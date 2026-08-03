@@ -1,0 +1,11 @@
+schema_version: 1
+canonical_genres:
+  - Hip Hop
+  - Alternative Rock
+aliases:
+  rap rock:
+    - Hip Hop
+    - Alternative Rock
+  rock rap:
+    - Hip Hop
+    - Alternative Rock

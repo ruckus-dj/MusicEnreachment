@@ -1,0 +1,8 @@
+schema_version: 1
+musicbrainz:
+  endpoint: https://musicbrainz.org/ws/2/
+  user_agent: music-ingest/0.1 (operator@example.test)
+  rate_limit_seconds: 1
+  cache_freshness_hours: 24
+acoustid:
+  enabled: false
