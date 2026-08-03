@@ -1,0 +1,48 @@
+# Local IDE, agent, and generated state
+.codegraph/
+.omo/
+.playwright-mcp/
+.idea/
+.aider*
+.cursor/
+.claude/
+.continue/
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+.venv/
+src/.venv/
+*.egg-info/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.netrc
+.secrets/
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+*.token
+credentials.*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+logs/
+
+# AI/editor temporary artifacts
+.tmp/
+tmp/
+*.tmp
+*-tmp
+*-tmp/

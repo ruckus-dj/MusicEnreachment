@@ -1,0 +1,46 @@
+# Secrets and local environments
+.env
+.env.*
+!.env.example
+.venv/
+src/.venv/
+
+# Python and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+src/.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+
+# Local IDE and agent state
+.idea/
+.omo/
+.codegraph/
+.playwright-mcp/
+.git/
+
+# Local test stand, including runtime configuration and media
+test_stand/
+
+# Tests and raw media must never be part of the production image
+tests/
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.wav
+*.aiff
+*.aif
+*.alac
+*.ape
+*.wma
+*.cue
+*.jpg
+*.jpeg
+*.png
+*.webp
