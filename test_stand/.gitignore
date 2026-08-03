@@ -1,0 +1,16 @@
+.env
+
+config/lidarr/*
+!config/lidarr/.gitkeep
+config/navidrome/*
+!config/navidrome/.gitkeep
+
+data/downloads/*
+!data/downloads/.gitkeep
+data/incoming/*
+!data/incoming/.gitkeep
+data/.publish-staging/*
+!data/.publish-staging/.gitkeep
+data/media/*
+!data/media/.gitkeep
+data/retention/*

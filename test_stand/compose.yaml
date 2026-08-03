@@ -1,0 +1,108 @@
+name: music-enrichment-test-stand
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: music-enrichment-postgres
+    environment:
+      POSTGRES_DB: music_ingest
+      POSTGRES_PASSWORD: music_ingest
+      POSTGRES_USER: music_ingest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U music_ingest -d music_ingest"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  music-ingest:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: music-enrichment-ingest
+    command: ["python", "-m", "music_ingest", "serve"]
+    environment:
+      MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:music_ingest@postgres/music_ingest
+      MUSIC_INGEST_INCOMING_ROOT: /data/incoming
+      MUSIC_INGEST_STAGING_ROOT: /data/.publish/staging
+      MUSIC_INGEST_MEDIA_ROOT: /data/.publish/media
+      MUSIC_INGEST_RETENTION_ROOT: /data/.publish/retention
+      MUSIC_INGEST_QUARANTINE_ROOT: /data/.publish/quarantine
+      MUSIC_INGEST_PROVENANCE_ROOT: /data/.publish/provenance
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8787:8000"
+    volumes:
+      - ./data:/data:ro
+      - ./data/.publish:/data/.publish
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: music-enrichment-lidarr
+    environment:
+      PUID: ${PUID:-501}
+      PGID: ${PGID:-20}
+      TZ: ${TZ:-Europe/Moscow}
+      UMASK: "022"
+    ports:
+      - "8686:8686"
+    volumes:
+      - ./config/lidarr:/config
+      - ./data:/data
+      - ./data/.publish/media:/data/media:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8686/ping >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+    restart: unless-stopped
+
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: music-enrichment-navidrome
+    environment:
+      ND_DATAFOLDER: /data
+      ND_LOGLEVEL: info
+      ND_MUSICFOLDER: /music
+    ports:
+      - "4533:4533"
+    volumes:
+      - ./config/navidrome:/data
+      - ./data/.publish/media:/music:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:4533/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  lidarr-webhook:
+    image: curlimages/curl:8.15.0
+    command: ["/bin/sh", "/configure-lidarr-webhook.sh"]
+    depends_on:
+      lidarr:
+        condition: service_healthy
+      music-ingest:
+        condition: service_healthy
+    environment:
+      LIDARR_URL: http://lidarr:8686
+      WEBHOOK_URL: http://music-ingest:8000/api/intake/lidarr
+    volumes:
+      - ./config/lidarr:/config:ro
+      - ./scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro
+    restart: "no"
+
+volumes:
+  postgres-data:
