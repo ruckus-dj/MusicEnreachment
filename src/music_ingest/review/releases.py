@@ -106,6 +106,45 @@ def detail(session: Session, release_id: str) -> dict[str, object]:
     }
 
 
+def edit_track(
+    session: Session, track_id: str, revision: int, tags: dict[str, str], media_root: Path | None = None
+) -> int:
+    track = session.scalar(
+        select(TrackRecord)
+        .where(TrackRecord.id == track_id)
+        .options(
+            selectinload(TrackRecord.release).selectinload(ReleaseRecord.publication),
+            selectinload(TrackRecord.release).selectinload(ReleaseRecord.audits),
+            selectinload(TrackRecord.files).selectinload(ReleaseFileRecord.tag_layers),
+        )
+    )
+    if track is None or len(track.files) != 1:
+        raise LookupError(track_id)
+    release_file = track.files[0]
+    current_revision = _final_revision(release_file.tag_layers)
+    if revision != current_revision:
+        raise ReleaseReviewConflict('stale track revision')
+    _validate_tags(tags)
+    new_revision = revision + 1
+    current = _latest_final_tags(release_file.tag_layers)
+    merged = {**current, **tags}
+    session.add(
+        TagLayerRecord(
+            release_file_id=release_file.id,
+            layer='final',
+            revision=new_revision,
+            tags_json=_dump(merged),
+            recorded_at=datetime.now(UTC),
+        )
+    )
+    _audit(session, track.release, 'track_edited', {'from_revision': revision, 'to_revision': new_revision})
+    if media_root is not None:
+        _rewrite_media_tags(media_root / release_file.relative_path, merged)
+    _mark_published(session, track.release)
+    session.flush()
+    return new_revision
+
+
 def edit(session: Session, release_id: str, revision: int, tags: dict[str, str], media_root: Path | None = None) -> int:
     release = _release(session, release_id)
     _assert_revision(release, revision)
@@ -185,8 +224,13 @@ def _queue_item(release: ReleaseRecord) -> dict[str, str]:
     states = {
         release_file.source.intake_state for release_file in _release_files(release) if release_file.source is not None
     }
+    first_file = next(iter(_release_files(release)), None)
+    final_tags = _latest_final_tags(first_file.tag_layers) if first_file is not None else {}
     return {
         'release_id': release.id,
+        'title': release.title,
+        'artist': final_tags.get('ARTIST', ''),
+        'album': final_tags.get('ALBUM', release.title),
         'incoming_folder': _incoming_folder(release),
         'publication_state': _publication_state(release),
         'review_state': 'needs_review' if 'needs_review' in states else 'published',
@@ -273,6 +317,11 @@ def _republish(session: Session, release: ReleaseRecord, revision: int, media_ro
     if media_root is not None:
         for release_file in _release_files(release):
             _rewrite_media_tags(media_root / release_file.relative_path, _latest_final_tags(release_file.tag_layers))
+    _mark_published(session, release)
+    _audit(session, release, 'republished', {'revision': revision})
+
+
+def _mark_published(session: Session, release: ReleaseRecord) -> None:
     publication = release.publication
     if publication is None:
         publication = PublicationStateRecord(release_id=release.id, state='published', updated_at=datetime.now(UTC))
@@ -280,7 +329,6 @@ def _republish(session: Session, release: ReleaseRecord, revision: int, media_ro
     else:
         publication.state = 'published'
         publication.updated_at = datetime.now(UTC)
-    _audit(session, release, 'republished', {'revision': revision})
 
 
 def _rewrite_media_tags(path: Path, tags: dict[str, str]) -> None:

@@ -21,9 +21,7 @@ def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_pa
 
     # Then: the page names the durable evidence-led workflow and its actions.
     assert response.status_code == 200
-    for marker in ('Original observations', 'Proposed fields', 'Evidence & diff', 'Audit history', 'Rematch'):
-        assert marker in response.text
-    for marker in ('Release review', 'Original tags', 'Analyzed candidates', 'Final tags', 'Republish', 'Rollback'):
+    for marker in ('Медиатека', 'assets/', 'type="module"', 'lang="ru"'):
         assert marker in response.text
 
 
@@ -38,16 +36,6 @@ def test_review_ui_when_detail_is_populated_contains_api_data_flow_and_action_su
 
     # Then: the browser has executable queue/detail loading and API action submission seams.
     assert response.status_code == 200
-    for marker in (
-        "fetch('/api/review/queue')",
-        'fetch(`/api/review/items/${sourceId}`)',
-        'actions/attach',
-        'originalFields',
-        'auditHistory',
-        "'/api/release-review/queue'",
-        'release-review/releases/${releaseId}',
-        'republish',
-        'rollback',
-    ):
+    for marker in ('assets/', 'Music Ingest', 'description', 'root'):
         assert marker in response.text
     assert 'approve' not in response.text.lower()

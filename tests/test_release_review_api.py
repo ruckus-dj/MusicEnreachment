@@ -112,6 +112,9 @@ def test_release_review_when_queued_returns_published_and_attention_releases(tmp
     assert response.json()['items'] == [
         {
             'release_id': release_id,
+            'title': 'Белые столбы',
+            'artist': 'Шипр',
+            'album': 'Белые столбы',
             'incoming_folder': '/incoming/Шипр/Белые столбы',
             'publication_state': 'published',
             'review_state': 'needs_review',
@@ -156,6 +159,23 @@ def test_release_review_when_published_fallback_is_edited_creates_revision_and_r
     assert detail['tracks'][0]['layers']['final']['TITLE'] == 'Белые столбы (edited)'
     assert detail['tracks'][0]['final_revision'] == 2
     assert [entry['action'] for entry in detail['audit']] == ['fallback_published', 'edited', 'republished']
+
+
+def test_release_review_when_single_track_is_edited_only_updates_that_track(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+
+    response = client.patch(
+        '/api/release-review/tracks/track-fallback/tags',
+        json={'revision': 1, 'tags': {'TITLE': 'Трек отдельно', 'GENRE': 'Jazz'}},
+    )
+    detail = client.get('/api/release-review/releases/release-fallback').json()
+
+    assert response.status_code == 200
+    assert response.json() == {'track_id': 'track-fallback', 'revision': 2, 'publication_state': 'published'}
+    assert detail['tracks'][0]['layers']['final']['TITLE'] == 'Трек отдельно'
+    assert detail['tracks'][0]['layers']['final']['GENRE'] == 'Jazz'
+    assert detail['tracks'][0]['final_revision'] == 2
+    assert detail['audit'][1]['action'] == 'track_edited'
 
 
 def test_release_review_when_stale_or_invalid_edit_rejects_without_overwrite(tmp_path: Path) -> None:

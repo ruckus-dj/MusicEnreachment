@@ -6,6 +6,7 @@ from typing import Protocol
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -18,6 +19,7 @@ from music_ingest.review.queue import QueueState, ReviewInputError, get_or_creat
 from music_ingest.review.releases import ReleaseReviewConflict, ReleaseReviewInputError
 from music_ingest.review.releases import detail as release_detail
 from music_ingest.review.releases import edit as edit_release
+from music_ingest.review.releases import edit_track as edit_release_track
 from music_ingest.review.releases import queue as release_queue
 from music_ingest.review.releases import republish as republish_release
 from music_ingest.review.releases import rollback as rollback_release
@@ -62,6 +64,9 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     source_provenance_root = provenance_root or incoming_root.parent / 'provenance'
+    assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
+    if assets_root.is_dir():
+        app.mount('/assets', StaticFiles(directory=assets_root), name='ui-assets')
 
     @app.middleware('http')
     async def authenticate_api(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -202,6 +207,20 @@ def create_app(
                 return {'release_id': release_id, 'revision': revision, 'publication_state': 'published'}
         except LookupError as error:
             raise HTTPException(status_code=404, detail='release review item not found') from error
+        except ReleaseReviewConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ReleaseReviewInputError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.patch('/api/release-review/tracks/{track_id}/tags')
+    def release_track_edit(track_id: str, request: ReleaseTagEdit) -> dict[str, str | int]:
+        try:
+            with session_factory() as session:
+                revision = edit_release_track(session, track_id, request.revision, request.tags, media_root)
+                session.commit()
+                return {'track_id': track_id, 'revision': revision, 'publication_state': 'published'}
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='track review item not found') from error
         except ReleaseReviewConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except ReleaseReviewInputError as error:
