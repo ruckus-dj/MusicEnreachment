@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import json
+import logging
+import shutil
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from subprocess import CalledProcessError, TimeoutExpired
+from typing import final
+
+from sqlalchemy.orm import Session
+
+from music_ingest.config.policies import FieldPolicy, GenrePolicy
+from music_ingest.inspectors.flac import InspectionState, inspect_flac
+from music_ingest.normalize.metadata import MetadataWriteError, MetadataWriteRequest, write_canonical_metadata
+from music_ingest.persistence.jobs import ClaimedJob, JobRepository
+from music_ingest.persistence.models import (
+    ArtworkRecord,
+    AuditRecord,
+    PublicationRecord,
+    PublicationStateRecord,
+    ReleaseFileRecord,
+    ReleaseGroupRecord,
+    ReleaseRecord,
+    ReviewDecisionRecord,
+    SourceRecord,
+    SourceTagRecord,
+    TagLayerRecord,
+    TrackRecord,
+)
+from music_ingest.processing.metadata import _fallback_metadata, _field_policy, _genre_policy, _hash, _read_tags
+from music_ingest.publication.service import PublicationError, PublicationRequest, publish_release
+from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingConfig:
+    incoming_root: Path
+    staging_root: Path
+    media_root: Path
+    retention_root: Path
+    quarantine_root: Path
+    flac_command: str = 'flac'
+    metaflac_command: str = 'metaflac'
+    timeout_seconds: float = 10.0
+    retry_delay: timedelta = timedelta(seconds=30)
+    max_attempts: int = 3
+    field_policy: FieldPolicy | None = None
+    genre_policy: GenrePolicy | None = None
+
+
+@final
+class ProcessingWorker:
+    def __init__(self, session: Session, config: ProcessingConfig, *, lease_age: timedelta | None = None) -> None:
+        self._session: Session = session
+        self._config: ProcessingConfig = config
+        self._lease_age: timedelta = lease_age or timedelta(minutes=5)
+
+    def run_once(self) -> bool:
+        now = datetime.now(UTC)
+        claimed = JobRepository(self._session).claim_next(now, self._lease_age)
+        if claimed is None:
+            return False
+        try:
+            self._process(claimed, now)
+        except ValueError as error:
+            self._quarantine_invalid_claim(claimed, str(error), now)
+        except MetadataWriteError as error:
+            self._quarantine_invalid_claim(claimed, str(error), now)
+        except (
+            OSError,
+            PublicationError,
+            FlacSanitizationFailure,
+            CalledProcessError,
+            TimeoutExpired,
+        ) as error:
+            LOGGER.warning(
+                'processing job retry',
+                extra={'job_id': claimed.job.id, 'attempt': claimed.attempt.attempt_number},
+                exc_info=error,
+            )
+            JobRepository(self._session).retry(
+                claimed,
+                datetime.now(UTC),
+                self._config.retry_delay,
+                self._config.max_attempts,
+            )
+        return True
+
+    def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+        source = self._source(claimed)
+        source_path = Path(source.source_path).resolve(strict=True)
+        valid_source = source_path.suffix.casefold() == '.flac' and source_path.is_relative_to(
+            self._config.incoming_root.resolve()
+        )
+        if not valid_source:
+            self._quarantine(claimed, source, 'source path is outside incoming FLAC boundary', now)
+            return
+        if self._changed(source, source_path):
+            self._quarantine(claimed, source, 'source changed after intake', now)
+            return
+        inspection = inspect_flac(
+            source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
+        )
+        if inspection.state is InspectionState.QUARANTINE:
+            self._quarantine(claimed, source, 'structural FLAC inspection failed', now)
+            return
+        tags = _read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
+        self._capture_observations(source, source_path, tags)
+        metadata = _fallback_metadata(tags)
+        staged_release = self._staging_directory(claimed.job.id)
+        sanitized_path = staged_release / '.sanitized.flac'
+        _ = sanitize_flac(
+            FlacSanitizationRequest(
+                source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
+            )
+        )
+        output_path = staged_release / source_path.name
+        written = write_canonical_metadata(
+            MetadataWriteRequest(
+                sanitized_path,
+                output_path,
+                staged_release,
+                metadata,
+                self._config.field_policy or _field_policy(),
+                self._config.genre_policy or _genre_policy(metadata.genres),
+                self._config.metaflac_command,
+                self._config.timeout_seconds,
+            )
+        )
+        sanitized_path.unlink()
+        self._stage_artwork(source_path, staged_release)
+        result = publish_release(
+            PublicationRequest(
+                staged_release,
+                self._config.staging_root,
+                self._config.media_root,
+                self._config.retention_root,
+                (source_path,),
+            )
+        )
+        source.intake_state = 'needs_review'
+        if not source.review_decisions:
+            source.review_decisions.append(
+                ReviewDecisionRecord(
+                    state='needs_review', rationale='provider unavailable; original-tag fallback published'
+                )
+            )
+        publication = source.publication
+        if publication is None:
+            publication = PublicationRecord(
+                source_id=source.id, publication_state='published', published_path=str(result.published_release)
+            )
+            self._session.add(publication)
+        else:
+            publication.publication_state = 'published'
+            publication.published_path = str(result.published_release)
+        release = self._workflow_release(claimed, source, result.published_release, tags, written.tags, now)
+        self._session.add(
+            AuditRecord(
+                release_id=release.id,
+                action='automatic_fallback_published',
+                actor='worker',
+                details_json=json.dumps({'path': str(result.published_release), 'tags': written.tags}),
+                recorded_at=now,
+            )
+        )
+        JobRepository(self._session).succeed(claimed, now)
+
+    def _workflow_release(
+        self,
+        claimed: ClaimedJob,
+        source: SourceRecord,
+        published_release: Path,
+        original_tags: tuple[tuple[str, str], ...],
+        final_tags: tuple[tuple[str, str], ...],
+        now: datetime,
+    ) -> ReleaseRecord:
+        group = ReleaseGroupRecord(id=f'{claimed.job.id}:group', title='Automatic fallback')
+        release = ReleaseRecord(id=f'{claimed.job.id}:release', release_group=group, title='Automatic fallback')
+        track = TrackRecord(id=f'{claimed.job.id}:track', release=release, position=1, title='Automatic fallback')
+        release_file = ReleaseFileRecord(
+            id=f'{claimed.job.id}:file',
+            track=track,
+            source_id=source.id,
+            relative_path=str(published_release.relative_to(self._config.media_root.resolve())),
+            content_sha256=_hash(next(published_release.glob('*.flac'))),
+        )
+        release_file.tag_layers = [
+            TagLayerRecord(layer='original', revision=1, tags_json=json.dumps(dict(original_tags)), recorded_at=now),
+            TagLayerRecord(layer='analyzed', revision=1, tags_json=json.dumps(dict(final_tags)), recorded_at=now),
+            TagLayerRecord(layer='final', revision=1, tags_json=json.dumps(dict(final_tags)), recorded_at=now),
+        ]
+        self._session.add_all(
+            (release_file, PublicationStateRecord(release=release, state='published', updated_at=now))
+        )
+        return release
+
+    def _source(self, claimed: ClaimedJob) -> SourceRecord:
+        if claimed.job.source_id is None:
+            raise ValueError('processing job has no source')
+        source = self._session.get(SourceRecord, claimed.job.source_id)
+        if source is None:
+            raise ValueError('processing job source is missing')
+        return source
+
+    def _changed(self, source: SourceRecord, path: Path) -> bool:
+        stat = path.stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, _hash(path)) != (
+            source.device,
+            source.inode,
+            source.size_bytes,
+            source.sha256,
+        )
+
+    def _capture_observations(self, source: SourceRecord, path: Path, tags: tuple[tuple[str, str], ...]) -> None:
+        if source.tag_observations:
+            return
+        source.tag_observations.extend(
+            SourceTagRecord(format_name='vorbis', tag_name=name, value=value) for name, value in tags
+        )
+        for artwork in (path.parent / 'cover.jpg', path.parent / 'cover.webp'):
+            if artwork.is_file():
+                source.artwork_observations.append(ArtworkRecord(sha256=_hash(artwork)))
+
+    def _staging_directory(self, job_id: str) -> Path:
+        directory = self._config.staging_root / job_id
+        self._config.staging_root.mkdir(parents=True, exist_ok=True)
+        self._config.media_root.mkdir(parents=True, exist_ok=True)
+        self._config.retention_root.mkdir(parents=True, exist_ok=True)
+        self._config.quarantine_root.mkdir(parents=True, exist_ok=True)
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir()
+        return directory
+
+    def _stage_artwork(self, source_path: Path, staged_release: Path) -> None:
+        artwork = next(
+            (path for path in (source_path.parent / 'cover.jpg', source_path.parent / 'cover.webp') if path.is_file()),
+            None,
+        )
+        if artwork is None:
+            return
+        _ = shutil.copy2(artwork, staged_release / artwork.name)
+
+    def _quarantine(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
+        source.intake_state = 'quarantined'
+        self._config.quarantine_root.mkdir(parents=True, exist_ok=True)
+        _ = (self._config.quarantine_root / f'{source.id}.json').write_text(
+            json.dumps({'reason': reason}), encoding='utf-8'
+        )
+        JobRepository(self._session).quarantine(claimed, now)
+
+    def _quarantine_invalid_claim(self, claimed: ClaimedJob, reason: str, now: datetime) -> None:
+        source_id = claimed.job.source_id
+        source = self._session.get(SourceRecord, source_id) if source_id is not None else None
+        if source is None:
+            JobRepository(self._session).quarantine(claimed, now)
+            return
+        self._quarantine(claimed, source, reason, now)
