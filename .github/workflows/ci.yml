@@ -48,6 +48,9 @@ jobs:
       - name: Set up Python
         run: uv python install 3.14
 
+      - name: Install media tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg flac
+
       - name: Install dependencies
         run: uv sync --locked
 
