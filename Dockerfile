@@ -1,5 +1,15 @@
 FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
 
+FROM node:24-bookworm-slim AS frontend
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend ./
+RUN npm run build
+
 FROM python:3.14-slim-trixie
 
 COPY --from=uv /uv /uvx /bin/
@@ -38,6 +48,7 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src/music_ingest ./src/music_ingest
+COPY --from=frontend /app/src/music_ingest/ui/dist ./src/music_ingest/ui/dist
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
