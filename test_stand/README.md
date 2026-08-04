@@ -48,31 +48,16 @@ authentication layer in this trusted local topology. `lidarr-webhook` is a
 one-shot setup task, not a healthy long-running service: an exit code of zero
 means Lidarr saved the endpoint and its `testall` validation reported success.
 
-## Task-7 webhook E2E
+## Stable library flow
 
-Run the deterministic E2E from the repository root:
+Use the incoming directory or a provider webhook to create immutable source
+observations. The worker creates managed publication versions and exposes the
+stable record, source history, publication history, metadata revisions, and
+processing events through `/api/library/records`.
 
-```sh
-uv run python -m tests.integration.task7_e2e
-```
-
-The command removes any prior local stand, starts a fresh Compose stack, creates
-a tagged FLAC fixture below `data/incoming/`, and posts the same real-shaped
-payloads Lidarr uses to the live intake API. It verifies `Test` creates only a
-receipt, a byte-identical `Download` replay reuses one receipt and job, and
-`Rename` plus `AlbumDelete` are durable webhook work. The worker must publish
-the automatic original-tag fallback, mark it `needs_review`, and create a
-published release. The runner then checks the release-review queue, edits final
-tags from revision 1 to 2, republishes revision 2, scans Navidrome, and verifies
-the fixture source inode and SHA-256 did not change.
-
-The stand's real proxy boundary remains Lidarr's internal URL
-`http://music-ingest:8000/api/intake/lidarr`. The runner posts fixtures to the
-host-mapped API (`http://localhost:8787`) only to deterministically cover all
-event variants, including replay; it does not add API authentication or make
-public-provider calls. A successful run writes only
-`.omo/evidence/music-ingest-platform/task-7-e2e.json`, after its assertions and
-cleanup complete. Failed runs leave no task-7 evidence artifact.
+The source file remains unchanged throughout intake and publication. A source
+replacement is attached to the existing stable record and makes the current
+publication stale instead of creating a second library identity.
 
 ## Stop and reset
 
@@ -83,7 +68,7 @@ docker compose down
 This preserves the PostgreSQL named volume. Use `docker compose down --volumes`
 only when an explicit local database reset is intended.
 
-The task-7 command owns its generated `data/incoming/task-7-*` fixture and its
-published media paths, removes them, and runs
+Any temporary fixture should own its generated incoming and published paths,
+remove them, and run
 `docker compose down --volumes --remove-orphans`. It does not clear any other
 bind-mounted fixture or configuration path.
