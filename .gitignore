@@ -18,6 +18,11 @@ __pycache__/
 src/.venv/
 *.egg-info/
 
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+src/music_ingest/ui/dist/
+
 # Local configuration and credentials
 .env
 .env.*
