@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintState, fingerprint_source
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.flac import FlacFinding, FlacFindingKind, FlacInspectionResult, InspectionState
+from music_ingest.intake.service import SourceId
 from music_ingest.persistence.models import Base, FingerprintRecord, SourceRecord
 
 
@@ -72,12 +73,16 @@ def test_fingerprint_source_when_inspection_is_valid_persists_local_evidence(tmp
         source_id = source.id
         result = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_valid_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_valid_flac_inspection()
+            ),
             fpcalc_command=str(executable),
         )
         repeated = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_valid_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_valid_flac_inspection()
+            ),
             fpcalc_command=str(executable),
         )
         session.commit()
@@ -94,6 +99,7 @@ def test_fingerprint_source_when_inspection_is_valid_persists_local_evidence(tmp
     assert all(item.fingerprint == '12345' for item in persisted)
     assert all(item.duration_seconds == 241 for item in persisted)
     assert all(item.tool_version == '1.6.0' for item in persisted)
+    assert result.tool is not None
     assert all(item.output_sha256 == sha256(result.tool.stdout.encode()).hexdigest() for item in persisted)
     assert source_path.read_bytes() == b'not decoded by the fake executable'
 
@@ -112,7 +118,9 @@ def test_fingerprint_source_when_inspection_is_quarantined_skips_fpcalc_and_pers
         source = _source(session, source_path)
         result = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_quarantined_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_quarantined_flac_inspection()
+            ),
             fpcalc_command=str(executable),
         )
         session.commit()
@@ -138,7 +146,9 @@ def test_fingerprint_source_when_fpcalc_is_missing_persists_unavailable_local_ev
         source = _source(session, source_path)
         result = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_valid_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_valid_flac_inspection()
+            ),
             fpcalc_command=str(tmp_path / 'missing-fpcalc'),
         )
         session.commit()
@@ -165,7 +175,9 @@ def test_fingerprint_source_when_fpcalc_fails_persists_local_failure_without_std
         source = _source(session, source_path)
         result = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_valid_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_valid_flac_inspection()
+            ),
             fpcalc_command=str(executable),
         )
         session.commit()
@@ -195,7 +207,9 @@ def test_fingerprint_source_when_fpcalc_output_is_malformed_persists_local_evide
         source = _source(session, source_path)
         result = fingerprint_source(
             session,
-            FingerprintRequest(source_id=source.id, source_path=source_path, inspection=_valid_flac_inspection()),
+            FingerprintRequest(
+                source_id=SourceId(source.id), source_path=source_path, inspection=_valid_flac_inspection()
+            ),
             fpcalc_command=str(executable),
         )
         session.commit()

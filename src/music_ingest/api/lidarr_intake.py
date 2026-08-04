@@ -11,13 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
-from music_ingest.persistence.models import (
-    JobRecord,
-    ReleaseFileRecord,
-    TombstoneRecord,
-    TrackRecord,
-    WebhookReceiptRecord,
-)
+from music_ingest.library.service import record_event
+from music_ingest.persistence.models import JobRecord, SourceRecord, WebhookReceiptRecord
 from music_ingest.persistence.repository import WebhookReceiptInput, WebhookReceiptRepository
 
 
@@ -117,9 +112,7 @@ def dispatch_lidarr_event(
             _record_renames(session, event)
             return result
         case LidarrAlbumDeletePayload():
-            result = _record_job(session, event, fingerprint, payload_json, received_at)
-            _record_album_tombstones(session, event, received_at)
-            return result
+            return _record_job(session, event, fingerprint, payload_json, received_at)
         case unreachable:
             assert_never(unreachable)
 
@@ -209,21 +202,16 @@ def _validate_rename_paths(event: LidarrRenamePayload, incoming_root: Path) -> N
 
 def _record_renames(session: Session, event: LidarrRenamePayload) -> None:
     for track_file in event.renamed_track_files:
-        release_file = session.scalar(
-            select(ReleaseFileRecord).where(ReleaseFileRecord.relative_path == str(track_file.previous_path))
-        )
-        if release_file is not None:
-            release_file.relative_path = str(track_file.path)
-
-
-def _record_album_tombstones(session: Session, event: LidarrAlbumDeletePayload, received_at: datetime) -> None:
-    if not event.deleted_files:
-        return
-    release_files = session.scalars(
-        select(ReleaseFileRecord).join(ReleaseFileRecord.track).where(TrackRecord.release_id == str(event.album.id))
-    ).all()
-    for release_file in release_files:
-        if release_file.tombstone is None:
-            session.add(
-                TombstoneRecord(release_file=release_file, reason='lidarr_album_delete', recorded_at=received_at)
-            )
+        source = session.scalar(select(SourceRecord).where(SourceRecord.source_path == str(track_file.previous_path)))
+        if source is not None:
+            source.source_path = str(track_file.path)
+            if source.library_record is not None:
+                record_event(
+                    session,
+                    source.library_record.id,
+                    'source_moved',
+                    source.library_record.processing_state,
+                    'source_renamed_by_provider',
+                    datetime.now(UTC),
+                    source.id,
+                )

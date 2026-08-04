@@ -16,12 +16,7 @@ from music_ingest.api.app import create_app
 from music_ingest.persistence.models import (
     Base,
     JobRecord,
-    ReleaseFileRecord,
-    ReleaseGroupRecord,
-    ReleaseRecord,
     SourceRecord,
-    TombstoneRecord,
-    TrackRecord,
     WebhookReceiptRecord,
 )
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
@@ -241,19 +236,16 @@ def test_lidarr_test_when_delivered_returns_no_content_without_a_job(tmp_path: P
     assert session.scalars(select(WebhookReceiptRecord)).one().job_id is None
 
 
-def test_lidarr_rename_and_album_delete_when_out_of_order_preserve_exact_deltas_and_tombstone(tmp_path: Path) -> None:
-    # Given: a persisted file whose current path is known to the workflow.
+def test_lidarr_rename_and_album_delete_when_out_of_order_preserve_source_history(tmp_path: Path) -> None:
+    # Given: an incoming source registered through the normal intake boundary.
     client, session = _client(tmp_path)
     old_path = tmp_path / 'incoming' / 'Artist' / 'Release' / 'old.flac'
     new_path = tmp_path / 'incoming' / 'Artist' / 'Release' / 'new.flac'
     old_path.parent.mkdir(parents=True)
     old_path.write_bytes(b'old source bytes')
     new_path.write_bytes(b'new source bytes')
-    group = ReleaseGroupRecord(id='group-1', title='Fixture Group')
-    release = ReleaseRecord(id='release-1', release_group=group, title='Fixture Release')
-    track = TrackRecord(id='track-1', release=release, position=1, title='Fixture Track')
-    session.add(ReleaseFileRecord(id='file-1', track=track, relative_path=str(old_path), content_sha256='a' * 64))
-    session.commit()
+    imported = client.post('/api/intake/lidarr', json=_download(old_path))
+    assert imported.status_code == 202
 
     # When: Rename is delivered before the file exists at its new path, then AlbumDelete is replayed.
     rename = client.post(
@@ -263,19 +255,17 @@ def test_lidarr_rename_and_album_delete_when_out_of_order_preserve_exact_deltas_
             'renamedTrackFiles': [{'previousPath': str(old_path), 'path': str(new_path)}],
         },
     )
-    album_delete = {'eventType': 'AlbumDelete', 'album': {'id': 'release-1'}, 'deletedFiles': True}
+    album_delete = {'eventType': 'AlbumDelete', 'album': {'id': 'provider-album'}, 'deletedFiles': True}
     deleted = client.post('/api/intake/lidarr', json=album_delete)
     replayed = client.post('/api/intake/lidarr', json=album_delete)
 
-    # Then: exact paths are retained as a database delta, and deletion only appends one tombstone.
+    # Then: exact source paths are retained, and provider deletion remains an operational event.
     assert rename.status_code == 202
     assert deleted.status_code == 202
     assert replayed.status_code == 202
-    renamed_file = session.get(ReleaseFileRecord, 'file-1')
-    assert renamed_file is not None
-    assert renamed_file.relative_path == str(new_path)
-    assert session.scalars(select(TombstoneRecord)).one().release_file_id == 'file-1'
-    assert len(session.scalars(select(WebhookReceiptRecord)).all()) == 2
+    renamed_source = session.scalars(select(SourceRecord)).one()
+    assert renamed_source.source_path == str(new_path)
+    assert len(session.scalars(select(WebhookReceiptRecord)).all()) == 3
 
 
 def test_lidarr_download_when_malformed_or_outside_incoming_root_rejects_without_a_job(tmp_path: Path) -> None:

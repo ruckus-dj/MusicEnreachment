@@ -56,7 +56,7 @@ tree. It records hashes, timestamps, FLAC/MP3 inspection state, and NFO/LRC
 presence without reading untrusted sidecar text into reports. It never removes `.nfo`,
 changes audio, writes tags, or publishes media. Review the initial
 Anacondaz, Noize MC, and Linkin Park sample reports separately; the event-driven
-runtime publishes valid media automatically and its review queue is attention-only.
+runtime publishes valid media automatically and records unresolved states on the stable library record.
 Interrupted runs can be rerun because each artifact is atomically replaced.
 
 ## Validation And Provider Safety

@@ -15,6 +15,12 @@ from music_ingest.config.policies import FieldPolicy, GenrePolicy
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
 from music_ingest.inspectors.flac import InspectionState, inspect_flac
 from music_ingest.intake.service import SourceId
+from music_ingest.library.service import (
+    ensure_source_record,
+    record_event,
+    record_metadata_layers,
+    record_publication,
+)
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
 from music_ingest.matching.providers import (
     AcoustIdMatch,
@@ -51,24 +57,15 @@ from music_ingest.normalize.metadata import (
 from music_ingest.persistence.jobs import ClaimedJob, JobRepository
 from music_ingest.persistence.models import (
     ArtworkRecord,
-    AuditRecord,
     CandidateRecord,
     ProviderAttemptRecord,
-    PublicationRecord,
-    PublicationStateRecord,
-    ReleaseFileRecord,
-    ReleaseGroupRecord,
-    ReleaseRecord,
     ReviewDecisionRecord,
     RuntimeSettingRecord,
     SourceRecord,
     SourceTagRecord,
-    TagLayerRecord,
-    TrackRecord,
 )
 from music_ingest.processing.metadata import _fallback_metadata, _field_policy, _genre_policy, _hash, _read_tags
 from music_ingest.publication.service import PublicationError, PublicationRequest, publish_release
-from music_ingest.review.queue import get_or_create
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
 LOGGER = logging.getLogger(__name__)
@@ -129,6 +126,10 @@ class ProcessingWorker:
                 self._config.max_attempts,
                 str(error),
             )
+            source = self._session.get(SourceRecord, claimed.job.source_id)
+            if source is not None:
+                record = ensure_source_record(self._session, source, now)
+                record_event(self._session, record.id, 'processing_retry', 'retrying', str(error), now, source.id)
         finally:
             self._discard_staging(claimed.job.id)
         return True
@@ -170,7 +171,16 @@ class ProcessingWorker:
                 source.review_decisions.append(
                     ReviewDecisionRecord(state='needs_review', rationale='canonical metadata required')
                 )
-            _ = get_or_create(self._session, source.id)
+            record = ensure_source_record(self._session, source, now)
+            record_event(
+                self._session,
+                record.id,
+                'metadata_required',
+                'needs_review',
+                'canonical metadata required',
+                now,
+                source.id,
+            )
             JobRepository(self._session).succeed(claimed, now)
             return
         if match_result is not None and match_result.decision is MatchDecision.AUTO_SELECTED:
@@ -209,6 +219,26 @@ class ProcessingWorker:
                 (source_path,),
             )
         )
+        library_record = ensure_source_record(self._session, source, now)
+        metadata_revisions = record_metadata_layers(
+            self._session,
+            library_record.id,
+            source.id,
+            dict(tags),
+            dict(written.tags),
+            dict(written.tags),
+            now,
+        )
+        audio_path = next(result.published_release.glob('*.flac'))
+        record_publication(
+            self._session,
+            library_record.id,
+            source.id,
+            audio_path,
+            _hash(audio_path),
+            metadata_revisions[-1].id,
+            now,
+        )
         source.intake_state = 'needs_review'
         if not source.review_decisions:
             source.review_decisions.append(
@@ -216,24 +246,14 @@ class ProcessingWorker:
                     state='needs_review', rationale='provider unavailable; original-tag fallback published'
                 )
             )
-        publication = source.publication
-        if publication is None:
-            publication = PublicationRecord(
-                source_id=source.id, publication_state='published', published_path=str(result.published_release)
-            )
-            self._session.add(publication)
-        else:
-            publication.publication_state = 'published'
-            publication.published_path = str(result.published_release)
-        release = self._workflow_release(claimed, source, result.published_release, tags, written.tags, now)
-        self._session.add(
-            AuditRecord(
-                release_id=release.id,
-                action='automatic_fallback_published',
-                actor='worker',
-                details_json=json.dumps({'path': str(result.published_release), 'tags': written.tags}),
-                recorded_at=now,
-            )
+        record_event(
+            self._session,
+            library_record.id,
+            'publication_ready_for_review',
+            'needs_review',
+            'provider unavailable; original-tag fallback published',
+            now,
+            source.id,
         )
         JobRepository(self._session).succeed(claimed, now)
 
@@ -342,35 +362,6 @@ class ProcessingWorker:
                     case NoMatch() | Ambiguous() | Disabled() | Malformed() | RateLimited() | Timeout() | Unavailable():
                         return
 
-    def _workflow_release(
-        self,
-        claimed: ClaimedJob,
-        source: SourceRecord,
-        published_release: Path,
-        original_tags: tuple[tuple[str, str], ...],
-        final_tags: tuple[tuple[str, str], ...],
-        now: datetime,
-    ) -> ReleaseRecord:
-        group = ReleaseGroupRecord(id=f'{claimed.job.id}:group', title='Automatic fallback')
-        release = ReleaseRecord(id=f'{claimed.job.id}:release', release_group=group, title='Automatic fallback')
-        track = TrackRecord(id=f'{claimed.job.id}:track', release=release, position=1, title='Automatic fallback')
-        release_file = ReleaseFileRecord(
-            id=f'{claimed.job.id}:file',
-            track=track,
-            source_id=source.id,
-            relative_path=str(published_release.relative_to(self._config.media_root.resolve())),
-            content_sha256=_hash(next(published_release.glob('*.flac'))),
-        )
-        release_file.tag_layers = [
-            TagLayerRecord(layer='original', revision=1, tags_json=json.dumps(dict(original_tags)), recorded_at=now),
-            TagLayerRecord(layer='analyzed', revision=1, tags_json=json.dumps(dict(final_tags)), recorded_at=now),
-            TagLayerRecord(layer='final', revision=1, tags_json=json.dumps(dict(final_tags)), recorded_at=now),
-        ]
-        self._session.add_all(
-            (release_file, PublicationStateRecord(release=release, state='published', updated_at=now))
-        )
-        return release
-
     def _source(self, claimed: ClaimedJob) -> SourceRecord:
         if claimed.job.source_id is None:
             raise ValueError('processing job has no source')
@@ -424,6 +415,8 @@ class ProcessingWorker:
     def _quarantine(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
         source.intake_state = 'quarantined'
         claimed.job.failure_reason = reason
+        record = ensure_source_record(self._session, source, now)
+        record_event(self._session, record.id, 'processing_quarantined', 'quarantined', reason, now, source.id)
         JobRepository(self._session).quarantine(claimed, now)
 
     def _quarantine_invalid_claim(self, claimed: ClaimedJob, reason: str, now: datetime) -> None:

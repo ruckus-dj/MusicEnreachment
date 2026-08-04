@@ -14,6 +14,7 @@ from music_ingest.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
     FixtureCase,
+    LiveProvenance,
     Malformed,
     MusicBrainzFixtureProvider,
     MusicBrainzLookupRequest,
@@ -62,6 +63,8 @@ def test_musicbrainz_when_response_is_fresh_reuses_cached_snapshot_without_a_sec
     second = service.lookup(request, NOW + timedelta(hours=23, minutes=59))
 
     # Then: the cache has one snapshot and neither provider selected a release.
+    assert isinstance(first.musicbrainz.provenance, LiveProvenance)
+    assert isinstance(second.musicbrainz.provenance, LiveProvenance)
     assert first.musicbrainz.provenance.state == 'fresh'
     assert second.musicbrainz.provenance.state == 'cached'
     assert second.selected_release is None
@@ -80,6 +83,7 @@ def test_musicbrainz_when_cache_is_stale_records_a_new_snapshot_and_reserves_a_s
     result = service.lookup(request, NOW + timedelta(hours=24))
 
     # Then: expiry is durable evidence before fresh evidence supersedes the stale snapshot.
+    assert isinstance(result.musicbrainz.provenance, LiveProvenance)
     assert result.musicbrainz.provenance.state == 'fresh'
     snapshots = session.scalars(select(ProviderSnapshotRecord).order_by(ProviderSnapshotRecord.id)).all()
     assert [snapshot.state for snapshot in snapshots] == ['fresh', 'stale', 'fresh']
@@ -148,6 +152,7 @@ def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(t
     )
 
     # Then: it uses the public v2 endpoint and passes the configured User-Agent without a socket.
+    assert isinstance(result.provenance, LiveProvenance)
     assert result.provenance.http_status == 200
     assert calls[0][0].startswith('https://musicbrainz.org/ws/2/release/?')
     assert calls[0][1]['User-Agent'] == 'music-ingest/1.0 (operator@example.test)'
@@ -175,6 +180,8 @@ def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_
     second = service.lookup(request, NOW + timedelta(minutes=1))
 
     # Then: no signature mismatch occurs and the second result is cached.
+    assert isinstance(first.musicbrainz.provenance, LiveProvenance)
+    assert isinstance(second.musicbrainz.provenance, LiveProvenance)
     assert first.musicbrainz.provenance.state == 'fresh'
     assert second.musicbrainz.provenance.state == 'cached'
     assert starts == [NOW]

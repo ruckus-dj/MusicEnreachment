@@ -8,50 +8,21 @@ from typing import Protocol
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
+from music_ingest.library.service import attach_source, library_record_detail, library_records, record_event
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
-from music_ingest.persistence.models import RuntimeSettingRecord, SourceRecord
+from music_ingest.persistence.models import RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
-from music_ingest.review.queue import QueueState, ReviewInputError, get_or_create, perform_action
-from music_ingest.review.releases import ReleaseReviewConflict, ReleaseReviewInputError
-from music_ingest.review.releases import detail as release_detail
-from music_ingest.review.releases import edit as edit_release
-from music_ingest.review.releases import edit_track as edit_release_track
-from music_ingest.review.releases import queue as release_queue
-from music_ingest.review.releases import republish as republish_release
-from music_ingest.review.releases import rollback as rollback_release
 from music_ingest.ui.page import REVIEW_PAGE
 
 
 class SessionFactory(Protocol):
     def __call__(self) -> Session: ...
-
-
-class ReviewAction(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    musicbrainz_id: str | None = None
-    artist: str | None = Field(default=None, max_length=512)
-    release_title: str | None = Field(default=None, max_length=512)
-
-
-class ReleaseTagEdit(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    revision: int = Field(ge=1)
-    tags: dict[str, str] = Field(min_length=1)
-
-
-class ReleaseRevisionAction(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    revision: int = Field(ge=1)
 
 
 class MatchingSettings(BaseModel):
@@ -60,7 +31,12 @@ class MatchingSettings(BaseModel):
     confidence_threshold: float = Field(ge=0.0, le=1.0)
 
 
-_FIELDS_ADAPTER = TypeAdapter(dict[str, str])
+class LibraryIdentityUpdate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    musicbrainz_recording_id: str = Field(
+        pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    )
 
 
 def create_app(
@@ -120,17 +96,160 @@ def create_app(
             session.commit()
             return result
 
-    @app.get('/api/review/queue')
-    def review_queue(state: QueueState | None = None) -> dict[str, list[dict[str, str]]]:
+    @app.get('/api/library/records')
+    def library_catalog() -> JSONResponse:
         with session_factory() as session:
-            sources = session.scalars(select(SourceRecord).order_by(SourceRecord.id)).all()
-            items = []
-            for source in sources:
-                record = get_or_create(session, source.id)
-                if state is None or record.state == state.value:
-                    items.append({'source_id': source.id, 'state': record.state})
-            session.commit()
-            return {'items': items}
+            records = library_records(session)
+            return JSONResponse(
+                content={
+                    'items': [
+                        {
+                            'record_id': record.id,
+                            'musicbrainz_recording_id': record.musicbrainz_recording_id,
+                            'musicbrainz_release_id': record.musicbrainz_release_id,
+                            'musicbrainz_artist_id': record.musicbrainz_artist_id,
+                            'source_state': record.source_state,
+                            'processing_state': record.processing_state,
+                            'match_state': record.match_state,
+                            'publication_state': record.publication_state,
+                            'metadata_state': record.metadata_state,
+                            'sources': [
+                                {
+                                    'source_id': source.id,
+                                    'path': source.source_path,
+                                    'format': source.source_path.rsplit('.', maxsplit=1)[-1],
+                                    'sha256': source.sha256,
+                                    'state': source.intake_state,
+                                    'disappeared_at': source.disappeared_at.isoformat()
+                                    if source.disappeared_at is not None
+                                    else None,
+                                }
+                                for source in record.sources
+                            ],
+                            'publications': [
+                                {
+                                    'publication_id': publication.id,
+                                    'source_id': publication.source_id,
+                                    'path': publication.path,
+                                    'format': publication.format_name,
+                                    'sha256': publication.content_sha256,
+                                    'state': publication.state,
+                                    'created_at': publication.created_at.isoformat(),
+                                }
+                                for publication in record.publications
+                            ],
+                        }
+                        for record in records
+                    ]
+                }
+            )
+
+    @app.get('/api/library/records/{record_id}')
+    def library_catalog_detail(record_id: str) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                return JSONResponse(
+                    content={
+                        'record_id': record.id,
+                        'musicbrainz_recording_id': record.musicbrainz_recording_id,
+                        'musicbrainz_release_id': record.musicbrainz_release_id,
+                        'musicbrainz_artist_id': record.musicbrainz_artist_id,
+                        'states': {
+                            'source': record.source_state,
+                            'processing': record.processing_state,
+                            'match': record.match_state,
+                            'publication': record.publication_state,
+                            'metadata': record.metadata_state,
+                        },
+                        'sources': [
+                            {
+                                'source_id': source.id,
+                                'path': source.source_path,
+                                'sha256': source.sha256,
+                                'size_bytes': source.size_bytes,
+                                'origin': source.origin,
+                                'state': source.intake_state,
+                                'disappeared_at': source.disappeared_at.isoformat()
+                                if source.disappeared_at is not None
+                                else None,
+                            }
+                            for source in record.sources
+                        ],
+                        'publications': [
+                            {
+                                'publication_id': publication.id,
+                                'source_id': publication.source_id,
+                                'path': publication.path,
+                                'format': publication.format_name,
+                                'sha256': publication.content_sha256,
+                                'metadata_revision_id': publication.metadata_revision_id,
+                                'state': publication.state,
+                                'created_at': publication.created_at.isoformat(),
+                            }
+                            for publication in record.publications
+                        ],
+                        'metadata_revisions': [
+                            {
+                                'id': revision.id,
+                                'source_id': revision.source_id,
+                                'layer': revision.layer,
+                                'revision': revision.revision,
+                                'tags': revision.tags_json,
+                                'actor': revision.actor,
+                                'created_at': revision.created_at.isoformat(),
+                            }
+                            for revision in record.metadata_revisions
+                        ],
+                        'events': [
+                            {
+                                'id': event.id,
+                                'source_id': event.source_id,
+                                'kind': event.kind,
+                                'state': event.state,
+                                'reason': event.reason,
+                                'details': event.details_json,
+                                'created_at': event.created_at.isoformat(),
+                            }
+                            for event in record.events
+                        ],
+                    }
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record not found') from error
+
+    @app.post('/api/library/records/{record_id}/sources/{source_id}', status_code=status.HTTP_204_NO_CONTENT)
+    def attach_library_source(record_id: str, source_id: str) -> Response:
+        try:
+            with session_factory() as session:
+                attach_source(session, source_id, record_id)
+                session.commit()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.put('/api/library/records/{record_id}/identity')
+    def update_library_identity(record_id: str, request: LibraryIdentityUpdate) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                record.musicbrainz_recording_id = request.musicbrainz_recording_id.lower()
+                record.match_state = 'matched'
+                record.updated_at = datetime.now(UTC)
+                record_event(
+                    session,
+                    record.id,
+                    'identity_attached',
+                    record.processing_state,
+                    None,
+                    record.updated_at,
+                )
+                session.commit()
+                return JSONResponse(
+                    content={'record_id': record.id, 'musicbrainz_recording_id': record.musicbrainz_recording_id}
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record not found') from error
 
     @app.get('/api/settings/matching', response_model=MatchingSettings)
     def matching_settings() -> MatchingSettings:
@@ -157,143 +276,4 @@ def create_app(
             session.commit()
             return request
 
-    @app.get('/api/review/items/{source_id}')
-    def review_detail(source_id: str) -> JSONResponse:
-        with session_factory() as session:
-            source = session.scalar(
-                select(SourceRecord)
-                .where(SourceRecord.id == source_id)
-                .options(
-                    selectinload(SourceRecord.tag_observations),
-                    selectinload(SourceRecord.provider_attempts),
-                    selectinload(SourceRecord.candidates),
-                    selectinload(SourceRecord.fingerprints),
-                    selectinload(SourceRecord.review_release),
-                    selectinload(SourceRecord.review_audits),
-                    selectinload(SourceRecord.publish_snapshots),
-                )
-            )
-            if source is None:
-                raise HTTPException(status_code=404, detail='review item not found')
-            record = get_or_create(session, source_id)
-            original = _FIELDS_ADAPTER.validate_json(record.original_json)
-            proposed = _FIELDS_ADAPTER.validate_json(record.proposed_json)
-            detail = {
-                'source_id': source_id,
-                'state': record.state,
-                'original': original,
-                'proposed': proposed,
-                'diff': [
-                    {'field': key, 'original': original.get(key), 'proposed': proposed.get(key)} for key in proposed
-                ],
-                'provider': [
-                    {'name': item.provider_name, 'state': item.outcome, 'snapshot': item.snapshot}
-                    for item in source.provider_attempts
-                ],
-                'fingerprints': [
-                    {'state': item.state, 'fingerprint': item.fingerprint, 'duration': item.duration_seconds}
-                    for item in source.fingerprints
-                ],
-                'candidates': [{'key': item.candidate_key, 'evidence': item.evidence} for item in source.candidates],
-                'audit': [
-                    {'action': item.action, 'actor': item.actor, 'before': item.before_json, 'after': item.after_json}
-                    for item in source.review_audits
-                ],
-                'ids': {'artist': record.artist_id, 'release': record.release_id, 'track': record.track_id},
-                'musicbrainz_id': record.musicbrainz_id,
-                'previous_publish_snapshot': _snapshot(source),
-            }
-            session.commit()
-            return JSONResponse(content=detail)
-
-    @app.post('/api/review/items/{source_id}/actions/{action}')
-    def review_action(source_id: str, action: str, request: ReviewAction) -> dict[str, object]:
-        fields = request.model_dump(exclude_none=True)
-        try:
-            with session_factory() as session:
-                record = perform_action(session, source_id, action, fields)
-                session.commit()
-                return {
-                    'source_id': source_id,
-                    'state': record.state,
-                    'ids': {'artist': record.artist_id, 'release': record.release_id, 'track': record.track_id},
-                    'musicbrainz_id': record.musicbrainz_id,
-                }
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='review item not found') from error
-        except ReviewInputError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.get('/api/release-review/queue')
-    def release_review_queue() -> dict[str, list[dict[str, str]]]:
-        with session_factory() as session:
-            return {'items': release_queue(session)}
-
-    @app.get('/api/release-review/releases/{release_id}')
-    def release_review_detail(release_id: str) -> JSONResponse:
-        try:
-            with session_factory() as session:
-                return JSONResponse(content=release_detail(session, release_id))
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='release review item not found') from error
-
-    @app.patch('/api/release-review/releases/{release_id}/tags')
-    def release_review_edit(release_id: str, request: ReleaseTagEdit) -> dict[str, str | int]:
-        try:
-            with session_factory() as session:
-                revision = edit_release(session, release_id, request.revision, request.tags, media_root)
-                session.commit()
-                return {'release_id': release_id, 'revision': revision, 'publication_state': 'published'}
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='release review item not found') from error
-        except ReleaseReviewConflict as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except ReleaseReviewInputError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.patch('/api/release-review/tracks/{track_id}/tags')
-    def release_track_edit(track_id: str, request: ReleaseTagEdit) -> dict[str, str | int]:
-        try:
-            with session_factory() as session:
-                revision = edit_release_track(session, track_id, request.revision, request.tags, media_root)
-                session.commit()
-                return {'track_id': track_id, 'revision': revision, 'publication_state': 'published'}
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='track review item not found') from error
-        except ReleaseReviewConflict as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except ReleaseReviewInputError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.post('/api/release-review/releases/{release_id}/republish')
-    def release_review_republish(release_id: str, request: ReleaseRevisionAction) -> dict[str, str | int]:
-        try:
-            with session_factory() as session:
-                republish_release(session, release_id, request.revision, media_root)
-                session.commit()
-                return {'release_id': release_id, 'revision': request.revision, 'publication_state': 'published'}
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='release review item not found') from error
-        except ReleaseReviewConflict as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.post('/api/release-review/releases/{release_id}/rollback')
-    def release_review_rollback(release_id: str, request: ReleaseRevisionAction) -> dict[str, str | int]:
-        try:
-            with session_factory() as session:
-                revision = rollback_release(session, release_id, request.revision, media_root)
-                session.commit()
-                return {'release_id': release_id, 'revision': revision, 'publication_state': 'published'}
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail='release review item not found') from error
-        except ReleaseReviewInputError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
     return app
-
-
-def _snapshot(source: SourceRecord) -> dict[str, str] | None:
-    if not source.publish_snapshots:
-        return None
-    item = sorted(source.publish_snapshots, key=lambda value: value.id)[-1]
-    return {'state': item.state, 'release': item.release_json}

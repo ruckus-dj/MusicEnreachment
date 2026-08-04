@@ -61,7 +61,7 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_databa
         session.commit()
         persisted = session.get(SourceRecord, result.source_id)
 
-    # Then: raw observations remain separate, publication is only a placeholder, and source bytes are untouched.
+    # Then: raw observations remain separate, no publication exists yet, and source bytes are untouched.
     assert persisted is not None
     assert persisted.origin == Origin.MANUAL.value
     assert persisted.device is not None
@@ -74,8 +74,7 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_databa
         ('id3', 'Live Version'),
         ('vorbis', 'Studio Version'),
     ]
-    assert persisted.publication is not None
-    assert persisted.publication.published_path is None
+    assert persisted.library_publications == []
     assert source.read_bytes() == b'manual source bytes'
     assert not (tmp_path / 'provenance').exists()
 
@@ -213,6 +212,6 @@ def test_provenance_migration_when_upgraded_and_downgraded_creates_only_its_sche
     assert 'source_records' in upgraded_tables
     assert 'provider_attempts' in upgraded_tables
     assert 'fingerprint_evidence' in upgraded_tables
-    assert 'publication_records' in upgraded_tables
+    assert 'library_publications' in upgraded_tables
     assert 'fingerprint_evidence' not in downgraded_tables
     assert upgraded_tables != downgraded_tables

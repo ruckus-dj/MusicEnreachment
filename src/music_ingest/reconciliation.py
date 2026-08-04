@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
-from music_ingest.persistence.models import JobRecord, ReleaseFileRecord, SourceRecord, TombstoneRecord
+from music_ingest.library.service import attach_source, record_event
+from music_ingest.persistence.models import JobRecord, SourceRecord
 
 
 class ScanResult(BaseModel):
@@ -41,7 +42,7 @@ def reconcile_incoming(session: Session, incoming_root: Path) -> ScanResult:
     sources = list(
         session.scalars(
             select(SourceRecord).options(
-                selectinload(SourceRecord.release_files).selectinload(ReleaseFileRecord.tombstone)
+                selectinload(SourceRecord.library_record),
             )
         ).all()
     )
@@ -80,6 +81,20 @@ def reconcile_incoming(session: Session, incoming_root: Path) -> ScanResult:
             ),
         )
         seen_source_ids.add(intake.source_id)
+        if path_source is not None and path_source.library_record_id is not None:
+            replacement = session.get(SourceRecord, intake.source_id)
+            if replacement is not None:
+                orphan_record = replacement.library_record
+                attach_source(
+                    session,
+                    replacement.id,
+                    path_source.library_record_id,
+                    reason='source_replaced',
+                )
+                path_source.intake_state = 'replaced'
+                path_source.disappeared_at = datetime.now(UTC)
+                if orphan_record is not None and orphan_record.id != path_source.library_record_id:
+                    session.delete(orphan_record)
         if _enqueue_job(session, intake.source_id, datetime.now(UTC)):
             queued_jobs += 1
 
@@ -88,21 +103,25 @@ def reconcile_incoming(session: Session, incoming_root: Path) -> ScanResult:
     removed_paths: set[Path] = set()
     for source in sources:
         source_path = Path(source.source_path).resolve()
-        if source.id in seen_source_ids or source_path in current_paths or source.intake_state == 'deleted':
+        if source.id in seen_source_ids or source_path in current_paths or source.intake_state == 'disappeared':
             continue
-        source.intake_state = 'deleted'
+        source.intake_state = 'disappeared'
+        source.disappeared_at = datetime.now(UTC)
+        if source.library_record is not None:
+            source.library_record.source_state = 'disappeared'
+            source.library_record.updated_at = datetime.now(UTC)
+            record_event(
+                session,
+                source.library_record.id,
+                'source_disappeared',
+                source.library_record.processing_state,
+                'filesystem_scan_removed',
+                datetime.now(UTC),
+                source.id,
+            )
         if source_path not in removed_paths:
             removed_paths.add(source_path)
             removed += 1
-        for release_file in source.release_files:
-            if release_file.tombstone is None:
-                session.add(
-                    TombstoneRecord(
-                        release_file=release_file,
-                        reason='filesystem_scan_removed',
-                        recorded_at=datetime.now(UTC),
-                    )
-                )
 
     session.flush()
     return ScanResult(

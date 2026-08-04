@@ -7,17 +7,15 @@ from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, LargeBi
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from music_ingest.persistence.base import Base
+from music_ingest.persistence.library import (
+    LibraryEventRecord,
+    LibraryMetadataRevisionRecord,
+    LibraryPublicationRecord,
+    LibraryRecord,
+)
 from music_ingest.persistence.workflow import (
-    AuditRecord,
     JobAttemptRecord,
     JobRecord,
-    PublicationStateRecord,
-    ReleaseFileRecord,
-    ReleaseGroupRecord,
-    ReleaseRecord,
-    TagLayerRecord,
-    TombstoneRecord,
-    TrackRecord,
     WebhookReceiptRecord,
 )
 
@@ -35,6 +33,8 @@ class SourceRecord(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     origin: Mapped[str] = mapped_column(String(16), nullable=False)
     intake_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
+    disappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     tag_observations: Mapped[list[SourceTagRecord]] = relationship(back_populates='source', lazy='selectin')
     artwork_observations: Mapped[list[ArtworkRecord]] = relationship(back_populates='source', lazy='selectin')
@@ -42,15 +42,10 @@ class SourceRecord(Base):
     candidates: Mapped[list[CandidateRecord]] = relationship(back_populates='source', lazy='selectin')
     review_decisions: Mapped[list[ReviewDecisionRecord]] = relationship(back_populates='source', lazy='selectin')
     fingerprints: Mapped[list[FingerprintRecord]] = relationship(back_populates='source', lazy='selectin')
-    publication: Mapped[PublicationRecord | None] = relationship(
-        back_populates='source', lazy='selectin', uselist=False
+    library_record: Mapped[LibraryRecord | None] = relationship(back_populates='sources')
+    library_publications: Mapped[list[LibraryPublicationRecord]] = relationship(
+        'LibraryPublicationRecord', back_populates='source', lazy='selectin'
     )
-    review_release: Mapped[ReviewReleaseRecord | None] = relationship(
-        back_populates='source', lazy='selectin', uselist=False
-    )
-    review_audits: Mapped[list[ReviewAuditRecord]] = relationship(back_populates='source', lazy='selectin')
-    publish_snapshots: Mapped[list[PublishSnapshotRecord]] = relationship(back_populates='source', lazy='selectin')
-    release_files: Mapped[list[ReleaseFileRecord]] = relationship(back_populates='source', lazy='selectin')
 
 
 @final
@@ -130,57 +125,6 @@ class FingerprintRecord(Base):
 
 
 @final
-class PublicationRecord(Base):
-    __tablename__ = 'publication_records'
-
-    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), primary_key=True)
-    publication_state: Mapped[str] = mapped_column(String(32), nullable=False)
-    published_path: Mapped[str | None] = mapped_column(Text)
-    source: Mapped[SourceRecord] = relationship(back_populates='publication')
-
-
-@final
-class ReviewReleaseRecord(Base):
-    __tablename__ = 'review_releases'
-
-    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), primary_key=True)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
-    original_json: Mapped[str] = mapped_column(Text, nullable=False)
-    proposed_json: Mapped[str] = mapped_column(Text, nullable=False)
-    artist_id: Mapped[str] = mapped_column(String(96), nullable=False)
-    release_id: Mapped[str] = mapped_column(String(96), nullable=False)
-    track_id: Mapped[str] = mapped_column(String(96), nullable=False)
-    musicbrainz_id: Mapped[str | None] = mapped_column(String(36))
-    source: Mapped[SourceRecord] = relationship(back_populates='review_release')
-
-
-@final
-class ReviewAuditRecord(Base):
-    __tablename__ = 'review_audits'
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    action: Mapped[str] = mapped_column(String(32), nullable=False)
-    before_json: Mapped[str] = mapped_column(Text, nullable=False)
-    after_json: Mapped[str] = mapped_column(Text, nullable=False)
-    actor: Mapped[str] = mapped_column(String(128), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    source: Mapped[SourceRecord] = relationship(back_populates='review_audits')
-
-
-@final
-class PublishSnapshotRecord(Base):
-    __tablename__ = 'publish_snapshots'
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
-    release_json: Mapped[str] = mapped_column(Text, nullable=False)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    source: Mapped[SourceRecord] = relationship(back_populates='publish_snapshots')
-
-
-@final
 class ProviderSnapshotRecord(Base):
     __tablename__ = 'provider_snapshots'
 
@@ -218,29 +162,21 @@ class RuntimeSettingRecord(Base):
 
 __all__ = [
     'ArtworkRecord',
-    'AuditRecord',
     'Base',
     'CandidateRecord',
     'FingerprintRecord',
+    'LibraryEventRecord',
+    'LibraryMetadataRevisionRecord',
+    'LibraryPublicationRecord',
+    'LibraryRecord',
     'JobAttemptRecord',
     'JobRecord',
     'ProviderAttemptRecord',
     'ProviderScheduleRecord',
     'RuntimeSettingRecord',
     'ProviderSnapshotRecord',
-    'PublicationRecord',
-    'PublicationStateRecord',
-    'PublishSnapshotRecord',
-    'ReleaseFileRecord',
-    'ReleaseGroupRecord',
-    'ReleaseRecord',
-    'ReviewAuditRecord',
     'ReviewDecisionRecord',
-    'ReviewReleaseRecord',
     'SourceRecord',
     'SourceTagRecord',
-    'TagLayerRecord',
-    'TombstoneRecord',
-    'TrackRecord',
     'WebhookReceiptRecord',
 ]

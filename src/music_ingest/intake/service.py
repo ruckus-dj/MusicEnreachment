@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, ClassVar, NewType
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from music_ingest.persistence.library import LibraryRecord
 from music_ingest.persistence.models import (
     ArtworkRecord,
     CandidateRecord,
     ProviderAttemptRecord,
-    PublicationRecord,
     ReviewDecisionRecord,
     SourceRecord,
     SourceTagRecord,
@@ -115,6 +117,8 @@ def _persist_source(
     size_bytes: int,
     source_hash: str,
 ) -> SourceRecord:
+    now = datetime.now(UTC)
+    library_record = LibraryRecord(id=f'record-{uuid4().hex}', created_at=now, updated_at=now)
     source = SourceRecord(
         id=source_id,
         source_path=str(request.source_path),
@@ -125,6 +129,7 @@ def _persist_source(
         duration_seconds=request.duration_seconds,
         origin=request.origin.value,
         intake_state=IntakeState.NEEDS_REVIEW.value,
+        library_record=library_record,
     )
     source.tag_observations = [
         SourceTagRecord(format_name=item.format_name, tag_name=item.tag_name, value=item.value)
@@ -146,7 +151,6 @@ def _persist_source(
     source.review_decisions = [
         ReviewDecisionRecord(state=item.state, rationale=item.rationale) for item in request.review_decisions
     ]
-    source.publication = PublicationRecord(publication_state='pending', published_path=None)
     return repository.add_source(source)
 
 

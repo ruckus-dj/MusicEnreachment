@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import assert_never
 
 import pytest
+import requests
 
 from music_ingest.matching.providers import (
     AcoustIdFixtureProvider,
@@ -381,6 +382,10 @@ def test_production_transport_when_gate_absent_never_constructs_http_client(
     construction_count = 0
 
     class _RecordingClient:
+        def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+            _ = url, headers, timeout
+            raise AssertionError('the disabled transport must not issue requests')
+
         def close(self) -> None:
             return None
 
@@ -403,6 +408,10 @@ def test_production_transport_when_gate_present_constructs_via_injected_seam(
     monkeypatch.setenv('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT', '1')
 
     class _RecordingClient:
+        def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+            _ = url, headers, timeout
+            raise AssertionError('the injected client is not used during construction')
+
         def close(self) -> None:
             return None
 

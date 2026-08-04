@@ -187,8 +187,8 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         assert job is not None and job.state == 'completed'
         source = session.get(SourceRecord, job.source_id)
         assert source is not None and source.intake_state == 'needs_review'
-        assert source.publication is None
-        assert source.review_release is not None and source.review_release.state == 'needs_review'
+        assert source.library_publications == []
+        assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert [evidence.state for evidence in source.fingerprints] == ['success']
         assert source.fingerprints[0].fingerprint
         assert [attempt.provider_name for attempt in source.provider_attempts] == ['musicbrainz', 'acoustid']
@@ -355,6 +355,6 @@ def test_worker_when_source_tags_cannot_form_a_fallback_queues_review(tmp_path: 
         assert job is not None and job.state == 'completed'
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
         assert source is not None and source.intake_state == 'needs_review'
-        assert source.review_release is not None and source.review_release.state == 'needs_review'
+        assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert [decision.rationale for decision in source.review_decisions] == ['canonical metadata required']
     assert not list(config.media_root.rglob('*.flac'))

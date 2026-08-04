@@ -23,6 +23,6 @@ def test_only_komodo_describes_production_deployment_and_templates_have_no_secre
 def test_operational_docs_preserve_dry_run_and_provider_safety_contracts() -> None:
     content = (ROOT / 'docs' / 'deployment.md').read_text(encoding='utf-8')
     assert 'python -m music_ingest dry-run' in content
-    assert 'review queue is attention-only' in content
+    assert 'records unresolved states on the stable library record' in content
     assert 'MUSIC_INGEST_ENABLE_LIVE_TESTS=1' in content
     assert 'never removes `.nfo`' in content
