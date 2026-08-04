@@ -21,35 +21,47 @@ def _read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[
     )
 
 
-def _fallback_metadata(tags: tuple[tuple[str, str], ...]) -> CanonicalMetadata:
+def _fallback_metadata(tags: tuple[tuple[str, str], ...]) -> CanonicalMetadata | None:
     values = {name: value for name, value in tags}
-    required = (
-        'TITLE',
-        'ARTIST',
-        'ALBUM',
-        'ALBUMARTIST',
-        'DATE',
-        'TRACKNUMBER',
-        'TRACKTOTAL',
-        'DISCNUMBER',
-        'DISCTOTAL',
-        'GENRE',
-    )
-    if any(not values.get(name) for name in required):
-        raise ValueError('source tags cannot form a structurally valid fallback')
+    title = values.get('TITLE')
+    artist = values.get('ARTIST')
+    album = values.get('ALBUM')
+    album_artist = values.get('ALBUMARTIST')
+    date = values.get('DATE')
+    track_number = values.get('TRACKNUMBER')
+    track_total = values.get('TRACKTOTAL')
+    disc_number = values.get('DISCNUMBER')
+    disc_total = values.get('DISCTOTAL')
+    genre = values.get('GENRE')
+    if (
+        title is None
+        or artist is None
+        or album is None
+        or album_artist is None
+        or date is None
+        or track_number is None
+        or track_total is None
+        or disc_number is None
+        or disc_total is None
+        or genre is None
+    ):
+        return None
+    genres = tuple(filter(None, genre.split('; ')))
+    if not genres:
+        return None
     return CanonicalMetadata(
         CanonicalSource.AUTOMATIC_FALLBACK,
-        values['TITLE'],
-        tuple(values['ARTIST'].split('; ')),
-        values['ALBUM'],
-        tuple(values['ALBUMARTIST'].split('; ')),
-        values['DATE'],
+        title,
+        tuple(artist.split('; ')),
+        album,
+        tuple(album_artist.split('; ')),
+        date,
         values.get('ORIGINALDATE'),
-        int(values['TRACKNUMBER']),
-        int(values['TRACKTOTAL']),
-        int(values['DISCNUMBER']),
-        int(values['DISCTOTAL']),
-        tuple(values['GENRE'].split('; ')),
+        int(track_number),
+        int(track_total),
+        int(disc_number),
+        int(disc_total),
+        genres,
         None,
         None,
         None,

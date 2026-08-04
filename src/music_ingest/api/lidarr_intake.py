@@ -46,7 +46,7 @@ class LidarrTestPayload(BaseModel):
 class LidarrDownloadPayload(BaseModel):
     model_config = ConfigDict(extra='allow', frozen=True)
 
-    event_type: Literal['Download'] = Field(alias='eventType')
+    event_type: Literal['Download', 'ReleaseImport'] = Field(alias='eventType')
     track_files: tuple[LidarrTrackFile, ...] = Field(alias='trackFiles', min_length=1)
     is_upgrade: bool = Field(alias='isUpgrade')
     deleted_files: tuple[LidarrTrackFile, ...] = Field(default=(), alias='deletedFiles')
@@ -94,7 +94,7 @@ def parse_lidarr_event(raw_payload: bytes) -> LidarrEvent:
 
 
 def dispatch_lidarr_event(
-    session: Session, event: LidarrEvent, raw_payload: bytes, incoming_root: Path, provenance_root: Path
+    session: Session, event: LidarrEvent, raw_payload: bytes, incoming_root: Path
 ) -> LidarrDispatchResult:
     fingerprint = hashlib.sha256(raw_payload).hexdigest()
     payload_json = raw_payload.decode('utf-8')
@@ -109,7 +109,7 @@ def dispatch_lidarr_event(
             return LidarrDispatchResult(job_id=None, replayed=replayed)
         case LidarrDownloadPayload():
             _validate_download_paths(event, incoming_root)
-            source_ids = _intake_download_sources(session, event, provenance_root)
+            source_ids = _intake_download_sources(session, event)
             return _record_job(session, event, fingerprint, payload_json, received_at, source_ids)
         case LidarrRenamePayload():
             _validate_rename_paths(event, incoming_root)
@@ -159,7 +159,7 @@ def _record_job(
     return LidarrDispatchResult(job_id=job_id, replayed=existing_job is not None)
 
 
-def _intake_download_sources(session: Session, event: LidarrDownloadPayload, provenance_root: Path) -> tuple[str, ...]:
+def _intake_download_sources(session: Session, event: LidarrDownloadPayload) -> tuple[str, ...]:
     return tuple(
         intake_source(
             session,
@@ -173,7 +173,6 @@ def _intake_download_sources(session: Session, event: LidarrDownloadPayload, pro
                 candidates=(),
                 review_decisions=(),
             ),
-            provenance_root,
         ).source_id
         for track_file in event.track_files
     )

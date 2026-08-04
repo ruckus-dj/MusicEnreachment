@@ -57,6 +57,7 @@ class ProviderEvidenceRequest:
     musicbrainz_case: FixtureCase
     fingerprint: str | None
     acoustid_case: FixtureCase | None
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,7 @@ class ProviderEvidenceResult:
 @dataclass(frozen=True, slots=True)
 class ProviderEvidenceService:
     session: Session
-    musicbrainz: MusicBrainzProvider
+    musicbrainz: MusicBrainzProvider | None
     acoustid: AcoustIdProvider | None
     wait_until: Callable[[datetime], None] | None = None
 
@@ -79,6 +80,8 @@ class ProviderEvidenceService:
         return ProviderEvidenceResult(musicbrainz=musicbrainz, acoustid=acoustid)
 
     def _lookup_musicbrainz(self, request: ProviderEvidenceRequest, now: datetime) -> MusicBrainzResult:
+        if self.musicbrainz is None or not request.query:
+            return Disabled(_provenance('musicbrainz', _disabled_request_hash(), b'', None, now, 'fresh'))
         request_hash = sha256(request.query.encode()).hexdigest()
         cached = self._fresh_snapshot('musicbrainz', request_hash, now)
         if cached is not None:
@@ -101,7 +104,9 @@ class ProviderEvidenceService:
                 if cached is not None:
                     return _decode_acoustid(cached, 'cached')
                 self._reserve_start('acoustid', now)
-                result = provider.lookup(AcoustIdLookupRequest(fingerprint, fixture_case), now)
+                result = provider.lookup(
+                    AcoustIdLookupRequest(fingerprint, fixture_case, request.duration_seconds), now
+                )
                 return self._persist_acoustid(result, request_hash, now)
 
     def _fresh_snapshot(self, provider_name: str, request_hash: str, now: datetime) -> ProviderSnapshotRecord | None:
@@ -110,7 +115,7 @@ class ProviderEvidenceService:
             return None
         captured_at = _utc(snapshot.captured_at)
         age = now - captured_at
-        if age < _FRESHNESS and snapshot.response_body is not None:
+        if age < _FRESHNESS and snapshot.response_body:
             return snapshot
         _ = ProviderPersistenceRepository(self.session).append_snapshot(
             provider_name=provider_name,
@@ -186,15 +191,15 @@ def _utc(value: datetime) -> datetime:
 def _provenance(
     provider_name: str, request_hash: str, raw: bytes, http_status: int | None, captured_at: datetime, state: str
 ) -> LiveProvenance:
-    return LiveProvenance(provider_name, request_hash, sha256(raw).hexdigest(), http_status, captured_at, state)
+    return LiveProvenance(provider_name, request_hash, sha256(raw).hexdigest(), http_status, captured_at, state, raw)
 
 
 def _raw_response(result: MusicBrainzResult | AcoustIdResult) -> bytes:
     match result.provenance:
         case FixtureProvenance(path=path):
             return path.read_bytes()
-        case LiveProvenance():
-            return b''
+        case LiveProvenance(response_body=body):
+            return body
 
 
 def _status(result: MusicBrainzResult | AcoustIdResult) -> int | None:

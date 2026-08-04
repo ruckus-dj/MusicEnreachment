@@ -32,7 +32,6 @@ def _client(tmp_path: Path) -> tuple[TestClient, str]:
                 candidates=(),
                 review_decisions=(),
             ),
-            tmp_path / 'provenance',
         )
         session.commit()
     return TestClient(create_app(lambda: Session(engine))), result.source_id
@@ -83,3 +82,18 @@ def test_review_local_only_when_attention_actions_preserve_identity(tmp_path: Pa
     assert detail['ids']['release'].startswith('local-release-')
     assert [entry['action'] for entry in detail['audit']] == ['attach', 'rematch']
     assert detail['previous_publish_snapshot'] is None
+
+
+def test_matching_settings_when_updated_are_visible_without_restart(tmp_path: Path) -> None:
+    # Given: an API backed by the local persistence schema.
+    client, _ = _client(tmp_path)
+
+    # When: the operator reads and then updates the confidence threshold.
+    initial = client.get('/api/settings/matching')
+    updated = client.put('/api/settings/matching', json={'confidence_threshold': 0.83})
+    reread = client.get('/api/settings/matching')
+
+    # Then: the setting is validated and immediately durable through the same app instance.
+    assert initial.json() == {'confidence_threshold': 0.7}
+    assert updated.status_code == 200
+    assert reread.json() == {'confidence_threshold': 0.83}

@@ -8,14 +8,14 @@ This isolated Docker test stand does not contact or change the production server
 | --- | --- | --- | --- | --- |
 | `data/downloads/` | Raw material placed by a download client | read/write at `/data/downloads` | unavailable | unavailable |
 | `data/incoming/` | Lidarr-managed import library | read/write at `/data/incoming` | read-only at `/data/incoming` | unavailable |
-| `data/.publish/` | Shared atomic staging, media, and state filesystem | unavailable | read/write at `/data/.publish` | media read-only at `/music` |
+| `data/media/` | Published canonical media library | unavailable | read/write at `/data/media` | media read-only at `/music` |
 
-The PostgreSQL-backed API and its in-process worker receive a read-only `/data`
-view. One explicit writable mount exposes the `.publish` tree; its staging,
-media, retention, quarantine, and provenance subdirectories share one filesystem
-so publication can use atomic rename. `/data/downloads` and `/data/incoming`
-remain read-only.
-Lidarr and Navidrome retain their read-only media boundary.
+The PostgreSQL-backed API and its in-process worker receive only the incoming
+source tree read-only, the final media tree read/write, and the disposable
+`appdata/music-ingest/` workspace read/write. PostgreSQL stores tags, revisions,
+provider evidence, review decisions, job failures, and publication metadata.
+There are no provenance, quarantine, retention, or rollback files. The staging
+workspace is consumed by atomic publication and is not a second media library.
 
 ## Start
 
@@ -84,6 +84,6 @@ This preserves the PostgreSQL named volume. Use `docker compose down --volumes`
 only when an explicit local database reset is intended.
 
 The task-7 command owns its generated `data/incoming/task-7-*` fixture and its
-published/staging/retention sibling paths, removes them, and runs
+published media paths, removes them, and runs
 `docker compose down --volumes --remove-orphans`. It does not clear any other
 bind-mounted fixture or configuration path.

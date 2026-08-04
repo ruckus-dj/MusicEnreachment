@@ -26,19 +26,20 @@ services:
     environment:
       MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:music_ingest@postgres/music_ingest
       MUSIC_INGEST_INCOMING_ROOT: /data/incoming
-      MUSIC_INGEST_STAGING_ROOT: /data/.publish/staging
-      MUSIC_INGEST_MEDIA_ROOT: /data/.publish/media
-      MUSIC_INGEST_RETENTION_ROOT: /data/.publish/retention
-      MUSIC_INGEST_QUARANTINE_ROOT: /data/.publish/quarantine
-      MUSIC_INGEST_PROVENANCE_ROOT: /data/.publish/provenance
+      MUSIC_INGEST_STAGING_ROOT: /appdata/music-ingest/staging
+      MUSIC_INGEST_MEDIA_ROOT: /data/media
+      MUSIC_INGEST_ENABLE_LIVE_TRANSPORT: ${MUSIC_INGEST_ENABLE_LIVE_TRANSPORT:-0}
+      MUSIC_INGEST_ACOUSTID_CLIENT_KEY: ${MUSIC_INGEST_ACOUSTID_CLIENT_KEY:-}
+      MUSIC_INGEST_MUSICBRAINZ_USER_AGENT: ${MUSIC_INGEST_MUSICBRAINZ_USER_AGENT:-music-ingest/0.1.0 (music-ingest@example.com)}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "8787:8000"
     volumes:
-      - ./data:/data:ro
-      - ./data/.publish:/data/.publish
+      - ./data/incoming:/data/incoming:ro
+      - ./data/media:/data/media
+      - ./appdata/music-ingest:/appdata/music-ingest
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
       interval: 5s
@@ -58,8 +59,8 @@ services:
       - "8686:8686"
     volumes:
       - ./config/lidarr:/config
-      - ./data:/data
-      - ./data/.publish/media:/data/media:ro
+      - ./data/downloads:/data/downloads
+      - ./data/incoming:/data/incoming
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8686/ping >/dev/null"]
       interval: 5s
@@ -79,7 +80,7 @@ services:
       - "4533:4533"
     volumes:
       - ./config/navidrome:/data
-      - ./data/.publish/media:/music:ro
+      - ./data/media:/music:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:4533/ping"]
       interval: 5s

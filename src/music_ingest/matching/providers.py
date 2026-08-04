@@ -84,6 +84,12 @@ class FixtureProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class MusicBrainzHttpResponse:
+    status_code: int
+    body: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class LiveProvenance:
     provider_name: str
     request_hash: str
@@ -91,6 +97,7 @@ class LiveProvenance:
     http_status: int | None
     captured_at: datetime
     state: str
+    response_body: bytes = b''
 
     def __post_init__(self) -> None:
         provider_name = _require_str('provider_name', self.provider_name)
@@ -122,6 +129,7 @@ class MusicBrainzLookupRequest:
 class AcoustIdLookupRequest:
     fingerprint: str
     fixture_case: FixtureCase
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,12 +324,21 @@ class ProductionTransportDisabledError(Exception):
 
 
 class PublicHttpClient(Protocol):
+    def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response: ...
+
     def close(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
 class LiveTransport:
     client: PublicHttpClient
+
+    def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+        try:
+            response = self.client.get(url, headers=headers, timeout=30.0)
+        except requests.RequestException:
+            return MusicBrainzHttpResponse(status_code=503, body=b'')
+        return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
 
 
 def build_live_transport(

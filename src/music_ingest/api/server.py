@@ -18,6 +18,9 @@ from sqlalchemy.orm import sessionmaker
 from alembic import command
 from music_ingest.api.app import create_app
 from music_ingest.config.policies import PolicyBundle, PolicyYamlError, load_policy_bundle
+from music_ingest.matching.acoustid import AcoustIdV2Adapter
+from music_ingest.matching.musicbrainz import MusicBrainzV2Adapter
+from music_ingest.matching.providers import AcoustIdProvider, MusicBrainzProvider, build_live_transport
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.runtime import run_processing_worker
 
@@ -96,9 +99,6 @@ def create_runtime_app() -> FastAPI:
             field_policy=policy_bundle.field_policy,
             genre_policy=policy_bundle.genre_policy,
         )
-    provenance_root = Path(
-        os.environ.get('MUSIC_INGEST_PROVENANCE_ROOT', processing_config.incoming_root.parent / 'provenance')
-    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -115,20 +115,36 @@ def create_runtime_app() -> FastAPI:
         session_factory,
         lifespan=lifespan,
         incoming_root=processing_config.incoming_root,
-        provenance_root=provenance_root,
         media_root=processing_config.media_root,
         api_token=runtime_config.api_token,
     )
 
 
 def _processing_config(environment: Mapping[str, str]) -> ProcessingConfig:
+    musicbrainz_provider, acoustid_provider = _live_providers(environment)
     return ProcessingConfig(
         incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
-        staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/data/.publish-staging')),
+        staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
-        retention_root=Path(environment.get('MUSIC_INGEST_RETENTION_ROOT', '/data/retention')),
-        quarantine_root=Path(environment.get('MUSIC_INGEST_QUARANTINE_ROOT', '/data/quarantine')),
+        musicbrainz_provider=musicbrainz_provider,
+        acoustid_provider=acoustid_provider,
     )
+
+
+def _live_providers(environment: Mapping[str, str]) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None]:
+    if environment.get('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT') != '1':
+        return None, None
+    transport = build_live_transport()
+    musicbrainz = MusicBrainzV2Adapter(
+        transport,
+        environment.get(
+            'MUSIC_INGEST_MUSICBRAINZ_USER_AGENT',
+            'music-ingest/0.1.0 (music-ingest@example.com)',
+        ),
+    )
+    acoustid_key = environment.get('MUSIC_INGEST_ACOUSTID_CLIENT_KEY')
+    acoustid = AcoustIdV2Adapter(transport, acoustid_key) if acoustid_key else None
+    return musicbrainz, acoustid
 
 
 def _policy_bundle(environment: Mapping[str, str]) -> PolicyBundle | None:

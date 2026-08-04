@@ -1,8 +1,6 @@
 schema_version: 1
 storage:
   work_dir: /var/lib/music-ingest/work
-  quarantine_dir: /var/lib/music-ingest/quarantine
-  provenance_dir: /var/lib/music-ingest/provenance
 review:
   manual_review_on_low_confidence: true
   manual_review_on_unknown_genre: true

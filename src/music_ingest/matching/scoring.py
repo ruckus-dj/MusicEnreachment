@@ -3,6 +3,7 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 
 from music_ingest.matching.providers import (
     AcoustIdMatch,
@@ -37,6 +38,9 @@ class ReviewReason(StrEnum):
     CONFLICTING_CONTEXT = 'conflicting_context'
     INSUFFICIENT_RELEASE_SCORE = 'insufficient_release_score'
     UNSAFE_TEXT = 'unsafe_text'
+
+
+DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.70
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +83,10 @@ class MatchResult:
 
 
 def resolve_match(
-    request: MatchingRequest, musicbrainz: MusicBrainzResult, acoustid: AcoustIdResult | None
+    request: MatchingRequest,
+    musicbrainz: MusicBrainzResult,
+    acoustid: AcoustIdResult | None,
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
 ) -> MatchResult:
     recording_score = _recording_score(request.explicit_ids, acoustid)
     release_score = _release_score(request, musicbrainz)
@@ -91,7 +98,7 @@ def resolve_match(
             release_score,
             ReviewReason.LOCAL_ONLY_REQUESTED,
         )
-    reason = _review_reason(request, musicbrainz, release_score)
+    reason = _review_reason(request, musicbrainz, release_score, confidence_threshold)
     if reason is not None:
         return MatchResult(MatchDecision.NEEDS_REVIEW, None, recording_score, release_score, reason)
     match musicbrainz:
@@ -170,7 +177,10 @@ def _duration_score(expected: int | None, actual: int | None) -> float:
 
 
 def _review_reason(
-    request: MatchingRequest, musicbrainz: MusicBrainzResult, release_score: CandidateScore
+    request: MatchingRequest,
+    musicbrainz: MusicBrainzResult,
+    release_score: CandidateScore,
+    confidence_threshold: float,
 ) -> ReviewReason | None:
     match musicbrainz:
         case MusicBrainzMatch(provenance=LiveProvenance(state='stale')):
@@ -182,7 +192,7 @@ def _review_reason(
                 return ReviewReason.MANUAL_MBID_UNVERIFIED
             if request.lidarr is not None and _lidarr_conflicts(request.lidarr, candidate):
                 return ReviewReason.CONFLICTING_CONTEXT
-            if release_score.score < 0.8:
+            if release_score.score < confidence_threshold:
                 return ReviewReason.INSUFFICIENT_RELEASE_SCORE
             match candidate, musicbrainz.provenance:
                 case _, LiveProvenance(state='fresh' | 'cached'):

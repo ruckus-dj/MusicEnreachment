@@ -207,6 +207,15 @@ class ProviderScheduleRecord(Base):
     lease_token: Mapped[str | None] = mapped_column(String(64))
 
 
+@final
+class RuntimeSettingRecord(Base):
+    __tablename__ = 'runtime_settings'
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 __all__ = [
     'ArtworkRecord',
     'AuditRecord',
@@ -217,6 +226,7 @@ __all__ = [
     'JobRecord',
     'ProviderAttemptRecord',
     'ProviderScheduleRecord',
+    'RuntimeSettingRecord',
     'ProviderSnapshotRecord',
     'PublicationRecord',
     'PublicationStateRecord',

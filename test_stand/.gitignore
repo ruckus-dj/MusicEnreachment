@@ -9,8 +9,7 @@ data/downloads/*
 !data/downloads/.gitkeep
 data/incoming/*
 !data/incoming/.gitkeep
-data/.publish-staging/*
-!data/.publish-staging/.gitkeep
 data/media/*
 !data/media/.gitkeep
-data/retention/*
+appdata/music-ingest/*
+!appdata/music-ingest/.gitkeep

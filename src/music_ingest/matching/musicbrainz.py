@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import ClassVar, Protocol
 from urllib.parse import urlencode
@@ -12,6 +12,7 @@ from music_ingest.matching.providers import (
     Ambiguous,
     LiveProvenance,
     Malformed,
+    MusicBrainzHttpResponse,
     MusicBrainzLookupRequest,
     MusicBrainzMatch,
     MusicBrainzResult,
@@ -22,12 +23,6 @@ from music_ingest.matching.providers import (
 )
 
 _ENDPOINT = 'https://musicbrainz.org/ws/2/release/'
-
-
-@dataclass(frozen=True, slots=True)
-class MusicBrainzHttpResponse:
-    status_code: int
-    body: bytes
 
 
 class MusicBrainzTransport(Protocol):
@@ -59,7 +54,8 @@ class MusicBrainzV2Adapter:
     transport: MusicBrainzTransport
     user_agent: str
 
-    def lookup(self, request: MusicBrainzLookupRequest, now: datetime) -> MusicBrainzResult:
+    def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzResult:
+        captured_at = now or datetime.now(UTC)
         url = f'{_ENDPOINT}?{urlencode({"query": request.query, "fmt": "json"})}'
         response = self.transport.get(url, headers={'User-Agent': self.user_agent, 'Accept': 'application/json'})
         provenance = LiveProvenance(
@@ -67,8 +63,9 @@ class MusicBrainzV2Adapter:
             sha256(request.query.encode()).hexdigest(),
             sha256(response.body).hexdigest(),
             response.status_code,
-            now,
+            captured_at,
             'fresh',
+            response.body,
         )
         if response.status_code == 429:
             return RateLimited(provenance)

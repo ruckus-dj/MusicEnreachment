@@ -57,11 +57,16 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
     assert services.lidarr.healthcheck
     assert services.navidrome.healthcheck
     assert services.music_ingest.volumes == [
-        './data:/data:ro',
-        './data/.publish:/data/.publish',
+        './data/incoming:/data/incoming:ro',
+        './data/media:/data/media',
+        './appdata/music-ingest:/appdata/music-ingest',
     ]
-    assert './data:/data' in services.lidarr.volumes
-    assert services.navidrome.volumes == ['./config/navidrome:/data', './data/.publish/media:/music:ro']
+    assert services.lidarr.volumes == [
+        './config/lidarr:/config',
+        './data/downloads:/data/downloads',
+        './data/incoming:/data/incoming',
+    ]
+    assert services.navidrome.volumes == ['./config/navidrome:/data', './data/media:/music:ro']
     assert services.lidarr_webhook.depends_on['lidarr'].condition == 'service_healthy'
     assert services.lidarr_webhook.depends_on['music-ingest'].condition == 'service_healthy'
     assert './scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro' in services.lidarr_webhook.volumes
@@ -85,9 +90,14 @@ def test_production_stack_when_deployed_runs_the_runtime_with_external_storage()
     environment = service.environment
     assert environment['MUSIC_INGEST_DATABASE_URL'].startswith('infisical://')
     assert environment['MUSIC_INGEST_INCOMING_ROOT'] == '/data/incoming'
+    assert environment['MUSIC_INGEST_STAGING_ROOT'] == '/appdata/music-ingest/staging'
     assert environment['MUSIC_INGEST_MEDIA_ROOT'] == '/data/publish/music'
-    assert environment['MUSIC_INGEST_PROVENANCE_ROOT'] == '/state/provenance'
+    assert not {
+        'MUSIC_INGEST_RETENTION_ROOT',
+        'MUSIC_INGEST_QUARANTINE_ROOT',
+        'MUSIC_INGEST_PROVENANCE_ROOT',
+    }.intersection(environment)
     assert '/mnt/pool/data/music-incoming:/data/incoming:ro' in service.volumes
-    assert '/mnt/pool/data/media:/data/publish' in service.volumes
-    assert '/mnt/ssd/appdata/music-ingest/provenance:/state/provenance' in service.volumes
+    assert '/mnt/pool/data/media:/data/publish/music' in service.volumes
+    assert '/mnt/ssd/appdata/music-ingest:/appdata/music-ingest' in service.volumes
     assert service.healthcheck

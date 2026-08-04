@@ -132,8 +132,6 @@ def test_lidarr_download_when_valid_flac_reaches_the_worker_through_its_durable_
         incoming_root=tmp_path / 'incoming',
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
-        retention_root=tmp_path / 'retention',
-        quarantine_root=tmp_path / 'quarantine',
     )
     assert ProcessingWorker(session, config).run_once()
     session.commit()
@@ -149,6 +147,23 @@ def test_lidarr_download_when_valid_flac_reaches_the_worker_through_its_durable_
         'provider unavailable; original-tag fallback published'
     ]
     assert next(config.media_root.rglob('*.flac')).is_file()
+
+
+def test_lidarr_release_import_when_delivered_uses_the_same_source_independent_intake(tmp_path: Path) -> None:
+    # Given: a real incoming FLAC and the event name used by manual Lidarr imports.
+    client, session = _client(tmp_path)
+    source_path = tmp_path / 'incoming' / 'Artist' / 'Release' / '01.flac'
+    source_path.parent.mkdir(parents=True)
+    _ = _flac(source_path)
+
+    # When: Lidarr delivers a ReleaseImport webhook without download-client metadata.
+    payload = _download(source_path)
+    payload['eventType'] = 'ReleaseImport'
+    response = client.post('/api/intake/lidarr', json=payload)
+
+    # Then: the event is accepted as the same file intake contract and creates one durable job.
+    assert response.status_code == 202
+    assert session.scalars(select(JobRecord)).one().kind == 'lidarr_releaseimport'
 
 
 def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_review(tmp_path: Path) -> None:
@@ -167,8 +182,6 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
         incoming_root=incoming_root,
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
-        retention_root=tmp_path / 'retention',
-        quarantine_root=tmp_path / 'quarantine',
     )
     with Session(engine) as session:
         assert ProcessingWorker(session, config).run_once()
@@ -201,8 +214,6 @@ def test_lidarr_download_when_malformed_source_is_claimed_quarantines_its_webhoo
         incoming_root=tmp_path / 'incoming',
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
-        retention_root=tmp_path / 'retention',
-        quarantine_root=tmp_path / 'quarantine',
     )
     assert ProcessingWorker(session, config).run_once()
     session.commit()
@@ -213,7 +224,8 @@ def test_lidarr_download_when_malformed_source_is_claimed_quarantines_its_webhoo
     assert job.state == 'quarantined'
     assert source_path.read_bytes() == b'not a FLAC container'
     assert job.source_id is not None
-    assert (config.quarantine_root / f'{job.source_id}.json').is_file()
+    assert job.failure_reason == 'structural FLAC inspection failed'
+    assert not (tmp_path / 'quarantine').exists()
 
 
 def test_lidarr_test_when_delivered_returns_no_content_without_a_job(tmp_path: Path) -> None:

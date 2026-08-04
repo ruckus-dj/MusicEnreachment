@@ -53,8 +53,11 @@ class JobRepository:
         claimed.job.state = 'quarantined'
         claimed.job.next_attempt_at = None
 
-    def retry(self, claimed: ClaimedJob, now: datetime, delay: timedelta, max_attempts: int) -> None:
+    def retry(
+        self, claimed: ClaimedJob, now: datetime, delay: timedelta, max_attempts: int, failure_reason: str
+    ) -> None:
         if claimed.attempt.attempt_number >= max_attempts:
+            claimed.job.failure_reason = failure_reason
             self.quarantine(claimed, now)
             return
         claimed.attempt.state = 'retry_wait'

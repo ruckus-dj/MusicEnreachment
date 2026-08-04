@@ -52,18 +52,15 @@ def _create_flac(directory: Path, name: str) -> Path:
 def _request(tmp_path: Path, source: Path, staged_release: Path) -> PublicationRequest:
     media = tmp_path / 'media'
     media.mkdir()
-    retention = tmp_path / 'retention'
-    retention.mkdir()
     return PublicationRequest(
         staged_release=staged_release,
         staging_root=tmp_path / 'staging',
         media_root=media,
-        retention_root=retention,
         source_paths=(source,),
     )
 
 
-def test_publish_release_when_complete_exposes_release_and_retains_manifest(tmp_path: Path) -> None:
+def test_publish_release_when_complete_exposes_release_without_sidecar_state(tmp_path: Path) -> None:
     # Given: a normalized release under controlled staging and an immutable raw download.
     downloads = tmp_path / 'downloads'
     downloads.mkdir()
@@ -81,13 +78,12 @@ def test_publish_release_when_complete_exposes_release_and_retains_manifest(tmp_
     # When: the completed release crosses the publication boundary.
     result = publish_release(_request(tmp_path, source, release))
 
-    # Then: only the completed directory becomes visible, with independent media and rollback evidence.
+    # Then: only the completed directory becomes visible, with independent media and no sidecar state.
     assert result.published_release == tmp_path / 'media' / 'Artist One' / 'Fixture Release (2026)'
     assert (result.published_release / published_track.name).exists()
     assert source_before == (source.stat().st_ino, sha256(source.read_bytes()).hexdigest())
     assert (result.published_release / published_track.name).stat().st_ino != source.stat().st_ino
-    assert result.rollback_manifest.exists()
-    assert 'raw.flac' in result.rollback_manifest.read_text(encoding='utf-8')
+    assert not (tmp_path / 'retention').exists()
 
 
 def test_publish_release_when_invalid_lrc_rejects_without_partial_media_visibility(tmp_path: Path) -> None:

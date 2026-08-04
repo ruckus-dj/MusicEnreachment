@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260729_0010'
+_HEAD_REVISION = '20260805_0013'
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
@@ -36,6 +36,7 @@ _APPLICATION_TABLES = frozenset(
         'publication_states',
         'tombstones',
         'audit_records',
+        'runtime_settings',
     }
 )
 

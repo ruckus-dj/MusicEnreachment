@@ -51,7 +51,10 @@ class AcoustIdV2Adapter:
 
     def lookup(self, request: AcoustIdLookupRequest, now: datetime | None = None) -> AcoustIdResult:
         captured_at = now or datetime.now().astimezone()
-        query = urlencode({'client': self.client_key, 'fingerprint': request.fingerprint, 'meta': 'recordings'})
+        parameters = {'client': self.client_key, 'fingerprint': request.fingerprint, 'meta': 'recordings'}
+        if request.duration_seconds is not None:
+            parameters['duration'] = str(round(request.duration_seconds))
+        query = urlencode(parameters)
         url = f'{_ENDPOINT}?{query}'
         response = self.transport.get(url, headers={'Accept': 'application/json'})
         provenance = LiveProvenance(
@@ -61,6 +64,7 @@ class AcoustIdV2Adapter:
             response.status_code,
             captured_at,
             'fresh',
+            response.body,
         )
         if response.status_code == 429:
             return RateLimited(provenance)

@@ -222,8 +222,8 @@ def main() -> None:
     finally:
         shutil.rmtree(fixture_root, ignore_errors=True)
         if job_id:
-            for root in ('media', '.publish-staging', 'retention'):
-                shutil.rmtree(stand_root / 'data' / root / job_id, ignore_errors=True)
+            shutil.rmtree(stand_root / 'data' / 'media' / job_id, ignore_errors=True)
+            shutil.rmtree(stand_root / 'appdata' / 'music-ingest' / 'staging' / job_id, ignore_errors=True)
         cleanup['fixture_removed'] = not fixture_root.exists()
         _ = compose(stand_root, 'down', '--volumes', '--remove-orphans')
         cleanup['stack_removed'] = True

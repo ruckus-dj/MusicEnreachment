@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
-from stat import S_IREAD, S_IWRITE
 
 import pytest
 from alembic.config import Config
@@ -48,7 +47,7 @@ def intake_request(source: Path, origin: Origin) -> IntakeRequest:
     )
 
 
-def test_intake_source_when_conflicting_observations_preserves_source_and_provenance(tmp_path: Path) -> None:
+def test_intake_source_when_conflicting_observations_preserves_source_and_database_evidence(tmp_path: Path) -> None:
     # Given: a manual source with mutually conflicting observations.
     source = tmp_path / 'manual.mp3'
     _ = source.write_bytes(b'manual source bytes')
@@ -56,9 +55,9 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_proven
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "intake.db"}')
     Base.metadata.create_all(engine)
 
-    # When: intake persists the source evidence and provenance artifact.
+    # When: intake persists the source evidence in the database.
     with Session(engine) as session:
-        result = intake_source(session, intake_request(source, Origin.MANUAL), tmp_path / 'provenance')
+        result = intake_source(session, intake_request(source, Origin.MANUAL))
         session.commit()
         persisted = session.get(SourceRecord, result.source_id)
 
@@ -78,12 +77,7 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_proven
     assert persisted.publication is not None
     assert persisted.publication.published_path is None
     assert source.read_bytes() == b'manual source bytes'
-    artifact = result.provenance_path.read_text(encoding='utf-8')
-    assert 'Live Version' in artifact
-    assert 'Studio Version' in artifact
-    assert 'published_tags' not in artifact
-    assert 'canonical' not in artifact
-    assert 'offline fixture' not in artifact
+    assert not (tmp_path / 'provenance').exists()
 
 
 def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(tmp_path: Path) -> None:
@@ -96,9 +90,9 @@ def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(t
 
     # When: the same source is submitted twice.
     with Session(engine) as session:
-        first = intake_source(session, request, tmp_path / 'provenance')
+        first = intake_source(session, request)
         session.commit()
-        second = intake_source(session, request, tmp_path / 'provenance')
+        second = intake_source(session, request)
         session.commit()
         persisted = session.get(SourceRecord, first.source_id)
 
@@ -108,34 +102,27 @@ def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(t
     assert persisted.origin == Origin.LIDARR.value
     assert len(persisted.tag_observations) == 2
     assert len(persisted.provider_attempts) == 1
-    assert first.provenance_path == second.provenance_path
+    assert first.source_id == second.source_id
 
 
-def test_intake_source_when_repeated_existing_artifact_is_read_only_does_not_rewrite_it(tmp_path: Path) -> None:
-    # Given: an existing immutable provenance artifact for a Lidarr source.
+def test_intake_source_when_repeated_database_identity_does_not_create_files(tmp_path: Path) -> None:
+    # Given: a Lidarr source whose database identity already exists.
     source = tmp_path / 'lidarr.flac'
     _ = source.write_bytes(b'lidarr source bytes')
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "intake.db"}')
     Base.metadata.create_all(engine)
     request = intake_request(source, Origin.LIDARR)
     with Session(engine) as session:
-        first = intake_source(session, request, tmp_path / 'provenance')
+        first = intake_source(session, request)
         session.commit()
-        original_content = first.provenance_path.read_text(encoding='utf-8')
-        original_stat = first.provenance_path.stat()
-        first.provenance_path.chmod(S_IREAD)
 
         # When: the same source identity is received again.
-        second = intake_source(session, request, tmp_path / 'provenance')
+        second = intake_source(session, request)
         session.commit()
 
-        # Then: the read-only artifact remains untouched and the repeat succeeds.
-        assert second.provenance_path == first.provenance_path
-        assert second.provenance_path.read_text(encoding='utf-8') == original_content
-        repeated_stat = second.provenance_path.stat()
-        assert repeated_stat.st_ino == original_stat.st_ino
-        assert repeated_stat.st_mtime_ns == original_stat.st_mtime_ns
-        first.provenance_path.chmod(S_IREAD | S_IWRITE)
+        # Then: the repeat succeeds without creating a provenance artifact.
+        assert second.source_id == first.source_id
+        assert not (tmp_path / 'provenance').exists()
 
 
 @pytest.mark.parametrize(

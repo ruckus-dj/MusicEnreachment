@@ -114,6 +114,7 @@ class JobRecord(Base):
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_reason: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[list[JobAttemptRecord]] = relationship(
         back_populates='job', lazy='selectin', order_by='JobAttemptRecord.attempt_number'
     )

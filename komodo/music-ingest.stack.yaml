@@ -6,19 +6,14 @@ services:
       FPCALC: /usr/bin/fpcalc
       MUSIC_INGEST_DATABASE_URL: infisical://music-ingest/database-url
       MUSIC_INGEST_INCOMING_ROOT: /data/incoming
-      MUSIC_INGEST_STAGING_ROOT: /data/publish/.publish-staging
+      MUSIC_INGEST_STAGING_ROOT: /appdata/music-ingest/staging
       MUSIC_INGEST_MEDIA_ROOT: /data/publish/music
-      MUSIC_INGEST_RETENTION_ROOT: /state/retention
-      MUSIC_INGEST_QUARANTINE_ROOT: /state/quarantine
-      MUSIC_INGEST_PROVENANCE_ROOT: /state/provenance
     expose:
       - "8000"
     volumes:
       - /mnt/ssd/appdata/music-ingest/config:/app/config:ro
-      - /mnt/pool/data/media:/data/publish
-      - /mnt/ssd/appdata/music-ingest/retention:/state/retention
-      - /mnt/ssd/appdata/music-ingest/quarantine:/state/quarantine
-      - /mnt/ssd/appdata/music-ingest/provenance:/state/provenance
+      - /mnt/ssd/appdata/music-ingest:/appdata/music-ingest
+      - /mnt/pool/data/media:/data/publish/music
       - /mnt/pool/data/music-incoming:/data/incoming:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]

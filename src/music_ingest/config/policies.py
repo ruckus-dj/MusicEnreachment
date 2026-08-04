@@ -56,13 +56,11 @@ class FrozenPolicy(BaseModel):
 
 
 class StorageLocations(BaseModel):
-    """Locations the service may use after an operator deploys it."""
+    """Transient workspace the service may use during processing."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True)
 
     work_dir: Path
-    quarantine_dir: Path
-    provenance_dir: Path
 
 
 class ReviewPolicy(BaseModel):

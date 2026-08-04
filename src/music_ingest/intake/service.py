@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
@@ -80,45 +79,9 @@ class IntakeRequest(IntakeEvidence):
 
 class IntakeResult(IntakeEvidence):
     source_id: SourceId
-    provenance_path: Path
 
 
-class ProvenanceTag(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    format_name: str
-    tag_name: str
-    value: str
-
-
-class ProvenanceProviderAttempt(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    provider_name: str
-    outcome: str
-    snapshot_sha256: str
-
-
-class ProvenanceArtifact(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    source_id: str
-    source_path: str
-    device: int
-    inode: int
-    size_bytes: int
-    sha256: str
-    duration_seconds: int | None
-    origin: Origin
-    intake_state: IntakeState
-    observed_tags: tuple[ProvenanceTag, ...]
-    artwork_hashes: tuple[str, ...]
-    provider_attempts: tuple[ProvenanceProviderAttempt, ...]
-    candidates: tuple[CandidateEvidence, ...]
-    review_decisions: tuple[ReviewDecision, ...]
-
-
-def intake_source(session: Session, request: IntakeRequest, provenance_directory: Path) -> IntakeResult:
+def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
     source_stat = request.source_path.stat()
     source_hash = _source_sha256(request.source_path)
     source_id = _source_id(source_stat.st_dev, source_stat.st_ino, source_hash)
@@ -140,8 +103,7 @@ def intake_source(session: Session, request: IntakeRequest, provenance_directory
             source = repository.find_source(source_id)
             if source is None:
                 raise
-    artifact_path = _write_provenance(provenance_directory, source)
-    return IntakeResult(source_id=source_id, provenance_path=artifact_path)
+    return IntakeResult(source_id=source_id)
 
 
 def _persist_source(
@@ -198,44 +160,3 @@ def _source_sha256(source_path: Path) -> str:
 
 def _source_id(device: int, inode: int, source_hash: str) -> SourceId:
     return SourceId(sha256(f'{device}:{inode}:{source_hash}'.encode()).hexdigest())
-
-
-def _write_provenance(provenance_directory: Path, source: SourceRecord) -> Path:
-    artifact = ProvenanceArtifact(
-        source_id=source.id,
-        source_path=source.source_path,
-        device=source.device,
-        inode=source.inode,
-        size_bytes=source.size_bytes,
-        sha256=source.sha256,
-        duration_seconds=source.duration_seconds,
-        origin=Origin(source.origin),
-        intake_state=IntakeState(source.intake_state),
-        observed_tags=tuple(
-            ProvenanceTag(format_name=item.format_name, tag_name=item.tag_name, value=item.value)
-            for item in source.tag_observations
-        ),
-        artwork_hashes=tuple(item.sha256 for item in source.artwork_observations),
-        provider_attempts=tuple(
-            ProvenanceProviderAttempt(
-                provider_name=item.provider_name,
-                outcome=item.outcome,
-                snapshot_sha256=item.snapshot_sha256,
-            )
-            for item in source.provider_attempts
-        ),
-        candidates=tuple(
-            CandidateEvidence(candidate_key=item.candidate_key, evidence=item.evidence) for item in source.candidates
-        ),
-        review_decisions=tuple(
-            ReviewDecision(state=item.state, rationale=item.rationale) for item in source.review_decisions
-        ),
-    )
-    provenance_directory.mkdir(parents=True, exist_ok=True)
-    artifact_path = provenance_directory / f'{source.id}.json'
-    if artifact_path.exists():
-        return artifact_path
-    with artifact_path.open('x', encoding='utf-8') as artifact_file:
-        artifact_json = json.dumps(artifact.model_dump(mode='json'), sort_keys=True, separators=(',', ':'))
-        _ = artifact_file.write(f'{artifact_json}\n')
-    return artifact_path

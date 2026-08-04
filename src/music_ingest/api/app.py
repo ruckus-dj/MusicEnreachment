@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -13,8 +14,10 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
-from music_ingest.persistence.models import SourceRecord
+from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
+from music_ingest.persistence.models import RuntimeSettingRecord, SourceRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
+from music_ingest.reconciliation import ScanResult, reconcile_incoming
 from music_ingest.review.queue import QueueState, ReviewInputError, get_or_create, perform_action
 from music_ingest.review.releases import ReleaseReviewConflict, ReleaseReviewInputError
 from music_ingest.review.releases import detail as release_detail
@@ -51,6 +54,12 @@ class ReleaseRevisionAction(BaseModel):
     revision: int = Field(ge=1)
 
 
+class MatchingSettings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    confidence_threshold: float = Field(ge=0.0, le=1.0)
+
+
 _FIELDS_ADAPTER = TypeAdapter(dict[str, str])
 
 
@@ -58,12 +67,10 @@ def create_app(
     session_factory: SessionFactory,
     lifespan: Lifespan[FastAPI] | None = None,
     incoming_root: Path = Path('/data/incoming'),
-    provenance_root: Path | None = None,
     media_root: Path | None = None,
     api_token: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
-    source_provenance_root = provenance_root or incoming_root.parent / 'provenance'
     assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
     if assets_root.is_dir():
         app.mount('/assets', StaticFiles(directory=assets_root), name='ui-assets')
@@ -96,7 +103,7 @@ def create_app(
         try:
             event = parse_lidarr_event(raw_payload)
             with session_factory() as session:
-                result = dispatch_lidarr_event(session, event, raw_payload, incoming_root, source_provenance_root)
+                result = dispatch_lidarr_event(session, event, raw_payload, incoming_root)
                 session.commit()
         except LidarrIntakeError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -105,6 +112,13 @@ def create_app(
         if result.job_id is None:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=result.model_dump())
+
+    @app.post('/api/reconciliation/scan', response_model=ScanResult)
+    def reconciliation_scan() -> ScanResult:
+        with session_factory() as session:
+            result = reconcile_incoming(session, incoming_root)
+            session.commit()
+            return result
 
     @app.get('/api/review/queue')
     def review_queue(state: QueueState | None = None) -> dict[str, list[dict[str, str]]]:
@@ -117,6 +131,31 @@ def create_app(
                     items.append({'source_id': source.id, 'state': record.state})
             session.commit()
             return {'items': items}
+
+    @app.get('/api/settings/matching', response_model=MatchingSettings)
+    def matching_settings() -> MatchingSettings:
+        with session_factory() as session:
+            setting = session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
+            threshold = DEFAULT_CONFIDENCE_THRESHOLD if setting is None else float(setting.value)
+            return MatchingSettings(confidence_threshold=threshold)
+
+    @app.put('/api/settings/matching', response_model=MatchingSettings)
+    def update_matching_settings(request: MatchingSettings) -> MatchingSettings:
+        with session_factory() as session:
+            setting = session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
+            if setting is None:
+                session.add(
+                    RuntimeSettingRecord(
+                        key='matching.confidence_threshold',
+                        value=str(request.confidence_threshold),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+            else:
+                setting.value = str(request.confidence_threshold)
+                setting.updated_at = datetime.now(UTC)
+            session.commit()
+            return request
 
     @app.get('/api/review/items/{source_id}')
     def review_detail(source_id: str) -> JSONResponse:

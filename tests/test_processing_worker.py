@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -12,7 +13,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
-from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, SourceRecord
+from music_ingest.matching.providers import AcoustIdFixtureProvider
+from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
 
@@ -30,7 +32,7 @@ def _flac(path: Path) -> Path:
             '-f',
             'lavfi',
             '-i',
-            'sine=frequency=440:duration=1',
+            'sine=frequency=440:duration=10',
             '-c:a',
             'flac',
             str(path),
@@ -65,6 +67,19 @@ def _flac(path: Path) -> Path:
     return path
 
 
+def _tagless_flac(path: Path) -> Path:
+    source = _flac(path)
+    removed = run(  # noqa: S603
+        ['metaflac', '--remove-all-tags', str(source)],  # noqa: S607
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert removed.returncode == 0, removed.stderr
+    return source
+
+
 def _source(session: Session, path: Path) -> SourceRecord:
     stat = path.stat()
     source = SourceRecord(
@@ -88,8 +103,6 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         incoming_root=tmp_path / 'incoming',
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
-        retention_root=tmp_path / 'retention',
-        quarantine_root=tmp_path / 'quarantine',
         flac_command='flac',
         metaflac_command='metaflac',
     )
@@ -141,6 +154,48 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
     assert tags.returncode == 0
     assert 'TITLE=Fixture Track' in tags.stdout
     assert 'GENRE=Hip Hop; Alternative Rock' in tags.stdout
+
+
+def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
+    # Given: a valid FLAC with no source tags and an immutable queued job.
+    config = replace(
+        _config(tmp_path),
+        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+    )
+    config.incoming_root.mkdir()
+    source_path = _tagless_flac(config.incoming_root / 'tagless.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)))
+        session.add(
+            JobRecord(
+                id='job-tagless', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC)
+            )
+        )
+        session.commit()
+
+    # When: one worker processes the valid source.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: the source is reviewable, the job is complete, and no fictional media copy exists.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'job-tagless')
+        assert job is not None and job.state == 'completed'
+        source = session.get(SourceRecord, job.source_id)
+        assert source is not None and source.intake_state == 'needs_review'
+        assert source.publication is None
+        assert source.review_release is not None and source.review_release.state == 'needs_review'
+        assert [evidence.state for evidence in source.fingerprints] == ['success']
+        assert source.fingerprints[0].fingerprint
+        assert [attempt.provider_name for attempt in source.provider_attempts] == ['musicbrainz', 'acoustid']
+        assert [attempt.outcome for attempt in source.provider_attempts] == ['disabled', 'acoustidmatch']
+        assert [candidate.candidate_key for candidate in source.candidates] == ['f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a']
+        assert [decision.rationale for decision in source.review_decisions] == ['canonical metadata required']
+    assert not list(config.media_root.rglob('*.flac'))
 
 
 def test_worker_when_media_root_is_a_symlink_keeps_the_published_job_succeeded(tmp_path: Path) -> None:
@@ -246,6 +301,7 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         assert not worker.run_once()
         job = session.get(JobRecord, 'job-retry')
         assert job is not None and job.next_attempt_at is not None
+        assert not (config.staging_root / 'job-retry').exists()
         job.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
         session.commit()
 
@@ -259,13 +315,13 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         assert [attempt.state for attempt in job.attempts] == ['retry_wait', 'succeeded']
 
 
-def test_worker_when_source_tags_cannot_form_a_fallback_quarantines_the_claimed_job(tmp_path: Path) -> None:
+def test_worker_when_source_tags_cannot_form_a_fallback_queues_review(tmp_path: Path) -> None:
     # Given: a valid FLAC whose observed tags cannot form a canonical fallback.
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
     removed = run(  # noqa: S603
-        ['metaflac', '--remove-tag=GENRE', str(source_path)],  # noqa: S607
+        ['metaflac', '--remove-tag=ALBUM', str(source_path)],  # noqa: S607
         capture_output=True,
         check=False,
         text=True,
@@ -292,11 +348,13 @@ def test_worker_when_source_tags_cannot_form_a_fallback_quarantines_the_claimed_
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: the claim is terminal and the diagnostic is retained outside the source tree.
+    # Then: the claim is terminal and the source waits for canonical metadata review.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-invalid-tags')
         source = session.get(SourceRecord, job.source_id) if job is not None else None
-        assert job is not None and job.state == 'quarantined'
-        assert [attempt.state for attempt in job.attempts] == ['quarantined']
-        assert source is not None and source.intake_state == 'quarantined'
-    assert (config.quarantine_root / f'{source.id}.json').is_file()
+        assert job is not None and job.state == 'completed'
+        assert [attempt.state for attempt in job.attempts] == ['succeeded']
+        assert source is not None and source.intake_state == 'needs_review'
+        assert source.review_release is not None and source.review_release.state == 'needs_review'
+        assert [decision.rationale for decision in source.review_decisions] == ['canonical metadata required']
+    assert not list(config.media_root.rglob('*.flac'))

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from subprocess import TimeoutExpired, run
@@ -19,9 +17,7 @@ class PublicationRequest:
     staged_release: Path
     staging_root: Path
     media_root: Path
-    retention_root: Path
     source_paths: tuple[Path, ...]
-    retention_days: int = 30
     flac_command: str = 'flac'
     metaflac_command: str = 'metaflac'
     timeout_seconds: float = 30.0
@@ -30,7 +26,6 @@ class PublicationRequest:
 @dataclass(frozen=True, slots=True)
 class PublicationResult:
     published_release: Path
-    rollback_manifest: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +42,7 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     recovered = _recover_completed_publication(request)
     if recovered is not None:
         return recovered
-    staged_release, staging_root, media_root, retention_root = _controlled_roots(request)
+    staged_release, staging_root, media_root = _controlled_roots(request)
     relative_release = staged_release.relative_to(staging_root)
     source_snapshots = _source_snapshots(request.source_paths)
     audio_paths = _validate_release(staged_release, request)
@@ -55,20 +50,18 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     published_release = media_root / relative_release
     if published_release.exists():
         raise PublicationError('media destination already exists')
-    manifest_path = _write_manifest(retention_root, relative_release, source_snapshots, request.retention_days)
     published_release.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.replace(staged_release, published_release)
         _fsync_directory(published_release.parent)
     except OSError as error:
         raise PublicationError('atomic release publication failed') from error
-    return PublicationResult(published_release=published_release, rollback_manifest=manifest_path)
+    return PublicationResult(published_release=published_release)
 
 
 def _recover_completed_publication(request: PublicationRequest) -> PublicationResult | None:
     staging_root = request.staging_root.resolve(strict=True)
     media_root = request.media_root.resolve(strict=True)
-    retention_root = request.retention_root.resolve(strict=True)
     staged_release = request.staged_release.resolve()
     if staged_release == staging_root or staging_root not in staged_release.parents:
         raise PublicationError('release must be nested under controlled staging')
@@ -76,26 +69,22 @@ def _recover_completed_publication(request: PublicationRequest) -> PublicationRe
         return None
     relative_release = staged_release.relative_to(staging_root)
     published_release = media_root / relative_release
-    manifest_path = retention_root / f'{sha256(str(relative_release).encode()).hexdigest()}.rollback.json'
-    if published_release.is_dir() and manifest_path.is_file():
-        return PublicationResult(published_release=published_release, rollback_manifest=manifest_path)
+    if published_release.is_dir():
+        return PublicationResult(published_release=published_release)
     raise PublicationError('staged release is missing')
 
 
-def _controlled_roots(request: PublicationRequest) -> tuple[Path, Path, Path, Path]:
+def _controlled_roots(request: PublicationRequest) -> tuple[Path, Path, Path]:
     staging_root = request.staging_root.resolve(strict=True)
     media_root = request.media_root.resolve(strict=True)
-    retention_root = request.retention_root.resolve(strict=True)
     staged_release = request.staged_release.resolve(strict=True)
-    if not all(path.is_dir() for path in (staging_root, media_root, retention_root, staged_release)):
+    if not all(path.is_dir() for path in (staging_root, media_root, staged_release)):
         raise PublicationError('publication roots and staged release must be directories')
     if staged_release == staging_root or staging_root not in staged_release.parents:
         raise PublicationError('release must be nested under controlled staging')
     if staging_root.stat().st_dev != media_root.stat().st_dev:
         raise PublicationError('staging and media must share a filesystem')
-    if request.retention_days < 1:
-        raise PublicationError('retention must be at least one day')
-    return staged_release, staging_root, media_root, retention_root
+    return staged_release, staging_root, media_root
 
 
 def _source_snapshots(paths: tuple[Path, ...]) -> tuple[tuple[Path, int, int, str], ...]:
@@ -199,29 +188,6 @@ def _reject_source_hardlinks(audio_paths: tuple[Path, ...], sources: tuple[tuple
     source_inodes = {(device, inode) for _, device, inode, _ in sources}
     if any((path.stat().st_dev, path.stat().st_ino) in source_inodes for path in audio_paths):
         raise PublicationError('published media cannot hardlink to source downloads')
-
-
-def _write_manifest(
-    retention_root: Path, relative_release: Path, sources: tuple[tuple[Path, int, int, str], ...], retention_days: int
-) -> Path:
-    release_key = sha256(str(relative_release).encode()).hexdigest()
-    manifest_path = retention_root / f'{release_key}.rollback.json'
-    payload = {
-        'release': str(relative_release),
-        'retain_until': (datetime.now(UTC) + timedelta(days=retention_days)).isoformat(),
-        'sources': [
-            {'path': str(path), 'device': device, 'inode': inode, 'sha256': digest}
-            for path, device, inode, digest in sources
-        ],
-    }
-    try:
-        with manifest_path.open('x', encoding='utf-8') as manifest:
-            _ = manifest.write(json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n')
-            manifest.flush()
-            os.fsync(manifest.fileno())
-    except FileExistsError as error:
-        raise PublicationError('rollback manifest already exists') from error
-    return manifest_path
 
 
 def _sha256(path: Path) -> str:
