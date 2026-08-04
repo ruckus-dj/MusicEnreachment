@@ -102,6 +102,7 @@ metadata_state:     original | analyzed | final | edited
 - Space: 4px base; 8px control gap, 16px field rhythm, 24px panel inset, 40px content gutter.
 - Type: Newsreader for display/section headings; DM Sans for body; DM Mono for tags, paths, and revisions.
 - Depth: low warm shadow on panels; tonal selected rows; motion only on interactive transform/background state changes.
+- Rail: 252px desktop navigation rail; horizontal navigation below 700px.
 
 ## 4. Layout
 
