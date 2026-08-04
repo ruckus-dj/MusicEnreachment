@@ -53,7 +53,7 @@ PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest serve
 ```
 
-The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Storage roots are configured with `MUSIC_INGEST_*_ROOT` environment variables. Set `MUSIC_INGEST_API_TOKEN` in any network-exposed deployment; when set, it protects every `/api/` route with either `X-API-Key` or `Authorization: Bearer`.
+The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure only the incoming root, final media root, and transient staging root with `MUSIC_INGEST_*_ROOT` environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Set `MUSIC_INGEST_API_TOKEN` in any network-exposed deployment; when set, it protects every `/api/` route with either `X-API-Key` or `Authorization: Bearer`.
 
 ## Local integration stand
 

@@ -30,14 +30,13 @@ Replace the placeholder MusicBrainz contact before enabling MusicBrainz. Keep
 AcoustID disabled unless an Infisical reference has been configured.
 
 Configure Lidarr to import into `/mnt/pool/data/music-incoming`, then mount that
-path read-only as `/data/incoming` in `music-ingest`. Mount the parent
-`/mnt/pool/data/media` once as writable `/data/publish`; use
-`/data/publish/.publish-staging` for staging and `/data/publish/music` for
-published media. Navidrome must mount `/mnt/pool/data/media/music` read-only.
-Keep retention, quarantine, and provenance under the separate state mounts.
-Staging and published media must remain under the one writable bind mount so
-atomic publication is valid; the normal workflow does not replace a Lidarr
-incoming pathname, and Task 9a remains separately gated.
+path read-only as `/data/incoming` in `music-ingest`. Mount
+`/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
+mount `/mnt/ssd/appdata/music-ingest` as `/appdata/music-ingest` for disposable
+staging only. Navidrome must mount `/mnt/pool/data/media` read-only at its music
+root. PostgreSQL is the only durable store for tags, versions, provenance,
+review decisions, failure reasons, and publication metadata. The normal workflow
+does not replace a Lidarr incoming pathname, and Task 9a remains separately gated.
 
 The PostgreSQL URL is an external Infisical reference. Do not add PostgreSQL to
 the Komodo stack or use a local SQLite fallback. Startup migrations are owned by
