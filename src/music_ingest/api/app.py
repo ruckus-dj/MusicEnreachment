@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,13 @@ from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
-from music_ingest.library.service import attach_source, library_record_detail, library_records, record_event
+from music_ingest.library.service import (
+    attach_source,
+    library_record_detail,
+    library_records,
+    record_event,
+    record_metadata_layers,
+)
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.models import RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
@@ -37,6 +44,13 @@ class LibraryIdentityUpdate(BaseModel):
     musicbrainz_recording_id: str = Field(
         pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
     )
+
+
+class MetadataUpdate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str
+    tags: dict[str, str]
 
 
 def create_app(
@@ -65,8 +79,15 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {'status': 'ok', 'service': 'music-ingest'}
 
+    @app.get('/', response_class=HTMLResponse)
     @app.get('/review', response_class=HTMLResponse)
     def review_page() -> str:
+        return REVIEW_PAGE
+
+    @app.get('/library', response_class=HTMLResponse)
+    @app.get('/library/{path:path}', response_class=HTMLResponse)
+    def library_route(path: str = '') -> str:
+        _ = path
         return REVIEW_PAGE
 
     @app.get('/favicon.ico')
@@ -113,6 +134,15 @@ def create_app(
                             'match_state': record.match_state,
                             'publication_state': record.publication_state,
                             'metadata_state': record.metadata_state,
+                            'metadata_revisions': [
+                                {
+                                    'source_id': revision.source_id,
+                                    'layer': revision.layer,
+                                    'revision': revision.revision,
+                                    'tags': json.loads(revision.tags_json),
+                                }
+                                for revision in record.metadata_revisions
+                            ],
                             'sources': [
                                 {
                                     'source_id': source.id,
@@ -170,6 +200,27 @@ def create_app(
                                 'size_bytes': source.size_bytes,
                                 'origin': source.origin,
                                 'state': source.intake_state,
+                                'tag_observations': [
+                                    {'name': tag.tag_name, 'value': tag.value, 'format': tag.format_name}
+                                    for tag in source.tag_observations
+                                ],
+                                'fingerprints': [
+                                    {
+                                        'state': fingerprint.state,
+                                        'fingerprint': fingerprint.fingerprint,
+                                        'duration_seconds': fingerprint.duration_seconds,
+                                        'tool_version': fingerprint.tool_version,
+                                    }
+                                    for fingerprint in source.fingerprints
+                                ],
+                                'provider_attempts': [
+                                    {
+                                        'provider': attempt.provider_name,
+                                        'outcome': attempt.outcome,
+                                        'snapshot_sha256': attempt.snapshot_sha256,
+                                    }
+                                    for attempt in source.provider_attempts
+                                ],
                                 'disappeared_at': source.disappeared_at.isoformat()
                                 if source.disappeared_at is not None
                                 else None,
@@ -195,7 +246,7 @@ def create_app(
                                 'source_id': revision.source_id,
                                 'layer': revision.layer,
                                 'revision': revision.revision,
-                                'tags': revision.tags_json,
+                                'tags': json.loads(revision.tags_json),
                                 'actor': revision.actor,
                                 'created_at': revision.created_at.isoformat(),
                             }
@@ -208,7 +259,7 @@ def create_app(
                                 'kind': event.kind,
                                 'state': event.state,
                                 'reason': event.reason,
-                                'details': event.details_json,
+                                'details': json.loads(event.details_json),
                                 'created_at': event.created_at.isoformat(),
                             }
                             for event in record.events
@@ -248,6 +299,42 @@ def create_app(
                 return JSONResponse(
                     content={'record_id': record.id, 'musicbrainz_recording_id': record.musicbrainz_recording_id}
                 )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record not found') from error
+
+    @app.put('/api/library/records/{record_id}/metadata')
+    def update_library_metadata(record_id: str, request: MetadataUpdate) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                revisions = {
+                    revision.layer: revision.tags_json
+                    for revision in record.metadata_revisions
+                    if revision.source_id == request.source_id
+                }
+                if 'original' not in revisions or 'analyzed' not in revisions:
+                    raise HTTPException(status_code=409, detail='metadata layers are not ready for editing')
+                now = datetime.now(UTC)
+                created = record_metadata_layers(
+                    session,
+                    record.id,
+                    request.source_id,
+                    json.loads(revisions['original']),
+                    json.loads(revisions['analyzed']),
+                    request.tags,
+                    now,
+                )
+                record_event(
+                    session,
+                    record.id,
+                    'metadata_reviewed',
+                    record.processing_state,
+                    None,
+                    now,
+                    request.source_id,
+                )
+                session.commit()
+                return JSONResponse(content={'revision': created[-1].revision, 'tags': request.tags})
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
 

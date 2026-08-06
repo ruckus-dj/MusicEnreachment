@@ -17,7 +17,7 @@ def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_pa
     client = TestClient(create_app(lambda: Session(engine)))
 
     # When: the operator opens the local review page.
-    response = client.get('/review')
+    response = client.get('/')
 
     # Then: the page names the durable evidence-led workflow and its actions.
     assert response.status_code == 200
@@ -39,3 +39,17 @@ def test_review_ui_when_detail_is_populated_contains_api_data_flow_and_action_su
     for marker in ('assets/', 'Music Ingest', 'description', 'root'):
         assert marker in response.text
     assert 'approve' not in response.text.lower()
+
+
+def test_library_deep_link_when_reloaded_returns_the_review_shell(tmp_path: Path) -> None:
+    # Given: the browser has a deep link to a track inspector.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "review-ui-deep-link.db"}')
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the browser reloads that URL directly.
+    response = client.get('/library/artist/Radiohead/album/OK%20Computer/track/record-1/source-1')
+
+    # Then: FastAPI returns the SPA shell so React can restore the route.
+    assert response.status_code == 200
+    assert 'id="root"' in response.text

@@ -18,6 +18,28 @@ class SourceRecordView(Protocol):
     intake_state: str
     library_record_id: str | None
     disappeared_at: datetime | None
+    tag_observations: list[SourceTagView]
+    fingerprints: list[FingerprintView]
+    provider_attempts: list[ProviderAttemptView]
+
+
+class SourceTagView(Protocol):
+    tag_name: str
+    value: str
+    format_name: str
+
+
+class FingerprintView(Protocol):
+    state: str
+    fingerprint: str | None
+    duration_seconds: float | None
+    tool_version: str | None
+
+
+class ProviderAttemptView(Protocol):
+    provider_name: str
+    outcome: str
+    snapshot_sha256: str
 
 
 @final
