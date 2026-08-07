@@ -15,6 +15,7 @@ type Route = { readonly screen: Screen; readonly artist?: string; readonly album
 type WorkflowStatus = { readonly tone: 'ready' | 'pending' | 'error'; readonly label: string; readonly detail: string }
 
 const TAG_FIELDS = ['TITLE', 'ARTIST', 'ALBUM', 'ALBUMARTIST', 'DATE', 'ORIGINALDATE', 'GENRE', 'TRACKNUMBER', 'TRACKTOTAL', 'DISCNUMBER', 'DISCTOTAL', 'MUSICBRAINZ_TRACKID', 'MUSICBRAINZ_ALBUMID', 'MUSICBRAINZ_RELEASEGROUPID', 'ISRC'] as const
+const catalogCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { headers: { 'content-type': 'application/json' }, ...options })
@@ -37,6 +38,12 @@ function latestRevision(item: Summary, sourceId: string, layer: Layer): Revision
 function titleFor(item: Summary, sourceId: string): string { return tagsFor(item, sourceId, 'final').TITLE || tagsFor(item, sourceId, 'original').TITLE || item.sources.find((source) => source.source_id === sourceId)?.path.split('/').at(-1) || item.record_id }
 function artistFor(item: Summary, sourceId: string): string { return tagsFor(item, sourceId, 'final').ARTIST || tagsFor(item, sourceId, 'original').ARTIST || 'Неизвестный исполнитель' }
 function albumFor(item: Summary, sourceId: string): string { return tagsFor(item, sourceId, 'final').ALBUM || tagsFor(item, sourceId, 'original').ALBUM || 'Без альбома' }
+function trackNumberFor(item: Summary, sourceId: string): number | null {
+  const value = tagsFor(item, sourceId, 'final').TRACKNUMBER || tagsFor(item, sourceId, 'original').TRACKNUMBER
+  const parsed = Number.parseInt(value?.split('/', 1)[0]?.trim() ?? '', 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+function compareNames(left: string, right: string): number { return catalogCollator.compare(left, right) || left.localeCompare(right) }
 function decodeRoutePart(value: string | undefined): string { return value ? decodeURIComponent(value) : '' }
 function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean)
@@ -95,9 +102,22 @@ function App() {
   useEffect(() => { if (screen !== 'track' || !recordId || !sourceId || !items.length || detail) return; const item = items.find((entry) => entry.record_id === recordId); const source = item?.sources.find((entry) => entry.source_id === sourceId); if (item && source) void loadTrack(item, source) }, [items, screen, recordId, sourceId, detail])
 
   const tracks = useMemo(() => items.flatMap((item) => item.sources.map((source) => ({ item, source }))).filter(({ item, source }) => `${artistFor(item, source.source_id)} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`.toLowerCase().includes(query.toLowerCase())), [items, query])
-  const artists = [...new Set(tracks.map(({ item, source }) => artistFor(item, source.source_id)))].sort()
-  const albums = [...new Set(tracks.filter(({ item, source }) => artistFor(item, source.source_id) === artist).map(({ item, source }) => albumFor(item, source.source_id)))].sort()
-  const albumTracks = tracks.filter(({ item, source }) => artistFor(item, source.source_id) === artist && albumFor(item, source.source_id) === album)
+  const artists = [...new Set(tracks.map(({ item, source }) => artistFor(item, source.source_id)))].sort(compareNames)
+  const albums = [...new Set(tracks.filter(({ item, source }) => artistFor(item, source.source_id) === artist).map(({ item, source }) => albumFor(item, source.source_id)))].sort(compareNames)
+  const albumTracks = tracks
+    .filter(({ item, source }) => artistFor(item, source.source_id) === artist && albumFor(item, source.source_id) === album)
+    .sort(({ item: leftItem, source: leftSource }, { item: rightItem, source: rightSource }) => {
+      const leftNumber = trackNumberFor(leftItem, leftSource.source_id)
+      const rightNumber = trackNumberFor(rightItem, rightSource.source_id)
+      if (leftNumber !== rightNumber) {
+        if (leftNumber === null) return 1
+        if (rightNumber === null) return -1
+        return leftNumber - rightNumber
+      }
+      return compareNames(titleFor(leftItem, leftSource.source_id), titleFor(rightItem, rightSource.source_id))
+        || leftItem.record_id.localeCompare(rightItem.record_id)
+        || leftSource.source_id.localeCompare(rightSource.source_id)
+    })
   const currentTrack = albumTracks.find(({ item, source }) => item.record_id === recordId && source.source_id === sourceId) ?? tracks.find(({ item, source }) => item.record_id === recordId && source.source_id === sourceId)
   const currentTags = detail && sourceId ? (layer === 'final' ? draft : tagsFor(detail, sourceId, layer)) : {}
   function back() { if (screen === 'track') navigate({ screen: 'tracks', artist, album }); else if (screen === 'tracks') navigate({ screen: 'albums', artist, album }); else if (screen === 'albums') navigate({ screen: 'artists' }) }
