@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
@@ -122,7 +123,7 @@ def sanitize_flac(request: FlacSanitizationRequest) -> FlacSanitizationResult:
                 FlacSanitizationError(FlacSanitizationErrorKind.POSTFLIGHT_FAILED, temporary_path)
             )
         try:
-            os.link(temporary_path, output_path)
+            _copy_file_exclusive(temporary_path, output_path)
         except FileExistsError:
             raise FlacSanitizationFailure(
                 FlacSanitizationError(FlacSanitizationErrorKind.DESTINATION_CONFLICT, output_path)
@@ -152,11 +153,19 @@ def _validated_paths(request: FlacSanitizationRequest) -> tuple[Path, Path, Path
         raise FlacSanitizationFailure(
             FlacSanitizationError(FlacSanitizationErrorKind.DESTINATION_CONFLICT, output_path)
         )
-    if source_path.stat().st_dev != staging_directory.stat().st_dev:
-        raise FlacSanitizationFailure(
-            FlacSanitizationError(FlacSanitizationErrorKind.INVALID_STAGING, staging_directory)
-        )
     return source_path, output_path, staging_directory
+
+
+def _copy_file_exclusive(source: Path, destination: Path) -> None:
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(descriptor, 'wb') as output, source.open('rb') as input_file:
+            shutil.copyfileobj(input_file, output)
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def _parse_layout(payload: bytes, path: Path) -> _FlacLayout:

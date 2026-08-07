@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
 import pytest
 
+import music_ingest.sanitizers.flac as processing
 from music_ingest.inspectors._tool import ToolState
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
@@ -259,13 +259,13 @@ def test_sanitize_flac_does_not_clobber_destination_created_at_publish_seam(
     staging.mkdir()
     output = staging / 'race.flac'
     victim = b'concurrent destination'
-    original_link = os.link
+    original_copy = processing._copy_file_exclusive
 
-    def create_victim_then_link(temporary: str, destination: str) -> None:
+    def create_victim_then_copy(temporary: Path, destination: Path) -> None:
         _ = output.write_bytes(victim)
-        original_link(temporary, destination)
+        original_copy(temporary, destination)
 
-    monkeypatch.setattr('music_ingest.sanitizers.flac.os.link', create_victim_then_link)
+    monkeypatch.setattr(processing, '_copy_file_exclusive', create_victim_then_copy)
 
     # When: the final destination appears at the no-clobber publication seam.
     with pytest.raises(FlacSanitizationFailure) as failure:
