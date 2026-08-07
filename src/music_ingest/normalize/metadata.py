@@ -89,7 +89,7 @@ def write_canonical_metadata(request: MetadataWriteRequest) -> MetadataWriteResu
         _write_tags(temporary_path, tags, request.metaflac_command, request.timeout_seconds)
         _verify_tags(temporary_path, tags, request.metaflac_command, request.timeout_seconds)
         try:
-            os.link(temporary_path, output_path)
+            shutil.copy2(temporary_path, output_path)
         except FileExistsError as error:
             raise MetadataWriteError('metadata destination already exists') from error
     finally:
@@ -108,8 +108,6 @@ def _validate_paths(request: MetadataWriteRequest) -> tuple[Path, Path, Path]:
         raise MetadataWriteError('canonical metadata output must be a FLAC file')
     if source_path == output_path or output_path.exists():
         raise MetadataWriteError('metadata source and destination must be distinct and unused')
-    if source_path.stat().st_dev != staging_directory.stat().st_dev:
-        raise MetadataWriteError('metadata staging must share the source filesystem')
     return source_path, output_path, staging_directory
 
 

@@ -5,7 +5,6 @@ from collections.abc import Callable
 
 import anyio
 from anyio.to_thread import run_sync
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
@@ -19,8 +18,8 @@ async def run_processing_worker(
     while True:
         try:
             processed = await run_sync(_run_processing_once, session_factory, config)
-        except SQLAlchemyError:
-            LOGGER.exception('processing worker database iteration failed')
+        except Exception:  # noqa: BLE001
+            LOGGER.exception('processing worker iteration failed; continuing poll loop')
             processed = False
         if not processed:
             await anyio.sleep(poll_seconds)
