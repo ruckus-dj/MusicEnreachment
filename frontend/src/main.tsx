@@ -6,9 +6,10 @@ type Tags = Record<string, string>
 type Revision = { readonly id?: number; readonly source_id: string; readonly layer: string; readonly revision: number; readonly tags: Tags; readonly actor?: string; readonly created_at?: string }
 type Source = { readonly source_id: string; readonly path: string; readonly format?: string; readonly sha256: string; readonly state: string; readonly origin?: string; readonly size_bytes?: number; readonly tag_observations?: readonly { readonly name: string; readonly value: string; readonly format: string }[]; readonly fingerprints?: readonly { readonly state: string; readonly fingerprint: string | null; readonly duration_seconds: number | null; readonly tool_version: string | null }[]; readonly provider_attempts?: readonly { readonly provider: string; readonly outcome: string; readonly snapshot_sha256: string }[] }
 type Publication = { readonly publication_id: string; readonly path: string; readonly source_id: string; readonly metadata_revision_id?: number | null; readonly state: string; readonly created_at?: string }
+type DestinationConflict = { readonly path: string; readonly ownership: 'managed' | 'unmanaged'; readonly reason: string }
 type Summary = { readonly record_id: string; readonly source_state: string; readonly processing_state: string; readonly match_state: string; readonly publication_state: string; readonly metadata_state: string; readonly sources: readonly Source[]; readonly publications: readonly Publication[]; readonly metadata_revisions?: readonly Revision[] }
 type Event = { readonly kind: string; readonly state: string; readonly reason: string | null; readonly details: Record<string, unknown>; readonly source_id?: string | null; readonly created_at: string }
-type Detail = Summary & { readonly states: { readonly source: string; readonly processing: string; readonly match: string; readonly publication: string; readonly metadata: string }; readonly events: readonly Event[] }
+type Detail = Summary & { readonly states: { readonly source: string; readonly processing: string; readonly match: string; readonly publication: string; readonly metadata: string }; readonly events: readonly Event[]; readonly destination_conflict?: DestinationConflict | null }
 type Screen = 'artists' | 'albums' | 'tracks' | 'track'
 type Layer = 'original' | 'analyzed' | 'final'
 type Route = { readonly screen: Screen; readonly artist?: string; readonly album?: string; readonly recordId?: string; readonly sourceId?: string }
@@ -65,7 +66,8 @@ function routePath(route: Route): string {
 }
 function workflowStatus(detail: Detail): WorkflowStatus {
   const latest = detail.events.at(-1)
-  if (detail.states.processing === 'retrying' || detail.states.processing === 'quarantined' || detail.states.publication === 'failed') return { tone: 'error', label: 'Требуется внимание', detail: latest?.reason ?? 'Последняя операция не завершилась успешно' }
+  if (detail.destination_conflict) return { tone: 'error', label: 'Конфликт destination', detail: `Папка уже существует: ${detail.destination_conflict.path}` }
+  if (detail.states.processing === 'retrying' || detail.states.processing === 'blocked_infrastructure' || detail.states.processing === 'quarantined' || detail.states.source === 'invalid_audio' || detail.states.publication === 'failed') return { tone: 'error', label: 'Требуется внимание', detail: latest?.reason ?? 'Последняя операция не завершилась успешно' }
   if (detail.states.processing === 'analyzing') return { tone: 'pending', label: 'Идёт анализ провайдеров', detail: 'Исходные и текущие опубликованные теги сохранены. Финальная ревизия появится после анализа.' }
   if (detail.states.processing === 'publishing' || detail.states.publication === 'stale') return { tone: 'pending', label: 'Публикация ожидает', detail: 'Финальная ревизия создана и будет записана в управляемую медиакопию очередью публикации. Исходник останется неизменным.' }
   return { tone: 'ready', label: detail.states.publication === 'current' ? 'Публикация актуальна' : 'Готово к публикации', detail: detail.states.publication === 'current' ? 'Текущий FLAC соответствует опубликованной финальной ревизии.' : 'Изменения сохранены как история и ожидают публикации.' }
