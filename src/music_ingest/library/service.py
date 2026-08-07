@@ -159,6 +159,40 @@ def record_metadata_layers(
     return tuple(revisions)
 
 
+def append_metadata_revision(
+    session: Session,
+    library_record_id: str,
+    source_id: str,
+    layer: str,
+    tags: dict[str, str],
+    actor: str,
+    now: datetime,
+) -> LibraryMetadataRevisionRecord:
+    """Append one immutable metadata revision for a source layer."""
+    record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id))
+    if record is None:
+        raise LookupError(library_record_id)
+    if layer == 'original':
+        existing = next((item for item in record.metadata_revisions if item.layer == layer), None)
+        if existing is not None:
+            return existing
+    revision = LibraryMetadataRevisionRecord(
+        library_record_id=record.id,
+        source_id=source_id,
+        layer=layer,
+        revision=max((item.revision for item in record.metadata_revisions if item.layer == layer), default=0) + 1,
+        tags_json=json.dumps(tags, ensure_ascii=False, sort_keys=True),
+        actor=actor,
+        created_at=now,
+    )
+    session.add(revision)
+    record.updated_at = now
+    if layer == 'final':
+        record.metadata_state = 'final'
+    session.flush()
+    return revision
+
+
 def record_event(
     session: Session,
     library_record_id: str,
