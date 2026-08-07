@@ -12,6 +12,8 @@ from typing import ClassVar, Final, Protocol, override
 
 import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
 SHA256_HEX_PATTERN: Final = re.compile(r'^[0-9a-f]{64}$')
@@ -85,7 +87,7 @@ class FixtureProvenance:
 
 @dataclass(frozen=True, slots=True)
 class MusicBrainzHttpResponse:
-    status_code: int
+    status_code: int | None
     body: bytes
 
 
@@ -123,13 +125,16 @@ type Provenance = FixtureProvenance | LiveProvenance
 class MusicBrainzLookupRequest:
     query: str
     fixture_case: FixtureCase
+    recording_mbid: str | None = None
+    release_title: str | None = None
+    artist_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AcoustIdLookupRequest:
     fingerprint: str
     fixture_case: FixtureCase
-    duration_seconds: float | None = None
+    duration_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,14 +340,31 @@ class LiveTransport:
 
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
         try:
-            response = self.client.get(url, headers=headers, timeout=30.0)
+            response = self.client.get(url, headers=headers, timeout=10.0)
         except requests.RequestException:
-            return MusicBrainzHttpResponse(status_code=503, body=b'')
+            return MusicBrainzHttpResponse(status_code=None, body=b'')
         return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
 
 
+def _default_live_client() -> requests.Session:
+    client = requests.Session()
+    retries = Retry(
+        total=2,
+        connect=2,
+        read=0,
+        status=2,
+        backoff_factor=1.0,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({'GET'}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    client.mount('https://', HTTPAdapter(max_retries=retries))
+    return client
+
+
 def build_live_transport(
-    client_factory: Callable[[], PublicHttpClient] = requests.Session,
+    client_factory: Callable[[], PublicHttpClient] = _default_live_client,
 ) -> LiveTransport:
     if os.environ.get(LIVE_TRANSPORT_ENVIRONMENT) != '1':
         raise ProductionTransportDisabledError(LIVE_TRANSPORT_ENVIRONMENT)

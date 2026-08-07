@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import ClassVar
 from urllib.parse import urlencode
@@ -34,7 +34,7 @@ class _Result(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
 
     score: float
-    recordings: tuple[_Recording, ...]
+    recordings: tuple[_Recording, ...] = ()
 
 
 class _Response(BaseModel):
@@ -50,10 +50,14 @@ class AcoustIdV2Adapter:
     client_key: str
 
     def lookup(self, request: AcoustIdLookupRequest, now: datetime | None = None) -> AcoustIdResult:
-        captured_at = now or datetime.now().astimezone()
-        parameters = {'client': self.client_key, 'fingerprint': request.fingerprint, 'meta': 'recordings'}
-        if request.duration_seconds is not None:
-            parameters['duration'] = str(round(request.duration_seconds))
+        captured_at = now or datetime.now(UTC)
+        parameters = {
+            'client': self.client_key,
+            'duration': str(round(request.duration_seconds)),
+            'fingerprint': request.fingerprint,
+            'format': 'json',
+            'meta': 'recordingids',
+        }
         query = urlencode(parameters)
         url = f'{_ENDPOINT}?{query}'
         response = self.transport.get(url, headers={'Accept': 'application/json'})
@@ -66,13 +70,19 @@ class AcoustIdV2Adapter:
             'fresh',
             response.body,
         )
+        if response.status_code is None:
+            return Unavailable(provenance)
         if response.status_code == 429:
             return RateLimited(provenance)
-        if response.status_code >= 500:
+        if response.status_code is not None and response.status_code >= 500:
             return Unavailable(provenance)
+        if response.status_code != 200:
+            return Malformed(provenance)
         try:
             payload = _Response.model_validate_json(response.body)
         except ValidationError:
+            return Malformed(provenance)
+        if payload.status != 'ok':
             return Malformed(provenance)
         match payload.results:
             case (_Result(score=score, recordings=(_Recording(id=recording_mbid), *_)), *_):

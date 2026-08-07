@@ -18,6 +18,7 @@ from music_ingest.matching.providers import (
     Malformed,
     MusicBrainzFixtureProvider,
     MusicBrainzLookupRequest,
+    MusicBrainzMatch,
     RateLimited,
     Unavailable,
 )
@@ -123,7 +124,7 @@ def test_acoustid_when_disabled_or_enabled_only_contributes_recording_evidence(t
     # When: each request is resolved alongside MusicBrainz fixture evidence.
     disabled = service.lookup(ProviderEvidenceRequest('one', FixtureCase.NO_MATCH, None, None), NOW)
     enabled = service.lookup(
-        ProviderEvidenceRequest('two', FixtureCase.NO_MATCH, 'fixture-fingerprint', FixtureCase.SUCCESS),
+        ProviderEvidenceRequest('two', FixtureCase.NO_MATCH, 'fixture-fingerprint', FixtureCase.SUCCESS, 241),
         NOW + timedelta(seconds=1),
     )
 
@@ -132,6 +133,24 @@ def test_acoustid_when_disabled_or_enabled_only_contributes_recording_evidence(t
     assert enabled.acoustid is not None
     assert enabled.selected_release is None
     assert len(starts) == 3
+
+
+def test_provider_evidence_when_force_refresh_is_requested_bypasses_fresh_provider_cache(tmp_path: Path) -> None:
+    # Given: a successful provider snapshot that would normally be reused.
+    session, starts = _session(tmp_path)
+    service = _service(session, starts)
+    request = ProviderEvidenceRequest('two', FixtureCase.NO_MATCH, 'fixture-fingerprint', FixtureCase.SUCCESS, 241)
+    _ = service.lookup(request, NOW)
+
+    # When: the same provider request explicitly asks for a fresh lookup.
+    forced = service.lookup(
+        ProviderEvidenceRequest('two', FixtureCase.NO_MATCH, 'fixture-fingerprint', FixtureCase.SUCCESS, 241, True),
+        NOW + timedelta(seconds=1),
+    )
+
+    # Then: the provider is scheduled again instead of returning the cached snapshot.
+    assert isinstance(forced.acoustid, AcoustIdMatch)
+    assert starts == [NOW, NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=1)]
 
 
 def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(tmp_path: Path) -> None:
@@ -156,6 +175,145 @@ def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(t
     assert result.provenance.http_status == 200
     assert calls[0][0].startswith('https://musicbrainz.org/ws/2/release/?')
     assert calls[0][1]['User-Agent'] == 'music-ingest/1.0 (operator@example.test)'
+
+
+def test_musicbrainz_v2_adapter_when_recording_id_is_known_looks_up_linked_releases() -> None:
+    # Given: AcoustID has supplied a MusicBrainz recording ID.
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+
+    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: the adapter resolves the recording through MusicBrainz.
+    result = adapter.lookup(
+        MusicBrainzLookupRequest(
+            'artist:Fixture release:Fixture Album',
+            FixtureCase.SUCCESS,
+            'recording-id',
+            'Fixture Album',
+        ),
+        NOW,
+    )
+
+    # Then: it returns the linked release and uses the recording lookup endpoint.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.release_mbid == 'release-id'
+    assert '/recording/recording-id?' in calls[0]
+    assert 'inc=releases' in calls[0]
+
+
+def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_path: Path) -> None:
+    # Given: a high-confidence AcoustID fixture and a MusicBrainz transport.
+    session, starts = _session(tmp_path)
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+
+    service = ProviderEvidenceService(
+        session,
+        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
+        starts.append,
+    )
+
+    # When: provider evidence is looked up for the album.
+    result = service.lookup(
+        ProviderEvidenceRequest(
+            'artist:Fixture release:Fixture Album',
+            FixtureCase.SUCCESS,
+            'fixture-fingerprint',
+            FixtureCase.SUCCESS,
+            241,
+            release_title='Fixture Album',
+            artist_name='Fixture Artist',
+        ),
+        NOW,
+    )
+
+    # Then: MusicBrainz receives the AcoustID recording ID instead of a text search.
+    assert isinstance(result.musicbrainz, MusicBrainzMatch)
+    assert '/recording/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a?' in calls[0]
+    assert result.musicbrainz.candidate.artist_name == 'Fixture Artist'
+
+
+def test_provider_evidence_when_acoustid_confidence_is_low_uses_text_search_fallback(tmp_path: Path) -> None:
+    # Given: AcoustID evidence below the configured confidence threshold.
+    session, starts = _session(tmp_path)
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+
+    service = ProviderEvidenceService(
+        session,
+        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
+        starts.append,
+    )
+
+    # When: provider evidence is looked up with a threshold above the AcoustID score.
+    _ = service.lookup(
+        ProviderEvidenceRequest(
+            'artist:Fixture release:Fixture Album',
+            FixtureCase.SUCCESS,
+            'fixture-fingerprint',
+            FixtureCase.SUCCESS,
+            241,
+            release_title='Fixture Album',
+            acoustid_confidence_threshold=0.99,
+        ),
+        NOW,
+    )
+
+    # Then: the fallback uses the text release search.
+    assert '/ws/2/release/?' in calls[0]
+
+
+def test_provider_evidence_when_acoustid_has_no_match_uses_text_search_fallback(tmp_path: Path) -> None:
+    # Given: AcoustID returns no recording for the fingerprint.
+    session, starts = _session(tmp_path)
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+
+    service = ProviderEvidenceService(
+        session,
+        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
+        starts.append,
+    )
+
+    # When: provider evidence is looked up with an AcoustID no-match fixture.
+    _ = service.lookup(
+        ProviderEvidenceRequest(
+            'artist:Fixture release:Fixture Album',
+            FixtureCase.SUCCESS,
+            'fixture-fingerprint',
+            FixtureCase.NO_MATCH,
+            241,
+            release_title='Fixture Album',
+        ),
+        NOW,
+    )
+
+    # Then: the fallback uses the text release search.
+    assert '/ws/2/release/?' in calls[0]
 
 
 def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_cached(tmp_path: Path) -> None:
@@ -189,9 +347,11 @@ def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_
 
 def test_acoustid_v2_adapter_when_configured_produces_only_recording_evidence(tmp_path: Path) -> None:
     # Given: a configured injected transport returning one AcoustID recording.
+    calls: list[tuple[str, dict[str, str]]] = []
+
     class FixtureTransport:
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
-            _ = url, headers
+            calls.append((url, headers))
             return MusicBrainzHttpResponse(
                 200, b'{"status":"ok","results":[{"score":0.9,"recordings":[{"id":"recording-id"}]}]}'
             )
@@ -199,7 +359,7 @@ def test_acoustid_v2_adapter_when_configured_produces_only_recording_evidence(tm
     adapter = AcoustIdV2Adapter(FixtureTransport(), 'fixture-client-key')
 
     # When: configured AcoustID evidence is obtained through its injected transport.
-    result = adapter.lookup(AcoustIdLookupRequest('fixture-fingerprint', FixtureCase.SUCCESS), NOW)
+    result = adapter.lookup(AcoustIdLookupRequest('fixture-fingerprint', FixtureCase.SUCCESS, 241))
 
     # Then: it carries recording evidence rather than release-selection metadata.
     match result:
@@ -207,3 +367,27 @@ def test_acoustid_v2_adapter_when_configured_produces_only_recording_evidence(tm
             assert evidence.recording_mbid == 'recording-id'
         case _:
             raise AssertionError('configured AcoustID fixture did not produce recording evidence')
+    assert 'client=fixture-client-key' in calls[0][0]
+    assert 'duration=241' in calls[0][0]
+    assert 'format=json' in calls[0][0]
+    assert 'meta=recordingids' in calls[0][0]
+    assert calls[0][1] == {'Accept': 'application/json'}
+
+
+def test_acoustid_v2_adapter_when_a_result_has_no_recordings_keeps_valid_recording_evidence() -> None:
+    # Given: the current API shape includes a useful result and a score-only result.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = url, headers
+            return MusicBrainzHttpResponse(
+                200, b'{"status":"ok","results":[{"score":0.99,"recordings":[{"id":"recording-id"}]},{"score":0.93}]}'
+            )
+
+    adapter = AcoustIdV2Adapter(FixtureTransport(), 'fixture-client-key')
+
+    # When: the adapter parses the response.
+    result = adapter.lookup(AcoustIdLookupRequest('fixture-fingerprint', FixtureCase.SUCCESS, 173), NOW)
+
+    # Then: the valid first result remains usable evidence.
+    assert isinstance(result, AcoustIdMatch)
+    assert result.evidence.recording_mbid == 'recording-id'

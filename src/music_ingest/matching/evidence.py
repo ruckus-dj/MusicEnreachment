@@ -58,6 +58,10 @@ class ProviderEvidenceRequest:
     fingerprint: str | None
     acoustid_case: FixtureCase | None
     duration_seconds: float | None = None
+    force_refresh: bool = False
+    release_title: str | None = None
+    acoustid_confidence_threshold: float = 0.7
+    artist_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,22 +79,40 @@ class ProviderEvidenceService:
     wait_until: Callable[[datetime], None] | None = None
 
     def lookup(self, request: ProviderEvidenceRequest, now: datetime) -> ProviderEvidenceResult:
-        musicbrainz = self._lookup_musicbrainz(request, now)
         acoustid = self._lookup_acoustid(request, now)
+        musicbrainz = self._lookup_musicbrainz(request, acoustid, now)
         return ProviderEvidenceResult(musicbrainz=musicbrainz, acoustid=acoustid)
 
-    def _lookup_musicbrainz(self, request: ProviderEvidenceRequest, now: datetime) -> MusicBrainzResult:
+    def _lookup_musicbrainz(
+        self, request: ProviderEvidenceRequest, acoustid: AcoustIdResult | None, now: datetime
+    ) -> MusicBrainzResult:
         if self.musicbrainz is None or not request.query:
             return Disabled(_provenance('musicbrainz', _disabled_request_hash(), b'', None, now, 'fresh'))
-        request_hash = sha256(request.query.encode()).hexdigest()
-        cached = self._fresh_snapshot('musicbrainz', request_hash, now)
+
+        match acoustid:
+            case AcoustIdMatch(evidence=evidence) if evidence.score >= request.acoustid_confidence_threshold:
+                musicbrainz_request = MusicBrainzLookupRequest(
+                    request.query,
+                    request.musicbrainz_case,
+                    evidence.recording_mbid,
+                    request.release_title,
+                    request.artist_name,
+                )
+                request_hash = sha256(f'recording:{evidence.recording_mbid}'.encode()).hexdigest()
+            case _:
+                musicbrainz_request = MusicBrainzLookupRequest(request.query, request.musicbrainz_case)
+                request_hash = sha256(request.query.encode()).hexdigest()
+        cached = None if request.force_refresh else self._fresh_snapshot('musicbrainz', request_hash, now)
         if cached is not None:
             return _decode_musicbrainz(cached, 'cached')
         self._reserve_start('musicbrainz', now)
-        result = self.musicbrainz.lookup(MusicBrainzLookupRequest(request.query, request.musicbrainz_case), now)
+        result = self.musicbrainz.lookup(musicbrainz_request, now)
         return self._persist_musicbrainz(result, request_hash, now)
 
     def _lookup_acoustid(self, request: ProviderEvidenceRequest, now: datetime) -> AcoustIdResult | None:
+        duration_seconds = request.duration_seconds
+        if duration_seconds is None:
+            return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
         match self.acoustid, request.fingerprint, request.acoustid_case:
             case _, None, _:
                 return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
@@ -100,13 +122,11 @@ class ProviderEvidenceService:
                 return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
             case provider, str() as fingerprint, FixtureCase() as fixture_case:
                 request_hash = sha256(fingerprint.encode()).hexdigest()
-                cached = self._fresh_snapshot('acoustid', request_hash, now)
+                cached = None if request.force_refresh else self._fresh_snapshot('acoustid', request_hash, now)
                 if cached is not None:
                     return _decode_acoustid(cached, 'cached')
                 self._reserve_start('acoustid', now)
-                result = provider.lookup(
-                    AcoustIdLookupRequest(fingerprint, fixture_case, request.duration_seconds), now
-                )
+                result = provider.lookup(AcoustIdLookupRequest(fingerprint, fixture_case, duration_seconds), now)
                 return self._persist_acoustid(result, request_hash, now)
 
     def _fresh_snapshot(self, provider_name: str, request_hash: str, now: datetime) -> ProviderSnapshotRecord | None:

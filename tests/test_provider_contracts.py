@@ -86,7 +86,7 @@ def test_acoustid_fixture_provider_when_fixture_case_is_requested_returns_eviden
 ) -> None:
     # Given: a raw checked-in AcoustID fixture selected by an explicit case.
     provider = AcoustIdFixtureProvider(FIXTURE_DIRECTORY / 'acoustid')
-    request = AcoustIdLookupRequest(fingerprint='fixture-fingerprint', fixture_case=fixture_case)
+    request = AcoustIdLookupRequest(fingerprint='fixture-fingerprint', fixture_case=fixture_case, duration_seconds=241)
 
     # When: evidence-only matching reads its fixture bytes from disk.
     result = provider.lookup(request)
@@ -423,6 +423,24 @@ def test_production_transport_when_gate_present_constructs_via_injected_seam(
     # Then: the transport holds the injected client and never touches the network.
     assert isinstance(transport, LiveTransport)
     assert transport.client is injected_client
+
+
+def test_live_transport_when_tls_request_fails_does_not_fabricate_http_503() -> None:
+    # Given: a live client that cannot complete the TLS request.
+    class _FailingClient:
+        def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+            _ = url, headers, timeout
+            raise requests.ConnectionError('TLS handshake failed')
+
+        def close(self) -> None:
+            return None
+
+    # When: the transport crosses the network boundary.
+    response = LiveTransport(_FailingClient()).get('https://musicbrainz.org/ws/2/release/', headers={})
+
+    # Then: no HTTP status is claimed when no HTTP response existed.
+    assert response.status_code is None
+    assert response.body == b''
 
 
 @pytest.mark.live
