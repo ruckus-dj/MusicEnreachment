@@ -142,7 +142,7 @@ def _live_providers(environment: Mapping[str, str]) -> tuple[MusicBrainzProvider
             'music-ingest/0.1.0 (music-ingest@example.com)',
         ),
     )
-    acoustid_key = environment.get('MUSIC_INGEST_ACOUSTID_CLIENT_KEY')
+    acoustid_key = environment.get('MUSIC_INGEST_ACOUSTID_CLIENT_KEY', '').strip()
     acoustid = AcoustIdV2Adapter(transport, acoustid_key) if acoustid_key else None
     return musicbrainz, acoustid
 
