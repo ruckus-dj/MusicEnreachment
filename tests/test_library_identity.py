@@ -231,7 +231,7 @@ def test_provider_retry_api_requeues_failed_and_missing_provider_work_without_du
     with Session(engine) as session:
         jobs = {job.source_id: job for job in session.query(JobRecord).all()}
         assert jobs['source-failed'].state == 'queued'
-        assert jobs['source-failed'].kind == 'provider_retry'
+        assert jobs['source-failed'].kind == 'provider_analysis'
         assert jobs['source-never'].state == 'queued'
         assert jobs['source-success'].state == 'completed'
         assert len(jobs) == 3

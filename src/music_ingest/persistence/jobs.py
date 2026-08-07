@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import final
+from uuid import uuid4
 
 from sqlalchemy import Select, and_, select
 from sqlalchemy.orm import Session, selectinload
@@ -66,26 +67,41 @@ class JobRepository:
         claimed.job.next_attempt_at = now + delay
 
     def requeue_source(self, source_id: str, now: datetime) -> bool:
-        """Put a completed source back into the analysis queue without duplicating its job."""
-        job = self._session.scalar(select(JobRecord).where(JobRecord.source_id == source_id))
-        if job is None:
-            self._session.add(
-                JobRecord(
-                    id=f'provider-retry-{source_id}',
-                    source_id=source_id,
-                    kind='provider_retry',
-                    state='queued',
-                    created_at=now,
-                )
+        """Queue a distinct provider-analysis job for a source."""
+        return self.enqueue(source_id, 'provider_analysis', now) is not None
+
+    def enqueue(
+        self,
+        source_id: str,
+        kind: str,
+        now: datetime,
+        metadata_revision_id: int | None = None,
+    ) -> JobRecord | None:
+        """Create or coalesce one queued job of a given kind for a source."""
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(
+                JobRecord.source_id == source_id,
+                JobRecord.kind == kind,
+                JobRecord.state.in_(['queued', 'running']),
             )
-            return True
-        if job.state in {'queued', 'running'}:
-            return False
-        job.kind = 'provider_retry'
-        job.state = 'queued'
-        job.next_attempt_at = None
-        job.failure_reason = None
-        return True
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            if metadata_revision_id is not None:
+                active.metadata_revision_id = metadata_revision_id
+            return None
+        job = JobRecord(
+            id=f'{kind}-{source_id}-{uuid4().hex}',
+            source_id=source_id,
+            kind=kind,
+            metadata_revision_id=metadata_revision_id,
+            state='queued',
+            created_at=now,
+        )
+        self._session.add(job)
+        self._session.flush()
+        return job
 
     def _claimable_statement(self, now: datetime, lease_age: timedelta) -> Select[tuple[JobRecord]]:
         stale_before = now - lease_age
