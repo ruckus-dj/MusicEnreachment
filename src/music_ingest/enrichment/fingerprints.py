@@ -93,6 +93,9 @@ def _is_valid_flac_state(state: FlacInspectionState) -> bool:
             return True
         case FlacInspectionState.QUARANTINE:
             return False
+        case FlacInspectionState.INFRASTRUCTURE:
+            return False
+    return False
 
 
 def _is_valid_mp3_state(state: Mp3InspectionState) -> bool:
@@ -101,6 +104,7 @@ def _is_valid_mp3_state(state: Mp3InspectionState) -> bool:
             return True
         case Mp3InspectionState.QUARANTINE:
             return False
+    return False
 
 
 def _from_tool(tool: ToolEvidence, fpcalc_command: str, timeout_seconds: float) -> FingerprintResult:

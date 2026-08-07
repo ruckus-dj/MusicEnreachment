@@ -96,7 +96,7 @@ def test_inspect_flac_when_tool_timeout_quarantines_and_preserves_source(tmp_pat
 
     result = inspect_flac(source, flac_command=str(hanging_tool), timeout_seconds=0.01)
 
-    assert result.state is InspectionState.QUARANTINE
+    assert result.state is InspectionState.INFRASTRUCTURE
     assert FlacFindingKind.FLAC_TEST_TIMED_OUT in [finding.kind for finding in result.findings]
     assert result.flac_test.return_code is None
     assert _snapshot(source) == before

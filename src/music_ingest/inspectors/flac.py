@@ -9,6 +9,7 @@ from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
 
 class InspectionState(StrEnum):
     VALID = 'valid'
+    INFRASTRUCTURE = 'infrastructure'
     QUARANTINE = 'quarantine'
 
 
@@ -51,7 +52,13 @@ def inspect_flac(
     findings = findings + _tool_findings(flac_test)
     has_trailing_id3v1 = any(finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in findings)
     flac_test_rejects_container = flac_test.state is not ToolState.SUCCESS and not has_trailing_id3v1
-    state = InspectionState.QUARANTINE if malformed or flac_test_rejects_container else InspectionState.VALID
+    state = (
+        InspectionState.QUARANTINE
+        if malformed
+        else InspectionState.VALID
+        if not flac_test_rejects_container
+        else InspectionState.INFRASTRUCTURE
+    )
     return FlacInspectionResult(state, findings, flac_test)
 
 
