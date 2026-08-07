@@ -15,11 +15,11 @@ from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
 from music_ingest.library.service import (
+    append_metadata_revision,
     attach_source,
     library_record_detail,
     library_records,
     record_event,
-    record_metadata_layers,
 )
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.jobs import JobRepository
@@ -386,34 +386,33 @@ def create_app(
         try:
             with session_factory() as session:
                 record = library_record_detail(session, record_id)
-                revisions = {
-                    revision.layer: revision.tags_json
-                    for revision in record.metadata_revisions
-                    if revision.source_id == request.source_id
-                }
-                if 'original' not in revisions or 'analyzed' not in revisions:
-                    raise HTTPException(status_code=409, detail='metadata layers are not ready for editing')
+                source = next((item for item in record.sources if item.id == request.source_id), None)
+                if source is None:
+                    raise HTTPException(status_code=404, detail='source not found')
                 now = datetime.now(UTC)
-                created = record_metadata_layers(
+                created = append_metadata_revision(
                     session,
                     record.id,
                     request.source_id,
-                    json.loads(revisions['original']),
-                    json.loads(revisions['analyzed']),
+                    'final',
                     request.tags,
+                    'manual',
                     now,
                 )
+                queued = JobRepository(session).enqueue(source.id, 'final_publish', now, created.id)
                 record_event(
                     session,
                     record.id,
-                    'metadata_reviewed',
-                    record.processing_state,
-                    None,
+                    'final_publish_queued',
+                    'publishing',
+                    'manual final metadata revision queued for publication',
                     now,
                     request.source_id,
                 )
                 session.commit()
-                return JSONResponse(content={'revision': created[-1].revision, 'tags': request.tags})
+                return JSONResponse(
+                    content={'revision': created.revision, 'tags': request.tags, 'queued': queued is not None}
+                )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
 
