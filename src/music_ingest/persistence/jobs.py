@@ -59,7 +59,10 @@ class JobRepository:
     ) -> None:
         if claimed.attempt.attempt_number >= max_attempts:
             claimed.job.failure_reason = failure_reason
-            self.quarantine(claimed, now)
+            claimed.attempt.state = 'blocked_infrastructure'
+            claimed.attempt.finished_at = now
+            claimed.job.state = 'blocked_infrastructure'
+            claimed.job.next_attempt_at = None
             return
         claimed.attempt.state = 'retry_wait'
         claimed.attempt.finished_at = now

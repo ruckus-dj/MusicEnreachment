@@ -85,12 +85,16 @@ def reconcile_incoming(session: Session, incoming_root: Path) -> ScanResult:
             replacement = session.get(SourceRecord, intake.source_id)
             if replacement is not None:
                 orphan_record = replacement.library_record
-                attach_source(
+                _ = attach_source(
                     session,
                     replacement.id,
                     path_source.library_record_id,
                     reason='source_replaced',
                 )
+                old_job = session.scalar(select(JobRecord).where(JobRecord.source_id == path_source.id))
+                if old_job is not None and old_job.state in {'queued', 'running'}:
+                    old_job.state = 'superseded'
+                    old_job.next_attempt_at = None
                 path_source.intake_state = 'replaced'
                 path_source.disappeared_at = datetime.now(UTC)
                 if orphan_record is not None and orphan_record.id != path_source.library_record_id:
@@ -161,7 +165,7 @@ def _enqueue_job(session: Session, source_id: str, created_at: datetime) -> bool
             )
         )
         return True
-    if existing.state != 'quarantined':
+    if existing.state not in {'quarantined', 'blocked_infrastructure'}:
         return False
     existing.state = 'queued'
     existing.next_attempt_at = None

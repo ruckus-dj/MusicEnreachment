@@ -324,3 +324,49 @@ def test_reconciliation_replaces_source_version_without_replacing_record(tmp_pat
     assert len(persisted.sources) == 2
     assert {source.library_record_id for source in persisted.sources} == {'record-replaced'}
     assert any(source.intake_state == 'replaced' for source in persisted.sources)
+
+
+def test_reconciliation_keeps_current_publication_until_replacement_publishes(tmp_path: Path) -> None:
+    # Given: a stable record with a current publication and a changed incoming file.
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    source_path = incoming / 'song.flac'
+    source_path.write_bytes(b'new-source')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "replacement-publication.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-replacement-publication', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-old',
+            source_path=str(source_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        publication = LibraryPublicationRecord(
+            id='publication-old',
+            library_record=record,
+            source=source,
+            path=str(tmp_path / 'media' / 'song.flac'),
+            format_name='flac',
+            content_sha256='b' * 64,
+            state='current',
+            created_at=timestamp,
+        )
+        session.add_all((record, source, publication))
+        session.commit()
+
+        # When: reconciliation discovers the replacement source generation.
+        _ = reconcile_incoming(session, incoming)
+        session.commit()
+
+        # Then: the old publication remains current until the new audio is published.
+        persisted = session.get(LibraryRecord, record.id)
+        assert persisted is not None
+        assert next(item for item in persisted.publications if item.id == 'publication-old').state == 'current'

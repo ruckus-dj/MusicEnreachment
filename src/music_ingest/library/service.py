@@ -53,17 +53,12 @@ def attach_source(
     source.library_record = record
     source.disappeared_at = None
     record.source_state = 'present'
-    for publication in record.publications:
-        if publication.state == 'current':
-            publication.state = 'superseded'
-    if record.publication_state == 'current':
-        record.publication_state = 'stale'
     record.updated_at = timestamp
     session.add(
         LibraryEventRecord(
             library_record_id=record.id,
             source_id=source.id,
-            kind='source_attached',
+            kind='source_replaced' if reason == 'source_replaced' else 'source_attached',
             state='present',
             reason=reason,
             details_json='{}',
