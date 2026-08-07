@@ -21,7 +21,9 @@ def _read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[
     )
 
 
-def _fallback_metadata(tags: tuple[tuple[str, str], ...]) -> CanonicalMetadata | None:
+def _fallback_metadata(
+    tags: tuple[tuple[str, str], ...], source: CanonicalSource = CanonicalSource.AUTOMATIC_FALLBACK
+) -> CanonicalMetadata | None:
     values = {name: value for name, value in tags}
     title = values.get('TITLE')
     artist = values.get('ARTIST')
@@ -50,7 +52,7 @@ def _fallback_metadata(tags: tuple[tuple[str, str], ...]) -> CanonicalMetadata |
     if not genres:
         return None
     return CanonicalMetadata(
-        CanonicalSource.AUTOMATIC_FALLBACK,
+        source,
         title,
         tuple(artist.split('; ')),
         album,
@@ -62,9 +64,9 @@ def _fallback_metadata(tags: tuple[tuple[str, str], ...]) -> CanonicalMetadata |
         int(disc_number),
         int(disc_total),
         genres,
-        None,
-        None,
-        None,
+        values.get('MUSICBRAINZ_TRACKID'),
+        values.get('MUSICBRAINZ_ALBUMID'),
+        values.get('MUSICBRAINZ_RELEASEGROUPID'),
         values.get('ISRC'),
     )
 

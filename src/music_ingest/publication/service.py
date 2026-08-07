@@ -21,6 +21,7 @@ class PublicationRequest:
     flac_command: str = 'flac'
     metaflac_command: str = 'metaflac'
     timeout_seconds: float = 30.0
+    require_canonical_tags: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,25 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     except OSError as error:
         raise PublicationError('atomic release publication failed') from error
     return PublicationResult(published_release=published_release)
+
+
+def replace_published_audio(request: PublicationRequest, target_audio: Path) -> PublicationResult:
+    """Atomically replace one published FLAC with a validated staged FLAC."""
+    staged_release, _, media_root = _controlled_roots(request)
+    target = target_audio.resolve()
+    if target.parent != media_root.resolve() and media_root.resolve() not in target.parents:
+        raise PublicationError('published audio is outside the media root')
+    source_snapshots = _source_snapshots(request.source_paths)
+    audio_paths = _validate_release(staged_release, request)
+    if len(audio_paths) != 1 or target.suffix.casefold() != '.flac':
+        raise PublicationError('republish requires one FLAC target')
+    _reject_source_hardlinks(audio_paths, source_snapshots)
+    try:
+        os.replace(audio_paths[0], target)
+        _fsync_directory(target.parent)
+    except OSError as error:
+        raise PublicationError('atomic audio replacement failed') from error
+    return PublicationResult(published_release=target.parent)
 
 
 def _recover_completed_publication(request: PublicationRequest) -> PublicationResult | None:
@@ -152,9 +172,9 @@ def _validate_tags(path: Path, request: PublicationRequest) -> None:
         for line in completed.stdout.splitlines()
         if '=' in line
     }
-    if not _REQUIRED_TAGS.issubset(tags):
+    if request.require_canonical_tags and not _REQUIRED_TAGS.issubset(tags):
         raise PublicationError('canonical publication tags are incomplete')
-    for name in ('ARTIST', 'GENRE'):
+    for name in ('ARTIST', 'GENRE') if request.require_canonical_tags else ():
         if not _semicolon_list(tags[name]):
             raise PublicationError(f'canonical {name.lower()} tags must use semicolon-separated values')
 

@@ -58,6 +58,19 @@ class MetadataWriteResult:
     tags: tuple[tuple[str, str], ...]
 
 
+def write_observed_metadata(
+    path: Path,
+    tags: tuple[tuple[str, str], ...],
+    metaflac_command: str = 'metaflac',
+    timeout_seconds: float = 10.0,
+) -> MetadataWriteResult:
+    """Replace a staged file's tags with the observed allowlisted source tags."""
+    filtered = tuple((name, value) for name, value in tags if name in ALLOWED_TAG_KEYS)
+    _write_tags(path, filtered, metaflac_command, timeout_seconds)
+    _verify_tags(path, filtered, metaflac_command, timeout_seconds)
+    return MetadataWriteResult(path, filtered)
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataWriteError(Exception):
     reason: str
@@ -73,8 +86,8 @@ def write_canonical_metadata(request: MetadataWriteRequest) -> MetadataWriteResu
     tags = _canonical_tags(request.metadata, request.fields, request.genres)
     temporary_path = _copy_to_staging(source_path, staging_directory)
     try:
-        _write_tags(temporary_path, tags, request)
-        _verify_tags(temporary_path, tags, request)
+        _write_tags(temporary_path, tags, request.metaflac_command, request.timeout_seconds)
+        _verify_tags(temporary_path, tags, request.metaflac_command, request.timeout_seconds)
         try:
             os.link(temporary_path, output_path)
         except FileExistsError as error:
@@ -165,15 +178,15 @@ def _copy_to_staging(source_path: Path, staging_directory: Path) -> Path:
     return temporary_path
 
 
-def _write_tags(path: Path, tags: tuple[tuple[str, str], ...], request: MetadataWriteRequest) -> None:
-    command = (
-        request.metaflac_command,
+def _write_tags(path: Path, tags: tuple[tuple[str, str], ...], command: str, timeout_seconds: float) -> None:
+    arguments = (
+        command,
         '--remove-all-tags',
         *(f'--set-tag={name}={value}' for name, value in tags),
         str(path),
     )
     try:
-        completed = run(command, capture_output=True, check=False, text=True, timeout=request.timeout_seconds)  # noqa: S603
+        completed = run(arguments, capture_output=True, check=False, text=True, timeout=timeout_seconds)  # noqa: S603
     except FileNotFoundError as error:
         raise MetadataWriteError('metaflac is unavailable') from error
     except TimeoutExpired as error:
@@ -184,14 +197,14 @@ def _write_tags(path: Path, tags: tuple[tuple[str, str], ...], request: Metadata
         raise MetadataWriteError('metaflac rejected canonical metadata')
 
 
-def _verify_tags(path: Path, expected: tuple[tuple[str, str], ...], request: MetadataWriteRequest) -> None:
+def _verify_tags(path: Path, expected: tuple[tuple[str, str], ...], command: str, timeout_seconds: float) -> None:
     try:
         completed = run(  # noqa: S603
-            (request.metaflac_command, '--export-tags-to=-', str(path)),
+            (command, '--export-tags-to=-', str(path)),
             capture_output=True,
             check=False,
             text=True,
-            timeout=request.timeout_seconds,
+            timeout=timeout_seconds,
         )
     except FileNotFoundError as error:
         raise MetadataWriteError('metaflac is unavailable') from error
