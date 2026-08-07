@@ -65,6 +65,28 @@ class JobRepository:
         claimed.job.state = 'queued'
         claimed.job.next_attempt_at = now + delay
 
+    def requeue_source(self, source_id: str, now: datetime) -> bool:
+        """Put a completed source back into the analysis queue without duplicating its job."""
+        job = self._session.scalar(select(JobRecord).where(JobRecord.source_id == source_id))
+        if job is None:
+            self._session.add(
+                JobRecord(
+                    id=f'provider-retry-{source_id}',
+                    source_id=source_id,
+                    kind='provider_retry',
+                    state='queued',
+                    created_at=now,
+                )
+            )
+            return True
+        if job.state in {'queued', 'running'}:
+            return False
+        job.kind = 'provider_retry'
+        job.state = 'queued'
+        job.next_attempt_at = None
+        job.failure_reason = None
+        return True
+
     def _claimable_statement(self, now: datetime, lease_age: timedelta) -> Select[tuple[JobRecord]]:
         stale_before = now - lease_age
         return (

@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from music_ingest.api.app import create_app
 from music_ingest.persistence.models import (
     Base,
+    JobRecord,
     LibraryPublicationRecord,
     LibraryRecord,
+    ProviderAttemptRecord,
     SourceRecord,
 )
 from music_ingest.reconciliation import reconcile_incoming
@@ -125,6 +127,123 @@ def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> N
 
     assert identity.status_code == 200
     assert identity.json()['musicbrainz_recording_id'] == '11111111-1111-4111-8111-111111111111'
+
+
+def test_provider_retry_api_requeues_failed_and_missing_provider_work_without_duplicate_jobs(tmp_path: Path) -> None:
+    # Given: one failed source, one source never sent to a provider, and one successful source.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider-retry.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-retry', created_at=timestamp, updated_at=timestamp)
+        failed = SourceRecord(
+            id='source-failed',
+            source_path='/incoming/failed.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        never_sent = SourceRecord(
+            id='source-never',
+            source_path='/incoming/never.flac',
+            device=1,
+            inode=3,
+            size_bytes=4,
+            sha256='b' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        successful = SourceRecord(
+            id='source-success',
+            source_path='/incoming/success.flac',
+            device=1,
+            inode=4,
+            size_bytes=5,
+            sha256='c' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        session.add_all(
+            (
+                record,
+                failed,
+                never_sent,
+                successful,
+                ProviderAttemptRecord(
+                    source=failed,
+                    provider_name='acoustid',
+                    outcome='malformed',
+                    snapshot_sha256='d' * 64,
+                    snapshot='{}',
+                ),
+                ProviderAttemptRecord(
+                    source=successful,
+                    provider_name='acoustid',
+                    outcome='acoustidmatch',
+                    snapshot_sha256='e' * 64,
+                    snapshot='{}',
+                ),
+                JobRecord(
+                    id='job-failed',
+                    source_id='source-failed',
+                    kind='filesystem_scan',
+                    state='completed',
+                    created_at=timestamp,
+                ),
+                JobRecord(
+                    id='job-never',
+                    source_id='source-never',
+                    kind='filesystem_scan',
+                    state='completed',
+                    created_at=timestamp,
+                ),
+                JobRecord(
+                    id='job-success',
+                    source_id='source-success',
+                    kind='filesystem_scan',
+                    state='completed',
+                    created_at=timestamp,
+                ),
+            )
+        )
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the operator retries one failed source and then requests the bulk provider retry.
+    single = client.post('/api/library/records/record-retry/sources/source-failed/provider-retry')
+    bulk = client.post('/api/library/providers/retry')
+
+    # Then: the single source is queued once, and bulk queues only the never-sent source.
+    assert single.status_code == 200
+    assert single.json() == {'source_id': 'source-failed', 'queued': True}
+    assert bulk.status_code == 200
+    assert bulk.json() == {'queued': 1}
+    with Session(engine) as session:
+        jobs = {job.source_id: job for job in session.query(JobRecord).all()}
+        assert jobs['source-failed'].state == 'queued'
+        assert jobs['source-failed'].kind == 'provider_retry'
+        assert jobs['source-never'].state == 'queued'
+        assert jobs['source-success'].state == 'completed'
+        assert len(jobs) == 3
+
+    with Session(engine) as session:
+        source = session.get(SourceRecord, 'source-success')
+        assert source is not None
+        source.disappeared_at = timestamp
+        session.commit()
+    disappeared = client.post('/api/library/records/record-retry/sources/source-success/provider-retry')
+    assert disappeared.status_code == 200
+    assert disappeared.json() == {'source_id': 'source-success', 'queued': False}
 
 
 def test_reconciliation_replaces_source_version_without_replacing_record(tmp_path: Path) -> None:

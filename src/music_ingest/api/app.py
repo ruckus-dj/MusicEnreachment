@@ -22,6 +22,8 @@ from music_ingest.library.service import (
     record_metadata_layers,
 )
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
+from music_ingest.persistence.jobs import JobRepository
+from music_ingest.persistence.library import SourceRecordView
 from music_ingest.persistence.models import RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
@@ -51,6 +53,28 @@ class MetadataUpdate(BaseModel):
 
     source_id: str
     tags: dict[str, str]
+
+
+class ProviderRetryResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    queued: int
+
+
+class ProviderRetryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str
+    queued: bool
+
+
+_RETRYABLE_PROVIDER_OUTCOMES = frozenset({'malformed', 'rate_limited', 'timeout', 'unavailable', 'disabled', 'failed'})
+
+
+def _needs_provider_retry(source: SourceRecordView) -> bool:
+    return not source.provider_attempts or any(
+        attempt.outcome.casefold() in _RETRYABLE_PROVIDER_OUTCOMES for attempt in source.provider_attempts
+    )
 
 
 def create_app(
@@ -117,6 +141,30 @@ def create_app(
             session.commit()
             return result
 
+    @app.post('/api/library/providers/retry', response_model=ProviderRetryResult)
+    def retry_failed_providers() -> ProviderRetryResult:
+        now = datetime.now(UTC)
+        queued = 0
+        with session_factory() as session:
+            jobs = JobRepository(session)
+            for record in library_records(session):
+                for source in record.sources:
+                    if source.disappeared_at is not None or not _needs_provider_retry(source):
+                        continue
+                    if jobs.requeue_source(source.id, now):
+                        record_event(
+                            session,
+                            record.id,
+                            'provider_retry_queued',
+                            'queued',
+                            'provider retry requested from review UI',
+                            now,
+                            source.id,
+                        )
+                        queued += 1
+            session.commit()
+        return ProviderRetryResult(queued=queued)
+
     @app.get('/api/library/records')
     def library_catalog() -> JSONResponse:
         with session_factory() as session:
@@ -150,6 +198,10 @@ def create_app(
                                     'format': source.source_path.rsplit('.', maxsplit=1)[-1],
                                     'sha256': source.sha256,
                                     'state': source.intake_state,
+                                    'tag_observations': [
+                                        {'name': tag.tag_name, 'value': tag.value, 'format': tag.format_name}
+                                        for tag in source.tag_observations
+                                    ],
                                     'disappeared_at': source.disappeared_at.isoformat()
                                     if source.disappeared_at is not None
                                     else None,
@@ -278,6 +330,33 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post('/api/library/records/{record_id}/sources/{source_id}/provider-retry')
+    def retry_provider_for_source(record_id: str, source_id: str) -> ProviderRetryResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                if source.disappeared_at is not None:
+                    return ProviderRetryResponse(source_id=source.id, queued=False)
+                now = datetime.now(UTC)
+                queued = JobRepository(session).requeue_source(source.id, now)
+                if queued:
+                    record_event(
+                        session,
+                        record.id,
+                        'provider_retry_queued',
+                        'queued',
+                        'provider retry requested from review UI',
+                        now,
+                        source.id,
+                    )
+                session.commit()
+                return ProviderRetryResponse(source_id=source.id, queued=queued)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
 
     @app.put('/api/library/records/{record_id}/identity')
     def update_library_identity(record_id: str, request: LibraryIdentityUpdate) -> JSONResponse:
