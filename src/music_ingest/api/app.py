@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
@@ -24,7 +26,7 @@ from music_ingest.library.service import (
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.jobs import JobRepository
 from music_ingest.persistence.library import LibraryRecord, SourceRecordView
-from music_ingest.persistence.models import RuntimeSettingRecord
+from music_ingest.persistence.models import JobRecord, RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
 from music_ingest.ui.page import REVIEW_PAGE
@@ -65,6 +67,14 @@ class ProviderRetryResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source_id: str
+    queued: bool
+
+
+class DestinationConflictCleanupResponse(BaseModel):
+    record_id: str
+    source_id: str
+    path: str
+    removed: bool
     queued: bool
 
 
@@ -154,6 +164,7 @@ def create_app(
         return REVIEW_PAGE
 
     @app.get('/favicon.ico')
+    @app.get('/favicon.svg')
     def favicon() -> Response:
         return Response(status_code=204)
 
@@ -179,6 +190,31 @@ def create_app(
             result = reconcile_incoming(session, incoming_root)
             session.commit()
             return result
+
+    def destination_conflict(
+        session: Session, record: LibraryRecord, source: SourceRecordView
+    ) -> dict[str, str] | None:
+        if media_root is None:
+            return None
+        publications = [item for item in record.publications if item.state == 'current']
+        if any(Path(item.path).resolve().exists() for item in publications):
+            return None
+        jobs = list(
+            session.scalars(
+                select(JobRecord)
+                .where(JobRecord.source_id == source.id, JobRecord.kind.not_in(['provider_analysis', 'final_publish']))
+                .order_by(JobRecord.created_at.desc())
+            ).all()
+        )
+        if not jobs:
+            return None
+        candidate = (media_root.resolve() / jobs[0].id).resolve()
+        if candidate == media_root.resolve() or media_root.resolve() not in candidate.parents or not candidate.exists():
+            return None
+        ownership = (
+            'managed' if any(Path(item.path).resolve().parent == candidate for item in publications) else 'unmanaged'
+        )
+        return {'path': str(candidate), 'ownership': ownership, 'reason': 'media destination already exists'}
 
     @app.post('/api/library/providers/retry', response_model=ProviderRetryResult)
     def retry_failed_providers() -> ProviderRetryResult:
@@ -355,10 +391,72 @@ def create_app(
                             }
                             for event in record.events
                         ],
+                        'destination_conflict': next(
+                            (
+                                conflict
+                                for source in record.sources
+                                if (conflict := destination_conflict(session, record, source)) is not None
+                            ),
+                            None,
+                        ),
                     }
                 )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
+
+    @app.post(
+        '/api/library/records/{record_id}/sources/{source_id}/destination-conflict/cleanup',
+        response_model=DestinationConflictCleanupResponse,
+    )
+    def cleanup_destination_conflict(record_id: str, source_id: str) -> DestinationConflictCleanupResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                conflict = destination_conflict(session, record, source)
+                if conflict is None:
+                    raise HTTPException(status_code=404, detail='destination conflict not found')
+                if conflict['ownership'] == 'managed':
+                    raise HTTPException(status_code=409, detail='managed destination must be replaced by the worker')
+                path = Path(conflict['path'])
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                job = session.scalar(
+                    select(JobRecord)
+                    .where(
+                        JobRecord.source_id == source.id, JobRecord.kind.not_in(['provider_analysis', 'final_publish'])
+                    )
+                    .order_by(JobRecord.created_at.desc())
+                )
+                queued = job is not None
+                if job is not None:
+                    job.state = 'queued'
+                    job.next_attempt_at = None
+                    job.failure_reason = None
+                now = datetime.now(UTC)
+                record_event(
+                    session,
+                    record.id,
+                    'destination_conflict_cleaned',
+                    'queued' if queued else 'needs_review',
+                    'unmanaged destination removed by review action',
+                    now,
+                    source.id,
+                )
+                session.commit()
+                return DestinationConflictCleanupResponse(
+                    record_id=record.id,
+                    source_id=source.id,
+                    path=str(path),
+                    removed=True,
+                    queued=queued,
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
 
     @app.post('/api/library/records/{record_id}/sources/{source_id}', status_code=status.HTTP_204_NO_CONTENT)
     def attach_library_source(record_id: str, source_id: str) -> Response:
