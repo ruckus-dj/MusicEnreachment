@@ -25,6 +25,15 @@ workspace is consumed by atomic publication and is not a second media library.
    docker compose up --build --wait
    ```
 
+The Compose network has IPv6 enabled so the application can use MusicBrainz's
+IPv6 endpoint when the Docker host has a working IPv6 route. If the stand was
+already running, recreate its network after this change:
+
+```sh
+docker compose down
+docker compose up --build --wait
+```
+
 2. Compose starts PostgreSQL, runs Alembic during API startup, starts the
    in-process worker, configures and tests Lidarr's `music-ingest` webhook, and
    exposes the ready API at <http://localhost:8787/healthz>.

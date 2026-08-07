@@ -105,5 +105,9 @@ services:
       - ./scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro
     restart: "no"
 
+networks:
+  default:
+    enable_ipv6: true
+
 volumes:
   postgres-data:
