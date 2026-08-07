@@ -215,7 +215,7 @@ def test_lidarr_download_when_malformed_source_is_claimed_quarantines_its_webhoo
     assert job.state == 'quarantined'
     assert source_path.read_bytes() == b'not a FLAC container'
     assert job.source_id is not None
-    assert job.failure_reason == 'structural FLAC inspection failed'
+    assert job.failure_reason == 'malformed FLAC container'
     assert not (tmp_path / 'quarantine').exists()
 
 

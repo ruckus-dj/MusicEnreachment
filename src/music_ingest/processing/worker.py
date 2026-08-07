@@ -7,17 +7,19 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
-from typing import final
+from typing import final, override
 
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
 from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
-from music_ingest.inspectors.flac import InspectionState, inspect_flac
-from music_ingest.intake.service import SourceId
+from music_ingest.inspectors._tool import ToolState
+from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
+from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
 from music_ingest.library.service import (
     append_metadata_revision,
+    attach_source,
     ensure_source_record,
     record_event,
     record_publication,
@@ -71,12 +73,20 @@ from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
     publish_release,
-    replace_published_audio,
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
 LOGGER = logging.getLogger(__name__)
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingInfrastructureError(Exception):
+    reason: str
+
+    @override
+    def __str__(self) -> str:
+        return self.reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,10 +155,10 @@ class ProcessingWorker:
             return False
         try:
             self._process(claimed, now)
-        except ValueError as error:
-            self._quarantine_invalid_claim(claimed, str(error), now)
         except MetadataWriteError as error:
-            self._quarantine_invalid_claim(claimed, str(error), now)
+            self._retry_claim(claimed, str(error), now)
+        except ProcessingInfrastructureError as error:
+            self._retry_claim(claimed, str(error), now)
         except (
             OSError,
             PublicationError,
@@ -156,22 +166,11 @@ class ProcessingWorker:
             CalledProcessError,
             TimeoutExpired,
         ) as error:
-            LOGGER.warning(
-                'processing job retry',
-                extra={'job_id': claimed.job.id, 'attempt': claimed.attempt.attempt_number},
-                exc_info=error,
-            )
-            JobRepository(self._session).retry(
-                claimed,
-                datetime.now(UTC),
-                self._config.retry_delay,
-                self._config.max_attempts,
-                str(error),
-            )
-            source = self._session.get(SourceRecord, claimed.job.source_id)
-            if source is not None:
-                record = ensure_source_record(self._session, source, now)
-                record_event(self._session, record.id, 'processing_retry', 'retrying', str(error), now, source.id)
+            self._retry_claim(claimed, str(error), now, error)
+        except ValueError as error:
+            self._retry_claim(claimed, str(error), now, error)
+        except Exception as error:  # noqa: BLE001
+            self._retry_claim(claimed, 'unexpected processing error', now, error)
         finally:
             self._discard_staging(claimed.job.id)
         return True
@@ -195,14 +194,21 @@ class ProcessingWorker:
             self._quarantine(claimed, source, 'source path is outside incoming FLAC boundary', now)
             return
         if self._changed(source, source_path):
-            self._quarantine(claimed, source, 'source changed after intake', now)
+            self._requeue_changed_source(claimed, source, source_path, now)
             return
         inspection = inspect_flac(
             source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
         )
-        if inspection.state is InspectionState.QUARANTINE:
-            self._quarantine(claimed, source, 'structural FLAC inspection failed', now)
+        malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
+        if malformed:
+            self._invalid_audio(claimed, source, 'malformed FLAC container', now)
             return
+        has_repairable_wrapper = any(finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings)
+        if inspection.flac_test.state is ToolState.FAILED and not has_repairable_wrapper:
+            self._invalid_audio(claimed, source, 'FLAC decoder rejected audio', now)
+            return
+        if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
+            raise ProcessingInfrastructureError(f'flac inspection unavailable: {inspection.flac_test.state}')
         _ = fingerprint_source(
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
@@ -243,19 +249,20 @@ class ProcessingWorker:
                 )
             )
         self._stage_artwork(source_path, staged_release)
-        if not any(path.name.casefold() in {'cover.jpg', 'cover.webp'} for path in staged_release.iterdir()):
-            source.intake_state = 'needs_review'
+        self._session.refresh(source)
+        if source.intake_state == 'replaced':
             record_event(
                 self._session,
                 record.id,
-                'publication_blocked',
-                'needs_review',
-                'release artwork is missing',
+                'source_generation_superseded',
+                'superseded',
+                'source was replaced while processing; newer generation is queued',
                 now,
                 source.id,
             )
             JobRepository(self._session).succeed(claimed, now)
             return
+        current_publication = next((item for item in record.publications if item.state == 'current'), None)
         result = publish_release(
             PublicationRequest(
                 staged_release,
@@ -263,6 +270,8 @@ class ProcessingWorker:
                 self._config.media_root,
                 (source_path,),
                 require_canonical_tags=False,
+                destination_release=Path(current_publication.path).parent if current_publication is not None else None,
+                replace_existing=current_publication is not None,
             )
         )
         final_revision = append_metadata_revision(
@@ -293,6 +302,16 @@ class ProcessingWorker:
         )
         if providers_enabled:
             _ = JobRepository(self._session).enqueue(source.id, 'provider_analysis', now)
+        if not written.tags:
+            record_event(
+                self._session,
+                record.id,
+                'metadata_required',
+                'analyzing' if providers_enabled else 'needs_review',
+                'audio published without usable metadata',
+                now,
+                source.id,
+            )
         JobRepository(self._session).succeed(claimed, now)
 
     def _process_provider_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
@@ -301,6 +320,11 @@ class ProcessingWorker:
         inspection = inspect_flac(
             source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
         )
+        if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
+            self._invalid_audio(claimed, source, 'malformed FLAC container', now)
+            return
+        if inspection.flac_test.state is not ToolState.SUCCESS:
+            raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
         fingerprint = fingerprint_source(
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
@@ -403,12 +427,10 @@ class ProcessingWorker:
             self._config.media_root,
             (source_path,),
             require_canonical_tags=False,
+            destination_release=Path(publication.path).parent if publication is not None else None,
+            replace_existing=publication is not None,
         )
-        if publication is None:
-            published = publish_release(request)
-        else:
-            target_audio = Path(publication.path)
-            published = replace_published_audio(request, target_audio)
+        published = publish_release(request)
         audio_path = next(published.published_release.glob('*.flac'))
         _ = record_publication(
             self._session,
@@ -590,6 +612,71 @@ class ProcessingWorker:
             return
         _ = shutil.copy2(artwork, staged_release / artwork.name)
 
+    def _retry_claim(
+        self,
+        claimed: ClaimedJob,
+        reason: str,
+        now: datetime,
+        error: BaseException | None = None,
+    ) -> None:
+        LOGGER.warning(
+            'processing job retry',
+            extra={'job_id': claimed.job.id, 'attempt': claimed.attempt.attempt_number},
+            exc_info=error,
+        )
+        repository = JobRepository(self._session)
+        repository.retry(
+            claimed,
+            datetime.now(UTC),
+            self._config.retry_delay,
+            self._config.max_attempts,
+            reason,
+        )
+        source = self._session.get(SourceRecord, claimed.job.source_id)
+        if source is None:
+            return
+        record = ensure_source_record(self._session, source, now)
+        blocked = claimed.job.state == 'blocked_infrastructure'
+        record_event(
+            self._session,
+            record.id,
+            'processing_blocked' if blocked else 'processing_retry',
+            'blocked_infrastructure' if blocked else 'retrying',
+            reason,
+            now,
+            source.id,
+        )
+
+    def _requeue_changed_source(self, claimed: ClaimedJob, source: SourceRecord, path: Path, now: datetime) -> None:
+        record = ensure_source_record(self._session, source, now)
+        origin = Origin.LIDARR if source.origin == Origin.LIDARR.value else Origin.MANUAL
+        replacement = intake_source(
+            self._session,
+            IntakeRequest(
+                source_path=path,
+                origin=origin,
+                duration_seconds=source.duration_seconds,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        replacement_source = self._session.get(SourceRecord, replacement.source_id)
+        if replacement_source is None:
+            raise ProcessingInfrastructureError('changed source replacement was not persisted')
+        orphan_record = replacement_source.library_record
+        _ = attach_source(self._session, replacement_source.id, record.id, reason='source_replaced', now=now)
+        if orphan_record is not None and orphan_record.id != record.id:
+            self._session.delete(orphan_record)
+        source.intake_state = 'replaced'
+        claimed.attempt.state = 'succeeded'
+        claimed.attempt.finished_at = now
+        claimed.job.state = 'superseded'
+        claimed.job.next_attempt_at = None
+        _ = JobRepository(self._session).enqueue(replacement.source_id, 'filesystem_scan', now)
+
     def _quarantine(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
         source.intake_state = 'quarantined'
         claimed.job.failure_reason = reason
@@ -597,10 +684,9 @@ class ProcessingWorker:
         record_event(self._session, record.id, 'processing_quarantined', 'quarantined', reason, now, source.id)
         JobRepository(self._session).quarantine(claimed, now)
 
-    def _quarantine_invalid_claim(self, claimed: ClaimedJob, reason: str, now: datetime) -> None:
-        source_id = claimed.job.source_id
-        source = self._session.get(SourceRecord, source_id) if source_id is not None else None
-        if source is None:
-            JobRepository(self._session).quarantine(claimed, now)
-            return
-        self._quarantine(claimed, source, reason, now)
+    def _invalid_audio(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
+        source.intake_state = 'invalid_audio'
+        claimed.job.failure_reason = reason
+        record = ensure_source_record(self._session, source, now)
+        record_event(self._session, record.id, 'invalid_audio', 'invalid_audio', reason, now, source.id)
+        JobRepository(self._session).quarantine(claimed, now)

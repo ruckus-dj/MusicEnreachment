@@ -160,6 +160,44 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
     assert 'GENRE=Hip Hop; Alternative Rock' in tags.stdout
 
 
+def test_worker_when_unexpected_processing_error_retries_without_quarantining_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a valid source with a queued initial job.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(
+            JobRecord(
+                id='job-unexpected', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC)
+            )
+        )
+        session.commit()
+
+    def fail_unexpected(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError('unexpected processing failure')
+
+    monkeypatch.setattr(ProcessingWorker, '_process', fail_unexpected)
+
+    # When: the worker encounters an exception outside its typed processing errors.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: the source stays valid and the job remains retryable.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'job-unexpected')
+        source = session.get(SourceRecord, job.source_id) if job is not None else None
+        assert job is not None and job.state == 'queued'
+        assert source is not None and source.intake_state == 'discovered'
+        assert source.library_record is not None
+        assert source.library_record.events[-1].kind == 'processing_retry'
+
+
 def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path: Path) -> None:
     # Given: an import with both providers configured and durable provider schedules.
     config = replace(
@@ -253,14 +291,14 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: the source is reviewable, the job is complete, and no publication exists without artwork.
+        # Then: the source is reviewable, the job is complete, and audio is published without usable metadata.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-tagless')
         assert job is not None and job.state == 'completed'
         source = session.get(SourceRecord, job.source_id)
-        assert source is not None and source.intake_state == 'needs_review'
-        assert source.library_publications == []
-        assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
+        assert source is not None and source.intake_state == 'present'
+        assert len(source.library_publications) == 1
+        assert source.library_record is not None and source.library_record.processing_state == 'analyzing'
         assert [evidence.state for evidence in source.fingerprints] == ['success']
         assert source.fingerprints[0].fingerprint
         assert source.provider_attempts == []
@@ -269,8 +307,8 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         revisions = {
             revision.layer: json.loads(revision.tags_json) for revision in source.library_record.metadata_revisions
         }
-        assert revisions == {'original': {}}
-    assert not list(config.media_root.rglob('*.flac'))
+        assert revisions == {'original': {}, 'final': {}}
+    assert list(config.media_root.rglob('*.flac'))
 
 
 def test_worker_when_media_root_is_a_symlink_keeps_the_published_job_succeeded(tmp_path: Path) -> None:
@@ -390,7 +428,7 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         assert [attempt.state for attempt in job.attempts] == ['retry_wait', 'succeeded']
 
 
-def test_worker_when_source_tags_cannot_form_a_fallback_queues_review(tmp_path: Path) -> None:
+def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(tmp_path: Path) -> None:
     # Given: a valid FLAC whose observed tags cannot form a canonical fallback.
     config = _config(tmp_path)
     config.incoming_root.mkdir()
@@ -423,13 +461,15 @@ def test_worker_when_source_tags_cannot_form_a_fallback_queues_review(tmp_path: 
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: the claim is terminal and the source waits for canonical metadata review.
+    # Then: the claim is terminal and observed tags are published for later analysis.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-invalid-tags')
         source = session.get(SourceRecord, job.source_id) if job is not None else None
         assert job is not None and job.state == 'completed'
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
-        assert source is not None and source.intake_state == 'needs_review'
+        assert source is not None and source.intake_state == 'present'
         assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert source.review_decisions == []
-    assert not list(config.media_root.rglob('*.flac'))
+        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
+        assert len(source.library_publications) == 1
+    assert list(config.media_root.rglob('*.flac'))
