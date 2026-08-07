@@ -107,7 +107,7 @@ def test_lidarr_download_when_valid_persists_one_receipt_and_queued_job_on_repla
     assert second.status_code == 202
     assert first.json()['job_id'] == second.json()['job_id']
     assert json.loads(session.scalars(select(WebhookReceiptRecord)).one().payload_json) == payload
-    job = session.scalars(select(JobRecord)).one()
+    job = session.scalars(select(JobRecord).where(JobRecord.kind == 'lidarr_download')).one()
     assert job.kind == 'lidarr_download'
     assert job.state == 'queued'
     assert source.read_bytes() == b'raw source bytes'
@@ -137,10 +137,8 @@ def test_lidarr_download_when_valid_flac_reaches_the_worker_through_its_durable_
     source = session.get(SourceRecord, job.source_id)
     assert job.source_id is not None
     assert job.state == 'completed'
-    assert source is not None and source.intake_state == 'needs_review'
-    assert [decision.rationale for decision in source.review_decisions] == [
-        'provider unavailable; original-tag fallback published'
-    ]
+    assert source is not None and source.intake_state == 'present'
+    assert source.review_decisions == []
     assert next(config.media_root.rglob('*.flac')).is_file()
 
 
@@ -185,14 +183,12 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
     # Then: fallback media publishes once and signals review instead of entering retry_wait.
     assert response.status_code == 202
     with Session(engine) as session:
-        job = session.scalars(select(JobRecord)).one()
+        job = session.scalars(select(JobRecord).where(JobRecord.kind == 'lidarr_download')).one()
         source = session.get(SourceRecord, job.source_id)
         assert job.state == 'completed'
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
         assert source is not None
-        assert [decision.rationale for decision in source.review_decisions] == [
-            'provider unavailable; original-tag fallback published'
-        ]
+        assert source.review_decisions == []
     assert next(config.media_root.rglob('*.flac')).is_file()
 
 

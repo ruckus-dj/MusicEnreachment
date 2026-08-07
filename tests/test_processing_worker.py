@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -13,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
-from music_ingest.matching.providers import AcoustIdFixtureProvider
+from music_ingest.matching.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
@@ -129,14 +130,17 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: fallback media is independently published while the source and review evidence remain immutable.
+    # Then: initial final media is independently published before provider analysis.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-1')
         assert job is not None and job.state == 'completed'
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
         source = session.get(SourceRecord, job.source_id)
         assert source is not None
-        assert source.intake_state == 'needs_review'
+        assert source.intake_state == 'present'
+        assert source.review_decisions == []
+        assert source.library_record is not None
+        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
     published = next(config.media_root.rglob('*.flac'))
     assert source_identity == (
         source_path.stat().st_dev,
@@ -154,6 +158,74 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
     assert tags.returncode == 0
     assert 'TITLE=Fixture Track' in tags.stdout
     assert 'GENRE=Hip Hop; Alternative Rock' in tags.stdout
+
+
+def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path: Path) -> None:
+    # Given: an import with both providers configured and durable provider schedules.
+    config = replace(
+        _config(tmp_path),
+        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
+        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+    )
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    _ = (config.incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        source_id = source.id
+        session.add_all(
+            (
+                ProviderScheduleRecord(provider_name='musicbrainz', next_start_at=datetime.now(UTC)),
+                ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)),
+                JobRecord(
+                    id='job-phases',
+                    source_id=source.id,
+                    kind='analyze',
+                    state='queued',
+                    created_at=datetime.now(UTC),
+                ),
+            )
+        )
+        session.commit()
+
+    # When: the worker drains initial import, provider analysis, and final publication jobs.
+    with Session(engine) as session:
+        worker = ProcessingWorker(session, config)
+        assert worker.run_once()
+        session.commit()
+        assert worker.run_once()
+        session.commit()
+        assert worker.run_once()
+        session.commit()
+
+    # Then: the current publication points at the provider-derived final revision and contains its tags.
+    with Session(engine) as session:
+        jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
+        assert [job.kind for job in jobs] == ['analyze', 'provider_analysis', 'final_publish']
+        assert [job.state for job in jobs] == ['completed', 'completed', 'completed']
+        source = session.get(SourceRecord, source_id)
+        assert source is not None and source.library_record is not None
+        revisions = {
+            (item.layer, item.revision): json.loads(item.tags_json) for item in source.library_record.metadata_revisions
+        }
+        assert revisions['original', 1]['ALBUM'] == 'Fixture Album'
+        assert revisions['analyzed', 1]['MUSICBRAINZ_ALBUMID'] == '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
+        assert revisions['final', 2]['ALBUM'] == 'Fixture Release'
+        current = next(item for item in source.library_publications if item.state == 'current')
+        assert current.metadata_revision_id is not None
+        published_path = Path(current.path)
+        tags = run(  # noqa: S603
+            ['metaflac', '--export-tags-to=-', str(published_path)],  # noqa: S607
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        assert tags.returncode == 0
+        assert 'ALBUM=Fixture Release' in tags.stdout
+        assert 'MUSICBRAINZ_ALBUMID=4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c' in tags.stdout
 
 
 def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
@@ -181,7 +253,7 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: the source is reviewable, the job is complete, and no fictional media copy exists.
+    # Then: the source is reviewable, the job is complete, and no publication exists without artwork.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-tagless')
         assert job is not None and job.state == 'completed'
@@ -191,10 +263,13 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert [evidence.state for evidence in source.fingerprints] == ['success']
         assert source.fingerprints[0].fingerprint
-        assert [attempt.provider_name for attempt in source.provider_attempts] == ['musicbrainz', 'acoustid']
-        assert [attempt.outcome for attempt in source.provider_attempts] == ['disabled', 'acoustidmatch']
-        assert [candidate.candidate_key for candidate in source.candidates] == ['f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a']
-        assert [decision.rationale for decision in source.review_decisions] == ['canonical metadata required']
+        assert source.provider_attempts == []
+        assert source.candidates == []
+        assert [decision.rationale for decision in source.review_decisions] == []
+        revisions = {
+            revision.layer: json.loads(revision.tags_json) for revision in source.library_record.metadata_revisions
+        }
+        assert revisions == {'original': {}}
     assert not list(config.media_root.rglob('*.flac'))
 
 
@@ -356,5 +431,5 @@ def test_worker_when_source_tags_cannot_form_a_fallback_queues_review(tmp_path: 
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
         assert source is not None and source.intake_state == 'needs_review'
         assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
-        assert [decision.rationale for decision in source.review_decisions] == ['canonical metadata required']
+        assert source.review_decisions == []
     assert not list(config.media_root.rglob('*.flac'))

@@ -9,16 +9,17 @@ from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import final
 
+from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from music_ingest.config.policies import FieldPolicy, GenrePolicy
+from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
 from music_ingest.inspectors.flac import InspectionState, inspect_flac
 from music_ingest.intake.service import SourceId
 from music_ingest.library.service import (
+    append_metadata_revision,
     ensure_source_record,
     record_event,
-    record_metadata_layers,
     record_publication,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
@@ -53,22 +54,29 @@ from music_ingest.normalize.metadata import (
     MetadataWriteError,
     MetadataWriteRequest,
     write_canonical_metadata,
+    write_observed_metadata,
 )
 from music_ingest.persistence.jobs import ClaimedJob, JobRepository
+from music_ingest.persistence.library import LibraryRecord
 from music_ingest.persistence.models import (
     ArtworkRecord,
     CandidateRecord,
     ProviderAttemptRecord,
-    ReviewDecisionRecord,
     RuntimeSettingRecord,
     SourceRecord,
     SourceTagRecord,
 )
 from music_ingest.processing.metadata import _fallback_metadata, _field_policy, _genre_policy, _hash, _read_tags
-from music_ingest.publication.service import PublicationError, PublicationRequest, publish_release
+from music_ingest.publication.service import (
+    PublicationError,
+    PublicationRequest,
+    publish_release,
+    replace_published_audio,
+)
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
 LOGGER = logging.getLogger(__name__)
+_TAGS_ADAPTER = TypeAdapter(dict[str, str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +95,40 @@ class ProcessingConfig:
     musicbrainz_provider: MusicBrainzProvider | None = None
     acoustid_provider: AcoustIdProvider | None = None
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def _analyzed_tags(
+    tags: tuple[tuple[str, str], ...],
+    provider_result: ProviderEvidenceResult | None,
+    match_result: MatchResult | None,
+) -> dict[str, str]:
+    analyzed = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
+    if provider_result is not None:
+        match provider_result.musicbrainz:
+            case MusicBrainzMatch(candidate=candidate):
+                analyzed['ALBUM'] = candidate.release_title
+                analyzed['ALBUMARTIST'] = candidate.artist_name
+                analyzed['MUSICBRAINZ_ALBUMID'] = candidate.release_mbid
+                if candidate.recording_mbids:
+                    analyzed['MUSICBRAINZ_TRACKID'] = candidate.recording_mbids[0]
+            case _:
+                pass
+        match provider_result.acoustid:
+            case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_TRACKID' not in analyzed:
+                analyzed['MUSICBRAINZ_TRACKID'] = evidence.recording_mbid
+            case _:
+                pass
+    if match_result is not None and match_result.selected_release_mbid is not None:
+        analyzed['MUSICBRAINZ_ALBUMID'] = match_result.selected_release_mbid
+    return analyzed
+
+
+def _apply_match_identity(record: LibraryRecord, match_result: MatchResult | None) -> None:
+    if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
+        return
+    record.match_state = 'matched'
+    record.musicbrainz_release_id = match_result.selected_release_mbid
+    record.musicbrainz_recording_id = match_result.recording_score.candidate_mbid
 
 
 @final
@@ -135,6 +177,15 @@ class ProcessingWorker:
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+        if claimed.job.kind in {'provider_analysis', 'provider_retry'}:
+            self._process_provider_analysis(claimed, now)
+            return
+        if claimed.job.kind == 'final_publish':
+            self._process_final_publish(claimed, now)
+            return
+        self._process_initial(claimed, now)
+
+    def _process_initial(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
         source_path = Path(source.source_path).resolve(strict=True)
         valid_source = source_path.suffix.casefold() == '.flac' and source_path.is_relative_to(
@@ -152,7 +203,7 @@ class ProcessingWorker:
         if inspection.state is InspectionState.QUARANTINE:
             self._quarantine(claimed, source, 'structural FLAC inspection failed', now)
             return
-        fingerprint = fingerprint_source(
+        _ = fingerprint_source(
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
             fpcalc_command=self._config.fpcalc_command,
@@ -160,35 +211,10 @@ class ProcessingWorker:
         )
         tags = _read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
         self._capture_observations(source, source_path, tags)
-        provider_result = self._lookup_providers(tags, fingerprint, now, claimed.job.kind == 'provider_retry')
-        if provider_result is not None:
-            self._capture_provider_evidence(source, provider_result)
-        match_result = self._resolve_provider_match(source, tags, provider_result)
+        original_tags = dict(tags)
         metadata = _fallback_metadata(tags)
-        if metadata is None:
-            source.intake_state = 'needs_review'
-            if not source.review_decisions:
-                source.review_decisions.append(
-                    ReviewDecisionRecord(state='needs_review', rationale='canonical metadata required')
-                )
-            record = ensure_source_record(self._session, source, now)
-            record_event(
-                self._session,
-                record.id,
-                'metadata_required',
-                'needs_review',
-                'canonical metadata required',
-                now,
-                source.id,
-            )
-            JobRepository(self._session).succeed(claimed, now)
-            return
-        if match_result is not None and match_result.decision is MatchDecision.AUTO_SELECTED:
-            metadata = replace(
-                metadata,
-                source=CanonicalSource.VERIFIED_RELEASE,
-                musicbrainz_album_id=match_result.selected_release_mbid,
-            )
+        record = ensure_source_record(self._session, source, now)
+        _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
         staged_release = self._staging_directory(claimed.job.id)
         sanitized_path = staged_release / '.sanitized.flac'
         _ = sanitize_flac(
@@ -197,64 +223,204 @@ class ProcessingWorker:
             )
         )
         output_path = staged_release / source_path.name
-        written = write_canonical_metadata(
-            MetadataWriteRequest(
-                sanitized_path,
-                output_path,
-                staged_release,
-                metadata,
-                self._config.field_policy or _field_policy(),
-                self._config.genre_policy or _genre_policy(metadata.genres),
-                self._config.metaflac_command,
-                self._config.timeout_seconds,
+        if metadata is None:
+            observed = write_observed_metadata(
+                sanitized_path, tags, self._config.metaflac_command, self._config.timeout_seconds
             )
-        )
-        sanitized_path.unlink()
+            _ = sanitized_path.rename(output_path)
+            written = replace(observed, output_path=output_path)
+        else:
+            written = write_canonical_metadata(
+                MetadataWriteRequest(
+                    sanitized_path,
+                    output_path,
+                    staged_release,
+                    metadata,
+                    self._config.field_policy or _field_policy(),
+                    self._config.genre_policy or _genre_policy(metadata.genres),
+                    self._config.metaflac_command,
+                    self._config.timeout_seconds,
+                )
+            )
         self._stage_artwork(source_path, staged_release)
+        if not any(path.name.casefold() in {'cover.jpg', 'cover.webp'} for path in staged_release.iterdir()):
+            source.intake_state = 'needs_review'
+            record_event(
+                self._session,
+                record.id,
+                'publication_blocked',
+                'needs_review',
+                'release artwork is missing',
+                now,
+                source.id,
+            )
+            JobRepository(self._session).succeed(claimed, now)
+            return
         result = publish_release(
             PublicationRequest(
                 staged_release,
                 self._config.staging_root,
                 self._config.media_root,
                 (source_path,),
+                require_canonical_tags=False,
             )
         )
-        library_record = ensure_source_record(self._session, source, now)
-        metadata_revisions = record_metadata_layers(
-            self._session,
-            library_record.id,
-            source.id,
-            dict(tags),
-            dict(written.tags),
-            dict(written.tags),
-            now,
+        final_revision = append_metadata_revision(
+            self._session, record.id, source.id, 'final', dict(written.tags), 'worker', now
         )
         audio_path = next(result.published_release.glob('*.flac'))
-        record_publication(
+        _ = record_publication(
             self._session,
-            library_record.id,
+            record.id,
             source.id,
             audio_path,
             _hash(audio_path),
-            metadata_revisions[-1].id,
+            final_revision.id,
             now,
         )
-        source.intake_state = 'needs_review'
-        if not source.review_decisions:
-            source.review_decisions.append(
-                ReviewDecisionRecord(
-                    state='needs_review', rationale='provider unavailable; original-tag fallback published'
-                )
-            )
+        source.intake_state = 'present'
+        providers_enabled = self._config.musicbrainz_provider is not None or self._config.acoustid_provider is not None
         record_event(
             self._session,
-            library_record.id,
-            'publication_ready_for_review',
-            'needs_review',
-            'provider unavailable; original-tag fallback published',
+            record.id,
+            'publication_ready_for_analysis' if providers_enabled else 'publication_ready_for_review',
+            'analyzing' if providers_enabled else 'needs_review',
+            'initial final metadata published; provider analysis queued'
+            if providers_enabled
+            else 'initial final metadata published; no providers configured',
             now,
             source.id,
         )
+        if providers_enabled:
+            _ = JobRepository(self._session).enqueue(source.id, 'provider_analysis', now)
+        JobRepository(self._session).succeed(claimed, now)
+
+    def _process_provider_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
+        source = self._source(claimed)
+        source_path = Path(source.source_path).resolve(strict=True)
+        inspection = inspect_flac(
+            source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
+        )
+        fingerprint = fingerprint_source(
+            self._session,
+            FingerprintRequest(SourceId(source.id), source_path, inspection),
+            fpcalc_command=self._config.fpcalc_command,
+            timeout_seconds=self._config.timeout_seconds,
+        )
+        tags = _read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
+        provider_result = self._lookup_providers(tags, fingerprint, now, force_refresh=True)
+        if provider_result is None:
+            raise ValueError('provider analysis has no configured providers')
+        self._capture_provider_evidence(source, provider_result)
+        match_result = self._resolve_provider_match(source, tags, provider_result)
+        analyzed_tags = _analyzed_tags(tags, provider_result, match_result)
+        record = ensure_source_record(self._session, source, now)
+        source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
+        if analyzed_tags == source_tags:
+            record_event(
+                self._session,
+                record.id,
+                'provider_analysis_unavailable',
+                'needs_review',
+                'providers returned no usable metadata',
+                now,
+                source.id,
+            )
+            JobRepository(self._session).succeed(claimed, now)
+            return
+        analyzed_revision = append_metadata_revision(
+            self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
+        )
+        final_revision = append_metadata_revision(
+            self._session, record.id, source.id, 'final', analyzed_tags, 'provider', now
+        )
+        _apply_match_identity(record, match_result)
+        _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+        record_event(
+            self._session,
+            record.id,
+            'provider_analysis_ready',
+            'publishing',
+            f'provider analysis revision {analyzed_revision.id} is ready',
+            now,
+            source.id,
+        )
+        JobRepository(self._session).succeed(claimed, now)
+
+    def _process_final_publish(self, claimed: ClaimedJob, now: datetime) -> None:
+        source = self._source(claimed)
+        record = ensure_source_record(self._session, source, now)
+        revision = next(
+            (
+                item
+                for item in reversed(record.metadata_revisions)
+                if item.layer == 'final'
+                and (claimed.job.metadata_revision_id is None or item.id == claimed.job.metadata_revision_id)
+            ),
+            None,
+        )
+        if revision is None:
+            raise ValueError('final metadata revision is missing')
+        final_tags = _TAGS_ADAPTER.validate_json(revision.tags_json)
+        source_path = Path(source.source_path).resolve(strict=True)
+        staged_release = self._staging_directory(claimed.job.id)
+        sanitized_path = staged_release / '.sanitized.flac'
+        _ = sanitize_flac(
+            FlacSanitizationRequest(
+                source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
+            )
+        )
+        output_path = staged_release / source_path.name
+        metadata = _fallback_metadata(tuple(final_tags.items()), CanonicalSource.REVIEWED_MANUAL)
+        if metadata is None:
+            observed = write_observed_metadata(
+                sanitized_path,
+                tuple(final_tags.items()),
+                self._config.metaflac_command,
+                self._config.timeout_seconds,
+            )
+            _ = sanitized_path.rename(output_path)
+            _ = replace(observed, output_path=output_path)
+        else:
+            _ = write_canonical_metadata(
+                MetadataWriteRequest(
+                    sanitized_path,
+                    output_path,
+                    staged_release,
+                    metadata,
+                    self._config.field_policy or _field_policy(),
+                    self._config.genre_policy or _genre_policy(metadata.genres),
+                    self._config.metaflac_command,
+                    self._config.timeout_seconds,
+                )
+            )
+            sanitized_path.unlink()
+        self._stage_artwork(source_path, staged_release)
+        publication = next((item for item in record.publications if item.state == 'current'), None)
+        request = PublicationRequest(
+            staged_release,
+            self._config.staging_root,
+            self._config.media_root,
+            (source_path,),
+            require_canonical_tags=False,
+        )
+        if publication is None:
+            published = publish_release(request)
+        else:
+            target_audio = Path(publication.path)
+            published = replace_published_audio(request, target_audio)
+        audio_path = next(published.published_release.glob('*.flac'))
+        _ = record_publication(
+            self._session,
+            record.id,
+            source.id,
+            audio_path,
+            _hash(audio_path),
+            revision.id,
+            now,
+        )
+        source.intake_state = 'present'
+        record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
         JobRepository(self._session).succeed(claimed, now)
 
     def _lookup_providers(
