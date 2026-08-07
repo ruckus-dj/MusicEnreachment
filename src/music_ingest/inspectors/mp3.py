@@ -9,6 +9,7 @@ from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
 
 class InspectionState(StrEnum):
     VALID = 'valid'
+    INFRASTRUCTURE = 'infrastructure'
     QUARANTINE = 'quarantine'
 
 
@@ -57,7 +58,13 @@ def inspect_mp3(
         timeout_seconds,
     )
     findings += _tool_findings(ffprobe)
-    state = InspectionState.QUARANTINE if malformed or ffprobe.state is not ToolState.SUCCESS else InspectionState.VALID
+    state = (
+        InspectionState.QUARANTINE
+        if malformed
+        else InspectionState.VALID
+        if ffprobe.state is ToolState.SUCCESS
+        else InspectionState.INFRASTRUCTURE
+    )
     return Mp3InspectionResult(state, findings, version, tag_size, ffprobe)
 
 
