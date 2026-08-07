@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -22,6 +24,8 @@ class PublicationRequest:
     metaflac_command: str = 'metaflac'
     timeout_seconds: float = 30.0
     require_canonical_tags: bool = True
+    destination_release: Path | None = None
+    replace_existing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,15 +52,24 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     source_snapshots = _source_snapshots(request.source_paths)
     audio_paths = _validate_release(staged_release, request)
     _reject_source_hardlinks(audio_paths, source_snapshots)
-    published_release = media_root / relative_release
-    if published_release.exists():
+    published_release = _destination_release(request, media_root, relative_release)
+    if published_release.exists() and not request.replace_existing:
         raise PublicationError('media destination already exists')
     published_release.parent.mkdir(parents=True, exist_ok=True)
+    temporary_release = Path(tempfile.mkdtemp(prefix=f'.{published_release.name}.', dir=published_release.parent))
     try:
-        os.replace(staged_release, published_release)
+        _copy_release(staged_release, temporary_release)
+        copied_audio = _validate_release(temporary_release, request)
+        _reject_source_hardlinks(copied_audio, source_snapshots)
+        _replace_release(temporary_release, published_release)
         _fsync_directory(published_release.parent)
     except OSError as error:
+        shutil.rmtree(temporary_release, ignore_errors=True)
         raise PublicationError('atomic release publication failed') from error
+    except PublicationError:
+        shutil.rmtree(temporary_release, ignore_errors=True)
+        raise
+    shutil.rmtree(staged_release)
     return PublicationResult(published_release=published_release)
 
 
@@ -71,11 +84,17 @@ def replace_published_audio(request: PublicationRequest, target_audio: Path) -> 
     if len(audio_paths) != 1 or target.suffix.casefold() != '.flac':
         raise PublicationError('republish requires one FLAC target')
     _reject_source_hardlinks(audio_paths, source_snapshots)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f'.{target.name}.', dir=target.parent)
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
     try:
-        os.replace(audio_paths[0], target)
+        shutil.copy2(audio_paths[0], temporary_path)
+        os.replace(temporary_path, target)
         _fsync_directory(target.parent)
     except OSError as error:
+        temporary_path.unlink(missing_ok=True)
         raise PublicationError('atomic audio replacement failed') from error
+    shutil.rmtree(staged_release)
     return PublicationResult(published_release=target.parent)
 
 
@@ -85,11 +104,11 @@ def _recover_completed_publication(request: PublicationRequest) -> PublicationRe
     staged_release = request.staged_release.resolve()
     if staged_release == staging_root or staging_root not in staged_release.parents:
         raise PublicationError('release must be nested under controlled staging')
+    relative_release = staged_release.relative_to(staging_root)
+    published_release = _destination_release(request, media_root, relative_release)
     if staged_release.exists():
         return None
-    relative_release = staged_release.relative_to(staging_root)
-    published_release = media_root / relative_release
-    if published_release.is_dir():
+    if published_release.is_dir() and request.replace_existing:
         return PublicationResult(published_release=published_release)
     raise PublicationError('staged release is missing')
 
@@ -102,9 +121,44 @@ def _controlled_roots(request: PublicationRequest) -> tuple[Path, Path, Path]:
         raise PublicationError('publication roots and staged release must be directories')
     if staged_release == staging_root or staging_root not in staged_release.parents:
         raise PublicationError('release must be nested under controlled staging')
-    if staging_root.stat().st_dev != media_root.stat().st_dev:
-        raise PublicationError('staging and media must share a filesystem')
     return staged_release, staging_root, media_root
+
+
+def _destination_release(request: PublicationRequest, media_root: Path, relative_release: Path) -> Path:
+    destination = (request.destination_release or media_root / relative_release).resolve()
+    if destination == media_root or media_root not in destination.parents:
+        raise PublicationError('media destination is outside the media root')
+    if destination.is_symlink():
+        raise PublicationError('media destination cannot be a symlink')
+    return destination
+
+
+def _copy_release(source: Path, destination: Path) -> None:
+    for path in source.rglob('*'):
+        relative = path.relative_to(source)
+        target = destination / relative
+        if path.is_dir():
+            target.mkdir()
+        elif path.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+
+
+def _replace_release(temporary_release: Path, destination: Path) -> None:
+    backup: Path | None = None
+    if destination.exists():
+        backup = destination.with_name(f'.{destination.name}.previous')
+        if backup.exists():
+            raise PublicationError('media destination replacement backup already exists')
+        os.replace(destination, backup)
+    try:
+        os.replace(temporary_release, destination)
+    except OSError:
+        if backup is not None and not destination.exists():
+            os.replace(backup, destination)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup)
 
 
 def _source_snapshots(paths: tuple[Path, ...]) -> tuple[tuple[Path, int, int, str], ...]:
@@ -128,9 +182,10 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
     if not audio_paths:
         raise PublicationError('release has no supported audio')
     artwork = tuple(path for path in paths if path.name.casefold() in {'cover.jpg', 'cover.webp'})
-    if len(artwork) != 1:
-        raise PublicationError('release must contain exactly one external cover')
-    _validate_artwork(artwork[0])
+    if len(artwork) > 1:
+        raise PublicationError('release must contain at most one external cover')
+    if artwork:
+        _validate_artwork(artwork[0])
     for audio_path in audio_paths:
         _validate_flac(audio_path, request)
         _validate_tags(audio_path, request)

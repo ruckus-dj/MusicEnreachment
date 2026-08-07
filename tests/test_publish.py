@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from os import link
 from pathlib import Path
@@ -86,6 +87,29 @@ def test_publish_release_when_complete_exposes_release_without_sidecar_state(tmp
     assert not (tmp_path / 'retention').exists()
 
 
+def test_publish_release_when_destination_exists_recovers_completed_move(tmp_path: Path) -> None:
+    # Given: a validated destination left by an interrupted atomic move and a staged retry.
+    downloads = tmp_path / 'downloads'
+    downloads.mkdir()
+    source = _create_flac(downloads, 'raw.flac')
+    staging = tmp_path / 'staging'
+    release = staging / 'Artist One' / 'Recovery Release (2026)'
+    release.mkdir(parents=True)
+    request = _request(tmp_path, source, release)
+    request = replace(request, replace_existing=True)
+    destination = request.media_root / 'Artist One' / 'Recovery Release (2026)'
+    destination.mkdir(parents=True)
+    _ = _create_flac(release, '01 - Recovery.flac')
+    _ = _create_flac(destination, '01 - Recovery.flac')
+
+    # When: the retry sees the already moved destination.
+    result = publish_release(request)
+
+    # Then: the existing valid destination is returned and the staged retry is removed.
+    assert result.published_release == destination
+    assert not release.exists()
+
+
 def test_publish_release_when_invalid_lrc_rejects_without_partial_media_visibility(tmp_path: Path) -> None:
     # Given: a staged release containing external text that cannot be decoded as UTF-8.
     downloads = tmp_path / 'downloads'
@@ -107,8 +131,8 @@ def test_publish_release_when_invalid_lrc_rejects_without_partial_media_visibili
     assert not (tmp_path / 'media' / 'Artist One' / 'Invalid Release (2026)').exists()
 
 
-def test_publish_release_when_cover_is_missing_retains_staging_without_media_visibility(tmp_path: Path) -> None:
-    # Given: a staged release with canonical audio but no required external artwork.
+def test_publish_release_when_cover_is_missing_publishes_audio_without_media_visibility_gap(tmp_path: Path) -> None:
+    # Given: a staged release with canonical audio and no optional external artwork.
     downloads = tmp_path / 'downloads'
     downloads.mkdir()
     source = _create_flac(downloads, 'raw.flac')
@@ -118,14 +142,14 @@ def test_publish_release_when_cover_is_missing_retains_staging_without_media_vis
     release.mkdir(parents=True)
     _ = _create_flac(release, '01 - Incomplete.flac')
 
-    # When: publication encounters the release missing its required cover component.
-    with pytest.raises(PublicationError, match='exactly one external cover'):
-        _ = publish_release(_request(tmp_path, source, release))
+    # When: publication encounters the release without external artwork.
+    result = publish_release(_request(tmp_path, source, release))
 
-    # Then: staging and source remain intact while no incomplete media directory appears.
-    assert release.exists()
+    # Then: audio is visible immediately while staging is consumed and source stays intact.
+    assert result.published_release == tmp_path / 'media' / 'Artist One' / 'Incomplete Release (2026)'
+    assert (result.published_release / '01 - Incomplete.flac').exists()
+    assert not release.exists()
     assert source_before == (source.stat().st_ino, sha256(source.read_bytes()).hexdigest())
-    assert not (tmp_path / 'media' / 'Artist One' / 'Incomplete Release (2026)').exists()
 
 
 def test_publish_release_when_staged_audio_hardlinks_download_rejects_media(tmp_path: Path) -> None:
