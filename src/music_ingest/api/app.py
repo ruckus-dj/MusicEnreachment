@@ -23,7 +23,7 @@ from music_ingest.library.service import (
 )
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.jobs import JobRepository
-from music_ingest.persistence.library import SourceRecordView
+from music_ingest.persistence.library import LibraryRecord, SourceRecordView
 from music_ingest.persistence.models import RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
@@ -69,6 +69,45 @@ class ProviderRetryResponse(BaseModel):
 
 
 _RETRYABLE_PROVIDER_OUTCOMES = frozenset({'malformed', 'rate_limited', 'timeout', 'unavailable', 'disabled', 'failed'})
+
+
+def _catalog_tags(record: LibraryRecord, source_id: str) -> dict[str, str]:
+    for layer in ('final', 'original'):
+        revision = next(
+            (
+                item
+                for item in reversed(record.metadata_revisions)
+                if item.source_id == source_id and item.layer == layer
+            ),
+            None,
+        )
+        if revision is not None:
+            return json.loads(revision.tags_json)
+    source = next(item for item in record.sources if item.id == source_id)
+    return {tag.tag_name: tag.value for tag in source.tag_observations}
+
+
+def _track_number(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value.split('/', maxsplit=1)[0].strip())
+    except ValueError:
+        return None
+
+
+def _catalog_sort_key(record: LibraryRecord) -> tuple[str, str, int, str, str, str]:
+    source = record.sources[0]
+    tags = _catalog_tags(record, source.id)
+    track_number = _track_number(tags.get('TRACKNUMBER'))
+    return (
+        tags.get('ARTIST', 'Неизвестный исполнитель').strip().casefold(),
+        tags.get('ALBUM', 'Без альбома').strip().casefold(),
+        track_number if track_number is not None else 2**31 - 1,
+        tags.get('TITLE', '').strip().casefold(),
+        record.id,
+        source.id,
+    )
 
 
 def _needs_provider_retry(source: SourceRecordView) -> bool:
@@ -168,7 +207,7 @@ def create_app(
     @app.get('/api/library/records')
     def library_catalog() -> JSONResponse:
         with session_factory() as session:
-            records = library_records(session)
+            records = sorted(library_records(session), key=_catalog_sort_key)
             return JSONResponse(
                 content={
                     'items': [

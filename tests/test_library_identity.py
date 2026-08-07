@@ -15,6 +15,7 @@ from music_ingest.persistence.models import (
     LibraryRecord,
     ProviderAttemptRecord,
     SourceRecord,
+    SourceTagRecord,
 )
 from music_ingest.reconciliation import reconcile_incoming
 
@@ -127,6 +128,47 @@ def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> N
 
     assert identity.status_code == 200
     assert identity.json()['musicbrainz_recording_id'] == '11111111-1111-4111-8111-111111111111'
+
+
+def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "library-order.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    records = (
+        ('record-b', 'source-b', 'Artist B', 'Album 1', 'Track 10', '10'),
+        ('record-a2', 'source-a2', 'Artist A', 'Album 2', 'Track 1', '1'),
+        ('record-a1', 'source-a1', 'Artist A', 'Album 1', 'Track 2', '2'),
+    )
+    with Session(engine) as session:
+        for record_id, source_id, artist, album, title, track_number in records:
+            record = LibraryRecord(id=record_id, created_at=timestamp, updated_at=timestamp)
+            source = SourceRecord(
+                id=source_id,
+                source_path=f'/incoming/{source_id}.flac',
+                device=1,
+                inode=len(source_id),
+                size_bytes=3,
+                sha256=source_id[0] * 64,
+                duration_seconds=180,
+                origin='manual',
+                intake_state='present',
+                library_record=record,
+            )
+            source.tag_observations = [
+                SourceTagRecord(format_name='flac', tag_name='ARTIST', value=artist),
+                SourceTagRecord(format_name='flac', tag_name='ALBUM', value=album),
+                SourceTagRecord(format_name='flac', tag_name='TITLE', value=title),
+                SourceTagRecord(format_name='flac', tag_name='TRACKNUMBER', value=track_number),
+            ]
+            session.add_all((record, source))
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    response = client.get('/api/library/records')
+
+    assert response.status_code == 200
+    assert [item['record_id'] for item in response.json()['items']] == ['record-a1', 'record-a2', 'record-b']
 
 
 def test_provider_retry_api_requeues_failed_and_missing_provider_work_without_duplicate_jobs(tmp_path: Path) -> None:
