@@ -160,7 +160,7 @@ class ProcessingWorker:
         )
         tags = _read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
         self._capture_observations(source, source_path, tags)
-        provider_result = self._lookup_providers(tags, fingerprint, now)
+        provider_result = self._lookup_providers(tags, fingerprint, now, claimed.job.kind == 'provider_retry')
         if provider_result is not None:
             self._capture_provider_evidence(source, provider_result)
         match_result = self._resolve_provider_match(source, tags, provider_result)
@@ -258,12 +258,20 @@ class ProcessingWorker:
         JobRepository(self._session).succeed(claimed, now)
 
     def _lookup_providers(
-        self, tags: tuple[tuple[str, str], ...], fingerprint: FingerprintResult, now: datetime
+        self,
+        tags: tuple[tuple[str, str], ...],
+        fingerprint: FingerprintResult,
+        now: datetime,
+        force_refresh: bool = False,
     ) -> ProviderEvidenceResult | None:
         values = {name: value for name, value in tags}
         query = f'artist:{values["ARTIST"]} release:{values["ALBUM"]}' if {'ARTIST', 'ALBUM'} <= values.keys() else ''
         musicbrainz = self._config.musicbrainz_provider if query else None
-        acoustid = self._config.acoustid_provider if fingerprint.fingerprint is not None else None
+        acoustid = (
+            self._config.acoustid_provider
+            if fingerprint.fingerprint is not None and fingerprint.duration_seconds is not None
+            else None
+        )
         if musicbrainz is None and acoustid is None:
             return None
         return ProviderEvidenceService(self._session, musicbrainz, acoustid).lookup(
@@ -273,6 +281,10 @@ class ProcessingWorker:
                 fingerprint.fingerprint,
                 FixtureCase.SUCCESS if acoustid is not None else None,
                 duration_seconds=fingerprint.duration_seconds,
+                force_refresh=force_refresh,
+                release_title=values.get('ALBUM'),
+                acoustid_confidence_threshold=self._confidence_threshold(),
+                artist_name=values.get('ARTIST'),
             ),
             now,
         )
