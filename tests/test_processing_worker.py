@@ -250,6 +250,9 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
         }
         assert revisions['original', 1]['ALBUM'] == 'Fixture Album'
         assert revisions['analyzed', 1]['MUSICBRAINZ_ALBUMID'] == '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
+        assert 'TITLE' not in revisions['analyzed', 1]
+        assert 'GENRE' not in revisions['analyzed', 1]
+        assert revisions['final', 2]['TITLE'] == revisions['original', 1]['TITLE']
         assert revisions['final', 2]['ALBUM'] == 'Fixture Release'
         current = next(item for item in source.library_publications if item.state == 'current')
         assert current.metadata_revision_id is not None

@@ -108,29 +108,53 @@ class ProcessingConfig:
 
 
 def _analyzed_tags(
-    tags: tuple[tuple[str, str], ...],
     provider_result: ProviderEvidenceResult | None,
     match_result: MatchResult | None,
 ) -> dict[str, str]:
-    analyzed = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
-    if provider_result is not None:
-        match provider_result.musicbrainz:
-            case MusicBrainzMatch(candidate=candidate):
-                analyzed['ALBUM'] = candidate.release_title
-                analyzed['ALBUMARTIST'] = candidate.artist_name
-                analyzed['MUSICBRAINZ_ALBUMID'] = candidate.release_mbid
-                if candidate.recording_mbids:
-                    analyzed['MUSICBRAINZ_TRACKID'] = candidate.recording_mbids[0]
-            case _:
-                pass
-        match provider_result.acoustid:
-            case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_TRACKID' not in analyzed:
-                analyzed['MUSICBRAINZ_TRACKID'] = evidence.recording_mbid
-            case _:
-                pass
+    analyzed: dict[str, str] = {}
+    if provider_result is None:
+        return analyzed
+    match provider_result.musicbrainz:
+        case MusicBrainzMatch(candidate=candidate):
+            analyzed['ALBUM'] = candidate.release_title
+            analyzed['ARTIST'] = candidate.artist_name
+            analyzed['ALBUMARTIST'] = candidate.artist_name
+            analyzed['MUSICBRAINZ_ALBUMID'] = candidate.release_mbid
+            if candidate.recording_mbids:
+                analyzed['MUSICBRAINZ_TRACKID'] = candidate.recording_mbids[0]
+        case _:
+            pass
+    match provider_result.acoustid:
+        case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_TRACKID' not in analyzed:
+            analyzed['MUSICBRAINZ_TRACKID'] = evidence.recording_mbid
+        case _:
+            pass
     if match_result is not None and match_result.selected_release_mbid is not None:
         analyzed['MUSICBRAINZ_ALBUMID'] = match_result.selected_release_mbid
     return analyzed
+
+
+def _final_tags(
+    source_tags: dict[str, str],
+    analyzed_tags: dict[str, str],
+    provider_result: ProviderEvidenceResult | None,
+    match_result: MatchResult | None,
+) -> dict[str, str]:
+    final = dict(source_tags)
+    musicbrainz_match = False
+    if provider_result is not None:
+        match provider_result.musicbrainz:
+            case MusicBrainzMatch():
+                musicbrainz_match = True
+            case _:
+                pass
+    verified_analysis = musicbrainz_match or (
+        match_result is not None and match_result.decision is MatchDecision.AUTO_SELECTED
+    )
+    for name, value in analyzed_tags.items():
+        if verified_analysis or name.startswith('MUSICBRAINZ_'):
+            final[name] = value
+    return final
 
 
 def _apply_match_identity(record: LibraryRecord, match_result: MatchResult | None) -> None:
@@ -337,10 +361,10 @@ class ProcessingWorker:
             raise ValueError('provider analysis has no configured providers')
         self._capture_provider_evidence(source, provider_result)
         match_result = self._resolve_provider_match(source, tags, provider_result)
-        analyzed_tags = _analyzed_tags(tags, provider_result, match_result)
+        analyzed_tags = _analyzed_tags(provider_result, match_result)
         record = ensure_source_record(self._session, source, now)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
-        if analyzed_tags == source_tags:
+        if not analyzed_tags:
             record_event(
                 self._session,
                 record.id,
@@ -355,8 +379,9 @@ class ProcessingWorker:
         analyzed_revision = append_metadata_revision(
             self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
         )
+        final_tags = _final_tags(source_tags, analyzed_tags, provider_result, match_result)
         final_revision = append_metadata_revision(
-            self._session, record.id, source.id, 'final', analyzed_tags, 'provider', now
+            self._session, record.id, source.id, 'final', final_tags, 'provider', now
         )
         _apply_match_identity(record, match_result)
         _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
