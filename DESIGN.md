@@ -103,3 +103,9 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 ## 9. Accepted Debt
 
 The React bundle is served as a production asset from FastAPI rather than through a separate deployment pipeline. Artwork thumbnails remain icon-based until a media-art endpoint exists; this does not hide metadata or alter navigation. The backend exposes the canonical FLAC tag allowlist; truly arbitrary vendor-specific tags remain intentionally rejected by the existing safety contract.
+
+## 10. Recovery primitives
+
+- `recovery-library-action`: sidebar action for one-click bulk recovery; disabled while a recovery request is active.
+- `destination-replace-action`: inline scoped action inside the error banner; only shown for service-owned destination conflicts and returns to the track state after completion.
+- Both use existing `.secondary`, focus-visible, disabled, and reduced-motion behavior.

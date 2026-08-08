@@ -15,3 +15,4 @@
 .entity-card strong{overflow-wrap:anywhere;text-overflow:clip;white-space:normal}
 @media(min-width:701px) and (max-width:1100px){.library-toolbar .provider-actions{align-items:stretch;flex-direction:column}.library-toolbar .provider-actions>*{width:100%}}
 .hero-copy{max-width:60ch}
+.workflow-banner .destination-replace-action{margin-left:auto;white-space:normal}.sidebar-bottom .recovery-library-action{margin-top:16px;color:color-mix(in srgb,var(--panel) 78%,var(--nav))}.sidebar-bottom .recovery-library-action:hover{color:var(--panel)}
