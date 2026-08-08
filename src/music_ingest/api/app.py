@@ -70,6 +70,23 @@ class ProviderRetryResponse(BaseModel):
     queued: bool
 
 
+class RecoveryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    queued: int
+    skipped: int
+    conflicts: int
+
+
+class SourceRecoveryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    record_id: str
+    source_id: str
+    queued: bool
+    kind: str | None
+
+
 class DestinationConflictCleanupResponse(BaseModel):
     record_id: str
     source_id: str
@@ -211,10 +228,97 @@ def create_app(
         candidate = (media_root.resolve() / jobs[0].id).resolve()
         if candidate == media_root.resolve() or media_root.resolve() not in candidate.parents or not candidate.exists():
             return None
-        ownership = (
-            'managed' if any(Path(item.path).resolve().parent == candidate for item in publications) else 'unmanaged'
-        )
+        ownership = 'managed' if jobs[0].id == candidate.name and jobs[0].kind == 'filesystem_scan' else 'unmanaged'
         return {'path': str(candidate), 'ownership': ownership, 'reason': 'media destination already exists'}
+
+    def queue_source_recovery(
+        session: Session, record: LibraryRecord, source: SourceRecordView, now: datetime
+    ) -> str | None:
+        source_path = Path(source.source_path)
+        if source.disappeared_at is not None or not source_path.is_file():
+            return None
+        current_publication = next((item for item in record.publications if item.state == 'current'), None)
+        final_revision = next(
+            (
+                item
+                for item in reversed(record.metadata_revisions)
+                if item.source_id == source.id and item.layer == 'final'
+            ),
+            None,
+        )
+        if current_publication is None:
+            kind = 'final_publish' if final_revision is not None else 'filesystem_scan'
+        elif record.processing_state == 'publishing' or record.publication_state in {'stale', 'failed'}:
+            kind = 'final_publish'
+        elif record.processing_state != 'complete':
+            kind = 'provider_analysis'
+        else:
+            return None
+        job = JobRepository(session).enqueue(
+            source.id,
+            kind,
+            now,
+            final_revision.id if kind == 'final_publish' and final_revision is not None else None,
+        )
+        if job is None:
+            return None
+        record_event(
+            session,
+            record.id,
+            'manual_recovery_queued',
+            'publishing' if kind == 'final_publish' else 'queued',
+            f'manual recovery queued {kind}',
+            now,
+            source.id,
+        )
+        return kind
+
+    def queue_record_recovery(session: Session, record: LibraryRecord, now: datetime) -> tuple[int, int]:
+        queued = 0
+        conflicts = 0
+        for source in record.sources:
+            if source.disappeared_at is not None:
+                continue
+            if destination_conflict(session, record, source) is not None:
+                conflicts += 1
+                continue
+            if queue_source_recovery(session, record, source, now) is not None:
+                queued += 1
+        return queued, conflicts
+
+    @app.post('/api/library/recovery', response_model=RecoveryResponse)
+    def recover_library() -> RecoveryResponse:
+        now = datetime.now(UTC)
+        queued = skipped = conflicts = 0
+        with session_factory() as session:
+            for record in library_records(session):
+                record_queued, record_conflicts = queue_record_recovery(session, record, now)
+                queued += record_queued
+                conflicts += record_conflicts
+                if record_queued == 0 and record_conflicts == 0:
+                    skipped += 1
+            session.commit()
+        return RecoveryResponse(queued=queued, skipped=skipped, conflicts=conflicts)
+
+    @app.post('/api/library/records/{record_id}/sources/{source_id}/reprocess', response_model=SourceRecoveryResponse)
+    def reprocess_source(record_id: str, source_id: str) -> SourceRecoveryResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                conflict = destination_conflict(session, record, source)
+                if conflict is not None:
+                    raise HTTPException(status_code=409, detail='destination conflict must be replaced first')
+                now = datetime.now(UTC)
+                kind = queue_source_recovery(session, record, source, now)
+                session.commit()
+                return SourceRecoveryResponse(
+                    record_id=record.id, source_id=source.id, queued=kind is not None, kind=kind
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
 
     @app.post('/api/library/providers/retry', response_model=ProviderRetryResult)
     def retry_failed_providers() -> ProviderRetryResult:
@@ -454,6 +558,51 @@ def create_app(
                     path=str(path),
                     removed=True,
                     queued=queued,
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
+
+    @app.post(
+        '/api/library/records/{record_id}/sources/{source_id}/destination-conflict/replace',
+        response_model=DestinationConflictCleanupResponse,
+    )
+    def replace_destination_conflict(record_id: str, source_id: str) -> DestinationConflictCleanupResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                conflict = destination_conflict(session, record, source)
+                if conflict is None:
+                    raise HTTPException(status_code=404, detail='destination conflict not found')
+                if conflict['ownership'] != 'managed':
+                    raise HTTPException(status_code=409, detail='only service-owned destinations can be replaced')
+                path = Path(conflict['path'])
+                if media_root is None or path == media_root.resolve() or media_root.resolve() not in path.parents:
+                    raise HTTPException(status_code=409, detail='destination is outside the media root')
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                now = datetime.now(UTC)
+                kind = queue_source_recovery(session, record, source, now)
+                record_event(
+                    session,
+                    record.id,
+                    'destination_replaced',
+                    'queued' if kind is not None else 'needs_review',
+                    'service-owned destination removed and recovery requested',
+                    now,
+                    source.id,
+                )
+                session.commit()
+                return DestinationConflictCleanupResponse(
+                    record_id=record.id,
+                    source_id=source.id,
+                    path=str(path),
+                    removed=True,
+                    queued=kind is not None,
                 )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error

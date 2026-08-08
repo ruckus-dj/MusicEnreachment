@@ -95,7 +95,7 @@ class JobRepository:
                 active.metadata_revision_id = metadata_revision_id
             return None
         job = JobRecord(
-            id=f'{kind}-{source_id}-{uuid4().hex}',
+            id=f'{kind[:63]}-{uuid4().hex}',
             source_id=source_id,
             kind=kind,
             metadata_revision_id=metadata_revision_id,
