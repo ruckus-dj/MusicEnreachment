@@ -246,7 +246,21 @@ def create_app(
             ),
             None,
         )
-        if current_publication is None:
+        analyzed_revision = next(
+            (
+                item
+                for item in reversed(record.metadata_revisions)
+                if item.source_id == source.id and item.layer == 'analyzed'
+            ),
+            None,
+        )
+        if record.processing_state == 'complete':
+            if analyzed_revision is None or not any(
+                not name.startswith('MUSICBRAINZ_') for name in json.loads(analyzed_revision.tags_json)
+            ):
+                return None
+            kind = 'provider_analysis'
+        elif current_publication is None:
             kind = 'final_publish' if final_revision is not None else 'filesystem_scan'
         elif record.processing_state == 'publishing' or record.publication_state in {'stale', 'failed'}:
             kind = 'final_publish'

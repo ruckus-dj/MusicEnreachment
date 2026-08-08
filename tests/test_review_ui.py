@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
+from music_ingest.library.service import append_metadata_revision
 from music_ingest.persistence.jobs import JobRepository
-from music_ingest.persistence.models import Base, JobRecord, SourceRecord
+from music_ingest.persistence.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord
 
 
 def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_path: Path) -> None:
@@ -161,3 +162,55 @@ def test_job_id_when_source_id_is_sha256_fits_database_column(tmp_path: Path) ->
         # Then: the generated identifier fits jobs.id VARCHAR(96).
         assert job is not None
         assert len(job.id) <= 96
+
+
+def test_library_recovery_when_completed_layer_contains_source_tags_requeues_analysis(tmp_path: Path) -> None:
+    # Given: a completed record whose historical analyzed layer contains copied source tags.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "layer-recovery.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    source_path.write_bytes(b'fixture')
+    published_path = tmp_path / 'published.flac'
+    published_path.write_bytes(b'published')
+    with Session(engine) as session:
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        source = session.get(SourceRecord, intake.source_id)
+        assert source is not None and source.library_record is not None
+        record = source.library_record
+        record.processing_state = 'complete'
+        record.publication_state = 'current'
+        session.add(
+            LibraryPublicationRecord(
+                id='publication-existing',
+                library_record_id=record.id,
+                source_id=source.id,
+                path=str(published_path),
+                format_name='flac',
+                content_sha256='a' * 64,
+                state='current',
+                created_at=datetime.now(UTC),
+            )
+        )
+        append_metadata_revision(
+            session, record.id, source.id, 'analyzed', {'TITLE': 'copied'}, 'provider', datetime.now(UTC)
+        )
+        session.commit()
+
+    # When: the operator requests bulk recovery.
+    response = TestClient(create_app(lambda: Session(engine))).post('/api/library/recovery')
+
+    # Then: the contaminated layer is eligible for a fresh provider analysis.
+    assert response.status_code == 200
+    assert response.json() == {'queued': 1, 'skipped': 0, 'conflicts': 0}
