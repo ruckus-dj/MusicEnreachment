@@ -176,6 +176,9 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         assert source.library_record is not None
         assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
     published = next(config.media_root.rglob('*.flac'))
+    assert published.relative_to(config.media_root).as_posix() == (
+        'Fixture Artist & Fixture Guest/Fixture Album/01 - Fixture Track.flac'
+    )
     assert source_identity == (
         source_path.stat().st_dev,
         source_path.stat().st_ino,

@@ -70,7 +70,14 @@ from music_ingest.persistence.models import (
     SourceRecord,
     SourceTagRecord,
 )
-from music_ingest.processing.metadata import fallback_metadata, field_policy, file_hash, genre_policy, read_tags
+from music_ingest.processing.metadata import (
+    fallback_metadata,
+    field_policy,
+    file_hash,
+    genre_policy,
+    publication_layout,
+    read_tags,
+)
 from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
@@ -274,12 +281,13 @@ class ProcessingWorker:
         _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
         staged_release = self._staging_directory(claimed.job.id)
         sanitized_path = staged_release / '.sanitized.flac'
+        relative_directory, output_name = publication_layout(tags, source_path.name)
         _ = sanitize_flac(
             FlacSanitizationRequest(
                 source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
             )
         )
-        output_path = staged_release / source_path.name
+        output_path = staged_release / output_name
         if metadata is None:
             observed = write_observed_metadata(
                 sanitized_path, tags, self._config.metaflac_command, self._config.timeout_seconds
@@ -299,6 +307,7 @@ class ProcessingWorker:
                     self._config.timeout_seconds,
                 )
             )
+            sanitized_path.unlink()
         self._stage_artwork(source_path, staged_release)
         self._session.refresh(source)
         if source.intake_state == 'replaced':
@@ -314,6 +323,11 @@ class ProcessingWorker:
             JobRepository(self._session).succeed(claimed, now)
             return
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
+        destination_release = (
+            Path(current_publication.path).parent
+            if current_publication is not None
+            else self._config.media_root / relative_directory
+        )
         result = publish_release(
             PublicationRequest(
                 staged_release,
@@ -321,7 +335,7 @@ class ProcessingWorker:
                 self._config.media_root,
                 (source_path,),
                 require_canonical_tags=False,
-                destination_release=Path(current_publication.path).parent if current_publication is not None else None,
+                destination_release=destination_release,
                 replace_existing=current_publication is not None,
             )
         )
@@ -476,12 +490,13 @@ class ProcessingWorker:
         source_path = Path(source.source_path).resolve(strict=True)
         staged_release = self._staging_directory(claimed.job.id)
         sanitized_path = staged_release / '.sanitized.flac'
+        relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
         _ = sanitize_flac(
             FlacSanitizationRequest(
                 source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
             )
         )
-        output_path = staged_release / source_path.name
+        output_path = staged_release / output_name
         metadata = fallback_metadata(tuple(final_tags.items()), CanonicalSource.REVIEWED_MANUAL)
         if metadata is None:
             observed = write_observed_metadata(
@@ -508,13 +523,16 @@ class ProcessingWorker:
             sanitized_path.unlink()
         self._stage_artwork(source_path, staged_release)
         publication = next((item for item in record.publications if item.state == 'current'), None)
+        destination_release = (
+            Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
+        )
         request = PublicationRequest(
             staged_release,
             self._config.staging_root,
             self._config.media_root,
             (source_path,),
             require_canonical_tags=False,
-            destination_release=Path(publication.path).parent if publication is not None else None,
+            destination_release=destination_release,
             replace_existing=publication is not None,
         )
         published = publish_release(request)

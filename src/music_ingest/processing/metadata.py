@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from hashlib import sha256
 from pathlib import Path
 from subprocess import run
@@ -71,6 +72,29 @@ def fallback_metadata(
     )
 
 
+def publication_layout(tags: tuple[tuple[str, str], ...], source_name: str) -> tuple[str, str]:
+    """Return the stable media directory and filename for one source track."""
+    metadata = fallback_metadata(tags)
+    if metadata is None:
+        return 'Unsorted', _safe_component(Path(source_name).name, 'track.flac')
+    artist = _safe_component(' & '.join(metadata.album_artists), 'Unknown Artist')
+    album = _safe_component(metadata.album, 'Unknown Album')
+    title = _safe_component(metadata.title, 'Unknown Track')
+    prefix = (
+        f'{metadata.disc_number:02d}-{metadata.track_number:02d}'
+        if metadata.disc_total > 1
+        else f'{metadata.track_number:02d}'
+    )
+    filename = f'{prefix} - {title}.flac'
+    return f'{artist}/{album}', filename
+
+
+def _safe_component(value: str, fallback: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '-', value)
+    cleaned = re.sub(r'\s*-\s*', ' - ', cleaned).strip(' .')
+    return cleaned or fallback
+
+
 def field_policy() -> FieldPolicy:
     return FieldPolicy(schema_version=1, list_separator='; ', allowed_tag_keys=tuple(sorted(ALLOWED_TAG_KEYS)))
 
@@ -94,6 +118,7 @@ def file_hash(path: Path) -> str:
 
 _read_tags = read_tags
 _fallback_metadata = fallback_metadata
+_publication_layout = publication_layout
 _field_policy = field_policy
 _genre_policy = genre_policy
 _hash = file_hash
