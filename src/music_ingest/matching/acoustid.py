@@ -17,6 +17,7 @@ from music_ingest.matching.providers import (
     Malformed,
     NoMatch,
     RateLimited,
+    RecordingCandidate,
     RecordingEvidence,
     Unavailable,
 )
@@ -74,7 +75,7 @@ class AcoustIdV2Adapter:
             return Unavailable(provenance)
         if response.status_code == 429:
             return RateLimited(provenance)
-        if response.status_code is not None and response.status_code >= 500:
+        if response.status_code >= 500:
             return Unavailable(provenance)
         if response.status_code != 200:
             return Malformed(provenance)
@@ -84,10 +85,15 @@ class AcoustIdV2Adapter:
             return Malformed(provenance)
         if payload.status != 'ok':
             return Malformed(provenance)
-        match payload.results:
-            case (_Result(score=score, recordings=(_Recording(id=recording_mbid), *_)), *_):
-                return AcoustIdMatch(provenance, RecordingEvidence(recording_mbid, score))
+        candidates = tuple(
+            RecordingCandidate(recording.id, result.score)
+            for result in payload.results
+            for recording in result.recordings
+        )
+        match candidates:
+            case (RecordingCandidate(recording_mbid=recording_mbid, score=score), *_):
+                return AcoustIdMatch(provenance, RecordingEvidence(recording_mbid, score, candidates))
             case ():
                 return NoMatch(provenance)
             case _:
-                return Malformed(provenance)
+                raise AssertionError('unreachable AcousticID candidate state')

@@ -62,6 +62,10 @@ class ProviderEvidenceRequest:
     release_title: str | None = None
     acoustid_confidence_threshold: float = 0.7
     artist_name: str | None = None
+    recording_mbid: str | None = None
+    release_mbid: str | None = None
+    run_acoustid: bool = True
+    run_musicbrainz: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,11 +90,36 @@ class ProviderEvidenceService:
     def _lookup_musicbrainz(
         self, request: ProviderEvidenceRequest, acoustid: AcoustIdResult | None, now: datetime
     ) -> MusicBrainzResult:
-        if self.musicbrainz is None or not request.query:
+        if (
+            not request.run_musicbrainz
+            or self.musicbrainz is None
+            or (not request.query and request.recording_mbid is None and request.release_mbid is None)
+        ):
             return Disabled(_provenance('musicbrainz', _disabled_request_hash(), b'', None, now, 'fresh'))
 
-        match acoustid:
-            case AcoustIdMatch(evidence=evidence) if evidence.score >= request.acoustid_confidence_threshold:
+        match request.release_mbid, request.recording_mbid, acoustid:
+            case str() as release_mbid, str() as recording_mbid, _:
+                musicbrainz_request = MusicBrainzLookupRequest(
+                    request.query,
+                    request.musicbrainz_case,
+                    recording_mbid,
+                    request.release_title,
+                    request.artist_name,
+                    release_mbid,
+                )
+                request_hash = sha256(f'release:{release_mbid}'.encode()).hexdigest()
+            case None, str() as recording_mbid, _:
+                musicbrainz_request = MusicBrainzLookupRequest(
+                    request.query,
+                    request.musicbrainz_case,
+                    recording_mbid,
+                    request.release_title,
+                    request.artist_name,
+                )
+                request_hash = sha256(f'recording:{recording_mbid}'.encode()).hexdigest()
+            case None, None, AcoustIdMatch(evidence=evidence) if (
+                evidence.score >= request.acoustid_confidence_threshold
+            ):
                 musicbrainz_request = MusicBrainzLookupRequest(
                     request.query,
                     request.musicbrainz_case,
@@ -111,6 +140,8 @@ class ProviderEvidenceService:
 
     def _lookup_acoustid(self, request: ProviderEvidenceRequest, now: datetime) -> AcoustIdResult | None:
         duration_seconds = request.duration_seconds
+        if not request.run_acoustid:
+            return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
         if duration_seconds is None:
             return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
         match self.acoustid, request.fingerprint, request.acoustid_case:
@@ -256,8 +287,8 @@ def _with_musicbrainz_provenance(result: MusicBrainzResult, provenance: LiveProv
             return MusicBrainzMatch(provenance, candidate)
         case NoMatch():
             return NoMatch(provenance)
-        case Ambiguous():
-            return Ambiguous(provenance)
+        case Ambiguous(candidates=candidates):
+            return Ambiguous(provenance, candidates)
         case Timeout():
             return Timeout(provenance)
         case Malformed():

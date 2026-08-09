@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import os
 import re
+import socket
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,10 +12,12 @@ from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import ClassVar, Final, Protocol, override
+from urllib.parse import urlsplit
 
 import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
 from requests.adapters import HTTPAdapter
+from requests.structures import CaseInsensitiveDict
 from urllib3.util import Retry
 
 LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
@@ -128,6 +133,7 @@ class MusicBrainzLookupRequest:
     recording_mbid: str | None = None
     release_title: str | None = None
     artist_name: str | None = None
+    release_mbid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,12 +151,28 @@ class ReleaseCandidate:
     duration_seconds: int | None = None
     recording_mbids: tuple[str, ...] = ()
     track_mbids: tuple[str, ...] = ()
+    recording_title: str | None = None
+    date: str | None = None
+    original_date: str | None = None
+    track_number: int | None = None
+    track_total: int | None = None
+    disc_number: int | None = None
+    disc_total: int | None = None
+    genres: tuple[str, ...] = ()
+    release_group_mbid: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingCandidate:
+    recording_mbid: str
+    score: float
 
 
 @dataclass(frozen=True, slots=True)
 class RecordingEvidence:
     recording_mbid: str
     score: float
+    candidates: tuple[RecordingCandidate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +195,7 @@ class NoMatch:
 @dataclass(frozen=True, slots=True)
 class Ambiguous:
     provenance: Provenance
+    candidates: tuple[ReleaseCandidate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +357,53 @@ class PublicHttpClient(Protocol):
     def close(self) -> None: ...
 
 
+class _IPv6HTTPSConnection(http.client.HTTPSConnection):
+    sock: socket.socket | ssl.SSLSocket
+
+    @override
+    def connect(self) -> None:
+        address = socket.getaddrinfo(self.host, self.port, socket.AF_INET6, socket.SOCK_STREAM)[0][4]
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(address)
+        self.sock = ssl.create_default_context().wrap_socket(sock, server_hostname=self.host)
+
+
+@dataclass(frozen=True, slots=True)
+class _IPv6FirstClient:
+    session: requests.Session
+
+    def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+        if urlsplit(url).hostname == 'musicbrainz.org':
+            try:
+                return self._get_ipv6(url, headers=headers, timeout=timeout)
+            except OSError:
+                pass
+        return self.session.get(url, headers=headers, timeout=timeout)
+
+    def close(self) -> None:
+        self.session.close()
+
+    @staticmethod
+    def _get_ipv6(url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+        parsed = urlsplit(url)
+        connection = _IPv6HTTPSConnection(parsed.hostname or '', parsed.port or 443, timeout=timeout)
+        try:
+            path = parsed.path or '/'
+            if parsed.query:
+                path = f'{path}?{parsed.query}'
+            connection.request('GET', path, headers=headers)
+            response = connection.getresponse()
+            result = requests.Response()
+            result.status_code = response.status
+            result.headers = CaseInsensitiveDict(dict(response.getheaders()))
+            object.__setattr__(result, '_content', response.read())
+            result.url = url
+            return result
+        finally:
+            connection.close()
+
+
 @dataclass(frozen=True, slots=True)
 class LiveTransport:
     client: PublicHttpClient
@@ -346,7 +416,7 @@ class LiveTransport:
         return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
 
 
-def _default_live_client() -> requests.Session:
+def _default_live_client() -> PublicHttpClient:
     client = requests.Session()
     retries = Retry(
         total=2,
@@ -360,7 +430,7 @@ def _default_live_client() -> requests.Session:
         raise_on_status=False,
     )
     client.mount('https://', HTTPAdapter(max_retries=retries))
-    return client
+    return _IPv6FirstClient(client)
 
 
 def build_live_transport(
