@@ -9,20 +9,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from music_ingest.persistence.base import Base
 
 
-class SourceRecordView(Protocol):
-    id: str
-    source_path: str
-    sha256: str
-    size_bytes: int
-    origin: str
-    intake_state: str
-    library_record_id: str | None
-    disappeared_at: datetime | None
-    tag_observations: list[SourceTagView]
-    fingerprints: list[FingerprintView]
-    provider_attempts: list[ProviderAttemptView]
-
-
 class SourceTagView(Protocol):
     tag_name: str
     value: str
@@ -36,10 +22,36 @@ class FingerprintView(Protocol):
     tool_version: str | None
 
 
+class CandidateView(Protocol):
+    candidate_key: str
+    evidence: str
+
+
+class ReviewDecisionView(Protocol):
+    state: str
+    rationale: str
+
+
 class ProviderAttemptView(Protocol):
     provider_name: str
     outcome: str
     snapshot_sha256: str
+
+
+class SourceRecordView(Protocol):
+    id: str
+    source_path: str
+    sha256: str
+    size_bytes: int
+    origin: str
+    intake_state: str
+    library_record_id: str | None
+    disappeared_at: datetime | None
+    tag_observations: list[SourceTagView]
+    fingerprints: list[FingerprintView]
+    provider_attempts: list[ProviderAttemptView]
+    candidates: list[CandidateView]
+    review_decisions: list[ReviewDecisionView]
 
 
 @final

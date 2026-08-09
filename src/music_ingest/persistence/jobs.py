@@ -73,6 +73,10 @@ class JobRepository:
         """Queue a distinct provider-analysis job for a source."""
         return self.enqueue(source_id, 'provider_analysis', now) is not None
 
+    def requeue_provider(self, source_id: str, provider: str, now: datetime) -> bool:
+        """Queue one provider's analysis without re-running the other provider."""
+        return self.enqueue(source_id, f'{provider}_analysis', now) is not None
+
     def enqueue(
         self,
         source_id: str,
