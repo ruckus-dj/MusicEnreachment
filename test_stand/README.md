@@ -40,6 +40,26 @@ docker compose up --build --wait
 3. Open Lidarr at <http://localhost:8686> and Navidrome at
    <http://localhost:4533>.
 
+### Colima host-port recovery
+
+On macOS with Colima, recreating a container can leave the SSH port-forwarder
+holding an old `8787` connection. If the container is healthy but
+`curl http://localhost:8787/healthz` returns an empty reply, refresh Colima's
+forwarder and retry:
+
+```sh
+colima restart
+docker compose up --wait
+curl --fail --silent --show-error http://localhost:8787/healthz
+```
+
+If the old SSH multiplex forward is still holding the port, use the current
+Colima VM address directly until the forwarder is reset:
+
+```sh
+curl --fail --silent --show-error "http://$(colima status --json | jq -r .ip_address):8787/healthz"
+```
+
 ## Test workflow
 
 Verify the actual API and its migrated PostgreSQL runtime with:
