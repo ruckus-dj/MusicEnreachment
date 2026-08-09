@@ -80,6 +80,7 @@ class MatchResult:
     recording_score: CandidateScore
     release_score: CandidateScore
     review_reason: ReviewReason | None
+    candidate_scores: tuple[CandidateScore, ...] = ()
 
 
 def resolve_match(
@@ -89,7 +90,8 @@ def resolve_match(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
 ) -> MatchResult:
     recording_score = _recording_score(request.explicit_ids, acoustid)
-    release_score = _release_score(request, musicbrainz)
+    candidate_scores = _candidate_scores(request, musicbrainz)
+    release_score = candidate_scores[0] if candidate_scores else CandidateScore(None, 0.0)
     if request.local_only:
         return MatchResult(
             MatchDecision.LOCAL_ONLY_REVIEW,
@@ -97,10 +99,11 @@ def resolve_match(
             recording_score,
             release_score,
             ReviewReason.LOCAL_ONLY_REQUESTED,
+            candidate_scores,
         )
     reason = _review_reason(request, musicbrainz, release_score, confidence_threshold)
     if reason is not None:
-        return MatchResult(MatchDecision.NEEDS_REVIEW, None, recording_score, release_score, reason)
+        return MatchResult(MatchDecision.NEEDS_REVIEW, None, recording_score, release_score, reason, candidate_scores)
     match musicbrainz:
         case MusicBrainzMatch(candidate=candidate):
             return MatchResult(
@@ -109,6 +112,7 @@ def resolve_match(
                 recording_score,
                 release_score,
                 None,
+                candidate_scores,
             )
         case Ambiguous() | Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
             return MatchResult(
@@ -117,6 +121,7 @@ def resolve_match(
                 recording_score,
                 release_score,
                 ReviewReason.MUSICBRAINZ_UNKNOWN,
+                candidate_scores,
             )
 
 
@@ -129,12 +134,16 @@ def _recording_score(explicit_ids: ExplicitMusicBrainzIds, acoustid: AcoustIdRes
             return CandidateScore(explicit_ids.recording_mbid, 0.0)
 
 
-def _release_score(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> CandidateScore:
+def _candidate_scores(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> tuple[CandidateScore, ...]:
     match musicbrainz:
         case MusicBrainzMatch(candidate=candidate):
-            return CandidateScore(candidate.release_mbid, _candidate_score(request, candidate))
-        case Ambiguous() | Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
-            return CandidateScore(None, 0.0)
+            return (CandidateScore(candidate.release_mbid, _candidate_score(request, candidate)),)
+        case Ambiguous(candidates=candidates):
+            return tuple(
+                CandidateScore(candidate.release_mbid, _candidate_score(request, candidate)) for candidate in candidates
+            )
+        case Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
+            return ()
 
 
 def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> float:
