@@ -14,7 +14,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
-from music_ingest.matching.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
+from music_ingest.matching.providers import (
+    AcoustIdFixtureProvider,
+    MusicBrainzFixtureProvider,
+    RecordingCandidate,
+    ReleaseCandidate,
+)
 from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
@@ -107,6 +112,35 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         flac_command='flac',
         metaflac_command='metaflac',
     )
+
+
+def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-evidence.db"}')
+    Base.metadata.create_all(engine)
+    metadata = ReleaseCandidate(
+        release_mbid='release-id',
+        release_title='Fixture Album',
+        artist_name='Fixture Artist',
+        recording_title='Fixture Track',
+    )
+    monkeypatch.setattr(ProcessingWorker, '_recording_metadata', lambda *_args: metadata)
+
+    with Session(engine) as session:
+        worker = ProcessingWorker(session, _config(tmp_path))
+        record = worker._acoustid_candidate_record(
+            RecordingCandidate('recording-id', 0.99),
+            (('ALBUM', 'Fixture Album'),),
+            datetime.now(UTC),
+            True,
+        )
+
+    evidence = json.loads(record.evidence)
+    assert evidence['artist'] == 'Fixture Artist'
+    assert evidence['release'] == 'Fixture Track · Fixture Album'
+    assert evidence['title'] == 'Fixture Track'
+    assert evidence['album'] == 'Fixture Album'
 
 
 def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallback_and_review(tmp_path: Path) -> None:
@@ -238,7 +272,7 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
         assert worker.run_once()
         session.commit()
 
-    # Then: the current publication points at the provider-derived final revision and contains its tags.
+    # Then: the current publication keeps source values until a reviewer confirms the low-score candidate.
     with Session(engine) as session:
         jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
         assert [job.kind for job in jobs] == ['analyze', 'provider_analysis', 'final_publish']
@@ -253,7 +287,7 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
         assert 'TITLE' not in revisions['analyzed', 1]
         assert 'GENRE' not in revisions['analyzed', 1]
         assert revisions['final', 2]['TITLE'] == revisions['original', 1]['TITLE']
-        assert revisions['final', 2]['ALBUM'] == 'Fixture Release'
+        assert revisions['final', 2]['ALBUM'] == revisions['original', 1]['ALBUM']
         current = next(item for item in source.library_publications if item.state == 'current')
         assert current.metadata_revision_id is not None
         published_path = Path(current.path)
@@ -265,7 +299,7 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
             timeout=10,
         )
         assert tags.returncode == 0
-        assert 'ALBUM=Fixture Release' in tags.stdout
+        assert 'ALBUM=Fixture Album' in tags.stdout
         assert 'MUSICBRAINZ_ALBUMID=4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c' in tags.stdout
 
 

@@ -8,7 +8,7 @@ from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePol
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
 
 
-def _read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[str, str], ...]:
+def read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[str, str], ...]:
     completed = run(  # noqa: S603
         (command, '--export-tags-to=-', str(path)), capture_output=True, check=False, text=True, timeout=timeout_seconds
     )
@@ -21,7 +21,7 @@ def _read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[
     )
 
 
-def _fallback_metadata(
+def fallback_metadata(
     tags: tuple[tuple[str, str], ...], source: CanonicalSource = CanonicalSource.AUTOMATIC_FALLBACK
 ) -> CanonicalMetadata | None:
     values = {name: value for name, value in tags}
@@ -71,11 +71,11 @@ def _fallback_metadata(
     )
 
 
-def _field_policy() -> FieldPolicy:
+def field_policy() -> FieldPolicy:
     return FieldPolicy(schema_version=1, list_separator='; ', allowed_tag_keys=tuple(sorted(ALLOWED_TAG_KEYS)))
 
 
-def _genre_policy(fallback_genres: tuple[str, ...]) -> GenrePolicy:
+def genre_policy(fallback_genres: tuple[str, ...]) -> GenrePolicy:
     canonical_genres = tuple(dict.fromkeys(('Hip Hop', 'Alternative Rock', *fallback_genres)))
     return GenrePolicy(
         schema_version=1,
@@ -84,9 +84,16 @@ def _genre_policy(fallback_genres: tuple[str, ...]) -> GenrePolicy:
     )
 
 
-def _hash(path: Path) -> str:
+def file_hash(path: Path) -> str:
     digest = sha256()
     with path.open('rb') as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_read_tags = read_tags
+_fallback_metadata = fallback_metadata
+_field_policy = field_policy
+_genre_policy = genre_policy
+_hash = file_hash
