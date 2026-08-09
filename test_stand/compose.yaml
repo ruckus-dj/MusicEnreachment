@@ -76,6 +76,7 @@ services:
       ND_DATAFOLDER: /data
       ND_LOGLEVEL: info
       ND_MUSICFOLDER: /music
+      ND_SCANNER_PURGEMISSING: full
     ports:
       - "4533:4533"
     volumes:

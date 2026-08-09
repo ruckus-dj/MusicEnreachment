@@ -34,7 +34,8 @@ path read-only as `/data/incoming` in `music-ingest`. Mount
 `/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
 mount `/mnt/ssd/appdata/music-ingest` as `/appdata/music-ingest` for disposable
 staging only. Navidrome must mount `/mnt/pool/data/media` read-only at its music
-root. PostgreSQL is the only durable store for tags, versions, provenance,
+root and set `ND_SCANNER_PURGEMISSING=full` so confirmed missing files are removed
+after full scans. PostgreSQL is the only durable store for tags, versions, provenance,
 review decisions, failure reasons, and publication metadata. The normal workflow
 does not replace a Lidarr incoming pathname, and Task 9a remains separately gated.
 
