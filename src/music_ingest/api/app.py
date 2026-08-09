@@ -5,7 +5,7 @@ import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -23,10 +23,12 @@ from music_ingest.library.service import (
     library_records,
     record_event,
 )
+from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
+from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.jobs import JobRepository
 from music_ingest.persistence.library import LibraryRecord, SourceRecordView
-from music_ingest.persistence.models import JobRecord, RuntimeSettingRecord
+from music_ingest.persistence.models import JobRecord, ReviewDecisionRecord, RuntimeSettingRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
 from music_ingest.ui.page import REVIEW_PAGE
@@ -63,11 +65,46 @@ class ProviderRetryResult(BaseModel):
     queued: int
 
 
+class ProviderRetryRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    retry_all: bool = False
+    provider: Literal['acoustid', 'musicbrainz'] | None = None
+
+
 class ProviderRetryResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source_id: str
     queued: bool
+
+
+class CandidateSelection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    candidate_key: str = Field(min_length=1, max_length=255)
+    provider: Literal['acoustid', 'musicbrainz'] = 'musicbrainz'
+
+
+class MusicBrainzOverride(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    release_mbid: str = Field(min_length=1, max_length=36)
+
+
+class CandidateEvidencePayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    provider: str = 'musicbrainz'
+    artist: str = ''
+    release: str = ''
+    title: str = ''
+    album: str = ''
+    score: float | None = None
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+_DEFAULT_PROVIDER_RETRY_REQUEST = ProviderRetryRequest()
 
 
 class RecoveryResponse(BaseModel):
@@ -95,7 +132,9 @@ class DestinationConflictCleanupResponse(BaseModel):
     queued: bool
 
 
-_RETRYABLE_PROVIDER_OUTCOMES = frozenset({'malformed', 'rate_limited', 'timeout', 'unavailable', 'disabled', 'failed'})
+_RETRYABLE_PROVIDER_OUTCOMES = frozenset(
+    {'malformed', 'rate_limited', 'ratelimited', 'timeout', 'unavailable', 'disabled', 'failed'}
+)
 
 
 def _catalog_tags(record: LibraryRecord, source_id: str) -> dict[str, str]:
@@ -143,12 +182,21 @@ def _needs_provider_retry(source: SourceRecordView) -> bool:
     )
 
 
+def _candidate_is_displayable(evidence: CandidateEvidencePayload) -> bool:
+    if evidence.provider != 'musicbrainz':
+        return True
+    return bool(
+        evidence.artist.strip() and evidence.release.strip() and evidence.tags.get('MUSICBRAINZ_ALBUMID', '').strip()
+    )
+
+
 def create_app(
     session_factory: SessionFactory,
     lifespan: Lifespan[FastAPI] | None = None,
     incoming_root: Path = Path('/data/incoming'),
     media_root: Path | None = None,
     api_token: str | None = None,
+    musicbrainz_provider: MusicBrainzProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
@@ -335,22 +383,29 @@ def create_app(
             raise HTTPException(status_code=404, detail='library record or source not found') from error
 
     @app.post('/api/library/providers/retry', response_model=ProviderRetryResult)
-    def retry_failed_providers() -> ProviderRetryResult:
+    def retry_failed_providers(request: ProviderRetryRequest = _DEFAULT_PROVIDER_RETRY_REQUEST) -> ProviderRetryResult:
         now = datetime.now(UTC)
         queued = 0
         with session_factory() as session:
             jobs = JobRepository(session)
             for record in library_records(session):
                 for source in record.sources:
-                    if source.disappeared_at is not None or not _needs_provider_retry(source):
+                    if source.disappeared_at is not None or (
+                        not request.retry_all and not _needs_provider_retry(source)
+                    ):
                         continue
-                    if jobs.requeue_source(source.id, now):
+                    provider_queued = (
+                        jobs.requeue_provider(source.id, request.provider, now)
+                        if request.provider is not None
+                        else jobs.requeue_source(source.id, now)
+                    )
+                    if provider_queued:
                         record_event(
                             session,
                             record.id,
                             'provider_retry_queued',
                             'queued',
-                            'provider retry requested from review UI',
+                            f'{request.provider or "all providers"} retry requested from review UI',
                             now,
                             source.id,
                         )
@@ -465,6 +520,25 @@ def create_app(
                                         'snapshot_sha256': attempt.snapshot_sha256,
                                     }
                                     for attempt in source.provider_attempts
+                                ],
+                                'candidates': [
+                                    {
+                                        'candidate_key': candidate.candidate_key,
+                                        'evidence': CandidateEvidencePayload.model_validate_json(
+                                            candidate.evidence
+                                        ).model_dump(),
+                                    }
+                                    for candidate in source.candidates
+                                    if _candidate_is_displayable(
+                                        CandidateEvidencePayload.model_validate_json(candidate.evidence)
+                                    )
+                                ],
+                                'review_decisions': [
+                                    {
+                                        'state': decision.state,
+                                        'rationale': decision.rationale,
+                                    }
+                                    for decision in source.review_decisions
                                 ],
                                 'disappeared_at': source.disappeared_at.isoformat()
                                 if source.disappeared_at is not None
@@ -632,7 +706,11 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post('/api/library/records/{record_id}/sources/{source_id}/provider-retry')
-    def retry_provider_for_source(record_id: str, source_id: str) -> ProviderRetryResponse:
+    def retry_provider_for_source(
+        record_id: str,
+        source_id: str,
+        request: ProviderRetryRequest = _DEFAULT_PROVIDER_RETRY_REQUEST,
+    ) -> ProviderRetryResponse:
         try:
             with session_factory() as session:
                 record = library_record_detail(session, record_id)
@@ -642,19 +720,215 @@ def create_app(
                 if source.disappeared_at is not None:
                     return ProviderRetryResponse(source_id=source.id, queued=False)
                 now = datetime.now(UTC)
-                queued = JobRepository(session).requeue_source(source.id, now)
+                queued = (
+                    JobRepository(session).requeue_provider(source.id, request.provider, now)
+                    if request.provider is not None
+                    else JobRepository(session).requeue_source(source.id, now)
+                )
                 if queued:
                     record_event(
                         session,
                         record.id,
                         'provider_retry_queued',
                         'queued',
-                        'provider retry requested from review UI',
+                        f'{request.provider or "all providers"} retry requested from review UI',
                         now,
                         source.id,
                     )
                 session.commit()
                 return ProviderRetryResponse(source_id=source.id, queued=queued)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
+
+    @app.get('/api/library/records/{record_id}/sources/{source_id}/candidates/{candidate_key}/musicbrainz')
+    def decode_acoustid_candidate(record_id: str, source_id: str, candidate_key: str) -> JSONResponse:
+        if musicbrainz_provider is None:
+            raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                candidate = next(
+                    (item for item in reversed(source.candidates) if item.candidate_key == candidate_key),
+                    None,
+                )
+                if candidate is None:
+                    raise LookupError(candidate_key)
+                evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+                if evidence.provider != 'acoustid':
+                    raise HTTPException(status_code=409, detail='candidate is not an AcousticID recording')
+                source_tags = _catalog_tags(record, source.id)
+                result = ProviderEvidenceService(session, musicbrainz_provider, None).lookup(
+                    ProviderEvidenceRequest(
+                        query='',
+                        musicbrainz_case=FixtureCase.SUCCESS,
+                        fingerprint=None,
+                        acoustid_case=None,
+                        force_refresh=True,
+                        release_title=source_tags.get('ALBUM'),
+                        artist_name=source_tags.get('ARTIST'),
+                        recording_mbid=candidate_key,
+                        run_acoustid=False,
+                        run_musicbrainz=True,
+                    ),
+                    datetime.now(UTC),
+                )
+                if isinstance(result.musicbrainz, MusicBrainzMatch):
+                    metadata = result.musicbrainz.candidate
+                elif isinstance(result.musicbrainz, Ambiguous):
+                    source_album = source_tags.get('ALBUM', '').casefold()
+                    metadata = next(
+                        (
+                            candidate
+                            for candidate in result.musicbrainz.candidates
+                            if candidate.release_title.casefold() == source_album
+                        ),
+                        result.musicbrainz.candidates[0] if result.musicbrainz.candidates else None,
+                    )
+                else:
+                    metadata = None
+                if metadata is None:
+                    return JSONResponse(
+                        content={
+                            'recording_mbid': candidate_key,
+                            'artist': source_tags.get('ARTIST', ''),
+                            'title': source_tags.get('TITLE', ''),
+                            'album': source_tags.get('ALBUM', ''),
+                            'release_mbid': None,
+                            'resolved': False,
+                            'tags': {},
+                        }
+                    )
+                return JSONResponse(
+                    content={
+                        'recording_mbid': candidate_key,
+                        'artist': metadata.artist_name or source_tags.get('ARTIST', ''),
+                        'title': metadata.recording_title or source_tags.get('TITLE', ''),
+                        'album': metadata.release_title or source_tags.get('ALBUM', ''),
+                        'release_mbid': metadata.release_mbid,
+                        'resolved': True,
+                        'tags': {
+                            name: value
+                            for name, value in {
+                                'TITLE': metadata.recording_title,
+                                'ARTIST': metadata.artist_name,
+                                'ALBUM': metadata.release_title,
+                                'MUSICBRAINZ_TRACKID': candidate_key,
+                                'MUSICBRAINZ_ALBUMID': metadata.release_mbid,
+                            }.items()
+                            if value is not None
+                        },
+                    }
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record, source, or candidate not found') from error
+
+    @app.post('/api/library/records/{record_id}/sources/{source_id}/candidates/select')
+    def select_provider_candidate(record_id: str, source_id: str, request: CandidateSelection) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                candidate = next(
+                    (item for item in reversed(source.candidates) if item.candidate_key == request.candidate_key),
+                    None,
+                )
+                if candidate is None:
+                    raise HTTPException(status_code=404, detail='provider candidate not found')
+                evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+                if evidence.provider != request.provider:
+                    raise HTTPException(status_code=409, detail='candidate belongs to another provider')
+                now = datetime.now(UTC)
+                if request.provider == 'acoustid':
+                    record.musicbrainz_recording_id = candidate.candidate_key
+                    record.musicbrainz_release_id = None
+                    queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
+                    session.add(
+                        ReviewDecisionRecord(
+                            source_id=source.id,
+                            state='acoustid_confirmed',
+                            rationale=f'AcousticID recording {candidate.candidate_key} selected by reviewer',
+                        )
+                    )
+                    record_event(
+                        session,
+                        record.id,
+                        'acoustid_candidate_confirmed',
+                        'analyzing',
+                        f'AcousticID recording {candidate.candidate_key} selected; MusicBrainz queued',
+                        now,
+                        source.id,
+                    )
+                    session.commit()
+                    return JSONResponse(
+                        content={'candidate_key': candidate.candidate_key, 'revision': None, 'queued': queued}
+                    )
+                candidate_tags = evidence.tags
+                if not candidate_tags:
+                    raise HTTPException(status_code=409, detail='provider candidate has no metadata')
+                source_tags = _catalog_tags(record, source.id)
+                final_tags = {**source_tags, **candidate_tags}
+                analyzed = append_metadata_revision(
+                    session, record.id, source.id, 'analyzed', candidate_tags, 'review', now
+                )
+                final = append_metadata_revision(session, record.id, source.id, 'final', final_tags, 'review', now)
+                record.match_state = 'matched'
+                record.musicbrainz_release_id = candidate.candidate_key
+                record.musicbrainz_recording_id = candidate_tags.get('MUSICBRAINZ_TRACKID')
+                session.add(
+                    ReviewDecisionRecord(
+                        source_id=source.id,
+                        state='confirmed',
+                        rationale=f'provider candidate {candidate.candidate_key} selected by reviewer',
+                    )
+                )
+                queued = JobRepository(session).enqueue(source.id, 'final_publish', now, final.id)
+                record_event(
+                    session,
+                    record.id,
+                    'provider_candidate_confirmed',
+                    'publishing',
+                    f'provider candidate {candidate.candidate_key} selected; final revision {analyzed.revision}',
+                    now,
+                    source.id,
+                )
+                session.commit()
+                return JSONResponse(
+                    content={
+                        'candidate_key': candidate.candidate_key,
+                        'revision': final.revision,
+                        'queued': queued is not None,
+                    }
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
+
+    @app.post('/api/library/records/{record_id}/sources/{source_id}/musicbrainz/override')
+    def override_musicbrainz_release(record_id: str, source_id: str, request: MusicBrainzOverride) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                now = datetime.now(UTC)
+                record.musicbrainz_release_id = request.release_mbid.lower()
+                queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
+                record_event(
+                    session,
+                    record.id,
+                    'musicbrainz_release_override_queued',
+                    'analyzing',
+                    f'MusicBrainz release {request.release_mbid} explicitly selected by reviewer',
+                    now,
+                    source.id,
+                )
+                session.commit()
+                return JSONResponse(content={'release_mbid': record.musicbrainz_release_id, 'queued': queued})
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
 

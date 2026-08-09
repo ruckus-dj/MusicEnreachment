@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.api.app import create_app
+from music_ingest.api.app import CandidateEvidencePayload, _candidate_is_displayable, create_app
+from music_ingest.matching.providers import MusicBrainzFixtureProvider
 from music_ingest.persistence.models import (
     Base,
+    CandidateRecord,
     JobRecord,
     LibraryPublicationRecord,
     LibraryRecord,
     ProviderAttemptRecord,
+    ProviderScheduleRecord,
+    ProviderSnapshotRecord,
     SourceRecord,
     SourceTagRecord,
 )
@@ -128,6 +133,168 @@ def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> N
 
     assert identity.status_code == 200
     assert identity.json()['musicbrainz_recording_id'] == '11111111-1111-4111-8111-111111111111'
+
+
+def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_path: Path) -> None:
+    # Given: a source with a stored MusicBrainz candidate and original tags.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-review.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-candidate', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-candidate',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            tag_observations=[SourceTagRecord(format_name='flac', tag_name='TITLE', value='Old title')],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='release-id',
+                    evidence='{"artist":"Artist","release":"Album","score":0.8,"tags":'
+                    '{"ALBUM":"Album","ARTIST":"Artist","TITLE":"New title",'
+                    '"TRACKNUMBER":"2","TRACKTOTAL":"10","DATE":"2020"}}',
+                )
+            ],
+        )
+        session.add_all((record, source))
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the reviewer confirms the selected candidate.
+    response = client.post(
+        '/api/library/records/record-candidate/sources/source-candidate/candidates/select',
+        json={'candidate_key': 'release-id'},
+    )
+
+    # Then: the selected provider tags become Final and a publication job is queued.
+    assert response.status_code == 200
+    with Session(engine) as session:
+        persisted = session.get(LibraryRecord, 'record-candidate')
+        assert persisted is not None
+        assert persisted.match_state == 'matched'
+        assert persisted.metadata_revisions[-1].layer == 'final'
+        assert 'New title' in persisted.metadata_revisions[-1].tags_json
+        assert session.query(JobRecord).filter_by(source_id='source-candidate', kind='final_publish').count() == 1
+
+
+def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-candidate-review.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-acoustid', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-acoustid',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            candidates=[
+                CandidateRecord(
+                    candidate_key='recording-id',
+                    evidence='{"provider":"acoustid","recording_mbid":"recording-id","score":0.99,"tags":{}}',
+                )
+            ],
+        )
+        session.add_all((record, source))
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+    response = client.post(
+        '/api/library/records/record-acoustid/sources/source-acoustid/candidates/select',
+        json={'candidate_key': 'recording-id', 'provider': 'acoustid'},
+    )
+
+    assert response.status_code == 200
+    with Session(engine) as session:
+        persisted = session.get(LibraryRecord, 'record-acoustid')
+        assert persisted is not None
+        assert persisted.musicbrainz_recording_id == 'recording-id'
+        assert persisted.musicbrainz_release_id is None
+        assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
+
+
+def test_library_api_decodes_acoustid_candidate_with_musicbrainz(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-decode.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-decode', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-decode',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            tag_observations=[SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Fixture Album')],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='recording-id',
+                    evidence='{"provider":"acoustid","recording_mbid":"recording-id","score":0.99,"tags":{}}',
+                )
+            ],
+        )
+        cached_response = b'{"outcome":"no_match"}'
+        session.add_all(
+            (
+                record,
+                source,
+                ProviderScheduleRecord(provider_name='musicbrainz', next_start_at=timestamp),
+                ProviderSnapshotRecord(
+                    provider_name='musicbrainz',
+                    request_hash=sha256(b'recording:recording-id').hexdigest(),
+                    request_descriptor='musicbrainz v2 lookup',
+                    response_sha256=sha256(cached_response).hexdigest(),
+                    response_body=cached_response,
+                    captured_at=datetime(2026, 8, 8, tzinfo=UTC),
+                    outcome='no_match',
+                    state='fresh',
+                    http_status=200,
+                ),
+            )
+        )
+        session.commit()
+
+    provider = MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz')
+    client = TestClient(create_app(lambda: Session(engine), musicbrainz_provider=provider))
+    response = client.get(
+        '/api/library/records/record-decode/sources/source-decode/candidates/recording-id/musicbrainz'
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()['artist'] == 'Fixture Artist'
+    assert response.json()['album'] == 'Fixture Release'
+
+
+def test_library_api_hides_legacy_musicbrainz_recording_candidates() -> None:
+    legacy = CandidateEvidencePayload(provider='musicbrainz', score=0.99)
+    release = CandidateEvidencePayload(
+        provider='musicbrainz',
+        artist='Fixture Artist',
+        release='Fixture Release',
+        tags={'MUSICBRAINZ_ALBUMID': 'release-id'},
+    )
+
+    assert not _candidate_is_displayable(legacy)
+    assert _candidate_is_displayable(release)
 
 
 def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path: Path) -> None:

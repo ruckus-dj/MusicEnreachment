@@ -117,6 +117,7 @@ def create_runtime_app() -> FastAPI:
         incoming_root=processing_config.incoming_root,
         media_root=processing_config.media_root,
         api_token=runtime_config.api_token,
+        musicbrainz_provider=processing_config.musicbrainz_provider,
     )
 
 
