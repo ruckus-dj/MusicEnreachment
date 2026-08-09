@@ -90,6 +90,11 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 - States: editable final layer, read-only original/analyzed labels, saving, success, stale revision/error.
 - Accessibility: every input has a visible field label and save result is inline.
 
+### Candidate review panel
+- Structure: review reason, selectable MusicBrainz candidates, score, identity summary, and explicit confirmation action.
+- States: candidates available, no candidates, confirming, confirmed and publishing.
+- Accessibility: each candidate is a native button with a text score and readable identity, never color alone.
+
 ### Scan action
 - Structure: primary action with explicit counts and queued-analysis feedback.
 - States: idle, scanning, complete, error.
