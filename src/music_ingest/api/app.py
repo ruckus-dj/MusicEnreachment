@@ -16,6 +16,13 @@ from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
+from music_ingest.genres import (
+    GenreCatalogSyncError,
+    GenreTransport,
+    load_genre_catalog,
+    replace_genre_catalog,
+    sync_genres,
+)
 from music_ingest.library.service import (
     append_metadata_revision,
     attach_source,
@@ -25,12 +32,12 @@ from music_ingest.library.service import (
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
 from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
-from music_ingest.matching.scoring import DEFAULT_CONFIDENCE_THRESHOLD
 from music_ingest.persistence.jobs import JobRepository
 from music_ingest.persistence.library import LibraryRecord, SourceRecordView
-from music_ingest.persistence.models import JobRecord, ReviewDecisionRecord, RuntimeSettingRecord
+from music_ingest.persistence.models import GenreCatalogRecord, JobRecord, ReviewDecisionRecord
 from music_ingest.persistence.repository import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
+from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
 from music_ingest.ui.page import REVIEW_PAGE
 
 
@@ -42,6 +49,77 @@ class MatchingSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     confidence_threshold: float = Field(ge=0.0, le=1.0)
+
+
+class RuntimeSettingsRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    confidence_threshold: float = Field(ge=0.0, le=1.0)
+    timeout_seconds: float = Field(gt=0.0, le=120.0)
+    retry_delay_seconds: float = Field(ge=0.0, le=3600.0)
+    max_attempts: int = Field(ge=1, le=10)
+    musicbrainz_enabled: bool
+    musicbrainz_user_agent: str = Field(min_length=1, max_length=255)
+    acoustid_enabled: bool
+    acoustid_client_key: str | None = Field(default=None, max_length=255)
+    artwork_enabled: bool
+
+
+class RuntimeSettingsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    confidence_threshold: float
+    timeout_seconds: float
+    retry_delay_seconds: float
+    max_attempts: int
+    musicbrainz_enabled: bool
+    musicbrainz_user_agent: str
+    acoustid_enabled: bool
+    acoustid_client_key_configured: bool
+    artwork_enabled: bool
+
+
+class GenreCatalogItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    musicbrainz_id: str
+    source_name: str
+    display_name: str
+
+
+class GenreCatalogResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[GenreCatalogItemResponse, ...]
+    last_synced_at: datetime | None
+
+
+def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
+    return RuntimeSettingsResponse(
+        confidence_threshold=settings.confidence_threshold,
+        timeout_seconds=settings.timeout_seconds,
+        retry_delay_seconds=settings.retry_delay_seconds,
+        max_attempts=settings.max_attempts,
+        musicbrainz_enabled=settings.musicbrainz_enabled,
+        musicbrainz_user_agent=settings.musicbrainz_user_agent,
+        acoustid_enabled=settings.acoustid_enabled,
+        acoustid_client_key_configured=bool(settings.acoustid_client_key),
+        artwork_enabled=settings.artwork_enabled,
+    )
+
+
+def _genre_catalog_response(entries: tuple[GenreCatalogRecord, ...]) -> GenreCatalogResponse:
+    return GenreCatalogResponse(
+        items=tuple(
+            GenreCatalogItemResponse(
+                musicbrainz_id=entry.musicbrainz_id,
+                source_name=entry.source_name,
+                display_name=entry.display_name,
+            )
+            for entry in entries
+        ),
+        last_synced_at=entries[0].synced_at if entries else None,
+    )
 
 
 class LibraryIdentityUpdate(BaseModel):
@@ -197,6 +275,7 @@ def create_app(
     media_root: Path | None = None,
     api_token: str | None = None,
     musicbrainz_provider: MusicBrainzProvider | None = None,
+    genre_transport: GenreTransport | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
@@ -219,6 +298,7 @@ def create_app(
 
     @app.get('/', response_class=HTMLResponse)
     @app.get('/review', response_class=HTMLResponse)
+    @app.get('/settings', response_class=HTMLResponse)
     def review_page() -> str:
         return REVIEW_PAGE
 
@@ -990,28 +1070,77 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
 
+    @app.get('/api/settings', response_model=RuntimeSettingsResponse)
+    def runtime_settings() -> RuntimeSettingsResponse:
+        with session_factory() as session:
+            return _settings_response(load_runtime_settings(session))
+
+    @app.put('/api/settings', response_model=RuntimeSettingsResponse)
+    def update_runtime_settings(request: RuntimeSettingsRequest) -> RuntimeSettingsResponse:
+        with session_factory() as session:
+            current = load_runtime_settings(session)
+            settings = RuntimeSettings(
+                confidence_threshold=request.confidence_threshold,
+                timeout_seconds=request.timeout_seconds,
+                retry_delay_seconds=request.retry_delay_seconds,
+                max_attempts=request.max_attempts,
+                musicbrainz_enabled=request.musicbrainz_enabled,
+                musicbrainz_user_agent=request.musicbrainz_user_agent,
+                acoustid_enabled=request.acoustid_enabled,
+                acoustid_client_key=(
+                    current.acoustid_client_key if request.acoustid_client_key is None else request.acoustid_client_key
+                ),
+                artwork_enabled=request.artwork_enabled,
+            )
+            if settings.acoustid_enabled and not settings.acoustid_client_key:
+                raise HTTPException(status_code=422, detail='AcoustID requires a client key when enabled')
+            save_runtime_settings(session, settings)
+            session.commit()
+            return _settings_response(settings)
+
+    @app.get('/api/genres', response_model=GenreCatalogResponse)
+    def genre_catalog() -> GenreCatalogResponse:
+        with session_factory() as session:
+            entries = load_genre_catalog(session)
+            if not entries and genre_transport is not None:
+                settings = load_runtime_settings(session)
+                try:
+                    synced_entries = sync_genres(genre_transport, user_agent=settings.musicbrainz_user_agent)
+                except GenreCatalogSyncError:
+                    return _genre_catalog_response(entries)
+                replace_genre_catalog(session, synced_entries, datetime.now(UTC))
+                session.commit()
+                entries = load_genre_catalog(session)
+            return _genre_catalog_response(entries)
+
+    @app.post('/api/genres/sync', response_model=GenreCatalogResponse)
+    def sync_genre_catalog() -> GenreCatalogResponse:
+        if genre_transport is None:
+            raise HTTPException(status_code=503, detail='MusicBrainz genre sync is unavailable')
+        with session_factory() as session:
+            settings = load_runtime_settings(session)
+            try:
+                entries = sync_genres(genre_transport, user_agent=settings.musicbrainz_user_agent)
+            except GenreCatalogSyncError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+            synced_at = datetime.now(UTC)
+            replace_genre_catalog(session, entries, synced_at)
+            session.commit()
+            return _genre_catalog_response(load_genre_catalog(session))
+
     @app.get('/api/settings/matching', response_model=MatchingSettings)
     def matching_settings() -> MatchingSettings:
         with session_factory() as session:
-            setting = session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
-            threshold = DEFAULT_CONFIDENCE_THRESHOLD if setting is None else float(setting.value)
-            return MatchingSettings(confidence_threshold=threshold)
+            return MatchingSettings(confidence_threshold=load_runtime_settings(session).confidence_threshold)
 
     @app.put('/api/settings/matching', response_model=MatchingSettings)
     def update_matching_settings(request: MatchingSettings) -> MatchingSettings:
         with session_factory() as session:
-            setting = session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
-            if setting is None:
-                session.add(
-                    RuntimeSettingRecord(
-                        key='matching.confidence_threshold',
-                        value=str(request.confidence_threshold),
-                        updated_at=datetime.now(UTC),
-                    )
-                )
-            else:
-                setting.value = str(request.confidence_threshold)
-                setting.updated_at = datetime.now(UTC)
+            current = load_runtime_settings(session)
+            save_runtime_settings(
+                session,
+                current.model_copy(update={'confidence_threshold': request.confidence_threshold}),
+            )
             session.commit()
             return request
 

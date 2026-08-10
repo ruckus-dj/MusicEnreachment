@@ -7,6 +7,7 @@ from subprocess import run
 
 from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
+from music_ingest.settings import RuntimeSettings
 
 
 def read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[str, str], ...]:
@@ -141,12 +142,13 @@ def field_policy() -> FieldPolicy:
     return FieldPolicy(schema_version=1, list_separator='; ', allowed_tag_keys=tuple(sorted(ALLOWED_TAG_KEYS)))
 
 
-def genre_policy(fallback_genres: tuple[str, ...]) -> GenrePolicy:
-    canonical_genres = tuple(dict.fromkeys(('Hip Hop', 'Alternative Rock', *fallback_genres)))
+def genre_policy(fallback_genres: tuple[str, ...], settings: RuntimeSettings | None = None) -> GenrePolicy:
+    configured_genres = () if settings is None else settings.canonical_genres
+    canonical_genres = tuple(dict.fromkeys((*configured_genres, *fallback_genres)))
     return GenrePolicy(
         schema_version=1,
         canonical_genres=canonical_genres,
-        aliases={'hip hop': ('Hip Hop',), 'alternative rock': ('Alternative Rock',)},
+        aliases={} if settings is None else settings.genre_aliases,
     )
 
 

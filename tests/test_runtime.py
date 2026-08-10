@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
@@ -12,7 +13,7 @@ import music_ingest.api.server as server
 from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
-from music_ingest.persistence.models import Base, JobRecord
+from music_ingest.persistence.models import Base, JobRecord, RuntimeSettingRecord
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -44,6 +45,37 @@ def test_runtime_health_when_review_app_is_created_returns_service_status() -> N
     # Then: the probe receives the stable service status without a database query.
     assert response.status_code == 200
     assert response.json() == {'status': 'ok', 'service': 'music-ingest'}
+
+
+def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "settings.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(
+            RuntimeSettingRecord(
+                key='providers.acoustid.client_key', value='stored-secret', updated_at=datetime.now(UTC)
+            )
+        )
+        session.commit()
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    response = client.put(
+        '/api/settings',
+        json={
+            'confidence_threshold': 0.8,
+            'timeout_seconds': 30,
+            'retry_delay_seconds': 10,
+            'max_attempts': 3,
+            'musicbrainz_enabled': True,
+            'musicbrainz_user_agent': 'Music Ingest/0.1',
+            'acoustid_enabled': True,
+            'acoustid_client_key': None,
+            'artwork_enabled': True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()['acoustid_client_key_configured'] is True
 
 
 @pytest.mark.parametrize(

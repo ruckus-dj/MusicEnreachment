@@ -25,7 +25,9 @@ from music_ingest.library.service import (
     record_event,
     record_publication,
 )
+from music_ingest.matching.acoustid import AcoustIdV2Adapter
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
+from music_ingest.matching.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     AcoustIdProvider,
@@ -35,6 +37,7 @@ from music_ingest.matching.providers import (
     FixtureCase,
     FixtureProvenance,
     LiveProvenance,
+    LiveTransport,
     Malformed,
     MusicBrainzMatch,
     MusicBrainzProvider,
@@ -87,6 +90,7 @@ from music_ingest.publication.service import (
     replace_published_audio,
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
+from music_ingest.settings import load_runtime_settings
 
 LOGGER = logging.getLogger(__name__)
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
@@ -114,6 +118,7 @@ class ProcessingConfig:
     max_attempts: int = 3
     field_policy: FieldPolicy | None = None
     genre_policy: GenrePolicy | None = None
+    live_transport: LiveTransport | None = None
     musicbrainz_provider: MusicBrainzProvider | None = None
     acoustid_provider: AcoustIdProvider | None = None
     artwork_provider: ArtworkProvider | None = None
@@ -261,7 +266,7 @@ class ProcessingWorker:
             self._requeue_changed_source(claimed, source, source_path, now)
             return
         inspection = inspect_flac(
-            source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
+            source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
         )
         malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
         if malformed:
@@ -277,9 +282,9 @@ class ProcessingWorker:
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
             fpcalc_command=self._config.fpcalc_command,
-            timeout_seconds=self._config.timeout_seconds,
+            timeout_seconds=self._timeout_seconds(),
         )
-        tags = read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
+        tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
         self._capture_observations(source, source_path, tags)
         original_tags = dict(tags)
         metadata = fallback_metadata(tags)
@@ -295,13 +300,13 @@ class ProcessingWorker:
             )
         _ = sanitize_flac(
             FlacSanitizationRequest(
-                source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
+                source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
             )
         )
         output_path = staged_release / output_name
         if metadata is None:
             observed = write_observed_metadata(
-                sanitized_path, tags, self._config.metaflac_command, self._config.timeout_seconds
+                sanitized_path, tags, self._config.metaflac_command, self._timeout_seconds()
             )
             _ = sanitized_path.rename(output_path)
             written = replace(observed, output_path=output_path)
@@ -312,10 +317,10 @@ class ProcessingWorker:
                     output_path,
                     staged_release,
                     metadata,
-                    self._config.field_policy or field_policy(),
-                    self._config.genre_policy or genre_policy(metadata.genres),
+                    field_policy(),
+                    genre_policy(metadata.genres, load_runtime_settings(self._session)),
                     self._config.metaflac_command,
-                    self._config.timeout_seconds,
+                    self._timeout_seconds(),
                 )
             )
             sanitized_path.unlink()
@@ -372,7 +377,7 @@ class ProcessingWorker:
             now,
         )
         source.intake_state = 'present'
-        providers_enabled = self._config.musicbrainz_provider is not None or self._config.acoustid_provider is not None
+        providers_enabled = any(self._configured_providers()[:2])
         record_event(
             self._session,
             record.id,
@@ -401,7 +406,7 @@ class ProcessingWorker:
         source = self._source(claimed)
         source_path = Path(source.source_path).resolve(strict=True)
         inspection = inspect_flac(
-            source_path, flac_command=self._config.flac_command, timeout_seconds=self._config.timeout_seconds
+            source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
         )
         if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
             self._invalid_audio(claimed, source, 'malformed FLAC container', now)
@@ -412,9 +417,9 @@ class ProcessingWorker:
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
             fpcalc_command=self._config.fpcalc_command,
-            timeout_seconds=self._config.timeout_seconds,
+            timeout_seconds=self._timeout_seconds(),
         )
-        tags = read_tags(source_path, self._config.metaflac_command, self._config.timeout_seconds)
+        tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
         record = ensure_source_record(self._session, source, now)
         provider_result = self._lookup_providers(
             tags,
@@ -513,7 +518,7 @@ class ProcessingWorker:
             )
         _ = sanitize_flac(
             FlacSanitizationRequest(
-                source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
+                source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
             )
         )
         output_path = staged_release / output_name
@@ -523,7 +528,7 @@ class ProcessingWorker:
                 sanitized_path,
                 tuple(final_tags.items()),
                 self._config.metaflac_command,
-                self._config.timeout_seconds,
+                self._timeout_seconds(),
             )
             _ = sanitized_path.rename(output_path)
             _ = replace(observed, output_path=output_path)
@@ -534,10 +539,10 @@ class ProcessingWorker:
                     output_path,
                     staged_release,
                     metadata,
-                    self._config.field_policy or field_policy(),
-                    self._config.genre_policy or genre_policy(metadata.genres),
+                    field_policy(),
+                    genre_policy(metadata.genres, load_runtime_settings(self._session)),
                     self._config.metaflac_command,
-                    self._config.timeout_seconds,
+                    self._timeout_seconds(),
                 )
             )
             sanitized_path.unlink()
@@ -591,9 +596,10 @@ class ProcessingWorker:
     ) -> ProviderEvidenceResult | None:
         values = {name: value for name, value in tags}
         query = f'artist:{values["ARTIST"]} release:{values["ALBUM"]}' if {'ARTIST', 'ALBUM'} <= values.keys() else ''
-        musicbrainz = self._config.musicbrainz_provider if run_musicbrainz and query else None
+        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+        musicbrainz = configured_musicbrainz if run_musicbrainz and query else None
         acoustid = (
-            self._config.acoustid_provider
+            configured_acoustid
             if run_acoustid and fingerprint.fingerprint is not None and fingerprint.duration_seconds is not None
             else None
         )
@@ -641,6 +647,8 @@ class ProcessingWorker:
         )
 
     def _confidence_threshold(self) -> float:
+        if self._config.live_transport is not None:
+            return load_runtime_settings(self._session).confidence_threshold
         setting = self._session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
         if setting is None:
             return self._config.confidence_threshold
@@ -767,12 +775,13 @@ class ProcessingWorker:
     def _recording_metadata(
         self, recording_mbid: str, tags: tuple[tuple[str, str], ...], now: datetime
     ) -> ReleaseCandidate | None:
-        if self._config.musicbrainz_provider is None:
+        musicbrainz, _, _ = self._configured_providers()
+        if musicbrainz is None:
             return None
         source_tags = dict(tags)
         result = ProviderEvidenceService(
             self._session,
-            self._config.musicbrainz_provider,
+            musicbrainz,
             None,
         ).lookup(
             ProviderEvidenceRequest(
@@ -843,7 +852,7 @@ class ProcessingWorker:
     def _stage_artwork_for_release(self, source_path: Path, staged_release: Path, final_tags: dict[str, str]) -> bool:
         self._stage_artwork(source_path, staged_release)
         release_id = final_tags.get('MUSICBRAINZ_ALBUMID')
-        provider = self._config.artwork_provider
+        _, _, provider = self._configured_providers()
         if release_id is None or provider is None:
             return False
         setting_key = f'artwork:{release_id}'
@@ -861,6 +870,30 @@ class ProcessingWorker:
         self._session.add(RuntimeSettingRecord(key=setting_key, value=setting_value, updated_at=datetime.now(UTC)))
         return candidate is not None
 
+    def _configured_providers(
+        self,
+    ) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
+        if self._config.live_transport is None:
+            return self._config.musicbrainz_provider, self._config.acoustid_provider, self._config.artwork_provider
+        settings = load_runtime_settings(self._session)
+        musicbrainz = (
+            MusicBrainzV2Adapter(self._config.live_transport, settings.musicbrainz_user_agent)
+            if settings.musicbrainz_enabled
+            else None
+        )
+        acoustid = (
+            AcoustIdV2Adapter(self._config.live_transport, settings.acoustid_client_key)
+            if settings.acoustid_enabled and settings.acoustid_client_key
+            else None
+        )
+        artwork = musicbrainz if settings.artwork_enabled else None
+        return musicbrainz, acoustid, artwork
+
+    def _timeout_seconds(self) -> float:
+        if self._config.live_transport is not None:
+            return load_runtime_settings(self._session).timeout_seconds
+        return self._config.timeout_seconds
+
     def _retry_claim(
         self,
         claimed: ClaimedJob,
@@ -877,8 +910,12 @@ class ProcessingWorker:
         repository.retry(
             claimed,
             datetime.now(UTC),
-            self._config.retry_delay,
-            self._config.max_attempts,
+            timedelta(seconds=load_runtime_settings(self._session).retry_delay_seconds)
+            if self._config.live_transport is not None
+            else self._config.retry_delay,
+            load_runtime_settings(self._session).max_attempts
+            if self._config.live_transport is not None
+            else self._config.max_attempts,
             reason,
         )
         source = self._session.get(SourceRecord, claimed.job.source_id)

@@ -156,8 +156,19 @@ class RuntimeSettingRecord(Base):
     __tablename__ = 'runtime_settings'
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    value: Mapped[str] = mapped_column(String(255), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+@final
+class GenreCatalogRecord(Base):
+    __tablename__ = 'genre_catalog'
+
+    musicbrainz_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_key: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 __all__ = [
@@ -174,6 +185,7 @@ __all__ = [
     'ProviderAttemptRecord',
     'ProviderScheduleRecord',
     'RuntimeSettingRecord',
+    'GenreCatalogRecord',
     'ProviderSnapshotRecord',
     'ReviewDecisionRecord',
     'SourceRecord',

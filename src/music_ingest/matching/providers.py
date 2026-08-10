@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import http.client
-import os
 import re
 import socket
 import ssl
@@ -436,6 +435,4 @@ def _default_live_client() -> PublicHttpClient:
 def build_live_transport(
     client_factory: Callable[[], PublicHttpClient] = _default_live_client,
 ) -> LiveTransport:
-    if os.environ.get(LIVE_TRANSPORT_ENVIRONMENT) != '1':
-        raise ProductionTransportDisabledError(LIVE_TRANSPORT_ENVIRONMENT)
     return LiveTransport(client=client_factory())

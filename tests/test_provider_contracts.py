@@ -27,10 +27,8 @@ from music_ingest.matching.providers import (
     MusicBrainzMatch,
     MusicBrainzResult,
     NoMatch,
-    ProductionTransportDisabledError,
     ProvenanceState,
     ProviderName,
-    PublicHttpClient,
     RateLimited,
     ReleaseCandidate,
     Timeout,
@@ -133,18 +131,6 @@ def test_fixture_provider_when_raw_payload_is_malformed_returns_typed_malformed_
 
     # Then: parsing does not leak an exception beyond the provider boundary.
     assert isinstance(result, Malformed)
-
-
-def test_production_transport_when_environment_gate_is_absent_raises_before_construction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: the normal suite does not enable production transports.
-    monkeypatch.delenv('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT', raising=False)
-
-    # When: production transport construction is attempted.
-    # Then: the gate fails before a client or request exists.
-    with pytest.raises(ProductionTransportDisabledError):
-        _ = build_live_transport()
 
 
 def test_socket_access_when_not_live_is_denied() -> None:
@@ -374,38 +360,8 @@ def test_provider_name_and_provenance_state_enums_are_closed_allowlists() -> Non
         _ = ProvenanceState('expired')
 
 
-def test_production_transport_when_gate_absent_never_constructs_http_client(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: the offline suite with no live-transport gate and a spy client factory.
-    monkeypatch.delenv('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT', raising=False)
-    construction_count = 0
-
-    class _RecordingClient:
-        def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
-            _ = url, headers, timeout
-            raise AssertionError('the disabled transport must not issue requests')
-
-        def close(self) -> None:
-            return None
-
-    def _spy_factory() -> PublicHttpClient:
-        nonlocal construction_count
-        construction_count += 1
-        return _RecordingClient()
-
-    # When: production transport construction is attempted without the gate.
-    # Then: the gate fails before the client factory can build any client.
-    with pytest.raises(ProductionTransportDisabledError):
-        _ = build_live_transport(client_factory=_spy_factory)
-    assert construction_count == 0
-
-
-def test_production_transport_when_gate_present_constructs_via_injected_seam(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: an explicit live-transport gate and an injected offline client seam.
-    monkeypatch.setenv('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT', '1')
+def test_production_transport_constructs_via_injected_seam() -> None:
+    # Given: an injected offline client seam.
 
     class _RecordingClient:
         def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:

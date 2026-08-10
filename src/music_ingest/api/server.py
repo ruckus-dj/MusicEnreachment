@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
 
@@ -17,11 +17,7 @@ from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from music_ingest.api.app import create_app
-from music_ingest.config.policies import PolicyBundle, PolicyYamlError, load_policy_bundle
-from music_ingest.enrichment.artwork import ArtworkProvider
-from music_ingest.matching.acoustid import AcoustIdV2Adapter
-from music_ingest.matching.musicbrainz import MusicBrainzV2Adapter
-from music_ingest.matching.providers import AcoustIdProvider, MusicBrainzProvider, build_live_transport
+from music_ingest.matching.providers import build_live_transport
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.runtime import run_processing_worker
 
@@ -89,17 +85,6 @@ def create_runtime_app() -> FastAPI:
 
     session_factory = sessionmaker(engine)
     processing_config = _processing_config(os.environ)
-    policy_bundle = _policy_bundle(os.environ)
-    if policy_bundle is not None:
-        processing_config = ProcessingConfig(
-            **{
-                field.name: getattr(processing_config, field.name)
-                for field in fields(ProcessingConfig)
-                if field.name not in {'field_policy', 'genre_policy'}
-            },
-            field_policy=policy_bundle.field_policy,
-            genre_policy=policy_bundle.genre_policy,
-        )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -119,44 +104,15 @@ def create_runtime_app() -> FastAPI:
         media_root=processing_config.media_root,
         api_token=runtime_config.api_token,
         musicbrainz_provider=processing_config.musicbrainz_provider,
+        genre_transport=processing_config.live_transport,
     )
 
 
 def _processing_config(environment: Mapping[str, str]) -> ProcessingConfig:
-    musicbrainz_provider, acoustid_provider, artwork_provider = _live_providers(environment)
+    live_transport = build_live_transport()
     return ProcessingConfig(
         incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
-        musicbrainz_provider=musicbrainz_provider,
-        acoustid_provider=acoustid_provider,
-        artwork_provider=artwork_provider,
+        live_transport=live_transport,
     )
-
-
-def _live_providers(
-    environment: Mapping[str, str],
-) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
-    if environment.get('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT') != '1':
-        return None, None, None
-    transport = build_live_transport()
-    musicbrainz = MusicBrainzV2Adapter(
-        transport,
-        environment.get(
-            'MUSIC_INGEST_MUSICBRAINZ_USER_AGENT',
-            'music-ingest/0.1.0 (music-ingest@example.com)',
-        ),
-    )
-    acoustid_key = environment.get('MUSIC_INGEST_ACOUSTID_CLIENT_KEY', '').strip()
-    acoustid = AcoustIdV2Adapter(transport, acoustid_key) if acoustid_key else None
-    return musicbrainz, acoustid, musicbrainz
-
-
-def _policy_bundle(environment: Mapping[str, str]) -> PolicyBundle | None:
-    policy_root = Path(environment.get('MUSIC_INGEST_POLICY_ROOT', '/app/config'))
-    if not (policy_root / 'config.yaml').is_file():
-        return None
-    try:
-        return load_policy_bundle(policy_root)
-    except (PolicyYamlError, ValueError) as error:
-        raise RuntimeConfigurationError('MUSIC_INGEST_POLICY_ROOT contains invalid policies') from error
