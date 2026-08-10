@@ -101,6 +101,16 @@ def resolve_match(
             ReviewReason.LOCAL_ONLY_REQUESTED,
             candidate_scores,
         )
+    automatic_candidate = _unique_source_match(request, musicbrainz)
+    if automatic_candidate is not None:
+        return MatchResult(
+            MatchDecision.AUTO_SELECTED,
+            automatic_candidate.release_mbid,
+            recording_score,
+            release_score,
+            None,
+            candidate_scores,
+        )
     reason = _review_reason(request, musicbrainz, release_score, confidence_threshold)
     if reason is not None:
         return MatchResult(MatchDecision.NEEDS_REVIEW, None, recording_score, release_score, reason, candidate_scores)
@@ -144,6 +154,26 @@ def _candidate_scores(request: MatchingRequest, musicbrainz: MusicBrainzResult) 
             )
         case Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
             return ()
+
+
+def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> ReleaseCandidate | None:
+    """Return the sole candidate matching both source artist and album text."""
+    if request.explicit_ids.release_mbid or request.explicit_ids.recording_mbid or request.explicit_ids.track_mbid:
+        return None
+    if not request.artist_name.strip() or not request.release_title.strip() or _has_unsafe_text(request):
+        return None
+    match musicbrainz:
+        case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
+            matches = tuple(
+                candidate
+                for candidate in candidates
+                if _normalized(request.artist_name) == _normalized(candidate.artist_name)
+                and _normalized(request.release_title) == _normalized(candidate.release_title)
+                and not _candidate_has_unsafe_text(candidate)
+            )
+            return matches[0] if len(matches) == 1 else None
+        case MusicBrainzMatch() | Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
+            return None
 
 
 def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> float:

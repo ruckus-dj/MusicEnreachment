@@ -151,6 +151,44 @@ def test_matching_when_fingerprint_equivalent_live_and_studio_pair_is_ambiguous_
     assert result.release_score.score == 0.0
 
 
+def test_matching_when_source_album_disambiguates_musicbrainz_candidates_selects_exact_album() -> None:
+    # Given: two releases for the same artist and track, with only one matching the source album tag.
+    request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.2', None)
+    evidence = Ambiguous(
+        _provenance('fresh'),
+        (
+            ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC'),
+            ReleaseCandidate('release-vol-2', 'The Greatest Hits Vol.2', 'Noize MC'),
+        ),
+    )
+
+    # When: matching evaluates the ambiguous MusicBrainz result.
+    result = resolve_match(request, evidence, None)
+
+    # Then: the unique exact source album match is selected automatically.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == 'release-vol-2'
+
+
+def test_matching_when_source_album_matches_multiple_candidates_keeps_review() -> None:
+    # Given: two candidates have identical artist and album text.
+    request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.2', None)
+    evidence = Ambiguous(
+        _provenance('fresh'),
+        (
+            ReleaseCandidate('release-one', 'The Greatest Hits Vol.2', 'Noize MC'),
+            ReleaseCandidate('release-two', 'The Greatest Hits Vol.2', 'Noize MC'),
+        ),
+    )
+
+    # When: matching evaluates the ambiguous MusicBrainz result.
+    result = resolve_match(request, evidence, None)
+
+    # Then: duplicate exact matches remain a manual review case.
+    assert result.decision is MatchDecision.NEEDS_REVIEW
+    assert result.review_reason is ReviewReason.MUSICBRAINZ_AMBIGUOUS
+
+
 def test_matching_when_exact_musicbrainz_facts_are_freshly_cached_selects_the_release() -> None:
     # Given: an exact normalized candidate retained inside the 24-hour cache window.
     request = MatchingRequest('Fíxture Artist', 'fixture release', None)
