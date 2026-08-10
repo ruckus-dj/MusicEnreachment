@@ -28,6 +28,7 @@ from music_ingest.matching.providers import (
 _ENDPOINT = 'https://musicbrainz.org/ws/2/release/'
 _RECORDING_ENDPOINT = 'https://musicbrainz.org/ws/2/recording/'
 _COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
+_RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels'
 
 
 class MusicBrainzTransport(Protocol):
@@ -58,7 +59,7 @@ class MusicBrainzV2Adapter:
         if request.release_mbid is not None:
             url = (
                 f'{_ENDPOINT}{quote(request.release_mbid, safe="")}'
-                f'?{urlencode({"inc": "artist-credits+media+recordings+release-groups+genres", "fmt": "json"})}'
+                f'?{urlencode({"inc": _RELEASE_INCLUDES, "fmt": "json"})}'
             )
             request_key = f'release:{request.release_mbid}'
         elif request.recording_mbid is not None:
@@ -158,10 +159,7 @@ class MusicBrainzV2Adapter:
         release: Release,
         provenance: LiveProvenance,
     ) -> tuple[Release, LiveProvenance]:
-        url = (
-            f'{_ENDPOINT}{quote(release.id, safe="")}'
-            f'?{urlencode({"inc": "artist-credits+media+recordings+release-groups+genres", "fmt": "json"})}'
-        )
+        url = f'{_ENDPOINT}{quote(release.id, safe="")}?{urlencode({"inc": _RELEASE_INCLUDES, "fmt": "json"})}'
         response = self.transport.get(url, headers={'User-Agent': self.user_agent, 'Accept': 'application/json'})
         if response.status_code != 200:
             return release, provenance
@@ -225,6 +223,16 @@ class MusicBrainzV2Adapter:
                 ),
             ),
             release_group_mbid=None if release.release_group is None else release.release_group.id,
+            isrcs=() if track is None else track.recording.isrcs,
+            performers=()
+            if track is None
+            else tuple(
+                relation.artist.name
+                for relation in track.recording.relations
+                if relation.target_type == 'artist'
+                and relation.type in {'performer', 'vocal', 'instrument'}
+                and relation.artist is not None
+            ),
         )
 
 

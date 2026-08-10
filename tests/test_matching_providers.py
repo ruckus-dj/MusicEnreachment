@@ -304,7 +304,12 @@ def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() 
                     b'"id":"artist-id","name":"Fixture Artist",'
                     b'"genres":[{"name":"Alternative Rock"},{"name":"Hip Hop"}]}}],'
                     b'"media":[{"position":1,"tracks":[{"position":1,"title":"Fixture Track",'
-                    b'"recording":{"id":"recording-id","title":"Fixture Track"}}]}]}'
+                    b'"recording":{"id":"recording-id","title":"Fixture Track",'
+                    b'"isrcs":["USFIX2600001"],"relations":['
+                    b'{"type":"performer","target-type":"artist",'
+                    b'"artist":{"id":"performer-id","name":"Fixture Performer"}},'
+                    b'{"type":"vocal","target-type":"artist",'
+                    b'"artist":{"id":"vocalist-id","name":"Fixture Vocalist"}}]}}]}]}'
                 )
             return MusicBrainzHttpResponse(200, body)
 
@@ -316,6 +321,8 @@ def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() 
     # Then: the candidate includes genres from the linked artist entity.
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.genres == ('Alternative Rock', 'Hip Hop')
+    assert result.candidate.isrcs == ('USFIX2600001',)
+    assert result.candidate.performers == ('Fixture Performer', 'Fixture Vocalist')
 
 
 def test_musicbrainz_genre_selection_prefers_track_then_album_then_artist() -> None:

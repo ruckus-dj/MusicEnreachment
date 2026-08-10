@@ -157,6 +157,8 @@ class ReleaseCandidate:
     disc_total: int | None = None
     genres: tuple[str, ...] = ()
     release_group_mbid: str | None = None
+    isrcs: tuple[str, ...] = ()
+    performers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

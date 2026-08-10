@@ -161,6 +161,14 @@ class Artist(BaseModel):
     genres: tuple[Genre, ...] = ()
 
 
+class ArtistRelation(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    type: str
+    target_type: str = Field(alias='target-type')
+    artist: Artist | None = None
+
+
 class ArtistCredit(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
@@ -183,6 +191,8 @@ class TrackRecording(BaseModel):
     title: str
     artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     genres: tuple[Genre, ...] = ()
+    isrcs: tuple[str, ...] = ()
+    relations: tuple[ArtistRelation, ...] = ()
 
 
 class Track(BaseModel):
