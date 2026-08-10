@@ -23,11 +23,15 @@ is restricted by the deployment network boundary.
 
 ## Operator Configuration
 
-Copy the six files in `config/templates/` to
-`/mnt/ssd/appdata/music-ingest/`. Templates are safe defaults, not credentials.
-Inject the PostgreSQL URL and any optional AcoustID reference through Infisical.
-Replace the placeholder MusicBrainz contact before enabling MusicBrainz. Keep
-AcoustID disabled unless an Infisical reference has been configured.
+Configure processing and external providers through the Settings tab in the
+review UI. The stack keeps only database credentials, container mounts, and
+runtime paths in its deployment environment.
+
+The genre catalog is not an operator-maintained setting. On first Settings-tab
+load, the service synchronizes the official MusicBrainz genre catalog through
+`/ws/2/genre/all` with the configured MusicBrainz User-Agent. The UI keeps the
+original MusicBrainz name for matching and shows a readable display label; the
+manual aliases JSON is not part of the runtime contract.
 
 Configure Lidarr to import into `/mnt/pool/data/music-incoming`, then mount that
 path read-only as `/data/incoming` in `music-ingest`. Mount

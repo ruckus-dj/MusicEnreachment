@@ -11,7 +11,6 @@ services:
     expose:
       - "8000"
     volumes:
-      - /mnt/ssd/appdata/music-ingest/config:/app/config:ro
       - /mnt/ssd/appdata/music-ingest:/appdata/music-ingest
       - /mnt/pool/data/media:/data/publish/music
       - /mnt/pool/data/music-incoming:/data/incoming:ro
