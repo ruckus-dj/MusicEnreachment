@@ -115,6 +115,32 @@ def test_runtime_app_when_started_upgrades_schema_before_it_serves_requests(monk
     assert response.status_code == 200
 
 
+def test_runtime_app_passes_live_transport_to_musicbrainz_review_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the runtime creates a live provider transport.
+    runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
+    transport = object()
+    captured: dict[str, object] = {}
+    engine = create_engine('sqlite+pysqlite:///:memory:')
+    monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
+    monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    monkeypatch.setattr(server, 'build_live_transport', lambda: transport)
+
+    def capture_app(*_args: object, **kwargs: object):
+        captured.update(kwargs)
+        return server.FastAPI()
+
+    monkeypatch.setattr(server, 'create_app', capture_app)
+
+    # When: the runtime application is constructed.
+    _ = server.create_runtime_app()
+
+    # Then: the API receives the same transport used by the worker.
+    assert captured['musicbrainz_transport'] is transport
+
+
 def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a runtime engine with a recorded disposal boundary.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)

@@ -33,6 +33,7 @@ from music_ingest.dto import (
     RuntimeSettingsResponse,
     SourceRecoveryResponse,
 )
+from music_ingest.external.musicbrainz import MusicBrainzTransport, MusicBrainzV2Adapter
 from music_ingest.external.musicbrainz_genres import (
     GenreCatalogSyncError,
     GenreTransport,
@@ -158,6 +159,7 @@ def create_app(
     media_root: Path | None = None,
     api_token: str | None = None,
     musicbrainz_provider: MusicBrainzProvider | None = None,
+    musicbrainz_transport: MusicBrainzTransport | None = None,
     genre_transport: GenreTransport | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
@@ -705,10 +707,16 @@ def create_app(
 
     @app.get('/api/library/records/{record_id}/sources/{source_id}/candidates/{candidate_key}/musicbrainz')
     def decode_acoustid_candidate(record_id: str, source_id: str, candidate_key: str) -> JSONResponse:
-        if musicbrainz_provider is None:
-            raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
         try:
             with session_factory() as session:
+                provider = musicbrainz_provider
+                if provider is None and musicbrainz_transport is not None:
+                    provider = MusicBrainzV2Adapter(
+                        musicbrainz_transport,
+                        load_runtime_settings(session).musicbrainz_user_agent,
+                    )
+                if provider is None:
+                    raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
                 record = library_record_detail(session, record_id)
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
@@ -723,7 +731,7 @@ def create_app(
                 if evidence.provider != 'acoustid':
                     raise HTTPException(status_code=409, detail='candidate is not an AcousticID recording')
                 source_tags = _catalog_tags(record, source.id)
-                result = ProviderEvidenceService(session, musicbrainz_provider, None).lookup(
+                result = ProviderEvidenceService(session, provider, None).lookup(
                     ProviderEvidenceRequest(
                         query='',
                         musicbrainz_case=FixtureCase.SUCCESS,
