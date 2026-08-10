@@ -1,0 +1,276 @@
+import { Icon as icon } from "../components/Icon";
+import { LibraryCatalog } from "../components/LibraryCatalog";
+import { titleFor } from "../domain/metadata";
+import { SettingsScreen } from "../screens/SettingsScreen";
+import { TrackDetail } from "../screens/TrackDetail";
+import type { Summary } from "../types";
+import type { AppControllerModel } from "./useAppController";
+
+const emptySummary: Summary = {
+  record_id: "",
+  source_state: "",
+  processing_state: "",
+  match_state: "",
+  publication_state: "",
+  metadata_state: "",
+  sources: [],
+  publications: [],
+};
+
+export function AppShell({ controller }: { controller: AppControllerModel }) {
+  const {
+    screen,
+    items,
+    tracks,
+    loading,
+    artist,
+    album,
+    detail,
+    sourceId,
+    currentTrack,
+    artists,
+    albums,
+    albumTracks,
+    notice,
+    watchedRecords,
+    watchedLibraryUntil,
+  } = controller;
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            {icon(
+              "M9 18V6l10-2v12M9 18a3 3 0 1 1-3-3 3 3 0 1 1 3 3Zm10-2a3 3 0 1 1-3-3 3 3 0 1 1 3 3Z",
+            )}
+          </div>
+          <div>
+            <strong>Music Ingest</strong>
+            <span>LIBRARY / REVIEW</span>
+          </div>
+        </div>
+        <nav>
+          <button
+            type="button"
+            className={screen !== "track" && screen !== "settings" ? "nav-item active" : "nav-item"}
+            onClick={() => controller.navigate({ screen: "artists" })}
+          >
+            {icon(
+              "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 8h10M7 12h10M7 16h6",
+            )}
+            <span>Медиатека</span>
+            <b>{tracks.length}</b>
+          </button>
+          <button
+            type="button"
+            className={screen === "settings" ? "nav-item active" : "nav-item"}
+            onClick={() => controller.navigate({ screen: "settings" })}
+          >
+            {icon(
+              "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6 6 18M18 18l-1.4-1.4M7.4 7.4 6 6",
+            )}
+            <span>Настройки</span>
+          </button>
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="storage">
+            <span>Состояние</span>
+            <strong>
+              {items.some((item) => item.processing_state !== "complete")
+                ? "Есть анализ"
+                : "Готово"}
+            </strong>
+            <small>Исходники не изменяются</small>
+          </div>
+          <button
+            type="button"
+            className="nav-item quiet"
+            disabled={loading}
+            onClick={() => void controller.loadLibrary()}
+          >
+            {icon("M4 12a8 8 0 1 0 2.34-5.66L4 8.68M4 4v4.68h4.68")}
+            <span>{loading ? "Обновляем…" : "Обновить список"}</span>
+          </button>
+        </div>
+      </aside>
+      <main className="workspace">
+        <header className="topbar">
+          <div className="breadcrumbs">
+            <span>Music Ingest</span>
+            <i>/</i>
+            <strong>
+              {screen === "settings"
+                ? "Настройки"
+                : screen === "artists"
+                  ? "Медиатека"
+                  : screen === "albums"
+                    ? artist
+                    : screen === "tracks"
+                      ? album
+                      : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+            </strong>
+          </div>
+          <div className="topbar-actions">
+            <span className="sync">
+              {Object.keys(watchedRecords).length || watchedLibraryUntil > 0
+                ? "Синхронизация…"
+                : "Синхронизировано"}
+            </span>
+            <button type="button" className="avatar">
+              MI
+            </button>
+          </div>
+        </header>
+        <div className="content">
+          <section className="hero">
+            <div>
+              {screen !== "artists" && screen !== "settings" && (
+                <button type="button" className="back" onClick={controller.back}>
+                  ← Назад
+                </button>
+              )}
+              <p className="eyebrow">
+                {screen === "settings"
+                  ? "Панель управления"
+                  : screen === "track"
+                    ? "Инспектор трека"
+                    : "Ваша медиатека"}
+              </p>
+              <h1>
+                {screen === "settings"
+                  ? "Настройки"
+                  : screen === "artists"
+                    ? "Исполнители"
+                    : screen === "albums"
+                      ? artist
+                      : screen === "tracks"
+                        ? album
+                        : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+              </h1>
+              <p className="hero-copy">
+                {screen === "settings"
+                  ? "Настройки runtime и провайдеров"
+                  : screen === "artists"
+                    ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
+                    : screen === "albums"
+                      ? "Альбомы исполнителя и их состояние обработки."
+                      : screen === "tracks"
+                        ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
+                        : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
+              </p>
+            </div>
+            <div className="hero-stat">
+              <strong>
+                {screen === "settings"
+                  ? "DB"
+                  : screen === "artists"
+                    ? artists.length
+                    : screen === "albums"
+                      ? albums.length
+                      : screen === "tracks"
+                        ? albumTracks.length
+                        : "01"}
+              </strong>
+              <span>
+                {screen === "settings"
+                  ? "runtime параметров"
+                  : screen === "artists"
+                    ? "артистов"
+                    : screen === "albums"
+                      ? "альбомов"
+                      : screen === "tracks"
+                        ? "треков"
+                        : "трек"}
+              </span>
+            </div>
+          </section>
+          {notice && (
+            <div className="notice-bar" role="status">
+              <span>{notice}</span>
+              <button type="button" onClick={() => controller.setNotice("")}>
+                Скрыть
+              </button>
+            </div>
+          )}
+          {screen !== "track" && screen !== "settings" && (
+            <div className="library-toolbar">
+              <label className="search">
+                {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
+                <input
+                  aria-label="Поиск"
+                  value={controller.query}
+                  onChange={(event) => controller.setQuery(event.target.value)}
+                  placeholder="Поиск по артисту, альбому или треку"
+                />
+              </label>
+              <div className="provider-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={controller.reprocessing}
+                  onClick={() => void controller.retryFailedProviders()}
+                >
+                  {controller.reprocessing ? "Ставим в очередь…" : "Переотправить провайдерам"}
+                </button>
+                <button
+                  type="button"
+                  className="primary scan"
+                  disabled={controller.scanning || controller.reprocessing}
+                  onClick={() => void controller.scan()}
+                >
+                  {controller.scanning ? "Сканируем…" : "Сканировать файлы"}
+                </button>
+              </div>
+            </div>
+          )}
+          {screen === "settings" ? (
+            <SettingsScreen
+              draft={controller.settingsDraft}
+              loading={controller.settingsLoading}
+              saving={controller.settingsSaving}
+              onChange={controller.setSettingsDraft}
+              onSave={() => void controller.saveSettings()}
+              genres={controller.genreCatalog}
+              genreSearch={controller.genreSearch}
+              onGenreSearch={controller.setGenreSearch}
+              genreLoading={controller.genreLoading}
+              genreSyncing={controller.genreSyncing}
+              onSyncGenres={() => void controller.syncGenres()}
+            />
+          ) : screen === "track" ? (
+            <TrackDetail
+              detail={detail}
+              sourceId={sourceId}
+              layer={controller.layer}
+              setLayer={controller.setLayer}
+              tags={controller.currentTags}
+              draft={controller.draft}
+              setDraft={controller.setDraft}
+              saving={controller.saving}
+              reprocessing={controller.reprocessing}
+              onSave={() => void controller.saveMetadata()}
+              onRetry={() => void controller.retryProvider("acoustid")}
+              onRetryAcoustId={() => void controller.retryProvider("acoustid")}
+              onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
+              onOverrideRelease={(value) => void controller.overrideRelease(value)}
+              onSelectCandidate={(key) => void controller.selectCandidate(key)}
+            />
+          ) : (
+            <LibraryCatalog
+              screen={screen}
+              artist={artist}
+              album={album}
+              artists={artists}
+              albums={albums}
+              tracks={tracks}
+              albumTracks={albumTracks}
+              loading={loading}
+              onNavigate={controller.navigate}
+              onRefresh={() => void controller.loadLibrary()}
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}

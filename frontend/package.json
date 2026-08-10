@@ -7,7 +7,12 @@
     "build": "tsc -b && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "doctor": "npx react-doctor@latest"
+    "doctor": "npx react-doctor@latest",
+    "format": "biome format --write src",
+    "format:check": "biome format src",
+    "lint": "biome lint src",
+    "typecheck": "tsc -b",
+    "check": "biome check src && tsc -b"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -17,6 +22,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.7",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "react-doctor": "^0.9.11",

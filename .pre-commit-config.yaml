@@ -24,3 +24,8 @@ repos:
         entry: uv run pytest
         language: system
         pass_filenames: false
+      - id: frontend-check
+        name: frontend format and lint
+        entry: npm run check --prefix frontend
+        language: system
+        pass_filenames: false
