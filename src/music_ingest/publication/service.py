@@ -83,7 +83,7 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
 
 
 def replace_published_audio(request: PublicationRequest, target_audio: Path) -> PublicationResult:
-    """Atomically replace one published FLAC with a validated staged FLAC."""
+    """Atomically replace one published track and its staged artwork."""
     staged_release, _, media_root = _controlled_roots(request)
     target = target_audio.resolve()
     if target.parent != media_root.resolve() and media_root.resolve() not in target.parents:
@@ -93,12 +93,31 @@ def replace_published_audio(request: PublicationRequest, target_audio: Path) -> 
     if len(audio_paths) != 1 or target.suffix.casefold() != '.flac':
         raise PublicationError('republish requires one FLAC target')
     _reject_source_hardlinks(audio_paths, source_snapshots)
+    staged_artwork = next(
+        (path for path in staged_release.iterdir() if path.name.casefold() in {'cover.jpg', 'cover.webp'}),
+        None,
+    )
+    target_stem = target.stem
+    for existing in target.parent.iterdir():
+        if (
+            existing != target
+            and existing.is_file()
+            and existing.suffix.casefold() in _AUDIO_SUFFIXES
+            and existing.stem == target_stem
+        ):
+            existing.unlink()
     descriptor, temporary_name = tempfile.mkstemp(prefix=f'.{target.name}.', dir=target.parent)
     os.close(descriptor)
     temporary_path = Path(temporary_name)
     try:
         shutil.copy2(audio_paths[0], temporary_path)
         os.replace(temporary_path, target)
+        if staged_artwork is not None and (
+            request.replace_artwork or not any((target.parent / name).exists() for name in ('cover.jpg', 'cover.webp'))
+        ):
+            for name in ('cover.jpg', 'cover.webp'):
+                (target.parent / name).unlink(missing_ok=True)
+            shutil.copy2(staged_artwork, target.parent / staged_artwork.name)
         _fsync_directory(target.parent)
     except OSError as error:
         temporary_path.unlink(missing_ok=True)
