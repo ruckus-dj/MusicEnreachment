@@ -7,7 +7,7 @@ from subprocess import run
 
 import pytest
 
-from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.metadata import (
     CanonicalMetadata,
     CanonicalSource,

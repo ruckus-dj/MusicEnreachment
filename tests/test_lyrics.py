@@ -14,7 +14,7 @@ from music_ingest.lyrics.validate import (
     persist_lyric_review,
     validate_and_write_lrc,
 )
-from music_ingest.persistence.models import Base, ReviewDecisionRecord, SourceRecord
+from music_ingest.models import Base, ReviewDecisionRecord, SourceRecord
 
 
 def _identity() -> LrcIdentity:

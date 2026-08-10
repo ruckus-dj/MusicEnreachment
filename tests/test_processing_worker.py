@@ -15,15 +15,14 @@ from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
 from music_ingest.matching.providers import (
-    AcoustIdFixtureProvider,
-    MusicBrainzFixtureProvider,
     RecordingCandidate,
     ReleaseCandidate,
 )
-from music_ingest.persistence.jobs import ClaimedJob
-from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
+from music_ingest.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
+from music_ingest.models.jobs import ClaimedJob
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
+from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 _FFMPEG: Final[str] = which('ffmpeg') or ''
 assert _FFMPEG

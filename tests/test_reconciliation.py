@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.persistence.models import Base, JobRecord, SourceRecord
+from music_ingest.models import Base, JobRecord, SourceRecord
 from music_ingest.reconciliation import reconcile_incoming
 
 

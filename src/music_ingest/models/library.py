@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, select
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from music_ingest.persistence.base import Base
+from music_ingest.models.db import Base
 
 
 class SourceTagView(Protocol):
@@ -84,6 +84,14 @@ class LibraryRecord(Base):
     events: Mapped[list[LibraryEventRecord]] = relationship(
         back_populates='library_record', lazy='selectin', order_by='LibraryEventRecord.created_at'
     )
+
+    @staticmethod
+    def get(session: Session, record_id: str) -> LibraryRecord | None:
+        return session.get(LibraryRecord, record_id)
+
+    @staticmethod
+    def get_by_recording(session: Session, recording_id: str) -> LibraryRecord | None:
+        return session.scalar(select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == recording_id))
 
 
 @final

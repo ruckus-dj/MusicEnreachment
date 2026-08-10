@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import Select, and_, select
 from sqlalchemy.orm import Session, selectinload
 
-from music_ingest.persistence.models import JobAttemptRecord, JobRecord
+from music_ingest.models.entities import JobAttemptRecord, JobRecord
 
 
 @dataclass(frozen=True, slots=True)

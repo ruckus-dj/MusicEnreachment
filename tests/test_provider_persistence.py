@@ -10,8 +10,8 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from alembic import command
-from music_ingest.persistence.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
-from music_ingest.persistence.repository import ProviderPersistenceRepository
+from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
+from music_ingest.models.repositories import ProviderPersistenceRepository, ensure_provider_schedules
 
 
 def test_provider_snapshot_is_global_append_only_and_lookup_is_newest(tmp_path: Path) -> None:
@@ -134,7 +134,24 @@ def test_provider_models_have_no_source_or_sensitive_snapshot_columns() -> None:
     assert 'response_body' in snapshot_columns
 
 
-def test_provider_migration_has_seeded_schedule_tables(tmp_path: Path) -> None:
+def test_runtime_initialization_seeds_provider_schedules_idempotently(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 7, 28, tzinfo=UTC)
+
+    with Session(engine) as session:
+        ensure_provider_schedules(session, ('musicbrainz', 'acoustid'), now)
+        session.commit()
+
+    with Session(engine) as session:
+        ensure_provider_schedules(session, ('musicbrainz', 'acoustid'), now + timedelta(minutes=1))
+        session.commit()
+        schedules = session.scalars(select(ProviderScheduleRecord)).all()
+        assert {schedule.provider_name for schedule in schedules} == {'musicbrainz', 'acoustid'}
+        assert {schedule.next_start_at.replace(tzinfo=UTC) for schedule in schedules} == {now}
+
+
+def test_provider_migration_creates_schedule_tables_without_runtime_rows(tmp_path: Path) -> None:
     database_path = tmp_path / 'migration.db'
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
@@ -144,6 +161,6 @@ def test_provider_migration_has_seeded_schedule_tables(tmp_path: Path) -> None:
     assert {'provider_snapshots', 'provider_schedules'} <= set(inspect(engine).get_table_names())
     assert 'response_body' in {column['name'] for column in inspect(engine).get_columns('provider_snapshots')}
     with Session(engine) as session:
-        assert {row.provider_name for row in session.query(ProviderScheduleRecord)} == {'musicbrainz', 'acoustid'}
+        assert session.scalars(select(ProviderScheduleRecord)).all() == []
     command.downgrade(config, 'base')
     assert 'provider_snapshots' not in inspect(engine).get_table_names()

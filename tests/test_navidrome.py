@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from music_ingest.integrations.navidrome import (
+from tests.support.navidrome import (
     GenreResponse,
     SearchResponse,
     catalog_matches,

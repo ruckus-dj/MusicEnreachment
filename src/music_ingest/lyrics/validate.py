@@ -7,7 +7,7 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
-from music_ingest.persistence.models import ReviewDecisionRecord
+from music_ingest.models import ReviewDecisionRecord
 
 _LRC_LINE: Final = re.compile(r'^\[(\d{2,}):([0-5]\d)(?:\.(\d{1,3}))?\](.+)$')
 _MAX_INITIAL_CUE_SECONDS: Final = 10.0

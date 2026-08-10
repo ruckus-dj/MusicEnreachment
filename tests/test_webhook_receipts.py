@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.persistence.models import Base, JobRecord, WebhookReceiptRecord
-from music_ingest.persistence.repository import (
+from music_ingest.models import Base, JobRecord, WebhookReceiptRecord
+from music_ingest.models.repositories import (
     ReceiptReplayConflictError,
     WebhookReceiptInput,
     WebhookReceiptRepository,

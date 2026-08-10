@@ -9,7 +9,6 @@ from music_ingest.matching.providers import (
     Ambiguous,
     FixtureCase,
     LiveProvenance,
-    MusicBrainzFixtureProvider,
     MusicBrainzLookupRequest,
     MusicBrainzMatch,
     RecordingEvidence,
@@ -24,6 +23,7 @@ from music_ingest.matching.scoring import (
     ReviewReason,
     resolve_match,
 )
+from tests.support.providers import MusicBrainzFixtureProvider
 
 NOW = datetime(2026, 7, 28, tzinfo=UTC)
 RELEASE_MBID = '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'

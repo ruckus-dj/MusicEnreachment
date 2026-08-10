@@ -5,11 +5,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from music_ingest.dto import EvidenceFixturePayload as _FixturePayload
 from music_ingest.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
@@ -32,23 +32,12 @@ from music_ingest.matching.providers import (
     Timeout,
     Unavailable,
 )
-from music_ingest.persistence.models import ProviderSnapshotRecord
-from music_ingest.persistence.repository import ProviderPersistenceRepository
+from music_ingest.models import ProviderSnapshotRecord
+from music_ingest.models.repositories import ProviderPersistenceRepository
 
 _FRESHNESS = timedelta(hours=24)
 _INTERVAL = timedelta(seconds=1)
 _LEASE_DURATION = timedelta(minutes=1)
-
-
-class _FixturePayload(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True)
-
-    outcome: FixtureCase
-    release_mbid: str | None = None
-    release_title: str | None = None
-    artist_name: str | None = None
-    recording_mbid: str | None = None
-    score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,9 +329,10 @@ def _decode_musicbrainz(snapshot: ProviderSnapshotRecord, state: str) -> MusicBr
         ):
             return MusicBrainzMatch(provenance, ReleaseCandidate(mbid, title, artist))
         case _FixturePayload(outcome=outcome):
-            return _failed(outcome, provenance)
+            return _failed(FixtureCase(outcome), provenance)
         case None:
             return Malformed(provenance)
+    return Malformed(provenance)
 
 
 def _decode_acoustid(snapshot: ProviderSnapshotRecord, state: str) -> AcoustIdResult:
@@ -359,9 +349,10 @@ def _decode_acoustid(snapshot: ProviderSnapshotRecord, state: str) -> AcoustIdRe
         case _FixturePayload(outcome=FixtureCase.SUCCESS, recording_mbid=str() as mbid, score=float() as score):
             return AcoustIdMatch(provenance, RecordingEvidence(mbid, score))
         case _FixturePayload(outcome=outcome):
-            return _failed(outcome, provenance)
+            return _failed(FixtureCase(outcome), provenance)
         case None:
             return Malformed(provenance)
+    return Malformed(provenance)
 
 
 def _payload(raw: bytes | None) -> _FixturePayload | None:

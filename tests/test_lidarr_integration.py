@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from music_ingest.integrations.lidarr import LidarrClient, LidarrIntakeEvent, enqueue_lidarr_intake
+from tests.support.lidarr import LidarrClient, LidarrIntakeEvent, enqueue_lidarr_intake
 
 
 @dataclass

@@ -3,82 +3,28 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, assert_never
+from typing import assert_never
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from music_ingest.dto import (
+    LidarrAlbumDeletePayload,
+    LidarrDispatchResult,
+    LidarrDownloadPayload,
+    LidarrEvent,
+    LidarrIntakeError,
+    LidarrRenamePayload,
+    LidarrTestPayload,
+)
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import record_event
-from music_ingest.persistence.models import JobRecord, SourceRecord, WebhookReceiptRecord
-from music_ingest.persistence.repository import WebhookReceiptInput, WebhookReceiptRepository
-
-
-class LidarrTrackFile(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    path: Path
-
-
-class LidarrRenamedTrackFile(LidarrTrackFile):
-    previous_path: Path = Field(alias='previousPath')
-
-
-class LidarrAlbum(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    id: int | str
-
-
-class LidarrTestPayload(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    event_type: Literal['Test'] = Field(alias='eventType')
-
-
-class LidarrDownloadPayload(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    event_type: Literal['Download', 'ReleaseImport'] = Field(alias='eventType')
-    track_files: tuple[LidarrTrackFile, ...] = Field(alias='trackFiles', min_length=1)
-    is_upgrade: bool = Field(alias='isUpgrade')
-    deleted_files: tuple[LidarrTrackFile, ...] = Field(default=(), alias='deletedFiles')
-
-
-class LidarrRenamePayload(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    event_type: Literal['Rename'] = Field(alias='eventType')
-    renamed_track_files: tuple[LidarrRenamedTrackFile, ...] = Field(alias='renamedTrackFiles', min_length=1)
-
-
-class LidarrAlbumDeletePayload(BaseModel):
-    model_config = ConfigDict(extra='allow', frozen=True)
-
-    event_type: Literal['AlbumDelete'] = Field(alias='eventType')
-    album: LidarrAlbum
-    deleted_files: bool = Field(alias='deletedFiles')
-
-
-type LidarrEvent = Annotated[
-    LidarrTestPayload | LidarrDownloadPayload | LidarrRenamePayload | LidarrAlbumDeletePayload,
-    Field(discriminator='event_type'),
-]
+from music_ingest.models import JobRecord, SourceRecord, WebhookReceiptRecord
+from music_ingest.models.repositories import WebhookReceiptInput, WebhookReceiptRepository
 
 _EVENT_ADAPTER: TypeAdapter[LidarrEvent] = TypeAdapter(LidarrEvent)
-
-
-class LidarrIntakeError(ValueError):
-    pass
-
-
-class LidarrDispatchResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    job_id: str | None
-    replayed: bool
 
 
 def parse_lidarr_event(raw_payload: bytes) -> LidarrEvent:

@@ -10,7 +10,7 @@ from music_ingest.enrichment.fingerprints import FingerprintRequest, Fingerprint
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.flac import FlacFinding, FlacFindingKind, FlacInspectionResult, InspectionState
 from music_ingest.intake.service import SourceId
-from music_ingest.persistence.models import Base, FingerprintRecord, SourceRecord
+from music_ingest.models import Base, FingerprintRecord, SourceRecord
 
 
 def _source(session: Session, source_path: Path) -> SourceRecord:

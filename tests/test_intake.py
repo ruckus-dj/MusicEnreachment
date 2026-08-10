@@ -21,7 +21,7 @@ from music_ingest.intake.service import (
     SourceTagObservation,
     intake_source,
 )
-from music_ingest.persistence.models import Base, SourceRecord
+from music_ingest.models import Base, SourceRecord
 
 
 def intake_request(source: Path, origin: Origin) -> IntakeRequest:

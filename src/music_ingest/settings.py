@@ -2,35 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from music_ingest.genres import load_genre_catalog
-from music_ingest.persistence.models import RuntimeSettingRecord
-
-DEFAULT_CONFIDENCE_THRESHOLD = 0.7
-DEFAULT_TIMEOUT_SECONDS = 10.0
-DEFAULT_RETRY_DELAY_SECONDS = 30.0
-DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_MUSICBRAINZ_USER_AGENT = 'music-ingest/0.1.0 (music-ingest@example.com)'
-DEFAULT_CANONICAL_GENRES: tuple[str, ...] = ()
-DEFAULT_GENRE_ALIASES: dict[str, tuple[str, ...]] = {}
-
-
-class RuntimeSettings(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    confidence_threshold: float = Field(default=DEFAULT_CONFIDENCE_THRESHOLD, ge=0.0, le=1.0)
-    timeout_seconds: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=120.0)
-    retry_delay_seconds: float = Field(default=DEFAULT_RETRY_DELAY_SECONDS, ge=0.0, le=3600.0)
-    max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1, le=10)
-    musicbrainz_enabled: bool = True
-    musicbrainz_user_agent: str = Field(default=DEFAULT_MUSICBRAINZ_USER_AGENT, min_length=1, max_length=255)
-    acoustid_enabled: bool = False
-    acoustid_client_key: str | None = Field(default=None, max_length=255)
-    artwork_enabled: bool = True
-    canonical_genres: tuple[str, ...] = DEFAULT_CANONICAL_GENRES
-    genre_aliases: dict[str, tuple[str, ...]] = DEFAULT_GENRE_ALIASES
+from music_ingest.dto import RuntimeSettings
+from music_ingest.external.musicbrainz_genres import load_genre_catalog
+from music_ingest.models import RuntimeSettingRecord
 
 
 def load_runtime_settings(session: Session) -> RuntimeSettings:

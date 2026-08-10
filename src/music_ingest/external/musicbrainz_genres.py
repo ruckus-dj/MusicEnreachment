@@ -8,12 +8,13 @@ from datetime import datetime
 from typing import Protocol
 from urllib.parse import urlencode
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from music_ingest.dto import GenrePage
 from music_ingest.matching.providers import MusicBrainzHttpResponse
-from music_ingest.persistence.models import GenreCatalogRecord
+from music_ingest.models import GenreCatalogRecord
 
 _ENDPOINT = 'https://musicbrainz.org/ws/2/genre/all'
 _PAGE_SIZE = 100
@@ -43,21 +44,6 @@ class GenreCatalogSyncError(RuntimeError):
     """Raised when MusicBrainz returns an unusable genre catalog response."""
 
 
-class _GenrePayload(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    musicbrainz_id: str = Field(alias='id', min_length=1)
-    source_name: str = Field(alias='name', min_length=1)
-
-
-class _GenrePage(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    count: int = Field(alias='genre-count', ge=0)
-    offset: int = Field(alias='genre-offset', ge=0)
-    genres: tuple[_GenrePayload, ...]
-
-
 def sync_genres(
     transport: GenreTransport,
     *,
@@ -76,7 +62,7 @@ def sync_genres(
         if response.status_code != 200:
             raise GenreCatalogSyncError(f'MusicBrainz genre catalog returned HTTP {response.status_code}')
         try:
-            page = _GenrePage.model_validate_json(response.body)
+            page = GenrePage.model_validate_json(response.body)
         except ValidationError as error:
             raise GenreCatalogSyncError('MusicBrainz genre catalog response was invalid') from error
         if page.offset != offset:

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from music_ingest.cli.dry_run import DryRunMutationError, run_dry_run
-from music_ingest.integrations.lidarr import LidarrClient, LidarrIntakeEvent, enqueue_lidarr_intake
+from tests.support.lidarr import LidarrClient, LidarrIntakeEvent, enqueue_lidarr_intake
 
 
 def test_policy_guardrails_when_dry_run_targets_source_tree_rejects_source_mutation(tmp_path: Path) -> None:

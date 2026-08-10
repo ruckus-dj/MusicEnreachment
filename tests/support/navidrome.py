@@ -3,75 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic, sleep
-from typing import ClassVar, override
+from typing import override
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class IndexedArtist(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    name: str
-
-
-class SearchResult(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    artists: tuple[IndexedArtist, ...] = Field(default=(), alias='artist')
-
-
-class SearchPayload(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    result: SearchResult = Field(alias='searchResult3')
-
-
-class SearchResponse(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    payload: SearchPayload = Field(alias='subsonic-response')
-
-
-class IndexedGenre(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    value: str
-
-
-class Genres(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    values: tuple[IndexedGenre, ...] = Field(default=(), alias='genre')
-
-
-class GenrePayload(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    genres: Genres
-
-
-class GenreResponse(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    payload: GenrePayload = Field(alias='subsonic-response')
-
-
-class ScanStatus(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    scanning: bool
-
-
-class ScanPayload(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    status: ScanStatus = Field(alias='scanStatus')
-
-
-class ScanResponse(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    payload: ScanPayload = Field(alias='subsonic-response')
+from tests.support.navidrome_dto import GenreResponse, ScanStatus, SearchResponse
 
 
 @dataclass(frozen=True, slots=True)

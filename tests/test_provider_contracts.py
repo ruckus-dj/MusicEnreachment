@@ -11,7 +11,6 @@ import pytest
 import requests
 
 from music_ingest.matching.providers import (
-    AcoustIdFixtureProvider,
     AcoustIdLookupRequest,
     AcoustIdMatch,
     AcoustIdResult,
@@ -22,7 +21,6 @@ from music_ingest.matching.providers import (
     LiveProvenance,
     LiveTransport,
     Malformed,
-    MusicBrainzFixtureProvider,
     MusicBrainzLookupRequest,
     MusicBrainzMatch,
     MusicBrainzResult,
@@ -35,6 +33,7 @@ from music_ingest.matching.providers import (
     Unavailable,
     build_live_transport,
 )
+from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 FIXTURE_DIRECTORY = Path(__file__).parent / 'fixtures'
 

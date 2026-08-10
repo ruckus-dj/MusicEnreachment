@@ -8,13 +8,13 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from music_ingest.persistence.library import (
+from music_ingest.models import SourceRecord
+from music_ingest.models.library import (
     LibraryEventRecord,
     LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
 )
-from music_ingest.persistence.models import SourceRecord
 
 
 def new_library_record(session: Session, now: datetime | None = None) -> LibraryRecord:

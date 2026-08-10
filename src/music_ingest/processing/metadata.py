@@ -5,7 +5,7 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
-from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
 from music_ingest.settings import RuntimeSettings
 

@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import final
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from music_ingest.persistence.base import Base
+from music_ingest.models.db import Base
 
 
 @final
@@ -38,6 +38,20 @@ class JobRecord(Base):
         back_populates='job', lazy='selectin', order_by='JobAttemptRecord.attempt_number'
     )
     webhook_receipts: Mapped[list[WebhookReceiptRecord]] = relationship(back_populates='job', lazy='selectin')
+
+    @staticmethod
+    def get(session: Session, job_id: str) -> JobRecord | None:
+        return session.get(JobRecord, job_id)
+
+    @staticmethod
+    def get_pending(session: Session, now: datetime) -> JobRecord | None:
+        return session.scalar(
+            select(JobRecord)
+            .where(JobRecord.state == 'queued')
+            .where((JobRecord.next_attempt_at.is_(None)) | (JobRecord.next_attempt_at <= now))
+            .order_by(JobRecord.created_at)
+            .limit(1)
+        )
 
 
 @final

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import final, override
@@ -10,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from music_ingest.persistence.models import (
+from music_ingest.models.entities import (
     FingerprintRecord,
     ProviderScheduleRecord,
     ProviderSnapshotRecord,
@@ -120,6 +121,19 @@ _HASH_RE = re.compile(r'^[0-9a-f]{64}$')
 _FORBIDDEN_DESCRIPTOR_RE = re.compile(
     r'(?i)(user[-_ ]?agent|contact|acoustid[-_ ]?(?:key|api)|fingerprint|exception|authorization|api[-_ ]?key)'
 )
+
+
+def ensure_provider_schedules(session: Session, provider_names: Iterable[str], next_start_at: datetime) -> None:
+    """Create missing provider schedules without changing existing runtime state."""
+    for provider_name in provider_names:
+        if session.get(ProviderScheduleRecord, provider_name) is not None:
+            continue
+        try:
+            with session.begin_nested():
+                session.add(ProviderScheduleRecord(provider_name=provider_name, next_start_at=next_start_at))
+                session.flush()
+        except IntegrityError:
+            continue
 
 
 @final

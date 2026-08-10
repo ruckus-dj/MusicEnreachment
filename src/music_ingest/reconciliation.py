@@ -4,26 +4,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from music_ingest.dto import ScanResult
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import attach_source, record_event
-from music_ingest.persistence.models import JobRecord, SourceRecord
-
-
-class ScanResult(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    added: int
-    changed: int
-    removed: int
-    moved: int
-    unchanged: int
-    queued_jobs: int
+from music_ingest.models import JobRecord, SourceRecord
 
 
 @dataclass(frozen=True, slots=True)

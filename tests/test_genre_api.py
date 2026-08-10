@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
 from music_ingest.matching.providers import MusicBrainzHttpResponse
-from music_ingest.persistence.models import Base
+from music_ingest.models import Base
 
 
 class GenreTransportFixture:

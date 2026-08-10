@@ -5,18 +5,35 @@ import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
-from music_ingest.genres import (
+from music_ingest.dto import (
+    CandidateEvidencePayload,
+    CandidateSelection,
+    DestinationConflictCleanupResponse,
+    GenreCatalogItemResponse,
+    GenreCatalogResponse,
+    LibraryIdentityUpdate,
+    MatchingSettings,
+    MetadataUpdate,
+    MusicBrainzOverride,
+    ProviderRetryRequest,
+    ProviderRetryResponse,
+    ProviderRetryResult,
+    RecoveryResponse,
+    RuntimeSettingsRequest,
+    RuntimeSettingsResponse,
+    SourceRecoveryResponse,
+)
+from music_ingest.external.musicbrainz_genres import (
     GenreCatalogSyncError,
     GenreTransport,
     load_genre_catalog,
@@ -32,10 +49,10 @@ from music_ingest.library.service import (
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
 from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
-from music_ingest.persistence.jobs import JobRepository
-from music_ingest.persistence.library import LibraryRecord, SourceRecordView
-from music_ingest.persistence.models import GenreCatalogRecord, JobRecord, ReviewDecisionRecord
-from music_ingest.persistence.repository import ReceiptReplayConflictError
+from music_ingest.models import GenreCatalogRecord, JobRecord, LibraryRecord, ReviewDecisionRecord
+from music_ingest.models.jobs import JobRepository
+from music_ingest.models.library import SourceRecordView
+from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
 from music_ingest.ui.page import REVIEW_PAGE
@@ -43,55 +60,6 @@ from music_ingest.ui.page import REVIEW_PAGE
 
 class SessionFactory(Protocol):
     def __call__(self) -> Session: ...
-
-
-class MatchingSettings(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    confidence_threshold: float = Field(ge=0.0, le=1.0)
-
-
-class RuntimeSettingsRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    confidence_threshold: float = Field(ge=0.0, le=1.0)
-    timeout_seconds: float = Field(gt=0.0, le=120.0)
-    retry_delay_seconds: float = Field(ge=0.0, le=3600.0)
-    max_attempts: int = Field(ge=1, le=10)
-    musicbrainz_enabled: bool
-    musicbrainz_user_agent: str = Field(min_length=1, max_length=255)
-    acoustid_enabled: bool
-    acoustid_client_key: str | None = Field(default=None, max_length=255)
-    artwork_enabled: bool
-
-
-class RuntimeSettingsResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    confidence_threshold: float
-    timeout_seconds: float
-    retry_delay_seconds: float
-    max_attempts: int
-    musicbrainz_enabled: bool
-    musicbrainz_user_agent: str
-    acoustid_enabled: bool
-    acoustid_client_key_configured: bool
-    artwork_enabled: bool
-
-
-class GenreCatalogItemResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    musicbrainz_id: str
-    source_name: str
-    display_name: str
-
-
-class GenreCatalogResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: tuple[GenreCatalogItemResponse, ...]
-    last_synced_at: datetime | None
 
 
 def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
@@ -122,92 +90,7 @@ def _genre_catalog_response(entries: tuple[GenreCatalogRecord, ...]) -> GenreCat
     )
 
 
-class LibraryIdentityUpdate(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    musicbrainz_recording_id: str = Field(
-        pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
-    )
-
-
-class MetadataUpdate(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    source_id: str
-    tags: dict[str, str]
-
-
-class ProviderRetryResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    queued: int
-
-
-class ProviderRetryRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    retry_all: bool = False
-    provider: Literal['acoustid', 'musicbrainz'] | None = None
-
-
-class ProviderRetryResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    source_id: str
-    queued: bool
-
-
-class CandidateSelection(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    candidate_key: str = Field(min_length=1, max_length=255)
-    provider: Literal['acoustid', 'musicbrainz'] = 'musicbrainz'
-
-
-class MusicBrainzOverride(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    release_mbid: str = Field(min_length=1, max_length=36)
-
-
-class CandidateEvidencePayload(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    provider: str = 'musicbrainz'
-    artist: str = ''
-    release: str = ''
-    title: str = ''
-    album: str = ''
-    score: float | None = None
-    tags: dict[str, str] = Field(default_factory=dict)
-
-
 _DEFAULT_PROVIDER_RETRY_REQUEST = ProviderRetryRequest()
-
-
-class RecoveryResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    queued: int
-    skipped: int
-    conflicts: int
-
-
-class SourceRecoveryResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    record_id: str
-    source_id: str
-    queued: bool
-    kind: str | None
-
-
-class DestinationConflictCleanupResponse(BaseModel):
-    record_id: str
-    source_id: str
-    path: str
-    removed: bool
-    queued: bool
 
 
 _RETRYABLE_PROVIDER_OUTCOMES = frozenset(

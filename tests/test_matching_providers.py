@@ -6,24 +6,24 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.matching.acoustid import AcoustIdV2Adapter
+from music_ingest.external.acoustid import AcoustIdV2Adapter
+from music_ingest.external.musicbrainz import MusicBrainzV2Adapter, select_genres
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
-from music_ingest.matching.musicbrainz import MusicBrainzHttpResponse, MusicBrainzV2Adapter, select_genres
 from music_ingest.matching.providers import (
-    AcoustIdFixtureProvider,
     AcoustIdLookupRequest,
     AcoustIdMatch,
     Ambiguous,
     FixtureCase,
     LiveProvenance,
     Malformed,
-    MusicBrainzFixtureProvider,
+    MusicBrainzHttpResponse,
     MusicBrainzLookupRequest,
     MusicBrainzMatch,
     RateLimited,
     Unavailable,
 )
-from music_ingest.persistence.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
+from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
+from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 NOW = datetime(2026, 7, 28, tzinfo=UTC)

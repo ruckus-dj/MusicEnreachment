@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import override
 
-from music_ingest.config.policies import GenrePolicy
-from music_ingest.genres import genre_key
+from music_ingest.dto import GenrePolicy
+from music_ingest.external.musicbrainz_genres import genre_key
 
 
 @dataclass(frozen=True, slots=True)

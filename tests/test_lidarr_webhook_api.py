@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
-from music_ingest.persistence.models import (
+from music_ingest.models import (
     Base,
     JobRecord,
     SourceRecord,

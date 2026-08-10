@@ -9,7 +9,7 @@ from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import override
 
-from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.genres import GenreNormalizationError, normalize_genres
 
 

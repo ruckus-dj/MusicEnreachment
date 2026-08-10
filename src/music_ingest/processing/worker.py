@@ -12,9 +12,11 @@ from typing import final, override
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
+from music_ingest.external.acoustid import AcoustIdV2Adapter
+from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.inspectors._tool import ToolState
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
@@ -25,9 +27,7 @@ from music_ingest.library.service import (
     record_event,
     record_publication,
 )
-from music_ingest.matching.acoustid import AcoustIdV2Adapter
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
-from music_ingest.matching.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     AcoustIdProvider,
@@ -57,22 +57,22 @@ from music_ingest.matching.scoring import (
     MatchResult,
     resolve_match,
 )
+from music_ingest.models import (
+    ArtworkRecord,
+    CandidateRecord,
+    LibraryRecord,
+    ProviderAttemptRecord,
+    RuntimeSettingRecord,
+    SourceRecord,
+    SourceTagRecord,
+)
+from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
     MetadataWriteRequest,
     write_canonical_metadata,
     write_observed_metadata,
-)
-from music_ingest.persistence.jobs import ClaimedJob, JobRepository
-from music_ingest.persistence.library import LibraryRecord
-from music_ingest.persistence.models import (
-    ArtworkRecord,
-    CandidateRecord,
-    ProviderAttemptRecord,
-    RuntimeSettingRecord,
-    SourceRecord,
-    SourceTagRecord,
 )
 from music_ingest.processing.metadata import (
     fallback_metadata,

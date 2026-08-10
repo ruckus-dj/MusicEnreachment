@@ -13,7 +13,7 @@ import music_ingest.api.server as server
 from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
-from music_ingest.persistence.models import Base, JobRecord, RuntimeSettingRecord
+from music_ingest.models import Base, JobRecord, RuntimeSettingRecord
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -115,10 +115,11 @@ def test_runtime_app_when_started_upgrades_schema_before_it_serves_requests(monk
     assert response.status_code == 200
 
 
-def test_runtime_app_when_shutdown_disposes_its_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a runtime engine with a recorded disposal boundary.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
-    engine = create_engine('sqlite+pysqlite:///:memory:')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "runtime.db"}')
+    Base.metadata.create_all(engine)
     disposed: list[None] = []
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
@@ -138,10 +139,11 @@ async def _record_worker_start(*_args: object) -> None:
     await anyio.sleep_forever()
 
 
-def test_runtime_app_when_started_runs_the_processing_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a runtime with an isolated processing-worker boundary.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
-    engine = create_engine('sqlite+pysqlite:///:memory:')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "runtime.db"}')
+    Base.metadata.create_all(engine)
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)

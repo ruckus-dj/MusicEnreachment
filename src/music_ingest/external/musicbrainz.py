@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import ClassVar, Protocol
+from typing import Protocol
 from unicodedata import normalize
 from urllib.parse import quote, urlencode
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from music_ingest.dto import RecordingResponse, Release, ReleaseResponse
 from music_ingest.enrichment.artwork import ArtworkCandidate, ArtworkFormat
 from music_ingest.matching.providers import (
     Ambiguous,
@@ -31,77 +32,6 @@ _COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
 
 class MusicBrainzTransport(Protocol):
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse: ...
-
-
-class _Genre(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    name: str
-
-
-class _ArtistCredit(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    name: str
-    genres: tuple[_Genre, ...] = ()
-
-
-class _ReleaseGroup(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True, populate_by_name=True)
-
-    id: str
-    first_release_date: str | None = Field(default=None, alias='first-release-date')
-
-
-class _TrackRecording(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    id: str
-    title: str
-    artist_credit: tuple[_ArtistCredit, ...] = ()
-    genres: tuple[_Genre, ...] = ()
-
-
-class _Track(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    position: int
-    title: str
-    length: int | None = None
-    recording: _TrackRecording
-
-
-class _Medium(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    position: int
-    track_count: int | None = Field(default=None, alias='track-count')
-    tracks: tuple[_Track, ...] = ()
-
-
-class _Release(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True, populate_by_name=True)
-
-    id: str
-    title: str
-    status: str | None = None
-    artist_credit: tuple[_ArtistCredit, ...] = ()
-    date: str | None = None
-    genres: tuple[_Genre, ...] = ()
-    release_group: _ReleaseGroup | None = Field(default=None, alias='release-group')
-    media: tuple[_Medium, ...] = ()
-
-
-class _Response(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    releases: tuple[_Release, ...]
-
-
-class _RecordingResponse(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra='ignore', frozen=True)
-
-    releases: tuple[_Release, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +90,7 @@ class MusicBrainzV2Adapter:
             return Malformed(provenance)
         if request.release_mbid is not None:
             try:
-                release_payload = _Release.model_validate_json(response.body)
+                release_payload = Release.model_validate_json(response.body)
             except ValidationError:
                 return Malformed(provenance)
             return MusicBrainzMatch(
@@ -169,7 +99,7 @@ class MusicBrainzV2Adapter:
             )
         if request.recording_mbid is not None:
             try:
-                recording_payload = _RecordingResponse.model_validate_json(response.body)
+                recording_payload = RecordingResponse.model_validate_json(response.body)
             except ValidationError:
                 return Malformed(provenance)
             return self._resolve_recording_releases(
@@ -180,7 +110,7 @@ class MusicBrainzV2Adapter:
                 provenance,
             )
         try:
-            search_payload = _Response.model_validate_json(response.body)
+            search_payload = ReleaseResponse.model_validate_json(response.body)
         except ValidationError:
             return Malformed(provenance)
         eligible = _without_pseudo_releases(search_payload.releases)
@@ -195,7 +125,7 @@ class MusicBrainzV2Adapter:
 
     def _resolve_recording_releases(
         self,
-        releases: tuple[_Release, ...],
+        releases: tuple[Release, ...],
         release_title: str | None,
         artist_name: str | None,
         recording_mbid: str,
@@ -213,7 +143,7 @@ class MusicBrainzV2Adapter:
             case () if not eligible:
                 return NoMatch(provenance)
             case _:
-                enriched_releases: list[_Release] = []
+                enriched_releases: list[Release] = []
                 enriched_provenance = provenance
                 for release in matching:
                     enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
@@ -225,9 +155,9 @@ class MusicBrainzV2Adapter:
 
     def _enrich_release(
         self,
-        release: _Release,
+        release: Release,
         provenance: LiveProvenance,
-    ) -> tuple[_Release, LiveProvenance]:
+    ) -> tuple[Release, LiveProvenance]:
         url = (
             f'{_ENDPOINT}{quote(release.id, safe="")}'
             f'?{urlencode({"inc": "artist-credits+media+recordings+release-groups+genres", "fmt": "json"})}'
@@ -236,7 +166,7 @@ class MusicBrainzV2Adapter:
         if response.status_code != 200:
             return release, provenance
         try:
-            detailed = _Release.model_validate_json(response.body)
+            detailed = Release.model_validate_json(response.body)
         except ValidationError:
             return release, provenance
         combined_body = provenance.response_body + b'\n' + response.body
@@ -248,7 +178,7 @@ class MusicBrainzV2Adapter:
 
     @staticmethod
     def _candidate(
-        release: _Release, artist_name: str | None = None, recording_mbid: str | None = None
+        release: Release, artist_name: str | None = None, recording_mbid: str | None = None
     ) -> ReleaseCandidate:
         track = next(
             (
@@ -292,7 +222,7 @@ class MusicBrainzV2Adapter:
         )
 
 
-def _matching_releases(releases: tuple[_Release, ...], release_title: str | None) -> tuple[_Release, ...]:
+def _matching_releases(releases: tuple[Release, ...], release_title: str | None) -> tuple[Release, ...]:
     if release_title is None:
         return releases
     requested = _title_key(release_title)
@@ -300,7 +230,7 @@ def _matching_releases(releases: tuple[_Release, ...], release_title: str | None
     return exact or releases
 
 
-def _without_pseudo_releases(releases: tuple[_Release, ...]) -> tuple[_Release, ...]:
+def _without_pseudo_releases(releases: tuple[Release, ...]) -> tuple[Release, ...]:
     return tuple(release for release in releases if (release.status or '').casefold() != 'pseudo-release')
 
 

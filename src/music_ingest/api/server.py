@@ -4,6 +4,7 @@ import os
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
 
@@ -17,7 +18,8 @@ from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from music_ingest.api.app import create_app
-from music_ingest.matching.providers import build_live_transport
+from music_ingest.matching.providers import ProviderName, build_live_transport
+from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.runtime import run_processing_worker
 
@@ -89,6 +91,9 @@ def create_runtime_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         del application
+        with session_factory() as session:
+            ensure_provider_schedules(session, (provider.value for provider in ProviderName), datetime.now(UTC))
+            session.commit()
         async with anyio.create_task_group() as task_group:
             _ = task_group.start_soon(run_processing_worker, session_factory, processing_config)
             try:

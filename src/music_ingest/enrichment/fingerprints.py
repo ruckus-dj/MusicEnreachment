@@ -5,19 +5,19 @@ from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from re import MULTILINE, compile
-from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from music_ingest.dto import FpcalcPayload
 from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
 from music_ingest.inspectors.flac import FlacInspectionResult
 from music_ingest.inspectors.flac import InspectionState as FlacInspectionState
 from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
 from music_ingest.inspectors.mp3 import Mp3InspectionResult
 from music_ingest.intake.service import SourceId
-from music_ingest.persistence.models import FingerprintRecord
-from music_ingest.persistence.repository import FingerprintRepository
+from music_ingest.models import FingerprintRecord
+from music_ingest.models.repositories import FingerprintRepository
 
 
 class FingerprintState(StrEnum):
@@ -46,13 +46,6 @@ class FingerprintResult:
     output_sha256: str
     tool: ToolEvidence | None
     version_tool: ToolEvidence | None
-
-
-class _FpcalcPayload(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, strict=True)
-
-    duration: float = Field(ge=0)
-    fingerprint: str = Field(min_length=1)
 
 
 _VERSION_PATTERN = compile(r'^fpcalc version (?P<version>[^\s]+)', flags=MULTILINE)
@@ -126,7 +119,7 @@ def _parse_success(
     tool: ToolEvidence, output_sha256: str, fpcalc_command: str, timeout_seconds: float
 ) -> FingerprintResult:
     try:
-        payload = _FpcalcPayload.model_validate_json(tool.stdout)
+        payload = FpcalcPayload.model_validate_json(tool.stdout)
     except ValidationError:
         return FingerprintResult(FingerprintState.MALFORMED, None, None, None, output_sha256, tool, None)
     version_tool = run_tool((fpcalc_command, '-version'), timeout_seconds)

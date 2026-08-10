@@ -9,8 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import CandidateEvidencePayload, _candidate_is_displayable, create_app
-from music_ingest.matching.providers import MusicBrainzFixtureProvider
-from music_ingest.persistence.models import (
+from music_ingest.models import (
     Base,
     CandidateRecord,
     JobRecord,
@@ -23,6 +22,7 @@ from music_ingest.persistence.models import (
     SourceTagRecord,
 )
 from music_ingest.reconciliation import reconcile_incoming
+from tests.support.providers import MusicBrainzFixtureProvider
 
 
 def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path: Path) -> None:

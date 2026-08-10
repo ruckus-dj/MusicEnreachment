@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from music_ingest.api.app import create_app
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import append_metadata_revision
-from music_ingest.persistence.jobs import JobRepository
-from music_ingest.persistence.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord
+from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord
+from music_ingest.models.jobs import JobRepository
 
 
 def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_path: Path) -> None:
