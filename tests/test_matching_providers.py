@@ -178,6 +178,27 @@ def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(t
     assert calls[0][1]['User-Agent'] == 'music-ingest/1.0 (operator@example.test)'
 
 
+def test_musicbrainz_v2_adapter_fetches_front_artwork_for_release_once() -> None:
+    # Given: a MusicBrainz transport returning a verified JPEG front cover.
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            calls.append((url, headers))
+            return MusicBrainzHttpResponse(200, b'\xff\xd8\xffcover\xff\xd9')
+
+    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: the adapter requests artwork for a MusicBrainz release.
+    artwork = adapter.fetch_artwork('release-id')
+
+    # Then: the Cover Art Archive front endpoint returns a release-bound JPEG candidate.
+    assert artwork is not None
+    assert artwork.release_id == 'release-id'
+    assert artwork.format.value == 'jpg'
+    assert calls[0][0] == 'https://coverartarchive.org/release/release-id/front-500'
+
+
 def test_musicbrainz_v2_adapter_when_recording_id_is_known_looks_up_linked_releases() -> None:
     # Given: AcoustID has supplied a MusicBrainz recording ID.
     calls: list[str] = []

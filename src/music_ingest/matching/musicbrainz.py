@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from music_ingest.enrichment.artwork import ArtworkCandidate, ArtworkFormat
 from music_ingest.matching.providers import (
     Ambiguous,
     LiveProvenance,
@@ -25,6 +26,7 @@ from music_ingest.matching.providers import (
 
 _ENDPOINT = 'https://musicbrainz.org/ws/2/release/'
 _RECORDING_ENDPOINT = 'https://musicbrainz.org/ws/2/recording/'
+_COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
 
 
 class MusicBrainzTransport(Protocol):
@@ -106,6 +108,20 @@ class _RecordingResponse(BaseModel):
 class MusicBrainzV2Adapter:
     transport: MusicBrainzTransport
     user_agent: str
+
+    def fetch_artwork(self, release_id: str) -> ArtworkCandidate | None:
+        """Fetch the first verified front cover for a MusicBrainz release."""
+        response = self.transport.get(
+            f'{_COVER_ART_ENDPOINT}{quote(release_id, safe="")}/front-500',
+            headers={'User-Agent': self.user_agent, 'Accept': 'image/jpeg,image/webp'},
+        )
+        if response.status_code != 200:
+            return None
+        if response.body.startswith(b'\xff\xd8\xff') and response.body.endswith(b'\xff\xd9'):
+            return ArtworkCandidate(release_id, ArtworkFormat.JPEG, response.body)
+        if len(response.body) >= 12 and response.body[:4] == b'RIFF' and response.body[8:12] == b'WEBP':
+            return ArtworkCandidate(release_id, ArtworkFormat.WEBP, response.body)
+        return None
 
     def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzResult:
         captured_at = now or datetime.now(UTC)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, override
+from typing import Final, Protocol, override
 
 _MAX_ARTWORK_BYTES: Final = 20 * 1024 * 1024
 
@@ -18,6 +18,10 @@ class ArtworkCandidate:
     release_id: str
     format: ArtworkFormat
     payload: bytes
+
+
+class ArtworkProvider(Protocol):
+    def fetch_artwork(self, release_id: str) -> ArtworkCandidate | None: ...
 
 
 @dataclass(frozen=True, slots=True)
