@@ -38,6 +38,7 @@ class CanonicalMetadata:
     musicbrainz_album_id: str | None
     musicbrainz_release_group_id: str | None
     isrc: str | None
+    performer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +159,7 @@ def _canonical_tags(
         ('MUSICBRAINZ_ALBUMID', metadata.musicbrainz_album_id),
         ('MUSICBRAINZ_RELEASEGROUPID', metadata.musicbrainz_release_group_id),
         ('ISRC', metadata.isrc),
+        ('PERFORMER', metadata.performer),
     )
     return required + tuple((name, value) for name, value in optional if value is not None)
 

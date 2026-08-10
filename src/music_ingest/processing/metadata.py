@@ -70,6 +70,7 @@ def fallback_metadata(
         values.get('MUSICBRAINZ_ALBUMID'),
         values.get('MUSICBRAINZ_RELEASEGROUPID'),
         values.get('ISRC'),
+        performer=values.get('PERFORMER'),
     )
 
 
