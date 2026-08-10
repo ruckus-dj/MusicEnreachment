@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from hashlib import sha256
 from pathlib import Path
 from shutil import which
@@ -20,6 +20,7 @@ from music_ingest.matching.providers import (
     RecordingCandidate,
     ReleaseCandidate,
 )
+from music_ingest.persistence.jobs import ClaimedJob
 from music_ingest.persistence.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
@@ -112,6 +113,44 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         flac_command='flac',
         metaflac_command='metaflac',
     )
+
+
+def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: a queued job and a clock that advances during processing.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "job-timing.db"}')
+    Base.metadata.create_all(engine)
+    started_at = datetime(2026, 8, 10, 0, 0, 0, tzinfo=UTC)
+    finished_at = started_at + timedelta(seconds=3)
+
+    class Clock:
+        values = iter((started_at, finished_at))
+
+        @classmethod
+        def now(cls, tz: tzinfo | None) -> datetime:
+            _ = tz
+            return next(cls.values)
+
+    def process_initial(worker: ProcessingWorker, claimed: ClaimedJob, now: datetime) -> None:
+        _ = worker, claimed, now
+
+    monkeypatch.setattr(processing, 'datetime', Clock)
+    monkeypatch.setattr(ProcessingWorker, '_process_initial', process_initial)
+    with Session(engine) as session:
+        session.add(
+            JobRecord(id='timing-job', source_id=None, kind='filesystem_scan', state='queued', created_at=started_at)
+        )
+        session.commit()
+        worker = ProcessingWorker(session, _config(tmp_path))
+
+        # When: one worker iteration completes the job.
+        assert worker.run_once()
+
+        # Then: the attempt duration reflects processing rather than claim time.
+        job = session.get(JobRecord, 'timing-job')
+        assert job is not None
+        assert job.state == 'completed'
+        assert job.attempts[0].started_at == started_at
+        assert job.attempts[0].finished_at == finished_at
 
 
 def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist(

@@ -84,6 +84,7 @@ from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
     publish_release,
+    replace_published_audio,
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
@@ -234,6 +235,8 @@ class ProcessingWorker:
             self._retry_claim(claimed, 'unexpected processing error', now, error)
         finally:
             self._discard_staging(claimed.job.id)
+            if claimed.attempt.state == 'running':
+                JobRepository(self._session).succeed(claimed, datetime.now(UTC))
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
@@ -328,29 +331,37 @@ class ProcessingWorker:
                 now,
                 source.id,
             )
-            JobRepository(self._session).succeed(claimed, now)
             return
         destination_release = (
             Path(current_publication.path).parent
             if current_publication is not None
             else self._config.media_root / relative_directory
         )
-        result = publish_release(
-            PublicationRequest(
-                staged_release,
-                self._config.staging_root,
-                self._config.media_root,
-                (source_path,),
-                require_canonical_tags=False,
-                destination_release=destination_release,
-                replace_existing=current_publication is not None,
-                destination_audio_name=None if current_publication is None else Path(current_publication.path).name,
-            )
+        request = PublicationRequest(
+            staged_release,
+            self._config.staging_root,
+            self._config.media_root,
+            (source_path,),
+            require_canonical_tags=False,
+            destination_release=destination_release,
+            replace_existing=current_publication is not None,
+            destination_audio_name=None if current_publication is None else Path(current_publication.path).name,
+        )
+        result = (
+            publish_release(request)
+            if current_publication is None
+            else replace_published_audio(request, Path(current_publication.path))
         )
         final_revision = append_metadata_revision(
             self._session, record.id, source.id, 'final', dict(written.tags), 'worker', now
         )
-        audio_path = result.published_audio or next(result.published_release.glob('*.flac'))
+        audio_path = result.published_audio
+        if audio_path is None:
+            audio_path = (
+                Path(current_publication.path)
+                if current_publication is not None
+                else next(result.published_release.glob('*.flac'))
+            )
         _ = record_publication(
             self._session,
             record.id,
@@ -385,7 +396,6 @@ class ProcessingWorker:
                 now,
                 source.id,
             )
-        JobRepository(self._session).succeed(claimed, now)
 
     def _process_provider_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
@@ -437,7 +447,6 @@ class ProcessingWorker:
                 now,
                 source.id,
             )
-            JobRepository(self._session).succeed(claimed, now)
             return
         analyzed_tags = _analyzed_tags(provider_result, match_result)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
@@ -451,7 +460,6 @@ class ProcessingWorker:
                 now,
                 source.id,
             )
-            JobRepository(self._session).succeed(claimed, now)
             return
         analyzed_revision = append_metadata_revision(
             self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
@@ -478,7 +486,6 @@ class ProcessingWorker:
             now,
             source.id,
         )
-        JobRepository(self._session).succeed(claimed, now)
 
     def _process_final_publish(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
@@ -549,8 +556,16 @@ class ProcessingWorker:
             destination_audio_name=None if publication is None else Path(publication.path).name,
             replace_artwork=provider_artwork_staged,
         )
-        published = publish_release(request)
-        audio_path = published.published_audio or next(published.published_release.glob('*.flac'))
+        published = (
+            publish_release(request)
+            if publication is None
+            else replace_published_audio(request, Path(publication.path))
+        )
+        audio_path = published.published_audio
+        if audio_path is None:
+            audio_path = (
+                Path(publication.path) if publication is not None else next(published.published_release.glob('*.flac'))
+            )
         _ = record_publication(
             self._session,
             record.id,
@@ -562,7 +577,6 @@ class ProcessingWorker:
         )
         source.intake_state = 'present'
         record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
-        JobRepository(self._session).succeed(claimed, now)
 
     def _lookup_providers(
         self,
@@ -907,7 +921,7 @@ class ProcessingWorker:
             self._session.delete(orphan_record)
         source.intake_state = 'replaced'
         claimed.attempt.state = 'succeeded'
-        claimed.attempt.finished_at = now
+        claimed.attempt.finished_at = datetime.now(UTC)
         claimed.job.state = 'superseded'
         claimed.job.next_attempt_at = None
         _ = JobRepository(self._session).enqueue(replacement.source_id, 'filesystem_scan', now)
@@ -917,11 +931,11 @@ class ProcessingWorker:
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
         record_event(self._session, record.id, 'processing_quarantined', 'quarantined', reason, now, source.id)
-        JobRepository(self._session).quarantine(claimed, now)
+        JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
 
     def _invalid_audio(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
         source.intake_state = 'invalid_audio'
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
         record_event(self._session, record.id, 'invalid_audio', 'invalid_audio', reason, now, source.id)
-        JobRepository(self._session).quarantine(claimed, now)
+        JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
