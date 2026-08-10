@@ -10,7 +10,7 @@ from subprocess import CompletedProcess, run
 from time import monotonic, sleep
 from typing import Final
 
-import httpx
+import httpx2 as httpx
 from pydantic import TypeAdapter
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]

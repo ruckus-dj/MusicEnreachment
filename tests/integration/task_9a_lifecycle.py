@@ -8,7 +8,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
 
-import httpx
+import httpx2 as httpx
 from pydantic import BaseModel
 
 type JsonValue = str | int | bool | None | list['JsonValue'] | dict[str, 'JsonValue']
