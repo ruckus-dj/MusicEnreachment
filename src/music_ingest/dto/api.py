@@ -153,10 +153,19 @@ class Genre(BaseModel):
     name: str
 
 
+class Artist(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    id: str
+    name: str
+    genres: tuple[Genre, ...] = ()
+
+
 class ArtistCredit(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
     name: str
+    artist: Artist | None = None
     genres: tuple[Genre, ...] = ()
 
 
@@ -172,7 +181,7 @@ class TrackRecording(BaseModel):
 
     id: str
     title: str
-    artist_credit: tuple[ArtistCredit, ...] = ()
+    artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     genres: tuple[Genre, ...] = ()
 
 
@@ -199,7 +208,7 @@ class Release(BaseModel):
     id: str
     title: str
     status: str | None = None
-    artist_credit: tuple[ArtistCredit, ...] = ()
+    artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     date: str | None = None
     genres: tuple[Genre, ...] = ()
     release_group: ReleaseGroup | None = Field(default=None, alias='release-group')

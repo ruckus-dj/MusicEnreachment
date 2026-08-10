@@ -290,6 +290,34 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
     assert result.candidate.genres == ('Electronic',)
 
 
+def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() -> None:
+    # Given: MusicBrainz places artist genres under artist-credit[].artist.genres.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/' in url:
+                body = b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            else:
+                body = (
+                    b'{"id":"release-id","title":"Fixture Album",'
+                    b'"artist-credit":[{"name":"Fixture Artist","artist":{'
+                    b'"id":"artist-id","name":"Fixture Artist",'
+                    b'"genres":[{"name":"Alternative Rock"},{"name":"Hip Hop"}]}}],'
+                    b'"media":[{"position":1,"tracks":[{"position":1,"title":"Fixture Track",'
+                    b'"recording":{"id":"recording-id","title":"Fixture Track"}}]}]}'
+                )
+            return MusicBrainzHttpResponse(200, body)
+
+    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+        MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS, 'recording-id', 'Fixture Album'),
+        NOW,
+    )
+
+    # Then: the candidate includes genres from the linked artist entity.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.genres == ('Alternative Rock', 'Hip Hop')
+
+
 def test_musicbrainz_genre_selection_prefers_track_then_album_then_artist() -> None:
     assert select_genres(('Track',), ('Album',), ('Artist',)) == ('Track',)
     assert select_genres((), ('Album',), ('Artist',)) == ('Album',)

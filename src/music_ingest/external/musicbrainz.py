@@ -216,7 +216,13 @@ class MusicBrainzV2Adapter:
             genres=select_genres(
                 tuple(genre.name for genre in track.recording.genres) if track is not None else (),
                 tuple(genre.name for genre in release.genres),
-                tuple(genre.name for credit in release.artist_credit for genre in credit.genres),
+                tuple(
+                    genre.name
+                    for credit in release.artist_credit
+                    for artist in (credit.artist,)
+                    if artist is not None
+                    for genre in artist.genres
+                ),
             ),
             release_group_mbid=None if release.release_group is None else release.release_group.id,
         )
