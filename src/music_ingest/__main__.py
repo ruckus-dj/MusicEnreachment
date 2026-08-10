@@ -3,11 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from sys import argv
 
-from pydantic import ValidationError
 from uvicorn import run
 
 from music_ingest.cli.dry_run import DryRunMutationError, run_dry_run
-from music_ingest.config import PolicyYamlError, load_policy_bundle, render_safe_summary
 
 
 def main() -> None:
@@ -22,13 +20,9 @@ def main() -> None:
         print(f'dry-run reports: {reports.summary} {reports.review} {reports.proposals}')
         return
     if len(argv) != 2:
-        msg = 'usage: python -m music_ingest serve | POLICY_DIRECTORY | dry-run SOURCE_DIRECTORY REPORT_DIRECTORY'
+        msg = 'usage: python -m music_ingest serve | dry-run SOURCE_DIRECTORY REPORT_DIRECTORY'
         raise SystemExit(msg)
-    try:
-        bundle = load_policy_bundle(Path(argv[1]))
-    except (PolicyYamlError, ValidationError) as error:
-        raise SystemExit('music-ingest: invalid policy configuration') from error
-    print(render_safe_summary(bundle))
+    raise SystemExit('music-ingest: unknown command')
 
 
 if __name__ == '__main__':
