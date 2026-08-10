@@ -181,6 +181,19 @@ def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist
     assert evidence['album'] == 'Fixture Album'
 
 
+def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:
+    # Given: MusicBrainz returns lowercase genre source names.
+    candidate = ReleaseCandidate(
+        'release-id', 'Fixture Album', 'Fixture Artist', genres=('alternative rock', 'hip hop')
+    )
+
+    # When: provider candidate metadata is converted to tags.
+    tags = processing._candidate_tags(candidate)
+
+    # Then: the published GENRE value uses readable labels.
+    assert tags['GENRE'] == 'Alternative Rock; Hip Hop'
+
+
 def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallback_and_review(tmp_path: Path) -> None:
     # Given: a DB-backed queued job with a valid immutable incoming FLAC and artwork.
     config = _config(tmp_path)

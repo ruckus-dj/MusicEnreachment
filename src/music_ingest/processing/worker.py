@@ -17,6 +17,7 @@ from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
 from music_ingest.external.acoustid import AcoustIdV2Adapter
 from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
+from music_ingest.external.musicbrainz_genres import display_genre_name
 from music_ingest.inspectors._tool import ToolState
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
@@ -164,7 +165,7 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
         'TRACKTOTAL': None if candidate.track_total is None else str(candidate.track_total),
         'DISCNUMBER': None if candidate.disc_number is None else str(candidate.disc_number),
         'DISCTOTAL': None if candidate.disc_total is None else str(candidate.disc_total),
-        'GENRE': '; '.join(candidate.genres) if candidate.genres else None,
+        'GENRE': '; '.join(display_genre_name(genre) for genre in candidate.genres) if candidate.genres else None,
         'MUSICBRAINZ_RELEASEGROUPID': candidate.release_group_mbid,
     }
     tags.update({name: value for name, value in optional_tags.items() if value is not None})
