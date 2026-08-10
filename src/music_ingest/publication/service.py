@@ -9,7 +9,10 @@ from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import Final, override
 
-_AUDIO_SUFFIXES: Final = frozenset({'.flac'})
+_AUDIO_SUFFIXES: Final = frozenset(
+    {'.aac', '.aiff', '.alac', '.ape', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.wma'}
+)
+_VALIDATED_AUDIO_SUFFIXES: Final = frozenset({'.flac'})
 _REQUIRED_TAGS: Final = frozenset({'ARTIST', 'ALBUM', 'GENRE'})
 _MAX_ARTWORK_BYTES: Final = 20 * 1024 * 1024
 
@@ -26,11 +29,14 @@ class PublicationRequest:
     require_canonical_tags: bool = True
     destination_release: Path | None = None
     replace_existing: bool = False
+    destination_audio_name: str | None = None
+    replace_artwork: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class PublicationResult:
     published_release: Path
+    published_audio: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,13 +58,16 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     source_snapshots = _source_snapshots(request.source_paths)
     audio_paths = _validate_release(staged_release, request)
     _reject_source_hardlinks(audio_paths, source_snapshots)
+    target_name = request.destination_audio_name or audio_paths[0].name
     published_release = _destination_release(request, media_root, relative_release)
-    if published_release.exists() and not request.replace_existing:
-        raise PublicationError('media destination already exists')
+    if published_release.exists() and not published_release.is_dir():
+        raise PublicationError('media destination is not a directory')
     published_release.parent.mkdir(parents=True, exist_ok=True)
     temporary_release = Path(tempfile.mkdtemp(prefix=f'.{published_release.name}.', dir=published_release.parent))
     try:
-        _copy_release(staged_release, temporary_release)
+        if published_release.exists():
+            shutil.copytree(published_release, temporary_release, dirs_exist_ok=True)
+        _merge_release(staged_release, temporary_release, request)
         copied_audio = _validate_release(temporary_release, request)
         _reject_source_hardlinks(copied_audio, source_snapshots)
         _replace_release(temporary_release, published_release)
@@ -70,7 +79,7 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
         shutil.rmtree(temporary_release, ignore_errors=True)
         raise
     shutil.rmtree(staged_release)
-    return PublicationResult(published_release=published_release)
+    return PublicationResult(published_release=published_release, published_audio=published_release / target_name)
 
 
 def replace_published_audio(request: PublicationRequest, target_audio: Path) -> PublicationResult:
@@ -133,13 +142,34 @@ def _destination_release(request: PublicationRequest, media_root: Path, relative
     return destination
 
 
-def _copy_release(source: Path, destination: Path) -> None:
+def _merge_release(source: Path, destination: Path, request: PublicationRequest) -> None:
+    """Overlay one staged track onto an existing album directory."""
+    audio_paths = tuple(
+        path for path in source.rglob('*') if path.is_file() and path.suffix.casefold() in _VALIDATED_AUDIO_SUFFIXES
+    )
+    if len(audio_paths) != 1:
+        raise PublicationError('a publication must contain exactly one audio track')
+    staged_audio = audio_paths[0]
+    target_name = request.destination_audio_name or staged_audio.name
+    for existing in destination.iterdir() if destination.exists() else ():
+        if (
+            existing.is_file()
+            and existing.suffix.casefold() in _AUDIO_SUFFIXES
+            and existing.stem == Path(target_name).stem
+        ):
+            existing.unlink()
     for path in source.rglob('*'):
         relative = path.relative_to(source)
-        target = destination / relative
+        target = destination / (target_name if path == staged_audio else relative)
         if path.is_dir():
-            target.mkdir()
+            target.mkdir(parents=True, exist_ok=True)
         elif path.is_file():
+            if (
+                path.name.casefold() in {'cover.jpg', 'cover.webp'}
+                and not request.replace_artwork
+                and any((destination / name).exists() for name in ('cover.jpg', 'cover.webp'))
+            ):
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
 
@@ -178,7 +208,7 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
     if any(path.is_symlink() for path in release.rglob('*')):
         raise PublicationError('staged release cannot contain symbolic links')
     paths = tuple(path for path in release.rglob('*') if path.is_file())
-    audio_paths = tuple(path for path in paths if path.suffix.casefold() in _AUDIO_SUFFIXES)
+    audio_paths = tuple(path for path in paths if path.suffix.casefold() in _VALIDATED_AUDIO_SUFFIXES)
     if not audio_paths:
         raise PublicationError('release has no supported audio')
     artwork = tuple(path for path in paths if path.name.casefold() in {'cover.jpg', 'cover.webp'})

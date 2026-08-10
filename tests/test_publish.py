@@ -110,6 +110,68 @@ def test_publish_release_when_destination_exists_recovers_completed_move(tmp_pat
     assert not release.exists()
 
 
+def test_publish_release_when_album_directory_exists_merges_new_track_without_losing_existing_audio(
+    tmp_path: Path,
+) -> None:
+    # Given: an existing album directory and a staged second track for that album.
+    downloads = tmp_path / 'downloads'
+    downloads.mkdir()
+    source = _create_flac(downloads, 'raw-second.flac')
+    staging = tmp_path / 'staging'
+    release = staging / 'Artist One' / 'Shared Album'
+    release.mkdir(parents=True)
+    _ = _create_flac(release, '02 - Second.flac')
+    destination = tmp_path / 'media' / 'Artist One' / 'Shared Album'
+    destination.mkdir(parents=True)
+    _ = _create_flac(destination, '01 - First.flac')
+
+    # When: the second track is published into the existing album directory.
+    result = publish_release(
+        PublicationRequest(
+            staged_release=release,
+            staging_root=staging,
+            media_root=tmp_path / 'media',
+            source_paths=(source,),
+            destination_release=destination,
+        )
+    )
+
+    # Then: the album directory is reused and both track files remain visible.
+    assert result.published_release == destination
+    assert {path.name for path in destination.glob('*.flac')} == {'01 - First.flac', '02 - Second.flac'}
+
+
+def test_publish_release_when_same_track_exists_in_other_audio_format_replaces_that_track_name(
+    tmp_path: Path,
+) -> None:
+    # Given: an existing MP3 target with the same track stem as a staged FLAC.
+    downloads = tmp_path / 'downloads'
+    downloads.mkdir()
+    source = _create_flac(downloads, 'raw-second.flac')
+    staging = tmp_path / 'staging'
+    release = staging / 'Artist One' / 'Shared Album'
+    release.mkdir(parents=True)
+    _ = _create_flac(release, '02 - Second.flac')
+    destination = tmp_path / 'media' / 'Artist One' / 'Shared Album'
+    destination.mkdir(parents=True)
+    (destination / '02 - Second.mp3').write_bytes(b'old-format')
+
+    # When: the FLAC version is published for the same track target.
+    _ = publish_release(
+        PublicationRequest(
+            staged_release=release,
+            staging_root=staging,
+            media_root=tmp_path / 'media',
+            source_paths=(source,),
+            destination_release=destination,
+        )
+    )
+
+    # Then: only one format remains for that track stem.
+    assert not (destination / '02 - Second.mp3').exists()
+    assert (destination / '02 - Second.flac').exists()
+
+
 def test_publish_release_when_invalid_lrc_rejects_without_partial_media_visibility(tmp_path: Path) -> None:
     # Given: a staged release containing external text that cannot be decoded as UTF-8.
     downloads = tmp_path / 'downloads'
