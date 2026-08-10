@@ -40,3 +40,30 @@ def test_publication_layout_when_canonical_metadata_is_available_uses_artist_alb
 
     # Then: technical job identifiers are absent from both directory and filename.
     assert layout == ('Album Artist/Live Set', '02-02 - Opening - Theme.flac')
+
+
+def test_publication_layout_when_source_has_no_tags_uses_unsorted_first_track_name() -> None:
+    # Given: a source with no usable tags at all.
+    tags: tuple[tuple[str, str], ...] = ()
+
+    # When: the worker derives its fallback publication layout.
+    layout = _publication_layout(tags, 'raw.flac')
+
+    # Then: the file gets a stable first-free-style fallback name instead of the source basename.
+    assert layout == ('Unsorted', 'Track 01.flac')
+
+
+def test_publication_layout_when_source_has_partial_album_tags_uses_available_identity() -> None:
+    # Given: source tags identify the artist, album, title, and track but omit optional canonical fields.
+    tags = (
+        ('ARTIST', 'Artist'),
+        ('ALBUM', 'Album'),
+        ('TITLE', 'Track'),
+        ('TRACKNUMBER', '2'),
+    )
+
+    # When: the worker derives the persistent publication layout.
+    layout = _publication_layout(tags, 'source.flac')
+
+    # Then: available source identity determines the album directory and filename.
+    assert layout == ('Artist/Album', '02 - Track.flac')

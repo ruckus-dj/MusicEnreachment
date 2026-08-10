@@ -75,18 +75,60 @@ def fallback_metadata(
 def publication_layout(tags: tuple[tuple[str, str], ...], source_name: str) -> tuple[str, str]:
     """Return the stable media directory and filename for one source track."""
     metadata = fallback_metadata(tags)
+    values = {name: value for name, value in tags}
+    suffix = Path(source_name).suffix.casefold() or '.flac'
     if metadata is None:
-        return 'Unsorted', _safe_component(Path(source_name).name, 'track.flac')
+        artist = values.get('ALBUMARTIST') or values.get('ARTIST')
+        album = values.get('ALBUM')
+        title = values.get('TITLE')
+        track_number = _positive_int(values.get('TRACKNUMBER'))
+        disc_number = _positive_int(values.get('DISCNUMBER'))
+        disc_total = _positive_int(values.get('DISCTOTAL'))
+        if not artist or not album:
+            return 'Unsorted', f'Track 01{suffix}'
+        safe_artist = _safe_component(artist, 'Unknown Artist')
+        safe_album = _safe_component(album, 'Unknown Album')
+        if not title:
+            filename = f'Track {track_number:02d}{suffix}' if track_number is not None else f'Track 01{suffix}'
+        else:
+            safe_title = _safe_component(title, 'Unknown Track')
+            prefix = _track_prefix(track_number, disc_number, disc_total)
+            filename = f'{prefix} - {safe_title}{suffix}' if prefix else f'{safe_title}{suffix}'
+        return f'{safe_artist}/{safe_album}', filename
     artist = _safe_component(' & '.join(metadata.album_artists), 'Unknown Artist')
     album = _safe_component(metadata.album, 'Unknown Album')
     title = _safe_component(metadata.title, 'Unknown Track')
-    prefix = (
-        f'{metadata.disc_number:02d}-{metadata.track_number:02d}'
-        if metadata.disc_total > 1
-        else f'{metadata.track_number:02d}'
-    )
-    filename = f'{prefix} - {title}.flac'
-    return f'{artist}/{album}', filename
+    prefix = _track_prefix(metadata.track_number, metadata.disc_number, metadata.disc_total)
+    return f'{artist}/{album}', f'{prefix} - {title}{suffix}'
+
+
+def _positive_int(value: str | None) -> int | None:
+    try:
+        parsed = int(value) if value is not None else None
+    except ValueError:
+        return None
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _track_prefix(track_number: int | None, disc_number: int | None, disc_total: int | None) -> str:
+    if track_number is None:
+        return ''
+    if disc_total is not None and disc_total > 1 and disc_number:
+        return f'{disc_number:02d}-{track_number:02d}'
+    return f'{track_number:02d}'
+
+
+def next_unsorted_filename(directory: Path, suffix: str) -> str:
+    """Return the lowest unused Track NN name across supported audio formats."""
+    used_numbers = {
+        int(match.group(1))
+        for path in directory.glob('Track *')
+        if (match := re.fullmatch(r'Track (\d{2})\.[^.]+', path.name)) is not None
+    }
+    number = 1
+    while number in used_numbers:
+        number += 1
+    return f'Track {number:02d}{suffix}'
 
 
 def _safe_component(value: str, fallback: str) -> str:
