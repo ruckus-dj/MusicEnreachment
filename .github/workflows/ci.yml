@@ -32,6 +32,9 @@ jobs:
       - name: Build frontend
         run: npm run build --prefix frontend
 
+      - name: Check frontend formatting and lint
+        run: npm run check --prefix frontend
+
   checks:
     name: Python checks
     runs-on: ubuntu-latest
