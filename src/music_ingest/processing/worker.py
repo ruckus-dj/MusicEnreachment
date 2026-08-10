@@ -166,6 +166,8 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
         'DISCNUMBER': None if candidate.disc_number is None else str(candidate.disc_number),
         'DISCTOTAL': None if candidate.disc_total is None else str(candidate.disc_total),
         'GENRE': '; '.join(display_genre_name(genre) for genre in candidate.genres) if candidate.genres else None,
+        'ISRC': '; '.join(candidate.isrcs) if candidate.isrcs else None,
+        'PERFORMER': '; '.join(candidate.performers) if candidate.performers else None,
         'MUSICBRAINZ_RELEASEGROUPID': candidate.release_group_mbid,
     }
     tags.update({name: value for name, value in optional_tags.items() if value is not None})

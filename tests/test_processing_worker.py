@@ -184,7 +184,12 @@ def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist
 def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:
     # Given: MusicBrainz returns lowercase genre source names.
     candidate = ReleaseCandidate(
-        'release-id', 'Fixture Album', 'Fixture Artist', genres=('alternative rock', 'hip hop')
+        'release-id',
+        'Fixture Album',
+        'Fixture Artist',
+        genres=('alternative rock', 'hip hop'),
+        isrcs=('USFIX2600001',),
+        performers=('Fixture Performer', 'Fixture Vocalist'),
     )
 
     # When: provider candidate metadata is converted to tags.
@@ -192,6 +197,8 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
 
     # Then: the published GENRE value uses readable labels.
     assert tags['GENRE'] == 'Alternative Rock; Hip Hop'
+    assert tags['ISRC'] == 'USFIX2600001'
+    assert tags['PERFORMER'] == 'Fixture Performer; Fixture Vocalist'
 
 
 def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallback_and_review(tmp_path: Path) -> None:
