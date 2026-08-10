@@ -1,7 +1,0 @@
-schema_version: 1
-storage:
-  work_dir: /mnt/ssd/appdata/music-ingest/work
-review:
-  manual_review_on_low_confidence: true
-  manual_review_on_unknown_genre: true
-  manual_review_on_lyric_mismatch: true
