@@ -67,6 +67,9 @@ export type DestinationConflict = {
 };
 export type Summary = {
   readonly record_id: string;
+  readonly musicbrainz_recording_id?: string | null;
+  readonly musicbrainz_release_id?: string | null;
+  readonly musicbrainz_artist_id?: string | null;
   readonly source_state: string;
   readonly processing_state: string;
   readonly match_state: string;

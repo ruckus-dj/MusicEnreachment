@@ -63,7 +63,7 @@ export type AppControllerModel = {
   loadLibrary: (showLoader?: boolean) => Promise<void>;
   scan: () => Promise<void>;
   retryFailedProviders: () => Promise<void>;
-  saveMetadata: () => Promise<void>;
+  saveMetadata: () => Promise<boolean>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
   selectCandidate: (selection: string) => Promise<void>;
@@ -283,7 +283,7 @@ export function useAppController(): AppControllerModel {
     }
   }
   async function saveMetadata() {
-    if (!detail || !sourceId) return;
+    if (!detail || !sourceId) return false;
     setSaving(true);
     try {
       const result = await api<{ revision: number; queued: boolean; tags: Tags }>(
@@ -298,8 +298,10 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(detail.record_id, sourceId);
       setDraft({ ...result.tags });
       if (result.queued) watchRecord(detail.record_id, sourceId);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось сохранить метаданные");
+      return false;
     } finally {
       setSaving(false);
     }

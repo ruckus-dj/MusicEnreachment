@@ -241,15 +241,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             <TrackDetail
               detail={detail}
               sourceId={sourceId}
-              layer={controller.layer}
-              setLayer={controller.setLayer}
-              tags={controller.currentTags}
               draft={controller.draft}
               setDraft={controller.setDraft}
               saving={controller.saving}
               reprocessing={controller.reprocessing}
-              onSave={() => void controller.saveMetadata()}
-              onRetry={() => void controller.retryProvider("acoustid")}
+              onSave={controller.saveMetadata}
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
               onOverrideRelease={(value) => void controller.overrideRelease(value)}

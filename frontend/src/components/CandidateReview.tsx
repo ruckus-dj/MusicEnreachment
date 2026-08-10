@@ -8,12 +8,14 @@ export function CandidateReview({
   candidates,
   reason,
   disabled,
+  selectedKey,
   onSelect,
 }: {
   readonly provider?: ProviderName;
   readonly candidates: readonly Candidate[];
   readonly reason: string;
   readonly disabled: boolean;
+  readonly selectedKey: string | null;
   readonly onSelect: (selection: string) => void;
 }) {
   const unique = [
@@ -25,6 +27,30 @@ export function CandidateReview({
     Record<string, { readonly artist: string; readonly title: string; readonly album: string }>
   >({});
   const candidateKeys = unique.map((candidate) => candidate.candidate_key).join("|");
+  const selectedCandidate = unique.find(
+    (candidate) =>
+      candidate.candidate_key === selectedKey || candidate.evidence.recording_mbid === selectedKey,
+  );
+  const selectedMetadata = selectedCandidate ? decoded[selectedCandidate.candidate_key] : undefined;
+  const selectedTitle =
+    selectedMetadata?.title ||
+    selectedCandidate?.evidence.title ||
+    selectedCandidate?.evidence.release ||
+    (selectedKey ? `${isAcoustId ? "Запись" : "Релиз"} ${selectedKey}` : "Вариант не выбран");
+  const selectedSubtitle = selectedCandidate
+    ? [
+        selectedMetadata?.artist || selectedCandidate.evidence.artist,
+        selectedMetadata?.album || selectedCandidate.evidence.album,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : selectedKey
+      ? "Подтверждённый вариант"
+      : "Нужно выбрать вариант для продолжения";
+  const [isOpen, setIsOpen] = useState(!selectedKey && unique.length > 0);
+  useEffect(() => {
+    setIsOpen(!selectedKey && unique.length > 0);
+  }, [selectedKey, candidateKeys]);
   useEffect(() => {
     if (!isAcoustId || !route.recordId || !route.sourceId) return;
     let cancelled = false;
@@ -75,80 +101,99 @@ export function CandidateReview({
   }, [candidateKeys, isAcoustId, route.recordId, route.sourceId]);
   return (
     <section className="candidate-review" aria-labelledby={`${provider}-candidate-title`}>
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">{isAcoustId ? "AcousticID" : "MusicBrainz"}</p>
-          <h3 id={`${provider}-candidate-title`}>
-            {isAcoustId ? "Найденные записи" : "Варианты релиза"}
-          </h3>
-        </div>
-        <span className="badge">{unique.length} вариантов</span>
-      </div>
-      <p className="candidate-reason">
-        {reason ||
-          (isAcoustId
-            ? "Выберите запись, чтобы запросить её метаданные в MusicBrainz."
-            : "Выберите подтверждённый релиз MusicBrainz.")}
-      </p>
-      {unique.length ? (
-        <div className="candidate-list">
-          {unique.map((candidate) => {
-            const hasMetadata = Object.keys(candidate.evidence.tags).length > 0;
-            const mbid = candidate.evidence.recording_mbid ?? candidate.candidate_key;
-            const href = isAcoustId
-              ? `https://musicbrainz.org/recording/${mbid}`
-              : `https://musicbrainz.org/release/${candidate.candidate_key}`;
-            const metadata = decoded[candidate.candidate_key];
-            const title =
-              metadata?.title ||
-              candidate.evidence.title ||
-              candidate.evidence.release ||
-              (isAcoustId ? "MusicBrainz recording" : "Без названия релиза");
-            const subtitle = isAcoustId
-              ? [
-                  metadata?.artist || candidate.evidence.artist,
-                  metadata?.album || candidate.evidence.album,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || candidate.candidate_key
-              : candidate.evidence.artist || "Исполнитель не указан";
-            return (
-              <article className="candidate-card" key={`${provider}-${candidate.candidate_key}`}>
-                <div>
-                  <strong>{title}</strong>
-                  <small>{subtitle}</small>
-                  <a href={href} target="_blank" rel="noreferrer">
-                    Открыть в MusicBrainz
-                  </a>
-                  {!hasMetadata && !isAcoustId && (
-                    <small>Метаданные отсутствуют; повторите запрос</small>
-                  )}
-                </div>
-                <div className="candidate-score">
-                  {candidate.evidence.score === null
-                    ? "—"
-                    : `${Math.round(candidate.evidence.score * 100)}%`}
-                  <small>оценка</small>
-                </div>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={disabled || (!isAcoustId && !hasMetadata)}
-                  onClick={() => onSelect(`${provider}:${candidate.candidate_key}`)}
-                >
-                  {isAcoustId
-                    ? "Выбрать запись"
-                    : hasMetadata
-                      ? "Выбрать и подтвердить"
-                      : "Нет метаданных"}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="candidate-empty">
-          Провайдер не вернул вариантов. Повторите запрос после восстановления связи.
+      <button
+        type="button"
+        className={`candidate-disclosure ${selectedKey ? "selected" : "needs-selection"}`}
+        aria-expanded={isOpen}
+        aria-controls={`${provider}-candidate-options`}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span className="candidate-disclosure-copy">
+          <span className="eyebrow">{isAcoustId ? "AcousticID" : "MusicBrainz"}</span>
+          <strong id={`${provider}-candidate-title`}>{selectedTitle}</strong>
+          <small>{selectedSubtitle}</small>
+        </span>
+        <span className="candidate-disclosure-meta">
+          <span className={`candidate-state ${selectedKey ? "confirmed" : "attention"}`}>
+            {selectedKey ? "Выбрано" : "Нужно выбрать"}
+          </span>
+          <span className="candidate-chevron" aria-hidden="true">
+            {isOpen ? "⌃" : "⌄"}
+          </span>
+        </span>
+      </button>
+      {isOpen && (
+        <div id={`${provider}-candidate-options`} className="candidate-options">
+          <p className="candidate-reason">
+            {reason ||
+              (isAcoustId
+                ? "Выберите запись, чтобы запросить её метаданные в MusicBrainz."
+                : "Выберите подтверждённый релиз MusicBrainz.")}
+          </p>
+          {unique.length ? (
+            <div className="candidate-list">
+              {unique.map((candidate) => {
+                const hasMetadata = Object.keys(candidate.evidence.tags).length > 0;
+                const mbid = candidate.evidence.recording_mbid ?? candidate.candidate_key;
+                const href = isAcoustId
+                  ? `https://musicbrainz.org/recording/${mbid}`
+                  : `https://musicbrainz.org/release/${candidate.candidate_key}`;
+                const metadata = decoded[candidate.candidate_key];
+                const title =
+                  metadata?.title ||
+                  candidate.evidence.title ||
+                  candidate.evidence.release ||
+                  (isAcoustId ? "MusicBrainz recording" : "Без названия релиза");
+                const subtitle = isAcoustId
+                  ? [
+                      metadata?.artist || candidate.evidence.artist,
+                      metadata?.album || candidate.evidence.album,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || candidate.candidate_key
+                  : candidate.evidence.artist || "Исполнитель не указан";
+                return (
+                  <article
+                    className="candidate-card"
+                    key={`${provider}-${candidate.candidate_key}`}
+                  >
+                    <div>
+                      <strong>{title}</strong>
+                      <small>{subtitle}</small>
+                      <a href={href} target="_blank" rel="noreferrer">
+                        Открыть в MusicBrainz
+                      </a>
+                      {!hasMetadata && !isAcoustId && (
+                        <small>Метаданные отсутствуют; повторите запрос</small>
+                      )}
+                    </div>
+                    <div className="candidate-score">
+                      {candidate.evidence.score === null
+                        ? "—"
+                        : `${Math.round(candidate.evidence.score * 100)}%`}
+                      <small>оценка</small>
+                    </div>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={disabled || (!isAcoustId && !hasMetadata)}
+                      onClick={() => onSelect(`${provider}:${candidate.candidate_key}`)}
+                    >
+                      {isAcoustId
+                        ? "Выбрать запись"
+                        : hasMetadata
+                          ? "Выбрать и подтвердить"
+                          : "Нет метаданных"}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="candidate-empty">
+              Провайдер не вернул вариантов. Повторите запрос после восстановления связи.
+            </div>
+          )}
         </div>
       )}
     </section>
