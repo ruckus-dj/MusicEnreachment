@@ -59,6 +59,20 @@ def test_library_deep_link_when_reloaded_returns_the_review_shell(tmp_path: Path
     assert 'id="root"' in response.text
 
 
+def test_settings_deep_link_when_reloaded_returns_the_review_shell(tmp_path: Path) -> None:
+    # Given: a review app serving the compiled React shell.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "settings-deep-link.db"}')
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the browser reloads the settings route directly.
+    response = client.get('/settings')
+
+    # Then: FastAPI returns the shell so React can restore the settings screen.
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
 def test_library_recovery_when_source_is_blocked_requeues_without_deleting_history(tmp_path: Path) -> None:
     # Given: an existing source whose initial filesystem job exhausted its retries.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recovery.db"}')
