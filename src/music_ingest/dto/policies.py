@@ -20,6 +20,7 @@ ALLOWED_TAG_KEYS = frozenset(
         'MUSICBRAINZ_ALBUMID',
         'MUSICBRAINZ_RELEASEGROUPID',
         'ISRC',
+        'PERFORMER',
     }
 )
 
