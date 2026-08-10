@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
 from music_ingest.config.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
 from music_ingest.inspectors._tool import ToolState
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
@@ -75,6 +76,7 @@ from music_ingest.processing.metadata import (
     field_policy,
     file_hash,
     genre_policy,
+    next_unsorted_filename,
     publication_layout,
     read_tags,
 )
@@ -113,6 +115,7 @@ class ProcessingConfig:
     genre_policy: GenrePolicy | None = None
     musicbrainz_provider: MusicBrainzProvider | None = None
     acoustid_provider: AcoustIdProvider | None = None
+    artwork_provider: ArtworkProvider | None = None
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
 
 
@@ -282,6 +285,11 @@ class ProcessingWorker:
         staged_release = self._staging_directory(claimed.job.id)
         sanitized_path = staged_release / '.sanitized.flac'
         relative_directory, output_name = publication_layout(tags, source_path.name)
+        current_publication = next((item for item in record.publications if item.state == 'current'), None)
+        if relative_directory == 'Unsorted' and current_publication is None:
+            output_name = next_unsorted_filename(
+                self._config.media_root / relative_directory, source_path.suffix.casefold()
+            )
         _ = sanitize_flac(
             FlacSanitizationRequest(
                 source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
@@ -322,7 +330,6 @@ class ProcessingWorker:
             )
             JobRepository(self._session).succeed(claimed, now)
             return
-        current_publication = next((item for item in record.publications if item.state == 'current'), None)
         destination_release = (
             Path(current_publication.path).parent
             if current_publication is not None
@@ -337,12 +344,13 @@ class ProcessingWorker:
                 require_canonical_tags=False,
                 destination_release=destination_release,
                 replace_existing=current_publication is not None,
+                destination_audio_name=None if current_publication is None else Path(current_publication.path).name,
             )
         )
         final_revision = append_metadata_revision(
             self._session, record.id, source.id, 'final', dict(written.tags), 'worker', now
         )
-        audio_path = next(result.published_release.glob('*.flac'))
+        audio_path = result.published_audio or next(result.published_release.glob('*.flac'))
         _ = record_publication(
             self._session,
             record.id,
@@ -491,6 +499,11 @@ class ProcessingWorker:
         staged_release = self._staging_directory(claimed.job.id)
         sanitized_path = staged_release / '.sanitized.flac'
         relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
+        publication = next((item for item in record.publications if item.state == 'current'), None)
+        if relative_directory == 'Unsorted' and publication is None:
+            output_name = next_unsorted_filename(
+                self._config.media_root / relative_directory, source_path.suffix.casefold()
+            )
         _ = sanitize_flac(
             FlacSanitizationRequest(
                 source_path, sanitized_path, staged_release, self._config.flac_command, self._config.timeout_seconds
@@ -521,8 +534,7 @@ class ProcessingWorker:
                 )
             )
             sanitized_path.unlink()
-        self._stage_artwork(source_path, staged_release)
-        publication = next((item for item in record.publications if item.state == 'current'), None)
+        provider_artwork_staged = self._stage_artwork_for_release(source_path, staged_release, final_tags)
         destination_release = (
             Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
         )
@@ -534,9 +546,11 @@ class ProcessingWorker:
             require_canonical_tags=False,
             destination_release=destination_release,
             replace_existing=publication is not None,
+            destination_audio_name=None if publication is None else Path(publication.path).name,
+            replace_artwork=provider_artwork_staged,
         )
         published = publish_release(request)
-        audio_path = next(published.published_release.glob('*.flac'))
+        audio_path = published.published_audio or next(published.published_release.glob('*.flac'))
         _ = record_publication(
             self._session,
             record.id,
@@ -811,6 +825,27 @@ class ProcessingWorker:
         if artwork is None:
             return
         _ = shutil.copy2(artwork, staged_release / artwork.name)
+
+    def _stage_artwork_for_release(self, source_path: Path, staged_release: Path, final_tags: dict[str, str]) -> bool:
+        self._stage_artwork(source_path, staged_release)
+        release_id = final_tags.get('MUSICBRAINZ_ALBUMID')
+        provider = self._config.artwork_provider
+        if release_id is None or provider is None:
+            return False
+        setting_key = f'artwork:{release_id}'
+        if self._session.get(RuntimeSettingRecord, setting_key) is not None:
+            return False
+        candidate = provider.fetch_artwork(release_id)
+        setting_value = 'missing'
+        if candidate is not None:
+            for name in ('cover.jpg', 'cover.webp'):
+                (staged_release / name).unlink(missing_ok=True)
+            _ = write_release_artwork(
+                ArtworkWriteRequest(self._config.staging_root, staged_release, release_id, candidate)
+            )
+            setting_value = candidate.format.value
+        self._session.add(RuntimeSettingRecord(key=setting_key, value=setting_value, updated_at=datetime.now(UTC)))
+        return candidate is not None
 
     def _retry_claim(
         self,

@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from alembic import command
 from music_ingest.api.app import create_app
 from music_ingest.config.policies import PolicyBundle, PolicyYamlError, load_policy_bundle
+from music_ingest.enrichment.artwork import ArtworkProvider
 from music_ingest.matching.acoustid import AcoustIdV2Adapter
 from music_ingest.matching.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.matching.providers import AcoustIdProvider, MusicBrainzProvider, build_live_transport
@@ -122,19 +123,22 @@ def create_runtime_app() -> FastAPI:
 
 
 def _processing_config(environment: Mapping[str, str]) -> ProcessingConfig:
-    musicbrainz_provider, acoustid_provider = _live_providers(environment)
+    musicbrainz_provider, acoustid_provider, artwork_provider = _live_providers(environment)
     return ProcessingConfig(
         incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
         musicbrainz_provider=musicbrainz_provider,
         acoustid_provider=acoustid_provider,
+        artwork_provider=artwork_provider,
     )
 
 
-def _live_providers(environment: Mapping[str, str]) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None]:
+def _live_providers(
+    environment: Mapping[str, str],
+) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
     if environment.get('MUSIC_INGEST_ENABLE_LIVE_TRANSPORT') != '1':
-        return None, None
+        return None, None, None
     transport = build_live_transport()
     musicbrainz = MusicBrainzV2Adapter(
         transport,
@@ -145,7 +149,7 @@ def _live_providers(environment: Mapping[str, str]) -> tuple[MusicBrainzProvider
     )
     acoustid_key = environment.get('MUSIC_INGEST_ACOUSTID_CLIENT_KEY', '').strip()
     acoustid = AcoustIdV2Adapter(transport, acoustid_key) if acoustid_key else None
-    return musicbrainz, acoustid
+    return musicbrainz, acoustid, musicbrainz
 
 
 def _policy_bundle(environment: Mapping[str, str]) -> PolicyBundle | None:
