@@ -86,13 +86,13 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 - States: default, hover, selected, focus, empty catalog.
 
 ### Metadata inspector
-- Structure: evidence cards, layer tabs, labeled canonical tag inputs, revision badge, save action, history.
-- States: editable final layer, read-only original/analyzed labels, saving, success, stale revision/error.
+- Structure: compact Original/Analyzed/Final comparison, labeled Final inputs only in edit mode, revision badge, save action, history.
+- States: read-only comparison, editing Final, saving, success, stale revision/error.
 - Accessibility: every input has a visible field label and save result is inline.
 
 ### Candidate review panel
-- Structure: review reason, selectable MusicBrainz candidates, score, identity summary, and explicit confirmation action.
-- States: candidates available, no candidates, confirming, confirmed and publishing.
+- Structure: selected provider identity in a disclosure header, review reason, selectable MusicBrainz candidates, score, identity summary, and explicit confirmation action.
+- States: unresolved and expanded, selected and collapsed, candidates available, no candidates, confirming, confirmed and publishing.
 - Accessibility: each candidate is a native button with a text score and readable identity, never color alone.
 
 ### Scan action
