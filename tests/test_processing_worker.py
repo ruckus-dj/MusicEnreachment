@@ -17,7 +17,16 @@ import music_ingest.processing.worker as processing
 from music_ingest.matching.providers import (
     ReleaseCandidate,
 )
-from music_ingest.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
+from music_ingest.models import (
+    Base,
+    CandidateRecord,
+    JobAttemptRecord,
+    JobRecord,
+    LibraryRecord,
+    ProviderScheduleRecord,
+    ReviewDecisionRecord,
+    SourceRecord,
+)
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError
@@ -169,6 +178,59 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
     assert tags['GENRE'] == 'Alternative Rock; Hip Hop'
     assert tags['ISRC'] == 'USFIX2600001'
     assert tags['PERFORMER'] == 'Fixture Performer; Fixture Vocalist'
+
+
+def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identity() -> None:
+    # Given: stale automatic identities from a prior run and newer AcousticID evidence.
+    source = SourceRecord(
+        id='source-id',
+        source_path='source.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='0' * 64,
+        duration_seconds=1,
+        origin='lidarr',
+        intake_state='present',
+    )
+    source.candidates.extend(
+        (
+            CandidateRecord(
+                source_id=source.id,
+                candidate_key='stale-acoustid-recording',
+                evidence=json.dumps(
+                    {'provider': 'acoustid', 'tags': {'MUSICBRAINZ_TRACKID': 'stale-acoustid-recording'}}
+                ),
+            ),
+            CandidateRecord(
+                source_id=source.id,
+                candidate_key='fresh-acoustid-recording',
+                evidence=json.dumps(
+                    {'provider': 'acoustid', 'tags': {'MUSICBRAINZ_TRACKID': 'fresh-acoustid-recording'}}
+                ),
+            ),
+        )
+    )
+    record = LibraryRecord(
+        id='record-id',
+        musicbrainz_recording_id='stale-automatic-recording',
+        musicbrainz_release_id='stale-automatic-release',
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    # When: a full reprocess prepares its MusicBrainz lookup.
+    lookup_ids = processing.musicbrainz_lookup_ids(record, source)
+
+    # Then: fresh AcousticID evidence replaces stale automatic identity and permits album disambiguation.
+    assert lookup_ids == ('fresh-acoustid-recording', None)
+
+    # And: a reviewer-confirmed AcousticID selection remains authoritative.
+    source.review_decisions.append(
+        ReviewDecisionRecord(source_id=source.id, state='acoustid_confirmed', rationale='selected by reviewer')
+    )
+    record.musicbrainz_recording_id = 'reviewer-recording'
+    assert processing.musicbrainz_lookup_ids(record, source) == ('reviewer-recording', None)
 
 
 def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallback_and_review(tmp_path: Path) -> None:

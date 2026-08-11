@@ -194,11 +194,32 @@ def _candidate_record(candidate: ReleaseCandidate, score: float | None) -> Candi
 
 
 def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
-    for candidate in source.candidates:
+    for candidate in reversed(source.candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
         if evidence.provider == 'acoustid':
             return evidence.tags.get('MUSICBRAINZ_TRACKID')
     return None
+
+
+def _has_reviewer_decision(source: SourceRecord, state: str) -> bool:
+    return any(decision.state == state for decision in source.review_decisions)
+
+
+def musicbrainz_lookup_ids(record: LibraryRecord, source: SourceRecord) -> tuple[str | None, str | None]:
+    recording_mbid = (
+        record.musicbrainz_recording_id
+        if _has_reviewer_decision(source, 'acoustid_confirmed')
+        else _acoustid_recording_mbid(source)
+    )
+    release_mbid = record.musicbrainz_release_id if _has_reviewer_decision(source, 'confirmed') else None
+    return recording_mbid, release_mbid
+
+
+def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceRecord) -> ExplicitMusicBrainzIds:
+    return ExplicitMusicBrainzIds(
+        record.musicbrainz_release_id if _has_reviewer_decision(source, 'confirmed') else None,
+        record.musicbrainz_recording_id if _has_reviewer_decision(source, 'acoustid_confirmed') else None,
+    )
 
 
 def _final_tags(
@@ -440,17 +461,14 @@ class ProcessingWorker:
         )
         tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
         record = ensure_source_record(self._session, source, now)
+        recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
         provider_result = self._lookup_providers(
             tags,
             fingerprint,
             now,
             force_refresh=True,
-            recording_mbid=(
-                record.musicbrainz_recording_id
-                if claimed.job.kind == 'acoustid_analysis'
-                else _acoustid_recording_mbid(source)
-            ),
-            release_mbid=record.musicbrainz_release_id,
+            recording_mbid=recording_mbid,
+            release_mbid=release_mbid,
             run_acoustid=claimed.job.kind == 'acoustid_analysis',
             run_musicbrainz=claimed.job.kind == 'musicbrainz_analysis',
         )
@@ -682,7 +700,7 @@ class ProcessingWorker:
                 values.get('ARTIST', ''),
                 values.get('ALBUM', ''),
                 source.duration_seconds,
-                ExplicitMusicBrainzIds(record.musicbrainz_release_id, record.musicbrainz_recording_id),
+                _reviewer_selected_musicbrainz_ids(record, source),
             ),
             result.musicbrainz,
             result.acoustid,
