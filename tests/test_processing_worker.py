@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
 from music_ingest.matching.providers import (
-    RecordingCandidate,
     ReleaseCandidate,
 )
 from music_ingest.models import Base, JobAttemptRecord, JobRecord, ProviderScheduleRecord, SourceRecord
@@ -152,78 +151,6 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
         assert job.attempts[0].finished_at == finished_at
 
 
-def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist(tmp_path: Path) -> None:
-    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-evidence.db"}')
-    Base.metadata.create_all(engine)
-    metadata = ReleaseCandidate(
-        release_mbid='release-id',
-        release_title='Fixture Album',
-        artist_name='Fixture Artist',
-        recording_title='Fixture Track',
-    )
-    with Session(engine) as session:
-        worker = ProcessingWorker(session, _config(tmp_path))
-        record = worker._acoustid_candidate_record_from_metadata(
-            RecordingCandidate('recording-id', 0.99),
-            (metadata,),
-        )
-
-    evidence = json.loads(record.evidence)
-    assert evidence['artist'] == 'Fixture Artist'
-    assert evidence['release'] == 'Fixture Track · Fixture Album'
-    assert evidence['title'] == 'Fixture Track'
-    assert evidence['album'] == 'Fixture Album'
-
-
-def test_acoustid_candidates_when_one_release_matches_source_album_selects_that_recording() -> None:
-    # Given: two fingerprint candidates whose MusicBrainz releases disagree on the source album.
-    enrichments = (
-        (
-            RecordingCandidate('recording-wrong', 0.99),
-            (ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC'),),
-        ),
-        (
-            RecordingCandidate('recording-right', 0.98),
-            (ReleaseCandidate('release-vol-2', 'The Greatest Hits Vol.2', 'Noize MC'),),
-        ),
-    )
-
-    # When: the worker compares enriched candidates with the source tags.
-    selected = processing._select_unique_acoustid_recording(
-        enrichments,
-        (('ARTIST', 'Noize MC'), ('ALBUM', 'The Greatest Hits Vol.2')),
-    )
-
-    # Then: it selects the AcousticID recording, not a MusicBrainz release.
-    assert selected == 'recording-right'
-
-
-def test_musicbrainz_candidates_when_one_release_remains_for_recording_selects_that_release() -> None:
-    # Given: one persisted MusicBrainz candidate tied to the selected AcousticID recording.
-    candidates = (
-        processing.CandidateRecord(
-            candidate_key='release-vol-2',
-            evidence=json.dumps(
-                {
-                    'provider': 'musicbrainz',
-                    'tags': {
-                        'MUSICBRAINZ_TRACKID': 'recording-right',
-                        'MUSICBRAINZ_ALBUMID': 'release-vol-2',
-                    },
-                }
-            ),
-        ),
-    )
-
-    # When: the worker looks for releases attached to that recording.
-    selected = processing._select_unique_musicbrainz_candidate(candidates, 'recording-right')
-
-    # Then: the sole release is returned for automatic confirmation.
-    assert selected is not None
-    assert selected[0] == 'release-vol-2'
-    assert selected[1].tags['MUSICBRAINZ_ALBUMID'] == 'release-vol-2'
-
-
 def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:
     # Given: MusicBrainz returns lowercase genre source names.
     candidate = ReleaseCandidate(
@@ -256,7 +183,9 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
     with Session(engine) as session:
         source = _source(session, source_path)
         session.add(
-            JobRecord(id='job-1', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC))
+            JobRecord(
+                id='job-1', source_id=source.id, kind='filesystem_scan', state='queued', created_at=datetime.now(UTC)
+            )
         )
         session.commit()
 
@@ -311,7 +240,11 @@ def test_worker_when_unexpected_processing_error_retries_without_quarantining_so
         source = _source(session, source_path)
         session.add(
             JobRecord(
-                id='job-unexpected', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC)
+                id='job-unexpected',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
             )
         )
         session.commit()
@@ -336,7 +269,7 @@ def test_worker_when_unexpected_processing_error_retries_without_quarantining_so
         assert source.library_record.events[-1].kind == 'processing_retry'
 
 
-def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path: Path) -> None:
+def test_worker_runs_initial_and_staged_provider_phases_in_order(tmp_path: Path) -> None:
     # Given: an import with both providers configured and durable provider schedules.
     config = replace(
         _config(tmp_path),
@@ -358,7 +291,7 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
                 JobRecord(
                     id='job-phases',
                     source_id=source.id,
-                    kind='analyze',
+                    kind='filesystem_scan',
                     state='queued',
                     created_at=datetime.now(UTC),
                 ),
@@ -366,32 +299,35 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
         )
         session.commit()
 
-    # When: the worker drains initial import, provider analysis, and final publication jobs.
+    # When: the worker drains initial import and both provider analyses.
     with Session(engine) as session:
         worker = ProcessingWorker(session, config)
         assert worker.run_once()
         session.commit()
         assert worker.run_once()
         session.commit()
+        source = session.get(SourceRecord, source_id)
+        assert source is not None
+        assert [attempt.provider_name for attempt in source.provider_attempts] == ['acoustid']
+        assert [job.kind for job in session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id)] == [
+            'filesystem_scan',
+            'acoustid_analysis',
+            'musicbrainz_analysis',
+        ]
         assert worker.run_once()
         session.commit()
 
     # Then: the current publication keeps source values until a reviewer confirms the low-score candidate.
     with Session(engine) as session:
         jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
-        assert [job.kind for job in jobs] == ['analyze', 'provider_analysis', 'final_publish']
+        assert [job.kind for job in jobs] == ['filesystem_scan', 'acoustid_analysis', 'musicbrainz_analysis']
         assert [job.state for job in jobs] == ['completed', 'completed', 'completed']
         source = session.get(SourceRecord, source_id)
         assert source is not None and source.library_record is not None
-        revisions = {
-            (item.layer, item.revision): json.loads(item.tags_json) for item in source.library_record.metadata_revisions
-        }
-        assert revisions['original', 1]['ALBUM'] == 'Fixture Album'
-        assert revisions['analyzed', 1]['MUSICBRAINZ_ALBUMID'] == '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
-        assert 'TITLE' not in revisions['analyzed', 1]
-        assert 'GENRE' not in revisions['analyzed', 1]
-        assert revisions['final', 2]['TITLE'] == revisions['original', 1]['TITLE']
-        assert revisions['final', 2]['ALBUM'] == revisions['original', 1]['ALBUM']
+        assert [attempt.provider_name for attempt in source.provider_attempts] == ['acoustid', 'musicbrainz']
+        revisions = {item.layer for item in source.library_record.metadata_revisions}
+        assert revisions == {'original', 'final'}
+        assert source.library_record.processing_state == 'needs_review'
         current = next(item for item in source.library_publications if item.state == 'current')
         assert current.metadata_revision_id is not None
         published_path = Path(current.path)
@@ -404,7 +340,7 @@ def test_worker_runs_initial_provider_and_final_publish_phases_in_order(tmp_path
         )
         assert tags.returncode == 0
         assert 'ALBUM=Fixture Album' in tags.stdout
-        assert 'MUSICBRAINZ_ALBUMID=4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c' in tags.stdout
+        assert 'MUSICBRAINZ_ALBUMID=' not in tags.stdout
 
 
 def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
@@ -422,7 +358,11 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         session.add(ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)))
         session.add(
             JobRecord(
-                id='job-tagless', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC)
+                id='job-tagless',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
             )
         )
         session.commit()
@@ -467,7 +407,11 @@ def test_worker_when_media_root_is_a_symlink_keeps_the_published_job_succeeded(t
         source = _source(session, source_path)
         session.add(
             JobRecord(
-                id='job-symlink-root', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC)
+                id='job-symlink-root',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
             )
         )
         session.commit()
@@ -497,7 +441,7 @@ def test_worker_when_interrupted_job_is_stale_reclaims_it_with_a_new_attempt(tmp
         job = JobRecord(
             id='job-1',
             source_id=source.id,
-            kind='analyze',
+            kind='filesystem_scan',
             state='running',
             created_at=datetime.now(UTC) - timedelta(minutes=10),
         )
@@ -537,7 +481,13 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
     with Session(engine) as session:
         source = _source(session, source_path)
         session.add(
-            JobRecord(id='job-retry', source_id=source.id, kind='analyze', state='queued', created_at=datetime.now(UTC))
+            JobRecord(
+                id='job-retry',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
+            )
         )
         session.commit()
     publish = processing.publish_release
@@ -590,7 +540,7 @@ def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(
             JobRecord(
                 id='job-invalid-tags',
                 source_id=source.id,
-                kind='analyze',
+                kind='filesystem_scan',
                 state='queued',
                 created_at=datetime.now(UTC),
             )
