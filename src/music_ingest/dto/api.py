@@ -101,6 +101,16 @@ class MusicBrainzOverride(BaseModel):
     release_mbid: str = Field(min_length=1, max_length=36)
 
 
+class CandidateReleasePayload(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    release_mbid: str
+    artist: str = ''
+    title: str = ''
+    album: str = ''
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
 class CandidateEvidencePayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -111,6 +121,7 @@ class CandidateEvidencePayload(BaseModel):
     album: str = ''
     score: float | None = None
     tags: dict[str, str] = Field(default_factory=dict)
+    releases: tuple[CandidateReleasePayload, ...] = ()
 
 
 class RecoveryResponse(BaseModel):

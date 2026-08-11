@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import unicodedata
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import final, override
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
 from music_ingest.external.acoustid import AcoustIdV2Adapter
@@ -188,6 +189,41 @@ def _candidate_record(candidate: ReleaseCandidate, score: float | None) -> Candi
             sort_keys=True,
         ),
     )
+
+
+def _select_unique_acoustid_recording(
+    enrichments: tuple[tuple[RecordingCandidate, tuple[ReleaseCandidate, ...]], ...],
+    tags: tuple[tuple[str, str], ...],
+) -> str | None:
+    source_tags = dict(tags)
+    source_artist = _normalize_matching_text(source_tags.get('ARTIST', ''))
+    source_album = _normalize_matching_text(source_tags.get('ALBUM', ''))
+    matches = tuple(
+        recording.recording_mbid
+        for recording, releases in enrichments
+        if any(
+            _normalize_matching_text(release.artist_name) == source_artist
+            and _normalize_matching_text(release.release_title) == source_album
+            for release in releases
+        )
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _select_unique_musicbrainz_candidate(
+    candidates: tuple[CandidateRecord, ...], recording_mbid: str
+) -> tuple[str, CandidateEvidencePayload] | None:
+    matches: dict[str, CandidateEvidencePayload] = {}
+    for candidate in candidates:
+        evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+        if evidence.provider == 'musicbrainz' and evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid:
+            matches[candidate.candidate_key] = evidence
+    return next(iter(matches.items())) if len(matches) == 1 else None
+
+
+def _normalize_matching_text(value: str) -> str:
+    decomposed = unicodedata.normalize('NFKD', value).casefold()
+    return ''.join(character for character in decomposed if character.isalnum())
 
 
 def _final_tags(
@@ -437,7 +473,7 @@ class ProcessingWorker:
         if provider_result is None:
             raise ValueError('provider analysis has no configured providers')
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
-        self._capture_provider_evidence(
+        auto_selected_acoustid = self._capture_provider_evidence(
             source,
             provider_result,
             match_result,
@@ -446,6 +482,51 @@ class ProcessingWorker:
             claimed.job.kind == 'acoustid_analysis',
         )
         if claimed.job.kind == 'acoustid_analysis':
+            if auto_selected_acoustid is not None:
+                record.musicbrainz_recording_id = auto_selected_acoustid
+                auto_selected_musicbrainz = _select_unique_musicbrainz_candidate(
+                    tuple(source.candidates), auto_selected_acoustid
+                )
+                if auto_selected_musicbrainz is not None:
+                    release_mbid, evidence = auto_selected_musicbrainz
+                    source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
+                    analyzed_revision = append_metadata_revision(
+                        self._session, record.id, source.id, 'analyzed', evidence.tags, 'provider', now
+                    )
+                    final_revision = append_metadata_revision(
+                        self._session,
+                        record.id,
+                        source.id,
+                        'final',
+                        {**source_tags, **evidence.tags},
+                        'provider',
+                        now,
+                    )
+                    record.match_state = 'matched'
+                    record.musicbrainz_release_id = release_mbid
+                    _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+                    record_event(
+                        self._session,
+                        record.id,
+                        'musicbrainz_candidate_auto_selected',
+                        'publishing',
+                        (
+                            f'MusicBrainz release {release_mbid} was the sole candidate for AcousticID recording '
+                            f'{auto_selected_acoustid}; final revision {analyzed_revision.revision} queued'
+                        ),
+                        now,
+                        source.id,
+                    )
+                    return
+                record_event(
+                    self._session,
+                    record.id,
+                    'acoustid_candidate_auto_selected',
+                    'needs_review',
+                    f'AcousticID recording {auto_selected_acoustid} matched source artist and album',
+                    now,
+                    source.id,
+                )
             record_event(
                 self._session,
                 record.id,
@@ -669,10 +750,10 @@ class ProcessingWorker:
         now: datetime,
         tags: tuple[tuple[str, str], ...],
         enrich_acoustid_candidates: bool,
-    ) -> None:
-        self._capture_provider_attempt(source, 'musicbrainz', result.musicbrainz, match_result, now, tags, False)
+    ) -> str | None:
+        _ = self._capture_provider_attempt(source, 'musicbrainz', result.musicbrainz, match_result, now, tags, False)
         if result.acoustid is not None:
-            self._capture_provider_attempt(
+            return self._capture_provider_attempt(
                 source,
                 'acoustid',
                 result.acoustid,
@@ -681,6 +762,7 @@ class ProcessingWorker:
                 tags,
                 enrich_acoustid_candidates,
             )
+        return None
 
     def _capture_provider_attempt(
         self,
@@ -691,7 +773,7 @@ class ProcessingWorker:
         now: datetime,
         tags: tuple[tuple[str, str], ...],
         enrich_acoustid_candidates: bool,
-    ) -> None:
+    ) -> str | None:
         match result:
             case (
                 MusicBrainzMatch(provenance=provenance)
@@ -739,21 +821,36 @@ class ProcessingWorker:
                         recordings = evidence.candidates or (
                             RecordingCandidate(evidence.recording_mbid, evidence.score),
                         )
-                        source.candidates.extend(
-                            self._acoustid_candidate_record(recording, tags, now, enrich_acoustid_candidates)
+                        enrichments = tuple(
+                            (
+                                recording,
+                                self._recording_metadata_candidates(recording.recording_mbid, tags, now)
+                                if enrich_acoustid_candidates
+                                else (),
+                            )
                             for recording in recordings
                         )
+                        source.candidates.extend(
+                            self._acoustid_candidate_record_from_metadata(recording, releases)
+                            for recording, releases in enrichments
+                        )
+                        selected = _select_unique_acoustid_recording(enrichments, tags)
+                        if selected is not None:
+                            selected_releases = next(
+                                releases for recording, releases in enrichments if recording.recording_mbid == selected
+                            )
+                            source.candidates.extend(
+                                _candidate_record(candidate, None) for candidate in selected_releases
+                            )
+                        return selected
                     case NoMatch() | Disabled() | Malformed() | RateLimited() | Timeout() | Unavailable():
-                        return
+                        return None
+        return None
 
-    def _acoustid_candidate_record(
-        self,
-        recording: RecordingCandidate,
-        tags: tuple[tuple[str, str], ...],
-        now: datetime,
-        enrich: bool,
+    def _acoustid_candidate_record_from_metadata(
+        self, recording: RecordingCandidate, releases: tuple[ReleaseCandidate, ...]
     ) -> CandidateRecord:
-        metadata = self._recording_metadata(recording.recording_mbid, tags, now) if enrich else None
+        metadata = releases[0] if releases else None
         return CandidateRecord(
             candidate_key=recording.recording_mbid,
             evidence=json.dumps(
@@ -770,17 +867,27 @@ class ProcessingWorker:
                     'title': '' if metadata is None else (metadata.recording_title or ''),
                     'album': '' if metadata is None else metadata.release_title,
                     'tags': {} if metadata is None else _candidate_tags(metadata),
+                    'releases': [
+                        {
+                            'release_mbid': release.release_mbid,
+                            'artist': release.artist_name,
+                            'title': release.recording_title or '',
+                            'album': release.release_title,
+                            'tags': _candidate_tags(release),
+                        }
+                        for release in releases
+                    ],
                 },
                 sort_keys=True,
             ),
         )
 
-    def _recording_metadata(
+    def _recording_metadata_candidates(
         self, recording_mbid: str, tags: tuple[tuple[str, str], ...], now: datetime
-    ) -> ReleaseCandidate | None:
+    ) -> tuple[ReleaseCandidate, ...]:
         musicbrainz, _, _ = self._configured_providers()
         if musicbrainz is None:
-            return None
+            return ()
         source_tags = dict(tags)
         result = ProviderEvidenceService(
             self._session,
@@ -800,7 +907,13 @@ class ProcessingWorker:
             ),
             now,
         )
-        return result.musicbrainz.candidate if isinstance(result.musicbrainz, MusicBrainzMatch) else None
+        match result.musicbrainz:
+            case MusicBrainzMatch(candidate=candidate):
+                return (candidate,)
+            case Ambiguous(candidates=candidates):
+                return candidates
+            case NoMatch() | Disabled() | Malformed() | RateLimited() | Timeout() | Unavailable():
+                return ()
 
     def _source(self, claimed: ClaimedJob) -> SourceRecord:
         if claimed.job.source_id is None:

@@ -731,6 +731,23 @@ def create_app(
                 if evidence.provider != 'acoustid':
                     raise HTTPException(status_code=409, detail='candidate is not an AcousticID recording')
                 source_tags = _catalog_tags(record, source.id)
+                if evidence.releases:
+                    source_album = source_tags.get('ALBUM', '').casefold()
+                    metadata = next(
+                        (release for release in evidence.releases if release.album.casefold() == source_album),
+                        evidence.releases[0],
+                    )
+                    return JSONResponse(
+                        content={
+                            'recording_mbid': candidate_key,
+                            'artist': metadata.artist or source_tags.get('ARTIST', ''),
+                            'title': metadata.title or source_tags.get('TITLE', ''),
+                            'album': metadata.album or source_tags.get('ALBUM', ''),
+                            'release_mbid': metadata.release_mbid,
+                            'resolved': True,
+                            'tags': metadata.tags,
+                        }
+                    )
                 result = ProviderEvidenceService(session, provider, None).lookup(
                     ProviderEvidenceRequest(
                         query='',

@@ -152,9 +152,7 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
         assert job.attempts[0].finished_at == finished_at
 
 
-def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-evidence.db"}')
     Base.metadata.create_all(engine)
     metadata = ReleaseCandidate(
@@ -163,15 +161,11 @@ def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist
         artist_name='Fixture Artist',
         recording_title='Fixture Track',
     )
-    monkeypatch.setattr(ProcessingWorker, '_recording_metadata', lambda *_args: metadata)
-
     with Session(engine) as session:
         worker = ProcessingWorker(session, _config(tmp_path))
-        record = worker._acoustid_candidate_record(
+        record = worker._acoustid_candidate_record_from_metadata(
             RecordingCandidate('recording-id', 0.99),
-            (('ALBUM', 'Fixture Album'),),
-            datetime.now(UTC),
-            True,
+            (metadata,),
         )
 
     evidence = json.loads(record.evidence)
@@ -179,6 +173,55 @@ def test_acoustid_candidate_evidence_includes_musicbrainz_title_album_and_artist
     assert evidence['release'] == 'Fixture Track · Fixture Album'
     assert evidence['title'] == 'Fixture Track'
     assert evidence['album'] == 'Fixture Album'
+
+
+def test_acoustid_candidates_when_one_release_matches_source_album_selects_that_recording() -> None:
+    # Given: two fingerprint candidates whose MusicBrainz releases disagree on the source album.
+    enrichments = (
+        (
+            RecordingCandidate('recording-wrong', 0.99),
+            (ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC'),),
+        ),
+        (
+            RecordingCandidate('recording-right', 0.98),
+            (ReleaseCandidate('release-vol-2', 'The Greatest Hits Vol.2', 'Noize MC'),),
+        ),
+    )
+
+    # When: the worker compares enriched candidates with the source tags.
+    selected = processing._select_unique_acoustid_recording(
+        enrichments,
+        (('ARTIST', 'Noize MC'), ('ALBUM', 'The Greatest Hits Vol.2')),
+    )
+
+    # Then: it selects the AcousticID recording, not a MusicBrainz release.
+    assert selected == 'recording-right'
+
+
+def test_musicbrainz_candidates_when_one_release_remains_for_recording_selects_that_release() -> None:
+    # Given: one persisted MusicBrainz candidate tied to the selected AcousticID recording.
+    candidates = (
+        processing.CandidateRecord(
+            candidate_key='release-vol-2',
+            evidence=json.dumps(
+                {
+                    'provider': 'musicbrainz',
+                    'tags': {
+                        'MUSICBRAINZ_TRACKID': 'recording-right',
+                        'MUSICBRAINZ_ALBUMID': 'release-vol-2',
+                    },
+                }
+            ),
+        ),
+    )
+
+    # When: the worker looks for releases attached to that recording.
+    selected = processing._select_unique_musicbrainz_candidate(candidates, 'recording-right')
+
+    # Then: the sole release is returned for automatic confirmation.
+    assert selected is not None
+    assert selected[0] == 'release-vol-2'
+    assert selected[1].tags['MUSICBRAINZ_ALBUMID'] == 'release-vol-2'
 
 
 def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:
