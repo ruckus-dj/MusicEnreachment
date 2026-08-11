@@ -74,6 +74,12 @@ class ProviderRetryResult(BaseModel):
     queued: int
 
 
+class FullReprocessResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    queued: int
+
+
 class ProviderRetryRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 

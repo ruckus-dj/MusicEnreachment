@@ -29,6 +29,54 @@ def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_pa
         assert marker in response.text
 
 
+def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-all.db"}')
+    Base.metadata.create_all(engine)
+    active_path = tmp_path / 'active.flac'
+    disappeared_path = tmp_path / 'disappeared.flac'
+    _ = active_path.write_bytes(b'active')
+    _ = disappeared_path.write_bytes(b'disappeared')
+    with Session(engine) as session:
+        active = intake_source(
+            session,
+            IntakeRequest(
+                source_path=active_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        disappeared = intake_source(
+            session,
+            IntakeRequest(
+                source_path=disappeared_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        disappeared_source = session.get(SourceRecord, disappeared.source_id)
+        assert disappeared_source is not None
+        disappeared_source.disappeared_at = datetime.now(UTC)
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).post('/api/library/reprocess-all')
+
+    assert response.status_code == 200
+    assert response.json() == {'queued': 1}
+    with Session(engine) as session:
+        jobs = list(session.query(JobRecord).filter(JobRecord.kind == 'filesystem_scan').all())
+        assert [job.source_id for job in jobs] == [active.source_id]
+
+
 def test_review_ui_when_detail_is_populated_contains_api_data_flow_and_action_submission(tmp_path: Path) -> None:
     # Given: a review page backed by the local API.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "review-ui-populated.db"}')
@@ -171,7 +219,7 @@ def test_job_id_when_source_id_is_sha256_fits_database_column(tmp_path: Path) ->
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         # When: recovery creates a provider job for that source.
-        job = JobRepository(session).enqueue('a' * 64, 'provider_analysis', datetime.now(UTC))
+        job = JobRepository(session).enqueue('a' * 64, 'acoustid_analysis', datetime.now(UTC))
 
         # Then: the generated identifier fits jobs.id VARCHAR(96).
         assert job is not None

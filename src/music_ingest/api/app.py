@@ -19,6 +19,7 @@ from music_ingest.dto import (
     CandidateEvidencePayload,
     CandidateSelection,
     DestinationConflictCleanupResponse,
+    FullReprocessResponse,
     GenreCatalogItemResponse,
     GenreCatalogResponse,
     LibraryIdentityUpdate,
@@ -138,7 +139,7 @@ def _catalog_sort_key(record: LibraryRecord) -> tuple[str, str, int, str, str, s
     )
 
 
-def _needs_provider_retry(source: SourceRecordView) -> bool:
+def _needs_analysis_retry(source: SourceRecordView) -> bool:
     return not source.provider_attempts or any(
         attempt.outcome.casefold() in _RETRYABLE_PROVIDER_OUTCOMES for attempt in source.provider_attempts
     )
@@ -221,6 +222,21 @@ def create_app(
             session.commit()
             return result
 
+    @app.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
+    def reprocess_all_library() -> FullReprocessResponse:
+        now = datetime.now(UTC)
+        queued = 0
+        with session_factory() as session:
+            jobs = JobRepository(session)
+            for record in library_records(session):
+                for source in record.sources:
+                    if source.disappeared_at is not None:
+                        continue
+                    if jobs.enqueue(source.id, 'filesystem_scan', now) is not None:
+                        queued += 1
+            session.commit()
+        return FullReprocessResponse(queued=queued)
+
     def destination_conflict(
         session: Session, record: LibraryRecord, source: SourceRecordView
     ) -> dict[str, str] | None:
@@ -232,7 +248,10 @@ def create_app(
         jobs = list(
             session.scalars(
                 select(JobRecord)
-                .where(JobRecord.source_id == source.id, JobRecord.kind.not_in(['provider_analysis', 'final_publish']))
+                .where(
+                    JobRecord.source_id == source.id,
+                    JobRecord.kind.not_in(['acoustid_analysis', 'musicbrainz_analysis', 'final_publish']),
+                )
                 .order_by(JobRecord.created_at.desc())
             ).all()
         )
@@ -272,13 +291,13 @@ def create_app(
                 not name.startswith('MUSICBRAINZ_') for name in json.loads(analyzed_revision.tags_json)
             ):
                 return None
-            kind = 'provider_analysis'
+            kind = 'acoustid_analysis'
         elif current_publication is None:
             kind = 'final_publish' if final_revision is not None else 'filesystem_scan'
         elif record.processing_state == 'publishing' or record.publication_state in {'stale', 'failed'}:
             kind = 'final_publish'
         elif record.processing_state != 'complete':
-            kind = 'provider_analysis'
+            kind = 'acoustid_analysis'
         else:
             return None
         job = JobRepository(session).enqueue(
@@ -356,7 +375,7 @@ def create_app(
             for record in library_records(session):
                 for source in record.sources:
                     if source.disappeared_at is not None or (
-                        not request.retry_all and not _needs_provider_retry(source)
+                        not request.retry_all and not _needs_analysis_retry(source)
                     ):
                         continue
                     provider_queued = (
@@ -368,9 +387,9 @@ def create_app(
                         record_event(
                             session,
                             record.id,
-                            'provider_retry_queued',
+                            'analysis_retry_queued',
                             'queued',
-                            f'{request.provider or "all providers"} retry requested from review UI',
+                            f'{request.provider or "all analysis stages"} retry requested from review UI',
                             now,
                             source.id,
                         )
@@ -585,7 +604,8 @@ def create_app(
                 job = session.scalar(
                     select(JobRecord)
                     .where(
-                        JobRecord.source_id == source.id, JobRecord.kind.not_in(['provider_analysis', 'final_publish'])
+                        JobRecord.source_id == source.id,
+                        JobRecord.kind.not_in(['acoustid_analysis', 'musicbrainz_analysis', 'final_publish']),
                     )
                     .order_by(JobRecord.created_at.desc())
                 )
@@ -694,9 +714,9 @@ def create_app(
                     record_event(
                         session,
                         record.id,
-                        'provider_retry_queued',
+                        'analysis_retry_queued',
                         'queued',
-                        f'{request.provider or "all providers"} retry requested from review UI',
+                        f'{request.provider or "all analysis stages"} retry requested from review UI',
                         now,
                         source.id,
                     )
