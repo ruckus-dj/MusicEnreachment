@@ -163,6 +163,14 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
     if not request.artist_name.strip() or not request.release_title.strip() or _has_unsafe_text(request):
         return None
     match musicbrainz:
+        case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
+            return (
+                candidate
+                if _normalized(request.artist_name) == _normalized(candidate.artist_name)
+                and _normalized(request.release_title) == _normalized(candidate.release_title)
+                and not _candidate_has_unsafe_text(candidate)
+                else None
+            )
         case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
             matches = tuple(
                 candidate
@@ -172,7 +180,9 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
                 and not _candidate_has_unsafe_text(candidate)
             )
             return matches[0] if len(matches) == 1 else None
-        case MusicBrainzMatch() | Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
+        case MusicBrainzMatch() | Ambiguous():
+            return None
+        case _:
             return None
 
 

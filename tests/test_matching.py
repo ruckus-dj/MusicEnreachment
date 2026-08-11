@@ -170,6 +170,21 @@ def test_matching_when_source_album_disambiguates_musicbrainz_candidates_selects
     assert result.selected_release_mbid == 'release-vol-2'
 
 
+def test_matching_when_single_fresh_release_matches_source_artist_and_album_selects_automatically() -> None:
+    # Given: MusicBrainz returns one release with an exact source artist and album match.
+    request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.1', None)
+    evidence = MusicBrainzMatch(
+        _provenance('fresh'), ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC')
+    )
+
+    # When: matching evaluates the verified release.
+    result = resolve_match(request, evidence, None, confidence_threshold=0.9)
+
+    # Then: exact album evidence does not remain pending merely because the duration is unavailable.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == 'release-vol-1'
+
+
 def test_matching_when_source_album_matches_multiple_candidates_keeps_review() -> None:
     # Given: two candidates have identical artist and album text.
     request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.2', None)
