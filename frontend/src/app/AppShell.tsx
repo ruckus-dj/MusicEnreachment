@@ -249,6 +249,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
               onOverrideRelease={(value) => void controller.overrideRelease(value)}
+              onOverrideRecording={(value) => void controller.overrideRecording(value)}
               onSelectCandidate={(key) => void controller.selectCandidate(key)}
             />
           ) : (

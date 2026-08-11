@@ -15,6 +15,7 @@ export function TrackDetail({
   onRetryAcoustId,
   onRetryMusicBrainz,
   onOverrideRelease,
+  onOverrideRecording,
   onSelectCandidate,
 }: {
   readonly detail: Detail | null;
@@ -27,10 +28,12 @@ export function TrackDetail({
   readonly onRetryAcoustId?: () => void;
   readonly onRetryMusicBrainz?: () => void;
   readonly onOverrideRelease?: (releaseMbid: string) => void;
+  readonly onOverrideRecording?: (recordingMbid: string) => void;
   readonly onSelectCandidate: (selection: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [releaseOverride, setReleaseOverride] = useState("");
+  const [recordingOverride, setRecordingOverride] = useState("");
   const source = detail?.sources.find((item) => item.source_id === sourceId);
   if (!detail || !source) return <div className="empty-state">Открываем данные трека…</div>;
 
@@ -80,6 +83,11 @@ export function TrackDetail({
     const releaseMbid = releaseOverride.trim();
     if (!releaseMbid) return;
     onOverrideRelease?.(releaseMbid);
+  };
+  const overrideRecording = () => {
+    const recordingMbid = recordingOverride.trim();
+    if (!recordingMbid) return;
+    onOverrideRecording?.(recordingMbid);
   };
 
   return (
@@ -190,6 +198,28 @@ export function TrackDetail({
                 onClick={overrideRelease}
               >
                 {reprocessing ? "Загружаем…" : "Загрузить release"}
+              </button>
+            </div>
+          </details>
+          <details className="release-override">
+            <summary>Выбрать recording MBID вручную</summary>
+            <p className="candidate-reason">
+              Используйте это, если автоматически выбрана неверная запись трека.
+            </p>
+            <div className="provider-actions">
+              <input
+                aria-label="MusicBrainz recording ID"
+                value={recordingOverride}
+                onChange={(event) => setRecordingOverride(event.target.value)}
+                placeholder="recording MBID"
+              />
+              <button
+                type="button"
+                className="primary"
+                disabled={!recordingOverride.trim() || reprocessing}
+                onClick={overrideRecording}
+              >
+                {reprocessing ? "Загружаем…" : "Загрузить recording"}
               </button>
             </div>
           </details>

@@ -66,6 +66,7 @@ export type AppControllerModel = {
   saveMetadata: () => Promise<boolean>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
+  overrideRecording: (recordingMbid: string) => Promise<void>;
   selectCandidate: (selection: string) => Promise<void>;
   saveSettings: () => Promise<void>;
   syncGenres: () => Promise<void>;
@@ -235,6 +236,27 @@ export function useAppController(): AppControllerModel {
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось загрузить release");
+    } finally {
+      setReprocessing(false);
+    }
+  }
+  async function overrideRecording(recordingMbid: string) {
+    if (!recordId || !sourceId) return;
+    setReprocessing(true);
+    try {
+      const result = await api<{ recording_mbid: string; queued: boolean }>(
+        `/api/library/records/${recordId}/sources/${sourceId}/musicbrainz/override`,
+        { method: "POST", body: JSON.stringify({ recording_mbid: recordingMbid }) },
+      );
+      setNotice(
+        result.queued
+          ? `Запись ${result.recording_mbid} поставлена в очередь анализа`
+          : `Запись ${result.recording_mbid} сохранена`,
+      );
+      await refreshRecord(recordId, sourceId);
+      if (result.queued) watchRecord(recordId, sourceId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось загрузить recording");
     } finally {
       setReprocessing(false);
     }
@@ -525,6 +547,7 @@ export function useAppController(): AppControllerModel {
     saveMetadata,
     retryProvider,
     overrideRelease,
+    overrideRecording,
     selectCandidate,
     saveSettings,
     syncGenres,
