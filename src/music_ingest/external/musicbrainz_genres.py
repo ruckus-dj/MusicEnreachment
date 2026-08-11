@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -48,9 +46,8 @@ def sync_genres(
     transport: GenreTransport,
     *,
     user_agent: str,
-    sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[GenreCatalogEntry, ...]:
-    """Fetch the complete alphabetized MusicBrainz genre catalog at one request per second."""
+    """Fetch the complete alphabetized MusicBrainz genre catalog."""
     entries: list[GenreCatalogEntry] = []
     offset = 0
     while True:
@@ -90,7 +87,6 @@ def sync_genres(
         offset += len(page.genres)
         if not page.genres or offset >= page.count:
             break
-        sleep(1.0)
     return tuple(sorted(entries, key=lambda item: item.source_name.casefold()))
 
 

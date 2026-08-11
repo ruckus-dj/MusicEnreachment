@@ -36,7 +36,7 @@ def test_sync_genres_when_musicbrainz_returns_lowercase_names_creates_display_la
     )
     transport = FakeGenreTransport((response,))
 
-    result = sync_genres(transport, user_agent='Music Ingest/0.1 (test@example.com)', sleep=lambda _: None)
+    result = sync_genres(transport, user_agent='Music Ingest/0.1 (test@example.com)')
 
     assert result == (
         GenreCatalogEntry('2-tone-id', '2 tone', '2 Tone'),
@@ -65,5 +65,4 @@ def test_sync_genres_when_page_ends_before_reported_count_rejects_partial_catalo
         sync_genres(
             FakeGenreTransport((response,)),
             user_agent='Music Ingest/0.1 (test@example.com)',
-            sleep=lambda _: None,
         )
