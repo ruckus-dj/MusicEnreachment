@@ -44,8 +44,12 @@ export function TrackDetail({
   const acoustIdCandidates = candidates.filter(
     (candidate) => candidate.evidence.provider === "acoustid",
   );
+  const selectedAcoustId = detail.musicbrainz_recording_id ?? null;
+  const selectedMusicBrainz = detail.musicbrainz_release_id ?? null;
   const musicBrainzCandidates = candidates.filter(
-    (candidate) => candidate.evidence.provider === "musicbrainz",
+    (candidate) =>
+      candidate.evidence.provider === "musicbrainz" &&
+      (!selectedAcoustId || candidate.evidence.tags.MUSICBRAINZ_TRACKID === selectedAcoustId),
   );
   const visibleTagFields = [
     ...new Set([
@@ -58,8 +62,6 @@ export function TrackDetail({
   const trackTitle =
     originalTags.TITLE || draft.TITLE || source.path.split("/").at(-1) || "Без названия";
   const trackAlbum = originalTags.ALBUM || draft.ALBUM || "Без альбома";
-  const selectedAcoustId = detail.musicbrainz_recording_id ?? null;
-  const selectedMusicBrainz = detail.musicbrainz_release_id ?? null;
   const hasProviderEvidence =
     acoustIdCandidates.length > 0 ||
     musicBrainzCandidates.length > 0 ||

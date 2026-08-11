@@ -1025,6 +1025,7 @@ h2 {
   margin: 12px 0 16px;
   color: var(--muted);
   font-size: 12px;
+  word-break: keep-all;
 }
 .candidate-list {
   display: grid;
