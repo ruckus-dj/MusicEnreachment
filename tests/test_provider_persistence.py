@@ -10,6 +10,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from alembic import command
+from music_ingest.matching.providers import DatabaseRequestRateLimiter
 from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
 from music_ingest.models.repositories import ProviderPersistenceRepository, ensure_provider_schedules
 
@@ -83,6 +84,25 @@ def test_provider_schedule_reservation_flushes_without_commit_and_returns_lease(
 
     with Session(engine) as session:
         assert session.get(ProviderScheduleRecord, 'acoustid') is not None
+
+
+def test_database_rate_limiter_when_called_twice_reserves_one_and_a_half_seconds(tmp_path: Path) -> None:
+    # Given: a shared database schedule and a sleep seam that records requested delays.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(ProviderScheduleRecord(provider_name='musicbrainz', next_start_at=datetime.now(UTC)))
+        session.commit()
+    delays: list[float] = []
+    limiter = DatabaseRequestRateLimiter(lambda: Session(engine), delays.append)
+
+    # When: two MusicBrainz wire calls reserve their start times.
+    limiter.wait('musicbrainz')
+    limiter.wait('musicbrainz')
+
+    # Then: the second call is scheduled at the configured 0.5-0.7 RPS interval.
+    assert delays
+    assert 1.4 <= delays[-1] <= 1.6
 
 
 def test_repository_rejects_naive_provider_timestamps(tmp_path: Path) -> None:

@@ -4,18 +4,23 @@ import http.client
 import re
 import socket
 import ssl
+import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol, override
+from typing import Final, Protocol, final, override
 from urllib.parse import urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
 from requests.structures import CaseInsensitiveDict
+from sqlalchemy.orm import Session
 from urllib3.util import Retry
+
+from music_ingest.models.repositories import ProviderPersistenceRepository
 
 LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
 SHA256_HEX_PATTERN: Final = re.compile(r'^[0-9a-f]{64}$')
@@ -46,6 +51,40 @@ class ProvenanceState(StrEnum):
 
 
 _PROVIDER_NAMES: Final = frozenset(ProviderName)
+_REQUEST_INTERVAL = timedelta(seconds=1.5)
+_LEASE_DURATION = timedelta(minutes=1)
+
+
+class SessionFactory(Protocol):
+    def __call__(self) -> Session: ...
+
+
+class RequestRateLimiter(Protocol):
+    def wait(self, provider_name: str) -> None: ...
+
+
+@final
+class DatabaseRequestRateLimiter:
+    def __init__(
+        self,
+        session_factory: SessionFactory,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._session_factory: SessionFactory = session_factory
+        self._sleep: Callable[[float], None] = sleep
+
+    def wait(self, provider_name: str) -> None:
+        now = datetime.now(UTC)
+        with self._session_factory() as session:
+            reservation = ProviderPersistenceRepository(session).reserve_next_start(
+                provider_name, now, _REQUEST_INTERVAL, _LEASE_DURATION
+            )
+            session.commit()
+        delay = (reservation.scheduled_start - datetime.now(UTC)).total_seconds()
+        if delay > 0:
+            self._sleep(delay)
+
+
 _PROVENANCE_STATES: Final = frozenset(ProvenanceState)
 
 
@@ -301,33 +340,35 @@ class _IPv6FirstClient:
 @dataclass(frozen=True, slots=True)
 class LiveTransport:
     client: PublicHttpClient
+    limiter: RequestRateLimiter | None = None
+    sleep: Callable[[float], None] = time.sleep
 
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
-        try:
-            response = self.client.get(url, headers=headers, timeout=10.0)
-        except requests.RequestException:
-            return MusicBrainzHttpResponse(status_code=None, body=b'')
-        return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
+        for attempt in range(3):
+            if self.limiter is not None and urlsplit(url).hostname == 'musicbrainz.org':
+                self.limiter.wait('musicbrainz')
+            try:
+                response = self.client.get(url, headers=headers, timeout=10.0)
+            except requests.RequestException:
+                return MusicBrainzHttpResponse(status_code=None, body=b'')
+            if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
+                return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
+            retry_after = response.headers.get('Retry-After')
+            if retry_after is not None:
+                with suppress(ValueError):
+                    self.sleep(max(float(retry_after), 0.0))
+        raise AssertionError('unreachable transport retry state')
 
 
 def _default_live_client() -> PublicHttpClient:
     client = requests.Session()
-    retries = Retry(
-        total=2,
-        connect=2,
-        read=0,
-        status=2,
-        backoff_factor=1.0,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({'GET'}),
-        respect_retry_after_header=True,
-        raise_on_status=False,
-    )
+    retries = Retry(total=0)
     client.mount('https://', HTTPAdapter(max_retries=retries))
     return _IPv6FirstClient(client)
 
 
 def build_live_transport(
     client_factory: Callable[[], PublicHttpClient] = _default_live_client,
+    limiter: RequestRateLimiter | None = None,
 ) -> LiveTransport:
-    return LiveTransport(client=client_factory())
+    return LiveTransport(client=client_factory(), limiter=limiter)

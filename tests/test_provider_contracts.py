@@ -398,6 +398,38 @@ def test_live_transport_when_tls_request_fails_does_not_fabricate_http_503() -> 
     assert response.body == b''
 
 
+def test_live_transport_when_musicbrainz_is_requested_acquires_rate_limit_for_each_wire_call() -> None:
+    # Given: a transport with a limiter seam and one successful offline response.
+    class _RecordingLimiter:
+        def __init__(self) -> None:
+            self.providers: list[str] = []
+
+        def wait(self, provider_name: str) -> None:
+            self.providers.append(provider_name)
+
+    class _SuccessfulClient:
+        def get(self, url: str, *, headers: dict[str, str], timeout: float) -> requests.Response:
+            _ = url, headers, timeout
+            response = requests.Response()
+            response.status_code = 200
+            response._content = b'{}'
+            return response
+
+        def close(self) -> None:
+            return None
+
+    limiter = _RecordingLimiter()
+    transport = LiveTransport(_SuccessfulClient(), limiter=limiter)
+
+    # When: two MusicBrainz requests and one unrelated provider request cross the seam.
+    _ = transport.get('https://musicbrainz.org/ws/2/release/one', headers={})
+    _ = transport.get('https://musicbrainz.org/ws/2/release/two', headers={})
+    _ = transport.get('https://coverartarchive.org/release/one/front-500', headers={})
+
+    # Then: every MusicBrainz wire call is reserved, while unrelated hosts are unaffected.
+    assert limiter.providers == ['musicbrainz', 'musicbrainz']
+
+
 @pytest.mark.live
 def test_live_marker_when_environment_gate_is_absent_is_skipped() -> None:
     # Given: this test is marked as a live test without a live environment gate.
