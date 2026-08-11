@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -36,8 +35,6 @@ from music_ingest.models import ProviderSnapshotRecord
 from music_ingest.models.repositories import ProviderPersistenceRepository
 
 _FRESHNESS = timedelta(hours=24)
-_INTERVAL = timedelta(seconds=1)
-_LEASE_DURATION = timedelta(minutes=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +120,8 @@ class ProviderEvidenceService:
         cached = None if request.force_refresh else self._fresh_snapshot('musicbrainz', request_hash, now)
         if cached is not None:
             return _decode_musicbrainz(cached, 'cached')
-        self._reserve_start('musicbrainz', now)
+        if self.wait_until is not None:
+            self.wait_until(now)
         result = self.musicbrainz.lookup(musicbrainz_request, now)
         return self._persist_musicbrainz(result, request_hash, now)
 
@@ -145,7 +143,8 @@ class ProviderEvidenceService:
                 cached = None if request.force_refresh else self._fresh_snapshot('acoustid', request_hash, now)
                 if cached is not None:
                     return _decode_acoustid(cached, 'cached')
-                self._reserve_start('acoustid', now)
+                if self.wait_until is not None:
+                    self.wait_until(now)
                 result = provider.lookup(AcoustIdLookupRequest(fingerprint, fixture_case, duration_seconds), now)
                 return self._persist_acoustid(result, request_hash, now)
 
@@ -171,13 +170,6 @@ class ProviderEvidenceService:
         )
         self.session.commit()
         return None
-
-    def _reserve_start(self, provider_name: str, now: datetime) -> None:
-        reservation = ProviderPersistenceRepository(self.session).reserve_next_start(
-            provider_name, now, _INTERVAL, _LEASE_DURATION
-        )
-        self.session.commit()
-        (self.wait_until or _wait_until)(reservation.scheduled_start)
 
     def _persist_musicbrainz(self, result: MusicBrainzResult, request_hash: str, now: datetime) -> MusicBrainzResult:
         raw = _raw_response(result)
@@ -212,12 +204,6 @@ class ProviderEvidenceService:
         )
         self.session.commit()
         return _with_acoustid_provenance(result, persisted)
-
-
-def _wait_until(scheduled_start: datetime) -> None:
-    delay = (scheduled_start - datetime.now(UTC)).total_seconds()
-    if delay > 0:
-        time.sleep(delay)
 
 
 def _disabled_request_hash() -> str:

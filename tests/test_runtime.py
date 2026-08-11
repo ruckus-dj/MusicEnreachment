@@ -126,7 +126,7 @@ def test_runtime_app_passes_live_transport_to_musicbrainz_review_endpoint(
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
-    monkeypatch.setattr(server, 'build_live_transport', lambda: transport)
+    monkeypatch.setattr(server, 'build_live_transport', lambda **_kwargs: transport)
 
     def capture_app(*_args: object, **kwargs: object):
         captured.update(kwargs)

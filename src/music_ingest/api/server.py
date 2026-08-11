@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,11 +14,11 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from music_ingest.api.app import create_app
-from music_ingest.matching.providers import ProviderName, build_live_transport
+from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.runtime import run_processing_worker
@@ -86,7 +86,7 @@ def create_runtime_app() -> FastAPI:
     )
 
     session_factory = sessionmaker(engine)
-    processing_config = _processing_config(os.environ)
+    processing_config = _processing_config(os.environ, session_factory)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -114,8 +114,8 @@ def create_runtime_app() -> FastAPI:
     )
 
 
-def _processing_config(environment: Mapping[str, str]) -> ProcessingConfig:
-    live_transport = build_live_transport()
+def _processing_config(environment: Mapping[str, str], session_factory: Callable[[], Session]) -> ProcessingConfig:
+    live_transport = build_live_transport(limiter=DatabaseRequestRateLimiter(session_factory))
     return ProcessingConfig(
         incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
