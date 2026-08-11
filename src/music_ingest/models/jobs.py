@@ -70,8 +70,8 @@ class JobRepository:
         claimed.job.next_attempt_at = now + delay
 
     def requeue_source(self, source_id: str, now: datetime) -> bool:
-        """Queue a distinct provider-analysis job for a source."""
-        return self.enqueue(source_id, 'provider_analysis', now) is not None
+        """Queue both provider stages from the start of the enrichment pipeline."""
+        return self.enqueue(source_id, 'acoustid_analysis', now) is not None
 
     def requeue_provider(self, source_id: str, provider: str, now: datetime) -> bool:
         """Queue one provider's analysis without re-running the other provider."""
