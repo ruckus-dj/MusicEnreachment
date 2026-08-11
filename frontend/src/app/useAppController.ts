@@ -62,7 +62,7 @@ export type AppControllerModel = {
   back: () => void;
   loadLibrary: (showLoader?: boolean) => Promise<void>;
   scan: () => Promise<void>;
-  retryFailedProviders: () => Promise<void>;
+  reprocessAll: () => Promise<void>;
   saveMetadata: () => Promise<boolean>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
@@ -175,15 +175,20 @@ export function useAppController(): AppControllerModel {
     setScanning(true);
     setNotice("Восстанавливаем недоимпортированные записи…");
     try {
-      const result = await api<{ queued: number; skipped: number; conflicts: number }>(
-        "/api/library/recovery",
-        { method: "POST" },
-      );
+      const result = await api<{
+        readonly added: number;
+        readonly changed: number;
+        readonly moved: number;
+        readonly removed: number;
+        readonly unchanged: number;
+        readonly queued_jobs: number;
+      }>("/api/reconciliation/scan", { method: "POST" });
       setNotice(
-        `В очередь: ${result.queued}; пропущено: ${result.skipped}; конфликтов destination: ${result.conflicts}`,
+        `Новых: ${result.added}; изменённых: ${result.changed}; перемещённых: ${result.moved}; ` +
+          `удалённых: ${result.removed}; в очереди: ${result.queued_jobs}`,
       );
       await loadLibrary();
-      if (result.queued > 0) watchLibrary();
+      if (result.queued_jobs > 0) watchLibrary();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Восстановление не удалось");
     } finally {
@@ -264,14 +269,13 @@ export function useAppController(): AppControllerModel {
       setReprocessing(false);
     }
   }
-  async function retryFailedProviders() {
+  async function reprocessAll() {
     setReprocessing(true);
     try {
-      const result = await api<{ queued: number }>("/api/library/providers/retry", {
+      const result = await api<{ readonly queued: number }>("/api/library/reprocess-all", {
         method: "POST",
-        body: JSON.stringify({ retry_all: true }),
       });
-      setNotice(`Поставлено в очередь повторного анализа: ${result.queued}`);
+      setNotice(`Полная переобработка поставлена в очередь: ${result.queued}`);
       await loadLibrary(false);
       if (result.queued > 0) watchLibrary();
     } catch (error) {
@@ -517,7 +521,7 @@ export function useAppController(): AppControllerModel {
     back,
     loadLibrary,
     scan,
-    retryFailedProviders,
+    reprocessAll,
     saveMetadata,
     retryProvider,
     overrideRelease,

@@ -208,9 +208,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   type="button"
                   className="secondary"
                   disabled={controller.reprocessing}
-                  onClick={() => void controller.retryFailedProviders()}
+                  onClick={() => void controller.reprocessAll()}
                 >
-                  {controller.reprocessing ? "Ставим в очередь…" : "Переотправить провайдерам"}
+                  {controller.reprocessing ? "Ставим в очередь…" : "Переобработать всю медиатеку"}
                 </button>
                 <button
                   type="button"
@@ -218,7 +218,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   disabled={controller.scanning || controller.reprocessing}
                   onClick={() => void controller.scan()}
                 >
-                  {controller.scanning ? "Сканируем…" : "Сканировать файлы"}
+                  {controller.scanning ? "Сканируем…" : "Сканировать новые и изменённые"}
                 </button>
               </div>
             </div>
