@@ -227,6 +227,53 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
         assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
 
 
+def test_library_api_recording_override_persists_identity_and_queues_musicbrainz_analysis(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-recording-override', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-recording-override',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        session.add_all((record, source))
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+    response = client.post(
+        '/api/library/records/record-recording-override/sources/source-recording-override/musicbrainz/override',
+        json={'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68'},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68',
+        'release_mbid': None,
+        'queued': True,
+    }
+    with Session(engine) as session:
+        persisted = session.get(LibraryRecord, 'record-recording-override')
+        assert persisted is not None
+        assert persisted.musicbrainz_recording_id == '3c32b3e7-f21d-4935-bcac-d9c0df46db68'
+        assert persisted.musicbrainz_release_id is None
+        assert any(decision.state == 'acoustid_confirmed' for decision in persisted.sources[0].review_decisions)
+        assert (
+            session.query(JobRecord)
+            .filter_by(source_id='source-recording-override', kind='musicbrainz_analysis')
+            .count()
+            == 1
+        )
+
+
 def test_library_api_decodes_acoustid_candidate_with_musicbrainz(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-decode.db"}')
     Base.metadata.create_all(engine)

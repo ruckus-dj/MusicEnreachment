@@ -217,8 +217,12 @@ def musicbrainz_lookup_ids(record: LibraryRecord, source: SourceRecord) -> tuple
 
 def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceRecord) -> ExplicitMusicBrainzIds:
     return ExplicitMusicBrainzIds(
-        record.musicbrainz_release_id if _has_reviewer_decision(source, 'confirmed') else None,
-        record.musicbrainz_recording_id if _has_reviewer_decision(source, 'acoustid_confirmed') else None,
+        record.musicbrainz_release_id
+        if _has_reviewer_decision(source, 'confirmed') and record.musicbrainz_release_id is not None
+        else None,
+        record.musicbrainz_recording_id
+        if _has_reviewer_decision(source, 'acoustid_confirmed') and record.musicbrainz_recording_id is not None
+        else None,
     )
 
 

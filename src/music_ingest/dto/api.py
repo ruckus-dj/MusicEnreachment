@@ -104,7 +104,8 @@ class CandidateSelection(BaseModel):
 class MusicBrainzOverride(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    release_mbid: str = Field(min_length=1, max_length=36)
+    release_mbid: str | None = Field(default=None, min_length=1, max_length=36)
+    recording_mbid: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class CandidateReleasePayload(BaseModel):

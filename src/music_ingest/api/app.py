@@ -923,20 +923,53 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                if (request.release_mbid is None) == (request.recording_mbid is None):
+                    raise HTTPException(status_code=422, detail='provide exactly one release_mbid or recording_mbid')
                 now = datetime.now(UTC)
-                record.musicbrainz_release_id = request.release_mbid.lower()
+                if request.recording_mbid is not None:
+                    recording_mbid = request.recording_mbid.lower()
+                    record.musicbrainz_recording_id = recording_mbid
+                    record.musicbrainz_release_id = None
+                    decision_state = 'acoustid_confirmed'
+                    decision_reason = f'MusicBrainz recording {request.recording_mbid} explicitly selected by reviewer'
+                    response = {
+                        'recording_mbid': recording_mbid,
+                        'release_mbid': None,
+                    }
+                else:
+                    release_mbid = request.release_mbid
+                    if release_mbid is None:
+                        raise HTTPException(
+                            status_code=422, detail='provide exactly one release_mbid or recording_mbid'
+                        )
+                    release_mbid = release_mbid.lower()
+                    record.musicbrainz_recording_id = None
+                    record.musicbrainz_release_id = release_mbid
+                    decision_state = 'confirmed'
+                    decision_reason = f'MusicBrainz release {request.release_mbid} explicitly selected by reviewer'
+                    response = {
+                        'recording_mbid': record.musicbrainz_recording_id,
+                        'release_mbid': release_mbid,
+                    }
+                session.add(
+                    ReviewDecisionRecord(
+                        source_id=source.id,
+                        state=decision_state,
+                        rationale=decision_reason,
+                    )
+                )
                 queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
                 record_event(
                     session,
                     record.id,
-                    'musicbrainz_release_override_queued',
+                    'musicbrainz_override_queued',
                     'analyzing',
-                    f'MusicBrainz release {request.release_mbid} explicitly selected by reviewer',
+                    decision_reason,
                     now,
                     source.id,
                 )
                 session.commit()
-                return JSONResponse(content={'release_mbid': record.musicbrainz_release_id, 'queued': queued})
+                return JSONResponse(content={**response, 'queued': queued})
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
 
