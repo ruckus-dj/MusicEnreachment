@@ -234,6 +234,17 @@ def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> floa
     return 0.0
 
 
+def _unique_acoustid_album_match(
+    candidate_matches: tuple[tuple[ProviderEvidenceResult, MatchResult], ...],
+) -> tuple[ProviderEvidenceResult, MatchResult] | None:
+    automatic_matches = tuple(
+        candidate_match
+        for candidate_match in candidate_matches
+        if candidate_match[1].decision is MatchDecision.AUTO_SELECTED
+    )
+    return automatic_matches[0] if len(automatic_matches) == 1 else None
+
+
 def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
     recording_mbids = _acoustid_recording_mbids(source)
     return recording_mbids[0] if recording_mbids else None
@@ -674,37 +685,47 @@ class ProcessingWorker:
                 )
             return
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
-        if (
-            claimed.job.kind == 'musicbrainz_analysis'
-            and match_result is not None
-            and match_result.decision is not MatchDecision.AUTO_SELECTED
-        ):
+        if claimed.job.kind == 'musicbrainz_analysis':
+            candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
             for candidate_recording_mbid in _acoustid_recording_mbids(source):
-                if candidate_recording_mbid == recording_mbid:
-                    continue
-                candidate_result = self._lookup_providers(
-                    tags,
-                    fingerprint,
-                    now,
-                    force_refresh=True,
-                    recording_mbid=candidate_recording_mbid,
-                    release_mbid=release_mbid,
-                    run_acoustid=False,
-                    run_musicbrainz=True,
+                candidate_result = (
+                    provider_result
+                    if candidate_recording_mbid == recording_mbid
+                    else self._lookup_providers(
+                        tags,
+                        fingerprint,
+                        now,
+                        force_refresh=True,
+                        recording_mbid=candidate_recording_mbid,
+                        release_mbid=release_mbid,
+                        run_acoustid=False,
+                        run_musicbrainz=True,
+                    )
                 )
                 if candidate_result is None:
                     continue
                 candidate_match = self._resolve_provider_match(record, source, tags, candidate_result)
-                if candidate_match is not None and candidate_match.decision is MatchDecision.AUTO_SELECTED:
-                    provider_result = candidate_result
-                    match_result = replace(
-                        candidate_match,
-                        recording_score=CandidateScore(
-                            candidate_recording_mbid,
-                            _acoustid_recording_score(source, candidate_recording_mbid),
-                        ),
-                    )
-                    break
+                match candidate_result.musicbrainz, candidate_match:
+                    case MusicBrainzMatch(candidate=candidate), MatchResult(decision=MatchDecision.AUTO_SELECTED) if (
+                        candidate_recording_mbid in candidate.recording_mbids
+                    ):
+                        candidate_matches.append(
+                            (
+                                candidate_result,
+                                replace(
+                                    candidate_match,
+                                    recording_score=CandidateScore(
+                                        candidate_recording_mbid,
+                                        _acoustid_recording_score(source, candidate_recording_mbid),
+                                    ),
+                                ),
+                            )
+                        )
+                    case _:
+                        pass
+            selected_match = _unique_acoustid_album_match(tuple(candidate_matches))
+            if selected_match is not None:
+                provider_result, match_result = selected_match
         _ = self._capture_provider_attempt(source, 'musicbrainz', provider_result.musicbrainz, match_result)
         if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
             record_event(

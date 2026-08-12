@@ -17,7 +17,10 @@ import music_ingest.processing.worker as processing
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError
 from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
+from music_ingest.matching.evidence import ProviderEvidenceResult
 from music_ingest.matching.providers import (
+    FixtureProvenance,
+    MusicBrainzMatch,
     ReleaseCandidate,
 )
 from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
@@ -162,6 +165,47 @@ def test_automatic_match_persists_acoustid_recording_and_release_identity() -> N
     assert record.match_state == 'matched'
     assert record.musicbrainz_recording_id == '47d13484-9eed-4460-babd-bca3a19fcd77'
     assert record.musicbrainz_release_id == 'd5c9ba44-448a-4b07-9f06-e6626032c19d'
+
+
+def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> None:
+    # Given: two AcousticID recordings, only one of which MusicBrainz resolves to the source album.
+    provenance = FixtureProvenance(Path('fixture.json'), 'a' * 64)
+    wrong_result = ProviderEvidenceResult(
+        MusicBrainzMatch(
+            provenance,
+            ReleaseCandidate('release-vol-2', 'The Greatest Hits Vol.2', 'Noize MC', recording_mbids=('vol-2',)),
+        ),
+        None,
+    )
+    correct_result = ProviderEvidenceResult(
+        MusicBrainzMatch(
+            provenance,
+            ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC', recording_mbids=('vol-1',)),
+        ),
+        None,
+    )
+    wrong_match = MatchResult(
+        MatchDecision.NEEDS_REVIEW,
+        None,
+        CandidateScore('vol-2', 0.99),
+        CandidateScore('release-vol-2', 0.4),
+        None,
+    )
+    correct_match = MatchResult(
+        MatchDecision.AUTO_SELECTED,
+        'release-vol-1',
+        CandidateScore('vol-1', 0.99),
+        CandidateScore('release-vol-1', 0.8),
+        None,
+    )
+
+    # When: the worker considers all resolved AcousticID recordings.
+    selected = processing._unique_acoustid_album_match(
+        ((wrong_result, wrong_match), (correct_result, correct_match)),
+    )
+
+    # Then: it selects the only recording verified for the source album.
+    assert selected == (correct_result, correct_match)
 
 
 def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
