@@ -89,6 +89,12 @@ export function compareNames(left: string, right: string): number {
 
 export function workflowStatus(detail: Detail): WorkflowStatus {
   const latest = detail.events.at(-1);
+  if (detail.states.source === "disappeared")
+    return {
+      tone: "error",
+      label: "Исходный файл не найден",
+      detail: "Исходные теги и анализ сохранены, но повторная обработка недоступна.",
+    };
   if (detail.destination_conflict)
     return {
       tone: "error",

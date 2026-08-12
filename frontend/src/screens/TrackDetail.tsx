@@ -119,7 +119,12 @@ export function TrackDetail({
   };
 
   const lifecycleLabels = {
-    source: source.state === "present" ? "На месте" : source.state,
+    source:
+      source.state === "present"
+        ? "На месте"
+        : source.state === "disappeared"
+          ? "Файл отсутствует"
+          : source.state,
     processing:
       detail.states.processing === "complete"
         ? "Завершена"
@@ -155,6 +160,11 @@ export function TrackDetail({
           {finalRevision ? `Final rev ${finalRevision.revision}` : "Final ещё не создана"}
         </span>
       </div>
+      {source.state === "disappeared" && (
+        <p data-testid="source-unavailable" role="status" className="source-unavailable">
+          Исходный файл не найден. Исходные теги и анализ сохранены для текущей публикации.
+        </p>
+      )}
 
       <div className="track-context">
         <p className="eyebrow">Сравнение файла</p>

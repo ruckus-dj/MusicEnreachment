@@ -188,6 +188,35 @@ describe("TrackDetail effective source", () => {
     expect(document.querySelector(".workflow-banner")?.className).not.toContain("ready");
   });
 
+  it("marks a disappeared published source as unavailable while keeping its evidence visible", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        sources: [
+          { ...detail.sources[0], state: "disappeared", disappeared_at: "2026-08-12T10:00:00Z" },
+        ],
+        states: { ...detail.states, source: "disappeared" },
+        publications: [
+          {
+            publication_id: "publication-1",
+            path: "/library/Artist/Track.flac",
+            source_id: "source-a",
+            sha256: "c".repeat(64),
+            state: "current",
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByTestId("source-unavailable").textContent).toContain(
+      "Исходный файл не найден",
+    );
+    expect(screen.getByTestId("source-lifecycle").textContent).toContain(
+      "Источник: Файл отсутствует",
+    );
+    expect(screen.getByTestId("source-unavailable").getAttribute("role")).toBe("status");
+  });
+
   it("does not show green ready tone when publication state is current but no actual publication exists", () => {
     renderDetail({
       detail: {
