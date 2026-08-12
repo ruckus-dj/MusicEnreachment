@@ -663,6 +663,20 @@ def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path:
     assert [item['record_id'] for item in response.json()['items']] == ['record-a1', 'record-a2', 'record-b']
 
 
+def test_library_catalog_keeps_empty_record_after_source_reassignment(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "empty-record.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(LibraryRecord(id='empty-record', created_at=datetime.now(UTC), updated_at=datetime.now(UTC)))
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).get('/api/library/records')
+
+    assert response.status_code == 200
+    assert response.json()['items'][0]['record_id'] == 'empty-record'
+    assert response.json()['items'][0]['sources'] == []
+
+
 def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_duplicate_jobs(tmp_path: Path) -> None:
     # Given: one failed source, one source never sent to a provider, and one successful source.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider-retry.db"}')

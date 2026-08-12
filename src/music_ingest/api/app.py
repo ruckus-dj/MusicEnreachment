@@ -165,6 +165,8 @@ def _track_number(value: str | None) -> int | None:
 
 
 def _catalog_sort_key(record: LibraryRecord) -> tuple[str, str, int, str, str, str]:
+    if not record.sources:
+        return ('', '', 2**31 - 1, '', record.id, '')
     source = record.sources[0]
     tags = _catalog_tags(record, source.id)
     track_number = _track_number(tags.get('TRACKNUMBER'))
