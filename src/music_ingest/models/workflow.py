@@ -27,7 +27,8 @@ class JobRecord(Base):
     __tablename__ = 'jobs'
     __table_args__: tuple[CheckConstraint, ...] = (
         CheckConstraint(
-            '(source_id IS NOT NULL) != (library_record_id IS NOT NULL)', name='ck_jobs_exactly_one_target'
+            "((source_id IS NOT NULL) != (library_record_id IS NOT NULL)) OR kind = 'reconciliation_scan'",
+            name='ck_jobs_target_or_reconciliation',
         ),
     )
 
@@ -40,6 +41,7 @@ class JobRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[list[JobAttemptRecord]] = relationship(
         back_populates='job', lazy='selectin', order_by='JobAttemptRecord.attempt_number'
     )
@@ -67,6 +69,14 @@ _ = Index(
     unique=True,
     postgresql_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
     sqlite_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
+)
+
+_ = Index(
+    'uq_active_reconciliation_scan_job',
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'reconciliation_scan') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'reconciliation_scan') & JobRecord.state.in_(['queued', 'running']),
 )
 
 

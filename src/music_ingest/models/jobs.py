@@ -111,6 +111,36 @@ class JobRepository:
                 raise
             return None
 
+    def enqueue_reconciliation_scan(self, now: datetime) -> tuple[JobRecord, bool]:
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.kind == 'reconciliation_scan')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return active, False
+        try:
+            with self._session.begin_nested():
+                job = JobRecord(
+                    id=f'reconciliation-scan-{uuid4().hex}',
+                    kind='reconciliation_scan',
+                    state='queued',
+                    created_at=now,
+                )
+                self._session.add(job)
+                self._session.flush()
+                return job, True
+        except IntegrityError:
+            active = self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.kind == 'reconciliation_scan')
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            if active is None:
+                raise
+            return active, False
+
     def enqueue(
         self,
         source_id: str,
