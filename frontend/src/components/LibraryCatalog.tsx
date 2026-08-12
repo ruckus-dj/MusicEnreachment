@@ -106,7 +106,7 @@ export function LibraryCatalog({
         {albumTracks.map(({ item, source }, index) => (
           <button
             type="button"
-            className="track-line"
+            className={`track-line ${source.state === "disappeared" ? "unavailable" : ""}`}
             key={`${item.record_id}-${source.source_id}`}
             onClick={() =>
               onNavigate({
@@ -124,11 +124,13 @@ export function LibraryCatalog({
               <small>{source.path}</small>
             </span>
             <span className="track-meta">
-              {item.processing_state === "analyzing"
-                ? "Анализируется"
-                : item.match_state === "matched"
-                  ? "MusicBrainz подтверждён"
-                  : "Нужна проверка"}
+              {source.state === "disappeared"
+                ? "Исходный файл отсутствует"
+                : item.processing_state === "analyzing"
+                  ? "Анализируется"
+                  : item.match_state === "matched"
+                    ? "MusicBrainz подтверждён"
+                    : "Нужна проверка"}
             </span>
             <i>→</i>
           </button>

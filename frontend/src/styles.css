@@ -213,6 +213,13 @@ button:disabled {
     11px "DM Mono",
     monospace;
 }
+.source-unavailable {
+  margin: 0 0 var(--space-4);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+  padding: var(--space-3) var(--space-4);
+}
 .avatar {
   border: 1px solid var(--line);
   border-radius: 50%;
