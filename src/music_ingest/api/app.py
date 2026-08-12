@@ -37,6 +37,8 @@ from music_ingest.dto import (
     RecoveryResponse,
     RuntimeSettingsRequest,
     RuntimeSettingsResponse,
+    ScanJobResponse,
+    ScanResult,
     SourceRecoveryResponse,
     SourceRootCandidateListResponse,
     SourceRootCandidateResponse,
@@ -82,7 +84,7 @@ from music_ingest.models import (
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
-from music_ingest.reconciliation import ScanResult, mark_disappeared_source, reconcile_incoming
+from music_ingest.reconciliation import mark_disappeared_source
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 from music_ingest.source_roots import (
@@ -332,12 +334,21 @@ def create_app(
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=result.model_dump())
 
-    @app.post('/api/reconciliation/scan', response_model=ScanResult)
-    def reconciliation_scan() -> ScanResult:
+    @app.post('/api/reconciliation/scan', response_model=ScanJobResponse, status_code=status.HTTP_202_ACCEPTED)
+    def reconciliation_scan() -> ScanJobResponse:
         with session_factory() as session:
-            result = reconcile_incoming(session)
+            job, _ = JobRepository(session).enqueue_reconciliation_scan(datetime.now(UTC))
             session.commit()
-            return result
+            return ScanJobResponse(job_id=job.id, state=job.state)
+
+    @app.get('/api/reconciliation/scan/{job_id}', response_model=ScanJobResponse)
+    def reconciliation_scan_status(job_id: str) -> ScanJobResponse:
+        with session_factory() as session:
+            job = session.get(JobRecord, job_id)
+            if job is None or job.kind != 'reconciliation_scan':
+                raise HTTPException(status_code=404, detail='reconciliation scan job not found')
+            result = ScanResult.model_validate_json(job.result_json) if job.result_json is not None else None
+            return ScanJobResponse(job_id=job.id, state=job.state, result=result)
 
     @app.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
     def reprocess_all_library() -> FullReprocessResponse:

@@ -20,6 +20,7 @@ from music_ingest.models import (
     SourceRootRecord,
 )
 from music_ingest.models.jobs import JobRepository
+from music_ingest.processing import ProcessingConfig, ProcessingWorker
 
 
 def _source_root(path: Path, *, enabled: bool = True) -> SourceRootRecord:
@@ -97,6 +98,46 @@ def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path
         jobs = list(session.query(JobRecord).filter(JobRecord.kind == 'filesystem_scan').all())
         assert [job.source_id for job in jobs] == [active.source_id]
         assert session.get(SourceRecord, disappeared.source_id) is None
+
+
+def test_reconciliation_scan_api_queues_one_job_and_reports_completed_result(tmp_path: Path) -> None:
+    # Given: an empty database and a configured, empty source root.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reconciliation-scan.db"}')
+    Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    with Session(engine) as session:
+        session.add(_source_root(incoming))
+        session.commit()
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the operator asks to scan twice before the worker has started.
+    first = client.post('/api/reconciliation/scan')
+    second = client.post('/api/reconciliation/scan')
+
+    # Then: one durable job is reused and its terminal result is available through the API.
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()['job_id'] == second.json()['job_id']
+    job_id = first.json()['job_id']
+    with Session(engine) as session:
+        worker = ProcessingWorker(
+            session,
+            ProcessingConfig(
+                incoming_root=incoming,
+                staging_root=tmp_path / 'staging',
+                media_root=tmp_path / 'media',
+            ),
+        )
+        assert worker.run_once()
+        session.commit()
+    status_response = client.get(f'/api/reconciliation/scan/{job_id}')
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        'job_id': job_id,
+        'state': 'completed',
+        'result': {'added': 0, 'changed': 0, 'removed': 0, 'moved': 0, 'unchanged': 0, 'queued_jobs': 0},
+    }
 
 
 def test_review_ui_when_detail_is_populated_contains_api_data_flow_and_action_submission(tmp_path: Path) -> None:

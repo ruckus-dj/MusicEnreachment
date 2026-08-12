@@ -112,6 +112,7 @@ from music_ingest.publication.service import (
     publish_release,
     replace_published_audio,
 )
+from music_ingest.reconciliation import reconcile_incoming
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 from music_ingest.settings import load_runtime_settings
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
@@ -354,6 +355,9 @@ class ProcessingWorker:
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+        if claimed.job.kind == 'reconciliation_scan':
+            claimed.job.result_json = reconcile_incoming(self._session).model_dump_json()
+            return
         if claimed.job.kind == 'selection_refresh':
             self._process_selection_refresh(claimed, now)
             return
