@@ -60,6 +60,7 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
         './data/sources:/data/sources:ro',
         './data/media:/data/media',
         './data/incoming:/data/incoming',
+        './data/downloads:/data/downloads',
         './appdata/music-ingest:/appdata/music-ingest',
     ]
     assert services.lidarr.volumes == [

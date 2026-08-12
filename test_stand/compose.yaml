@@ -43,6 +43,7 @@ services:
       - ./data/sources:/data/sources:ro
       - ./data/media:/data/media
       - ./data/incoming:/data/incoming
+      - ./data/downloads:/data/downloads
       - ./appdata/music-ingest:/appdata/music-ingest
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
