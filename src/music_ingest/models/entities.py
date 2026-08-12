@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import final
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, select
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, LargeBinary, Text, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -24,19 +24,19 @@ from music_ingest.models.workflow import (
 class SourceRecord(Base):
     __tablename__ = 'source_records'
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
     device: Mapped[int] = mapped_column(BigInteger, nullable=False)
     inode: Mapped[int] = mapped_column(BigInteger, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
-    origin: Mapped[str] = mapped_column(String(16), nullable=False)
-    intake_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    intake_state: Mapped[str] = mapped_column(Text, nullable=False)
     source_root_id: Mapped[str] = mapped_column(ForeignKey('source_roots.id'), nullable=False, server_default='legacy')
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
     disappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    media_codec: Mapped[str | None] = mapped_column(String(16))
+    media_codec: Mapped[str | None] = mapped_column(Text)
     media_bit_depth: Mapped[int | None] = mapped_column(Integer)
     media_sample_rate: Mapped[int | None] = mapped_column(Integer)
     media_channels: Mapped[int | None] = mapped_column(Integer)
@@ -73,11 +73,11 @@ class SourceRootRecord(Base):
 
     __tablename__ = 'source_roots'
 
-    id: Mapped[str] = mapped_column(String(96), primary_key=True)
-    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
     canonical_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
-    scan_state: Mapped[str] = mapped_column(String(32), nullable=False, default='never_scanned')
+    scan_state: Mapped[str] = mapped_column(Text, nullable=False, default='never_scanned')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -93,8 +93,8 @@ class SourceRecordingAssignmentRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
     rationale: Mapped[str | None] = mapped_column(Text)
     evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default='{}')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -109,8 +109,8 @@ class SourceAssociationOverrideRecord(Base):
     __tablename__ = 'source_association_overrides'
 
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), primary_key=True)
-    recording_mbid: Mapped[str] = mapped_column(String(36), nullable=False)
-    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    recording_mbid: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -124,8 +124,8 @@ class SourceTagRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    format_name: Mapped[str] = mapped_column(String(32), nullable=False)
-    tag_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    format_name: Mapped[str] = mapped_column(Text, nullable=False)
+    tag_name: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='tag_observations')
 
@@ -136,7 +136,7 @@ class ArtworkRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='artwork_observations')
 
 
@@ -146,9 +146,9 @@ class ProviderAttemptRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
-    snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='provider_attempts')
 
@@ -159,7 +159,7 @@ class CandidateRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    candidate_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    candidate_key: Mapped[str] = mapped_column(Text, nullable=False)
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='candidates')
 
@@ -170,7 +170,7 @@ class ReviewDecisionRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='review_decisions')
 
@@ -181,16 +181,16 @@ class FingerprintRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
     fingerprint: Mapped[str | None] = mapped_column(Text)
     duration_seconds: Mapped[float | None] = mapped_column(Float)
-    tool_version: Mapped[str | None] = mapped_column(String(64))
-    output_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    tool_state: Mapped[str | None] = mapped_column(String(32))
+    tool_version: Mapped[str | None] = mapped_column(Text)
+    output_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_state: Mapped[str | None] = mapped_column(Text)
     return_code: Mapped[int | None] = mapped_column(Integer)
-    version_tool_state: Mapped[str | None] = mapped_column(String(32))
+    version_tool_state: Mapped[str | None] = mapped_column(Text)
     version_return_code: Mapped[int | None] = mapped_column(Integer)
-    version_output_sha256: Mapped[str | None] = mapped_column(String(64))
+    version_output_sha256: Mapped[str | None] = mapped_column(Text)
     source: Mapped[SourceRecord] = relationship(back_populates='fingerprints')
 
 
@@ -199,14 +199,14 @@ class ProviderSnapshotRecord(Base):
     __tablename__ = 'provider_snapshots'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
     request_descriptor: Mapped[str] = mapped_column(Text, nullable=False)
-    response_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     response_body: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
     age_seconds: Mapped[int | None] = mapped_column(Integer)
     http_status: Mapped[int | None] = mapped_column(Integer)
 
@@ -215,17 +215,17 @@ class ProviderSnapshotRecord(Base):
 class ProviderScheduleRecord(Base):
     __tablename__ = 'provider_schedules'
 
-    provider_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider_name: Mapped[str] = mapped_column(Text, primary_key=True)
     next_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lease_token: Mapped[str | None] = mapped_column(String(64))
+    lease_token: Mapped[str | None] = mapped_column(Text)
 
 
 @final
 class RuntimeSettingRecord(Base):
     __tablename__ = 'runtime_settings'
 
-    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -236,7 +236,7 @@ class StorageConfigRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     output_root: Mapped[str] = mapped_column(Text, nullable=False)
-    state: Mapped[str] = mapped_column(String(16), nullable=False, default='ready')
+    state: Mapped[str] = mapped_column(Text, nullable=False, default='ready')
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -245,10 +245,10 @@ class StorageConfigRecord(Base):
 class GenreCatalogRecord(Base):
     __tablename__ = 'genre_catalog'
 
-    musicbrainz_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    normalized_key: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    musicbrainz_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    source_name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_key: Mapped[str] = mapped_column(Text, index=True, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     @staticmethod

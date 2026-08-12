@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -65,15 +65,15 @@ class LibraryRecord(Base):
 
     __tablename__ = 'library_records'
 
-    id: Mapped[str] = mapped_column(String(96), primary_key=True)
-    musicbrainz_recording_id: Mapped[str | None] = mapped_column(String(36), unique=True)
-    musicbrainz_release_id: Mapped[str | None] = mapped_column(String(36))
-    musicbrainz_artist_id: Mapped[str | None] = mapped_column(String(36))
-    source_state: Mapped[str] = mapped_column(String(32), nullable=False, default='present')
-    processing_state: Mapped[str] = mapped_column(String(32), nullable=False, default='queued')
-    match_state: Mapped[str] = mapped_column(String(32), nullable=False, default='unmatched')
-    publication_state: Mapped[str] = mapped_column(String(32), nullable=False, default='absent')
-    metadata_state: Mapped[str] = mapped_column(String(32), nullable=False, default='original')
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    musicbrainz_recording_id: Mapped[str | None] = mapped_column(Text, unique=True)
+    musicbrainz_release_id: Mapped[str | None] = mapped_column(Text)
+    musicbrainz_artist_id: Mapped[str | None] = mapped_column(Text)
+    source_state: Mapped[str] = mapped_column(Text, nullable=False, default='present')
+    processing_state: Mapped[str] = mapped_column(Text, nullable=False, default='queued')
+    match_state: Mapped[str] = mapped_column(Text, nullable=False, default='unmatched')
+    publication_state: Mapped[str] = mapped_column(Text, nullable=False, default='absent')
+    metadata_state: Mapped[str] = mapped_column(Text, nullable=False, default='original')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -109,14 +109,14 @@ class LibraryPublicationRecord(Base):
 
     __tablename__ = 'library_publications'
 
-    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
-    format_name: Mapped[str] = mapped_column(String(32), nullable=False)
-    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    format_name: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
-    state: Mapped[str] = mapped_column(String(32), nullable=False, default='current')
+    state: Mapped[str] = mapped_column(Text, nullable=False, default='current')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     library_record: Mapped[LibraryRecord] = relationship(back_populates='publications')
@@ -142,7 +142,7 @@ class EffectiveSourceDecisionRecord(Base):
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
     baseline_source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
-    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(Text, nullable=False)
     quality_tuple_json: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -156,17 +156,17 @@ class PublicationAttemptRecord(Base):
 
     __tablename__ = 'publication_attempts'
 
-    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
     metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
     target_directory: Mapped[str] = mapped_column(Text, nullable=False)
-    target_audio_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_audio_name: Mapped[str] = mapped_column(Text, nullable=False)
     staging_directory: Mapped[str] = mapped_column(Text, nullable=False)
     backup_directory: Mapped[str] = mapped_column(Text, nullable=False)
-    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
-    output_sha256: Mapped[str | None] = mapped_column(String(64))
+    manifest_sha256: Mapped[str | None] = mapped_column(Text)
+    output_sha256: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -185,10 +185,10 @@ class LibraryMetadataRevisionRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
-    layer: Mapped[str] = mapped_column(String(16), nullable=False)
+    layer: Mapped[str] = mapped_column(Text, nullable=False)
     revision: Mapped[int] = mapped_column(nullable=False)
     tags_json: Mapped[str] = mapped_column(Text, nullable=False)
-    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     library_record: Mapped[LibraryRecord] = relationship(back_populates='metadata_revisions')
@@ -204,8 +204,8 @@ class LibraryEventRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
-    kind: Mapped[str] = mapped_column(String(64), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     details_json: Mapped[str] = mapped_column(Text, nullable=False, default='{}')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
