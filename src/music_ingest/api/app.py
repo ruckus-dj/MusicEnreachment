@@ -82,7 +82,7 @@ from music_ingest.models import (
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
-from music_ingest.reconciliation import ScanResult, reconcile_incoming
+from music_ingest.reconciliation import ScanResult, mark_disappeared_source, reconcile_incoming
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 from music_ingest.source_roots import (
@@ -342,12 +342,23 @@ def create_app(
     @app.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
     def reprocess_all_library() -> FullReprocessResponse:
         now = datetime.now(UTC)
-        queued = 0
         with session_factory() as session:
+            queued = 0
             jobs = JobRepository(session)
             for record in library_records(session):
                 for source in record.sources:
                     if source.disappeared_at is not None:
+                        continue
+                    persisted_source = SourceRecord.get(session, source.id)
+                    if persisted_source is not None and not Path(persisted_source.source_path).is_file():
+                        mark_disappeared_source(session, persisted_source)
+                        continue
+                    root = None if persisted_source is None else persisted_source.source_root
+                    if root is not None and (
+                        not root.enabled
+                        or root.id == 'historical-unmanaged'
+                        or root.canonical_path.startswith('historical-unmanaged://')
+                    ):
                         continue
                     _ = require_owned_source(session, source.id)
                     if jobs.enqueue(source.id, 'filesystem_scan', now) is not None:

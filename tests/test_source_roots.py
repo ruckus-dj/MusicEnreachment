@@ -133,6 +133,34 @@ def test_source_roots_when_root_has_observations_archives_them_on_removal(tmp_pa
     assert client.get('/api/settings/source-roots').json()['items'] == []
 
 
+def test_full_reprocess_when_historical_sources_exist_skips_them(tmp_path: Path) -> None:
+    # Given: an archived source root that retains its historical observations.
+    source_parent = tmp_path / 'sources'
+    legacy_root = source_parent / 'legacy'
+    legacy_root.mkdir(parents=True)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess.db"}')
+    Base.metadata.create_all(engine)
+    client = TestClient(
+        create_app(
+            lambda: Session(engine),
+            incoming_root=legacy_root,
+            source_roots_parent=source_parent,
+            e2e_seed_enabled=True,
+        )
+    )
+    assert client.post('/api/e2e/seed').status_code == 200
+    assert client.delete('/api/settings/source-roots/legacy').status_code == 204
+
+    # When: the operator requests a full reprocess.
+    response = client.post('/api/library/reprocess-all')
+
+    # Then: unavailable historical observations do not abort active-library processing.
+    assert response.status_code == 200
+    assert response.json() == {'queued': 0}
+    source_reprocess = client.post('/api/library/records/e2e-record/sources/e2e-source-a/reprocess')
+    assert source_reprocess.status_code == 404
+
+
 def test_review_routes_when_application_has_no_token_are_public(tmp_path: Path) -> None:
     # Given: an application with no application-owned authentication.
     client, _ = _client(tmp_path)

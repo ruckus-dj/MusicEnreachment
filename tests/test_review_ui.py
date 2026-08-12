@@ -85,10 +85,9 @@ def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path
                 review_decisions=(),
             ),
         )
-        disappeared_source = session.get(SourceRecord, disappeared.source_id)
-        assert disappeared_source is not None
-        disappeared_source.disappeared_at = datetime.now(UTC)
         session.commit()
+
+    disappeared_path.unlink()
 
     response = TestClient(create_app(lambda: Session(engine))).post('/api/library/reprocess-all')
 
@@ -97,6 +96,7 @@ def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path
     with Session(engine) as session:
         jobs = list(session.query(JobRecord).filter(JobRecord.kind == 'filesystem_scan').all())
         assert [job.source_id for job in jobs] == [active.source_id]
+        assert session.get(SourceRecord, disappeared.source_id) is None
 
 
 def test_review_ui_when_detail_is_populated_contains_api_data_flow_and_action_submission(tmp_path: Path) -> None:
@@ -355,8 +355,8 @@ def test_library_recovery_rejects_invalid_persisted_source_root(tmp_path: Path, 
         assert session.query(JobRecord).filter_by(source_id=intake.source_id).count() == 0
 
 
-@pytest.mark.parametrize('root_state', ('disabled', 'historical', 'outside', 'symlink'))
-def test_reprocess_all_rejects_invalid_persisted_source_root(tmp_path: Path, root_state: str) -> None:
+@pytest.mark.parametrize('root_state', ('disabled',))
+def test_reprocess_all_skips_unavailable_persisted_source_root(tmp_path: Path, root_state: str) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-invalid-root.db"}')
     Base.metadata.create_all(engine)
     source_path = tmp_path / 'track.flac'
@@ -380,9 +380,51 @@ def test_reprocess_all_rejects_invalid_persisted_source_root(tmp_path: Path, roo
         match root_state:
             case 'disabled':
                 root.enabled = False
-            case 'historical':
-                root.id = 'historical-unmanaged'
-                root.canonical_path = 'historical-unmanaged://'
+            case 'outside':
+                outside = tmp_path / 'outside'
+                outside.mkdir()
+                root.canonical_path = str(outside)
+            case 'symlink':
+                target = tmp_path / 'target'
+                target.mkdir()
+                link = tmp_path / 'root-link'
+                link.symlink_to(target, target_is_directory=True)
+                root.canonical_path = str(link)
+            case unreachable:
+                raise AssertionError(unreachable)
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).post('/api/library/reprocess-all')
+
+    assert response.status_code == 200
+    assert response.json() == {'queued': 0}
+    with Session(engine) as session:
+        assert session.query(JobRecord).filter_by(source_id=intake.source_id).count() == 0
+
+
+@pytest.mark.parametrize('root_state', ('outside', 'symlink'))
+def test_reprocess_all_rejects_unsafe_persisted_source_root(tmp_path: Path, root_state: str) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-invalid-root.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    _ = source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = _source_root(tmp_path)
+        session.add(root)
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        match root_state:
             case 'outside':
                 outside = tmp_path / 'outside'
                 outside.mkdir()
