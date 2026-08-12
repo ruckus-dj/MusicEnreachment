@@ -65,6 +65,40 @@ function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}
 }
 
 describe("TrackDetail effective source", () => {
+  it("shows the automatically matched AcousticID recording as selected", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        musicbrainz_recording_id: "47d13484-9eed-4460-babd-bca3a19fcd77",
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "47d13484-9eed-4460-babd-bca3a19fcd77",
+                evidence: {
+                  provider: "acoustid",
+                  recording_mbid: "47d13484-9eed-4460-babd-bca3a19fcd77",
+                  artist: "Fixture Artist",
+                  release: "Fixture Release",
+                  title: "Fixture Track",
+                  album: "Fixture Release",
+                  score: 0.99,
+                  tags: {},
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByRole("button", { name: /AcousticID.*Выбрано/ }).textContent).toContain(
+      "Выбрано",
+    );
+  });
+
   it("exposes source choices and sends the selected source through the callback", () => {
     const onSelectEffectiveSource = vi.fn();
     renderDetail({ onSelectEffectiveSource });

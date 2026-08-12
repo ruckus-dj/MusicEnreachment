@@ -20,6 +20,7 @@ from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCap
 from music_ingest.matching.providers import (
     ReleaseCandidate,
 )
+from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -141,6 +142,26 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         flac_command='flac',
         metaflac_command='metaflac',
     )
+
+
+def test_automatic_match_persists_acoustid_recording_and_release_identity() -> None:
+    # Given: source album matching selected a MusicBrainz release and verified its AcousticID recording.
+    record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+    match_result = MatchResult(
+        MatchDecision.AUTO_SELECTED,
+        'd5c9ba44-448a-4b07-9f06-e6626032c19d',
+        CandidateScore('47d13484-9eed-4460-babd-bca3a19fcd77', 0.9945609),
+        CandidateScore('d5c9ba44-448a-4b07-9f06-e6626032c19d', 0.8),
+        None,
+    )
+
+    # When: the worker accepts the automatic provider match.
+    processing._apply_match_identity(record, match_result)
+
+    # Then: the UI can render the selected AcousticID recording instead of asking for a choice.
+    assert record.match_state == 'matched'
+    assert record.musicbrainz_recording_id == '47d13484-9eed-4460-babd-bca3a19fcd77'
+    assert record.musicbrainz_release_id == 'd5c9ba44-448a-4b07-9f06-e6626032c19d'
 
 
 def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

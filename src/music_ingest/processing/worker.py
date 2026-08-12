@@ -59,6 +59,7 @@ from music_ingest.matching.providers import (
 )
 from music_ingest.matching.scoring import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    CandidateScore,
     ExplicitMusicBrainzIds,
     MatchDecision,
     MatchingRequest,
@@ -214,12 +215,28 @@ def _candidate_record(candidate: ReleaseCandidate, score: float | None) -> Candi
     )
 
 
-def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
+def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
+    recording_mbids: list[str] = []
     for candidate in reversed(source.candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
         if evidence.provider == 'acoustid':
-            return evidence.tags.get('MUSICBRAINZ_TRACKID')
-    return None
+            recording_mbid = evidence.tags.get('MUSICBRAINZ_TRACKID')
+            if recording_mbid is not None and recording_mbid not in recording_mbids:
+                recording_mbids.append(recording_mbid)
+    return tuple(recording_mbids)
+
+
+def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> float:
+    for candidate in reversed(source.candidates):
+        evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+        if evidence.provider == 'acoustid' and evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid:
+            return evidence.score or 0.0
+    return 0.0
+
+
+def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
+    recording_mbids = _acoustid_recording_mbids(source)
+    return recording_mbids[0] if recording_mbids else None
 
 
 def _has_reviewer_decision(source: SourceRecord, state: str) -> bool:
@@ -657,6 +674,37 @@ class ProcessingWorker:
                 )
             return
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
+        if (
+            claimed.job.kind == 'musicbrainz_analysis'
+            and match_result is not None
+            and match_result.decision is not MatchDecision.AUTO_SELECTED
+        ):
+            for candidate_recording_mbid in _acoustid_recording_mbids(source):
+                if candidate_recording_mbid == recording_mbid:
+                    continue
+                candidate_result = self._lookup_providers(
+                    tags,
+                    fingerprint,
+                    now,
+                    force_refresh=True,
+                    recording_mbid=candidate_recording_mbid,
+                    release_mbid=release_mbid,
+                    run_acoustid=False,
+                    run_musicbrainz=True,
+                )
+                if candidate_result is None:
+                    continue
+                candidate_match = self._resolve_provider_match(record, source, tags, candidate_result)
+                if candidate_match is not None and candidate_match.decision is MatchDecision.AUTO_SELECTED:
+                    provider_result = candidate_result
+                    match_result = replace(
+                        candidate_match,
+                        recording_score=CandidateScore(
+                            candidate_recording_mbid,
+                            _acoustid_recording_score(source, candidate_recording_mbid),
+                        ),
+                    )
+                    break
         _ = self._capture_provider_attempt(source, 'musicbrainz', provider_result.musicbrainz, match_result)
         if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
             record_event(
@@ -706,6 +754,7 @@ class ProcessingWorker:
         if associated is None:
             return
         record = library_record_detail(self._session, associated.library_record_id)
+        _apply_match_identity(record, match_result)
         analyzed_tags = _analyzed_tags(provider_result, match_result)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
         if not analyzed_tags:
