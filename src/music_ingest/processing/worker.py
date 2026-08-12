@@ -245,6 +245,16 @@ def _unique_acoustid_album_match(
     return automatic_matches[0] if len(automatic_matches) == 1 else None
 
 
+def _unique_acoustid_recording_match(
+    candidate_matches: tuple[tuple[ProviderEvidenceResult, CandidateScore], ...],
+    confidence_threshold: float,
+) -> tuple[ProviderEvidenceResult, CandidateScore] | None:
+    qualified_matches = tuple(
+        candidate_match for candidate_match in candidate_matches if candidate_match[1].score >= confidence_threshold
+    )
+    return qualified_matches[0] if len(qualified_matches) == 1 else None
+
+
 def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
     recording_mbids = _acoustid_recording_mbids(source)
     return recording_mbids[0] if recording_mbids else None
@@ -685,8 +695,10 @@ class ProcessingWorker:
                 )
             return
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
+        recording_match: tuple[ProviderEvidenceResult, CandidateScore] | None = None
         if claimed.job.kind == 'musicbrainz_analysis':
             candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
+            recording_matches: list[tuple[ProviderEvidenceResult, CandidateScore]] = []
             for candidate_recording_mbid in _acoustid_recording_mbids(source):
                 candidate_result = (
                     provider_result
@@ -705,29 +717,27 @@ class ProcessingWorker:
                 if candidate_result is None:
                     continue
                 candidate_match = self._resolve_provider_match(record, source, tags, candidate_result)
-                match candidate_result.musicbrainz, candidate_match:
-                    case MusicBrainzMatch(candidate=candidate), MatchResult(decision=MatchDecision.AUTO_SELECTED) if (
-                        candidate_recording_mbid in candidate.recording_mbids
-                    ):
-                        candidate_matches.append(
-                            (
-                                candidate_result,
-                                replace(
-                                    candidate_match,
-                                    recording_score=CandidateScore(
-                                        candidate_recording_mbid,
-                                        _acoustid_recording_score(source, candidate_recording_mbid),
-                                    ),
-                                ),
-                            )
+                match candidate_result.musicbrainz:
+                    case MusicBrainzMatch(candidate=candidate) if candidate_recording_mbid in candidate.recording_mbids:
+                        recording_score = CandidateScore(
+                            candidate_recording_mbid,
+                            _acoustid_recording_score(source, candidate_recording_mbid),
                         )
+                        recording_matches.append((candidate_result, recording_score))
+                        if candidate_match is not None and candidate_match.decision is MatchDecision.AUTO_SELECTED:
+                            candidate_matches.append(
+                                (candidate_result, replace(candidate_match, recording_score=recording_score))
+                            )
                     case _:
-                        pass
+                        continue
             selected_match = _unique_acoustid_album_match(tuple(candidate_matches))
             if selected_match is not None:
                 provider_result, match_result = selected_match
+            recording_match = _unique_acoustid_recording_match(tuple(recording_matches), self._confidence_threshold())
+            if recording_match is not None:
+                provider_result, _ = recording_match
         _ = self._capture_provider_attempt(source, 'musicbrainz', provider_result.musicbrainz, match_result)
-        if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
+        if recording_match is None:
             record_event(
                 self._session,
                 record.id,
@@ -738,7 +748,7 @@ class ProcessingWorker:
                 source.id,
             )
             return
-        recording_mbid = match_result.recording_score.candidate_mbid
+        recording_mbid = recording_match[1].candidate_mbid
         match recording_mbid, provider_result.musicbrainz:
             case str() as verified_recording_mbid, MusicBrainzMatch(candidate=candidate) if (
                 verified_recording_mbid in candidate.recording_mbids
@@ -759,13 +769,13 @@ class ProcessingWorker:
             AutomaticAssociationRequest(
                 source.id,
                 verified_recording_mbid,
-                match_result.recording_score.score,
+                recording_match[1].score,
                 self._confidence_threshold(),
                 json.dumps(
                     {
-                        'release_mbid': match_result.selected_release_mbid,
+                        'release_mbid': None if match_result is None else match_result.selected_release_mbid,
                         'recording_mbid': verified_recording_mbid,
-                        'score': match_result.recording_score.score,
+                        'score': recording_match[1].score,
                     },
                     sort_keys=True,
                 ),
@@ -775,6 +785,17 @@ class ProcessingWorker:
         if associated is None:
             return
         record = library_record_detail(self._session, associated.library_record_id)
+        if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
+            record_event(
+                self._session,
+                record.id,
+                'analysis_ready_for_review',
+                'needs_review',
+                'AcousticID recording was confirmed; MusicBrainz release requires review',
+                now,
+                source.id,
+            )
+            return
         _apply_match_identity(record, match_result)
         analyzed_tags = _analyzed_tags(provider_result, match_result)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
@@ -797,7 +818,6 @@ class ProcessingWorker:
             self._session, record.id, source.id, 'final', final_tags, 'provider', now
         )
         _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
-        _ = JobRepository(self._session).enqueue_selection_refresh(record.id, now)
         record_event(
             self._session,
             record.id,

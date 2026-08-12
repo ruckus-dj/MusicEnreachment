@@ -208,6 +208,25 @@ def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> No
     assert selected == (correct_result, correct_match)
 
 
+def test_unique_acoustid_recording_match_selects_verified_recording_without_release_match() -> None:
+    # Given: AcousticID identifies one recording with sufficient confidence, while its release needs review.
+    provenance = FixtureProvenance(Path('fixture.json'), 'a' * 64)
+    provider_result = ProviderEvidenceResult(
+        MusicBrainzMatch(
+            provenance,
+            ReleaseCandidate('release-vol-1', 'The Greatest Hits Vol.1', 'Noize MC', recording_mbids=('vol-1',)),
+        ),
+        None,
+    )
+    recording_score = CandidateScore('vol-1', 0.99)
+
+    # When: the worker evaluates the verified AcousticID recording independently from the release decision.
+    selected = processing._unique_acoustid_recording_match(((provider_result, recording_score),), 0.8)
+
+    # Then: it preserves the recording selection despite the unresolved release.
+    assert selected == (provider_result, recording_score)
+
+
 def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a queued job and a clock that advances during processing.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "job-timing.db"}')
@@ -633,16 +652,22 @@ def test_worker_runs_initial_and_staged_provider_phases_in_order(tmp_path: Path)
         assert worker.run_once()
         session.commit()
 
-    # Then: the current publication keeps source values until a reviewer confirms the low-score candidate.
+    # Then: the recording is confirmed while the low-score release stays in review.
     with Session(engine) as session:
         jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
-        assert [job.kind for job in jobs] == ['filesystem_scan', 'acoustid_analysis', 'musicbrainz_analysis']
-        assert [job.state for job in jobs] == ['completed', 'completed', 'completed']
+        assert [job.kind for job in jobs] == [
+            'filesystem_scan',
+            'acoustid_analysis',
+            'musicbrainz_analysis',
+            'selection_refresh',
+            'selection_refresh',
+        ]
+        assert [job.state for job in jobs] == ['completed', 'completed', 'completed', 'queued', 'queued']
         source = session.get(SourceRecord, source_id)
         assert source is not None and source.library_record is not None
         assert [attempt.provider_name for attempt in source.provider_attempts] == ['acoustid', 'musicbrainz']
-        revisions = {item.layer for item in source.library_record.metadata_revisions}
-        assert revisions == {'original', 'final'}
+        assert source.library_record.musicbrainz_recording_id == 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+        assert source.library_record.musicbrainz_release_id is None
         assert source.library_record.processing_state == 'needs_review'
         current = next(item for item in source.library_publications if item.state == 'current')
         assert current.metadata_revision_id is not None
