@@ -7,13 +7,32 @@ from hashlib import sha256
 from pathlib import Path
 from stat import S_ISREG
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.dto import ScanResult
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import record_event, reevaluate_effective_source_decision
-from music_ingest.models import JobRecord, SourceRecord, SourceRootRecord
+from music_ingest.models import (
+    ArtworkRecord,
+    CandidateRecord,
+    EffectiveSourceDecisionRecord,
+    FingerprintRecord,
+    JobAttemptRecord,
+    JobRecord,
+    LibraryEventRecord,
+    LibraryMetadataRevisionRecord,
+    LibraryPublicationRecord,
+    ProviderAttemptRecord,
+    PublicationAttemptRecord,
+    ReviewDecisionRecord,
+    SourceAssociationOverrideRecord,
+    SourceRecord,
+    SourceRecordingAssignmentRecord,
+    SourceRootRecord,
+    SourceTagRecord,
+    WebhookReceiptRecord,
+)
 from music_ingest.models.jobs import JobRepository
 from music_ingest.source_boundary import SourceBoundaryError, resolve_regular_file
 
@@ -210,24 +229,79 @@ def _mark_disappeared(
             continue
         if _stored_path(source) in current_paths:
             continue
-        source.intake_state = 'disappeared'
-        source.disappeared_at = datetime.now(UTC)
-        if source.library_record is not None:
-            source.library_record.source_state = 'disappeared'
-            source.library_record.updated_at = datetime.now(UTC)
-            record_event(
-                session,
-                source.library_record.id,
-                'source_disappeared',
-                source.library_record.processing_state,
-                'filesystem_scan_removed',
-                datetime.now(UTC),
-                source.id,
-            )
-            _ = reevaluate_effective_source_decision(session, source.library_record.id, datetime.now(UTC))
-            _ = JobRepository(session).enqueue_selection_refresh(source.library_record.id, datetime.now(UTC))
+        mark_disappeared_source(session, source)
         removed += 1
     return removed
+
+
+def mark_disappeared_source(session: Session, source: SourceRecord) -> None:
+    has_current_publication = session.scalar(
+        select(LibraryPublicationRecord.id)
+        .where(LibraryPublicationRecord.source_id == source.id)
+        .where(LibraryPublicationRecord.state == 'current')
+    )
+    if not has_current_publication:
+        _remove_unpublished_source(session, source)
+        return
+    source.intake_state = 'disappeared'
+    source.disappeared_at = datetime.now(UTC)
+    if source.library_record is not None:
+        source.library_record.source_state = 'disappeared'
+        source.library_record.updated_at = datetime.now(UTC)
+        record_event(
+            session,
+            source.library_record.id,
+            'source_disappeared',
+            source.library_record.processing_state,
+            'filesystem_scan_removed',
+            datetime.now(UTC),
+            source.id,
+        )
+        _ = reevaluate_effective_source_decision(session, source.library_record.id, datetime.now(UTC))
+        _ = JobRepository(session).enqueue_selection_refresh(source.library_record.id, datetime.now(UTC))
+
+
+def _remove_unpublished_source(session: Session, source: SourceRecord) -> None:
+    source_id = source.id
+    job_ids = select(JobRecord.id).where(JobRecord.source_id == source_id)
+    _ = session.execute(delete(LibraryPublicationRecord).where(LibraryPublicationRecord.source_id == source_id))
+    _ = session.execute(delete(PublicationAttemptRecord).where(PublicationAttemptRecord.source_id == source_id))
+    _ = session.execute(
+        update(WebhookReceiptRecord).where(WebhookReceiptRecord.job_id.in_(job_ids)).values(job_id=None)
+    )
+    _ = session.execute(delete(JobAttemptRecord).where(JobAttemptRecord.job_id.in_(job_ids)))
+    _ = session.execute(delete(JobRecord).where(JobRecord.source_id == source_id))
+    _ = session.execute(
+        delete(SourceAssociationOverrideRecord).where(SourceAssociationOverrideRecord.source_id == source_id)
+    )
+    _ = session.execute(
+        delete(SourceRecordingAssignmentRecord).where(SourceRecordingAssignmentRecord.source_id == source_id)
+    )
+    _ = session.execute(delete(SourceTagRecord).where(SourceTagRecord.source_id == source_id))
+    _ = session.execute(delete(ArtworkRecord).where(ArtworkRecord.source_id == source_id))
+    _ = session.execute(delete(ProviderAttemptRecord).where(ProviderAttemptRecord.source_id == source_id))
+    _ = session.execute(delete(CandidateRecord).where(CandidateRecord.source_id == source_id))
+    _ = session.execute(delete(ReviewDecisionRecord).where(ReviewDecisionRecord.source_id == source_id))
+    _ = session.execute(delete(FingerprintRecord).where(FingerprintRecord.source_id == source_id))
+    _ = session.execute(
+        update(EffectiveSourceDecisionRecord)
+        .where(EffectiveSourceDecisionRecord.source_id == source_id)
+        .values(source_id=None)
+    )
+    _ = session.execute(
+        update(EffectiveSourceDecisionRecord)
+        .where(EffectiveSourceDecisionRecord.baseline_source_id == source_id)
+        .values(baseline_source_id=None)
+    )
+    _ = session.execute(
+        update(LibraryMetadataRevisionRecord)
+        .where(LibraryMetadataRevisionRecord.source_id == source_id)
+        .values(source_id=None)
+    )
+    _ = session.execute(
+        update(LibraryEventRecord).where(LibraryEventRecord.source_id == source_id).values(source_id=None)
+    )
+    session.delete(source)
 
 
 def _stored_path(source: SourceRecord) -> Path:

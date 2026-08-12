@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.models import Base, JobRecord, SourceRecord, SourceRootRecord
+from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord, SourceRootRecord
 from music_ingest.reconciliation import reconcile_incoming
 
 
@@ -57,9 +57,9 @@ def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Pa
         assert current.changed == 1
         assert current.removed == 1
         assert after_change_removed.removed == 1
-        assert len(session.scalars(select(SourceRecord)).all()) == 4
+        assert len(session.scalars(select(SourceRecord)).all()) == 2
         jobs = list(session.scalars(select(JobRecord)).all())
-        assert len(jobs) == 6
+        assert len(jobs) == 3
         assert {job.kind for job in jobs} == {'filesystem_scan', 'selection_refresh'}
 
 
@@ -180,17 +180,16 @@ def test_reconcile_disappearance_is_limited_to_the_scanned_root(tmp_path: Path) 
         result = reconcile_incoming(session)
         session.commit()
 
-        # Then: disappearance is recorded only against the root that was scanned and changed.
+        # Then: only the source in the scanned root is removed.
         first_source = session.scalar(select(SourceRecord).where(SourceRecord.source_root_id == 'first'))
         second_source = session.scalar(select(SourceRecord).where(SourceRecord.source_root_id == 'second'))
-        assert first_source is not None
+        assert first_source is None
         assert second_source is not None
         assert result.removed == 1
-        assert first_source.intake_state == 'disappeared'
         assert second_source.intake_state != 'disappeared'
 
 
-def test_reconcile_reactivates_same_inode_after_it_returns_to_its_root(tmp_path: Path) -> None:
+def test_reconcile_creates_a_new_source_when_a_removed_file_returns_to_its_root(tmp_path: Path) -> None:
     # Given: a scanned FLAC is moved outside its enabled root, then returned without changing its inode.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reappearance.db"}')
     _ = Base.metadata.create_all(engine)
@@ -212,9 +211,117 @@ def test_reconcile_reactivates_same_inode_after_it_returns_to_its_root(tmp_path:
         result = reconcile_incoming(session)
         session.commit()
 
-        # Then: its durable observation returns to available lifecycle state instead of remaining disappeared.
+        # Then: it is registered as a new available source after the old unused observation was removed.
         source = session.scalar(select(SourceRecord).where(SourceRecord.source_root_id == 'root'))
         assert source is not None
-        assert result.unchanged == 1
+        assert result.added == 1
         assert source.intake_state == 'needs_review'
         assert source.disappeared_at is None
+
+
+def test_reconcile_removes_disappeared_source_without_a_publication(tmp_path: Path) -> None:
+    # Given: a reconciled source that has never produced a managed publication.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unpublished-removal.db"}')
+    Base.metadata.create_all(engine)
+    root_path = tmp_path / 'root'
+    root_path.mkdir()
+    source_path = root_path / 'track.flac'
+    source_path.write_bytes(b'unpublished')
+
+    with Session(engine) as session:
+        session.add(_root('root', root_path))
+        reconcile_incoming(session)
+        session.commit()
+        source_id = session.scalars(select(SourceRecord.id)).one()
+
+        # When: the source file disappears from its configured root.
+        source_path.unlink()
+        result = reconcile_incoming(session)
+        session.commit()
+
+        # Then: the missing, unused source observation is removed with its record.
+        assert result.removed == 1
+        assert session.get(SourceRecord, source_id) is None
+
+
+def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_path: Path) -> None:
+    # Given: a reconciled source that owns a managed publication.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "published-retention.db"}')
+    Base.metadata.create_all(engine)
+    root_path = tmp_path / 'root'
+    root_path.mkdir()
+    source_path = root_path / 'track.flac'
+    source_path.write_bytes(b'published')
+    now = datetime.now(UTC)
+
+    with Session(engine) as session:
+        session.add(_root('root', root_path))
+        reconcile_incoming(session)
+        source = session.scalars(select(SourceRecord)).one()
+        assert source.library_record is not None
+        session.add(
+            LibraryPublicationRecord(
+                id='publication-retained',
+                library_record=source.library_record,
+                source=source,
+                path=str(tmp_path / 'media' / 'track.flac'),
+                format_name='flac',
+                content_sha256='a' * 64,
+                state='current',
+                created_at=now,
+            )
+        )
+        session.commit()
+
+        # When: the published source file disappears from its configured root.
+        source_path.unlink()
+        result = reconcile_incoming(session)
+        session.commit()
+
+        # Then: the source remains as visibly disappeared provenance for its publication.
+        retained = session.get(SourceRecord, source.id)
+        assert result.removed == 1
+        assert retained is not None
+        assert retained.intake_state == 'disappeared'
+        assert retained.disappeared_at is not None
+
+
+def test_reconcile_removes_disappeared_source_with_only_a_superseded_publication(tmp_path: Path) -> None:
+    # Given: a reconciled source referenced only by an obsolete publication.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "superseded-removal.db"}')
+    Base.metadata.create_all(engine)
+    root_path = tmp_path / 'root'
+    root_path.mkdir()
+    source_path = root_path / 'track.flac'
+    source_path.write_bytes(b'superseded')
+    now = datetime.now(UTC)
+
+    with Session(engine) as session:
+        session.add(_root('root', root_path))
+        reconcile_incoming(session)
+        source = session.scalars(select(SourceRecord)).one()
+        assert source.library_record is not None
+        session.add(
+            LibraryPublicationRecord(
+                id='publication-superseded',
+                library_record=source.library_record,
+                source=source,
+                path=str(tmp_path / 'media' / 'track.flac'),
+                format_name='flac',
+                content_sha256='a' * 64,
+                state='superseded',
+                created_at=now,
+            )
+        )
+        session.commit()
+        source_id = source.id
+
+        # When: the obsolete source file disappears from its configured root.
+        source_path.unlink()
+        result = reconcile_incoming(session)
+        session.commit()
+
+        # Then: obsolete publication history does not retain the missing source.
+        assert result.removed == 1
+        assert session.get(SourceRecord, source_id) is None
+        assert session.get(LibraryPublicationRecord, 'publication-superseded') is None
