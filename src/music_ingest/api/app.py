@@ -622,6 +622,7 @@ def create_app(
                             {
                                 'source_id': source.id,
                                 'path': source.source_path,
+                                'format': source.source_path.rsplit('.', maxsplit=1)[-1],
                                 'sha256': source.sha256,
                                 'size_bytes': source.size_bytes,
                                 'origin': source.origin,

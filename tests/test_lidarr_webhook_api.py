@@ -21,6 +21,7 @@ from music_ingest.models import (
     SourceRootRecord,
     WebhookReceiptRecord,
 )
+from music_ingest.normalize.tags import write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 
 _FFMPEG: Final[str] = which('ffmpeg') or ''
@@ -82,27 +83,21 @@ def _flac(path: Path, genre: str = 'Hip Hop; Alternative Rock') -> Path:
         timeout=10,
     )
     assert created.returncode == 0, created.stderr
-    tagged = run(  # noqa: S603
-        [  # noqa: S607
-            'metaflac',
-            '--set-tag=TITLE=Webhook Track',
-            '--set-tag=ARTIST=Fixture Artist; Fixture Guest',
-            '--set-tag=ALBUM=Webhook Album',
-            '--set-tag=ALBUMARTIST=Fixture Artist; Fixture Guest',
-            '--set-tag=DATE=2026',
-            '--set-tag=TRACKNUMBER=1',
-            '--set-tag=TRACKTOTAL=1',
-            '--set-tag=DISCNUMBER=1',
-            '--set-tag=DISCTOTAL=1',
-            f'--set-tag=GENRE={genre}',
-            str(path),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
+    _ = write_normalized_tags(
+        path,
+        (
+            ('TITLE', 'Webhook Track'),
+            ('ARTIST', 'Fixture Artist; Fixture Guest'),
+            ('ALBUM', 'Webhook Album'),
+            ('ALBUMARTIST', 'Fixture Artist; Fixture Guest'),
+            ('DATE', '2026'),
+            ('TRACKNUMBER', '1'),
+            ('TRACKTOTAL', '1'),
+            ('DISCNUMBER', '1'),
+            ('DISCTOTAL', '1'),
+            ('GENRE', genre),
+        ),
     )
-    assert tagged.returncode == 0, tagged.stderr
     return path
 
 

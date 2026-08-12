@@ -10,6 +10,7 @@ from subprocess import run
 import pytest
 
 from music_ingest.models import SourceRecord, SourceRootRecord
+from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
 from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
@@ -40,20 +41,10 @@ def _create_flac(directory: Path, name: str) -> Path:
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    tagged = run(  # noqa: S603,S607
-        [  # noqa: S607
-            'metaflac',  # noqa: S607
-            '--set-tag=ARTIST=Artist One; Artist Two',
-            '--set-tag=ALBUM=Fixture Release',
-            '--set-tag=GENRE=Hip Hop; Alternative Rock',
-            str(path),
-        ],  # noqa: E501,S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
+    _ = write_normalized_tags(
+        path,
+        (('ARTIST', 'Artist One; Artist Two'), ('ALBUM', 'Fixture Release'), ('GENRE', 'Hip Hop; Alternative Rock')),
     )
-    assert tagged.returncode == 0, tagged.stderr
     return path
 
 
@@ -155,6 +146,10 @@ def test_publish_release_accepts_registry_declared_m4a_and_preserves_suffix(
     release = staging / 'Artist' / 'Release'
     release.mkdir(parents=True)
     staged_audio = _create_audio(release, name, codec, 'ipod')
+    _ = write_normalized_tags(
+        staged_audio,
+        (('ARTIST', 'Artist One; Artist Two'), ('ALBUM', 'Fixture Release'), ('GENRE', 'Hip Hop; Alternative Rock')),
+    )
     original_bytes = staged_audio.read_bytes()
 
     result = publish_release(_request(tmp_path, source, release))
@@ -336,14 +331,9 @@ def test_replace_published_audio_when_album_exists_touches_only_target_track_and
     release = staging / 'Artist One' / 'Shared Album'
     release.mkdir(parents=True)
     staged_track = _create_flac(release, '02 - Second.flac')
-    tagged = run(  # noqa: S603,S607
-        ['metaflac', '--set-tag=TITLE=Replacement Track', str(staged_track)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-    assert tagged.returncode == 0, tagged.stderr
+    replacement_tags = dict(read_normalized_tags(staged_track))
+    replacement_tags['TITLE'] = 'Replacement Track'
+    _ = write_normalized_tags(staged_track, tuple(replacement_tags.items()))
     (release / 'cover.jpg').write_bytes(b'\xff\xd8\xffnew-cover\xff\xd9')
     destination = tmp_path / 'media' / 'Artist One' / 'Shared Album'
     destination.mkdir(parents=True)

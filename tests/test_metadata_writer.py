@@ -20,6 +20,7 @@ from music_ingest.normalize.metadata import (
     MetadataWriteRequest,
     write_canonical_metadata,
 )
+from music_ingest.normalize.tags import read_normalized_tags
 
 
 def _create_flac(directory: Path, name: str) -> Path:
@@ -161,19 +162,12 @@ def test_write_canonical_metadata_when_verified_facts_writes_allowlisted_tags(tm
     )
 
     # Then: list fields use semicolons, aliases are ordered canonically, and source bytes are unchanged.
-    listed = run(  # noqa: S603,S607
-        ['metaflac', '--list', str(output.output_path)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )  # noqa: S603,S607,E501
-    assert listed.returncode == 0, listed.stderr
-    assert 'comment[0]: TITLE=Fixture Track' in listed.stdout
-    assert 'ARTIST=Artist One; Artist Two' in listed.stdout
-    assert 'GENRE=Hip Hop; Alternative Rock' in listed.stdout
-    assert 'MUSICBRAINZ_ALBUMID=album-id' in listed.stdout
-    assert '/' not in next(line for line in listed.stdout.splitlines() if 'GENRE=' in line)
+    listed = dict(read_normalized_tags(output.output_path))
+    assert listed['TITLE'] == 'Fixture Track'
+    assert listed['ARTIST'] == 'Artist One; Artist Two'
+    assert listed['GENRE'] == 'Hip Hop; Alternative Rock'
+    assert listed['MUSICBRAINZ_ALBUMID'] == 'album-id'
+    assert '/' not in listed['GENRE']
     assert snapshot == (source.stat().st_ino, sha256(source.read_bytes()).hexdigest())
 
 
@@ -411,15 +405,8 @@ def test_write_canonical_metadata_when_reviewed_local_only_omits_uninvented_musi
     )  # noqa: E501
 
     # Then: local-only output never fabricates provider IDs.
-    listed = run(  # noqa: S603,S607
-        ['metaflac', '--list', str(output.output_path)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )  # noqa: S603,S607,E501
-    assert listed.returncode == 0, listed.stderr
-    assert 'MUSICBRAINZ_' not in listed.stdout
+    listed = dict(read_normalized_tags(output.output_path))
+    assert not any(name.startswith('MUSICBRAINZ_') for name in listed)
 
 
 def test_write_canonical_metadata_when_genre_is_unapproved_rejects_without_output(tmp_path: Path) -> None:

@@ -6,11 +6,12 @@ import tempfile
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from subprocess import TimeoutExpired, run
 from typing import Final, override
 
+from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
 from music_ingest.models import SourceRecord
+from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 
 _AUDIO_SUFFIXES: Final = frozenset(
@@ -26,8 +27,7 @@ class PublicationRequest:
     staging_root: Path
     media_root: Path
     source_paths: tuple[Path, ...]
-    flac_command: str = 'flac'
-    metaflac_command: str = 'metaflac'
+    ffmpeg_command: str = 'ffmpeg'
     timeout_seconds: float = 30.0
     require_canonical_tags: bool = True
     destination_release: Path | None = None
@@ -79,9 +79,9 @@ def publish_release(request: PublicationRequest) -> PublicationResult:
     except OSError as error:
         shutil.rmtree(temporary_release, ignore_errors=True)
         raise PublicationError('atomic release publication failed') from error
-    except PublicationError:
+    except PublicationError as error:
         shutil.rmtree(temporary_release, ignore_errors=True)
-        raise
+        raise error
     shutil.rmtree(staged_release)
     return PublicationResult(published_release=published_release, published_audio=published_release / target_name)
 
@@ -248,8 +248,7 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
         _validate_artwork(artwork[0])
     for audio_path in audio_paths:
         _validate_capability(audio_path, request)
-        if audio_path.suffix.casefold() == '.flac':
-            _validate_tags(audio_path, request)
+        _validate_tags(audio_path, request)
     for lyric_path in (path for path in paths if path.suffix.casefold() == '.lrc'):
         _validate_lrc(lyric_path)
     return audio_paths
@@ -257,17 +256,9 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
 
 def _validate_flac(path: Path, request: PublicationRequest) -> None:
     try:
-        completed = run(  # noqa: S603
-            (request.flac_command, '--test', str(path)),
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=request.timeout_seconds,
-        )
-    except (FileNotFoundError, TimeoutExpired, OSError) as error:
-        raise PublicationError('FLAC validation tool failed') from error
-    if completed.returncode != 0:
-        raise PublicationError('FLAC validation failed')
+        validate_decoder(path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds)
+    except DecoderValidationError as error:
+        raise PublicationError('FLAC decoder validation failed') from error
 
 
 def _validate_capability(path: Path, request: PublicationRequest) -> None:
@@ -281,22 +272,9 @@ def _validate_capability(path: Path, request: PublicationRequest) -> None:
 
 def _validate_tags(path: Path, request: PublicationRequest) -> None:
     try:
-        completed = run(  # noqa: S603
-            (request.metaflac_command, '--export-tags-to=-', str(path)),
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=request.timeout_seconds,
-        )
-    except (FileNotFoundError, TimeoutExpired, OSError) as error:
-        raise PublicationError('metadata validation tool failed') from error
-    if completed.returncode != 0:
-        raise PublicationError('metadata validation failed')
-    tags = {
-        line.split('=', maxsplit=1)[0]: line.split('=', maxsplit=1)[1]
-        for line in completed.stdout.splitlines()
-        if '=' in line
-    }
+        tags = dict(read_normalized_tags(path))
+    except MetadataTagError as error:
+        raise PublicationError('Mutagen metadata validation failed') from error
     if request.require_canonical_tags and not _REQUIRED_TAGS.issubset(tags):
         raise PublicationError('canonical publication tags are incomplete')
     for name in ('ARTIST', 'GENRE') if request.require_canonical_tags else ():

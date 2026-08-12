@@ -7,7 +7,7 @@ from subprocess import run
 import pytest
 
 import music_ingest.sanitizers.flac as processing
-from music_ingest.inspectors._tool import ToolState
+from music_ingest.inspectors.decoder import validate_decoder
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
 
@@ -106,10 +106,9 @@ def _assert_sanitized(source: Path, output: Path, source_before: tuple[int, int,
     output_payload = output.read_bytes()
     source_streaminfo, source_frames, _ = _layout(source_payload)
     output_streaminfo, output_frames, output_metadata = _layout(output_payload)
-    tested = run(['flac', '-t', str(output)], capture_output=True, check=False, text=True, timeout=10)  # noqa: S603, S607
 
     assert _source_snapshot(source) == source_before
-    assert tested.returncode == 0, tested.stderr
+    validate_decoder(output)
     assert not output_payload.startswith(b'ID3')
     assert not output_payload.endswith(b'TAG' + (b'\x00' * 125))
     assert output_streaminfo == source_streaminfo
@@ -176,8 +175,8 @@ def test_sanitize_flac_removes_repairable_id3_wrappers(tmp_path: Path, prefix: b
     _assert_sanitized(source, output, source_before)
 
 
-def test_sanitize_flac_accepts_a_leading_id3v24_footer_when_preflight_rejects_wrapper(tmp_path: Path) -> None:
-    # Given: a FLAC wrapped in a structurally recognized ID3v2.4 footer tag rejected by flac -t.
+def test_sanitize_flac_accepts_a_leading_id3v24_footer_wrapper(tmp_path: Path) -> None:
+    # Given: a FLAC wrapped in a structurally recognized ID3v2.4 footer tag.
     source = _create_flac(tmp_path, 'id3v24-footer.flac')
     _ = source.write_bytes(_id3v24_footer() + source.read_bytes())
     source_before = _source_snapshot(source)
@@ -188,10 +187,8 @@ def test_sanitize_flac_accepts_a_leading_id3v24_footer_when_preflight_rejects_wr
     # When: sanitation rebuilds the container without the repairable wrapper.
     result = sanitize_flac(FlacSanitizationRequest(source, output, staging))
 
-    # Then: failed source preflight remains recorded while output and decoded-audio identity validate.
-    assert result.preflight.state is ToolState.FAILED
-    assert result.preflight.return_code != 0
-    assert result.postflight.state is ToolState.SUCCESS
+    # Then: output and decoded-audio identity validate regardless of decoder tolerance for the wrapper.
+    assert result.postflight.return_code == 0
     _assert_sanitized(source, output, source_before)
 
 

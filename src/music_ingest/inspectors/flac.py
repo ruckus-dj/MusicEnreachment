@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
+from music_ingest.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.inspectors.decoder import decoder_evidence
 
 
 class InspectionState(StrEnum):
@@ -44,11 +45,11 @@ class FlacInspectionResult:
 
 
 def inspect_flac(
-    source_path: Path, *, flac_command: str = 'flac', timeout_seconds: float = 10.0
+    source_path: Path, *, ffmpeg_command: str = 'ffmpeg', timeout_seconds: float = 10.0
 ) -> FlacInspectionResult:
     payload = source_path.read_bytes()
     findings, malformed = _parse_flac(payload)
-    flac_test = run_tool((flac_command, '-t', str(source_path)), timeout_seconds)
+    flac_test = decoder_evidence(source_path, ffmpeg_command=ffmpeg_command, timeout_seconds=timeout_seconds)
     findings = findings + _tool_findings(flac_test)
     has_trailing_id3v1 = any(finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in findings)
     flac_test_rejects_container = flac_test.state is not ToolState.SUCCESS and not has_trailing_id3v1

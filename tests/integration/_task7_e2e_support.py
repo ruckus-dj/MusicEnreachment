@@ -13,6 +13,8 @@ from typing import Final
 import httpx2 as httpx
 from pydantic import TypeAdapter
 
+from music_ingest.normalize.tags import write_normalized_tags
+
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
 
@@ -57,9 +59,8 @@ def snapshot(path: Path) -> Snapshot:
 
 def create_fixture(path: Path) -> None:
     ffmpeg = shutil.which('ffmpeg')
-    metaflac = shutil.which('metaflac')
-    if ffmpeg is None or metaflac is None:
-        raise E2eFailure('ffmpeg and metaflac are required for task-7 E2E fixture generation')
+    if ffmpeg is None:
+        raise E2eFailure('ffmpeg is required for task-7 E2E fixture generation')
     path.parent.mkdir(parents=True)
     _ = command(
         (
@@ -76,21 +77,20 @@ def create_fixture(path: Path) -> None:
             str(path),
         )
     )
-    _ = command(
+    _ = write_normalized_tags(
+        path,
         (
-            metaflac,
-            '--set-tag=TITLE=Task Seven Fixture',
-            '--set-tag=ARTIST=Task Seven Artist; Task Seven Guest',
-            '--set-tag=ALBUM=Task Seven Album',
-            '--set-tag=ALBUMARTIST=Task Seven Artist; Task Seven Guest',
-            '--set-tag=DATE=2026',
-            '--set-tag=TRACKNUMBER=1',
-            '--set-tag=TRACKTOTAL=1',
-            '--set-tag=DISCNUMBER=1',
-            '--set-tag=DISCTOTAL=1',
-            '--set-tag=GENRE=Hip Hop; Alternative Rock',
-            str(path),
-        )
+            ('TITLE', 'Task Seven Fixture'),
+            ('ARTIST', 'Task Seven Artist; Task Seven Guest'),
+            ('ALBUM', 'Task Seven Album'),
+            ('ALBUMARTIST', 'Task Seven Artist; Task Seven Guest'),
+            ('DATE', '2026'),
+            ('TRACKNUMBER', '1'),
+            ('TRACKTOTAL', '1'),
+            ('DISCNUMBER', '1'),
+            ('DISCTOTAL', '1'),
+            ('GENRE', 'Hip Hop; Alternative Rock'),
+        ),
     )
     _ = (path.parent / 'cover.jpg').write_bytes(b'\xff\xd8\xfftask-seven\xff\xd9')
 

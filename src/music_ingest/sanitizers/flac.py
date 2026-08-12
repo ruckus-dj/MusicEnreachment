@@ -8,7 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import final, override
 
-from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
+from music_ingest.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.inspectors.decoder import decoder_evidence
 
 
 class FlacSanitizationErrorKind(StrEnum):
@@ -59,7 +60,7 @@ class FlacSanitizationRequest:
     source_path: Path
     output_path: Path
     staging_directory: Path
-    flac_command: str = 'flac'
+    ffmpeg_command: str = 'ffmpeg'
     timeout_seconds: float = 10.0
 
 
@@ -94,7 +95,9 @@ def sanitize_flac(request: FlacSanitizationRequest) -> FlacSanitizationResult:
     source_path, output_path, staging_directory = _validated_paths(request)
     payload = source_path.read_bytes()
     source_layout = _parse_layout(payload, source_path)
-    preflight = run_tool((request.flac_command, '-t', str(source_path)), request.timeout_seconds)
+    preflight = decoder_evidence(
+        source_path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds
+    )
     has_repairable_wrapper = source_layout.has_trailing_id3v1 or any(
         finding.kind is FlacSanitizationFindingKind.LEADING_ID3V2_REMOVED for finding in source_layout.findings
     )
@@ -117,7 +120,9 @@ def sanitize_flac(request: FlacSanitizationRequest) -> FlacSanitizationResult:
         sanitized_payload = temporary_path.read_bytes()
         output_layout = _parse_layout(sanitized_payload, temporary_path)
         _validate_output_layout(source_layout, output_layout, temporary_path)
-        postflight = run_tool((request.flac_command, '-t', str(temporary_path)), request.timeout_seconds)
+        postflight = decoder_evidence(
+            temporary_path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds
+        )
         if postflight.state is not ToolState.SUCCESS:
             raise FlacSanitizationFailure(
                 FlacSanitizationError(FlacSanitizationErrorKind.POSTFLIGHT_FAILED, temporary_path)

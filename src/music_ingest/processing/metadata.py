@@ -3,24 +3,18 @@ from __future__ import annotations
 import re
 from hashlib import sha256
 from pathlib import Path
-from subprocess import run
 
 from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
+from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
 from music_ingest.settings import RuntimeSettings
 
 
-def read_tags(path: Path, command: str, timeout_seconds: float) -> tuple[tuple[str, str], ...]:
-    completed = run(  # noqa: S603
-        (command, '--export-tags-to=-', str(path)), capture_output=True, check=False, text=True, timeout=timeout_seconds
-    )
-    if completed.returncode != 0:
-        raise ValueError('metaflac could not read source tags')
-    return tuple(
-        (parts[0], parts[1])
-        for line in completed.stdout.splitlines()
-        if (parts := line.split('=', maxsplit=1)) and len(parts) == 2
-    )
+def read_tags(path: Path) -> tuple[tuple[str, str], ...]:
+    try:
+        return read_normalized_tags(path)
+    except MetadataTagError as error:
+        raise ValueError('Mutagen could not read source tags') from error
 
 
 def fallback_metadata(

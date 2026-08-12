@@ -34,7 +34,7 @@ class FingerprintState(StrEnum):
 class FingerprintRequest:
     source_id: SourceId
     source_path: Path
-    inspection: FlacInspectionResult | Mp3InspectionResult
+    inspection: FlacInspectionResult | Mp3InspectionResult | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,12 +72,14 @@ def _fingerprint(request: FingerprintRequest, fpcalc_command: str, timeout_secon
     return _from_tool(tool, fpcalc_command, timeout_seconds)
 
 
-def _is_valid_inspection(inspection: FlacInspectionResult | Mp3InspectionResult) -> bool:
+def _is_valid_inspection(inspection: FlacInspectionResult | Mp3InspectionResult | None) -> bool:
     match inspection:
         case FlacInspectionResult(state=state):
             return _is_valid_flac_state(state)
         case Mp3InspectionResult(state=state):
             return _is_valid_mp3_state(state)
+        case None:
+            return True
 
 
 def _is_valid_flac_state(state: FlacInspectionState) -> bool:

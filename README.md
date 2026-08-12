@@ -1,6 +1,6 @@
 # Music Ingest
 
-Music Ingest receives Lidarr download webhooks, records immutable source provenance, validates and sanitizes FLAC files, publishes a reviewable media copy, and exposes the review UI/API.
+Music Ingest receives Lidarr download webhooks, records immutable source provenance, validates media, publishes a reviewable media copy, and exposes the review UI/API.
 
 ## Runtime flow
 
@@ -59,7 +59,7 @@ The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL.
 
 ## Formats and matching
 
-The dry-run scanner recognizes `.aac`, `.aiff`, `.alac`, `.ape`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, and `.wma`. It performs detailed inspection for FLAC and MP3 and reports other recognized containers for review. Publication targets support FLAC, M4A, MP3, OGG, and OPUS.
+Ingest and publication support FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis, and Opus. Tags are read, written, and verified through Mutagen using each container's native scheme: Vorbis/Opus Comments, ID3v2.4, or MP4 atoms. Raw AAC and arbitrary scanner-recognized extensions are not publication formats.
 
 Candidate matching prefers an explicit MusicBrainz ID. Otherwise it scores normalized artist and release text, with a duration match contributing when available. Lidarr context can provide the stronger score. Ambiguous, stale, unsafe, unavailable, or below-threshold results remain in review rather than being auto-selected.
 

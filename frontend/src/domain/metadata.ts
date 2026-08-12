@@ -134,7 +134,7 @@ export function workflowStatus(detail: Detail): WorkflowStatus {
     return {
       tone: "ready",
       label: "Публикация актуальна",
-      detail: "Текущий FLAC соответствует опубликованной финальной ревизии.",
+      detail: "Текущий аудиофайл соответствует опубликованной финальной ревизии.",
     };
   return {
     tone: "pending",

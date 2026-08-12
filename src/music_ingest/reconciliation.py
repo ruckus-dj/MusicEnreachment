@@ -86,7 +86,9 @@ def reconcile_incoming(session: Session, incoming_root: Path | None = None) -> S
                     if existing.library_record is not None:
                         existing.library_record.source_state = 'present'
                         existing.library_record.updated_at = datetime.now(UTC)
-                if file.path.suffix == '.flac' and _enqueue_job(session, existing.id, datetime.now(UTC)):
+                if file.path.suffix.casefold() in _SUPPORTED_SUFFIXES and _enqueue_job(
+                    session, existing.id, datetime.now(UTC)
+                ):
                     queued_jobs += 1
                 continue
             path_source = sources_by_path.get((root.id, file.path))
@@ -116,7 +118,9 @@ def reconcile_incoming(session: Session, incoming_root: Path | None = None) -> S
             if path_source is not None and path_source.library_record_id is not None:
                 _replace_source(session, path_source, replacement)
                 _ = JobRepository(session).enqueue_selection_refresh(path_source.library_record_id, datetime.now(UTC))
-            if file.path.suffix == '.flac' and _enqueue_job(session, intake.source_id, datetime.now(UTC)):
+            if file.path.suffix.casefold() in _SUPPORTED_SUFFIXES and _enqueue_job(
+                session, intake.source_id, datetime.now(UTC)
+            ):
                 queued_jobs += 1
         removed += _mark_disappeared(session, sources, root.id, seen_source_ids, current_paths)
     session.flush()
@@ -190,10 +194,8 @@ def _fingerprint(path: Path, root: Path, root_id: str) -> FileFingerprint:
 
 
 def _inventory_state(path: Path) -> str:
-    if path.suffix.casefold() == '.flac':
-        return 'needs_review'
     if path.suffix.casefold() in _SUPPORTED_SUFFIXES:
-        return 'unsupported:capability_unavailable'
+        return 'needs_review'
     return 'unsupported:container_unsupported'
 
 

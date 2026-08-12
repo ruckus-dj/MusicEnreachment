@@ -17,6 +17,8 @@ import music_ingest.processing.worker as processing
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError
 from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
+from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
+from music_ingest.inspectors.mp3 import Mp3InspectionResult
 from music_ingest.matching.evidence import ProviderEvidenceResult
 from music_ingest.matching.providers import (
     FixtureProvenance,
@@ -39,6 +41,7 @@ from music_ingest.models import (
 )
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.normalize.metadata import MetadataWriteResult
+from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
@@ -68,40 +71,27 @@ def _flac(path: Path) -> Path:
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    tagged = run(  # noqa: S603
-        [  # noqa: S607
-            'metaflac',
-            '--set-tag=TITLE=Fixture Track',
-            '--set-tag=ARTIST=Fixture Artist; Fixture Guest',
-            '--set-tag=ALBUM=Fixture Album',
-            '--set-tag=ALBUMARTIST=Fixture Artist; Fixture Guest',
-            '--set-tag=DATE=2026',
-            '--set-tag=TRACKNUMBER=1',
-            '--set-tag=TRACKTOTAL=1',
-            '--set-tag=DISCNUMBER=1',
-            '--set-tag=DISCTOTAL=1',
-            '--set-tag=GENRE=Hip Hop; Alternative Rock',
-            str(path),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
+    _ = write_normalized_tags(
+        path,
+        (
+            ('TITLE', 'Fixture Track'),
+            ('ARTIST', 'Fixture Artist; Fixture Guest'),
+            ('ALBUM', 'Fixture Album'),
+            ('ALBUMARTIST', 'Fixture Artist; Fixture Guest'),
+            ('DATE', '2026'),
+            ('TRACKNUMBER', '1'),
+            ('TRACKTOTAL', '1'),
+            ('DISCNUMBER', '1'),
+            ('DISCTOTAL', '1'),
+            ('GENRE', 'Hip Hop; Alternative Rock'),
+        ),
     )
-    assert tagged.returncode == 0, tagged.stderr
     return path
 
 
 def _tagless_flac(path: Path) -> Path:
     source = _flac(path)
-    removed = run(  # noqa: S603
-        ['metaflac', '--remove-all-tags', str(source)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-    assert removed.returncode == 0, removed.stderr
+    _ = write_normalized_tags(source, ())
     return source
 
 
@@ -142,8 +132,6 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         incoming_root=tmp_path / 'incoming',
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
-        flac_command='flac',
-        metaflac_command='metaflac',
     )
 
 
@@ -406,16 +394,9 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         sha256(source_path.read_bytes()).hexdigest(),
     )
     assert published.stat().st_ino != source_path.stat().st_ino
-    tags = run(  # noqa: S603
-        ['metaflac', '--export-tags-to=-', str(published)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-    assert tags.returncode == 0
-    assert 'TITLE=Fixture Track' in tags.stdout
-    assert 'GENRE=Hip Hop; Alternative Rock' in tags.stdout
+    tags = dict(read_normalized_tags(published))
+    assert tags['TITLE'] == 'Fixture Track'
+    assert tags['GENRE'] == 'Hip Hop; Alternative Rock'
 
 
 @pytest.mark.parametrize(
@@ -439,6 +420,14 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
     monkeypatch.setattr(processing, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    if suffix == '.mp3':
+        monkeypatch.setattr(
+            processing,
+            'inspect_mp3',
+            lambda *_args, **_kwargs: Mp3InspectionResult(
+                Mp3InspectionState.VALID, (), None, None, ToolEvidence(ToolState.SUCCESS, 0, '', '')
+            ),
+        )
     monkeypatch.setattr(
         processing,
         'read_tags',
@@ -672,16 +661,9 @@ def test_worker_runs_initial_and_staged_provider_phases_in_order(tmp_path: Path)
         current = next(item for item in source.library_publications if item.state == 'current')
         assert current.metadata_revision_id is not None
         published_path = Path(current.path)
-        tags = run(  # noqa: S603
-            ['metaflac', '--export-tags-to=-', str(published_path)],  # noqa: S607
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=10,
-        )
-        assert tags.returncode == 0
-        assert 'ALBUM=Fixture Album' in tags.stdout
-        assert 'MUSICBRAINZ_ALBUMID=' not in tags.stdout
+        tags = dict(read_normalized_tags(published_path))
+        assert tags['ALBUM'] == 'Fixture Album'
+        assert 'MUSICBRAINZ_ALBUMID' not in tags
 
 
 def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
@@ -903,14 +885,8 @@ def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
-    removed = run(  # noqa: S603
-        ['metaflac', '--remove-tag=ALBUM', str(source_path)],  # noqa: S607
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-    assert removed.returncode == 0, removed.stderr
+    tags = tuple((name, value) for name, value in read_normalized_tags(source_path) if name != 'ALBUM')
+    _ = write_normalized_tags(source_path, tags)
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:

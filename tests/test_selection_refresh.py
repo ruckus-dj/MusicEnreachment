@@ -24,6 +24,7 @@ from music_ingest.models import (
     SourceRootRecord,
 )
 from music_ingest.models.jobs import ClaimedJob, JobRepository
+from music_ingest.normalize.tags import write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 
 
@@ -48,21 +49,10 @@ def _flac(path: Path, title: str) -> Path:
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    tagged = run(  # noqa: S603
-        [  # noqa: S607
-            'metaflac',
-            f'--set-tag=TITLE={title}',
-            '--set-tag=ARTIST=Fixture Artist',
-            '--set-tag=ALBUM=Fixture Album',
-            '--set-tag=GENRE=Rock',
-            str(path),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
+    _ = write_normalized_tags(
+        path,
+        (('TITLE', title), ('ARTIST', 'Fixture Artist'), ('ALBUM', 'Fixture Album'), ('GENRE', 'Rock')),
     )
-    assert tagged.returncode == 0, tagged.stderr
     return path
 
 

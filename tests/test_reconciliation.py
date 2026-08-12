@@ -117,12 +117,12 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
         result = reconcile_incoming(session)
         session.commit()
 
-        # Then: source provenance stays root-scoped; only FLAC is queued before capability activation.
+        # Then: source provenance stays root-scoped and every supported container is queued for capability validation.
         sources = list(session.scalars(select(SourceRecord).order_by(SourceRecord.source_path)))
         assert result.added == 7
-        assert result.queued_jobs == 2
+        assert result.queued_jobs == 6
         assert len(sources) == 7
-        assert len(session.scalars(select(JobRecord)).all()) == 2
+        assert len(session.scalars(select(JobRecord)).all()) == 6
         duplicate_hash = next(source.sha256 for source in sources if Path(source.source_path).suffix == '.flac')
         assert {source.source_root_id for source in sources if source.sha256 == duplicate_hash} == {'first', 'second'}
         assert all('escape.flac' not in source.source_path for source in sources)
@@ -131,10 +131,10 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
             for source in sources
             if Path(source.source_path).suffix != '.flac'
         } == {
-            '.m4a': 'unsupported:capability_unavailable',
-            '.mp3': 'unsupported:capability_unavailable',
-            '.opus': 'unsupported:capability_unavailable',
-            '.ogg': 'unsupported:capability_unavailable',
+            '.m4a': 'needs_review',
+            '.mp3': 'needs_review',
+            '.opus': 'needs_review',
+            '.ogg': 'needs_review',
             '.wav': 'unsupported:container_unsupported',
         }
 

@@ -89,12 +89,12 @@ def test_inspect_flac_malformed_container_quarantines_and_preserves_source(tmp_p
 
 def test_inspect_flac_when_tool_timeout_quarantines_and_preserves_source(tmp_path: Path) -> None:
     source = _create_flac(tmp_path, 'timeout.flac')
-    hanging_tool = tmp_path / 'hanging-flac'
+    hanging_tool = tmp_path / 'hanging-ffmpeg'
     _ = hanging_tool.write_text('#!/bin/sh\nexec sleep 10\n', encoding='utf-8')
     hanging_tool.chmod(0o700)
     before = _snapshot(source)
 
-    result = inspect_flac(source, flac_command=str(hanging_tool), timeout_seconds=0.01)
+    result = inspect_flac(source, ffmpeg_command=str(hanging_tool), timeout_seconds=0.01)
 
     assert result.state is InspectionState.INFRASTRUCTURE
     assert FlacFindingKind.FLAC_TEST_TIMED_OUT in [finding.kind for finding in result.findings]

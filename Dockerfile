@@ -17,14 +17,12 @@ COPY --from=uv /uv /uvx /bin/
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ffmpeg \
-        flac \
         libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eu; \
     test -x /usr/bin/fpcalc; \
     /usr/bin/fpcalc -version; \
-    flac --version; \
     ffprobe -version; \
     ffmpeg -hide_banner -loglevel error -f lavfi -i anoisesrc=color=white:sample_rate=44100 -t 10 -c:a pcm_s16le /tmp/fingerprint-smoke.wav; \
     set +e; /usr/bin/fpcalc -json -length 1 /tmp/fingerprint-smoke.wav >/tmp/fpcalc-short.out 2>/tmp/fpcalc-short.err; short_status=$?; set -e; \

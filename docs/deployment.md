@@ -46,7 +46,7 @@ after full scans. PostgreSQL is the only durable store for tags, versions, prove
 review decisions, failure reasons, and publication metadata. The normal workflow
 does not replace a Lidarr incoming pathname, and Task 9a remains separately gated.
 
-The source-roots parent must already exist, be a directory, and not be a symlink. Every configured root must be an existing, non-symlink immediate child. The scanner recognizes `.aac`, `.aiff`, `.alac`, `.ape`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, and `.wma`; FLAC and MP3 receive detailed inspection, while other recognized containers are reported for review. Publication supports FLAC, M4A, MP3, OGG, and OPUS.
+The source-roots parent must already exist, be a directory, and not be a symlink. Every configured root must be an existing, non-symlink immediate child. Ingest and publication support `.flac`, `.mp3`, `.m4a`, `.ogg`, and `.opus`. M4A accepts AAC and ALAC; Ogg accepts Vorbis and Opus according to its probed codec. Mutagen handles all tag reads, writes, and verification: Vorbis/Opus Comments for FLAC/Ogg/Opus, ID3v2.4 for MP3, and MP4 atoms for M4A. Raw AAC and unsupported containers remain outside the publication contract.
 
 Matching gives priority to explicit MusicBrainz IDs, then scores normalized artist and release text plus duration when available. Ambiguous, stale, unsafe, unavailable, or below-threshold matches stay in review. Published audio keeps the source extension and stable artist, album, and track layout. A replacement is staged, checked by manifest and hash, then atomically exposed. The previous publication is retained until finalization, then marked superseded. Source files are never mutated, and `.nfo` files are never removed.
 
@@ -83,5 +83,4 @@ MUSIC_INGEST_ENABLE_LIVE_TESTS=1 uv run pytest -m live -q
 
 Do not enable live tests in Komodo health checks, CI defaults, or migration
 automation. Before deployment, run the offline test suite, Ruff, and ty. The
-stack image supplies `fpcalc`, `flac`, and `ffprobe`; it must not depend on host
-tools.
+stack image supplies `fpcalc`, `ffmpeg`, and `ffprobe`; FLAC structural sanitization is implemented in Python and decoder validation uses FFmpeg. It must not depend on host tools.

@@ -25,6 +25,8 @@ from music_ingest.inspectors._tool import ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
+from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
+from music_ingest.inspectors.mp3 import inspect_mp3
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
 from music_ingest.library.service import (
     append_metadata_revision,
@@ -135,9 +137,7 @@ class ProcessingConfig:
     incoming_root: Path
     staging_root: Path
     media_root: Path
-    flac_command: str = 'flac'
     ffmpeg_command: str = 'ffmpeg'
-    metaflac_command: str = 'metaflac'
     fpcalc_command: str = 'fpcalc'
     timeout_seconds: float = 10.0
     retry_delay: timedelta = timedelta(seconds=30)
@@ -462,13 +462,14 @@ class ProcessingWorker:
         if capability is None:
             self._quarantine(claimed, source, 'source has no declared media capability', now)
             return
-        is_flac = source_path.suffix.casefold() == '.flac'
+        suffix = source_path.suffix.casefold()
+        is_flac = suffix == '.flac'
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
         if is_flac:
             inspection = inspect_flac(
-                source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
+                source_path, ffmpeg_command=self._config.ffmpeg_command, timeout_seconds=self._timeout_seconds()
             )
             malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
             if malformed:
@@ -488,7 +489,26 @@ class ProcessingWorker:
                 fpcalc_command=self._config.fpcalc_command,
                 timeout_seconds=self._timeout_seconds(),
             )
-        tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
+        elif suffix == '.mp3':
+            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
+            if inspection.state is Mp3InspectionState.QUARANTINE:
+                self._invalid_audio(claimed, source, 'malformed MP3 container', now)
+                return
+            if inspection.state is Mp3InspectionState.INFRASTRUCTURE:
+                raise ProcessingInfrastructureError(f'mp3 inspection unavailable: {inspection.ffprobe.state}')
+            _ = fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
+        else:
+            validate_decoder(
+                source_path,
+                ffmpeg_command=self._config.ffmpeg_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
+        tags = read_tags(source_path)
         self._capture_observations(source, source_path, tags)
         original_tags = dict(tags)
         metadata = fallback_metadata(tags)
@@ -505,7 +525,7 @@ class ProcessingWorker:
         if is_flac:
             sanitized = sanitize_flac(
                 FlacSanitizationRequest(
-                    source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
+                    source_path, sanitized_path, staged_release, self._config.ffmpeg_command, self._timeout_seconds()
                 )
             )
             source.media_codec = 'FLAC'
@@ -514,18 +534,14 @@ class ProcessingWorker:
             source.media_channels = sanitized.streaminfo.channels
             source.media_bitrate = None
         else:
-            shutil.copy2(source_path, sanitized_path)
+            _ = shutil.copy2(source_path, sanitized_path)
             source.media_codec = capability.codec.upper()
         output_path = staged_release / output_name
-        if metadata is None and is_flac:
-            observed = write_observed_metadata(
-                sanitized_path, tags, self._config.metaflac_command, self._timeout_seconds()
-            )
+        if metadata is None:
+            observed = write_observed_metadata(sanitized_path, tags)
             _ = sanitized_path.rename(output_path)
             written = replace(observed, output_path=output_path)
         else:
-            if metadata is None:
-                raise MetadataWriteError('non-FLAC source requires canonical metadata')
             written = write_canonical_metadata(
                 MetadataWriteRequest(
                     sanitized_path,
@@ -534,8 +550,6 @@ class ProcessingWorker:
                     metadata,
                     field_policy(),
                     genre_policy(metadata.genres, load_runtime_settings(self._session)),
-                    self._config.metaflac_command,
-                    self._timeout_seconds(),
                 )
             )
             sanitized_path.unlink()
@@ -631,21 +645,34 @@ class ProcessingWorker:
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
-        inspection = inspect_flac(
-            source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
-        )
-        if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
-            self._invalid_audio(claimed, source, 'malformed FLAC container', now)
-            return
-        if inspection.flac_test.state is not ToolState.SUCCESS:
-            raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
+        suffix = source_path.suffix.casefold()
+        if suffix == '.flac':
+            inspection = inspect_flac(
+                source_path, ffmpeg_command=self._config.ffmpeg_command, timeout_seconds=self._timeout_seconds()
+            )
+            if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
+                self._invalid_audio(claimed, source, 'malformed FLAC container', now)
+                return
+            if inspection.flac_test.state is not ToolState.SUCCESS:
+                raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
+        elif suffix == '.mp3':
+            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
+            if inspection.state is not Mp3InspectionState.VALID:
+                raise ProcessingInfrastructureError(f'mp3 analysis unavailable: {inspection.ffprobe.state}')
+        else:
+            validate_decoder(
+                source_path,
+                ffmpeg_command=self._config.ffmpeg_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
+            inspection = None
         fingerprint = fingerprint_source(
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, inspection),
             fpcalc_command=self._config.fpcalc_command,
             timeout_seconds=self._timeout_seconds(),
         )
-        tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
+        tags = read_tags(source_path)
         record = ensure_source_record(self._session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
         provider_result = self._lookup_providers(
@@ -900,25 +927,24 @@ class ProcessingWorker:
         staged_release = Path(attempt.staging_directory)
         staged_release.parent.mkdir(parents=True, exist_ok=True)
         if destination_release.is_dir():
-            shutil.copytree(destination_release, staged_release)
+            _ = shutil.copytree(destination_release, staged_release)
         else:
             staged_release.mkdir()
-        sanitized_path = staged_release / '.sanitized.flac'
+        suffix = source_path.suffix.casefold()
+        sanitized_path = staged_release / ('.sanitized.flac' if suffix == '.flac' else f'.staged{suffix}')
         output_path = staged_release / output_name
-        output_path.unlink(missing_ok=True)
-        _ = sanitize_flac(
-            FlacSanitizationRequest(
-                source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
+        _ = output_path.unlink(missing_ok=True)
+        if suffix == '.flac':
+            _ = sanitize_flac(
+                FlacSanitizationRequest(
+                    source_path, sanitized_path, staged_release, self._config.ffmpeg_command, self._timeout_seconds()
+                )
             )
-        )
+        else:
+            _ = shutil.copy2(source_path, sanitized_path)
         metadata = fallback_metadata(tuple(final_tags.items()), CanonicalSource.REVIEWED_MANUAL)
         if metadata is None:
-            observed = write_observed_metadata(
-                sanitized_path,
-                tuple(final_tags.items()),
-                self._config.metaflac_command,
-                self._timeout_seconds(),
-            )
+            observed = write_observed_metadata(sanitized_path, tuple(final_tags.items()))
             _ = sanitized_path.rename(output_path)
             _ = replace(observed, output_path=output_path)
         else:
@@ -930,8 +956,6 @@ class ProcessingWorker:
                     metadata,
                     field_policy(),
                     genre_policy(metadata.genres, load_runtime_settings(self._session)),
-                    self._config.metaflac_command,
-                    self._timeout_seconds(),
                 )
             )
             sanitized_path.unlink()
