@@ -8,10 +8,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Final, final, override
+from uuid import uuid4
 
 from pydantic import TypeAdapter
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
 from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
@@ -19,14 +22,18 @@ from music_ingest.external.acoustid import AcoustIdV2Adapter
 from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.external.musicbrainz_genres import display_genre_name
 from music_ingest.inspectors._tool import ToolState
+from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
+from music_ingest.inspectors.media_capabilities import inspect_media_capability
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
 from music_ingest.library.service import (
     append_metadata_revision,
     attach_source,
     ensure_source_record,
+    library_record_detail,
     record_event,
     record_publication,
+    reevaluate_effective_source_decision,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
 from music_ingest.matching.providers import (
@@ -61,11 +68,15 @@ from music_ingest.matching.scoring import (
 from music_ingest.models import (
     ArtworkRecord,
     CandidateRecord,
+    EffectiveSourceDecisionRecord,
+    JobRecord,
+    LibraryPublicationRecord,
     LibraryRecord,
     ProviderAttemptRecord,
     RuntimeSettingRecord,
     SourceRecord,
     SourceTagRecord,
+    StorageConfigRecord,
 )
 from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.normalize.metadata import (
@@ -84,6 +95,14 @@ from music_ingest.processing.metadata import (
     publication_layout,
     read_tags,
 )
+from music_ingest.publication import (
+    PublicationAttemptRequest,
+    expose_attempt,
+    finalize_and_cleanup_attempt,
+    mark_staged,
+    reconcile_attempts,
+    reserve_attempt,
+)
 from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
@@ -92,6 +111,7 @@ from music_ingest.publication.service import (
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 from music_ingest.settings import load_runtime_settings
+from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 
 LOGGER = logging.getLogger(__name__)
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
@@ -115,6 +135,7 @@ class ProcessingConfig:
     staging_root: Path
     media_root: Path
     flac_command: str = 'flac'
+    ffmpeg_command: str = 'ffmpeg'
     metaflac_command: str = 'metaflac'
     fpcalc_command: str = 'fpcalc'
     timeout_seconds: float = 10.0
@@ -207,9 +228,13 @@ def _has_reviewer_decision(source: SourceRecord, state: str) -> bool:
 
 def musicbrainz_lookup_ids(record: LibraryRecord, source: SourceRecord) -> tuple[str | None, str | None]:
     recording_mbid = (
-        record.musicbrainz_recording_id
-        if _has_reviewer_decision(source, 'acoustid_confirmed')
-        else _acoustid_recording_mbid(source)
+        source.association_override.recording_mbid
+        if source.association_override is not None
+        else (
+            record.musicbrainz_recording_id
+            if _has_reviewer_decision(source, 'acoustid_confirmed')
+            else _acoustid_recording_mbid(source)
+        )
     )
     release_mbid = record.musicbrainz_release_id if _has_reviewer_decision(source, 'confirmed') else None
     return recording_mbid, release_mbid
@@ -255,7 +280,11 @@ class ProcessingWorker:
         self._lease_age: timedelta = lease_age or timedelta(minutes=5)
 
     def run_once(self) -> bool:
+        storage = self._session.get(StorageConfigRecord, 1)
+        if storage is not None:
+            self._config = replace(self._config, media_root=Path(storage.output_root))
         now = datetime.now(UTC)
+        reconcile_attempts(self._session, now)
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
         if claimed is None:
             return False
@@ -265,6 +294,9 @@ class ProcessingWorker:
             self._retry_claim(claimed, str(error), now)
         except ProcessingInfrastructureError as error:
             self._retry_claim(claimed, str(error), now)
+        except DecoderValidationError as error:
+            source = self._source(claimed)
+            self._quarantine(claimed, source, str(error), now)
         except (
             OSError,
             PublicationError,
@@ -284,6 +316,9 @@ class ProcessingWorker:
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+        if claimed.job.kind == 'selection_refresh':
+            self._process_selection_refresh(claimed, now)
+            return
         if claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}:
             self._process_analysis(claimed, now)
             return
@@ -295,37 +330,126 @@ class ProcessingWorker:
             return
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')
 
+    def _process_selection_refresh(self, claimed: ClaimedJob, now: datetime) -> None:
+        record_id = claimed.job.library_record_id
+        if record_id is None:
+            raise ProcessingInfrastructureError('selection refresh requires a library record target')
+        record = self._session.scalar(select(LibraryRecord).where(LibraryRecord.id == record_id).with_for_update())
+        if record is None:
+            raise ProcessingInfrastructureError('selection refresh library record is missing')
+        _ = self._session.scalar(
+            select(EffectiveSourceDecisionRecord)
+            .where(EffectiveSourceDecisionRecord.library_record_id == record.id)
+            .with_for_update()
+        )
+        _ = self._session.scalar(
+            select(LibraryPublicationRecord)
+            .where(LibraryPublicationRecord.library_record_id == record.id)
+            .where(LibraryPublicationRecord.state == 'current')
+            .with_for_update()
+        )
+        decision = reevaluate_effective_source_decision(self._session, record_id, now)
+        if decision.source_id is None:
+            record_event(
+                self._session,
+                record_id,
+                'selection_refresh_no_eligible_source',
+                'complete',
+                'no eligible source; current managed output was retained',
+                now,
+            )
+            return
+        record = library_record_detail(self._session, record_id)
+        revision = next(
+            (
+                item
+                for item in reversed(record.metadata_revisions)
+                if item.source_id == decision.source_id and item.layer == 'final'
+            ),
+            None,
+        )
+        if revision is None:
+            record_event(
+                self._session,
+                record_id,
+                'selection_refresh_no_final_revision',
+                'needs_review',
+                'selected source has no final metadata revision; current managed output was retained',
+                now,
+                decision.source_id,
+            )
+            return
+        source = next(item for item in record.sources if item.id == decision.source_id)
+        publication = next((item for item in record.publications if item.state == 'current'), None)
+        if publication is not None and (
+            publication.source_id == decision.source_id
+            and publication.metadata_revision_id == revision.id
+            and publication.path.casefold().endswith(Path(source.source_path).suffix.casefold())
+        ):
+            record_event(
+                self._session,
+                record_id,
+                'selection_refresh_no_change',
+                'complete',
+                'selected source and final metadata revision already match the current publication',
+                now,
+                decision.source_id,
+            )
+            return
+        refresh_publish_job = JobRecord(
+            id=f'selection-refresh-publish-{claimed.job.id}',
+            source_id=decision.source_id,
+            kind='final_publish',
+            metadata_revision_id=revision.id,
+            state='running',
+            created_at=now,
+        )
+        self._process_final_publish(ClaimedJob(refresh_publish_job, claimed.attempt), now)
+        record_event(
+            self._session,
+            record_id,
+            'selection_refresh_selected',
+            'publishing',
+            f'effective source {decision.source_id} selected for refresh',
+            now,
+            decision.source_id,
+        )
+
     def _process_initial(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
-        source_path = Path(source.source_path).resolve(strict=True)
-        valid_source = source_path.suffix.casefold() == '.flac' and source_path.is_relative_to(
-            self._config.incoming_root.resolve()
-        )
-        if not valid_source:
-            self._quarantine(claimed, source, 'source path is outside incoming FLAC boundary', now)
+        source_path = self._owned_source_path(claimed, source, now)
+        if source_path is None:
             return
+        capability = inspect_media_capability(source_path, timeout_seconds=self._timeout_seconds()).capability
+        if capability is None:
+            self._quarantine(claimed, source, 'source has no declared media capability', now)
+            return
+        is_flac = source_path.suffix.casefold() == '.flac'
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
-        inspection = inspect_flac(
-            source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
-        )
-        malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
-        if malformed:
-            self._invalid_audio(claimed, source, 'malformed FLAC container', now)
-            return
-        has_repairable_wrapper = any(finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings)
-        if inspection.flac_test.state is ToolState.FAILED and not has_repairable_wrapper:
-            self._invalid_audio(claimed, source, 'FLAC decoder rejected audio', now)
-            return
-        if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
-            raise ProcessingInfrastructureError(f'flac inspection unavailable: {inspection.flac_test.state}')
-        _ = fingerprint_source(
-            self._session,
-            FingerprintRequest(SourceId(source.id), source_path, inspection),
-            fpcalc_command=self._config.fpcalc_command,
-            timeout_seconds=self._timeout_seconds(),
-        )
+        if is_flac:
+            inspection = inspect_flac(
+                source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
+            )
+            malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
+            if malformed:
+                self._invalid_audio(claimed, source, 'malformed FLAC container', now)
+                return
+            has_repairable_wrapper = any(
+                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
+            )
+            if inspection.flac_test.state is ToolState.FAILED and not has_repairable_wrapper:
+                self._invalid_audio(claimed, source, 'FLAC decoder rejected audio', now)
+                return
+            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
+                raise ProcessingInfrastructureError(f'flac inspection unavailable: {inspection.flac_test.state}')
+            _ = fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
         tags = read_tags(source_path, self._config.metaflac_command, self._timeout_seconds())
         self._capture_observations(source, source_path, tags)
         original_tags = dict(tags)
@@ -333,26 +457,37 @@ class ProcessingWorker:
         record = ensure_source_record(self._session, source, now)
         _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
         staged_release = self._staging_directory(claimed.job.id)
-        sanitized_path = staged_release / '.sanitized.flac'
+        sanitized_path = staged_release / ('.sanitized.flac' if is_flac else f'.staged{source_path.suffix}')
         relative_directory, output_name = publication_layout(tags, source_path.name)
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
         if relative_directory == 'Unsorted' and current_publication is None:
             output_name = next_unsorted_filename(
                 self._config.media_root / relative_directory, source_path.suffix.casefold()
             )
-        _ = sanitize_flac(
-            FlacSanitizationRequest(
-                source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
+        if is_flac:
+            sanitized = sanitize_flac(
+                FlacSanitizationRequest(
+                    source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
+                )
             )
-        )
+            source.media_codec = 'FLAC'
+            source.media_bit_depth = sanitized.streaminfo.bits_per_sample
+            source.media_sample_rate = sanitized.streaminfo.sample_rate
+            source.media_channels = sanitized.streaminfo.channels
+            source.media_bitrate = None
+        else:
+            shutil.copy2(source_path, sanitized_path)
+            source.media_codec = capability.codec.upper()
         output_path = staged_release / output_name
-        if metadata is None:
+        if metadata is None and is_flac:
             observed = write_observed_metadata(
                 sanitized_path, tags, self._config.metaflac_command, self._timeout_seconds()
             )
             _ = sanitized_path.rename(output_path)
             written = replace(observed, output_path=output_path)
         else:
+            if metadata is None:
+                raise MetadataWriteError('non-FLAC source requires canonical metadata')
             written = write_canonical_metadata(
                 MetadataWriteRequest(
                     sanitized_path,
@@ -367,6 +502,11 @@ class ProcessingWorker:
             )
             sanitized_path.unlink()
         self._stage_artwork(source_path, staged_release)
+        validate_decoder(
+            output_path,
+            ffmpeg_command=self._config.ffmpeg_command,
+            timeout_seconds=self._timeout_seconds(),
+        )
         self._session.refresh(source)
         if source.intake_state == 'replaced':
             record_event(
@@ -393,6 +533,7 @@ class ProcessingWorker:
             destination_release=destination_release,
             replace_existing=current_publication is not None,
             destination_audio_name=None if current_publication is None else Path(current_publication.path).name,
+            sources=(source,),
         )
         result = (
             publish_release(request)
@@ -407,7 +548,7 @@ class ProcessingWorker:
             audio_path = (
                 Path(current_publication.path)
                 if current_publication is not None
-                else next(result.published_release.glob('*.flac'))
+                else next(result.published_release.glob(f'*{source_path.suffix}'))
             )
         _ = record_publication(
             self._session,
@@ -419,6 +560,7 @@ class ProcessingWorker:
             now,
         )
         source.intake_state = 'present'
+        _ = reevaluate_effective_source_decision(self._session, record.id, now)
         configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
         providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
         record_event(
@@ -448,7 +590,9 @@ class ProcessingWorker:
 
     def _process_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
-        source_path = Path(source.source_path).resolve(strict=True)
+        source_path = self._owned_source_path(claimed, source, now)
+        if source_path is None:
+            return
         inspection = inspect_flac(
             source_path, flac_command=self._config.flac_command, timeout_seconds=self._timeout_seconds()
         )
@@ -525,6 +669,43 @@ class ProcessingWorker:
                 source.id,
             )
             return
+        recording_mbid = match_result.recording_score.candidate_mbid
+        match recording_mbid, provider_result.musicbrainz:
+            case str() as verified_recording_mbid, MusicBrainzMatch(candidate=candidate) if (
+                verified_recording_mbid in candidate.recording_mbids
+            ):
+                pass
+            case _:
+                record_event(
+                    self._session,
+                    record.id,
+                    'analysis_ready_for_review',
+                    'needs_review',
+                    'automatic match has no verified recording identity',
+                    now,
+                    source.id,
+                )
+                return
+        associated = RecordingAssociationService(self._session).associate_automatic(
+            AutomaticAssociationRequest(
+                source.id,
+                verified_recording_mbid,
+                match_result.recording_score.score,
+                self._confidence_threshold(),
+                json.dumps(
+                    {
+                        'release_mbid': match_result.selected_release_mbid,
+                        'recording_mbid': verified_recording_mbid,
+                        'score': match_result.recording_score.score,
+                    },
+                    sort_keys=True,
+                ),
+                now,
+            )
+        )
+        if associated is None:
+            return
+        record = library_record_detail(self._session, associated.library_record_id)
         analyzed_tags = _analyzed_tags(provider_result, match_result)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
         if not analyzed_tags:
@@ -545,8 +726,8 @@ class ProcessingWorker:
         final_revision = append_metadata_revision(
             self._session, record.id, source.id, 'final', final_tags, 'provider', now
         )
-        _apply_match_identity(record, match_result)
         _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+        _ = JobRepository(self._session).enqueue_selection_refresh(record.id, now)
         record_event(
             self._session,
             record.id,
@@ -560,6 +741,18 @@ class ProcessingWorker:
     def _process_final_publish(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
         record = ensure_source_record(self._session, source, now)
+        decision = reevaluate_effective_source_decision(self._session, record.id, now)
+        if decision.source_id != source.id:
+            record_event(
+                self._session,
+                record.id,
+                'final_publish_stale_source',
+                'complete',
+                'final publication source is no longer the effective source',
+                now,
+                source.id,
+            )
+            return
         revision = next(
             (
                 item
@@ -572,21 +765,62 @@ class ProcessingWorker:
         if revision is None:
             raise ValueError('final metadata revision is missing')
         final_tags = _TAGS_ADAPTER.validate_json(revision.tags_json)
-        source_path = Path(source.source_path).resolve(strict=True)
-        staged_release = self._staging_directory(claimed.job.id)
-        sanitized_path = staged_release / '.sanitized.flac'
+        source_path = self._owned_source_path(claimed, source, now)
+        if source_path is None:
+            return
         relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
         publication = next((item for item in record.publications if item.state == 'current'), None)
+        if publication is not None and (
+            publication.source_id == source.id
+            and publication.metadata_revision_id == revision.id
+            and Path(publication.path).suffix.casefold() == source_path.suffix.casefold()
+        ):
+            record_event(
+                self._session,
+                record.id,
+                'final_publish_no_change',
+                'complete',
+                'source, final metadata revision, and output extension already match the current publication',
+                now,
+                source.id,
+            )
+            return
         if relative_directory == 'Unsorted' and publication is None:
             output_name = next_unsorted_filename(
                 self._config.media_root / relative_directory, source_path.suffix.casefold()
             )
+        destination_release = (
+            Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
+        )
+        attempt_token = uuid4().hex
+        attempt = reserve_attempt(
+            self._session,
+            PublicationAttemptRequest(
+                f'publication-attempt-{attempt_token}',
+                record.id,
+                source.id,
+                revision.id,
+                destination_release,
+                output_name,
+                self._config.staging_root / 'publication-attempts' / attempt_token,
+                self._config.staging_root / 'publication-backups' / attempt_token,
+                now,
+            ),
+        )
+        staged_release = Path(attempt.staging_directory)
+        staged_release.parent.mkdir(parents=True, exist_ok=True)
+        if destination_release.is_dir():
+            shutil.copytree(destination_release, staged_release)
+        else:
+            staged_release.mkdir()
+        sanitized_path = staged_release / '.sanitized.flac'
+        output_path = staged_release / output_name
+        output_path.unlink(missing_ok=True)
         _ = sanitize_flac(
             FlacSanitizationRequest(
                 source_path, sanitized_path, staged_release, self._config.flac_command, self._timeout_seconds()
             )
         )
-        output_path = staged_release / output_name
         metadata = fallback_metadata(tuple(final_tags.items()), CanonicalSource.REVIEWED_MANUAL)
         if metadata is None:
             observed = write_observed_metadata(
@@ -612,40 +846,12 @@ class ProcessingWorker:
             )
             sanitized_path.unlink()
         provider_artwork_staged = self._stage_artwork_for_release(source_path, staged_release, final_tags)
-        destination_release = (
-            Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
-        )
-        request = PublicationRequest(
-            staged_release,
-            self._config.staging_root,
-            self._config.media_root,
-            (source_path,),
-            require_canonical_tags=False,
-            destination_release=destination_release,
-            replace_existing=publication is not None,
-            destination_audio_name=None if publication is None else Path(publication.path).name,
-            replace_artwork=provider_artwork_staged,
-        )
-        published = (
-            publish_release(request)
-            if publication is None
-            else replace_published_audio(request, Path(publication.path))
-        )
-        audio_path = published.published_audio
-        if audio_path is None:
-            audio_path = (
-                Path(publication.path) if publication is not None else next(published.published_release.glob('*.flac'))
-            )
-        _ = record_publication(
-            self._session,
-            record.id,
-            source.id,
-            audio_path,
-            file_hash(audio_path),
-            revision.id,
-            now,
-        )
+        _ = provider_artwork_staged
+        mark_staged(self._session, attempt, now)
+        expose_attempt(self._session, attempt, now)
+        _ = finalize_and_cleanup_attempt(self._session, attempt, now)
         source.intake_state = 'present'
+        _ = reevaluate_effective_source_decision(self._session, record.id, now)
         record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
 
     def _lookup_providers(
@@ -809,6 +1015,13 @@ class ProcessingWorker:
             raise ValueError('processing job source is missing')
         return source
 
+    def _owned_source_path(self, claimed: ClaimedJob, source: SourceRecord, now: datetime) -> Path | None:
+        try:
+            return resolve_owned_source(source)
+        except SourceBoundaryError as error:
+            self._quarantine(claimed, source, f'root boundary: {error}', now)
+            return None
+
     def _changed(self, source: SourceRecord, path: Path) -> bool:
         stat = path.stat()
         return (stat.st_dev, stat.st_ino, stat.st_size, file_hash(path)) != (
@@ -920,6 +1133,18 @@ class ProcessingWorker:
             else self._config.max_attempts,
             reason,
         )
+        if claimed.job.library_record_id is not None:
+            if self._session.get(LibraryRecord, claimed.job.library_record_id) is None:
+                return
+            record_event(
+                self._session,
+                claimed.job.library_record_id,
+                'selection_refresh_retry',
+                'retrying',
+                reason,
+                now,
+            )
+            return
         source = self._session.get(SourceRecord, claimed.job.source_id)
         if source is None:
             return
@@ -942,6 +1167,7 @@ class ProcessingWorker:
             self._session,
             IntakeRequest(
                 source_path=path,
+                source_root_id=source.source_root_id,
                 origin=origin,
                 duration_seconds=source.duration_seconds,
                 tag_observations=(),
@@ -969,12 +1195,15 @@ class ProcessingWorker:
         source.intake_state = 'quarantined'
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
-        record_event(self._session, record.id, 'processing_quarantined', 'quarantined', reason, now, source.id)
+        _ = reevaluate_effective_source_decision(self._session, record.id, now)
+        event_type = 'root_boundary' if reason.startswith('root boundary:') else 'processing_quarantined'
+        record_event(self._session, record.id, event_type, 'quarantined', reason, now, source.id)
         JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
 
     def _invalid_audio(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
         source.intake_state = 'invalid_audio'
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
+        _ = reevaluate_effective_source_decision(self._session, record.id, now)
         record_event(self._session, record.id, 'invalid_audio', 'invalid_audio', reason, now, source.id)
         JobRepository(self._session).quarantine(claimed, datetime.now(UTC))

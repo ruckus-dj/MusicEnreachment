@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -15,6 +14,11 @@ from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
 from music_ingest.api.lidarr_intake import LidarrIntakeError, dispatch_lidarr_event, parse_lidarr_event
+from music_ingest.association import (
+    ManualAssociationRequest,
+    RecordingAssociationService,
+    RecordingAssociationUnavailable,
+)
 from music_ingest.dto import (
     CandidateEvidencePayload,
     CandidateSelection,
@@ -23,6 +27,7 @@ from music_ingest.dto import (
     GenreCatalogItemResponse,
     GenreCatalogResponse,
     LibraryIdentityUpdate,
+    ManualSourceSelection,
     MatchingSettings,
     MetadataUpdate,
     MusicBrainzOverride,
@@ -33,6 +38,17 @@ from music_ingest.dto import (
     RuntimeSettingsRequest,
     RuntimeSettingsResponse,
     SourceRecoveryResponse,
+    SourceRootCandidateListResponse,
+    SourceRootCandidateResponse,
+    SourceRootCreateRequest,
+    SourceRootListResponse,
+    SourceRootResponse,
+    SourceRootUpdateRequest,
+    StorageBrowserItemResponse,
+    StorageBrowserResponse,
+    StorageConfigResponse,
+    StorageOutputPreviewResponse,
+    StoragePathRequest,
 )
 from music_ingest.external.musicbrainz import MusicBrainzTransport, MusicBrainzV2Adapter
 from music_ingest.external.musicbrainz_genres import (
@@ -48,16 +64,39 @@ from music_ingest.library.service import (
     library_record_detail,
     library_records,
     record_event,
+    reevaluate_effective_source_decision,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
 from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
-from music_ingest.models import GenreCatalogRecord, JobRecord, LibraryRecord, ReviewDecisionRecord
+from music_ingest.models import (
+    CandidateRecord,
+    GenreCatalogRecord,
+    JobRecord,
+    LibraryRecord,
+    ProviderAttemptRecord,
+    ReviewDecisionRecord,
+    SourceRecord,
+    SourceRootRecord,
+    SourceTagRecord,
+)
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.reconciliation import ScanResult, reconcile_incoming
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
+from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
+from music_ingest.source_roots import (
+    SourceRootConflictError,
+    SourceRootService,
+    SourceRootValidationError,
+)
+from music_ingest.storage import StorageService, StorageValidationError
 from music_ingest.ui.page import REVIEW_PAGE
+
+_E2E_RECORD_ID = 'e2e-record'
+_E2E_SOURCE_IDS = ('e2e-source-a', 'e2e-source-b')
+_E2E_RECORDING_MBID = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+_E2E_CORRECTION_MBID = '11111111-1111-4111-8111-111111111111'
 
 
 class SessionFactory(Protocol):
@@ -157,26 +196,19 @@ def create_app(
     session_factory: SessionFactory,
     lifespan: Lifespan[FastAPI] | None = None,
     incoming_root: Path = Path('/data/incoming'),
+    source_roots_parent: Path | None = None,
     media_root: Path | None = None,
-    api_token: str | None = None,
+    e2e_seed_enabled: bool = False,
     musicbrainz_provider: MusicBrainzProvider | None = None,
     musicbrainz_transport: MusicBrainzTransport | None = None,
     genre_transport: GenreTransport | None = None,
+    storage_browse_roots: tuple[Path, ...] | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
+    app.state.e2e_seed_enabled = e2e_seed_enabled
     assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
     if assets_root.is_dir():
         app.mount('/assets', StaticFiles(directory=assets_root), name='ui-assets')
-
-    @app.middleware('http')
-    async def authenticate_api(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        if api_token is None or not request.url.path.startswith('/api/'):
-            return await call_next(request)
-        supplied = request.headers.get('X-API-Key')
-        authorization = request.headers.get('Authorization')
-        if supplied != api_token and authorization != f'Bearer {api_token}':
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={'detail': 'authentication required'})
-        return await call_next(request)
 
     @app.get('/healthz')
     def healthz() -> dict[str, str]:
@@ -199,6 +231,89 @@ def create_app(
     def favicon() -> Response:
         return Response(status_code=204)
 
+    @app.post('/api/e2e/seed')
+    def seed_e2e_fixtures() -> JSONResponse:
+        if not app.state.e2e_seed_enabled:
+            raise HTTPException(status_code=404, detail='not found')
+        now = datetime.now(UTC)
+        with session_factory() as session:
+            root = session.scalar(select(SourceRootRecord).where(SourceRootRecord.id == 'legacy'))
+            if root is None:
+                root = SourceRootRecord(
+                    id='legacy',
+                    display_name='legacy',
+                    canonical_path=str(incoming_root),
+                    enabled=True,
+                    scan_state='never_scanned',
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(root)
+            record = session.get(LibraryRecord, _E2E_RECORD_ID)
+            if record is None:
+                record = LibraryRecord(id=_E2E_RECORD_ID, created_at=now, updated_at=now, match_state='matched')
+                session.add(record)
+            for index, source_id in enumerate(_E2E_SOURCE_IDS):
+                source = session.get(SourceRecord, source_id)
+                if source is None:
+                    source = SourceRecord(
+                        id=source_id,
+                        source_path=f'/data/sources/legacy/e2e/{source_id}.flac',
+                        device=1,
+                        inode=index + 1,
+                        size_bytes=1,
+                        sha256=f'{index + 1:064x}',
+                        duration_seconds=180,
+                        origin='e2e',
+                        intake_state='present',
+                        source_root=root,
+                        library_record=record,
+                        tag_observations=[
+                            SourceTagRecord(format_name='e2e', tag_name='ARTIST', value='Fixture Artist'),
+                            SourceTagRecord(format_name='e2e', tag_name='ALBUM', value='Fixture Album'),
+                            SourceTagRecord(format_name='e2e', tag_name='TITLE', value='Fixture Track'),
+                            SourceTagRecord(format_name='e2e', tag_name='TRACKNUMBER', value='1'),
+                        ],
+                        provider_attempts=[
+                            ProviderAttemptRecord(
+                                provider_name='musicbrainz',
+                                outcome='musicbrainzmatch',
+                                snapshot_sha256='e2e-provider-snapshot',
+                                snapshot='e2e fixture provider evidence',
+                            )
+                        ],
+                        candidates=[
+                            CandidateRecord(
+                                candidate_key='e2e-release',
+                                evidence=json.dumps(
+                                    {
+                                        'provider': 'musicbrainz',
+                                        'artist': 'Fixture Artist',
+                                        'release': 'Fixture Album',
+                                        'score': 1.0,
+                                        'tags': {
+                                            'MUSICBRAINZ_ALBUMID': '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c',
+                                            'MUSICBRAINZ_TRACKID': _E2E_RECORDING_MBID,
+                                        },
+                                    },
+                                    sort_keys=True,
+                                ),
+                            )
+                        ],
+                    )
+                    session.add(source)
+            record.musicbrainz_recording_id = _E2E_RECORDING_MBID
+            record.match_state = 'matched'
+            session.commit()
+        return JSONResponse(
+            content={
+                'record_id': _E2E_RECORD_ID,
+                'source_ids': list(_E2E_SOURCE_IDS),
+                'recording_mbid': _E2E_RECORDING_MBID,
+                'correction_mbid': _E2E_CORRECTION_MBID,
+            }
+        )
+
     @app.post('/api/intake/lidarr', status_code=status.HTTP_202_ACCEPTED)
     async def lidarr_intake(request: Request) -> Response:
         raw_payload = await request.body()
@@ -218,7 +333,7 @@ def create_app(
     @app.post('/api/reconciliation/scan', response_model=ScanResult)
     def reconciliation_scan() -> ScanResult:
         with session_factory() as session:
-            result = reconcile_incoming(session, incoming_root)
+            result = reconcile_incoming(session)
             session.commit()
             return result
 
@@ -232,6 +347,7 @@ def create_app(
                 for source in record.sources:
                     if source.disappeared_at is not None:
                         continue
+                    _ = require_owned_source(session, source.id)
                     if jobs.enqueue(source.id, 'filesystem_scan', now) is not None:
                         queued += 1
             session.commit()
@@ -266,10 +382,11 @@ def create_app(
     def queue_source_recovery(
         session: Session, record: LibraryRecord, source: SourceRecordView, now: datetime
     ) -> str | None:
-        source_path = Path(source.source_path)
-        if source.disappeared_at is not None or not source_path.is_file():
+        _ = require_owned_source(session, source.id)
+        if source.disappeared_at is not None:
             return None
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
+
         final_revision = next(
             (
                 item
@@ -319,6 +436,16 @@ def create_app(
         )
         return kind
 
+    def require_owned_source(session: Session, source_id: str) -> SourceRecord:
+        persisted_source = session.get(SourceRecord, source_id)
+        if persisted_source is None:
+            raise HTTPException(status_code=404, detail='source not found')
+        try:
+            _ = resolve_owned_source(persisted_source)
+        except SourceBoundaryError as error:
+            raise HTTPException(status_code=409, detail=f'source root boundary: {error}') from error
+        return persisted_source
+
     def queue_record_recovery(session: Session, record: LibraryRecord, now: datetime) -> tuple[int, int]:
         queued = 0
         conflicts = 0
@@ -354,6 +481,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
                 conflict = destination_conflict(session, record, source)
                 if conflict is not None:
                     raise HTTPException(status_code=409, detail='destination conflict must be replaced first')
@@ -378,6 +506,7 @@ def create_app(
                         not request.retry_all and not _needs_analysis_retry(source)
                     ):
                         continue
+                    _ = require_owned_source(session, source.id)
                     provider_queued = (
                         jobs.requeue_provider(source.id, request.provider, now)
                         if request.provider is not None
@@ -591,6 +720,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
                 conflict = destination_conflict(session, record, source)
                 if conflict is None:
                     raise HTTPException(status_code=404, detail='destination conflict not found')
@@ -646,6 +776,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
                 conflict = destination_conflict(session, record, source)
                 if conflict is None:
                     raise HTTPException(status_code=404, detail='destination conflict not found')
@@ -702,6 +833,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
                 if source.disappeared_at is not None:
                     return ProviderRetryResponse(source_id=source.id, queued=False)
                 now = datetime.now(UTC)
@@ -841,6 +973,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
                 candidate = next(
                     (item for item in reversed(source.candidates) if item.candidate_key == request.candidate_key),
                     None,
@@ -862,6 +995,9 @@ def create_app(
                             rationale=f'AcousticID recording {candidate.candidate_key} selected by reviewer',
                         )
                     )
+                    session.flush()
+                    session.expire_all()
+                    _ = reevaluate_effective_source_decision(session, record.id, now)
                     record_event(
                         session,
                         record.id,
@@ -894,7 +1030,10 @@ def create_app(
                         rationale=f'provider candidate {candidate.candidate_key} selected by reviewer',
                     )
                 )
-                queued = JobRepository(session).enqueue(source.id, 'final_publish', now, final.id)
+                session.flush()
+                session.expire_all()
+                _ = reevaluate_effective_source_decision(session, record.id, now)
+                queued = JobRepository(session).enqueue_selection_refresh(record.id, now)
                 record_event(
                     session,
                     record.id,
@@ -915,6 +1054,28 @@ def create_app(
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
 
+    @app.post('/api/library/records/{record_id}/effective-source')
+    def select_effective_source(record_id: str, request: ManualSourceSelection) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                decision = reevaluate_effective_source_decision(
+                    session, record.id, datetime.now(UTC), manual_source_id=request.source_id
+                )
+                _ = JobRepository(session).enqueue_selection_refresh(record.id, datetime.now(UTC))
+                session.commit()
+                return JSONResponse(
+                    content={
+                        'source_id': decision.source_id,
+                        'baseline_source_id': decision.baseline_source_id,
+                        'policy_version': decision.policy_version,
+                    }
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record not found') from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @app.post('/api/library/records/{record_id}/sources/{source_id}/musicbrainz/override')
     def override_musicbrainz_release(record_id: str, source_id: str, request: MusicBrainzOverride) -> JSONResponse:
         try:
@@ -923,55 +1084,28 @@ def create_app(
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
-                if (request.release_mbid is None) == (request.recording_mbid is None):
-                    raise HTTPException(status_code=422, detail='provide exactly one release_mbid or recording_mbid')
+                _ = require_owned_source(session, source.id)
                 now = datetime.now(UTC)
-                if request.recording_mbid is not None:
-                    recording_mbid = request.recording_mbid.lower()
-                    record.musicbrainz_recording_id = recording_mbid
-                    record.musicbrainz_release_id = None
-                    decision_state = 'acoustid_confirmed'
-                    decision_reason = f'MusicBrainz recording {request.recording_mbid} explicitly selected by reviewer'
-                    response = {
-                        'recording_mbid': recording_mbid,
-                        'release_mbid': None,
-                    }
-                else:
-                    release_mbid = request.release_mbid
-                    if release_mbid is None:
-                        raise HTTPException(
-                            status_code=422, detail='provide exactly one release_mbid or recording_mbid'
-                        )
-                    release_mbid = release_mbid.lower()
-                    record.musicbrainz_recording_id = None
-                    record.musicbrainz_release_id = release_mbid
-                    decision_state = 'confirmed'
-                    decision_reason = f'MusicBrainz release {request.release_mbid} explicitly selected by reviewer'
-                    response = {
-                        'recording_mbid': record.musicbrainz_recording_id,
-                        'release_mbid': release_mbid,
-                    }
-                session.add(
-                    ReviewDecisionRecord(
-                        source_id=source.id,
-                        state=decision_state,
-                        rationale=decision_reason,
+                provider = musicbrainz_provider
+                if provider is None and musicbrainz_transport is not None:
+                    provider = MusicBrainzV2Adapter(
+                        musicbrainz_transport, load_runtime_settings(session).musicbrainz_user_agent
+                    )
+                result = RecordingAssociationService(session, provider).associate_manual(
+                    ManualAssociationRequest(
+                        source.id,
+                        request.recording_mbid.lower(),
+                        now,
                     )
                 )
-                queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
-                record_event(
-                    session,
-                    record.id,
-                    'musicbrainz_override_queued',
-                    'analyzing',
-                    decision_reason,
-                    now,
-                    source.id,
-                )
                 session.commit()
-                return JSONResponse(content={**response, 'queued': queued})
+                return JSONResponse(
+                    content={'recording_mbid': request.recording_mbid.lower(), 'record_id': result.library_record_id}
+                )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
+        except RecordingAssociationUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.put('/api/library/records/{record_id}/identity')
     def update_library_identity(record_id: str, request: LibraryIdentityUpdate) -> JSONResponse:
@@ -1004,6 +1138,7 @@ def create_app(
                 source = next((item for item in record.sources if item.id == request.source_id), None)
                 if source is None:
                     raise HTTPException(status_code=404, detail='source not found')
+                _ = require_owned_source(session, source.id)
                 now = datetime.now(UTC)
                 created = append_metadata_revision(
                     session,
@@ -1014,7 +1149,7 @@ def create_app(
                     'manual',
                     now,
                 )
-                queued = JobRepository(session).enqueue(source.id, 'final_publish', now, created.id)
+                queued = JobRepository(session).enqueue_selection_refresh(record.id, now)
                 record_event(
                     session,
                     record.id,
@@ -1035,6 +1170,137 @@ def create_app(
     def runtime_settings() -> RuntimeSettingsResponse:
         with session_factory() as session:
             return _settings_response(load_runtime_settings(session))
+
+    def source_root_service(session: Session) -> SourceRootService:
+        return SourceRootService(session, source_roots_parent if media_root is None else None)
+
+    def storage_service(session: Session) -> StorageService:
+        if media_root is None:
+            raise HTTPException(status_code=503, detail='storage administration is not configured')
+        browse_roots = storage_browse_roots or tuple(
+            root for root in (source_roots_parent, incoming_root.parent, media_root.parent) if root is not None
+        )
+        return StorageService(session, browse_roots, media_root)
+
+    def source_root_response(root: SourceRootRecord) -> SourceRootResponse:
+        return SourceRootResponse(
+            id=root.id,
+            display_name=root.display_name,
+            canonical_path=root.canonical_path,
+            enabled=root.enabled,
+            scan_state=root.scan_state,
+        )
+
+    @app.get('/api/settings/source-roots', response_model=SourceRootListResponse)
+    def list_source_roots() -> SourceRootListResponse:
+        try:
+            with session_factory() as session:
+                service = source_root_service(session)
+                return SourceRootListResponse(items=tuple(source_root_response(root) for root in service.list()))
+        except SourceRootValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get('/api/settings/source-roots/candidates', response_model=SourceRootCandidateListResponse)
+    def list_source_root_candidates() -> SourceRootCandidateListResponse:
+        try:
+            with session_factory() as session:
+                candidates = source_root_service(session).candidates()
+                return SourceRootCandidateListResponse(
+                    items=tuple(
+                        SourceRootCandidateResponse(name=candidate.name, canonical_path=str(candidate))
+                        for candidate in candidates
+                    )
+                )
+        except SourceRootValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get('/api/settings/storage/browser', response_model=StorageBrowserResponse)
+    def browse_storage(path: str | None = None) -> StorageBrowserResponse:
+        try:
+            with session_factory() as session:
+                browser = storage_service(session).browse(path)
+                return StorageBrowserResponse(
+                    path=str(browser.path),
+                    parent_path=None if browser.parent_path is None else str(browser.parent_path),
+                    items=tuple(StorageBrowserItemResponse(name=item.name, path=str(item)) for item in browser.items),
+                )
+        except StorageValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get('/api/settings/storage', response_model=StorageConfigResponse)
+    def storage_config() -> StorageConfigResponse:
+        with session_factory() as session:
+            config = storage_service(session).config()
+            session.commit()
+            return StorageConfigResponse(
+                output_root=config.output_root,
+                state=config.state,
+                generation=config.generation,
+            )
+
+    @app.post('/api/settings/storage/output/preview', response_model=StorageOutputPreviewResponse)
+    def preview_storage_output(request: StoragePathRequest) -> StorageOutputPreviewResponse:
+        try:
+            with session_factory() as session:
+                preview = storage_service(session).preview_output(request.path)
+                return StorageOutputPreviewResponse(
+                    output_root=str(preview.output_root),
+                    same_filesystem=preview.same_filesystem,
+                    file_count=preview.file_count,
+                )
+        except StorageValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.put('/api/settings/storage/output', response_model=StorageConfigResponse)
+    def move_storage_output(request: StoragePathRequest) -> StorageConfigResponse:
+        try:
+            with session_factory() as session:
+                config = storage_service(session).move_output(request.path)
+                session.commit()
+                return StorageConfigResponse(
+                    output_root=config.output_root,
+                    state=config.state,
+                    generation=config.generation,
+                )
+        except StorageValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post('/api/settings/source-roots', response_model=SourceRootResponse, status_code=status.HTTP_201_CREATED)
+    def create_source_root(request: SourceRootCreateRequest) -> SourceRootResponse:
+        try:
+            with session_factory() as session:
+                service = source_root_service(session)
+                if media_root is not None:
+                    _ = storage_service(session).validate_input(request.path)
+                root = service.create(request.path, request.display_name)
+                session.commit()
+                return source_root_response(root)
+        except SourceRootValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except SourceRootConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except StorageValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.delete('/api/settings/source-roots/{root_id}', status_code=status.HTTP_204_NO_CONTENT)
+    def delete_source_root(root_id: str) -> Response:
+        with session_factory() as session:
+            if not source_root_service(session).remove(root_id):
+                raise HTTPException(status_code=404, detail='source root not found')
+            session.commit()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.put('/api/settings/source-roots/{root_id}', response_model=SourceRootResponse)
+    def update_source_root(root_id: str, request: SourceRootUpdateRequest) -> SourceRootResponse:
+        try:
+            with session_factory() as session:
+                root = source_root_service(session).update(root_id, request.display_name, request.enabled)
+                if root is None:
+                    raise HTTPException(status_code=404, detail='source root not found')
+                session.commit()
+                return source_root_response(root)
+        except SourceRootValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.put('/api/settings', response_model=RuntimeSettingsResponse)
     def update_runtime_settings(request: RuntimeSettingsRequest) -> RuntimeSettingsResponse:

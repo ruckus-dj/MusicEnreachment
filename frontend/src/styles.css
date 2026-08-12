@@ -1446,6 +1446,7 @@ h2 {
   font-size: 12px;
 }
 .settings-card input:not([type="checkbox"]),
+.settings-card select,
 .settings-card textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -1504,6 +1505,15 @@ h2 {
 .genre-catalog-toolbar .secondary {
   white-space: nowrap;
 }
+.source-root-form {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.source-root-form label {
+  min-width: 0;
+}
 .genre-catalog {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -1546,6 +1556,9 @@ h2 {
   .genre-catalog-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
+  .source-root-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .genre-catalog-toolbar .secondary {
     width: 100%;
   }
@@ -1572,5 +1585,169 @@ h2 {
   .settings-screen .primary,
   .settings-screen .secondary {
     min-height: 44px;
+  }
+}
+.source-root-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+  max-height: 360px;
+  margin-top: 16px;
+  overflow: auto;
+  padding-right: 4px;
+  padding-left: 0;
+  list-style: none;
+}
+.source-root-list .genre-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.source-root-list .genre-chip small {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.storage-root-row,
+.folder-picker header,
+.folder-picker-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.storage-root-row small,
+.folder-choice strong,
+.folder-picker-path,
+.folder-picker-list small {
+  overflow-wrap: anywhere;
+  font-family: "DM Mono", monospace;
+}
+.storage-migration-notice {
+  margin-top: 16px;
+  border: 1px solid var(--accent);
+  background: var(--attention);
+  padding: 16px;
+}
+.storage-migration-notice p {
+  margin: 8px 0 12px;
+  color: var(--muted);
+}
+.folder-choice {
+  display: grid;
+  gap: 6px;
+  align-content: end;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.folder-choice strong {
+  min-block-size: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tight);
+  background: var(--paper);
+  padding: 10px 12px;
+  color: var(--ink);
+  font-weight: 400;
+}
+.folder-picker-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--nav) 48%, transparent);
+  padding: 24px;
+}
+.folder-picker {
+  display: grid;
+  gap: 16px;
+  inline-size: min(100%, 760px);
+  max-block-size: min(80dvb, 720px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tight);
+  background: var(--paper);
+  box-shadow: 0 20px 48px color-mix(in srgb, var(--nav) 25%, transparent);
+  padding: 24px;
+}
+.folder-picker h3 {
+  margin: 0;
+  font:
+    600 24px "Newsreader",
+    serif;
+}
+.folder-picker-path {
+  border-block: 1px solid var(--line);
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.folder-picker-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.folder-picker-list button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 2px 8px;
+  inline-size: 100%;
+  border: 0;
+  border-radius: var(--radius-tight);
+  background: transparent;
+  padding: 10px;
+  color: var(--ink);
+  text-align: left;
+}
+.folder-picker-list button:hover {
+  background: var(--selected);
+}
+.folder-picker-list button span {
+  grid-row: span 2;
+  color: var(--accent);
+}
+.folder-picker-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+@media (max-width: 700px) {
+  .source-root-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .folder-picker-backdrop {
+    padding: 12px;
+  }
+  .folder-picker {
+    max-block-size: calc(100dvb - 24px);
+    padding: 16px;
+  }
+  .release-override .provider-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .release-override .provider-actions > * {
+    flex: none;
+    width: 100%;
+  }
+  .release-override .provider-actions input,
+  .release-override .provider-actions textarea {
+    width: 100%;
+  }
+  .provider-panel .section-heading .provider-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .provider-panel .section-heading .provider-actions > * {
+    flex: none;
+    width: 100%;
+  }
+  .evidence-grid strong,
+  .provider-summary {
+    overflow-wrap: anywhere;
+    word-break: break-all;
   }
 }

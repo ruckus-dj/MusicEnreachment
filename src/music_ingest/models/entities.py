@@ -33,8 +33,14 @@ class SourceRecord(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     origin: Mapped[str] = mapped_column(String(16), nullable=False)
     intake_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_root_id: Mapped[str] = mapped_column(ForeignKey('source_roots.id'), nullable=False, server_default='legacy')
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
     disappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    media_codec: Mapped[str | None] = mapped_column(String(16))
+    media_bit_depth: Mapped[int | None] = mapped_column(Integer)
+    media_sample_rate: Mapped[int | None] = mapped_column(Integer)
+    media_channels: Mapped[int | None] = mapped_column(Integer)
+    media_bitrate: Mapped[int | None] = mapped_column(Integer)
 
     tag_observations: Mapped[list[SourceTagRecord]] = relationship(back_populates='source', lazy='selectin')
     artwork_observations: Mapped[list[ArtworkRecord]] = relationship(back_populates='source', lazy='selectin')
@@ -46,6 +52,11 @@ class SourceRecord(Base):
     library_publications: Mapped[list[LibraryPublicationRecord]] = relationship(
         'LibraryPublicationRecord', back_populates='source', lazy='selectin'
     )
+    source_root: Mapped[SourceRootRecord] = relationship(back_populates='sources')
+    recording_assignments: Mapped[list[SourceRecordingAssignmentRecord]] = relationship(
+        back_populates='source', lazy='selectin', order_by='SourceRecordingAssignmentRecord.created_at'
+    )
+    association_override: Mapped[SourceAssociationOverrideRecord | None] = relationship(back_populates='source')
 
     @staticmethod
     def get(session: Session, source_id: str) -> SourceRecord | None:
@@ -54,6 +65,57 @@ class SourceRecord(Base):
     @staticmethod
     def get_by_path(session: Session, source_path: str) -> SourceRecord | None:
         return session.scalar(select(SourceRecord).where(SourceRecord.source_path == source_path))
+
+
+@final
+class SourceRootRecord(Base):
+    """A mutable configured root that owns immutable source observations."""
+
+    __tablename__ = 'source_roots'
+
+    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    canonical_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    scan_state: Mapped[str] = mapped_column(String(32), nullable=False, default='never_scanned')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    sources: Mapped[list[SourceRecord]] = relationship(back_populates='source_root', lazy='selectin')
+
+
+@final
+class SourceRecordingAssignmentRecord(Base):
+    """Append-only evidence of a source's recording aggregate assignment."""
+
+    __tablename__ = 'source_recording_assignments'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default='{}')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    source: Mapped[SourceRecord] = relationship(back_populates='recording_assignments')
+
+
+@final
+class SourceAssociationOverrideRecord(Base):
+    """Current operator override metadata without mutating assignment history."""
+
+    __tablename__ = 'source_association_overrides'
+
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), primary_key=True)
+    recording_mbid: Mapped[str] = mapped_column(String(36), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    source: Mapped[SourceRecord] = relationship(back_populates='association_override')
 
 
 @final
@@ -169,6 +231,17 @@ class RuntimeSettingRecord(Base):
 
 
 @final
+class StorageConfigRecord(Base):
+    __tablename__ = 'storage_config'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    output_root: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default='ready')
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+@final
 class GenreCatalogRecord(Base):
     __tablename__ = 'genre_catalog'
 
@@ -201,6 +274,9 @@ __all__ = [
     'ProviderSnapshotRecord',
     'ReviewDecisionRecord',
     'SourceRecord',
+    'SourceAssociationOverrideRecord',
+    'SourceRecordingAssignmentRecord',
+    'SourceRootRecord',
     'SourceTagRecord',
     'WebhookReceiptRecord',
 ]

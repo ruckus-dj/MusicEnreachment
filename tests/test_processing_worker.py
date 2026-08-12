@@ -14,22 +14,29 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
+from music_ingest.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.inspectors.decoder import DecoderValidationError
+from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
 from music_ingest.matching.providers import (
     ReleaseCandidate,
 )
 from music_ingest.models import (
     Base,
     CandidateRecord,
+    EffectiveSourceDecisionRecord,
     JobAttemptRecord,
     JobRecord,
+    LibraryEventRecord,
     LibraryRecord,
     ProviderScheduleRecord,
     ReviewDecisionRecord,
     SourceRecord,
+    SourceRootRecord,
 )
 from music_ingest.models.jobs import ClaimedJob
+from music_ingest.normalize.metadata import MetadataWriteResult
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.publication.service import PublicationError
+from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 _FFMPEG: Final[str] = which('ffmpeg') or ''
@@ -96,6 +103,20 @@ def _tagless_flac(path: Path) -> Path:
 
 def _source(session: Session, path: Path) -> SourceRecord:
     stat = path.stat()
+    root = session.get(SourceRootRecord, 'legacy')
+    if root is None:
+        now = datetime.now(UTC)
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path=str(path.parent.resolve()),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
     source = SourceRecord(
         id=sha256(f'{stat.st_dev}:{stat.st_ino}'.encode()).hexdigest(),
         source_path=str(path),
@@ -143,9 +164,23 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
     monkeypatch.setattr(processing, 'datetime', Clock)
     monkeypatch.setattr(ProcessingWorker, '_process_initial', process_initial)
     with Session(engine) as session:
-        session.add(
-            JobRecord(id='timing-job', source_id=None, kind='filesystem_scan', state='queued', created_at=started_at)
+        source = SourceRecord(
+            id='source-timing',
+            source_path=str(tmp_path / 'timing.flac'),
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=1,
+            origin='manual',
+            intake_state='present',
         )
+        session.add(
+            JobRecord(
+                id='timing-job', source_id=source.id, kind='filesystem_scan', state='queued', created_at=started_at
+            )
+        )
+        session.add(source)
         session.commit()
         worker = ProcessingWorker(session, _config(tmp_path))
 
@@ -253,7 +288,11 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
 
     # When: one worker claims and processes the job.
     with Session(engine) as session:
-        assert ProcessingWorker(session, config).run_once()
+        worker = ProcessingWorker(session, config)
+        assert worker.run_once()
+        job = session.get(JobRecord, 'job-1')
+        assert job is not None
+        assert job.state == 'completed'
         session.commit()
 
     # Then: initial final media is independently published before provider analysis.
@@ -264,6 +303,12 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         source = session.get(SourceRecord, job.source_id)
         assert source is not None
         assert source.intake_state == 'present'
+        assert source.media_codec == 'FLAC'
+        assert source.media_bit_depth is not None and source.media_bit_depth > 0
+        assert source.media_sample_rate is not None and source.media_sample_rate > 0
+        assert source.media_channels is not None and source.media_channels > 0
+        decision = session.get(EffectiveSourceDecisionRecord, source.library_record_id)
+        assert decision is not None and decision.source_id is None
         assert source.review_decisions == []
         assert source.library_record is not None
         assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
@@ -287,6 +332,150 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
     assert tags.returncode == 0
     assert 'TITLE=Fixture Track' in tags.stdout
     assert 'GENRE=Hip Hop; Alternative Rock' in tags.stdout
+
+
+@pytest.mark.parametrize(
+    ('suffix', 'codec_name'),
+    [('.m4a', 'aac'), ('.m4a', 'alac'), ('.mp3', 'mp3'), ('.opus', 'opus'), ('.ogg', 'vorbis')],
+)
+def test_worker_preserves_declared_non_flac_suffix_and_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str, codec_name: str
+) -> None:
+    # Given: a declared non-FLAC source and probes that avoid external capability/decoder tools.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = config.incoming_root / f'fixture{suffix}'
+    source_path.write_bytes(b'original non-flac bytes')
+    original_bytes = source_path.read_bytes()
+    capability = MediaCapabilityInspection(
+        MediaCapability(
+            'mov,mp4,m4a,3gp,3g2,mj2' if suffix == '.m4a' else 'mp3' if suffix == '.mp3' else 'ogg',
+            codec_name,
+        ),
+        ToolEvidence(ToolState.SUCCESS, 0, '', ''),
+    )
+    monkeypatch.setattr(processing, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(
+        processing,
+        'read_tags',
+        lambda *_args, **_kwargs: [
+            ('TITLE', 'Fixture Track'),
+            ('ARTIST', 'Fixture Artist; Fixture Guest'),
+            ('ALBUM', 'Fixture Album'),
+            ('ALBUMARTIST', 'Fixture Artist; Fixture Guest'),
+            ('DATE', '2026'),
+            ('TRACKNUMBER', '1'),
+            ('TRACKTOTAL', '1'),
+            ('DISCNUMBER', '1'),
+            ('DISCTOTAL', '1'),
+            ('GENRE', 'Hip Hop; Alternative Rock'),
+        ],
+    )
+    monkeypatch.setattr(processing, 'validate_decoder', lambda *_args, **_kwargs: None)
+
+    def preserve_audio(request: processing.MetadataWriteRequest) -> MetadataWriteResult:
+        request.output_path.parent.mkdir(parents=True, exist_ok=True)
+        request.output_path.write_bytes(request.source_path.read_bytes())
+        return MetadataWriteResult(request.output_path, (('TITLE', 'Fixture Track'),))
+
+    monkeypatch.setattr(
+        processing,
+        'write_canonical_metadata',
+        preserve_audio,
+    )
+    monkeypatch.setattr(
+        processing,
+        'publish_release',
+        lambda request: _publish_stub(request, suffix),
+    )
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(
+            JobRecord(
+                id='job-non-flac',
+                source_id=source.id,
+                kind='lidarr_download',
+                state='queued',
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    # When: the worker processes and publishes the queued source.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: the worker completes and publishes the source unchanged.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'job-non-flac')
+        assert job is not None
+        assert job.state == 'completed'
+        assert job.failure_reason is None
+        published_audio = config.media_root / 'Artist' / 'Release' / f'track{suffix}'
+        assert published_audio.suffix == suffix
+        assert published_audio.read_bytes() == original_bytes
+
+
+def _publish_stub(request: processing.PublicationRequest, suffix: str) -> PublicationResult:
+    published_release = request.media_root / 'Artist' / 'Release'
+    published_release.mkdir(parents=True, exist_ok=True)
+    staged_audio = next(request.staged_release.glob(f'*{suffix}'))
+    published_audio = published_release / f'track{suffix}'
+    published_audio.write_bytes(staged_audio.read_bytes())
+    return PublicationResult(published_release, published_audio)
+
+
+def test_worker_when_decoder_rejects_staged_audio_quarantines_without_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a valid source whose staged output fails the decoder validation seam.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(
+            JobRecord(
+                id='job-decoder',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    def reject_decoder(path: Path, **_kwargs: object) -> None:
+        raise DecoderValidationError(path)
+
+    published = False
+
+    def fail_publish(*_args: object, **_kwargs: object) -> None:
+        nonlocal published
+        published = True
+
+    monkeypatch.setattr(processing, 'validate_decoder', reject_decoder)
+    monkeypatch.setattr(processing, 'publish_release', fail_publish)
+
+    # When: the worker processes the queued initial job.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: decoder failure quarantines the job/source and leaves publication absent.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'job-decoder')
+        source = session.get(SourceRecord, job.source_id) if job is not None else None
+        assert job is not None and job.state == 'quarantined'
+        assert source is not None and source.intake_state == 'quarantined'
+        assert source.library_publications == []
+    assert not published
+    assert not list(config.media_root.rglob('*.flac'))
 
 
 def test_worker_when_unexpected_processing_error_retries_without_quarantining_source(
@@ -452,6 +641,44 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         }
         assert revisions == {'original': {}, 'final': {}}
     assert list(config.media_root.rglob('*.flac'))
+
+
+def test_worker_quarantines_source_when_persisted_root_is_disabled(tmp_path: Path) -> None:
+    # Given: a queued valid FLAC owned by a root disabled after reconciliation.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "root-boundary.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        root = session.get(SourceRootRecord, 'legacy')
+        assert root is not None
+        root.enabled = False
+        session.add(
+            JobRecord(
+                id='root-boundary-job',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    # When: the worker enters a persisted source boundary.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+        # Then: it quarantines before staging or publication and records the root-boundary event.
+        job = session.get(JobRecord, 'root-boundary-job')
+        source = session.get(SourceRecord, job.source_id) if job is not None else None
+        event = session.query(LibraryEventRecord).filter_by(kind='root_boundary').one()
+        assert job is not None and job.state == 'quarantined'
+        assert source is not None and source.intake_state == 'quarantined'
+        assert event.source_id == source.id
+        assert not (config.staging_root / 'root-boundary-job').exists()
 
 
 def test_worker_when_media_root_is_a_symlink_keeps_the_published_job_succeeded(tmp_path: Path) -> None:

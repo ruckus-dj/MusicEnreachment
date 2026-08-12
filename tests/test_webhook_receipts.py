@@ -27,7 +27,15 @@ def test_webhook_receipt_when_replayed_reuses_existing_receipt_and_job(tmp_path:
         job_id='job-1',
     )
     with Session(engine) as session:
-        session.add(JobRecord(id='job-1', kind='intake', state='queued', created_at=receipt.received_at))
+        session.add(
+            JobRecord(
+                id='job-1',
+                library_record_id='record-1',
+                kind='intake',
+                state='queued',
+                created_at=receipt.received_at,
+            )
+        )
         repository = WebhookReceiptRepository(session)
         first = repository.record_or_reuse(receipt)
         session.commit()

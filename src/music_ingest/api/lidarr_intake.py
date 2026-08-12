@@ -54,11 +54,10 @@ def dispatch_lidarr_event(
             return _record_job(session, event, fingerprint, payload_json, received_at, source_ids)
         case LidarrRenamePayload():
             _validate_rename_paths(event, incoming_root)
-            result = _record_job(session, event, fingerprint, payload_json, received_at)
             _record_renames(session, event)
-            return result
+            return _record_control_receipt(session, fingerprint, payload_json, received_at)
         case LidarrAlbumDeletePayload():
-            return _record_job(session, event, fingerprint, payload_json, received_at)
+            return _record_control_receipt(session, fingerprint, payload_json, received_at)
         case unreachable:
             assert_never(unreachable)
 
@@ -98,12 +97,24 @@ def _record_job(
     return LidarrDispatchResult(job_id=job_id, replayed=existing_job is not None)
 
 
+def _record_control_receipt(
+    session: Session, fingerprint: str, payload_json: str, received_at: datetime
+) -> LidarrDispatchResult:
+    replayed = _receipt_exists(session, fingerprint)
+    receipt = WebhookReceiptRepository(session).record_or_reuse(
+        WebhookReceiptInput(fingerprint, 'lidarr', payload_json, received_at)
+    )
+    _ = receipt
+    return LidarrDispatchResult(job_id=None, replayed=replayed)
+
+
 def _intake_download_sources(session: Session, event: LidarrDownloadPayload) -> tuple[str, ...]:
     return tuple(
         intake_source(
             session,
             IntakeRequest(
                 source_path=track_file.path.resolve(strict=True),
+                source_root_id='legacy',
                 origin=Origin.LIDARR,
                 duration_seconds=None,
                 tag_observations=(),
@@ -127,6 +138,8 @@ def _receipt_exists(session: Session, fingerprint: str) -> bool:
 def _validate_download_paths(event: LidarrDownloadPayload, incoming_root: Path) -> None:
     root = incoming_root.resolve(strict=True)
     for track_file in event.track_files:
+        if track_file.path.is_symlink():
+            raise LidarrIntakeError('Download trackFiles[].path cannot be a symbolic link')
         try:
             source_path = track_file.path.resolve(strict=True)
         except FileNotFoundError as error:

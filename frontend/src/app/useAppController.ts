@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api/client";
+import {
+  ApiError,
+  api,
+  browseStorage,
+  createSourceRoot,
+  getStorageConfig,
+  listSourceRootCandidates,
+  listSourceRoots,
+  moveStorageOutput,
+  previewStorageOutput,
+  removeSourceRoot,
+  selectEffectiveSource,
+  submitRecordingCorrection,
+} from "../api/client";
 import {
   albumFor,
   artistFor,
@@ -12,14 +25,23 @@ import {
 import { parseRoute, routePath } from "../routing";
 import type {
   Detail,
+  EffectiveSourceSelection,
   GenreCatalog,
   Layer,
   ProviderName,
+  RecordingCorrection,
+  RecordingCorrectionResult,
   Route,
   RuntimeSettings,
   RuntimeSettingsDraft,
   Screen,
   Source,
+  SourceRoot,
+  SourceRootCandidate,
+  SourceRootCreate,
+  StorageBrowser,
+  StorageConfig,
+  StorageOutputPreview,
   Summary,
   Tags,
   WatchedRecord,
@@ -43,6 +65,11 @@ export type AppControllerModel = {
   scanning: boolean;
   saving: boolean;
   reprocessing: boolean;
+  effectiveSourceId: string | null;
+  effectiveSourceError: string;
+  effectiveSourceSuccess: string;
+  recordingCorrectionError: string;
+  recordingCorrectionReview: string;
   settingsDraft: RuntimeSettingsDraft | null;
   settingsLoading: boolean;
   settingsSaving: boolean;
@@ -50,6 +77,17 @@ export type AppControllerModel = {
   genreSearch: string;
   genreLoading: boolean;
   genreSyncing: boolean;
+  sourceRoots: readonly SourceRoot[];
+  sourceRootsLoading: boolean;
+  sourceRootsError: string;
+  sourceRootCreating: boolean;
+  sourceRootRemoving: boolean;
+  sourceRootCandidates: readonly SourceRootCandidate[];
+  sourceRootCandidatesLoading: boolean;
+  storageBrowser: StorageBrowser | null;
+  storageConfig: StorageConfig | null;
+  storageOutputPreview: StorageOutputPreview | null;
+  storageLoading: boolean;
   watchedRecords: Record<string, WatchedRecord>;
   watchedLibraryUntil: number;
   tracks: CatalogTrack[];
@@ -66,10 +104,16 @@ export type AppControllerModel = {
   saveMetadata: () => Promise<boolean>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
-  overrideRecording: (recordingMbid: string) => Promise<void>;
+  overrideRecording: (request: RecordingCorrection) => Promise<void>;
   selectCandidate: (selection: string) => Promise<void>;
+  selectEffectiveSource: (sourceId: string) => Promise<void>;
   saveSettings: () => Promise<void>;
   syncGenres: () => Promise<void>;
+  createSourceRoot: (request: SourceRootCreate) => Promise<void>;
+  removeSourceRoot: (rootId: string) => Promise<void>;
+  browseStorage: (path?: string) => Promise<void>;
+  previewStorageOutput: (path: string) => Promise<void>;
+  moveStorageOutput: (path: string) => Promise<void>;
   setQuery: (value: string) => void;
   setNotice: (value: string) => void;
   setLayer: (value: Layer) => void;
@@ -95,6 +139,13 @@ export function useAppController(): AppControllerModel {
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [effectiveSourceId, setEffectiveSourceId] = useState<string | null>(
+    initialRoute.sourceId ?? null,
+  );
+  const [effectiveSourceError, setEffectiveSourceError] = useState("");
+  const [effectiveSourceSuccess, setEffectiveSourceSuccess] = useState("");
+  const [recordingCorrectionError, setRecordingCorrectionError] = useState("");
+  const [recordingCorrectionReview, setRecordingCorrectionReview] = useState("");
   const [settingsDraft, setSettingsDraft] = useState<RuntimeSettingsDraft | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -102,6 +153,22 @@ export function useAppController(): AppControllerModel {
   const [genreSearch, setGenreSearch] = useState("");
   const [genreLoading, setGenreLoading] = useState(false);
   const [genreSyncing, setGenreSyncing] = useState(false);
+  const [sourceRoots, setSourceRoots] = useState<readonly SourceRoot[]>([]);
+  const [sourceRootsLoaded, setSourceRootsLoaded] = useState(false);
+  const [sourceRootsLoading, setSourceRootsLoading] = useState(false);
+  const [sourceRootsError, setSourceRootsError] = useState("");
+  const [sourceRootCreating, setSourceRootCreating] = useState(false);
+  const [sourceRootRemoving, setSourceRootRemoving] = useState(false);
+  const [sourceRootCandidates, setSourceRootCandidates] = useState<readonly SourceRootCandidate[]>(
+    [],
+  );
+  const [sourceRootCandidatesLoading, setSourceRootCandidatesLoading] = useState(false);
+  const [storageBrowser, setStorageBrowser] = useState<StorageBrowser | null>(null);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
+  const [storageOutputPreview, setStorageOutputPreview] = useState<StorageOutputPreview | null>(
+    null,
+  );
+  const [storageLoading, setStorageLoading] = useState(false);
   const [watchedRecords, setWatchedRecords] = useState<Record<string, WatchedRecord>>({});
   const [watchedLibraryUntil, setWatchedLibraryUntil] = useState(0);
   const watchedRecordsRef = useRef(watchedRecords);
@@ -156,6 +223,9 @@ export function useAppController(): AppControllerModel {
     setAlbum(route.album ?? "");
     setRecordId(route.recordId ?? "");
     setSourceId(route.sourceId ?? "");
+    setEffectiveSourceId(route.sourceId ?? null);
+    setEffectiveSourceError("");
+    setEffectiveSourceSuccess("");
     setDetail(null);
     setLayer("final");
   }
@@ -240,23 +310,48 @@ export function useAppController(): AppControllerModel {
       setReprocessing(false);
     }
   }
-  async function overrideRecording(recordingMbid: string) {
+  async function overrideRecording(request: RecordingCorrection) {
     if (!recordId || !sourceId) return;
     setReprocessing(true);
+    setRecordingCorrectionError("");
+    setRecordingCorrectionReview("");
     try {
-      const result = await api<{ recording_mbid: string; queued: boolean }>(
-        `/api/library/records/${recordId}/sources/${sourceId}/musicbrainz/override`,
-        { method: "POST", body: JSON.stringify({ recording_mbid: recordingMbid }) },
+      const result: RecordingCorrectionResult = await submitRecordingCorrection(
+        recordId,
+        sourceId,
+        request,
       );
-      setNotice(
-        result.queued
-          ? `Запись ${result.recording_mbid} поставлена в очередь анализа`
-          : `Запись ${result.recording_mbid} сохранена`,
-      );
+      setNotice(`Запись ${result.recording_mbid} исправлена для выбранного источника`);
       await refreshRecord(recordId, sourceId);
-      if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось загрузить recording");
+      if (error instanceof ApiError && error.status === 409) {
+        setRecordingCorrectionError(
+          "Исправление конфликтует с сохранёнными свидетельствами провайдера.",
+        );
+        setRecordingCorrectionReview(
+          "Требуется проверка исправления записи. Сверьте свидетельства и повторите позже.",
+        );
+        await refreshRecord(recordId, sourceId);
+      } else {
+        setRecordingCorrectionError(
+          error instanceof ApiError
+            ? error.status === 422
+              ? "Проверьте MBID записи."
+              : error.status === 503
+                ? "MusicBrainz временно недоступен. Повторите исправление позже."
+                : error.status === 404
+                  ? "Выбранный источник записи больше недоступен. Обновите данные трека."
+                  : "Не удалось отправить исправление записи."
+            : error instanceof Error
+              ? error.message
+              : "Не удалось отправить исправление записи.",
+        );
+      }
+      setNotice(
+        error instanceof ApiError && error.status === 409
+          ? "Исправление не применено: требуется проверка конфликта."
+          : "Исправление записи не применено.",
+      );
     } finally {
       setReprocessing(false);
     }
@@ -287,6 +382,26 @@ export function useAppController(): AppControllerModel {
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось подтвердить кандидата");
+    } finally {
+      setReprocessing(false);
+    }
+  }
+  async function selectEffectiveSourceForRecord(selectedSourceId: string) {
+    if (!recordId || !selectedSourceId) return;
+    setReprocessing(true);
+    setEffectiveSourceError("");
+    setEffectiveSourceSuccess("");
+    try {
+      const result: EffectiveSourceSelection = await selectEffectiveSource(recordId, {
+        source_id: selectedSourceId,
+      });
+      setEffectiveSourceId(result.source_id);
+      setEffectiveSourceSuccess("Источник выбран для публикации; очередь обновления создана");
+      await refreshRecord(recordId, sourceId);
+    } catch (error) {
+      setEffectiveSourceError(
+        error instanceof Error ? error.message : "Не удалось выбрать источник публикации",
+      );
     } finally {
       setReprocessing(false);
     }
@@ -351,6 +466,90 @@ export function useAppController(): AppControllerModel {
       setNotice(error instanceof Error ? error.message : "Не удалось загрузить жанры");
     } finally {
       setGenreLoading(false);
+    }
+  }
+  async function loadSourceRoots() {
+    setSourceRootsLoading(true);
+    setSourceRootsError("");
+    try {
+      setSourceRoots((await listSourceRoots()).items);
+      setSourceRootsLoaded(true);
+    } catch (error) {
+      setSourceRootsError(error instanceof Error ? error.message : "Не удалось загрузить корни");
+    } finally {
+      setSourceRootsLoading(false);
+    }
+  }
+  async function loadSourceRootCandidates() {
+    setSourceRootCandidatesLoading(true);
+    try {
+      setSourceRootCandidates((await listSourceRootCandidates()).items);
+    } catch (error) {
+      setSourceRootsError(error instanceof Error ? error.message : "Не удалось загрузить папки");
+    } finally {
+      setSourceRootCandidatesLoading(false);
+    }
+  }
+  async function loadStorage(path?: string) {
+    setStorageLoading(true);
+    try {
+      const [browser, config] = await Promise.all([browseStorage(path), getStorageConfig()]);
+      setStorageBrowser(browser);
+      setStorageConfig(config);
+    } catch (error) {
+      setSourceRootsError(
+        error instanceof Error ? error.message : "Не удалось открыть папки контейнера",
+      );
+    } finally {
+      setStorageLoading(false);
+    }
+  }
+  async function previewConfiguredStorageOutput(path: string) {
+    setStorageLoading(true);
+    try {
+      setStorageOutputPreview(await previewStorageOutput(path));
+    } catch (error) {
+      setSourceRootsError(
+        error instanceof Error ? error.message : "Не удалось проверить папку output",
+      );
+    } finally {
+      setStorageLoading(false);
+    }
+  }
+  async function moveConfiguredStorageOutput(path: string) {
+    setStorageLoading(true);
+    try {
+      setStorageConfig(await moveStorageOutput(path));
+      setStorageOutputPreview(null);
+      await loadStorage(path);
+    } catch (error) {
+      setSourceRootsError(error instanceof Error ? error.message : "Не удалось перенести output");
+    } finally {
+      setStorageLoading(false);
+    }
+  }
+  async function createConfiguredSourceRoot(request: SourceRootCreate) {
+    setSourceRootCreating(true);
+    setSourceRootsError("");
+    try {
+      const created = await createSourceRoot(request);
+      setSourceRoots((current) => [...current, created]);
+    } catch (error) {
+      setSourceRootsError(error instanceof Error ? error.message : "Не удалось добавить корень");
+    } finally {
+      setSourceRootCreating(false);
+    }
+  }
+  async function removeConfiguredSourceRoot(rootId: string) {
+    setSourceRootRemoving(true);
+    setSourceRootsError("");
+    try {
+      await removeSourceRoot(rootId);
+      setSourceRoots((current) => current.filter((item) => item.id !== rootId));
+    } catch (error) {
+      setSourceRootsError(error instanceof Error ? error.message : "Не удалось удалить корень");
+    } finally {
+      setSourceRootRemoving(false);
     }
   }
   async function syncGenres() {
@@ -445,6 +644,17 @@ export function useAppController(): AppControllerModel {
     if (screen === "settings" && !genreCatalog && !genreLoading) void loadGenres();
   }, [screen, genreCatalog, genreLoading]);
   useEffect(() => {
+    if (screen === "settings" && !sourceRootsLoaded && !sourceRootsLoading && !sourceRootsError)
+      void loadSourceRoots();
+  }, [screen, sourceRootsLoaded, sourceRootsLoading, sourceRootsError]);
+  useEffect(() => {
+    if (screen === "settings" && !sourceRootCandidatesLoading && sourceRootCandidates.length === 0)
+      void loadSourceRootCandidates();
+  }, [screen, sourceRootCandidates.length, sourceRootCandidatesLoading]);
+  useEffect(() => {
+    if (screen === "settings" && !storageBrowser && !storageLoading) void loadStorage();
+  }, [screen, storageBrowser, storageLoading]);
+  useEffect(() => {
     const onPopState = () => applyRoute(parseRoute(window.location.pathname));
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -524,6 +734,11 @@ export function useAppController(): AppControllerModel {
     scanning,
     saving,
     reprocessing,
+    effectiveSourceId,
+    effectiveSourceError,
+    effectiveSourceSuccess,
+    recordingCorrectionError,
+    recordingCorrectionReview,
     settingsDraft,
     settingsLoading,
     settingsSaving,
@@ -531,6 +746,17 @@ export function useAppController(): AppControllerModel {
     genreSearch,
     genreLoading,
     genreSyncing,
+    sourceRoots,
+    sourceRootsLoading,
+    sourceRootsError,
+    sourceRootCreating,
+    sourceRootRemoving,
+    sourceRootCandidates,
+    sourceRootCandidatesLoading,
+    storageBrowser,
+    storageConfig,
+    storageOutputPreview,
+    storageLoading,
     watchedRecords,
     watchedLibraryUntil,
     tracks,
@@ -549,8 +775,14 @@ export function useAppController(): AppControllerModel {
     overrideRelease,
     overrideRecording,
     selectCandidate,
+    selectEffectiveSource: selectEffectiveSourceForRecord,
     saveSettings,
     syncGenres,
+    createSourceRoot: createConfiguredSourceRoot,
+    removeSourceRoot: removeConfiguredSourceRoot,
+    browseStorage: loadStorage,
+    previewStorageOutput: previewConfiguredStorageOutput,
+    moveStorageOutput: moveConfiguredStorageOutput,
     setQuery,
     setNotice,
     setLayer,

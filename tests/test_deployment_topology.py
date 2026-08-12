@@ -57,14 +57,15 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
     assert services.lidarr.healthcheck
     assert services.navidrome.healthcheck
     assert services.music_ingest.volumes == [
-        './data/incoming:/data/incoming:ro',
+        './data/sources:/data/sources:ro',
         './data/media:/data/media',
+        './data/incoming:/data/incoming',
         './appdata/music-ingest:/appdata/music-ingest',
     ]
     assert services.lidarr.volumes == [
         './config/lidarr:/config',
         './data/downloads:/data/downloads',
-        './data/incoming:/data/incoming',
+        './data/media:/data/media',
     ]
     assert services.navidrome.volumes == ['./config/navidrome:/data', './data/media:/music:ro']
     assert services.lidarr_webhook.depends_on['lidarr'].condition == 'service_healthy'
@@ -72,6 +73,18 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
     assert './scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro' in services.lidarr_webhook.volumes
     assert services.lidarr_webhook.restart == 'no'
     assert not services.lidarr_webhook.healthcheck
+
+
+def test_lidarr_webhook_helper_when_reconfigured_replaces_stale_settings() -> None:
+    # Given: the test-stand helper that owns the sole Lidarr notification.
+    helper = (ROOT / 'test_stand' / 'scripts' / 'configure-lidarr-webhook.sh').read_text(encoding='utf-8')
+
+    # When: a prior stand run left the notification with obsolete credentials.
+    # Then: setup replaces it with the unauthenticated application URL.
+    assert 'MUSIC_INGEST_API_TOKEN' not in helper
+    assert 'Authorization' not in helper
+    assert '--request DELETE' in helper
+    assert '"id":[[:space:]]*' in helper
 
 
 def test_production_stack_when_deployed_runs_the_runtime_with_external_storage() -> None:
@@ -89,7 +102,9 @@ def test_production_stack_when_deployed_runs_the_runtime_with_external_storage()
     assert 'replace-at-deploy' not in service.image
     environment = service.environment
     assert environment['MUSIC_INGEST_DATABASE_URL'].startswith('infisical://')
-    assert environment['MUSIC_INGEST_INCOMING_ROOT'] == '/data/incoming'
+    assert 'MUSIC_INGEST_API_TOKEN' not in environment
+    assert environment['MUSIC_INGEST_SOURCE_ROOTS_PARENT'] == '/data/sources'
+    assert environment['MUSIC_INGEST_INCOMING_ROOT'] == '/data/sources/legacy'
     assert environment['MUSIC_INGEST_STAGING_ROOT'] == '/appdata/music-ingest/staging'
     assert environment['MUSIC_INGEST_MEDIA_ROOT'] == '/data/publish/music'
     assert not {
@@ -97,7 +112,7 @@ def test_production_stack_when_deployed_runs_the_runtime_with_external_storage()
         'MUSIC_INGEST_QUARANTINE_ROOT',
         'MUSIC_INGEST_PROVENANCE_ROOT',
     }.intersection(environment)
-    assert '/mnt/pool/data/music-incoming:/data/incoming:ro' in service.volumes
+    assert '/mnt/pool/data/music-incoming:/data/sources/legacy:ro' in service.volumes
     assert '/mnt/pool/data/media:/data/publish/music' in service.volumes
     assert '/mnt/ssd/appdata/music-ingest:/appdata/music-ingest' in service.volumes
     assert service.healthcheck

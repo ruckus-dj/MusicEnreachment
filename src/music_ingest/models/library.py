@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -47,6 +47,11 @@ class SourceRecordView(Protocol):
     intake_state: str
     library_record_id: str | None
     disappeared_at: datetime | None
+    media_codec: str | None
+    media_bit_depth: int | None
+    media_sample_rate: int | None
+    media_channels: int | None
+    media_bitrate: int | None
     tag_observations: list[SourceTagView]
     fingerprints: list[FingerprintView]
     provider_attempts: list[ProviderAttemptView]
@@ -84,6 +89,10 @@ class LibraryRecord(Base):
     events: Mapped[list[LibraryEventRecord]] = relationship(
         back_populates='library_record', lazy='selectin', order_by='LibraryEventRecord.created_at'
     )
+    effective_source_decision: Mapped[EffectiveSourceDecisionRecord | None] = relationship(
+        back_populates='library_record'
+    )
+    publication_attempts: Mapped[list[PublicationAttemptRecord]] = relationship(back_populates='library_record')
 
     @staticmethod
     def get(session: Session, record_id: str) -> LibraryRecord | None:
@@ -113,6 +122,57 @@ class LibraryPublicationRecord(Base):
     library_record: Mapped[LibraryRecord] = relationship(back_populates='publications')
     source: Mapped[SourceRecordView] = relationship('SourceRecord', back_populates='library_publications')
     metadata_revision: Mapped[LibraryMetadataRevisionRecord | None] = relationship(back_populates='publications')
+
+
+_ = Index(
+    'uq_current_library_publication',
+    LibraryPublicationRecord.library_record_id,
+    unique=True,
+    postgresql_where=LibraryPublicationRecord.state == 'current',
+    sqlite_where=LibraryPublicationRecord.state == 'current',
+)
+
+
+@final
+class EffectiveSourceDecisionRecord(Base):
+    """Persisted policy result for one stable recording aggregate."""
+
+    __tablename__ = 'effective_source_decisions'
+
+    library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
+    baseline_source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality_tuple_json: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    library_record: Mapped[LibraryRecord] = relationship(back_populates='effective_source_decision')
+
+
+@final
+class PublicationAttemptRecord(Base):
+    """Durable filesystem publication attempt state for crash recovery."""
+
+    __tablename__ = 'publication_attempts'
+
+    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_directory: Mapped[str] = mapped_column(Text, nullable=False)
+    target_audio_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staging_directory: Mapped[str] = mapped_column(Text, nullable=False)
+    backup_directory: Mapped[str] = mapped_column(Text, nullable=False)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    output_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+
+    library_record: Mapped[LibraryRecord] = relationship(back_populates='publication_attempts')
 
 
 @final

@@ -38,6 +38,86 @@ class RuntimeSettingsResponse(BaseModel):
     artwork_enabled: bool
 
 
+class SourceRootCreateRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str = Field(min_length=1, max_length=4096)
+    display_name: str = Field(min_length=1, max_length=255)
+
+
+class SourceRootUpdateRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    display_name: str = Field(min_length=1, max_length=255)
+    enabled: bool
+
+
+class SourceRootResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    display_name: str
+    canonical_path: str
+    enabled: bool
+    scan_state: str
+
+
+class SourceRootListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[SourceRootResponse, ...]
+
+
+class SourceRootCandidateResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    canonical_path: str
+
+
+class SourceRootCandidateListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[SourceRootCandidateResponse, ...]
+
+
+class StoragePathRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
+class StorageBrowserItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    path: str
+
+
+class StorageBrowserResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    parent_path: str | None
+    items: tuple[StorageBrowserItemResponse, ...]
+
+
+class StorageOutputPreviewResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    output_root: str
+    same_filesystem: bool
+    file_count: int
+
+
+class StorageConfigResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    output_root: str
+    state: str
+    generation: int
+
+
 class GenreCatalogItemResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -101,11 +181,18 @@ class CandidateSelection(BaseModel):
     provider: Literal['acoustid', 'musicbrainz'] = 'musicbrainz'
 
 
+class ManualSourceSelection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str = Field(min_length=1, max_length=64)
+
+
 class MusicBrainzOverride(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    release_mbid: str | None = Field(default=None, min_length=1, max_length=36)
-    recording_mbid: str | None = Field(default=None, min_length=1, max_length=36)
+    recording_mbid: str = Field(
+        pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    )
 
 
 class CandidateReleasePayload(BaseModel):

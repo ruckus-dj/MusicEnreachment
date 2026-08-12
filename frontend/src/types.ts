@@ -56,6 +56,8 @@ export type Publication = {
   readonly publication_id: string;
   readonly path: string;
   readonly source_id: string;
+  readonly format?: string;
+  readonly sha256?: string;
   readonly metadata_revision_id?: number | null;
   readonly state: string;
   readonly created_at?: string;
@@ -98,6 +100,21 @@ export type Detail = Summary & {
   readonly events: readonly Event[];
   readonly destination_conflict?: DestinationConflict | null;
 };
+export type ManualSourceSelection = {
+  readonly source_id: string;
+};
+export type EffectiveSourceSelection = {
+  readonly source_id: string | null;
+  readonly baseline_source_id: string | null;
+  readonly policy_version: string;
+};
+export type RecordingCorrection = {
+  readonly recording_mbid: string;
+};
+export type RecordingCorrectionResult = {
+  readonly recording_mbid: string;
+  readonly record_id: string;
+};
 export type Screen = "artists" | "albums" | "tracks" | "track" | "settings";
 export type Layer = "original" | "analyzed" | "final";
 export type Route = {
@@ -131,6 +148,46 @@ export type GenreCatalogItem = {
 export type GenreCatalog = {
   readonly items: readonly GenreCatalogItem[];
   readonly last_synced_at: string | null;
+};
+export type SourceRoot = {
+  readonly id: string;
+  readonly display_name: string;
+  readonly canonical_path: string;
+  readonly enabled: boolean;
+  readonly scan_state: string;
+};
+export type SourceRootList = {
+  readonly items: readonly SourceRoot[];
+};
+export type SourceRootCandidate = {
+  readonly name: string;
+  readonly canonical_path: string;
+};
+export type SourceRootCandidateList = {
+  readonly items: readonly SourceRootCandidate[];
+};
+export type SourceRootCreate = {
+  readonly path: string;
+  readonly display_name: string;
+};
+export type StorageBrowserItem = {
+  readonly name: string;
+  readonly path: string;
+};
+export type StorageBrowser = {
+  readonly path: string;
+  readonly parent_path: string | null;
+  readonly items: readonly StorageBrowserItem[];
+};
+export type StorageConfig = {
+  readonly output_root: string;
+  readonly state: string;
+  readonly generation: number;
+};
+export type StorageOutputPreview = {
+  readonly output_root: string;
+  readonly same_filesystem: boolean;
+  readonly file_count: number;
 };
 export type RuntimeSettingsDraft = {
   readonly confidence_threshold: number;

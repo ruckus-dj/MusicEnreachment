@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from argparse import Namespace
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from music_ingest.processing.runtime import run_processing_worker
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
 _CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_CONNECT_TIMEOUT_SECONDS'
+_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_SOURCE_ROOTS_PARENT'
+_STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_STORAGE_BROWSE_ROOTS'
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
 _ALEMBIC_INI = Path(__file__).resolve().parents[3] / 'alembic.ini'
 
@@ -38,7 +41,6 @@ class RuntimeConfigurationError(RuntimeError):
 class RuntimeConfig:
     database_url: str
     connect_timeout_seconds: int
-    api_token: str | None = None
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> Self:
@@ -63,7 +65,6 @@ class RuntimeConfig:
         return cls(
             database_url=database_url,
             connect_timeout_seconds=connect_timeout_seconds,
-            api_token=environment.get('MUSIC_INGEST_API_TOKEN'),
         )
 
 
@@ -73,6 +74,8 @@ def run_migrations(runtime_config: RuntimeConfig) -> None:
     migration_config.set_main_option(
         'music_ingest.connect_timeout_seconds', str(runtime_config.connect_timeout_seconds)
     )
+    legacy_root = os.environ.get('MUSIC_INGEST_INCOMING_ROOT')
+    migration_config.cmd_opts = Namespace(x=[] if legacy_root is None else [f'legacy_incoming_root={legacy_root}'])
     command.upgrade(migration_config, 'head')
 
 
@@ -87,6 +90,9 @@ def create_runtime_app() -> FastAPI:
 
     session_factory = sessionmaker(engine)
     processing_config = _processing_config(os.environ, session_factory)
+    source_roots_parent = Path(
+        os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE, str(processing_config.incoming_root.parent))
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -102,16 +108,23 @@ def create_runtime_app() -> FastAPI:
                 task_group.cancel_scope.cancel()
         engine.dispose()
 
-    return create_app(
+    application = create_app(
         session_factory,
         lifespan=lifespan,
         incoming_root=processing_config.incoming_root,
+        source_roots_parent=source_roots_parent,
         media_root=processing_config.media_root,
-        api_token=runtime_config.api_token,
         musicbrainz_provider=processing_config.musicbrainz_provider,
         musicbrainz_transport=processing_config.live_transport,
         genre_transport=processing_config.live_transport,
+        e2e_seed_enabled=os.environ.get('MUSIC_INGEST_E2E_SEED_ENABLED') == 'true',
+        storage_browse_roots=tuple(
+            Path(item)
+            for item in os.environ.get(_STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE, '/data').split(':')
+            if item
+        ),
     )
+    return application
 
 
 def _processing_config(environment: Mapping[str, str], session_factory: Callable[[], Session]) -> ProcessingConfig:

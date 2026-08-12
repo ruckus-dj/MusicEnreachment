@@ -8,10 +8,14 @@ payload='{"name":"music-ingest","onGrab":false,"onReleaseImport":true,"onUpgrade
 headers="X-Api-Key: $api_key"
 
 notifications="$(curl --fail --silent --show-error "$LIDARR_URL/api/v1/notification" --header "$headers")"
-if ! printf '%s' "$notifications" | grep -F -q 'http://music-ingest:8000/api/intake/lidarr'; then
-    curl --fail --silent --show-error --request POST "$LIDARR_URL/api/v1/notification" \
-        --header "$headers" --header 'Content-Type: application/json' --data "$payload" >/dev/null
+if printf '%s' "$notifications" | grep -F -q 'http://music-ingest:8000/api/intake/lidarr'; then
+    notification_id="$(printf '%s' "$notifications" | sed -n 's/.*"id":[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+    test -n "$notification_id"
+    curl --fail --silent --show-error --request DELETE "$LIDARR_URL/api/v1/notification/$notification_id" \
+        --header "$headers" >/dev/null
 fi
+curl --fail --silent --show-error --request POST "$LIDARR_URL/api/v1/notification" \
+    --header "$headers" --header 'Content-Type: application/json' --data "$payload" >/dev/null
 
 curl --fail --silent --show-error "$LIDARR_URL/api/v1/notification" --header "$headers" \
     | grep -F -q 'http://music-ingest:8000/api/intake/lidarr'

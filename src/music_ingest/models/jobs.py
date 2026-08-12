@@ -6,6 +6,7 @@ from typing import final
 from uuid import uuid4
 
 from sqlalchemy import Select, and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.models.entities import JobAttemptRecord, JobRecord
@@ -76,6 +77,39 @@ class JobRepository:
     def requeue_provider(self, source_id: str, provider: str, now: datetime) -> bool:
         """Queue one provider's analysis without re-running the other provider."""
         return self.enqueue(source_id, f'{provider}_analysis', now) is not None
+
+    def enqueue_selection_refresh(self, library_record_id: str, now: datetime) -> JobRecord | None:
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.library_record_id == library_record_id)
+            .where(JobRecord.kind == 'selection_refresh')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return None
+        try:
+            with self._session.begin_nested():
+                job = JobRecord(
+                    id=f'selection_refresh-{uuid4().hex}',
+                    library_record_id=library_record_id,
+                    kind='selection_refresh',
+                    state='queued',
+                    created_at=now,
+                )
+                self._session.add(job)
+                self._session.flush()
+                return job
+        except IntegrityError:
+            active = self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.library_record_id == library_record_id)
+                .where(JobRecord.kind == 'selection_refresh')
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            if active is None:
+                raise
+            return None
 
     def enqueue(
         self,

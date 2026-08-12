@@ -53,7 +53,17 @@ PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest serve
 ```
 
-The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure only the incoming root, final media root, and transient staging root with `MUSIC_INGEST_*_ROOT` environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Set `MUSIC_INGEST_API_TOKEN` in any network-exposed deployment; when set, it protects every `/api/` route with either `X-API-Key` or `Authorization: Bearer`.
+The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT` and its legacy immediate child `MUSIC_INGEST_INCOMING_ROOT`, plus final media and transient staging roots, with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
+
+`MUSIC_INGEST_SOURCE_ROOTS_PARENT` must be an existing, non-symlink directory. Each configured source root must be an existing, non-symlink immediate child of that mounted parent. Source roots are read-only inputs. The final media root is writable, while the staging root is disposable.
+
+## Formats and matching
+
+The dry-run scanner recognizes `.aac`, `.aiff`, `.alac`, `.ape`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, and `.wma`. It performs detailed inspection for FLAC and MP3 and reports other recognized containers for review. Publication targets support FLAC, M4A, MP3, OGG, and OPUS.
+
+Candidate matching prefers an explicit MusicBrainz ID. Otherwise it scores normalized artist and release text, with a duration match contributing when available. Lidarr context can provide the stronger score. Ambiguous, stale, unsafe, unavailable, or below-threshold results remain in review rather than being auto-selected.
+
+Published audio keeps the source extension and stable artist, album, and track layout. A replacement is staged and verified before the current publication is superseded. The incoming source pathname is never replaced, and source files are never mutated.
 
 ## Local integration stand
 
@@ -73,4 +83,5 @@ The test stand is intentionally disposable infrastructure for quickly checking L
 - Staging is validated before publication.
 - Invalid or changed sources are quarantined instead of published.
 - Dry-run reports are written outside the source tree and do not mutate source files.
+- Publication supersedes current audio only after staged output, manifest, and hash checks succeed. `.nfo` files are never removed.
 - Provider and enrichment modules are isolated capabilities; the current worker uses the explicit fallback path when provider enrichment is unavailable.

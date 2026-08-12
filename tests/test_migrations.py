@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260810_0002'
+_HEAD_REVISION = '20260812_0004'
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
@@ -30,6 +30,12 @@ _APPLICATION_TABLES = frozenset(
         'library_metadata_revisions',
         'library_publications',
         'library_events',
+        'source_roots',
+        'source_recording_assignments',
+        'source_association_overrides',
+        'effective_source_decisions',
+        'publication_attempts',
+        'storage_config',
     }
 )
 
@@ -55,5 +61,24 @@ def test_migration_lineage_when_upgraded_and_downgraded_preserves_schema_boundar
         assert revision == _HEAD_REVISION
         assert upgraded_tables >= _APPLICATION_TABLES
         assert not _APPLICATION_TABLES.intersection(downgraded_tables)
+    finally:
+        engine.dispose()
+
+
+def test_baseline_migration_when_upgraded_exposes_existing_source_lineage(tmp_path: Path) -> None:
+    # Given: an isolated database configured with the original migration lineage.
+    database_path = tmp_path / 'baseline-lineage.db'
+    config = Config()
+    config.set_main_option('script_location', str(_MIGRATION_DIRECTORY))
+    config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
+    engine = create_engine(f'sqlite+pysqlite:///{database_path}')
+
+    try:
+        # When: the original head revision is applied.
+        command.upgrade(config, _HEAD_REVISION)
+
+        # Then: source provenance still owns its stable source and record linkage fields.
+        columns = {column['name'] for column in inspect(engine).get_columns('source_records')}
+        assert {'id', 'source_path', 'library_record_id', 'sha256'}.issubset(columns)
     finally:
         engine.dispose()

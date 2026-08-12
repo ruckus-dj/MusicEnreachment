@@ -14,12 +14,11 @@ checked-in placeholder image.
 Komodo runs one `music-ingest` container with the `python -m music_ingest serve`
 command. That runtime upgrades the externally managed PostgreSQL database to
 Alembic head before serving and runs the API and processing worker together.
-It exposes port 8000 only on Komodo's internal network; do not publish an
-unauthenticated application port to the host or public network.
+It exposes port 8000 only on Komodo's internal network. Production authentication
+is owned by the reverse proxy; the application does not configure credentials.
 
 Lidarr must reach `http://music-ingest:8000/api/intake/lidarr` on that internal
-network. The API has no application authentication by design, so this endpoint
-is restricted by the deployment network boundary.
+network.
 
 ## Operator Configuration
 
@@ -34,7 +33,11 @@ original MusicBrainz name for matching and shows a readable display label; the
 manual aliases JSON is not part of the runtime contract.
 
 Configure Lidarr to import into `/mnt/pool/data/music-incoming`, then mount that
-path read-only as `/data/incoming` in `music-ingest`. Mount
+path read-only as `/data/sources/legacy` in `music-ingest` and set
+`MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources` and
+`MUSIC_INGEST_INCOMING_ROOT=/data/sources/legacy`. Operators may configure only
+existing, non-symlink immediate children of `/data/sources` through Settings.
+Mount
 `/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
 mount `/mnt/ssd/appdata/music-ingest` as `/appdata/music-ingest` for disposable
 staging only. Navidrome must mount `/mnt/pool/data/media` read-only at its music
@@ -42,6 +45,10 @@ root and set `ND_SCANNER_PURGEMISSING=full` so confirmed missing files are remov
 after full scans. PostgreSQL is the only durable store for tags, versions, provenance,
 review decisions, failure reasons, and publication metadata. The normal workflow
 does not replace a Lidarr incoming pathname, and Task 9a remains separately gated.
+
+The source-roots parent must already exist, be a directory, and not be a symlink. Every configured root must be an existing, non-symlink immediate child. The scanner recognizes `.aac`, `.aiff`, `.alac`, `.ape`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, and `.wma`; FLAC and MP3 receive detailed inspection, while other recognized containers are reported for review. Publication supports FLAC, M4A, MP3, OGG, and OPUS.
+
+Matching gives priority to explicit MusicBrainz IDs, then scores normalized artist and release text plus duration when available. Ambiguous, stale, unsafe, unavailable, or below-threshold matches stay in review. Published audio keeps the source extension and stable artist, album, and track layout. A replacement is staged, checked by manifest and hash, then atomically exposed. The previous publication is retained until finalization, then marked superseded. Source files are never mutated, and `.nfo` files are never removed.
 
 The PostgreSQL URL is an external Infisical reference. Do not add PostgreSQL to
 the Komodo stack or use a local SQLite fallback. Startup migrations are owned by
@@ -62,7 +69,9 @@ presence without reading untrusted sidecar text into reports. It never removes `
 changes audio, writes tags, or publishes media. Review the initial
 Anacondaz, Noize MC, and Linkin Park sample reports separately; the event-driven
 runtime publishes valid media automatically and records unresolved states on the stable library record.
-Interrupted runs can be rerun because each artifact is atomically replaced.
+Interrupted runs can be rerun because each report artifact is atomically replaced.
+
+Publication recovery follows the recorded attempt state: `reserved` or `staged` attempts are cleaned up, with an existing backup restored when needed; a valid recoverable staged output advances to `exposed`; an `exposed` attempt is verified by manifest and output hash before finalization; failed verification restores the backup and records a retryable failure. Finalized attempts only need temporary directories removed.
 
 ## Validation And Provider Safety
 

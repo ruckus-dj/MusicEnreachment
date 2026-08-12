@@ -54,6 +54,7 @@ class ReviewDecision(IntakeEvidence):
 
 class IntakeRequest(IntakeEvidence):
     source_path: Path
+    source_root_id: str = 'legacy'
     origin: Origin
     duration_seconds: NonNegativeDuration | None
     tag_observations: tuple[SourceTagObservation, ...]

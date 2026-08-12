@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -10,8 +11,28 @@ from sqlalchemy.orm import Session
 from music_ingest.api.app import create_app
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import append_metadata_revision
-from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord
+from music_ingest.models import (
+    Base,
+    CandidateRecord,
+    JobRecord,
+    LibraryPublicationRecord,
+    SourceRecord,
+    SourceRootRecord,
+)
 from music_ingest.models.jobs import JobRepository
+
+
+def _source_root(path: Path, *, enabled: bool = True) -> SourceRootRecord:
+    now = datetime.now(UTC)
+    return SourceRootRecord(
+        id='legacy',
+        display_name='legacy',
+        canonical_path=str(path.resolve()),
+        enabled=enabled,
+        scan_state='scanned',
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_path: Path) -> None:
@@ -37,6 +58,7 @@ def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path
     _ = active_path.write_bytes(b'active')
     _ = disappeared_path.write_bytes(b'disappeared')
     with Session(engine) as session:
+        session.add(_source_root(tmp_path))
         active = intake_source(
             session,
             IntakeRequest(
@@ -128,6 +150,7 @@ def test_library_recovery_when_source_is_blocked_requeues_without_deleting_histo
     source_path = tmp_path / 'track.flac'
     source_path.write_bytes(b'fixture')
     with Session(engine) as session:
+        session.add(_source_root(tmp_path))
         intake = intake_source(
             session,
             IntakeRequest(
@@ -171,6 +194,7 @@ def test_destination_replace_when_service_owned_removes_only_managed_folder(tmp_
     source_path = tmp_path / 'track.flac'
     source_path.write_bytes(b'fixture')
     with Session(engine) as session:
+        session.add(_source_root(tmp_path))
         intake = intake_source(
             session,
             IntakeRequest(
@@ -235,6 +259,7 @@ def test_library_recovery_when_completed_layer_contains_source_tags_requeues_ana
     published_path = tmp_path / 'published.flac'
     published_path.write_bytes(b'published')
     with Session(engine) as session:
+        session.add(_source_root(tmp_path))
         intake = intake_source(
             session,
             IntakeRequest(
@@ -276,3 +301,233 @@ def test_library_recovery_when_completed_layer_contains_source_tags_requeues_ana
     # Then: the contaminated layer is eligible for a fresh provider analysis.
     assert response.status_code == 200
     assert response.json() == {'queued': 1, 'skipped': 0, 'conflicts': 0}
+
+
+@pytest.mark.parametrize('root_state', ('disabled', 'historical', 'outside', 'symlink'))
+def test_library_recovery_rejects_invalid_persisted_source_root(tmp_path: Path, root_state: str) -> None:
+    # Given: an otherwise recoverable source whose persisted root was disabled after intake.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "disabled-root-recovery.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = _source_root(tmp_path)
+        session.add(root)
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        match root_state:
+            case 'disabled':
+                root.enabled = False
+            case 'historical':
+                root.id = 'historical-unmanaged'
+                root.canonical_path = 'historical-unmanaged://'
+            case 'outside':
+                outside = tmp_path / 'outside'
+                outside.mkdir()
+                root.canonical_path = str(outside)
+            case 'symlink':
+                target = tmp_path / 'target'
+                target.mkdir()
+                link = tmp_path / 'root-link'
+                link.symlink_to(target, target_is_directory=True)
+                root.canonical_path = str(link)
+            case unreachable:
+                raise AssertionError(unreachable)
+        session.commit()
+
+    # When: the bulk recovery endpoint attempts to queue the source.
+    response = TestClient(create_app(lambda: Session(engine))).post('/api/library/recovery')
+
+    # Then: it rejects the root boundary and creates no recovery job.
+    assert response.status_code == 409
+    with Session(engine) as session:
+        assert session.query(JobRecord).filter_by(source_id=intake.source_id).count() == 0
+
+
+@pytest.mark.parametrize('root_state', ('disabled', 'historical', 'outside', 'symlink'))
+def test_reprocess_all_rejects_invalid_persisted_source_root(tmp_path: Path, root_state: str) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-invalid-root.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    _ = source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = _source_root(tmp_path)
+        session.add(root)
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        match root_state:
+            case 'disabled':
+                root.enabled = False
+            case 'historical':
+                root.id = 'historical-unmanaged'
+                root.canonical_path = 'historical-unmanaged://'
+            case 'outside':
+                outside = tmp_path / 'outside'
+                outside.mkdir()
+                root.canonical_path = str(outside)
+            case 'symlink':
+                target = tmp_path / 'target'
+                target.mkdir()
+                link = tmp_path / 'root-link'
+                link.symlink_to(target, target_is_directory=True)
+                root.canonical_path = str(link)
+            case unreachable:
+                raise AssertionError(unreachable)
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).post('/api/library/reprocess-all')
+
+    assert response.status_code == 409
+    with Session(engine) as session:
+        assert session.query(JobRecord).filter_by(source_id=intake.source_id).count() == 0
+
+
+@pytest.mark.parametrize(('action', 'job_kind'), (('cleanup', 'manual_import'), ('replace', 'filesystem_scan')))
+def test_destination_conflict_actions_reject_disabled_source_before_deleting_output(
+    tmp_path: Path, action: str, job_kind: str
+) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / f"{action}-invalid-root.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    _ = source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = _source_root(tmp_path)
+        session.add(root)
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        source = session.get(SourceRecord, intake.source_id)
+        assert source is not None
+        job = JobRecord(
+            id=f'{job_kind}-{intake.source_id}',
+            source_id=intake.source_id,
+            kind=job_kind,
+            state='blocked_infrastructure',
+            created_at=datetime.now(UTC),
+        )
+        session.add(job)
+        job_id = job.id
+        root.enabled = False
+        record_id = source.library_record_id
+        session.commit()
+
+    destination = tmp_path / job_id
+    destination.mkdir()
+    (destination / 'stale.flac').write_bytes(b'stale')
+    response = TestClient(create_app(lambda: Session(engine), media_root=tmp_path)).post(
+        f'/api/library/records/{record_id}/sources/{intake.source_id}/destination-conflict/{action}'
+    )
+
+    assert response.status_code == 409
+    assert destination.exists()
+
+
+@pytest.mark.parametrize('root_state', ('disabled', 'historical', 'outside', 'symlink'))
+@pytest.mark.parametrize('action', ('metadata', 'candidate', 'musicbrainz_override'))
+def test_source_backed_job_actions_reject_invalid_roots_before_state_mutation(
+    tmp_path: Path, root_state: str, action: str
+) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / f"{action}-{root_state}.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    _ = source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = _source_root(tmp_path)
+        session.add(root)
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        source = session.get(SourceRecord, intake.source_id)
+        assert source is not None
+        session.add(
+            CandidateRecord(
+                source_id=source.id,
+                candidate_key='release-id',
+                evidence='{"tags":{"TITLE":"New title"}}',
+            )
+        )
+        match root_state:
+            case 'disabled':
+                root.enabled = False
+            case 'historical':
+                root.id = 'historical-unmanaged'
+                root.canonical_path = 'historical-unmanaged://'
+            case 'outside':
+                outside = tmp_path / 'outside'
+                outside.mkdir()
+                root.canonical_path = str(outside)
+            case 'symlink':
+                target = tmp_path / 'target'
+                target.mkdir()
+                link = tmp_path / 'root-link'
+                link.symlink_to(target, target_is_directory=True)
+                root.canonical_path = str(link)
+            case unreachable:
+                raise AssertionError(unreachable)
+        record_id = source.library_record_id
+        session.commit()
+
+    match action:
+        case 'metadata':
+            endpoint = f'/api/library/records/{record_id}/metadata'
+            payload = {'source_id': intake.source_id, 'tags': {'TITLE': 'New title'}}
+        case 'candidate':
+            endpoint = f'/api/library/records/{record_id}/sources/{intake.source_id}/candidates/select'
+            payload = {'candidate_key': 'release-id'}
+        case 'musicbrainz_override':
+            endpoint = f'/api/library/records/{record_id}/sources/{intake.source_id}/musicbrainz/override'
+            payload = {'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68'}
+        case unreachable:
+            raise AssertionError(unreachable)
+    response = TestClient(create_app(lambda: Session(engine))).request(
+        'PUT' if action == 'metadata' else 'POST', endpoint, json=payload
+    )
+
+    assert response.status_code == 409
+    with Session(engine) as session:
+        assert session.query(JobRecord).filter_by(source_id=intake.source_id).count() == 0
+        persisted_source = session.get(SourceRecord, intake.source_id)
+        assert persisted_source is not None and persisted_source.library_record is not None
+        assert persisted_source.library_record.metadata_revisions == []

@@ -1,4 +1,13 @@
-import type { GenreCatalog, RuntimeSettingsDraft } from "../types";
+import { useState } from "react";
+import type {
+  GenreCatalog,
+  RuntimeSettingsDraft,
+  SourceRoot,
+  SourceRootCreate,
+  StorageBrowser,
+  StorageConfig,
+  StorageOutputPreview,
+} from "../types";
 
 export function SettingsScreen({
   draft,
@@ -12,6 +21,20 @@ export function SettingsScreen({
   genreLoading,
   genreSyncing,
   onSyncGenres,
+  sourceRoots,
+  sourceRootsLoading,
+  sourceRootsError,
+  sourceRootCreating,
+  sourceRootRemoving,
+  storageBrowser,
+  storageConfig,
+  storageOutputPreview,
+  storageLoading,
+  onCreateSourceRoot,
+  onRemoveSourceRoot,
+  onBrowseStorage,
+  onPreviewStorageOutput,
+  onMoveStorageOutput,
 }: {
   readonly draft: RuntimeSettingsDraft | null;
   readonly loading: boolean;
@@ -24,13 +47,40 @@ export function SettingsScreen({
   readonly genreLoading: boolean;
   readonly genreSyncing: boolean;
   readonly onSyncGenres: () => void;
+  readonly sourceRoots: readonly SourceRoot[];
+  readonly sourceRootsLoading: boolean;
+  readonly sourceRootsError: string;
+  readonly sourceRootCreating: boolean;
+  readonly sourceRootRemoving: boolean;
+  readonly storageBrowser: StorageBrowser | null;
+  readonly storageConfig: StorageConfig | null;
+  readonly storageOutputPreview: StorageOutputPreview | null;
+  readonly storageLoading: boolean;
+  readonly onCreateSourceRoot: (request: SourceRootCreate) => void;
+  readonly onRemoveSourceRoot: (rootId: string) => void;
+  readonly onBrowseStorage: (path?: string) => void;
+  readonly onPreviewStorageOutput: (path: string) => void;
+  readonly onMoveStorageOutput: (path: string) => void;
 }) {
+  const [newRoot, setNewRoot] = useState<SourceRootCreate>({ path: "", display_name: "" });
+  const [pickerTarget, setPickerTarget] = useState<"input" | "output" | null>(null);
   if (loading || !draft) return <div className="empty-state">Загрузка настроек…</div>;
   const update = <K extends keyof RuntimeSettingsDraft>(key: K, value: RuntimeSettingsDraft[K]) =>
     onChange({ ...draft, [key]: value });
   const visibleGenres = (genres?.items ?? []).filter((genre) =>
     `${genre.display_name} ${genre.source_name}`.toLowerCase().includes(genreSearch.toLowerCase()),
   );
+  const submitSourceRoot = () => {
+    const request = { path: newRoot.path.trim(), display_name: newRoot.display_name.trim() };
+    if (!request.path || !request.display_name) return;
+    onCreateSourceRoot(request);
+    setNewRoot({ path: "", display_name: "" });
+  };
+  const selectStorageFolder = (path: string) => {
+    if (pickerTarget === "input") setNewRoot({ ...newRoot, path });
+    if (pickerTarget === "output") onPreviewStorageOutput(path);
+    setPickerTarget(null);
+  };
   return (
     <section className="settings-screen">
       <div className="screen-heading">
@@ -166,6 +216,156 @@ export function SettingsScreen({
             Названия берутся из MusicBrainz; исходные значения сохраняются для точного маппинга.
           </small>
         </fieldset>
+        <fieldset className="settings-card settings-card-wide">
+          <legend>Хранилище контейнера</legend>
+          <div className="storage-root-row">
+            <div>
+              <strong>Output</strong>
+              <small>{storageConfig?.output_root ?? "Загрузка…"}</small>
+            </div>
+            <button type="button" className="secondary" onClick={() => setPickerTarget("output")}>
+              Выбрать папку
+            </button>
+          </div>
+          {storageOutputPreview && (
+            <div className="storage-migration-notice" role="status">
+              <strong>
+                Перенести {storageOutputPreview.file_count} файлов в{" "}
+                {storageOutputPreview.output_root}?
+              </strong>
+              <p>
+                {storageOutputPreview.same_filesystem
+                  ? "Папки на одной файловой системе: перенос выполнится переименованием и обычно займёт мгновения."
+                  : "Папки на разных файловых системах: файлы будут полностью скопированы, это может занять долго."}
+              </p>
+              <button
+                type="button"
+                className="primary"
+                disabled={storageLoading}
+                onClick={() => onMoveStorageOutput(storageOutputPreview.output_root)}
+              >
+                {storageLoading ? "Переносим…" : "Перенести output"}
+              </button>
+            </div>
+          )}
+        </fieldset>
+        <fieldset className="settings-card settings-card-wide">
+          <legend>Корни исходников</legend>
+          {sourceRootsError && (
+            <p className="settings-help" data-testid="source-root-error" role="alert">
+              {sourceRootsError}
+            </p>
+          )}
+          {sourceRootsLoading ? (
+            <p className="settings-help">Загрузка корней…</p>
+          ) : (
+            <div data-testid="source-root-list">
+              {sourceRoots.length ? (
+                <ul className="source-root-list" aria-label="Настроенные корни исходников">
+                  {sourceRoots.map((root) => (
+                    <li className="genre-chip" key={root.id}>
+                      <strong>{root.display_name}</strong>
+                      <small>{root.canonical_path}</small>
+                      <small>
+                        {root.enabled ? "Включён" : "Отключён"} · Сканирование: {root.scan_state}
+                      </small>
+                      <button
+                        type="button"
+                        className="secondary"
+                        data-testid={`source-root-remove-${root.id}`}
+                        disabled={sourceRootRemoving}
+                        onClick={() => onRemoveSourceRoot(root.id)}
+                      >
+                        {sourceRootRemoving ? "Удаляем…" : "Удалить"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="settings-help">Корни исходников ещё не настроены.</p>
+              )}
+            </div>
+          )}
+          <div className="source-root-form">
+            <label>
+              Название корня
+              <input
+                value={newRoot.display_name}
+                onChange={(event) => setNewRoot({ ...newRoot, display_name: event.target.value })}
+              />
+            </label>
+            <div className="folder-choice">
+              <span>Папка исходников</span>
+              <strong>{newRoot.path || "Не выбрана"}</strong>
+              <button type="button" className="secondary" onClick={() => setPickerTarget("input")}>
+                Выбрать папку
+              </button>
+            </div>
+          </div>
+          <small className="settings-help">
+            Выбирайте только папки, доступные внутри контейнера. Output и его подпапки недоступны
+            для input.
+          </small>
+          <button
+            type="button"
+            className="primary"
+            data-testid="source-root-create"
+            disabled={sourceRootCreating || !newRoot.path.trim() || !newRoot.display_name.trim()}
+            onClick={submitSourceRoot}
+          >
+            {sourceRootCreating ? "Добавляем…" : "Добавить корень"}
+          </button>
+        </fieldset>
+        {pickerTarget && storageBrowser && (
+          <div className="folder-picker-backdrop" role="presentation">
+            <section
+              aria-label="Выбор папки контейнера"
+              className="folder-picker"
+              role="dialog"
+              aria-modal="true"
+            >
+              <header>
+                <div>
+                  <p className="eyebrow">Container filesystem</p>
+                  <h3>{pickerTarget === "input" ? "Выберите input" : "Выберите output"}</h3>
+                </div>
+                <button type="button" className="secondary" onClick={() => setPickerTarget(null)}>
+                  Отмена
+                </button>
+              </header>
+              <div className="folder-picker-path">{storageBrowser.path}</div>
+              <div className="folder-picker-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!storageBrowser.parent_path || storageLoading}
+                  onClick={() => onBrowseStorage(storageBrowser.parent_path ?? undefined)}
+                >
+                  Назад
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={storageLoading}
+                  onClick={() => selectStorageFolder(storageBrowser.path)}
+                >
+                  Выбрать эту папку
+                </button>
+              </div>
+              <ul className="folder-picker-list" aria-label="Папки текущего каталога">
+                {storageBrowser.items.map((item) => (
+                  <li key={item.path}>
+                    <button type="button" onClick={() => onBrowseStorage(item.path)}>
+                      <span aria-hidden="true">▸</span>
+                      <strong>{item.name}</strong>
+                      <small>{item.path}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -51,7 +51,7 @@ __all__ = [
 def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
     source_stat = request.source_path.stat()
     source_hash = _source_sha256(request.source_path)
-    source_id = _source_id(source_stat.st_dev, source_stat.st_ino, source_hash)
+    source_id = _source_id(request.source_root_id, source_stat.st_dev, source_stat.st_ino, source_hash)
     repository = IntakeRepository(session)
     source = repository.find_source(source_id)
     if source is None:
@@ -94,6 +94,7 @@ def _persist_source(
         duration_seconds=request.duration_seconds,
         origin=request.origin.value,
         intake_state=IntakeState.NEEDS_REVIEW.value,
+        source_root_id=request.source_root_id,
         library_record=library_record,
     )
     source.tag_observations = [
@@ -127,5 +128,5 @@ def _source_sha256(source_path: Path) -> str:
     return digest.hexdigest()
 
 
-def _source_id(device: int, inode: int, source_hash: str) -> SourceId:
-    return SourceId(sha256(f'{device}:{inode}:{source_hash}'.encode()).hexdigest())
+def _source_id(source_root_id: str, device: int, inode: int, source_hash: str) -> SourceId:
+    return SourceId(sha256(f'{source_root_id}:{device}:{inode}:{source_hash}'.encode()).hexdigest())

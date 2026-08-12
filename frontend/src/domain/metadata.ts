@@ -121,14 +121,24 @@ export function workflowStatus(detail: Detail): WorkflowStatus {
       detail:
         "Финальная ревизия создана и будет записана в управляемую медиакопию очередью публикации.",
     };
+  const hasCurrentPublication = detail.publications.some(
+    (item) => item.state === "current" && isPublicationHash(item.sha256),
+  );
+  if (hasCurrentPublication)
+    return {
+      tone: "ready",
+      label: "Публикация актуальна",
+      detail: "Текущий FLAC соответствует опубликованной финальной ревизии.",
+    };
   return {
-    tone: "ready",
-    label: detail.states.publication === "current" ? "Публикация актуальна" : "Готово к публикации",
-    detail:
-      detail.states.publication === "current"
-        ? "Текущий FLAC соответствует опубликованной финальной ревизии."
-        : "Изменения сохранены как история и ожидают публикации.",
+    tone: "pending",
+    label: "Готово к публикации",
+    detail: "Изменения сохранены как история и ожидают публикации.",
   };
+}
+
+export function isPublicationHash(value: string | undefined): value is string {
+  return /^[0-9a-f]{64}$/i.test(value ?? "") && !/^0+$/i.test(value ?? "");
 }
 
 export function detailIsPending(detail: Detail): boolean {

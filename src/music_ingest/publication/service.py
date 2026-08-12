@@ -9,10 +9,13 @@ from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import Final, override
 
+from music_ingest.inspectors.media_capabilities import inspect_media_capability
+from music_ingest.models import SourceRecord
+from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
+
 _AUDIO_SUFFIXES: Final = frozenset(
     {'.aac', '.aiff', '.alac', '.ape', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.wma'}
 )
-_VALIDATED_AUDIO_SUFFIXES: Final = frozenset({'.flac'})
 _REQUIRED_TAGS: Final = frozenset({'ARTIST', 'ALBUM', 'GENRE'})
 _MAX_ARTWORK_BYTES: Final = 20 * 1024 * 1024
 
@@ -31,6 +34,7 @@ class PublicationRequest:
     replace_existing: bool = False
     destination_audio_name: str | None = None
     replace_artwork: bool = False
+    sources: tuple[SourceRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +54,12 @@ class PublicationError(Exception):
 
 def publish_release(request: PublicationRequest) -> PublicationResult:
     """Validate an isolated staged release before atomically exposing it to media."""
+    source_snapshots = _source_snapshots(request.source_paths, request.sources)
     recovered = _recover_completed_publication(request)
     if recovered is not None:
         return recovered
     staged_release, staging_root, media_root = _controlled_roots(request)
     relative_release = staged_release.relative_to(staging_root)
-    source_snapshots = _source_snapshots(request.source_paths)
     audio_paths = _validate_release(staged_release, request)
     _reject_source_hardlinks(audio_paths, source_snapshots)
     target_name = request.destination_audio_name or audio_paths[0].name
@@ -88,10 +92,10 @@ def replace_published_audio(request: PublicationRequest, target_audio: Path) -> 
     target = target_audio.resolve()
     if target.parent != media_root.resolve() and media_root.resolve() not in target.parents:
         raise PublicationError('published audio is outside the media root')
-    source_snapshots = _source_snapshots(request.source_paths)
+    source_snapshots = _source_snapshots(request.source_paths, request.sources)
     audio_paths = _validate_release(staged_release, request)
-    if len(audio_paths) != 1 or target.suffix.casefold() != '.flac':
-        raise PublicationError('republish requires one FLAC target')
+    if len(audio_paths) != 1 or target.suffix.casefold() not in _AUDIO_SUFFIXES:
+        raise PublicationError('republish requires one supported audio target')
     _reject_source_hardlinks(audio_paths, source_snapshots)
     staged_artwork = next(
         (path for path in staged_release.iterdir() if path.name.casefold() in {'cover.jpg', 'cover.webp'}),
@@ -164,7 +168,7 @@ def _destination_release(request: PublicationRequest, media_root: Path, relative
 def _merge_release(source: Path, destination: Path, request: PublicationRequest) -> None:
     """Overlay one staged track onto an existing album directory."""
     audio_paths = tuple(
-        path for path in source.rglob('*') if path.is_file() and path.suffix.casefold() in _VALIDATED_AUDIO_SUFFIXES
+        path for path in source.rglob('*') if path.is_file() and path.suffix.casefold() in _AUDIO_SUFFIXES
     )
     if len(audio_paths) != 1:
         raise PublicationError('a publication must contain exactly one audio track')
@@ -210,14 +214,21 @@ def _replace_release(temporary_release: Path, destination: Path) -> None:
         shutil.rmtree(backup)
 
 
-def _source_snapshots(paths: tuple[Path, ...]) -> tuple[tuple[Path, int, int, str], ...]:
+def _source_snapshots(
+    paths: tuple[Path, ...], sources: tuple[SourceRecord, ...]
+) -> tuple[tuple[Path, int, int, str], ...]:
     if not paths:
         raise PublicationError('publication requires immutable source provenance')
+    if len(paths) != len(sources):
+        raise PublicationError('publication requires persisted source ownership')
     snapshots: list[tuple[Path, int, int, str]] = []
-    for raw_path in paths:
-        source_path = raw_path.resolve(strict=True)
-        if not source_path.is_file():
-            raise PublicationError('publication source must be a file')
+    for raw_path, source in zip(paths, sources, strict=True):
+        try:
+            source_path = resolve_owned_source(source)
+        except SourceBoundaryError as error:
+            raise PublicationError(f'publication source violates persisted root boundary: {error}') from error
+        if source_path != raw_path.resolve(strict=True):
+            raise PublicationError('publication source path does not match persisted provenance')
         snapshot = source_path.stat()
         snapshots.append((source_path, snapshot.st_dev, snapshot.st_ino, _sha256(source_path)))
     return tuple(snapshots)
@@ -227,7 +238,7 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
     if any(path.is_symlink() for path in release.rglob('*')):
         raise PublicationError('staged release cannot contain symbolic links')
     paths = tuple(path for path in release.rglob('*') if path.is_file())
-    audio_paths = tuple(path for path in paths if path.suffix.casefold() in _VALIDATED_AUDIO_SUFFIXES)
+    audio_paths = tuple(path for path in paths if path.is_file() and path.suffix.casefold() in _AUDIO_SUFFIXES)
     if not audio_paths:
         raise PublicationError('release has no supported audio')
     artwork = tuple(path for path in paths if path.name.casefold() in {'cover.jpg', 'cover.webp'})
@@ -236,8 +247,9 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
     if artwork:
         _validate_artwork(artwork[0])
     for audio_path in audio_paths:
-        _validate_flac(audio_path, request)
-        _validate_tags(audio_path, request)
+        _validate_capability(audio_path, request)
+        if audio_path.suffix.casefold() == '.flac':
+            _validate_tags(audio_path, request)
     for lyric_path in (path for path in paths if path.suffix.casefold() == '.lrc'):
         _validate_lrc(lyric_path)
     return audio_paths
@@ -256,6 +268,15 @@ def _validate_flac(path: Path, request: PublicationRequest) -> None:
         raise PublicationError('FLAC validation tool failed') from error
     if completed.returncode != 0:
         raise PublicationError('FLAC validation failed')
+
+
+def _validate_capability(path: Path, request: PublicationRequest) -> None:
+    inspection = inspect_media_capability(path, timeout_seconds=request.timeout_seconds)
+    if inspection.capability is None:
+        raise PublicationError('audio has no declared publication capability')
+
+    if path.suffix.casefold() == '.flac':
+        _validate_flac(path, request)
 
 
 def _validate_tags(path: Path, request: PublicationRequest) -> None:

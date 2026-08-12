@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import final
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -25,9 +25,15 @@ class WebhookReceiptRecord(Base):
 @final
 class JobRecord(Base):
     __tablename__ = 'jobs'
+    __table_args__: tuple[CheckConstraint, ...] = (
+        CheckConstraint(
+            '(source_id IS NOT NULL) != (library_record_id IS NOT NULL)', name='ck_jobs_exactly_one_target'
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(96), primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
+    library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
     state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -54,10 +60,22 @@ class JobRecord(Base):
         )
 
 
+_ = Index(
+    'uq_active_selection_refresh_job',
+    JobRecord.library_record_id,
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
+)
+
+
 @final
 class JobAttemptRecord(Base):
     __tablename__ = 'job_attempts'
-    __table_args__ = (UniqueConstraint('job_id', 'attempt_number', name='uq_job_attempt_number'),)
+    __table_args__: tuple[UniqueConstraint, ...] = (
+        UniqueConstraint('job_id', 'attempt_number', name='uq_job_attempt_number'),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id'), nullable=False)

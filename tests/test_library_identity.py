@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import CandidateEvidencePayload, _candidate_is_displayable, create_app
+from music_ingest.library.service import attach_source
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -19,6 +20,8 @@ from music_ingest.models import (
     ProviderScheduleRecord,
     ProviderSnapshotRecord,
     SourceRecord,
+    SourceRecordingAssignmentRecord,
+    SourceRootRecord,
     SourceTagRecord,
 )
 from music_ingest.reconciliation import reconcile_incoming
@@ -82,6 +85,50 @@ def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path:
     assert persisted.publications[0].source_id == 'source-mp3'
 
 
+def test_attach_source_when_moving_a_source_keeps_existing_publication_history(tmp_path: Path) -> None:
+    # Given: a source and its immutable publication history on one library record.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "attachment-history.db"}')
+    Base.metadata.create_all(engine)
+    observed_at = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        original = LibraryRecord(id='record-original', created_at=observed_at, updated_at=observed_at)
+        destination = LibraryRecord(id='record-destination', created_at=observed_at, updated_at=observed_at)
+        source = SourceRecord(
+            id='source-history',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=original,
+        )
+        publication = LibraryPublicationRecord(
+            id='publication-history',
+            library_record=original,
+            source=source,
+            path='Artist/Album/song.flac',
+            format_name='flac',
+            content_sha256='b' * 64,
+            state='current',
+            created_at=observed_at,
+        )
+        session.add_all((original, destination, source, publication))
+        session.commit()
+
+        # When: existing attachment mechanics move the source to another record.
+        _ = attach_source(session, source.id, destination.id, now=observed_at)
+        session.commit()
+
+        # Then: source association changes without deleting immutable output history.
+        persisted_source = session.get(SourceRecord, source.id)
+        assert persisted_source is not None
+        assert persisted_source.library_record_id == destination.id
+        assert session.get(LibraryPublicationRecord, publication.id) is not None
+
+
 def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "library-api.db"}')
     Base.metadata.create_all(engine)
@@ -140,11 +187,24 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-review.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
     with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         record = LibraryRecord(id='record-candidate', created_at=timestamp, updated_at=timestamp)
         source = SourceRecord(
             id='source-candidate',
-            source_path='/incoming/song.flac',
+            source_path=str(song_path),
             device=1,
             inode=2,
             size_bytes=3,
@@ -152,6 +212,7 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
             tag_observations=[SourceTagRecord(format_name='flac', tag_name='TITLE', value='Old title')],
             candidates=[
@@ -163,7 +224,7 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
                 )
             ],
         )
-        session.add_all((record, source))
+        session.add_all((root, record, source))
         session.commit()
 
     client = TestClient(create_app(lambda: Session(engine)))
@@ -182,18 +243,32 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
         assert persisted.match_state == 'matched'
         assert persisted.metadata_revisions[-1].layer == 'final'
         assert 'New title' in persisted.metadata_revisions[-1].tags_json
-        assert session.query(JobRecord).filter_by(source_id='source-candidate', kind='final_publish').count() == 1
+        refreshes = session.query(JobRecord).filter_by(library_record_id='record-candidate', kind='selection_refresh')
+        assert refreshes.count() == 1
 
 
 def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-candidate-review.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
     with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         record = LibraryRecord(id='record-acoustid', created_at=timestamp, updated_at=timestamp)
         source = SourceRecord(
             id='source-acoustid',
-            source_path='/incoming/song.flac',
+            source_path=str(song_path),
             device=1,
             inode=2,
             size_bytes=3,
@@ -201,6 +276,7 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
             candidates=[
                 CandidateRecord(
@@ -209,7 +285,7 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
                 )
             ],
         )
-        session.add_all((record, source))
+        session.add_all((root, record, source))
         session.commit()
 
     client = TestClient(create_app(lambda: Session(engine)))
@@ -227,15 +303,40 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
         assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
 
 
-def test_library_api_recording_override_persists_identity_and_queues_musicbrainz_analysis(tmp_path: Path) -> None:
+def test_library_api_recording_override_moves_only_selected_source_and_preserves_evidence(tmp_path: Path) -> None:
+    # Given: two sources on separate records and provider evidence for the source to move.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
     with Session(engine) as session:
-        record = LibraryRecord(id='record-recording-override', created_at=timestamp, updated_at=timestamp)
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(
+            id='record-recording-override',
+            musicbrainz_recording_id='11111111-1111-4111-8111-111111111111',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        target_record = LibraryRecord(
+            id='record-recording-target',
+            musicbrainz_recording_id='f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         source = SourceRecord(
             id='source-recording-override',
-            source_path='/incoming/song.flac',
+            source_path=str(song_path),
             device=1,
             inode=2,
             size_bytes=3,
@@ -243,35 +344,212 @@ def test_library_api_recording_override_persists_identity_and_queues_musicbrainz
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='acoustid', outcome='success', snapshot_sha256='b' * 64, snapshot='{}'
+                )
+            ],
+            candidates=[
+                CandidateRecord(candidate_key='provider-evidence', evidence='{"provider":"acoustid","score":0.99}')
+            ],
         )
-        session.add_all((record, source))
+        sibling = SourceRecord(
+            id='source-recording-target',
+            source_path=str(incoming / 'target.flac'),
+            device=3,
+            inode=4,
+            size_bytes=5,
+            sha256='c' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=target_record,
+        )
+        session.add_all((root, record, target_record, source, sibling))
         session.commit()
 
-    client = TestClient(create_app(lambda: Session(engine)))
-    response = client.post(
-        '/api/library/records/record-recording-override/sources/source-recording-override/musicbrainz/override',
-        json={'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68'},
+    client = TestClient(
+        create_app(
+            lambda: Session(engine),
+            musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz')),
+        )
     )
 
+    # When: a reviewer corrects only the selected source recording.
+    response = client.post(
+        '/api/library/records/record-recording-override/sources/source-recording-override/musicbrainz/override',
+        json={
+            'recording_mbid': 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+        },
+    )
+
+    # Then: only that source moves and the before/after audit, evidence, and refreshes survive.
     assert response.status_code == 200
     assert response.json() == {
-        'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68',
-        'release_mbid': None,
-        'queued': True,
+        'recording_mbid': 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+        'record_id': 'record-recording-target',
     }
     with Session(engine) as session:
-        persisted = session.get(LibraryRecord, 'record-recording-override')
-        assert persisted is not None
-        assert persisted.musicbrainz_recording_id == '3c32b3e7-f21d-4935-bcac-d9c0df46db68'
-        assert persisted.musicbrainz_release_id is None
-        assert any(decision.state == 'acoustid_confirmed' for decision in persisted.sources[0].review_decisions)
-        assert (
-            session.query(JobRecord)
-            .filter_by(source_id='source-recording-override', kind='musicbrainz_analysis')
-            .count()
-            == 1
+        moved = session.get(SourceRecord, 'source-recording-override')
+        unchanged = session.get(SourceRecord, 'source-recording-target')
+        assert moved is not None
+        assert unchanged is not None
+        assert moved.library_record_id == 'record-recording-target'
+        assert unchanged.library_record_id == 'record-recording-target'
+        assert len(moved.provider_attempts) == 1
+        assert len(moved.candidates) == 1
+        assignments = session.query(SourceRecordingAssignmentRecord).filter_by(source_id=moved.id).all()
+        assert len(assignments) == 1
+        assert 'record-recording-override' in assignments[0].evidence_json
+        assert 'record-recording-target' in assignments[0].evidence_json
+        original_record = session.get(LibraryRecord, 'record-recording-override')
+        persisted_target_record = session.get(LibraryRecord, 'record-recording-target')
+        assert original_record is not None
+        assert persisted_target_record is not None
+        assert {event.kind for event in original_record.events} >= {'source_recording_reassigned'}
+        assert {event.kind for event in persisted_target_record.events} >= {'source_recording_reassigned'}
+        assert {
+            job.library_record_id for job in session.query(JobRecord).filter_by(kind='selection_refresh').all()
+        } == {'record-recording-override', 'record-recording-target'}
+
+
+def test_library_api_recording_override_when_provider_is_unavailable_keeps_source_in_place(tmp_path: Path) -> None:
+    # Given: a source whose requested recording cannot be verified by MusicBrainz.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override-unavailable.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
         )
+        record = LibraryRecord(id='record-unavailable', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-unavailable',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+        )
+        session.add_all((root, record, source))
+        session.commit()
+
+    client = TestClient(
+        create_app(
+            lambda: Session(engine),
+            musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz_unavailable')),
+        )
+    )
+
+    # When: MusicBrainz returns unavailable for a typed override request.
+    invalid_response = client.post(
+        '/api/library/records/record-unavailable/sources/source-unavailable/musicbrainz/override',
+        json={'recording_mbid': 'not-a-uuid'},
+    )
+    response = client.post(
+        '/api/library/records/record-unavailable/sources/source-unavailable/musicbrainz/override',
+        json={
+            'recording_mbid': '3c32b3e7-f21d-4935-bcac-d9c0df46db68',
+        },
+    )
+
+    # Then: the API reports unavailable validation and leaves the association unchanged.
+    assert invalid_response.status_code == 422
+    assert response.status_code == 503
+    with Session(engine) as session:
+        source = session.get(SourceRecord, 'source-unavailable')
+        assert source is not None
+        assert source.library_record_id == 'record-unavailable'
+
+
+def test_library_api_recording_override_when_evidence_conflicts_persists_review_before_409(tmp_path: Path) -> None:
+    # Given: a source with retained AcoustID evidence for a different recording.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override-conflict.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(id='record-conflict-api', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-conflict-api',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+            candidates=[
+                CandidateRecord(
+                    candidate_key='other-recording',
+                    evidence=(
+                        '{"provider":"musicbrainz","score":0.99,"tags":'
+                        '{"MUSICBRAINZ_TRACKID":"11111111-1111-4111-8111-111111111111"}}'
+                    ),
+                )
+            ],
+        )
+        session.add_all((root, record, source))
+        session.commit()
+
+    client = TestClient(
+        create_app(
+            lambda: Session(engine), musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz'))
+        )
+    )
+
+    # When: the API receives a verified MBID absent from the source's candidates.
+    response = client.post(
+        '/api/library/records/record-conflict-api/sources/source-conflict-api/musicbrainz/override',
+        json={
+            'recording_mbid': 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+        },
+    )
+
+    # Then: the selected source is moved to the requested recording aggregate.
+    assert response.status_code == 200
+    with Session(engine) as session:
+        source = session.get(SourceRecord, 'source-conflict-api')
+        record = session.get(LibraryRecord, 'record-conflict-api')
+        assert source is not None
+        assert record is not None
+        assert source.library_record_id != record.id
+        target = session.get(LibraryRecord, source.library_record_id)
+        assert target is not None
+        assert target.musicbrainz_recording_id == 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
 
 
 def test_library_api_decodes_acoustid_candidate_with_musicbrainz(tmp_path: Path) -> None:
@@ -390,11 +668,27 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider-retry.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    source_root = tmp_path / 'incoming'
+    source_root.mkdir()
+    failed_path = source_root / 'failed.flac'
+    never_sent_path = source_root / 'never.flac'
+    successful_path = source_root / 'success.flac'
+    for source_path in (failed_path, never_sent_path, successful_path):
+        _ = source_path.write_bytes(b'fixture')
     with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(source_root),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         record = LibraryRecord(id='record-retry', created_at=timestamp, updated_at=timestamp)
         failed = SourceRecord(
             id='source-failed',
-            source_path='/incoming/failed.flac',
+            source_path=str(failed_path),
             device=1,
             inode=2,
             size_bytes=3,
@@ -402,11 +696,12 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
         )
         never_sent = SourceRecord(
             id='source-never',
-            source_path='/incoming/never.flac',
+            source_path=str(never_sent_path),
             device=1,
             inode=3,
             size_bytes=4,
@@ -414,11 +709,12 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
         )
         successful = SourceRecord(
             id='source-success',
-            source_path='/incoming/success.flac',
+            source_path=str(successful_path),
             device=1,
             inode=4,
             size_bytes=5,
@@ -426,10 +722,12 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
         )
         session.add_all(
             (
+                root,
                 record,
                 failed,
                 never_sent,

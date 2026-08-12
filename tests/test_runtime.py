@@ -97,6 +97,35 @@ def test_runtime_configuration_when_database_settings_are_invalid_fails_closed(e
         _ = RuntimeConfig.from_environment(environment)
 
 
+def test_runtime_configuration_when_api_token_is_missing_starts_without_application_auth() -> None:
+    # Given: an otherwise valid PostgreSQL runtime configuration without application credentials.
+    environment = {'MUSIC_INGEST_DATABASE_URL': 'postgresql+psycopg://music_ingest@database/music_ingest'}
+
+    # When: the service parses startup configuration.
+    # Then: reverse-proxy ownership leaves the application configuration token-free.
+    assert RuntimeConfig.from_environment(environment) == RuntimeConfig(
+        'postgresql+psycopg://music_ingest@database/music_ingest', 10
+    )
+
+
+def test_runtime_app_when_e2e_seed_flag_is_explicitly_enabled_sets_seed_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a valid runtime with the explicit E2E seed flag enabled.
+    runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
+    engine = create_engine('sqlite+pysqlite:///:memory:')
+    monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
+    monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    monkeypatch.setenv('MUSIC_INGEST_E2E_SEED_ENABLED', 'true')
+
+    # When: the runtime application is composed.
+    application = server.create_runtime_app()
+
+    # Then: the explicit flag reaches the application state.
+    assert application.state.e2e_seed_enabled is True
+
+
 def test_runtime_app_when_started_upgrades_schema_before_it_serves_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a configured PostgreSQL runtime with migration and engine seams isolated from external services.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
@@ -151,6 +180,11 @@ def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypat
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
     monkeypatch.setattr(engine, 'dispose', lambda: disposed.append(None))
+    source_parent = tmp_path / 'sources'
+    incoming_root = source_parent / 'legacy'
+    incoming_root.mkdir(parents=True)
+    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
+    monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
 
     # When: Uvicorn's ASGI lifespan enters and exits through TestClient.
     with TestClient(server.create_runtime_app()) as client:
@@ -173,6 +207,11 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    source_parent = tmp_path / 'sources'
+    incoming_root = source_parent / 'legacy'
+    incoming_root.mkdir(parents=True)
+    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
+    monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
     started: list[tuple[object, object]] = []
 
     async def record_worker_start(session_factory: object, config: object) -> None:

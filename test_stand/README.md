@@ -7,7 +7,7 @@ This isolated Docker test stand does not contact or change the production server
 | Host path | Purpose | Lidarr | music-ingest | Navidrome |
 | --- | --- | --- | --- | --- |
 | `data/downloads/` | Raw material placed by a download client | read/write at `/data/downloads` | unavailable | unavailable |
-| `data/incoming/` | Lidarr-managed import library | read/write at `/data/incoming` | read-only at `/data/incoming` | unavailable |
+| `data/sources/legacy/` | Lidarr-managed legacy import library | read/write at `/data/sources/legacy` | read-only at `/data/sources/legacy` | unavailable |
 | `data/media/` | Published canonical media library | unavailable | read/write at `/data/media` | media read-only at `/music` |
 
 The PostgreSQL-backed API and its in-process worker receive only the incoming
@@ -66,16 +66,15 @@ Verify the actual API and its migrated PostgreSQL runtime with:
 
 ```sh
 curl --fail --silent --show-error http://localhost:8787/healthz
-curl --fail --silent --show-error http://localhost:8787/review >/dev/null
+curl --fail --silent --show-error http://localhost:8787/api/settings/source-roots
 docker compose exec postgres psql -U music_ingest -d music_ingest -tAc 'select version_num from alembic_version'
 docker compose logs lidarr-webhook
 ```
 
-Lidarr delivers webhooks through the internal Compose network to
-`http://music-ingest:8000/api/intake/lidarr`; the app deliberately has no
-authentication layer in this trusted local topology. `lidarr-webhook` is a
-one-shot setup task, not a healthy long-running service: an exit code of zero
-means Lidarr saved the endpoint and its `testall` validation reported success.
+The local UI and API are public; production authentication is owned by the reverse
+proxy. `lidarr-webhook` is a one-shot setup task, not a healthy long-running
+service: an exit code of zero means Lidarr saved the endpoint and its `testall`
+validation reported success.
 
 ## Stable library flow
 

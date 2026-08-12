@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from shutil import which
 from subprocess import run
@@ -17,6 +18,7 @@ from music_ingest.models import (
     Base,
     JobRecord,
     SourceRecord,
+    SourceRootRecord,
     WebhookReceiptRecord,
 )
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
@@ -30,6 +32,20 @@ def _client(tmp_path: Path) -> tuple[TestClient, Session]:
     Base.metadata.create_all(engine)
     incoming_root = tmp_path / 'incoming'
     incoming_root.mkdir()
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path=str(incoming_root.resolve()),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
     return TestClient(create_app(lambda: Session(engine), incoming_root=incoming_root)), Session(engine)
 
 
@@ -165,6 +181,20 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
     incoming_root.mkdir()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unknown-genre.db"}')
     Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path=str(incoming_root.resolve()),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
     client = TestClient(create_app(lambda: Session(engine), incoming_root=incoming_root))
     source_path = _flac(incoming_root / 'fixture.flac', genre='Rock')
     _ = (incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
@@ -256,9 +286,9 @@ def test_lidarr_rename_and_album_delete_when_out_of_order_preserve_source_histor
     replayed = client.post('/api/intake/lidarr', json=album_delete)
 
     # Then: exact source paths are retained, and provider deletion remains an operational event.
-    assert rename.status_code == 202
-    assert deleted.status_code == 202
-    assert replayed.status_code == 202
+    assert rename.status_code == 204
+    assert deleted.status_code == 204
+    assert replayed.status_code == 204
     renamed_source = session.scalars(select(SourceRecord)).one()
     assert renamed_source.source_path == str(new_path)
     assert len(session.scalars(select(WebhookReceiptRecord)).all()) == 3

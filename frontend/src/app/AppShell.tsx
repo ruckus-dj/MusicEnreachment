@@ -53,6 +53,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           <button
             type="button"
             className={screen !== "track" && screen !== "settings" ? "nav-item active" : "nav-item"}
+            data-testid="nav-library"
             onClick={() => controller.navigate({ screen: "artists" })}
           >
             {icon(
@@ -64,6 +65,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           <button
             type="button"
             className={screen === "settings" ? "nav-item active" : "nav-item"}
+            data-testid="nav-settings"
             onClick={() => controller.navigate({ screen: "settings" })}
           >
             {icon(
@@ -236,6 +238,20 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               genreLoading={controller.genreLoading}
               genreSyncing={controller.genreSyncing}
               onSyncGenres={() => void controller.syncGenres()}
+              sourceRoots={controller.sourceRoots}
+              sourceRootsLoading={controller.sourceRootsLoading}
+              sourceRootsError={controller.sourceRootsError}
+              sourceRootCreating={controller.sourceRootCreating}
+              sourceRootRemoving={controller.sourceRootRemoving}
+              storageBrowser={controller.storageBrowser}
+              storageConfig={controller.storageConfig}
+              storageOutputPreview={controller.storageOutputPreview}
+              storageLoading={controller.storageLoading}
+              onCreateSourceRoot={(request) => void controller.createSourceRoot(request)}
+              onRemoveSourceRoot={(rootId) => void controller.removeSourceRoot(rootId)}
+              onBrowseStorage={(path) => void controller.browseStorage(path)}
+              onPreviewStorageOutput={(path) => void controller.previewStorageOutput(path)}
+              onMoveStorageOutput={(path) => void controller.moveStorageOutput(path)}
             />
           ) : screen === "track" ? (
             <TrackDetail
@@ -249,8 +265,14 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
               onOverrideRelease={(value) => void controller.overrideRelease(value)}
-              onOverrideRecording={(value) => void controller.overrideRecording(value)}
+              onOverrideRecording={(request) => void controller.overrideRecording(request)}
               onSelectCandidate={(key) => void controller.selectCandidate(key)}
+              onSelectEffectiveSource={(value) => void controller.selectEffectiveSource(value)}
+              effectiveSourceId={controller.effectiveSourceId}
+              effectiveSourceError={controller.effectiveSourceError}
+              effectiveSourceSuccess={controller.effectiveSourceSuccess}
+              recordingCorrectionError={controller.recordingCorrectionError}
+              recordingCorrectionReview={controller.recordingCorrectionReview}
             />
           ) : (
             <LibraryCatalog

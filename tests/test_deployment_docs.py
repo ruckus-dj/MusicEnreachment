@@ -26,3 +26,9 @@ def test_operational_docs_preserve_dry_run_and_provider_safety_contracts() -> No
     assert 'records unresolved states on the stable library record' in content
     assert 'MUSIC_INGEST_ENABLE_LIVE_TESTS=1' in content
     assert 'never removes `.nfo`' in content
+
+
+def test_operational_docs_describe_storage_and_publication_contracts() -> None:
+    content = (ROOT / 'docs' / 'deployment.md').read_text(encoding='utf-8')
+    assert '`reserved` or `staged`' in content
+    assert 'atomically replaced' in content
