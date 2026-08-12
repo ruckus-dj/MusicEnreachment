@@ -12,3 +12,11 @@ class ScanResult(BaseModel):
     moved: int
     unchanged: int
     queued_jobs: int
+
+
+class ScanJobResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    job_id: str
+    state: str
+    result: ScanResult | None = None

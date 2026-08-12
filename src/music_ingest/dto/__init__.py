@@ -59,7 +59,7 @@ from music_ingest.dto.lidarr import (
 )
 from music_ingest.dto.musicbrainz_genres import GenrePage
 from music_ingest.dto.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
-from music_ingest.dto.reconciliation import ScanResult
+from music_ingest.dto.reconciliation import ScanJobResponse, ScanResult
 from music_ingest.dto.settings import RuntimeSettings
 
 __all__ = [
@@ -107,6 +107,7 @@ __all__ = [
     'RuntimeSettings',
     'RuntimeSettingsRequest',
     'RuntimeSettingsResponse',
+    'ScanJobResponse',
     'ScanResult',
     'SourceId',
     'SourceRecoveryResponse',
