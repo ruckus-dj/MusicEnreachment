@@ -657,7 +657,10 @@ class ProcessingWorker:
             if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
                 self._invalid_audio(claimed, source, 'malformed FLAC container', now)
                 return
-            if inspection.flac_test.state is not ToolState.SUCCESS:
+            has_repairable_wrapper = any(
+                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
+            )
+            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
                 raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
         elif suffix == '.mp3':
             inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())

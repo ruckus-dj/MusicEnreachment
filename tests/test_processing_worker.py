@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
+from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError
 from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
@@ -593,7 +594,9 @@ def test_worker_when_unexpected_processing_error_retries_without_quarantining_so
         assert source.library_record.events[-1].kind == 'processing_retry'
 
 
-def test_worker_runs_initial_and_staged_provider_phases_in_order(tmp_path: Path) -> None:
+def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given: an import with both providers configured and durable provider schedules.
     config = replace(
         _config(tmp_path),
@@ -602,6 +605,17 @@ def test_worker_runs_initial_and_staged_provider_phases_in_order(tmp_path: Path)
     )
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
+    _ = source_path.write_bytes(source_path.read_bytes() + b'TAG' + (b'\x00' * 125))
+    fingerprint = FingerprintResult(
+        FingerprintState.SUCCESS,
+        'fixture-fingerprint',
+        10,
+        'fixture',
+        'a' * 64,
+        None,
+        None,
+    )
+    monkeypatch.setattr(processing, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
     _ = (config.incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
