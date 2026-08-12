@@ -34,6 +34,7 @@ import type {
   Route,
   RuntimeSettings,
   RuntimeSettingsDraft,
+  ScanJob,
   Screen,
   Source,
   SourceRoot,
@@ -137,6 +138,7 @@ export function useAppController(): AppControllerModel {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [effectiveSourceId, setEffectiveSourceId] = useState<string | null>(
@@ -244,25 +246,12 @@ export function useAppController(): AppControllerModel {
   }
   async function scan() {
     setScanning(true);
-    setNotice("Восстанавливаем недоимпортированные записи…");
+    setNotice("Сканирование поставлено в очередь…");
     try {
-      const result = await api<{
-        readonly added: number;
-        readonly changed: number;
-        readonly moved: number;
-        readonly removed: number;
-        readonly unchanged: number;
-        readonly queued_jobs: number;
-      }>("/api/reconciliation/scan", { method: "POST" });
-      setNotice(
-        `Новых: ${result.added}; изменённых: ${result.changed}; перемещённых: ${result.moved}; ` +
-          `удалённых: ${result.removed}; в очереди: ${result.queued_jobs}`,
-      );
-      await loadLibrary();
-      if (result.queued_jobs > 0) watchLibrary();
+      const job = await api<ScanJob>("/api/reconciliation/scan", { method: "POST" });
+      setScanJobId(job.job_id);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Восстановление не удалось");
-    } finally {
       setScanning(false);
     }
   }
@@ -592,6 +581,30 @@ export function useAppController(): AppControllerModel {
       busy = true;
       try {
         const libraryWatchActive = watchedLibraryUntilRef.current > 0;
+        if (scanJobId !== null) {
+          const job = await api<ScanJob>(
+            `/api/reconciliation/scan/${encodeURIComponent(scanJobId)}`,
+          );
+          if (job.state === "completed" && job.result !== null) {
+            const result = job.result;
+            setNotice(
+              `Новых: ${result.added}; изменённых: ${result.changed}; перемещённых: ${result.moved}; ` +
+                `удалённых: ${result.removed}; в очереди: ${result.queued_jobs}`,
+            );
+            setScanJobId(null);
+            setScanning(false);
+            await loadLibrary();
+            if (result.queued_jobs > 0) watchLibrary();
+          } else if (job.state !== "queued" && job.state !== "running") {
+            setNotice("Сканирование завершилось с ошибкой. Повторите попытку позже.");
+            setScanJobId(null);
+            setScanning(false);
+          } else {
+            setNotice(
+              job.state === "running" ? "Сканирование выполняется…" : "Сканирование в очереди…",
+            );
+          }
+        }
         if (libraryWatchActive && Date.now() >= watchedLibraryUntilRef.current)
           setWatchedLibraryUntil(0);
         const currentWatches = watchedRecordsRef.current;
@@ -636,7 +649,7 @@ export function useAppController(): AppControllerModel {
     };
     const timer = window.setInterval(() => void poll(), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [scanJobId]);
   useEffect(() => {
     if (screen === "settings" && !settingsDraft && !settingsLoading) void loadSettings();
   }, [screen, settingsDraft, settingsLoading]);

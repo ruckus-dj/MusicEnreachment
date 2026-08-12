@@ -207,3 +207,16 @@ export type WatchedRecord = {
   readonly startedAt: number;
   readonly sawPending: boolean;
 };
+export type ScanResult = {
+  readonly added: number;
+  readonly changed: number;
+  readonly moved: number;
+  readonly removed: number;
+  readonly unchanged: number;
+  readonly queued_jobs: number;
+};
+export type ScanJob = {
+  readonly job_id: string;
+  readonly state: string;
+  readonly result: ScanResult | null;
+};
