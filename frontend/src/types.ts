@@ -28,6 +28,7 @@ export type Source = {
   readonly format?: string;
   readonly sha256: string;
   readonly state: string;
+  readonly disappeared_at?: string | null;
   readonly origin?: string;
   readonly size_bytes?: number;
   readonly tag_observations?: readonly {
