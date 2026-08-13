@@ -50,6 +50,17 @@ import type {
 
 export type CatalogTrack = { item: Summary; source: Source };
 
+function catalogSource(item: Summary): Source | undefined {
+  const currentPublication = item.publications.find(
+    (publication) => publication.state === "current",
+  );
+  return (
+    item.sources.find((source) => source.source_id === currentPublication?.source_id) ??
+    item.sources.find((source) => source.state !== "disappeared") ??
+    item.sources[0]
+  );
+}
+
 export type AppControllerModel = {
   items: Summary[];
   detail: Detail | null;
@@ -702,7 +713,10 @@ export function useAppController(): AppControllerModel {
   const tracks = useMemo(
     () =>
       items
-        .flatMap((item) => item.sources.map((source) => ({ item, source })))
+        .flatMap((item) => {
+          const source = catalogSource(item);
+          return source ? [{ item, source }] : [];
+        })
         .filter(({ item, source }) =>
           `${albumArtistsFor(item, source.source_id).join(" ")} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`
             .toLowerCase()

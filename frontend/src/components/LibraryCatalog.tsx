@@ -96,7 +96,7 @@ export function LibraryCatalog({
     <section className="track-screen">
       <div className="screen-heading">
         <div>
-          <p className="eyebrow">{albumTracks.length} файлов</p>
+          <p className="eyebrow">{albumTracks.length} треков</p>
           <h2>Список треков</h2>
         </div>
         <button type="button" className="secondary" disabled={loading} onClick={onRefresh}>
