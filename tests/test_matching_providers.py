@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,11 +23,82 @@ from music_ingest.matching.providers import (
     RateLimited,
     Unavailable,
 )
+from music_ingest.matching.scoring import MatchingRequest, recording_candidate_matches
 from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 NOW = datetime(2026, 7, 28, tzinfo=UTC)
+
+_RECORDING_RELEASES = {
+    'c3ab18e7-e17a-4064-a352-834b67513f33': ('beatles-release', 'Let It Be', 'The Beatles', 'Let It Be', 232, 1, 12),
+    '6eddd1bf-2a06-4baf-8b31-0909963345c7': (
+        'clean-release',
+        'We Made It',
+        'Busta Rhymes feat. Linkin Park',
+        'We Made It (amended version)',
+        238,
+        1,
+        3,
+    ),
+    'fea273ef-bd0b-4f3a-ba7a-6d9ed240c2f5': (
+        'instrumental-release',
+        'We Made It',
+        'Busta Rhymes feat. Linkin Park',
+        'We Made It (instrumental)',
+        236,
+        3,
+        3,
+    ),
+    '5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4': (
+        '0f481339-f7bb-40b4-ab4a-f24c1c2a7009',
+        'We Made It',
+        'Busta Rhymes feat. Linkin Park',
+        'We Made It (album version)',
+        238,
+        1,
+        3,
+    ),
+}
+
+
+def _recording_releases_response(recording_id: str) -> bytes:
+    release_id, release_title, artist, _, _, _, _ = _RECORDING_RELEASES[recording_id]
+    return json.dumps(
+        {'releases': [{'id': release_id, 'title': release_title, 'artist-credit': [{'name': artist}]}]}
+    ).encode()
+
+
+def _release_response(release_id: str) -> bytes:
+    recording_id, (_, release_title, artist, recording_title, duration, track_number, track_total) = next(
+        (recording_id, values) for recording_id, values in _RECORDING_RELEASES.items() if values[0] == release_id
+    )
+    return json.dumps(
+        {
+            'id': release_id,
+            'title': release_title,
+            'country': 'JP' if release_id == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009' else 'US',
+            'artist-credit': [{'name': artist}],
+            'media': [
+                {
+                    'position': 1,
+                    'track-count': track_total,
+                    'tracks': [
+                        {
+                            'position': track_number,
+                            'title': recording_title,
+                            'length': duration * 1000,
+                            'recording': {
+                                'id': recording_id,
+                                'title': recording_title,
+                                'artist-credit': [{'name': artist}],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    ).encode()
 
 
 def _service(session: Session, starts: list[datetime]) -> ProviderEvidenceService:
@@ -384,6 +456,63 @@ def test_musicbrainz_v2_adapter_keeps_ambiguous_release_candidates() -> None:
     # Then: review can display both selectable releases instead of losing them in Ambiguous.
     assert isinstance(result, Ambiguous)
     assert tuple(candidate.release_mbid for candidate in result.candidates) == ('release-a', 'release-b')
+
+
+def test_provider_adapters_reject_false_acoustid_recording_and_select_japanese_maxi_release() -> None:
+    # Given: mocked AcoustID and MusicBrainz responses for We Made It (Album Version).
+    class AcoustIdTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = url, headers
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"status":"ok","results":[{"score":0.9639372,"recordings":['
+                b'{"id":"c3ab18e7-e17a-4064-a352-834b67513f33"},'
+                b'{"id":"6eddd1bf-2a06-4baf-8b31-0909963345c7"},'
+                b'{"id":"fea273ef-bd0b-4f3a-ba7a-6d9ed240c2f5"},'
+                b'{"id":"5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4"}]}]}',
+            )
+
+    class MusicBrainzTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            release_id = url.split('/release/', 1)[1].split('?', 1)[0] if '/release/' in url else ''
+            recording_id = url.split('/recording/', 1)[1].split('?', 1)[0] if '/recording/' in url else ''
+            if recording_id:
+                return MusicBrainzHttpResponse(200, _recording_releases_response(recording_id))
+            return MusicBrainzHttpResponse(200, _release_response(release_id))
+
+    request = MatchingRequest(
+        'Busta Rhymes feat. Linkin Park',
+        'We Made It [Maxi Single]',
+        238,
+        recording_title='We Made It (Album Version)',
+        track_number=1,
+        track_total=3,
+        disc_number=1,
+        disc_total=1,
+        source_path='/downloads/Japan WPCR-12973/01 - We Made It (Album Version).flac',
+    )
+    acoustid = AcoustIdV2Adapter(AcoustIdTransport(), 'client').lookup(
+        AcoustIdLookupRequest('fingerprint', FixtureCase.SUCCESS, 238.17), NOW
+    )
+    musicbrainz = MusicBrainzV2Adapter(MusicBrainzTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: each equally scored recording is resolved against MusicBrainz facts.
+    assert isinstance(acoustid, AcoustIdMatch)
+    eligible = tuple(
+        candidate
+        for recording in acoustid.evidence.candidates
+        for result in (
+            musicbrainz.lookup(MusicBrainzLookupRequest('', FixtureCase.SUCCESS, recording.recording_mbid), NOW),
+        )
+        if isinstance(result, MusicBrainzMatch)
+        for candidate in (result.candidate,)
+        if recording_candidate_matches(request, candidate)
+    )
+
+    # Then: the Beatles, clean, and instrumental recordings are rejected; the Japanese Maxi is selected.
+    assert tuple(candidate.recording_mbids for candidate in eligible) == (('5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4',),)
+    assert eligible[0].release_mbid == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009'
 
 
 def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_path: Path) -> None:

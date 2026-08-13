@@ -65,6 +65,12 @@ class MatchingRequest:
     explicit_ids: ExplicitMusicBrainzIds = ExplicitMusicBrainzIds()
     lidarr: LidarrContext | None = None
     local_only: bool = False
+    recording_title: str = ''
+    track_number: int | None = None
+    track_total: int | None = None
+    disc_number: int | None = None
+    disc_total: int | None = None
+    source_path: str = ''
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +114,16 @@ def resolve_match(
             automatic_candidate.release_mbid,
             recording_score,
             release_score,
+            None,
+            candidate_scores,
+        )
+    automatic_candidate = _unique_recording_context_match(request, musicbrainz)
+    if automatic_candidate is not None:
+        return MatchResult(
+            MatchDecision.AUTO_SELECTED,
+            automatic_candidate.release_mbid,
+            recording_score,
+            CandidateScore(automatic_candidate.release_mbid, _candidate_score(request, automatic_candidate)),
             None,
             candidate_scores,
         )
@@ -186,6 +202,33 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
             return None
 
 
+def _unique_recording_context_match(
+    request: MatchingRequest, musicbrainz: MusicBrainzResult
+) -> ReleaseCandidate | None:
+    if not request.recording_title.strip() or _has_unsafe_text(request):
+        return None
+    match musicbrainz:
+        case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
+            return (
+                candidate
+                if _has_recording_context(candidate) and recording_candidate_matches(request, candidate)
+                else None
+            )
+        case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
+            matches = tuple(
+                candidate
+                for candidate in candidates
+                if _has_recording_context(candidate) and recording_candidate_matches(request, candidate)
+            )
+            return matches[0] if len(matches) == 1 else None
+        case _:
+            return None
+
+
+def _has_recording_context(candidate: ReleaseCandidate) -> bool:
+    return candidate.recording_title is not None and candidate.duration_seconds is not None
+
+
 def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> float:
     if _candidate_matches_explicit_ids(request.explicit_ids, candidate):
         return 1.0
@@ -204,6 +247,45 @@ def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> f
         candidate,
     )
     return max(source_score, lidarr_score)
+
+
+def recording_candidate_matches(request: MatchingRequest, candidate: ReleaseCandidate) -> bool:
+    return (
+        _text_matches(request.artist_name, candidate.release_artist_name)
+        and _title_matches(request.recording_title, candidate.recording_title)
+        and _duration_matches(request.duration_seconds, candidate.duration_seconds)
+        and _number_matches(request.track_number, candidate.track_number)
+        and _number_matches(request.track_total, candidate.track_total)
+        and _number_matches(request.disc_number, candidate.disc_number)
+        and _number_matches(request.disc_total, candidate.disc_total)
+        and _country_matches(request.source_path, candidate.country)
+    )
+
+
+def _title_matches(source_title: str, candidate_title: str | None) -> bool:
+    return candidate_title is None or (
+        bool(source_title) and _recording_title_key(source_title) == _recording_title_key(candidate_title)
+    )
+
+
+def _text_matches(source_value: str, candidate_value: str | None) -> bool:
+    return candidate_value is None or (bool(source_value) and _normalized(source_value) == _normalized(candidate_value))
+
+
+def _duration_matches(expected: int | None, actual: int | None) -> bool:
+    return actual is None or _duration_score(expected, actual) == 0.2
+
+
+def _recording_title_key(value: str) -> str:
+    return _normalized(value).replace('albumversion', '')
+
+
+def _number_matches(expected: int | None, actual: int | None) -> bool:
+    return expected is None or actual is None or expected == actual
+
+
+def _country_matches(source_path: str, candidate_country: str | None) -> bool:
+    return candidate_country is None or 'japan' not in source_path.casefold() or candidate_country == 'JP'
 
 
 def _text_duration_score(

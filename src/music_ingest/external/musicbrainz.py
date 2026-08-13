@@ -187,10 +187,10 @@ class MusicBrainzV2Adapter:
             ),
             None,
         )
-        release_artist_name = ''.join(item.name for item in release.artist_credit)
+        release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
         artist = artist_name if artist_name is not None else release_artist_name
         if not artist and track is not None:
-            artist = ''.join(item.name for item in track.recording.artist_credit)
+            artist = ''.join(f'{item.name}{item.joinphrase}' for item in track.recording.artist_credit)
         recording_mbids = () if recording_mbid is None else (recording_mbid,)
         medium = next(
             (medium for medium in release.media if track is not None and track in medium.tracks),
@@ -208,6 +208,7 @@ class MusicBrainzV2Adapter:
             recording_title=None if track is None else track.recording.title,
             date=release.date,
             original_date=None if release.release_group is None else release.release_group.first_release_date,
+            country=release.country,
             track_number=None if track is None else track.position,
             track_total=track_total,
             disc_number=None if medium is None else medium.position,
@@ -235,6 +236,10 @@ class MusicBrainzV2Adapter:
                 and relation.artist is not None
             ),
             release_artist_name=release_artist_name or None,
+            recording_artist_names=(
+                () if track is None else tuple(credit.name for credit in track.recording.artist_credit)
+            ),
+            release_artist_names=tuple(credit.name for credit in release.artist_credit),
         )
 
 

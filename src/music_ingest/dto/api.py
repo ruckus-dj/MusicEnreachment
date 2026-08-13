@@ -278,6 +278,7 @@ class ArtistCredit(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
     name: str
+    joinphrase: str = ''
     artist: Artist | None = None
     genres: tuple[Genre, ...] = ()
 
@@ -325,6 +326,7 @@ class Release(BaseModel):
     status: str | None = None
     artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     date: str | None = None
+    country: str | None = None
     genres: tuple[Genre, ...] = ()
     release_group: ReleaseGroup | None = Field(default=None, alias='release-group')
     media: tuple[Medium, ...] = ()

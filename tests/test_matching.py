@@ -21,6 +21,7 @@ from music_ingest.matching.scoring import (
     MatchDecision,
     MatchingRequest,
     ReviewReason,
+    recording_candidate_matches,
     resolve_match,
 )
 from tests.support.providers import MusicBrainzFixtureProvider
@@ -218,6 +219,76 @@ def test_matching_when_exact_musicbrainz_facts_are_freshly_cached_selects_the_re
     assert result.decision is MatchDecision.AUTO_SELECTED
     assert result.selected_release_mbid == RELEASE_MBID
     assert result.release_score.score == 0.8
+
+
+def test_recording_candidate_matching_rejects_acoustid_false_positive_and_selects_japanese_maxi() -> None:
+    # Given: AcoustID gives the same high score to a Beatles false positive and three We Made It variants.
+    request = MatchingRequest(
+        artist_name='Busta Rhymes feat. Linkin Park',
+        release_title='We Made It [Maxi Single]',
+        duration_seconds=238,
+        recording_title='We Made It (Album Version)',
+        track_number=1,
+        track_total=3,
+        disc_number=1,
+        disc_total=1,
+        source_path='/downloads/Japan WPCR-12973/01 - We Made It (Album Version).flac',
+    )
+    candidates = (
+        ReleaseCandidate(
+            'beatles-release',
+            'Let It Be',
+            'The Beatles',
+            232,
+            ('c3ab18e7-e17a-4064-a352-834b67513f33',),
+            recording_title='Let It Be',
+            track_number=1,
+            track_total=12,
+        ),
+        ReleaseCandidate(
+            'clean-release',
+            'We Made It',
+            'Busta Rhymes feat. Linkin Park',
+            238,
+            ('6eddd1bf-2a06-4baf-8b31-0909963345c7',),
+            recording_title='We Made It (amended version)',
+            track_number=1,
+            track_total=3,
+        ),
+        ReleaseCandidate(
+            'instrumental-release',
+            'We Made It',
+            'Busta Rhymes feat. Linkin Park',
+            236,
+            ('fea273ef-bd0b-4f3a-ba7a-6d9ed240c2f5',),
+            recording_title='We Made It (instrumental)',
+            track_number=3,
+            track_total=3,
+        ),
+        ReleaseCandidate(
+            '0f481339-f7bb-40b4-ab4a-f24c1c2a7009',
+            'We Made It',
+            'Busta Rhymes feat. Linkin Park',
+            238,
+            ('5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4',),
+            recording_title='We Made It (album version)',
+            track_number=1,
+            track_total=3,
+            disc_number=1,
+            disc_total=1,
+            country='JP',
+        ),
+    )
+
+    # When: MusicBrainz facts validate each high-confidence AcoustID recording candidate.
+    selected = tuple(candidate for candidate in candidates if recording_candidate_matches(request, candidate))
+
+    # Then: only the source-consistent recording and its Japanese Maxi Single release remain eligible.
+    assert tuple(candidate.recording_mbids for candidate in selected) == (('5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4',),)
+    assert selected[0].release_mbid == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009'
+    result = resolve_match(request, Ambiguous(_provenance('fresh'), candidates), None)
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009'
 
 
 def test_matching_when_musicbrainz_outage_preserves_local_only_review_path() -> None:

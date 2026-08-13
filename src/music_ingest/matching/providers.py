@@ -190,6 +190,7 @@ class ReleaseCandidate:
     recording_title: str | None = None
     date: str | None = None
     original_date: str | None = None
+    country: str | None = None
     track_number: int | None = None
     track_total: int | None = None
     disc_number: int | None = None
@@ -199,6 +200,8 @@ class ReleaseCandidate:
     isrcs: tuple[str, ...] = ()
     performers: tuple[str, ...] = ()
     release_artist_name: str | None = None
+    recording_artist_names: tuple[str, ...] = ()
+    release_artist_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
