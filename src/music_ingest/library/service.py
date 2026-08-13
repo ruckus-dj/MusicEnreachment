@@ -282,7 +282,13 @@ def reevaluate_effective_source_decision(
 ) -> QualityDecision:
     record = library_record_detail(session, library_record_id)
     confirmed_source_ids = frozenset(
-        source.id for source in record.sources for decision in source.review_decisions if decision.state == 'confirmed'
+        source.id
+        for source in record.sources
+        if source.library_record_id == record.id
+        and (
+            record.musicbrainz_recording_id is not None
+            or any(decision.state == 'confirmed' for decision in source.review_decisions)
+        )
     )
     candidates = tuple(
         QualityCandidate(

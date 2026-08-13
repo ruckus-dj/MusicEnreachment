@@ -80,6 +80,45 @@ def test_quality_policy_v1_when_supported_fixture_is_eligible_persists_complete_
     assert decision.quality_tuple == expected_tuple
 
 
+def test_automatic_recording_match_when_reevaluated_selects_the_source_for_publication(tmp_path: Path) -> None:
+    # Given: a source automatically associated with its record and no manual review decision.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "automatic-effective-source.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(
+            id='record-automatic',
+            musicbrainz_recording_id='recording-mbid',
+            created_at=now,
+            updated_at=now,
+        )
+        source = SourceRecord(
+            id='source-automatic',
+            source_path='/incoming/automatic.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            media_codec='FLAC',
+            media_bit_depth=16,
+            media_sample_rate=44_100,
+            media_channels=2,
+            media_bitrate=None,
+            library_record=record,
+        )
+        session.add_all((record, source))
+        session.commit()
+
+        # When: the publication source policy is reevaluated.
+        decision = reevaluate_effective_source_decision(session, record.id, now)
+
+        # Then: automatic provider confirmation makes the source publication-eligible.
+        assert decision.source_id == source.id
+
+
 def test_quality_policy_v1_when_named_fixture_matrix_is_compared_selects_flac_24_96() -> None:
     # Given: the documented cross-codec fixture matrix.
     fixtures = (
