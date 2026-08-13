@@ -75,9 +75,7 @@ export function TrackDetail({
   const selectedAcoustId = detail.musicbrainz_recording_id ?? null;
   const selectedMusicBrainz = detail.musicbrainz_release_id ?? null;
   const musicBrainzCandidates = candidates.filter(
-    (candidate) =>
-      candidate.evidence.provider === "musicbrainz" &&
-      (!selectedAcoustId || candidate.evidence.tags.MUSICBRAINZ_TRACKID === selectedAcoustId),
+    (candidate) => candidate.evidence.provider === "musicbrainz",
   );
   const visibleTagFields = [
     ...new Set([
@@ -431,8 +429,8 @@ export function TrackDetail({
                 <small>{fingerprint?.tool_version ?? "инструмент не указан"}</small>
               </div>
               <div>
-                <span>AcousticID</span>
-                <strong>{attempts.at(-1)?.outcome ?? "Не запускался"}</strong>
+                <span>Провайдеры</span>
+                <strong>{attempts.length ? "История доступна" : "Не запускались"}</strong>
                 <small>
                   {attempts.length
                     ? `проверок провайдеров: ${attempts.length}`
@@ -440,6 +438,18 @@ export function TrackDetail({
                 </small>
               </div>
             </div>
+            {attempts.length > 0 && (
+              <ul className="provider-attempts" aria-label="Попытки провайдеров">
+                {attempts.map((attempt) => (
+                  <li key={`${attempt.provider}-${attempt.created_at ?? attempt.snapshot_sha256}`}>
+                    <strong>{attempt.provider}</strong>: {attempt.outcome} ·{" "}
+                    {attempt.created_at
+                      ? new Date(attempt.created_at).toLocaleString("ru-RU")
+                      : "время не сохранено"}
+                  </li>
+                ))}
+              </ul>
+            )}
             <p className="hash">SHA-256: {source.sha256}</p>
           </div>
         </div>

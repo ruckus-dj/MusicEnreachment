@@ -99,6 +99,41 @@ describe("TrackDetail effective source", () => {
     );
   });
 
+  it("shows every provider attempt with its actual provider and outcome", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        sources: [
+          {
+            ...detail.sources[0],
+            provider_attempts: [
+              {
+                provider: "acoustid",
+                outcome: "acoustidmatch",
+                snapshot_sha256: "a".repeat(64),
+                created_at: "2026-08-13T15:36:00Z",
+              },
+              {
+                provider: "musicbrainz",
+                outcome: "unavailable",
+                snapshot_sha256: "b".repeat(64),
+                created_at: "2026-08-13T15:37:00Z",
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByLabelText("Попытки провайдеров").textContent).toContain(
+      "musicbrainz: unavailable",
+    );
+    expect(screen.getByLabelText("Попытки провайдеров").textContent).toContain(
+      "acoustid: acoustidmatch",
+    );
+  });
+
   it("exposes source choices and sends the selected source through the callback", () => {
     const onSelectEffectiveSource = vi.fn();
     renderDetail({ onSelectEffectiveSource });

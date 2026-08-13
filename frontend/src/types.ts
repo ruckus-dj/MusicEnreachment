@@ -46,6 +46,7 @@ export type Source = {
     readonly provider: string;
     readonly outcome: string;
     readonly snapshot_sha256: string;
+    readonly created_at?: string;
   }[];
   readonly candidates?: readonly Candidate[];
   readonly review_decisions?: readonly {
