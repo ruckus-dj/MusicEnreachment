@@ -51,6 +51,20 @@ def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_pa
         assert marker in response.text
 
 
+def test_manual_actions_route_when_opened_serves_review_ui(tmp_path: Path) -> None:
+    # Given: an empty local review database.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-actions.db"}')
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: the operator opens the manual-actions route directly.
+    response = client.get('/manual-actions')
+
+    # Then: the single-page review application is available for client-side routing.
+    assert response.status_code == 200
+    assert 'type="module"' in response.text
+
+
 def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-all.db"}')
     Base.metadata.create_all(engine)

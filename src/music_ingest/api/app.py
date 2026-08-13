@@ -221,6 +221,7 @@ def create_app(
     @app.get('/', response_class=HTMLResponse)
     @app.get('/review', response_class=HTMLResponse)
     @app.get('/settings', response_class=HTMLResponse)
+    @app.get('/manual-actions', response_class=HTMLResponse)
     def review_page() -> str:
         return REVIEW_PAGE
 
