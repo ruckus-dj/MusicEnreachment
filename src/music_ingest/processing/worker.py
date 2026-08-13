@@ -66,6 +66,7 @@ from music_ingest.matching.scoring import (
     MatchDecision,
     MatchingRequest,
     MatchResult,
+    recording_candidate_matches,
     resolve_match,
 )
 from music_ingest.models import (
@@ -177,8 +178,10 @@ def _analyzed_tags(
 def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     tags: dict[str, str] = {
         'ALBUM': candidate.release_title,
-        'ARTIST': candidate.artist_name,
-        'ALBUMARTIST': candidate.release_artist_name or candidate.artist_name,
+        'ARTIST': '; '.join(candidate.recording_artist_names) or candidate.artist_name,
+        'ALBUMARTIST': (
+            '; '.join(candidate.release_artist_names) or candidate.release_artist_name or candidate.artist_name
+        ),
         'MUSICBRAINZ_ALBUMID': candidate.release_mbid,
     }
     if candidate.recording_mbids:
@@ -288,6 +291,29 @@ def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceReco
         if _has_reviewer_decision(source, 'acoustid_confirmed') and record.musicbrainz_recording_id is not None
         else None,
     )
+
+
+def _matching_request(
+    record: LibraryRecord, source: SourceRecord, tags: tuple[tuple[str, str], ...]
+) -> MatchingRequest:
+    values = {name: value for name, value in tags}
+    return MatchingRequest(
+        values.get('ARTIST', ''),
+        values.get('ALBUM', ''),
+        source.duration_seconds,
+        _reviewer_selected_musicbrainz_ids(record, source),
+        recording_title=values.get('TITLE', ''),
+        track_number=_tag_number(values.get('TRACKNUMBER')),
+        track_total=_tag_number(values.get('TRACKTOTAL')),
+        disc_number=_tag_number(values.get('DISCNUMBER')),
+        disc_total=_tag_number(values.get('DISCTOTAL')),
+        source_path=source.source_path,
+    )
+
+
+def _tag_number(value: str | None) -> int | None:
+    normalized = (value or '').split('/', 1)[0].strip()
+    return int(normalized) if normalized.isdecimal() else None
 
 
 def _final_tags(
@@ -731,6 +757,7 @@ class ProcessingWorker:
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
         recording_match: tuple[ProviderEvidenceResult, CandidateScore] | None = None
         if claimed.job.kind == 'musicbrainz_analysis':
+            candidate_request = _matching_request(record, source, tags)
             candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
             recording_matches: list[tuple[ProviderEvidenceResult, CandidateScore]] = []
             for candidate_recording_mbid in _acoustid_recording_mbids(source):
@@ -752,15 +779,32 @@ class ProcessingWorker:
                     continue
                 candidate_match = self._resolve_provider_match(record, source, tags, candidate_result)
                 match candidate_result.musicbrainz:
-                    case MusicBrainzMatch(candidate=candidate) if candidate_recording_mbid in candidate.recording_mbids:
+                    case MusicBrainzMatch(candidate=candidate):
+                        verified_candidates = (candidate,)
+                    case Ambiguous(candidates=candidates):
+                        verified_candidates = candidates
+                    case _:
+                        continue
+                matching_candidates = tuple(
+                    candidate
+                    for candidate in verified_candidates
+                    if candidate_recording_mbid in candidate.recording_mbids
+                    and recording_candidate_matches(candidate_request, candidate)
+                )
+                match matching_candidates:
+                    case (candidate,):
                         recording_score = CandidateScore(
                             candidate_recording_mbid,
                             _acoustid_recording_score(source, candidate_recording_mbid),
                         )
-                        recording_matches.append((candidate_result, recording_score))
+                        verified_result = replace(
+                            candidate_result,
+                            musicbrainz=MusicBrainzMatch(candidate_result.musicbrainz.provenance, candidate),
+                        )
+                        recording_matches.append((verified_result, recording_score))
                         if candidate_match is not None and candidate_match.decision is MatchDecision.AUTO_SELECTED:
                             candidate_matches.append(
-                                (candidate_result, replace(candidate_match, recording_score=recording_score))
+                                (verified_result, replace(candidate_match, recording_score=recording_score))
                             )
                     case _:
                         continue
@@ -1025,14 +1069,8 @@ class ProcessingWorker:
     ) -> MatchResult | None:
         if result is None:
             return None
-        values = {name: value for name, value in tags}
         return resolve_match(
-            MatchingRequest(
-                values.get('ARTIST', ''),
-                values.get('ALBUM', ''),
-                source.duration_seconds,
-                _reviewer_selected_musicbrainz_ids(record, source),
-            ),
+            _matching_request(record, source, tags),
             result.musicbrainz,
             result.acoustid,
             self._confidence_threshold(),

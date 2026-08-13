@@ -291,6 +291,25 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
     assert tags['PERFORMER'] == 'Fixture Performer; Fixture Vocalist'
 
 
+def test_musicbrainz_candidate_tags_write_featured_artists_as_multiple_values() -> None:
+    # Given: MusicBrainz provides an artist credit joined by "feat.".
+    candidate = ReleaseCandidate(
+        'release-id',
+        'We Made It',
+        'Busta Rhymes feat. Linkin Park',
+        release_artist_name='Busta Rhymes feat. Linkin Park',
+        recording_artist_names=('Busta Rhymes', 'Linkin Park'),
+        release_artist_names=('Busta Rhymes', 'Linkin Park'),
+    )
+
+    # When: candidate facts are converted to publication tags.
+    tags = processing._candidate_tags(candidate)
+
+    # Then: Navidrome receives two artists rather than a synthetic feat. artist.
+    assert tags['ARTIST'] == 'Busta Rhymes; Linkin Park'
+    assert tags['ALBUMARTIST'] == 'Busta Rhymes; Linkin Park'
+
+
 def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identity() -> None:
     # Given: stale automatic identities from a prior run and newer AcousticID evidence.
     source = SourceRecord(
