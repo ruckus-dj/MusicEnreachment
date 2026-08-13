@@ -1,5 +1,5 @@
 import type { CatalogTrack } from "../app/useAppController";
-import { albumFor, artistFor, titleFor } from "../domain/metadata";
+import { albumArtistsFor, albumFor, titleFor } from "../domain/metadata";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -49,8 +49,9 @@ export function LibraryCatalog({
               <strong>{name}</strong>
               <small>
                 {
-                  tracks.filter(({ item, source }) => artistFor(item, source.source_id) === name)
-                    .length
+                  tracks.filter(({ item, source }) =>
+                    albumArtistsFor(item, source.source_id).includes(name),
+                  ).length
                 }{" "}
                 треков
               </small>
@@ -78,7 +79,7 @@ export function LibraryCatalog({
                 {
                   tracks.filter(
                     ({ item, source }) =>
-                      artistFor(item, source.source_id) === artist &&
+                      albumArtistsFor(item, source.source_id).includes(artist) &&
                       albumFor(item, source.source_id) === name,
                   ).length
                 }{" "}

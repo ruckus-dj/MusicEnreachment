@@ -36,6 +36,37 @@ function ControllerProbe() {
   );
 }
 
+function CatalogProbe() {
+  const controller = useAppController();
+  const selectedAlbumRoute = {
+    screen: "tracks" as const,
+    artist: controller.artist,
+    album: "Collision Course",
+  };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => controller.navigate({ screen: "albums", artist: "Busta Rhymes" })}
+      >
+        busta
+      </button>
+      <button
+        type="button"
+        onClick={() => controller.navigate({ screen: "albums", artist: "Linkin Park" })}
+      >
+        linkin
+      </button>
+      <button type="button" onClick={() => controller.navigate(selectedAlbumRoute)}>
+        album
+      </button>
+      <output data-testid="artists">{controller.artists.join("|")}</output>
+      <output data-testid="albums">{controller.albums.join("|")}</output>
+      <output data-testid="album-tracks">{controller.albumTracks.length}</output>
+    </>
+  );
+}
+
 describe("useAppController effective source", () => {
   it("posts the choice and refreshes the record and library state", async () => {
     window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
@@ -144,5 +175,66 @@ describe("useAppController recording correction", () => {
     await waitFor(() => expect(screen.getByTestId("notice").textContent).toContain("исправлена"));
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records", expect.anything());
+  });
+});
+
+describe("useAppController catalog", () => {
+  it("lists each semicolon-separated album artist with the same album and tracks", async () => {
+    const sharedAlbum = {
+      record_id: "record-collaboration",
+      source_state: "present",
+      processing_state: "complete",
+      match_state: "matched",
+      publication_state: "current",
+      metadata_state: "final",
+      sources: [
+        {
+          source_id: "source-collaboration",
+          path: "/collaboration.flac",
+          sha256: "c",
+          state: "present",
+          tag_observations: [
+            { name: "ARTIST", value: "Featured Guest", format: "flac" },
+            { name: "ALBUMARTIST", value: "Busta Rhymes; Linkin Park", format: "flac" },
+            { name: "ALBUM", value: "Collision Course", format: "flac" },
+          ],
+        },
+      ],
+      publications: [],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [sharedAlbum] }));
+
+    window.history.replaceState({}, "", "/library/artists");
+    render(<CatalogProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("artists").textContent).toBe("Busta Rhymes|Linkin Park"),
+    );
+
+    await act(async () => {
+      screen.getByRole("button", { name: "busta" }).click();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("albums").textContent).toBe("Collision Course");
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "album" }).click();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("album-tracks").textContent).toBe("1");
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "linkin" }).click();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("albums").textContent).toBe("Collision Course");
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "album" }).click();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("album-tracks").textContent).toBe("1");
+    });
   });
 });
