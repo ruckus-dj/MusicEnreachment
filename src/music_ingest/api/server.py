@@ -23,6 +23,7 @@ from music_ingest.matching.providers import DatabaseRequestRateLimiter, Provider
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.runtime import run_processing_worker
+from music_ingest.settings import load_runtime_settings
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
 _CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_CONNECT_TIMEOUT_SECONDS'
@@ -128,7 +129,13 @@ def create_runtime_app() -> FastAPI:
 
 
 def _processing_config(environment: Mapping[str, str], session_factory: Callable[[], Session]) -> ProcessingConfig:
-    live_transport = build_live_transport(limiter=DatabaseRequestRateLimiter(session_factory))
+    def musicbrainz_host() -> str:
+        with session_factory() as session:
+            return load_runtime_settings(session).musicbrainz_host
+
+    live_transport = build_live_transport(
+        limiter=DatabaseRequestRateLimiter(session_factory), musicbrainz_host=musicbrainz_host
+    )
     return ProcessingConfig(
         incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),

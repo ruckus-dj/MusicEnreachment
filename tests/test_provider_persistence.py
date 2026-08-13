@@ -105,6 +105,24 @@ def test_database_rate_limiter_when_called_twice_reserves_one_and_a_half_seconds
     assert 1.4 <= delays[-1] <= 1.6
 
 
+def test_database_rate_limiter_when_custom_interval_is_configured_reserves_that_interval(tmp_path: Path) -> None:
+    # Given: a shared schedule and a self-hosted MusicBrainz interval with no delay.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(ProviderScheduleRecord(provider_name='musicbrainz', next_start_at=datetime.now(UTC)))
+        session.commit()
+    delays: list[float] = []
+    limiter = DatabaseRequestRateLimiter(lambda: Session(engine), delays.append, timedelta())
+
+    # When: two requests reserve their starts.
+    limiter.wait('musicbrainz')
+    limiter.wait('musicbrainz')
+
+    # Then: the configured zero-delay interval does not throttle either request.
+    assert delays == []
+
+
 def test_repository_rejects_naive_provider_timestamps(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
     Base.metadata.create_all(engine)

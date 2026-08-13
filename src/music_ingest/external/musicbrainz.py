@@ -25,8 +25,6 @@ from music_ingest.matching.providers import (
     Unavailable,
 )
 
-_ENDPOINT = 'https://musicbrainz.org/ws/2/release/'
-_RECORDING_ENDPOINT = 'https://musicbrainz.org/ws/2/recording/'
 _COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
 _RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels'
 
@@ -39,6 +37,7 @@ class MusicBrainzTransport(Protocol):
 class MusicBrainzV2Adapter:
     transport: MusicBrainzTransport
     user_agent: str
+    host: str = 'https://musicbrainz.org'
 
     def fetch_artwork(self, release_id: str) -> ArtworkCandidate | None:
         """Fetch the first verified front cover for a MusicBrainz release."""
@@ -58,18 +57,18 @@ class MusicBrainzV2Adapter:
         captured_at = now or datetime.now(UTC)
         if request.release_mbid is not None:
             url = (
-                f'{_ENDPOINT}{quote(request.release_mbid, safe="")}'
+                f'{self._release_endpoint}{quote(request.release_mbid, safe="")}'
                 f'?{urlencode({"inc": _RELEASE_INCLUDES, "fmt": "json"})}'
             )
             request_key = f'release:{request.release_mbid}'
         elif request.recording_mbid is not None:
             url = (
-                f'{_RECORDING_ENDPOINT}{quote(request.recording_mbid, safe="")}'
+                f'{self._recording_endpoint}{quote(request.recording_mbid, safe="")}'
                 f'?{urlencode({"inc": "releases", "fmt": "json"})}'
             )
             request_key = f'recording:{request.recording_mbid}'
         else:
-            url = f'{_ENDPOINT}?{urlencode({"query": request.query, "fmt": "json"})}'
+            url = f'{self._release_endpoint}?{urlencode({"query": request.query, "fmt": "json"})}'
             request_key = f'query:{request.query}'
         response = self.transport.get(url, headers={'User-Agent': self.user_agent, 'Accept': 'application/json'})
         provenance = LiveProvenance(
@@ -159,7 +158,8 @@ class MusicBrainzV2Adapter:
         release: Release,
         provenance: LiveProvenance,
     ) -> tuple[Release, LiveProvenance]:
-        url = f'{_ENDPOINT}{quote(release.id, safe="")}?{urlencode({"inc": _RELEASE_INCLUDES, "fmt": "json"})}'
+        query = urlencode({'inc': _RELEASE_INCLUDES, 'fmt': 'json'})
+        url = f'{self._release_endpoint}{quote(release.id, safe="")}?{query}'
         response = self.transport.get(url, headers={'User-Agent': self.user_agent, 'Accept': 'application/json'})
         if response.status_code != 200:
             return release, provenance
@@ -173,6 +173,14 @@ class MusicBrainzV2Adapter:
             sha256=sha256(combined_body).hexdigest(),
             response_body=combined_body,
         )
+
+    @property
+    def _release_endpoint(self) -> str:
+        return f'{self.host}/ws/2/release/'
+
+    @property
+    def _recording_endpoint(self) -> str:
+        return f'{self.host}/ws/2/recording/'
 
     @staticmethod
     def _candidate(

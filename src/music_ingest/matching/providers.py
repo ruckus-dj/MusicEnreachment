@@ -20,6 +20,7 @@ from requests.structures import CaseInsensitiveDict
 from sqlalchemy.orm import Session
 from urllib3.util import Retry
 
+from music_ingest.models import RuntimeSettingRecord
 from music_ingest.models.repositories import ProviderPersistenceRepository
 
 LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
@@ -69,15 +70,26 @@ class DatabaseRequestRateLimiter:
         self,
         session_factory: SessionFactory,
         sleep: Callable[[float], None] = time.sleep,
+        request_interval: timedelta | None = None,
     ) -> None:
         self._session_factory: SessionFactory = session_factory
         self._sleep: Callable[[float], None] = sleep
+        self._request_interval = request_interval
 
     def wait(self, provider_name: str) -> None:
         now = datetime.now(UTC)
         with self._session_factory() as session:
+            configured_interval = self._request_interval
+            if configured_interval is None:
+                stored_interval = session.get(RuntimeSettingRecord, 'providers.musicbrainz.request_delay_seconds')
+                if stored_interval is None:
+                    configured_interval = _REQUEST_INTERVAL
+                else:
+                    configured_interval = timedelta(seconds=float(stored_interval.value))
+            if configured_interval <= timedelta():
+                return
             reservation = ProviderPersistenceRepository(session).reserve_next_start(
-                provider_name, now, _REQUEST_INTERVAL, _LEASE_DURATION
+                provider_name, now, configured_interval, _LEASE_DURATION
             )
             session.commit()
         delay = (reservation.scheduled_start - datetime.now(UTC)).total_seconds()
@@ -346,10 +358,11 @@ class LiveTransport:
     client: PublicHttpClient
     limiter: RequestRateLimiter | None = None
     sleep: Callable[[float], None] = time.sleep
+    musicbrainz_host: Callable[[], str] = lambda: 'https://musicbrainz.org'
 
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
         for attempt in range(3):
-            if self.limiter is not None and urlsplit(url).hostname == 'musicbrainz.org':
+            if self.limiter is not None and urlsplit(url).hostname == urlsplit(self.musicbrainz_host()).hostname:
                 self.limiter.wait('musicbrainz')
             try:
                 response = self.client.get(url, headers=headers, timeout=10.0)
@@ -374,5 +387,6 @@ def _default_live_client() -> PublicHttpClient:
 def build_live_transport(
     client_factory: Callable[[], PublicHttpClient] = _default_live_client,
     limiter: RequestRateLimiter | None = None,
+    musicbrainz_host: Callable[[], str] = lambda: 'https://musicbrainz.org',
 ) -> LiveTransport:
-    return LiveTransport(client=client_factory(), limiter=limiter)
+    return LiveTransport(client=client_factory(), limiter=limiter, musicbrainz_host=musicbrainz_host)

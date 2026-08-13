@@ -19,6 +19,8 @@ class RuntimeSettingsRequest(BaseModel):
     max_attempts: int = Field(ge=1, le=10)
     musicbrainz_enabled: bool
     musicbrainz_user_agent: str = Field(min_length=1, max_length=255)
+    musicbrainz_host: str = Field(pattern=r'^https?://[^/?#]+$')
+    musicbrainz_request_delay_seconds: float = Field(ge=0.0, le=3600.0)
     acoustid_enabled: bool
     acoustid_client_key: str | None = Field(default=None, max_length=255)
     artwork_enabled: bool
@@ -33,6 +35,8 @@ class RuntimeSettingsResponse(BaseModel):
     max_attempts: int
     musicbrainz_enabled: bool
     musicbrainz_user_agent: str
+    musicbrainz_host: str
+    musicbrainz_request_delay_seconds: float
     acoustid_enabled: bool
     acoustid_client_key_configured: bool
     artwork_enabled: bool

@@ -68,6 +68,8 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             'max_attempts': 3,
             'musicbrainz_enabled': True,
             'musicbrainz_user_agent': 'Music Ingest/0.1',
+            'musicbrainz_host': 'https://musicbrainz.internal',
+            'musicbrainz_request_delay_seconds': 0,
             'acoustid_enabled': True,
             'acoustid_client_key': None,
             'artwork_enabled': True,
@@ -76,6 +78,8 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
 
     assert response.status_code == 200
     assert response.json()['acoustid_client_key_configured'] is True
+    assert response.json()['musicbrainz_host'] == 'https://musicbrainz.internal'
+    assert response.json()['musicbrainz_request_delay_seconds'] == 0
 
 
 @pytest.mark.parametrize(

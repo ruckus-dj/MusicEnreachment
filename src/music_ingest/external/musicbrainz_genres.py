@@ -14,7 +14,6 @@ from music_ingest.dto import GenrePage
 from music_ingest.matching.providers import MusicBrainzHttpResponse
 from music_ingest.models import GenreCatalogRecord
 
-_ENDPOINT = 'https://musicbrainz.org/ws/2/genre/all'
 _PAGE_SIZE = 100
 _SPECIAL_LABELS = {
     'dnb': 'DnB',
@@ -46,6 +45,7 @@ def sync_genres(
     transport: GenreTransport,
     *,
     user_agent: str,
+    host: str = 'https://musicbrainz.org',
 ) -> tuple[GenreCatalogEntry, ...]:
     """Fetch the complete alphabetized MusicBrainz genre catalog."""
     entries: list[GenreCatalogEntry] = []
@@ -53,7 +53,7 @@ def sync_genres(
     while True:
         query = urlencode({'fmt': 'json', 'limit': _PAGE_SIZE, 'offset': offset})
         response = transport.get(
-            f'{_ENDPOINT}?{query}',
+            f'{host}/ws/2/genre/all?{query}',
             headers={'User-Agent': user_agent, 'Accept': 'application/json'},
         )
         if response.status_code != 200:

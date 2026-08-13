@@ -113,6 +113,8 @@ def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
         max_attempts=settings.max_attempts,
         musicbrainz_enabled=settings.musicbrainz_enabled,
         musicbrainz_user_agent=settings.musicbrainz_user_agent,
+        musicbrainz_host=settings.musicbrainz_host,
+        musicbrainz_request_delay_seconds=settings.musicbrainz_request_delay_seconds,
         acoustid_enabled=settings.acoustid_enabled,
         acoustid_client_key_configured=bool(settings.acoustid_client_key),
         artwork_enabled=settings.artwork_enabled,
@@ -906,6 +908,7 @@ def create_app(
                     provider = MusicBrainzV2Adapter(
                         musicbrainz_transport,
                         load_runtime_settings(session).musicbrainz_user_agent,
+                        load_runtime_settings(session).musicbrainz_host,
                     )
                 if provider is None:
                     raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
@@ -1139,7 +1142,9 @@ def create_app(
                 provider = musicbrainz_provider
                 if provider is None and musicbrainz_transport is not None:
                     provider = MusicBrainzV2Adapter(
-                        musicbrainz_transport, load_runtime_settings(session).musicbrainz_user_agent
+                        musicbrainz_transport,
+                        load_runtime_settings(session).musicbrainz_user_agent,
+                        load_runtime_settings(session).musicbrainz_host,
                     )
                 result = RecordingAssociationService(session, provider).associate_manual(
                     ManualAssociationRequest(
@@ -1363,6 +1368,8 @@ def create_app(
                 max_attempts=request.max_attempts,
                 musicbrainz_enabled=request.musicbrainz_enabled,
                 musicbrainz_user_agent=request.musicbrainz_user_agent,
+                musicbrainz_host=request.musicbrainz_host,
+                musicbrainz_request_delay_seconds=request.musicbrainz_request_delay_seconds,
                 acoustid_enabled=request.acoustid_enabled,
                 acoustid_client_key=(
                     current.acoustid_client_key if request.acoustid_client_key is None else request.acoustid_client_key
@@ -1382,7 +1389,9 @@ def create_app(
             if not entries and genre_transport is not None:
                 settings = load_runtime_settings(session)
                 try:
-                    synced_entries = sync_genres(genre_transport, user_agent=settings.musicbrainz_user_agent)
+                    synced_entries = sync_genres(
+                        genre_transport, user_agent=settings.musicbrainz_user_agent, host=settings.musicbrainz_host
+                    )
                 except GenreCatalogSyncError:
                     return _genre_catalog_response(entries)
                 replace_genre_catalog(session, synced_entries, datetime.now(UTC))
@@ -1397,7 +1406,9 @@ def create_app(
         with session_factory() as session:
             settings = load_runtime_settings(session)
             try:
-                entries = sync_genres(genre_transport, user_agent=settings.musicbrainz_user_agent)
+                entries = sync_genres(
+                    genre_transport, user_agent=settings.musicbrainz_user_agent, host=settings.musicbrainz_host
+                )
             except GenreCatalogSyncError as error:
                 raise HTTPException(status_code=502, detail=str(error)) from error
             synced_at = datetime.now(UTC)

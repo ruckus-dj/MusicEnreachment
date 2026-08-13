@@ -12,6 +12,8 @@ class RuntimeSettings(BaseModel):
     musicbrainz_user_agent: str = Field(
         default='music-ingest/0.1.0 (music-ingest@example.com)', min_length=1, max_length=255
     )
+    musicbrainz_host: str = Field(default='https://musicbrainz.org', pattern=r'^https?://[^/?#]+$')
+    musicbrainz_request_delay_seconds: float = Field(default=1.5, ge=0.0, le=3600.0)
     acoustid_enabled: bool = False
     acoustid_client_key: str | None = Field(default=None, max_length=255)
     artwork_enabled: bool = True

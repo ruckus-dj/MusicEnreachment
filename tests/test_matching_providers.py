@@ -250,6 +250,27 @@ def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(t
     assert calls[0][1]['User-Agent'] == 'music-ingest/1.0 (operator@example.test)'
 
 
+def test_musicbrainz_v2_adapter_uses_the_configured_host_without_network() -> None:
+    # Given: a fixture transport and a self-hosted MusicBrainz URL.
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            return MusicBrainzHttpResponse(200, b'{"releases": []}')
+
+    adapter = MusicBrainzV2Adapter(
+        FixtureTransport(), 'music-ingest/1.0 (operator@example.test)', 'https://musicbrainz.internal'
+    )
+
+    # When: the adapter performs a release lookup.
+    _ = adapter.lookup(MusicBrainzLookupRequest('artist:fixture', FixtureCase.SUCCESS), NOW)
+
+    # Then: the request targets the configured server rather than the public default.
+    assert calls[0].startswith('https://musicbrainz.internal/ws/2/release/?')
+
+
 def test_musicbrainz_v2_adapter_fetches_front_artwork_for_release_once() -> None:
     # Given: a MusicBrainz transport returning a verified JPEG front cover.
     calls: list[tuple[str, dict[str, str]]] = []

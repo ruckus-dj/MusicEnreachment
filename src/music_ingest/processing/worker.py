@@ -1346,7 +1346,9 @@ class ProcessingWorker:
             return self._config.musicbrainz_provider, self._config.acoustid_provider, self._config.artwork_provider
         settings = load_runtime_settings(self._session)
         musicbrainz = (
-            MusicBrainzV2Adapter(self._config.live_transport, settings.musicbrainz_user_agent)
+            MusicBrainzV2Adapter(
+                self._config.live_transport, settings.musicbrainz_user_agent, settings.musicbrainz_host
+            )
             if settings.musicbrainz_enabled
             else None
         )

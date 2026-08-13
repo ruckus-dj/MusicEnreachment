@@ -17,6 +17,8 @@ def load_runtime_settings(session: Session) -> RuntimeSettings:
         'max_attempts': _setting_value(session, 'processing.max_attempts'),
         'musicbrainz_enabled': _setting_value(session, 'providers.musicbrainz.enabled'),
         'musicbrainz_user_agent': _setting_value(session, 'providers.musicbrainz.user_agent'),
+        'musicbrainz_host': _setting_value(session, 'providers.musicbrainz.host'),
+        'musicbrainz_request_delay_seconds': _setting_value(session, 'providers.musicbrainz.request_delay_seconds'),
         'acoustid_enabled': _setting_value(session, 'providers.acoustid.enabled'),
         'acoustid_client_key': _setting_value(session, 'providers.acoustid.client_key'),
         'artwork_enabled': _setting_value(session, 'artwork.enabled'),
@@ -32,6 +34,10 @@ def load_runtime_settings(session: Session) -> RuntimeSettings:
         max_attempts=_parse_int(values['max_attempts'], defaults.max_attempts),
         musicbrainz_enabled=_parse_bool(values['musicbrainz_enabled'], defaults.musicbrainz_enabled),
         musicbrainz_user_agent=values['musicbrainz_user_agent'] or defaults.musicbrainz_user_agent,
+        musicbrainz_host=values['musicbrainz_host'] or defaults.musicbrainz_host,
+        musicbrainz_request_delay_seconds=_parse_float(
+            values['musicbrainz_request_delay_seconds'], defaults.musicbrainz_request_delay_seconds
+        ),
         acoustid_enabled=_parse_bool(values['acoustid_enabled'], defaults.acoustid_enabled),
         acoustid_client_key=values['acoustid_client_key'] or defaults.acoustid_client_key,
         artwork_enabled=_parse_bool(values['artwork_enabled'], defaults.artwork_enabled),
@@ -48,6 +54,8 @@ def save_runtime_settings(session: Session, settings: RuntimeSettings) -> None:
         'processing.max_attempts': str(settings.max_attempts),
         'providers.musicbrainz.enabled': str(settings.musicbrainz_enabled).lower(),
         'providers.musicbrainz.user_agent': settings.musicbrainz_user_agent,
+        'providers.musicbrainz.host': settings.musicbrainz_host,
+        'providers.musicbrainz.request_delay_seconds': str(settings.musicbrainz_request_delay_seconds),
         'providers.acoustid.enabled': str(settings.acoustid_enabled).lower(),
         'providers.acoustid.client_key': settings.acoustid_client_key or '',
         'artwork.enabled': str(settings.artwork_enabled).lower(),
