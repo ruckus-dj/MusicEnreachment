@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import final
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, LargeBinary, Text, select
@@ -45,6 +45,7 @@ class SourceRecord(Base):
     tag_observations: Mapped[list[SourceTagRecord]] = relationship(back_populates='source', lazy='selectin')
     artwork_observations: Mapped[list[ArtworkRecord]] = relationship(back_populates='source', lazy='selectin')
     provider_attempts: Mapped[list[ProviderAttemptRecord]] = relationship(back_populates='source', lazy='selectin')
+    candidate_runs: Mapped[list[ProviderCandidateRunRecord]] = relationship(back_populates='source', lazy='selectin')
     candidates: Mapped[list[CandidateRecord]] = relationship(back_populates='source', lazy='selectin')
     review_decisions: Mapped[list[ReviewDecisionRecord]] = relationship(back_populates='source', lazy='selectin')
     fingerprints: Mapped[list[FingerprintRecord]] = relationship(back_populates='source', lazy='selectin')
@@ -150,7 +151,22 @@ class ProviderAttemptRecord(Base):
     outcome: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
     source: Mapped[SourceRecord] = relationship(back_populates='provider_attempts')
+
+
+@final
+class ProviderCandidateRunRecord(Base):
+    __tablename__ = 'provider_candidate_runs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    provider_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[SourceRecord] = relationship(back_populates='candidate_runs')
+    candidates: Mapped[list[CandidateRecord]] = relationship(back_populates='run', lazy='selectin')
 
 
 @final
@@ -159,9 +175,11 @@ class CandidateRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey('provider_candidate_runs.id'))
     candidate_key: Mapped[str] = mapped_column(Text, nullable=False)
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[SourceRecord] = relationship(back_populates='candidates')
+    run: Mapped[ProviderCandidateRunRecord | None] = relationship(back_populates='candidates')
 
 
 @final

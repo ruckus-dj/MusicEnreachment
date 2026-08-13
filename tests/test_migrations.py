@@ -9,13 +9,14 @@ from sqlalchemy import create_engine, inspect
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260813_0007'
+_HEAD_REVISION = '20260813_0008'
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
         'source_tag_observations',
         'artwork_hash_observations',
         'provider_attempts',
+        'provider_candidate_runs',
         'candidate_evidence',
         'review_decisions',
         'fingerprint_evidence',
