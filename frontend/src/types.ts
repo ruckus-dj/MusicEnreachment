@@ -136,6 +136,7 @@ export type RuntimeSettings = {
   readonly timeout_seconds: number;
   readonly retry_delay_seconds: number;
   readonly max_attempts: number;
+  readonly worker_concurrency: number;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
   readonly musicbrainz_host: string;
@@ -198,6 +199,7 @@ export type RuntimeSettingsDraft = {
   readonly timeout_seconds: number;
   readonly retry_delay_seconds: number;
   readonly max_attempts: number;
+  readonly worker_concurrency: number;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
   readonly musicbrainz_host: string;

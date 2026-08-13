@@ -12,6 +12,7 @@ const draft: RuntimeSettingsDraft = {
   timeout_seconds: 30,
   retry_delay_seconds: 10,
   max_attempts: 3,
+  worker_concurrency: 1,
   musicbrainz_enabled: true,
   musicbrainz_user_agent: "Music Ingest",
   musicbrainz_host: "https://musicbrainz.org",
@@ -180,5 +181,45 @@ describe("SettingsScreen MusicBrainz", () => {
       ...draft,
       musicbrainz_request_delay_seconds: 0,
     });
+  });
+});
+
+describe("SettingsScreen processing", () => {
+  it("updates worker concurrency", () => {
+    const onChange = vi.fn();
+
+    render(
+      <SettingsScreen
+        draft={draft}
+        loading={false}
+        saving={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        genres={null}
+        genreSearch=""
+        onGenreSearch={vi.fn()}
+        genreLoading={false}
+        genreSyncing={false}
+        onSyncGenres={vi.fn()}
+        sourceRoots={[]}
+        sourceRootsLoading={false}
+        sourceRootsError=""
+        sourceRootCreating={false}
+        sourceRootRemoving={false}
+        storageBrowser={null}
+        storageConfig={null}
+        storageOutputPreview={null}
+        storageLoading={false}
+        onCreateSourceRoot={vi.fn()}
+        onRemoveSourceRoot={vi.fn()}
+        onBrowseStorage={vi.fn()}
+        onPreviewStorageOutput={vi.fn()}
+        onMoveStorageOutput={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Параллельные воркеры"), { target: { value: "4" } });
+
+    expect(onChange).toHaveBeenCalledWith({ ...draft, worker_concurrency: 4 });
   });
 });
