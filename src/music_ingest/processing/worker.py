@@ -1134,7 +1134,7 @@ class ProcessingWorker:
         values = {name: value for name, value in tags}
         query = f'artist:{values["ARTIST"]} release:{values["ALBUM"]}' if {'ARTIST', 'ALBUM'} <= values.keys() else ''
         configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
-        musicbrainz = configured_musicbrainz if run_musicbrainz and query else None
+        musicbrainz = configured_musicbrainz if run_musicbrainz and (query or recording_mbid or release_mbid) else None
         acoustid = (
             configured_acoustid
             if run_acoustid and fingerprint.fingerprint is not None and fingerprint.duration_seconds is not None

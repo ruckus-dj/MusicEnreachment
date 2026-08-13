@@ -156,6 +156,39 @@ def test_automatic_match_persists_acoustid_recording_and_release_identity() -> N
     assert record.musicbrainz_release_id == 'd5c9ba44-448a-4b07-9f06-e6626032c19d'
 
 
+def test_musicbrainz_lookup_when_acoustid_supplies_recording_mbid_works_without_source_tags(tmp_path: Path) -> None:
+    # Given: a fingerprint match with no source tags and an available MusicBrainz provider.
+    config = replace(
+        _config(tmp_path),
+        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
+    )
+    fingerprint = FingerprintResult(
+        FingerprintState.SUCCESS,
+        'fixture-fingerprint',
+        10,
+        'fixture',
+        'a' * 64,
+        None,
+        None,
+    )
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+
+    # When: the MusicBrainz stage uses the AcousticID recording MBID.
+    with Session(engine) as session:
+        result = ProcessingWorker(session, config)._lookup_providers(
+            (),
+            fingerprint,
+            datetime.now(UTC),
+            recording_mbid='f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+            run_acoustid=False,
+        )
+
+    # Then: missing tags cannot disable the authoritative MBID lookup.
+    assert result is not None
+    assert isinstance(result.musicbrainz, MusicBrainzMatch)
+
+
 def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> None:
     # Given: two AcousticID recordings, only one of which MusicBrainz resolves to the source album.
     provenance = FixtureProvenance(Path('fixture.json'), 'a' * 64)
