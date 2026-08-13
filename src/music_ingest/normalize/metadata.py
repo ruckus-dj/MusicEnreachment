@@ -179,7 +179,6 @@ def _verify_mp3_tags(path: Path, metadata: CanonicalMetadata) -> None:
             'TPOS': f'{metadata.disc_number}/{metadata.disc_total}',
             'TDRC': metadata.date,
             'TCON': tuple(metadata.genres),
-            'TSRC': metadata.isrc,
         }
         actual = {
             'TIT2': tags['TIT2'].text[0],
@@ -190,11 +189,13 @@ def _verify_mp3_tags(path: Path, metadata: CanonicalMetadata) -> None:
             'TPOS': tags['TPOS'].text[0],
             'TDRC': str(tags['TDRC'].text[0]),
             'TCON': tuple(tags['TCON'].text),
-            'TSRC': tags['TSRC'].text[0],
         }
         if metadata.original_date is not None:
             expected['TDOR'] = metadata.original_date
             actual['TDOR'] = str(tags['TDOR'].text[0])
+        if metadata.isrc is not None:
+            expected['TSRC'] = metadata.isrc
+            actual['TSRC'] = tags['TSRC'].text[0]
         ufid = tags.getall('UFID:musicbrainz.org')
         if metadata.musicbrainz_track_id is not None and (
             not ufid or ufid[0].data.decode() != metadata.musicbrainz_track_id

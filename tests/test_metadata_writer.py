@@ -283,6 +283,24 @@ def test_write_canonical_metadata_when_mp3_source_has_observed_tags_reopens_with
     assert 'Observed title' not in tags['TIT2'].text
 
 
+def test_write_canonical_metadata_when_mp3_has_no_isrc_reopens_without_an_isrc_frame(tmp_path: Path) -> None:
+    # Given: a valid MP3 whose canonical decision has no ISRC.
+    source = _create_mp3(tmp_path, 'source.mp3')
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    fields, genres = _policies()
+    metadata = replace(_metadata(), isrc=None)
+
+    # When: canonical metadata is written to controlled staging.
+    output = write_canonical_metadata(
+        MetadataWriteRequest(source, staging / 'track.mp3', staging, metadata, fields, genres)
+    )
+
+    # Then: verification succeeds and the optional ISRC frame remains absent.
+    tags = ID3(output.output_path)
+    assert 'TSRC' not in tags
+
+
 def test_write_canonical_metadata_when_m4a_source_has_observed_tags_reopens_with_canonical_mp4_atoms(
     tmp_path: Path,
 ) -> None:
