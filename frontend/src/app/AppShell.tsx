@@ -292,7 +292,12 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onMoveStorageOutput={(path) => void controller.moveStorageOutput(path)}
             />
           ) : screen === "manual-actions" ? (
-            <ManualActionsScreen tracks={tracks} onNavigate={controller.navigate} />
+            <ManualActionsScreen
+              tracks={tracks}
+              reprocessing={controller.reprocessing}
+              onNavigate={controller.navigate}
+              onRetry={(recordId, sourceId) => void controller.reprocessSource(recordId, sourceId)}
+            />
           ) : screen === "track" ? (
             <TrackDetail
               detail={detail}

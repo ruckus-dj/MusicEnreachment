@@ -8,7 +8,9 @@ type ActionFilter = (typeof ACTION_FILTERS)[number];
 
 type ManualActionsScreenProps = {
   readonly tracks: readonly CatalogTrack[];
+  readonly reprocessing: boolean;
   readonly onNavigate: (route: Route) => void;
+  readonly onRetry: (recordId: string, sourceId: string) => void;
 };
 
 function hasAnalysisError(track: CatalogTrack): boolean {
@@ -39,7 +41,12 @@ function trackStatus(filter: ActionFilter): string {
   return filter === "analysis-error" ? "Анализ не завершён" : "Проверка оператора";
 }
 
-export function ManualActionsScreen({ tracks, onNavigate }: ManualActionsScreenProps) {
+export function ManualActionsScreen({
+  tracks,
+  reprocessing,
+  onNavigate,
+  onRetry,
+}: ManualActionsScreenProps) {
   const [filter, setFilter] = useState<ActionFilter>("analysis-error");
   const visibleTracks = tracks.filter((track) => matchesFilter(track, filter));
   const counts = new Map(
@@ -77,28 +84,40 @@ export function ManualActionsScreen({ tracks, onNavigate }: ManualActionsScreenP
       ) : (
         <div className="track-table">
           {visibleTracks.map(({ item, source }, index) => (
-            <button
-              type="button"
-              className="track-line"
-              key={`${item.record_id}-${source.source_id}`}
-              onClick={() =>
-                onNavigate({
-                  screen: "track",
-                  recordId: item.record_id,
-                  sourceId: source.source_id,
-                  artist: artistFor(item, source.source_id),
-                  album: albumFor(item, source.source_id),
-                })
-              }
-            >
+            <div className="track-line" key={`${item.record_id}-${source.source_id}`}>
               <b>{String(index + 1).padStart(2, "0")}</b>
               <span>
                 <strong>{titleFor(item, source.source_id)}</strong>
                 <small>{source.path}</small>
               </span>
               <span className="track-meta">{trackStatus(filter)}</span>
-              <i>→</i>
-            </button>
+              {filter === "analysis-error" ? (
+                <button
+                  type="button"
+                  className="secondary retry-action"
+                  disabled={reprocessing}
+                  onClick={() => onRetry(item.record_id, source.source_id)}
+                >
+                  {reprocessing ? "Ставим в очередь…" : "Повторить"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="track-open-action"
+                aria-label={`Открыть ${titleFor(item, source.source_id)}`}
+                onClick={() =>
+                  onNavigate({
+                    screen: "track",
+                    recordId: item.record_id,
+                    sourceId: source.source_id,
+                    artist: artistFor(item, source.source_id),
+                    album: albumFor(item, source.source_id),
+                  })
+                }
+              >
+                →
+              </button>
+            </div>
           ))}
         </div>
       )}
