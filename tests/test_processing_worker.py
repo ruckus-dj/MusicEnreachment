@@ -216,6 +216,53 @@ def test_unique_acoustid_recording_match_selects_verified_recording_without_rele
     assert selected == (provider_result, recording_score)
 
 
+def test_single_scored_candidate_selects_the_only_current_candidate_despite_other_provider_failure() -> None:
+    # Given: persisted successful AcousticID evidence and an unrelated failed MusicBrainz attempt.
+    source = SourceRecord(
+        id='source-id',
+        source_path='/source.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='a' * 64,
+        duration_seconds=1,
+        origin='manual',
+        intake_state='present',
+        candidates=[
+            CandidateRecord(
+                candidate_key='recording-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'acoustid',
+                        'score': 0.95,
+                        'tags': {'MUSICBRAINZ_TRACKID': 'recording-id'},
+                    }
+                ),
+            )
+        ],
+    )
+
+    # When: stored evidence is evaluated after a provider retry failed.
+    selected = processing._single_scored_candidate(source, 'acoustid', 0.7)
+
+    # Then: the qualifying sole candidate remains selectable.
+    assert selected is not None
+    assert selected[0] == 'recording-id'
+
+
+def test_independent_match_identity_preserves_a_selected_release_when_recording_is_unresolved() -> None:
+    # Given: a record with no recording identity and one qualifying MusicBrainz release.
+    record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+
+    # When: release evidence is selected independently.
+    processing._apply_independent_match_identity(record, None, 'release-id')
+
+    # Then: the release remains selected while the unresolved recording stays in review.
+    assert record.musicbrainz_release_id == 'release-id'
+    assert record.musicbrainz_recording_id is None
+    assert record.match_state == 'needs_review'
+
+
 def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: a queued job and a clock that advances during processing.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "job-timing.db"}')
