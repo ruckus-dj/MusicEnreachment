@@ -1,6 +1,7 @@
 import { Icon as icon } from "../components/Icon";
 import { LibraryCatalog } from "../components/LibraryCatalog";
 import { titleFor } from "../domain/metadata";
+import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrackDetail } from "../screens/TrackDetail";
 import type { Summary } from "../types";
@@ -35,6 +36,16 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
     watchedRecords,
     watchedLibraryUntil,
   } = controller;
+  const manualActionCount = tracks.filter(
+    ({ item, source }) =>
+      item.processing_state === "retrying" ||
+      item.processing_state === "blocked_infrastructure" ||
+      item.processing_state === "quarantined" ||
+      item.publication_state === "failed" ||
+      source.state === "invalid_audio" ||
+      item.processing_state === "needs_review" ||
+      item.match_state === "needs_review",
+  ).length;
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -52,7 +63,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
         <nav>
           <button
             type="button"
-            className={screen !== "track" && screen !== "settings" ? "nav-item active" : "nav-item"}
+            className={
+              screen !== "track" && screen !== "settings" && screen !== "manual-actions"
+                ? "nav-item active"
+                : "nav-item"
+            }
             data-testid="nav-library"
             onClick={() => controller.navigate({ screen: "artists" })}
           >
@@ -61,6 +76,17 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             )}
             <span>Медиатека</span>
             <b>{tracks.length}</b>
+          </button>
+          <button
+            type="button"
+            className={screen === "manual-actions" ? "nav-item active" : "nav-item"}
+            data-testid="nav-manual-actions"
+            onClick={() => controller.navigate({ screen: "manual-actions" })}
+          >
+            {icon(
+              "M12 8v4m0 4h.01M10.29 3.86 2.82 16.5A2 2 0 0 0 4.54 19.5h14.92a2 2 0 0 0 1.72-3L13.71 3.86a2 2 0 0 0-3.42 0Z",
+            )}
+            <span>Ручные действия</span>
           </button>
           <button
             type="button"
@@ -103,13 +129,15 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             <strong>
               {screen === "settings"
                 ? "Настройки"
-                : screen === "artists"
-                  ? "Медиатека"
-                  : screen === "albums"
-                    ? artist
-                    : screen === "tracks"
-                      ? album
-                      : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                : screen === "manual-actions"
+                  ? "Ручные действия"
+                  : screen === "artists"
+                    ? "Медиатека"
+                    : screen === "albums"
+                      ? artist
+                      : screen === "tracks"
+                        ? album
+                        : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -126,7 +154,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
         <div className="content">
           <section className="hero">
             <div>
-              {screen !== "artists" && screen !== "settings" && (
+              {screen !== "artists" && screen !== "settings" && screen !== "manual-actions" && (
                 <button type="button" className="back" onClick={controller.back}>
                   ← Назад
                 </button>
@@ -134,55 +162,65 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               <p className="eyebrow">
                 {screen === "settings"
                   ? "Панель управления"
-                  : screen === "track"
-                    ? "Инспектор трека"
-                    : "Ваша медиатека"}
+                  : screen === "manual-actions"
+                    ? "Очередь оператора"
+                    : screen === "track"
+                      ? "Инспектор трека"
+                      : "Ваша медиатека"}
               </p>
               <h1>
                 {screen === "settings"
                   ? "Настройки"
-                  : screen === "artists"
-                    ? "Исполнители"
-                    : screen === "albums"
-                      ? artist
-                      : screen === "tracks"
-                        ? album
-                        : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                  : screen === "manual-actions"
+                    ? "Ручные действия"
+                    : screen === "artists"
+                      ? "Исполнители"
+                      : screen === "albums"
+                        ? artist
+                        : screen === "tracks"
+                          ? album
+                          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
               </h1>
               <p className="hero-copy">
                 {screen === "settings"
                   ? "Настройки runtime и провайдеров"
-                  : screen === "artists"
-                    ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
-                    : screen === "albums"
-                      ? "Альбомы исполнителя и их состояние обработки."
-                      : screen === "tracks"
-                        ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
-                        : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
+                  : screen === "manual-actions"
+                    ? "Ошибки анализа и треки, для которых нельзя безопасно выбрать результат автоматически."
+                    : screen === "artists"
+                      ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
+                      : screen === "albums"
+                        ? "Альбомы исполнителя и их состояние обработки."
+                        : screen === "tracks"
+                          ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
+                          : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
               </p>
             </div>
             <div className="hero-stat">
               <strong>
                 {screen === "settings"
                   ? "DB"
-                  : screen === "artists"
-                    ? artists.length
-                    : screen === "albums"
-                      ? albums.length
-                      : screen === "tracks"
-                        ? albumTracks.length
-                        : "01"}
+                  : screen === "manual-actions"
+                    ? manualActionCount
+                    : screen === "artists"
+                      ? artists.length
+                      : screen === "albums"
+                        ? albums.length
+                        : screen === "tracks"
+                          ? albumTracks.length
+                          : "01"}
               </strong>
               <span>
                 {screen === "settings"
                   ? "runtime параметров"
-                  : screen === "artists"
-                    ? "артистов"
-                    : screen === "albums"
-                      ? "альбомов"
-                      : screen === "tracks"
-                        ? "треков"
-                        : "трек"}
+                  : screen === "manual-actions"
+                    ? "треков"
+                    : screen === "artists"
+                      ? "артистов"
+                      : screen === "albums"
+                        ? "альбомов"
+                        : screen === "tracks"
+                          ? "треков"
+                          : "трек"}
               </span>
             </div>
           </section>
@@ -194,7 +232,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               </button>
             </div>
           )}
-          {screen !== "track" && screen !== "settings" && (
+          {screen !== "track" && screen !== "settings" && screen !== "manual-actions" && (
             <div className="library-toolbar">
               <label className="search">
                 {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
@@ -253,6 +291,8 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onPreviewStorageOutput={(path) => void controller.previewStorageOutput(path)}
               onMoveStorageOutput={(path) => void controller.moveStorageOutput(path)}
             />
+          ) : screen === "manual-actions" ? (
+            <ManualActionsScreen tracks={tracks} onNavigate={controller.navigate} />
           ) : screen === "track" ? (
             <TrackDetail
               detail={detail}

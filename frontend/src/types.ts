@@ -116,7 +116,7 @@ export type RecordingCorrectionResult = {
   readonly recording_mbid: string;
   readonly record_id: string;
 };
-export type Screen = "artists" | "albums" | "tracks" | "track" | "settings";
+export type Screen = "artists" | "albums" | "tracks" | "track" | "manual-actions" | "settings";
 export type Layer = "original" | "analyzed" | "final";
 export type Route = {
   readonly screen: Screen;
