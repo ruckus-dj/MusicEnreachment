@@ -290,6 +290,41 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
     assert result.candidate.genres == ('Electronic',)
 
 
+def test_musicbrainz_v2_adapter_preserves_release_artist_separately_from_track_artist() -> None:
+    # Given: the source track artist differs from the artist credited for the matched release.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/' in url:
+                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"id":"release-id","title":"Fixture Album",'
+                b'"artist-credit":[{"name":"Album Artist"}],'
+                b'"media":[{"position":1,"tracks":[{"position":1,"title":"Fixture Track",'
+                b'"recording":{"id":"recording-id","title":"Fixture Track"}}]}]}',
+            )
+
+    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: the adapter resolves the recording to its release.
+    result = adapter.lookup(
+        MusicBrainzLookupRequest(
+            'artist:Track Artist release:Fixture Album',
+            FixtureCase.SUCCESS,
+            'recording-id',
+            'Fixture Album',
+            'Track Artist',
+        ),
+        NOW,
+    )
+
+    # Then: matching retains the track artist while the release credit remains independently available.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.artist_name == 'Track Artist'
+    assert result.candidate.release_artist_name == 'Album Artist'
+
+
 def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() -> None:
     # Given: MusicBrainz places artist genres under artist-credit[].artist.genres.
     class FixtureTransport:

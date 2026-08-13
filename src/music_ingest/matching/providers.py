@@ -198,6 +198,7 @@ class ReleaseCandidate:
     release_group_mbid: str | None = None
     isrcs: tuple[str, ...] = ()
     performers: tuple[str, ...] = ()
+    release_artist_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

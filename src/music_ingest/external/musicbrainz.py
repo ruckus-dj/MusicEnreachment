@@ -187,7 +187,8 @@ class MusicBrainzV2Adapter:
             ),
             None,
         )
-        artist = artist_name if artist_name is not None else ''.join(item.name for item in release.artist_credit)
+        release_artist_name = ''.join(item.name for item in release.artist_credit)
+        artist = artist_name if artist_name is not None else release_artist_name
         if not artist and track is not None:
             artist = ''.join(item.name for item in track.recording.artist_credit)
         recording_mbids = () if recording_mbid is None else (recording_mbid,)
@@ -233,6 +234,7 @@ class MusicBrainzV2Adapter:
                 and relation.type in {'performer', 'vocal', 'instrument'}
                 and relation.artist is not None
             ),
+            release_artist_name=release_artist_name or None,
         )
 
 
