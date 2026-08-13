@@ -16,6 +16,7 @@ from music_ingest.models.library import (
     LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
+    LibraryRecordConsolidationRecord,
 )
 from music_ingest.quality_policy import (
     DecisionReason,
@@ -338,6 +339,9 @@ def _json_value(raw: str) -> object:
 
 def library_record_detail(session: Session, library_record_id: str) -> LibraryRecord:
     """Load one stable record with its source and publication history."""
+    consolidation = session.get(LibraryRecordConsolidationRecord, library_record_id)
+    if consolidation is not None:
+        library_record_id = consolidation.canonical_library_record_id
     record = session.scalar(
         select(LibraryRecord)
         .where(LibraryRecord.id == library_record_id)
@@ -358,7 +362,9 @@ def library_records(session: Session) -> list[LibraryRecord]:
     """Load stable records for the source/publication catalog."""
     return list(
         session.scalars(
-            select(LibraryRecord).options(
+            select(LibraryRecord)
+            .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
+            .options(
                 selectinload(LibraryRecord.sources),
                 selectinload(LibraryRecord.publications),
             )

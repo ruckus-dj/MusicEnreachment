@@ -82,7 +82,7 @@ from music_ingest.models import (
     SourceTagRecord,
 )
 from music_ingest.models.jobs import JobRepository
-from music_ingest.models.library import SourceRecordView
+from music_ingest.models.library import LibraryRecordConsolidationRecord, SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.reconciliation import mark_disappeared_source
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
@@ -1011,6 +1011,18 @@ def create_app(
                     raise HTTPException(status_code=409, detail='candidate belongs to another provider')
                 now = datetime.now(UTC)
                 if request.provider == 'acoustid':
+                    existing_record = session.scalar(
+                        select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == candidate.candidate_key)
+                    )
+                    if existing_record is not None and existing_record.id != record.id:
+                        consolidation = session.get(LibraryRecordConsolidationRecord, existing_record.id)
+                        if consolidation is None or consolidation.canonical_library_record_id != record.id:
+                            raise HTTPException(
+                                status_code=409,
+                                detail='AcousticID recording is already assigned to another library record',
+                            )
+                        existing_record.musicbrainz_recording_id = None
+                        session.flush()
                     record.musicbrainz_recording_id = candidate.candidate_key
                     record.musicbrainz_release_id = None
                     queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
@@ -1035,7 +1047,7 @@ def create_app(
                     )
                     session.commit()
                     return JSONResponse(
-                        content={'candidate_key': candidate.candidate_key, 'revision': None, 'queued': queued}
+                        content={'candidate_key': candidate.candidate_key, 'revision': None, 'queued': bool(queued)}
                     )
                 candidate_tags = evidence.tags
                 if not candidate_tags:

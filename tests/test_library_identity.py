@@ -16,6 +16,7 @@ from music_ingest.models import (
     JobRecord,
     LibraryPublicationRecord,
     LibraryRecord,
+    LibraryRecordConsolidationRecord,
     ProviderAttemptRecord,
     ProviderScheduleRecord,
     ProviderSnapshotRecord,
@@ -301,6 +302,84 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
         assert persisted.musicbrainz_recording_id == 'recording-id'
         assert persisted.musicbrainz_release_id is None
         assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
+
+
+def test_library_api_confirms_acoustid_candidate_when_alias_keeps_the_recording_id(tmp_path: Path) -> None:
+    # Given: a consolidated historical alias that retains the selected recording identity.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-alias.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(id='record-canonical', created_at=timestamp, updated_at=timestamp)
+        alias = LibraryRecord(
+            id='record-alias',
+            musicbrainz_recording_id='recording-id',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        source = SourceRecord(
+            id='source-acoustid-alias',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+            candidates=[
+                CandidateRecord(
+                    candidate_key='recording-id',
+                    evidence='{"provider":"acoustid","recording_mbid":"recording-id","score":0.99,"tags":{}}',
+                )
+            ],
+        )
+        session.add_all(
+            (
+                root,
+                record,
+                alias,
+                source,
+                LibraryRecordConsolidationRecord(
+                    retired_library_record_id=alias.id,
+                    canonical_library_record_id=record.id,
+                    sha256='a' * 64,
+                    created_at=timestamp,
+                ),
+            )
+        )
+        session.commit()
+
+    # When: the reviewer confirms that same AcousticID recording on the canonical aggregate.
+    response = TestClient(create_app(lambda: Session(engine))).post(
+        '/api/library/records/record-canonical/sources/source-acoustid-alias/candidates/select',
+        json={'candidate_key': 'recording-id', 'provider': 'acoustid'},
+    )
+
+    # Then: the canonical record takes the current identity without a server error.
+    assert response.status_code == 200
+    with Session(engine) as session:
+        canonical = session.get(LibraryRecord, 'record-canonical')
+        retained_alias = session.get(LibraryRecord, 'record-alias')
+        assert canonical is not None
+        assert retained_alias is not None
+        assert canonical.musicbrainz_recording_id == 'recording-id'
+        assert retained_alias.musicbrainz_recording_id is None
 
 
 def test_library_api_recording_override_moves_only_selected_source_and_preserves_evidence(tmp_path: Path) -> None:
