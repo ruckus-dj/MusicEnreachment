@@ -454,7 +454,8 @@ h2 {
     monospace;
 }
 .track-screen,
-.inspector {
+.inspector,
+.manual-actions-screen {
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background: var(--panel);
@@ -470,6 +471,30 @@ h2 {
 }
 .track-table {
   padding: 0 12px;
+}
+.manual-action-filters {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--line);
+  border-inline: 0;
+  border-top: 0;
+  background: color-mix(in srgb, var(--selected) 54%, var(--panel));
+}
+.manual-action-filters legend {
+  padding: 0;
+  color: var(--muted);
+  font:
+    10px "DM Mono",
+    monospace;
+}
+.manual-action-filters .secondary.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--panel);
 }
 .track-line {
   display: grid;

@@ -67,6 +67,10 @@ Answers “what releases belong to this artist?” with a separate album list an
 
 Answers “which files are in this album?” with one row per source file, processing/match state, and a direct route to the track inspector.
 
+### Ручные действия
+
+Answers “what needs an operator now?” with one source row per track and two explicit filters: analysis errors and `Нужна проверка`. Rows link to the existing track inspector, where evidence and recovery actions remain scoped to the selected track.
+
 ### Инспектор трека
 
 Answers “what will be published?” in one focused screen: source path/hash/size, immutable source tags, fingerprint, AcousticID/provider evidence, history, and separate Original/Analyzed/Final metadata tabs. Only Final is editable; saving creates a new metadata revision and does not mutate the source file.
@@ -84,6 +88,11 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 ### Entity and track row
 - Structure: stable title, count/path, state, and explicit chevron/back destination.
 - States: default, hover, selected, focus, empty catalog.
+
+### Manual-action filter
+- Structure: two native toggle buttons with visible per-category counts above the existing track rows.
+- States: selected filter, unselected filter, empty category.
+- Accessibility: `aria-pressed` communicates the selected category; category labels never rely on color alone.
 
 ### Metadata inspector
 - Structure: compact Original/Analyzed/Final comparison, labeled Final inputs only in edit mode, revision badge, save action, history.
