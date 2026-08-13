@@ -14,8 +14,8 @@ import {
   submitRecordingCorrection,
 } from "../api/client";
 import {
+  albumArtistsFor,
   albumFor,
-  artistFor,
   compareNames,
   detailIsPending,
   tagsFor,
@@ -704,26 +704,27 @@ export function useAppController(): AppControllerModel {
       items
         .flatMap((item) => item.sources.map((source) => ({ item, source })))
         .filter(({ item, source }) =>
-          `${artistFor(item, source.source_id)} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`
+          `${albumArtistsFor(item, source.source_id).join(" ")} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
     [items, query],
   );
   const artists = [
-    ...new Set(tracks.map(({ item, source }) => artistFor(item, source.source_id))),
+    ...new Set(tracks.flatMap(({ item, source }) => albumArtistsFor(item, source.source_id))),
   ].sort(compareNames);
   const albums = [
     ...new Set(
       tracks
-        .filter(({ item, source }) => artistFor(item, source.source_id) === artist)
+        .filter(({ item, source }) => albumArtistsFor(item, source.source_id).includes(artist))
         .map(({ item, source }) => albumFor(item, source.source_id)),
     ),
   ].sort(compareNames);
   const albumTracks = tracks
     .filter(
       ({ item, source }) =>
-        artistFor(item, source.source_id) === artist && albumFor(item, source.source_id) === album,
+        albumArtistsFor(item, source.source_id).includes(artist) &&
+        albumFor(item, source.source_id) === album,
     )
     .sort(({ item: leftItem, source: leftSource }, { item: rightItem, source: rightSource }) => {
       const leftNumber = trackNumberFor(leftItem, leftSource.source_id);

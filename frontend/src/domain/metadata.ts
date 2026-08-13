@@ -68,6 +68,22 @@ export function artistFor(item: Summary, sourceId: string): string {
   );
 }
 
+export function albumArtistsFor(item: Summary, sourceId: string): string[] {
+  const albumArtist =
+    tagsFor(item, sourceId, "final").ALBUMARTIST ||
+    tagsFor(item, sourceId, "original").ALBUMARTIST ||
+    "";
+  const artists = [
+    ...new Set(
+      albumArtist
+        .split(";")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return artists.length > 0 ? artists : [artistFor(item, sourceId)];
+}
+
 export function albumFor(item: Summary, sourceId: string): string {
   return (
     tagsFor(item, sourceId, "final").ALBUM ||
