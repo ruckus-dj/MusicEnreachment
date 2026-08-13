@@ -4,6 +4,7 @@ from music_ingest.models.db import Base
 from music_ingest.models.entities import (
     ArtworkRecord,
     CandidateRecord,
+    DecoderEvidenceRecord,
     FingerprintRecord,
     GenreCatalogRecord,
     JobAttemptRecord,
@@ -36,6 +37,7 @@ __all__ = [
     'ArtworkRecord',
     'Base',
     'CandidateRecord',
+    'DecoderEvidenceRecord',
     'EffectiveSourceDecisionRecord',
     'FingerprintRecord',
     'GenreCatalogRecord',

@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.models.entities import (
+    DecoderEvidenceRecord,
     FingerprintRecord,
     ProviderScheduleRecord,
     ProviderSnapshotRecord,
@@ -61,6 +62,34 @@ class FingerprintRepository:
         self._session: Session = session
 
     def add_evidence(self, evidence: FingerprintRecord) -> FingerprintRecord:
+        self._session.add(evidence)
+        self._session.flush()
+        return evidence
+
+    def successful_evidence(self, source_id: str) -> FingerprintRecord | None:
+        return self._session.scalar(
+            select(FingerprintRecord)
+            .where(FingerprintRecord.source_id == source_id)
+            .where(FingerprintRecord.state == 'success')
+            .order_by(FingerprintRecord.id.desc())
+        )
+
+
+@final
+class DecoderEvidenceRepository:
+    def __init__(self, session: Session) -> None:
+        self._session: Session = session
+
+    def successful_evidence(self, source_id: str, decoder_command: str) -> DecoderEvidenceRecord | None:
+        return self._session.scalar(
+            select(DecoderEvidenceRecord)
+            .where(DecoderEvidenceRecord.source_id == source_id)
+            .where(DecoderEvidenceRecord.decoder_command == decoder_command)
+            .where(DecoderEvidenceRecord.tool_state == 'success')
+            .order_by(DecoderEvidenceRecord.id.desc())
+        )
+
+    def add_evidence(self, evidence: DecoderEvidenceRecord) -> DecoderEvidenceRecord:
         self._session.add(evidence)
         self._session.flush()
         return evidence

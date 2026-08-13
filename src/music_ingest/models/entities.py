@@ -49,6 +49,7 @@ class SourceRecord(Base):
     candidates: Mapped[list[CandidateRecord]] = relationship(back_populates='source', lazy='selectin')
     review_decisions: Mapped[list[ReviewDecisionRecord]] = relationship(back_populates='source', lazy='selectin')
     fingerprints: Mapped[list[FingerprintRecord]] = relationship(back_populates='source', lazy='selectin')
+    decoder_evidence: Mapped[list[DecoderEvidenceRecord]] = relationship(back_populates='source', lazy='selectin')
     library_record: Mapped[LibraryRecord | None] = relationship(back_populates='sources')
     library_publications: Mapped[list[LibraryPublicationRecord]] = relationship(
         'LibraryPublicationRecord', back_populates='source', lazy='selectin'
@@ -210,6 +211,20 @@ class FingerprintRecord(Base):
     version_return_code: Mapped[int | None] = mapped_column(Integer)
     version_output_sha256: Mapped[str | None] = mapped_column(Text)
     source: Mapped[SourceRecord] = relationship(back_populates='fingerprints')
+
+
+@final
+class DecoderEvidenceRecord(Base):
+    __tablename__ = 'decoder_evidence'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    decoder_command: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_state: Mapped[str] = mapped_column(Text, nullable=False)
+    return_code: Mapped[int | None] = mapped_column(Integer)
+    output_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[SourceRecord] = relationship(back_populates='decoder_evidence')
 
 
 @final

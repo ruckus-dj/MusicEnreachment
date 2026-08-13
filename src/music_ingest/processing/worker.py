@@ -5,6 +5,7 @@ import logging
 import shutil
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Final, final, override
@@ -17,11 +18,16 @@ from sqlalchemy.orm import Session
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
 from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
-from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintResult, fingerprint_source
+from music_ingest.enrichment.fingerprints import (
+    FingerprintRequest,
+    FingerprintResult,
+    FingerprintState,
+    fingerprint_source,
+)
 from music_ingest.external.acoustid import AcoustIdV2Adapter
 from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.external.musicbrainz_genres import display_genre_name
-from music_ingest.inspectors._tool import ToolState
+from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
@@ -83,7 +89,9 @@ from music_ingest.models import (
     SourceTagRecord,
     StorageConfigRecord,
 )
+from music_ingest.models.entities import DecoderEvidenceRecord
 from music_ingest.models.jobs import ClaimedJob, JobRepository
+from music_ingest.models.repositories import DecoderEvidenceRepository, FingerprintRepository
 from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
@@ -533,10 +541,21 @@ class ProcessingWorker:
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
+        if self._cached_fingerprint(source, suffix) is not None:
+            configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+            if configured_musicbrainz is not None or configured_acoustid is not None:
+                provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
+                _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
+            return
         if is_flac:
             inspection = inspect_flac(
-                source_path, ffmpeg_command=self._config.ffmpeg_command, timeout_seconds=self._timeout_seconds()
+                source_path,
+                ffmpeg_command=self._config.ffmpeg_command,
+                timeout_seconds=self._timeout_seconds(),
+                cached_decoder_evidence=self._cached_decoder_evidence(source),
             )
+            if self._cached_decoder_evidence(source) is None:
+                self._record_decoder_evidence(source, inspection.flac_test, now)
             malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
             if malformed:
                 self._invalid_audio(claimed, source, 'malformed FLAC container', now)
@@ -569,11 +588,7 @@ class ProcessingWorker:
                 timeout_seconds=self._timeout_seconds(),
             )
         else:
-            validate_decoder(
-                source_path,
-                ffmpeg_command=self._config.ffmpeg_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
+            self._validate_source_decoder(source, source_path, now)
         tags = read_tags(source_path)
         self._capture_observations(source, source_path, tags)
         original_tags = dict(tags)
@@ -711,11 +726,22 @@ class ProcessingWorker:
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
+        if self._changed(source, source_path):
+            self._requeue_changed_source(claimed, source, source_path, now)
+            return
         suffix = source_path.suffix.casefold()
-        if suffix == '.flac':
+        cached_fingerprint = self._cached_fingerprint(source, suffix)
+        if cached_fingerprint is not None:
+            fingerprint = cached_fingerprint
+        elif suffix == '.flac':
             inspection = inspect_flac(
-                source_path, ffmpeg_command=self._config.ffmpeg_command, timeout_seconds=self._timeout_seconds()
+                source_path,
+                ffmpeg_command=self._config.ffmpeg_command,
+                timeout_seconds=self._timeout_seconds(),
+                cached_decoder_evidence=self._cached_decoder_evidence(source),
             )
+            if self._cached_decoder_evidence(source) is None:
+                self._record_decoder_evidence(source, inspection.flac_test, now)
             if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
                 self._invalid_audio(claimed, source, 'malformed FLAC container', now)
                 return
@@ -724,23 +750,30 @@ class ProcessingWorker:
             )
             if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
                 raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
+            fingerprint = fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
         elif suffix == '.mp3':
             inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
             if inspection.state is not Mp3InspectionState.VALID:
                 raise ProcessingInfrastructureError(f'mp3 analysis unavailable: {inspection.ffprobe.state}')
-        else:
-            validate_decoder(
-                source_path,
-                ffmpeg_command=self._config.ffmpeg_command,
+            fingerprint = fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
                 timeout_seconds=self._timeout_seconds(),
             )
-            inspection = None
-        fingerprint = fingerprint_source(
-            self._session,
-            FingerprintRequest(SourceId(source.id), source_path, inspection),
-            fpcalc_command=self._config.fpcalc_command,
-            timeout_seconds=self._timeout_seconds(),
-        )
+        else:
+            self._validate_source_decoder(source, source_path, now)
+            fingerprint = fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, None),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
         tags = read_tags(source_path)
         record = ensure_source_record(self._session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
@@ -1283,6 +1316,52 @@ class ProcessingWorker:
             source.inode,
             source.size_bytes,
             source.sha256,
+        )
+
+    def _cached_fingerprint(self, source: SourceRecord, suffix: str) -> FingerprintResult | None:
+        fingerprint = FingerprintRepository(self._session).successful_evidence(source.id)
+        if fingerprint is None:
+            return None
+        if suffix == '.flac' and (
+            DecoderEvidenceRepository(self._session).successful_evidence(source.id, self._config.ffmpeg_command) is None
+        ):
+            return None
+        return FingerprintResult(
+            FingerprintState(fingerprint.state),
+            fingerprint.fingerprint,
+            fingerprint.duration_seconds,
+            fingerprint.tool_version,
+            fingerprint.output_sha256,
+            None,
+            None,
+        )
+
+    def _cached_decoder_evidence(self, source: SourceRecord) -> ToolEvidence | None:
+        evidence = DecoderEvidenceRepository(self._session).successful_evidence(source.id, self._config.ffmpeg_command)
+        if evidence is None:
+            return None
+        return ToolEvidence(ToolState(evidence.tool_state), evidence.return_code, '', '')
+
+    def _validate_source_decoder(self, source: SourceRecord, source_path: Path, now: datetime) -> None:
+        if self._cached_decoder_evidence(source) is not None:
+            return
+        validate_decoder(
+            source_path,
+            ffmpeg_command=self._config.ffmpeg_command,
+            timeout_seconds=self._timeout_seconds(),
+        )
+        self._record_decoder_evidence(source, ToolEvidence(ToolState.SUCCESS, 0, '', ''), now)
+
+    def _record_decoder_evidence(self, source: SourceRecord, evidence: ToolEvidence, now: datetime) -> None:
+        _ = DecoderEvidenceRepository(self._session).add_evidence(
+            DecoderEvidenceRecord(
+                source_id=source.id,
+                decoder_command=self._config.ffmpeg_command,
+                tool_state=evidence.state.value,
+                return_code=evidence.return_code,
+                output_sha256=sha256(evidence.stdout.encode()).hexdigest(),
+                checked_at=now,
+            )
         )
 
     def _capture_observations(self, source: SourceRecord, path: Path, tags: tuple[tuple[str, str], ...]) -> None:

@@ -58,6 +58,17 @@ def fingerprint_source(
     fpcalc_command: str = 'fpcalc',
     timeout_seconds: float = 30.0,
 ) -> FingerprintResult:
+    cached = FingerprintRepository(session).successful_evidence(request.source_id)
+    if cached is not None:
+        return FingerprintResult(
+            FingerprintState(cached.state),
+            cached.fingerprint,
+            cached.duration_seconds,
+            cached.tool_version,
+            cached.output_sha256,
+            None,
+            None,
+        )
     result = _fingerprint(request, fpcalc_command, timeout_seconds)
     _ = FingerprintRepository(session).add_evidence(_record(request.source_id, result))
     return result

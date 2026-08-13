@@ -93,8 +93,11 @@ def test_fingerprint_source_when_inspection_is_valid_persists_local_evidence(tmp
     assert result.fingerprint == '12345'
     assert result.duration_seconds == 241
     assert result.tool_version == '1.6.0'
-    assert repeated == result
-    assert len(persisted) == 2
+    assert repeated.state == result.state
+    assert repeated.fingerprint == result.fingerprint
+    assert repeated.duration_seconds == result.duration_seconds
+    assert repeated.tool_version == result.tool_version
+    assert len(persisted) == 1
     assert all(item.source_id == source_id for item in persisted)
     assert all(item.fingerprint == '12345' for item in persisted)
     assert all(item.duration_seconds == 241 for item in persisted)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
 from music_ingest.models import Base, JobRecord, RuntimeSettingRecord
+from music_ingest.processing import ProcessingConfig
+from music_ingest.processing import runtime as processing_runtime
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -66,6 +69,7 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             'timeout_seconds': 30,
             'retry_delay_seconds': 10,
             'max_attempts': 3,
+            'worker_concurrency': 4,
             'musicbrainz_enabled': True,
             'musicbrainz_user_agent': 'Music Ingest/0.1',
             'musicbrainz_host': 'https://musicbrainz.internal',
@@ -80,6 +84,7 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
     assert response.json()['acoustid_client_key_configured'] is True
     assert response.json()['musicbrainz_host'] == 'https://musicbrainz.internal'
     assert response.json()['musicbrainz_request_delay_seconds'] == 0
+    assert response.json()['worker_concurrency'] == 4
 
 
 @pytest.mark.parametrize(
@@ -230,6 +235,33 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
 
     # Then: the DB-backed worker runs alongside the web runtime.
     assert len(started) == 1
+
+
+def test_processing_runtime_when_started_supervises_all_configurable_worker_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the processing supervisor with its worker-slot boundary replaced by a cancellable observer.
+    started: list[int] = []
+
+    async def record_worker_slot(
+        _session_factory: Callable[[], Session], _config: ProcessingConfig, worker_slot: int, _poll_seconds: float
+    ) -> None:
+        started.append(worker_slot)
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(processing_runtime, '_run_processing_worker_slot', record_worker_slot)
+
+    async def start_then_cancel() -> None:
+        with anyio.move_on_after(0.1):
+            await processing_runtime.run_processing_worker(
+                lambda: Session(), ProcessingConfig(Path('/incoming'), Path('/staging'), Path('/media'))
+            )
+
+    # When: the supervisor starts.
+    anyio.run(start_then_cancel)
+
+    # Then: it creates every bounded slot so the live setting can activate up to the validated maximum.
+    assert started == list(range(8))
 
 
 def test_runtime_app_when_non_default_incoming_root_receives_download_uses_the_configured_root(

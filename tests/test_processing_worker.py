@@ -10,7 +10,7 @@ from subprocess import run
 from typing import Final
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
@@ -747,6 +747,71 @@ def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
         tags = dict(read_normalized_tags(published_path))
         assert tags['ALBUM'] == 'Fixture Album'
         assert 'MUSICBRAINZ_ALBUMID' not in tags
+
+
+def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerprint_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a processed FLAC source with durable decoder and fingerprint evidence.
+    config = replace(
+        _config(tmp_path),
+        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
+        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+    )
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add_all(
+            (
+                ProviderScheduleRecord(provider_name='musicbrainz', next_start_at=datetime.now(UTC)),
+                ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)),
+                JobRecord(
+                    id='initial',
+                    source_id=source.id,
+                    kind='filesystem_scan',
+                    state='queued',
+                    created_at=datetime.now(UTC),
+                ),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+        source = session.scalar(select(SourceRecord))
+        assert source is not None
+        for job in session.scalars(select(JobRecord).where(JobRecord.state == 'queued')):
+            job.state = 'completed'
+        session.add(
+            JobRecord(
+                id='full-reanalysis',
+                source_id=source.id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    def unexpected_media_tool(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError('unchanged source must reuse durable media evidence')
+
+    monkeypatch.setattr(processing, 'inspect_flac', unexpected_media_tool)
+    monkeypatch.setattr(processing, 'fingerprint_source', unexpected_media_tool)
+
+    # When: the full reanalysis scans the same unchanged source observation.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: the scan completes without invoking ffmpeg-backed inspection or fpcalc.
+    with Session(engine) as session:
+        reanalysis = session.get(JobRecord, 'full-reanalysis')
+        assert reanalysis is not None and reanalysis.state == 'completed'
 
 
 def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
