@@ -138,6 +138,8 @@ export type RuntimeSettings = {
   readonly max_attempts: number;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
+  readonly musicbrainz_host: string;
+  readonly musicbrainz_request_delay_seconds: number;
   readonly acoustid_enabled: boolean;
   readonly acoustid_client_key_configured: boolean;
   readonly artwork_enabled: boolean;
@@ -198,6 +200,8 @@ export type RuntimeSettingsDraft = {
   readonly max_attempts: number;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
+  readonly musicbrainz_host: string;
+  readonly musicbrainz_request_delay_seconds: number;
   readonly acoustid_enabled: boolean;
   readonly acoustid_client_key: string;
   readonly artwork_enabled: boolean;

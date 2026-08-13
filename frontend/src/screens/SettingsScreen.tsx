@@ -154,6 +154,31 @@ export function SettingsScreen({
               onChange={(event) => update("musicbrainz_user_agent", event.target.value)}
             />
           </label>
+          <label>
+            Хост MusicBrainz
+            <input
+              type="url"
+              pattern="https?://[^/?#]+"
+              value={draft.musicbrainz_host}
+              onChange={(event) => update("musicbrainz_host", event.target.value)}
+            />
+          </label>
+          <label>
+            Задержка запросов MusicBrainz, секунд
+            <input
+              type="number"
+              min="0"
+              max="3600"
+              step="0.1"
+              value={draft.musicbrainz_request_delay_seconds}
+              onChange={(event) =>
+                update("musicbrainz_request_delay_seconds", Number(event.target.value))
+              }
+            />
+          </label>
+          <small className="settings-help">
+            По умолчанию используется официальный MusicBrainz с безопасной задержкой 1,5 секунды.
+          </small>
           <label className="settings-check">
             <input
               type="checkbox"

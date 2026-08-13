@@ -14,6 +14,8 @@ const draft: RuntimeSettingsDraft = {
   max_attempts: 3,
   musicbrainz_enabled: true,
   musicbrainz_user_agent: "Music Ingest",
+  musicbrainz_host: "https://musicbrainz.org",
+  musicbrainz_request_delay_seconds: 1.5,
   acoustid_enabled: false,
   acoustid_client_key: "",
   artwork_enabled: true,
@@ -126,5 +128,57 @@ describe("SettingsScreen source roots", () => {
     });
     expect(screen.getByTestId("source-root-error").getAttribute("role")).toBe("alert");
     expect(screen.getByTestId("source-root-error").textContent).toContain("Корень уже настроен");
+  });
+});
+
+describe("SettingsScreen MusicBrainz", () => {
+  it("updates the host and request delay", () => {
+    const onChange = vi.fn();
+
+    render(
+      <SettingsScreen
+        draft={draft}
+        loading={false}
+        saving={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        genres={null}
+        genreSearch=""
+        onGenreSearch={vi.fn()}
+        genreLoading={false}
+        genreSyncing={false}
+        onSyncGenres={vi.fn()}
+        sourceRoots={[]}
+        sourceRootsLoading={false}
+        sourceRootsError=""
+        sourceRootCreating={false}
+        sourceRootRemoving={false}
+        storageBrowser={null}
+        storageConfig={null}
+        storageOutputPreview={null}
+        storageLoading={false}
+        onCreateSourceRoot={vi.fn()}
+        onRemoveSourceRoot={vi.fn()}
+        onBrowseStorage={vi.fn()}
+        onPreviewStorageOutput={vi.fn()}
+        onMoveStorageOutput={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Хост MusicBrainz"), {
+      target: { value: "https://musicbrainz.internal" },
+    });
+    fireEvent.change(screen.getByLabelText("Задержка запросов MusicBrainz, секунд"), {
+      target: { value: "0" },
+    });
+
+    expect(onChange).toHaveBeenNthCalledWith(1, {
+      ...draft,
+      musicbrainz_host: "https://musicbrainz.internal",
+    });
+    expect(onChange).toHaveBeenNthCalledWith(2, {
+      ...draft,
+      musicbrainz_request_delay_seconds: 0,
+    });
   });
 });
