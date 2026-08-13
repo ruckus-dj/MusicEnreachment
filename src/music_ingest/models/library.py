@@ -104,6 +104,18 @@ class LibraryRecord(Base):
 
 
 @final
+class LibraryRecordConsolidationRecord(Base):
+    """Append-only alias retained when exact content joins another aggregate."""
+
+    __tablename__ = 'library_record_consolidations'
+
+    retired_library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), primary_key=True)
+    canonical_library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+@final
 class LibraryPublicationRecord(Base):
     """Immutable managed output version tied to the exact source version used."""
 
