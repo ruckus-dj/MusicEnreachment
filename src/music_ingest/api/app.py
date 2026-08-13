@@ -82,7 +82,7 @@ from music_ingest.models import (
     SourceTagRecord,
 )
 from music_ingest.models.jobs import JobRepository
-from music_ingest.models.library import LibraryRecordConsolidationRecord, SourceRecordView
+from music_ingest.models.library import CandidateView, LibraryRecordConsolidationRecord, SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.reconciliation import mark_disappeared_source
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
@@ -193,6 +193,19 @@ def _candidate_is_displayable(evidence: CandidateEvidencePayload) -> bool:
         return True
     return bool(
         evidence.artist.strip() and evidence.release.strip() and evidence.tags.get('MUSICBRAINZ_ALBUMID', '').strip()
+    )
+
+
+def _current_candidates(source: SourceRecordView) -> tuple[CandidateView, ...]:
+    latest_run_ids: dict[str, int] = {}
+    for run in source.candidate_runs:
+        latest_run_ids[run.provider_name] = run.id
+    return tuple(
+        candidate
+        for candidate in source.candidates
+        if candidate.run_id is None
+        or latest_run_ids.get(CandidateEvidencePayload.model_validate_json(candidate.evidence).provider)
+        == candidate.run_id
     )
 
 
@@ -657,6 +670,7 @@ def create_app(
                                         'provider': attempt.provider_name,
                                         'outcome': attempt.outcome,
                                         'snapshot_sha256': attempt.snapshot_sha256,
+                                        'created_at': attempt.created_at.isoformat(),
                                     }
                                     for attempt in source.provider_attempts
                                 ],
@@ -667,7 +681,7 @@ def create_app(
                                             candidate.evidence
                                         ).model_dump(),
                                     }
-                                    for candidate in source.candidates
+                                    for candidate in _current_candidates(source)
                                     if _candidate_is_displayable(
                                         CandidateEvidencePayload.model_validate_json(candidate.evidence)
                                     )
@@ -1024,7 +1038,6 @@ def create_app(
                         existing_record.musicbrainz_recording_id = None
                         session.flush()
                     record.musicbrainz_recording_id = candidate.candidate_key
-                    record.musicbrainz_release_id = None
                     queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
                     session.add(
                         ReviewDecisionRecord(
@@ -1060,7 +1073,6 @@ def create_app(
                 final = append_metadata_revision(session, record.id, source.id, 'final', final_tags, 'review', now)
                 record.match_state = 'matched'
                 record.musicbrainz_release_id = candidate.candidate_key
-                record.musicbrainz_recording_id = candidate_tags.get('MUSICBRAINZ_TRACKID')
                 session.add(
                     ReviewDecisionRecord(
                         source_id=source.id,

@@ -23,6 +23,7 @@ class FingerprintView(Protocol):
 
 
 class CandidateView(Protocol):
+    run_id: int | None
     candidate_key: str
     evidence: str
 
@@ -36,6 +37,12 @@ class ProviderAttemptView(Protocol):
     provider_name: str
     outcome: str
     snapshot_sha256: str
+    created_at: datetime
+
+
+class ProviderCandidateRunView(Protocol):
+    id: int
+    provider_name: str
 
 
 class SourceRecordView(Protocol):
@@ -55,6 +62,7 @@ class SourceRecordView(Protocol):
     tag_observations: list[SourceTagView]
     fingerprints: list[FingerprintView]
     provider_attempts: list[ProviderAttemptView]
+    candidate_runs: list[ProviderCandidateRunView]
     candidates: list[CandidateView]
     review_decisions: list[ReviewDecisionView]
 
