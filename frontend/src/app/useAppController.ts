@@ -102,6 +102,7 @@ export type AppControllerModel = {
   loadLibrary: (showLoader?: boolean) => Promise<void>;
   scan: () => Promise<void>;
   reprocessAll: () => Promise<void>;
+  reprocessSource: (recordId: string, sourceId: string) => Promise<void>;
   saveMetadata: () => Promise<boolean>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
@@ -408,6 +409,26 @@ export function useAppController(): AppControllerModel {
       setNotice(
         error instanceof Error ? error.message : "Не удалось поставить провайдеры в очередь",
       );
+    } finally {
+      setReprocessing(false);
+    }
+  }
+  async function reprocessSource(recordId: string, sourceId: string) {
+    setReprocessing(true);
+    try {
+      const result = await api<{ queued: boolean; kind: string | null }>(
+        `/api/library/records/${encodeURIComponent(recordId)}/sources/${encodeURIComponent(sourceId)}/reprocess`,
+        { method: "POST" },
+      );
+      setNotice(
+        result.queued
+          ? "Повторный анализ поставлен в очередь"
+          : "Этот источник уже обрабатывается или не требует повторного анализа",
+      );
+      await loadLibrary(false);
+      if (result.queued) watchRecord(recordId, sourceId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось повторить анализ");
     } finally {
       setReprocessing(false);
     }
@@ -783,6 +804,7 @@ export function useAppController(): AppControllerModel {
     loadLibrary,
     scan,
     reprocessAll,
+    reprocessSource,
     saveMetadata,
     retryProvider,
     overrideRelease,
