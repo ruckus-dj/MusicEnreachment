@@ -272,6 +272,10 @@ def test_selection_refresh_when_better_source_replaces_output_atomically(tmp_pat
         assert current.path != previous.path
         published = Path(current.path)
         assert current.content_sha256 == sha256(published.read_bytes()).hexdigest()
+        refreshed_record = session.get(LibraryRecord, 'record-replace')
+        assert refreshed_record is not None
+        assert refreshed_record.processing_state == 'complete'
+        assert refreshed_record.publication_state == 'current'
         attempt = session.query(PublicationAttemptRecord).one()
         assert attempt.state == 'finalized'
         assert attempt.output_sha256 == current.content_sha256

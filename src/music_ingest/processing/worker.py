@@ -477,7 +477,7 @@ class ProcessingWorker:
             self._session,
             record_id,
             'selection_refresh_selected',
-            'publishing',
+            'complete',
             f'effective source {decision.source_id} selected for refresh',
             now,
             decision.source_id,
