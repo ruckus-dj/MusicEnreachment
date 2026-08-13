@@ -178,7 +178,7 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     tags: dict[str, str] = {
         'ALBUM': candidate.release_title,
         'ARTIST': candidate.artist_name,
-        'ALBUMARTIST': candidate.artist_name,
+        'ALBUMARTIST': candidate.release_artist_name or candidate.artist_name,
         'MUSICBRAINZ_ALBUMID': candidate.release_mbid,
     }
     if candidate.recording_mbids:

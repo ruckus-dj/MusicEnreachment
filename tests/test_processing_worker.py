@@ -269,7 +269,7 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
 
 
 def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:
-    # Given: MusicBrainz returns lowercase genre source names.
+    # Given: MusicBrainz returns a track artist, a distinct release artist, and lowercase genre source names.
     candidate = ReleaseCandidate(
         'release-id',
         'Fixture Album',
@@ -277,6 +277,7 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
         genres=('alternative rock', 'hip hop'),
         isrcs=('USFIX2600001',),
         performers=('Fixture Performer', 'Fixture Vocalist'),
+        release_artist_name='Fixture Album Artist',
     )
 
     # When: provider candidate metadata is converted to tags.
@@ -284,6 +285,8 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
 
     # Then: the published GENRE value uses readable labels.
     assert tags['GENRE'] == 'Alternative Rock; Hip Hop'
+    assert tags['ARTIST'] == 'Fixture Artist'
+    assert tags['ALBUMARTIST'] == 'Fixture Album Artist'
     assert tags['ISRC'] == 'USFIX2600001'
     assert tags['PERFORMER'] == 'Fixture Performer; Fixture Vocalist'
 
