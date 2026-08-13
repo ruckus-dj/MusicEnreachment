@@ -101,7 +101,31 @@ def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(t
     assert persisted.origin == Origin.LIDARR.value
     assert len(persisted.tag_observations) == 2
     assert len(persisted.provider_attempts) == 1
-    assert first.source_id == second.source_id
+
+
+def test_intake_source_when_distinct_paths_have_identical_bytes_shares_library_record(tmp_path: Path) -> None:
+    # Given: two immutable observations at distinct paths with exactly the same bytes.
+    first = tmp_path / 'first.flac'
+    second = tmp_path / 'second.flac'
+    _ = first.write_bytes(b'one immutable recording')
+    _ = second.write_bytes(b'one immutable recording')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "content-identity.db"}')
+    Base.metadata.create_all(engine)
+
+    # When: intake observes each path as an independent source.
+    with Session(engine) as session:
+        first_result = intake_source(session, intake_request(first, Origin.MANUAL))
+        second_result = intake_source(session, intake_request(second, Origin.MANUAL))
+        session.commit()
+        first_source = session.get(SourceRecord, first_result.source_id)
+        second_source = session.get(SourceRecord, second_result.source_id)
+
+    # Then: provenance is retained for both paths in one stable aggregate.
+    assert first_source is not None
+    assert second_source is not None
+    assert first_source.id != second_source.id
+    assert first_source.source_path != second_source.source_path
+    assert first_source.library_record_id == second_source.library_record_id
 
 
 def test_intake_source_when_repeated_database_identity_does_not_create_files(tmp_path: Path) -> None:

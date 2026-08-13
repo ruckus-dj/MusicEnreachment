@@ -67,6 +67,7 @@ def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
                     source_hash,
                 )
         except IntegrityError:
+            session.expire_all()
             source = repository.find_source(source_id)
             if source is None:
                 raise
@@ -117,7 +118,12 @@ def _persist_source(
     source.review_decisions = [
         ReviewDecisionRecord(state=item.state, rationale=item.rationale) for item in request.review_decisions
     ]
-    return repository.add_source(source)
+    source = repository.add_source(source)
+    existing_source = repository.find_other_source_by_sha256(source_hash, source.id)
+    if existing_source is not None and existing_source.library_record is not None:
+        source.library_record = existing_source.library_record
+        _ = repository.add_source(source)
+    return source
 
 
 def _source_sha256(source_path: Path) -> str:
