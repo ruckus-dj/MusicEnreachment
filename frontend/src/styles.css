@@ -498,7 +498,7 @@ h2 {
 }
 .track-line {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 160px 24px;
+  grid-template-columns: 42px minmax(0, 1fr) 160px auto 24px;
   align-items: center;
   gap: 12px;
   width: 100%;
@@ -508,13 +508,9 @@ h2 {
   color: var(--ink);
   padding: 14px 12px;
   text-align: left;
-  transition:
-    background var(--ease),
-    transform var(--ease);
 }
 .track-line:hover {
   background: var(--selected);
-  transform: translateX(2px);
 }
 .track-line > b {
   color: var(--accent);
@@ -542,10 +538,18 @@ h2 {
 .track-meta {
   white-space: nowrap;
 }
-.track-line i {
+.track-open-action {
+  border: 0;
+  background: transparent;
   color: var(--accent);
-  font-style: normal;
   font-size: 18px;
+  transition: transform var(--ease);
+}
+.track-open-action:hover {
+  transform: translateX(2px);
+}
+.retry-action {
+  white-space: nowrap;
 }
 .inspector-grid {
   display: grid;
@@ -759,7 +763,7 @@ h2 {
     border-left: 0;
   }
   .track-line {
-    grid-template-columns: 38px minmax(0, 1fr) 24px;
+    grid-template-columns: 38px minmax(0, 1fr) auto 24px;
   }
   .track-meta {
     display: none;
@@ -807,7 +811,7 @@ h2 {
     width: 100%;
   }
   .track-line {
-    grid-template-columns: 32px minmax(0, 1fr) 24px;
+    grid-template-columns: 32px minmax(0, 1fr) auto 24px;
     padding: 12px 8px;
   }
   .inspector-grid {
