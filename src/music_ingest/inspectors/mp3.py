@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Final
 
 from music_ingest.inspectors._tool import ToolEvidence, ToolState, run_tool
+
+_MAX_LEADING_RUN_IN_BYTES: Final = 64 * 1024
 
 
 class InspectionState(StrEnum):
@@ -71,9 +74,10 @@ def inspect_mp3(
 def _parse_mp3(payload: bytes) -> tuple[tuple[Mp3Finding, ...], int | None, int | None, bool]:
     offset, version, tag_size, id3_finding, malformed = _leading_id3v2(payload)
     findings = (id3_finding,) if id3_finding is not None else ()
-    if malformed or not _is_mp3_frame(payload, offset):
+    frame_offset = _first_mp3_frame_offset(payload, offset)
+    if malformed or frame_offset is None:
         return findings + (Mp3Finding(Mp3FindingKind.MALFORMED_CONTAINER, offset, None),), version, tag_size, True
-    findings += (Mp3Finding(Mp3FindingKind.MP3_FRAME, offset, 4),)
+    findings += (Mp3Finding(Mp3FindingKind.MP3_FRAME, frame_offset, 4),)
     if len(payload) >= 128 and payload[-128:-125] == b'TAG':
         findings += (Mp3Finding(Mp3FindingKind.TRAILING_ID3V1, len(payload) - 128, 128),)
     return findings, version, tag_size, False
@@ -89,6 +93,15 @@ def _leading_id3v2(payload: bytes) -> tuple[int, int | None, int | None, Mp3Find
     if total_size > len(payload):
         return 0, payload[3], tag_size, None, True
     return total_size, payload[3], tag_size, Mp3Finding(Mp3FindingKind.ID3V2, 0, total_size), False
+
+
+def _first_mp3_frame_offset(payload: bytes, offset: int) -> int | None:
+    """Return the first MPEG frame within ffmpeg's bounded leading run-in allowance."""
+    search_end = min(len(payload) - 3, offset + _MAX_LEADING_RUN_IN_BYTES)
+    for candidate_offset in range(offset, search_end):
+        if _is_mp3_frame(payload, candidate_offset):
+            return candidate_offset
+    return None
 
 
 def _is_mp3_frame(payload: bytes, offset: int) -> bool:
