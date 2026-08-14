@@ -25,8 +25,6 @@ services:
     command: ["python", "-m", "music_ingest", "serve"]
     environment:
       MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:music_ingest@postgres/music_ingest
-      MUSIC_INGEST_SOURCE_ROOTS_PARENT: /data/sources
-      MUSIC_INGEST_INCOMING_ROOT: /data/sources/legacy
       MUSIC_INGEST_E2E_SEED_ENABLED: "true"
       MUSIC_INGEST_STAGING_ROOT: /data/media/.staging
       MUSIC_INGEST_MEDIA_ROOT: /data/media
@@ -96,7 +94,7 @@ services:
     restart: unless-stopped
 
   lidarr-webhook:
-    image: curlimages/curl:8.15.0
+    image: curlimages/curl:latest
     command: ["/bin/sh", "/configure-lidarr-webhook.sh"]
     depends_on:
       lidarr:

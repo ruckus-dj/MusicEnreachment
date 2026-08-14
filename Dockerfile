@@ -1,18 +1,15 @@
-FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
-
-FROM node:24-bookworm-slim AS frontend
+FROM node:26-bookworm-slim AS frontend
 
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 COPY frontend ./
 RUN npm run build
 
-FROM python:3.14-slim-trixie
-
-COPY --from=uv /uv /uvx /bin/
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -41,7 +38,8 @@ ENV FPCALC=/usr/bin/fpcalc \
     UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project
 
 COPY alembic.ini ./
 COPY alembic ./alembic
