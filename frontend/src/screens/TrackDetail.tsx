@@ -67,6 +67,15 @@ export function TrackDetail({
     ? detail.metadata_revisions?.find((item) => item.id === currentPublication.metadata_revision_id)
     : undefined;
   const fingerprint = source.fingerprints?.at(-1);
+  const fingerprintDuration = fingerprint?.duration_seconds;
+  const roundedDurationSeconds =
+    fingerprintDuration === null || fingerprintDuration === undefined
+      ? null
+      : Math.round(fingerprintDuration);
+  const duration =
+    roundedDurationSeconds === null
+      ? "Не определена"
+      : `${Math.floor(roundedDurationSeconds / 60)}:${String(roundedDurationSeconds % 60).padStart(2, "0")}`;
   const attempts = source.provider_attempts ?? [];
   const originalTags = tagsFor(detail, sourceId, "original");
   const analyzedTags = tagsFor(detail, sourceId, "analyzed");
@@ -431,6 +440,11 @@ export function TrackDetail({
                 <span>Fingerprint</span>
                 <strong>{fingerprint?.fingerprint ? "Сформирован" : "Не найден"}</strong>
                 <small>{fingerprint?.tool_version ?? "инструмент не указан"}</small>
+              </div>
+              <div>
+                <span>Длительность</span>
+                <strong data-testid="track-duration">{duration}</strong>
+                <small>По данным fingerprint</small>
               </div>
               <div>
                 <span>Провайдеры</span>

@@ -66,6 +66,31 @@ function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}
 }
 
 describe("TrackDetail effective source", () => {
+  it("shows the fingerprint duration in minutes and seconds", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        sources: [
+          {
+            ...detail.sources[0],
+            fingerprints: [
+              {
+                state: "available",
+                fingerprint: "fingerprint",
+                duration_seconds: 245.4,
+                tool_version: "fpcalc 1.5.1",
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByText("Длительность")).toBeTruthy();
+    expect(screen.getByText("4:05")).toBeTruthy();
+  });
+
   it("shows the automatically matched AcousticID recording as selected", () => {
     renderDetail({
       detail: {
