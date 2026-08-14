@@ -25,7 +25,9 @@ _MP4_FIELDS = {
 }
 _MP4_FREEFORM_FIELDS = {
     'ORIGINALDATE': 'ORIGINALDATE',
-    'MUSICBRAINZ_TRACKID': 'MusicBrainz Track Id',
+    'MUSICBRAINZ_RECORDINGID': 'MusicBrainz Track Id',
+    'MUSICBRAINZ_ARTISTID': 'MusicBrainz Artist Id',
+    'MUSICBRAINZ_ALBUMARTISTID': 'MusicBrainz Album Artist Id',
     'MUSICBRAINZ_ALBUMID': 'MusicBrainz Album Id',
     'MUSICBRAINZ_RELEASEGROUPID': 'MusicBrainz Release Group Id',
     'ISRC': 'ISRC',
@@ -54,7 +56,8 @@ _ID3_TEXT_FRAME_NAMES = {
     'ISRC': 'TSRC',
 }
 _ID3_TXXX_FIELDS = {
-    'MUSICBRAINZ_TRACKID': 'MusicBrainz Track Id',
+    'MUSICBRAINZ_ARTISTID': 'MusicBrainz Artist Id',
+    'MUSICBRAINZ_ALBUMARTISTID': 'MusicBrainz Album Artist Id',
     'MUSICBRAINZ_ALBUMID': 'MusicBrainz Album Id',
     'MUSICBRAINZ_RELEASEGROUPID': 'MusicBrainz Release Group Id',
 }
@@ -148,9 +151,9 @@ def _read_mp3(path: Path) -> tuple[tuple[str, str], ...]:
         frame = next((item for item in tags.getall('TXXX') if item.desc == description), None)
         if frame is not None:
             values[name] = _LIST_SEPARATOR.join(frame.text)
-    ufid = next((item for item in tags.getall('UFID') if item.owner == 'musicbrainz.org'), None)
+    ufid = next((item for item in tags.getall('UFID') if item.owner == 'http://musicbrainz.org'), None)
     if ufid is not None:
-        values['MUSICBRAINZ_TRACKID'] = ufid.data.decode()
+        values['MUSICBRAINZ_RECORDINGID'] = ufid.data.decode()
     return tuple(values.items())
 
 
@@ -177,9 +180,9 @@ def _write_mp3(path: Path, values: Mapping[str, str]) -> None:
         value = values.get(name)
         if value is not None:
             tags.add(TXXX(encoding=3, desc=description, text=value))
-    track_id = values.get('MUSICBRAINZ_TRACKID')
-    if track_id is not None:
-        tags.add(UFID(owner='musicbrainz.org', data=track_id.encode()))
+    recording_id = values.get('MUSICBRAINZ_RECORDINGID')
+    if recording_id is not None:
+        tags.add(UFID(owner='http://musicbrainz.org', data=recording_id.encode()))
     tags.save(path, v2_version=4)
 
 
