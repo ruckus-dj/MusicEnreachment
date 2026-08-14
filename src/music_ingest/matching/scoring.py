@@ -182,7 +182,7 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
         case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
             return (
                 candidate
-                if _normalized(request.artist_name) == _normalized(candidate.artist_name)
+                if _normalized(request.artist_name) == _normalized(_release_artist_name(candidate))
                 and _normalized(request.release_title) == _normalized(candidate.release_title)
                 and not _candidate_has_unsafe_text(candidate)
                 else None
@@ -191,7 +191,7 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
             matches = tuple(
                 candidate
                 for candidate in candidates
-                if _normalized(request.artist_name) == _normalized(candidate.artist_name)
+                if _normalized(request.artist_name) == _normalized(_release_artist_name(candidate))
                 and _normalized(request.release_title) == _normalized(candidate.release_title)
                 and not _candidate_has_unsafe_text(candidate)
             )
@@ -251,7 +251,10 @@ def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> f
 
 def recording_candidate_matches(request: MatchingRequest, candidate: ReleaseCandidate) -> bool:
     return (
-        _text_matches(request.artist_name, candidate.release_artist_name)
+        (
+            _text_matches(request.artist_name, candidate.release_artist_name)
+            or any(_text_matches(request.artist_name, artist_name) for artist_name in candidate.recording_artist_names)
+        )
         and _title_matches(request.recording_title, candidate.recording_title)
         and _duration_matches(request.duration_seconds, candidate.duration_seconds)
         and _number_matches(request.track_number, candidate.track_number)
@@ -291,9 +294,13 @@ def _country_matches(source_path: str, candidate_country: str | None) -> bool:
 def _text_duration_score(
     artist_name: str, release_title: str, duration_seconds: int | None, candidate: ReleaseCandidate
 ) -> float:
-    artist_score = 0.4 if _normalized(artist_name) == _normalized(candidate.artist_name) else 0.0
+    artist_score = 0.4 if _normalized(artist_name) == _normalized(_release_artist_name(candidate)) else 0.0
     title_score = 0.4 if _normalized(release_title) == _normalized(candidate.release_title) else 0.0
     return artist_score + title_score + _duration_score(duration_seconds, candidate.duration_seconds)
+
+
+def _release_artist_name(candidate: ReleaseCandidate) -> str:
+    return candidate.release_artist_name or candidate.artist_name
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:

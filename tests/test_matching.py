@@ -186,6 +186,28 @@ def test_matching_when_single_fresh_release_matches_source_artist_and_album_sele
     assert result.selected_release_mbid == 'release-vol-1'
 
 
+def test_matching_when_recording_lookup_echoes_source_artist_but_release_artist_conflicts_requires_review() -> None:
+    # Given: a recording lookup carries the source artist as context, but MusicBrainz names a different release artist.
+    request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.1', None)
+    evidence = MusicBrainzMatch(
+        _provenance('fresh'),
+        ReleaseCandidate(
+            'release-vol-1',
+            'The Greatest Hits Vol.1',
+            'Noize MC',
+            release_artist_name='Unrelated Artist',
+        ),
+    )
+
+    # When: matching evaluates the authoritative release identity rather than echoed request context.
+    result = resolve_match(request, evidence, None)
+
+    # Then: it cannot automatically select a release whose MusicBrainz artist conflicts with the source artist.
+    assert result.decision is MatchDecision.NEEDS_REVIEW
+    assert result.selected_release_mbid is None
+    assert result.review_reason is ReviewReason.INSUFFICIENT_RELEASE_SCORE
+
+
 def test_matching_when_source_album_matches_multiple_candidates_keeps_review() -> None:
     # Given: two candidates have identical artist and album text.
     request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.2', None)
@@ -289,6 +311,31 @@ def test_recording_candidate_matching_rejects_acoustid_false_positive_and_select
     result = resolve_match(request, Ambiguous(_provenance('fresh'), candidates), None)
     assert result.decision is MatchDecision.AUTO_SELECTED
     assert result.selected_release_mbid == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009'
+
+
+def test_recording_candidate_matching_accepts_recording_artist_on_compilation_release() -> None:
+    # Given: a compilation release has a generic release artist while the recording artist matches the source.
+    request = MatchingRequest(
+        artist_name='Fixture Artist',
+        release_title='Fixture Compilation',
+        duration_seconds=180,
+        recording_title='Fixture Track',
+    )
+    candidate = ReleaseCandidate(
+        'compilation-release',
+        'Fixture Compilation',
+        'Fixture Artist',
+        180,
+        recording_title='Fixture Track',
+        release_artist_name='Various Artists',
+        recording_artist_names=('Fixture Artist',),
+    )
+
+    # When: recording context is evaluated against the release and track artist credits.
+    matches = recording_candidate_matches(request, candidate)
+
+    # Then: a unique track-level artist credit keeps the recording eligible for automatic selection.
+    assert matches
 
 
 def test_matching_when_musicbrainz_outage_preserves_local_only_review_path() -> None:
