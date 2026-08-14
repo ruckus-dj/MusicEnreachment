@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.worker as processing
+from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError
@@ -281,6 +282,38 @@ def test_single_scored_candidate_selects_the_only_current_candidate_despite_othe
     # Then: the qualifying sole candidate remains selectable.
     assert selected is not None
     assert selected[0] == 'recording-id'
+
+
+def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:
+    # Given: one confirmed AcousticID recording and one matching MusicBrainz release candidate.
+    recording = (
+        'recording-id',
+        CandidateEvidencePayload(provider='acoustid', score=0.95, tags={'MUSICBRAINZ_RECORDINGID': 'recording-id'}),
+    )
+    release = (
+        'release-id',
+        CandidateEvidencePayload(
+            provider='musicbrainz',
+            score=0.8,
+            tags={
+                'ALBUM': 'Fixture Release',
+                'MUSICBRAINZ_ALBUMID': 'release-id',
+                'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                'TITLE': 'Fixture Track',
+            },
+        ),
+    )
+
+    # When: recovery builds metadata from the persisted, cross-verified candidates.
+    tags = processing._stored_match_tags(recording, release)
+
+    # Then: provider facts remain available for analyzed and final revisions.
+    assert tags == {
+        'ALBUM': 'Fixture Release',
+        'MUSICBRAINZ_ALBUMID': 'release-id',
+        'MUSICBRAINZ_RECORDINGID': 'recording-id',
+        'TITLE': 'Fixture Track',
+    }
 
 
 def test_independent_match_identity_preserves_a_selected_release_when_recording_is_unresolved() -> None:

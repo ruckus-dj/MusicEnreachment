@@ -274,6 +274,26 @@ def _single_scored_candidate(
     return qualified[0] if len(qualified) == 1 else None
 
 
+def _stored_match_tags(
+    recording: tuple[str, CandidateEvidencePayload] | None,
+    release: tuple[str, CandidateEvidencePayload] | None,
+) -> dict[str, str]:
+    if recording is None or release is None:
+        return {}
+    recording_mbid, _ = recording
+    release_mbid, release_evidence = release
+    release_recording_mbid = release_evidence.tags.get('MUSICBRAINZ_RECORDINGID') or release_evidence.tags.get(
+        'MUSICBRAINZ_TRACKID'
+    )
+    if release_recording_mbid != recording_mbid:
+        return {}
+    return {
+        **release_evidence.tags,
+        'MUSICBRAINZ_ALBUMID': release_mbid,
+        'MUSICBRAINZ_RECORDINGID': recording_mbid,
+    }
+
+
 def _unique_acoustid_album_match(
     candidate_matches: tuple[tuple[ProviderEvidenceResult, MatchResult], ...],
 ) -> tuple[ProviderEvidenceResult, MatchResult] | None:
@@ -960,6 +980,7 @@ class ProcessingWorker:
                     stored_release[0],
                 )
             if stored_recording is not None or stored_release is not None:
+                analyzed_tags = _stored_match_tags(stored_recording, stored_release)
                 record_event(
                     self._session,
                     record.id,
@@ -969,6 +990,30 @@ class ProcessingWorker:
                     now,
                     source.id,
                 )
+                if analyzed_tags:
+                    source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
+                    _ = append_metadata_revision(
+                        self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
+                    )
+                    final_revision = append_metadata_revision(
+                        self._session,
+                        record.id,
+                        source.id,
+                        'final',
+                        {**source_tags, **analyzed_tags},
+                        'provider',
+                        now,
+                    )
+                    _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+                    record_event(
+                        self._session,
+                        record.id,
+                        'analysis_ready_for_publish',
+                        'publishing',
+                        'stored provider metadata is ready for final publication',
+                        now,
+                        source.id,
+                    )
                 return
             record_event(
                 self._session,
