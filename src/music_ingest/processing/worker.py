@@ -175,8 +175,8 @@ def _analyzed_tags(
         case _:
             pass
     match provider_result.acoustid:
-        case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_TRACKID' not in analyzed:
-            analyzed['MUSICBRAINZ_TRACKID'] = evidence.recording_mbid
+        case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_RECORDINGID' not in analyzed:
+            analyzed['MUSICBRAINZ_RECORDINGID'] = evidence.recording_mbid
         case _:
             pass
     if match_result is not None and match_result.selected_release_mbid is not None:
@@ -194,7 +194,7 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
         'MUSICBRAINZ_ALBUMID': candidate.release_mbid,
     }
     if candidate.recording_mbids:
-        tags['MUSICBRAINZ_TRACKID'] = candidate.recording_mbids[0]
+        tags['MUSICBRAINZ_RECORDINGID'] = candidate.recording_mbids[0]
     optional_tags = {
         'TITLE': candidate.recording_title,
         'DATE': candidate.date,
@@ -206,6 +206,8 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
         'GENRE': '; '.join(display_genre_name(genre) for genre in candidate.genres) if candidate.genres else None,
         'ISRC': '; '.join(candidate.isrcs) if candidate.isrcs else None,
         'PERFORMER': '; '.join(candidate.performers) if candidate.performers else None,
+        'MUSICBRAINZ_ARTISTID': '; '.join(candidate.recording_artist_mbids) or None,
+        'MUSICBRAINZ_ALBUMARTISTID': '; '.join(candidate.release_artist_mbids) or None,
         'MUSICBRAINZ_RELEASEGROUPID': candidate.release_group_mbid,
     }
     tags.update({name: value for name, value in optional_tags.items() if value is not None})
@@ -234,7 +236,7 @@ def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
     for candidate in reversed(source.candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
         if evidence.provider == 'acoustid':
-            recording_mbid = evidence.tags.get('MUSICBRAINZ_TRACKID')
+            recording_mbid = evidence.tags.get('MUSICBRAINZ_RECORDINGID') or evidence.tags.get('MUSICBRAINZ_TRACKID')
             if recording_mbid is not None and recording_mbid not in recording_mbids:
                 recording_mbids.append(recording_mbid)
     return tuple(recording_mbids)
@@ -243,7 +245,11 @@ def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
 def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> float:
     for candidate in reversed(source.candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
-        if evidence.provider == 'acoustid' and evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid:
+        if (
+            evidence.provider == 'acoustid'
+            and (evidence.tags.get('MUSICBRAINZ_RECORDINGID') or evidence.tags.get('MUSICBRAINZ_TRACKID'))
+            == recording_mbid
+        ):
             return evidence.score or 0.0
     return 0.0
 
@@ -1306,7 +1312,7 @@ class ProcessingWorker:
                                         'release': '',
                                         'title': '',
                                         'album': '',
-                                        'tags': {'MUSICBRAINZ_TRACKID': recording.recording_mbid},
+                                        'tags': {'MUSICBRAINZ_RECORDINGID': recording.recording_mbid},
                                     },
                                     sort_keys=True,
                                 ),

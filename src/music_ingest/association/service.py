@@ -222,7 +222,9 @@ class RecordingAssociationService:
         if not has_musicbrainz_attempt:
             return False
         return any(
-            evidence.provider == 'musicbrainz' and evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid
+            evidence.provider == 'musicbrainz'
+            and (evidence.tags.get('MUSICBRAINZ_RECORDINGID') or evidence.tags.get('MUSICBRAINZ_TRACKID'))
+            == recording_mbid
             for candidate in source.candidates
             for evidence in (CandidateEvidencePayload.model_validate_json(candidate.evidence),)
         )

@@ -757,16 +757,16 @@ def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
         assert worker.run_once()
         session.commit()
 
-    # Then: the recording is confirmed while the low-score release stays in review.
-    with Session(engine) as session:
-        jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
-        assert [job.kind for job in jobs] == [
-            'filesystem_scan',
-            'acoustid_analysis',
-            'musicbrainz_analysis',
-            'selection_refresh',
-            'selection_refresh',
-        ]
+        # Then: the recording is confirmed while the low-score release stays in review.
+        with Session(engine) as session:
+            jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
+            assert [job.kind for job in jobs] == [
+                'filesystem_scan',
+                'acoustid_analysis',
+                'musicbrainz_analysis',
+                'selection_refresh',
+                'selection_refresh',
+            ]
         assert [job.state for job in jobs] == ['completed', 'completed', 'completed', 'queued', 'queued']
         source = session.get(SourceRecord, source_id)
         assert source is not None and source.library_record is not None
