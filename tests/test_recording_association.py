@@ -102,6 +102,59 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
         assert first_source.library_record_id == second_source.library_record_id
 
 
+def test_automatic_association_when_ambiguous_release_has_confirmed_recording_moves_source(tmp_path: Path) -> None:
+    # Given: durable MusicBrainz evidence confirms a high-confidence recording, but releases are ambiguous.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "ambiguous-release-association.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-ambiguous-release', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='source-ambiguous-release',
+            source_path='/incoming/ambiguous-release.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='musicbrainz', outcome='ambiguous', snapshot_sha256='b' * 64, snapshot='{}'
+                )
+            ],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='album-compatible-release',
+                    evidence=(
+                        '{"provider":"musicbrainz","score":0.98,"tags":'
+                        '{"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                    ),
+                )
+            ],
+        )
+        session.add_all((record, source))
+        session.commit()
+
+        # When: the worker selects the only context-compatible AcousticID recording.
+        result = RecordingAssociationService(session).associate_automatic(
+            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+        )
+        session.commit()
+
+        # Then: recording identity is retained although choosing a release still requires review.
+        persisted = session.get(SourceRecord, source.id)
+        target = session.get(LibraryRecord, result.library_record_id) if result is not None else None
+        assert result is not None
+        assert persisted is not None
+        assert persisted.library_record_id == result.library_record_id
+        assert target is not None
+        assert target.musicbrainz_recording_id == recording_mbid
+
+
 def test_automatic_association_when_recording_is_not_durably_confirmed_requires_review(tmp_path: Path) -> None:
     # Given: a high-score request with no persisted MusicBrainz recording confirmation.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unverified-association.db"}')

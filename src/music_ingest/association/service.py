@@ -215,11 +215,11 @@ class RecordingAssociationService:
 
     def _has_confirmed_recording(self, source_id: str, recording_mbid: str) -> bool:
         source = self._source(source_id)
-        has_musicbrainz_attempt = any(
-            attempt.provider_name == 'musicbrainz' and attempt.outcome == 'musicbrainzmatch'
+        has_musicbrainz_recording_evidence = any(
+            attempt.provider_name == 'musicbrainz' and attempt.outcome in {'musicbrainzmatch', 'ambiguous'}
             for attempt in source.provider_attempts
         )
-        if not has_musicbrainz_attempt:
+        if not has_musicbrainz_recording_evidence:
             return False
         return any(
             evidence.provider == 'musicbrainz'
