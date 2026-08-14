@@ -248,6 +248,16 @@ class MusicBrainzV2Adapter:
                 () if track is None else tuple(credit.name for credit in track.recording.artist_credit)
             ),
             release_artist_names=tuple(credit.name for credit in release.artist_credit),
+            recording_artist_mbids=(
+                ()
+                if track is None or any(credit.artist is None for credit in track.recording.artist_credit)
+                else tuple(credit.artist.id for credit in track.recording.artist_credit if credit.artist is not None)
+            ),
+            release_artist_mbids=(
+                ()
+                if any(credit.artist is None for credit in release.artist_credit)
+                else tuple(credit.artist.id for credit in release.artist_credit if credit.artist is not None)
+            ),
         )
 
 

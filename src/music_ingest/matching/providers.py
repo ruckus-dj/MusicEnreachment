@@ -214,6 +214,8 @@ class ReleaseCandidate:
     release_artist_name: str | None = None
     recording_artist_names: tuple[str, ...] = ()
     release_artist_names: tuple[str, ...] = ()
+    recording_artist_mbids: tuple[str, ...] = ()
+    release_artist_mbids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
