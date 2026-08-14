@@ -11,6 +11,7 @@ from music_ingest.association import (
     ManualAssociationRequest,
     RecordingAssociationService,
 )
+from music_ingest.library import append_metadata_revision
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -153,6 +154,70 @@ def test_automatic_association_when_ambiguous_release_has_confirmed_recording_mo
         assert persisted.library_record_id == result.library_record_id
         assert target is not None
         assert target.musicbrainz_recording_id == recording_mbid
+
+
+def test_automatic_association_when_source_has_final_metadata_recreates_it_on_target(tmp_path: Path) -> None:
+    # Given: verified recording evidence and an immutable final revision on the source's prior record.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "association-final-revision.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    with Session(engine) as session:
+        previous = LibraryRecord(id='record-previous', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='source-final-revision',
+            source_path='/incoming/final-revision.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=previous,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='musicbrainz', outcome='musicbrainzmatch', snapshot_sha256='b' * 64, snapshot='{}'
+                )
+            ],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='recording',
+                    evidence=(
+                        '{"provider":"musicbrainz","score":0.98,"tags":'
+                        '{"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                    ),
+                )
+            ],
+        )
+        session.add_all((previous, source))
+        session.flush()
+        original = append_metadata_revision(
+            session, previous.id, source.id, 'final', {'TITLE': 'Fixture'}, 'worker', now
+        )
+        session.commit()
+
+        # When: automatic association moves the source to the verified recording aggregate.
+        result = RecordingAssociationService(session).associate_automatic(
+            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+        )
+        session.commit()
+
+        # Then: prior provenance remains immutable and the target gets a new final revision for the same source.
+        assert result is not None
+        retained = session.get(type(original), original.id)
+        target = session.get(LibraryRecord, result.library_record_id)
+        assert retained is not None
+        assert target is not None
+        target_revisions = [
+            revision
+            for revision in target.metadata_revisions
+            if revision.source_id == source.id and revision.layer == 'final'
+        ]
+        assert retained.library_record_id == previous.id
+        assert [(revision.tags_json, revision.actor) for revision in target_revisions] == [
+            ('{"TITLE": "Fixture"}', 'reassociation')
+        ]
 
 
 def test_automatic_association_when_recording_is_not_durably_confirmed_requires_review(tmp_path: Path) -> None:

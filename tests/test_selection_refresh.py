@@ -334,6 +334,62 @@ def test_selection_refresh_dispatches_persisted_effective_source_without_source_
         assert session.query(JobRecord).filter_by(source_id='source-selected').count() == 0
 
 
+def test_selection_refresh_recovers_final_metadata_from_reassociated_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a selected source whose immutable final revision still belongs to its prior record.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "selection-recovery.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    with Session(engine) as session:
+        previous = LibraryRecord(id='record-previous', created_at=now, updated_at=now)
+        record = LibraryRecord(id='record-recovered', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='source-recovered',
+            source_path=str(tmp_path / 'source.flac'),
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=1,
+            origin='manual',
+            intake_state='present',
+            media_codec='FLAC',
+            media_bit_depth=24,
+            media_sample_rate=96_000,
+            media_channels=2,
+            library_record=record,
+            review_decisions=[ReviewDecisionRecord(state='confirmed', rationale='fixture')],
+        )
+        session.add_all((previous, record, source))
+        session.flush()
+        _ = append_metadata_revision(session, previous.id, source.id, 'final', {'TITLE': 'Recovered'}, 'test', now)
+        assert JobRepository(session).enqueue_selection_refresh(record.id, now) is not None
+        session.commit()
+
+    dispatched_source_ids: list[str] = []
+
+    def publish_selected(worker: ProcessingWorker, claimed: ClaimedJob, timestamp: datetime) -> None:
+        _ = worker, timestamp
+        assert claimed.job.source_id is not None
+        dispatched_source_ids.append(claimed.job.source_id)
+
+    monkeypatch.setattr(ProcessingWorker, '_process_final_publish', publish_selected)
+    # When: the real record-target refresh claims the source.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, _config(tmp_path)).run_once()
+        session.commit()
+
+        # Then: final metadata is copied append-only to the target record before publication dispatch.
+        assert dispatched_source_ids == ['source-recovered']
+        revisions = session.query(LibraryMetadataRevisionRecord).order_by(LibraryMetadataRevisionRecord.id).all()
+        assert [(item.library_record_id, item.actor) for item in revisions] == [
+            ('record-previous', 'test'),
+            ('record-recovered', 'reassociation_recovery'),
+        ]
+        assert [item.tags_json for item in revisions] == ['{"TITLE": "Recovered"}', '{"TITLE": "Recovered"}']
+
+
 def test_selection_refresh_when_current_publication_matches_revision_records_no_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

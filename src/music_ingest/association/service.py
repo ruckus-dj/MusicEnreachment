@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import final, override
+from typing import Final, final, override
 
+from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from music_ingest.dto import CandidateEvidencePayload
-from music_ingest.library.service import new_library_record, reevaluate_effective_source_decision
+from music_ingest.library.service import (
+    append_metadata_revision,
+    new_library_record,
+    reevaluate_effective_source_decision,
+)
 from music_ingest.matching.providers import FixtureCase, MusicBrainzLookupRequest, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.models import (
     LibraryEventRecord,
@@ -21,6 +26,8 @@ from music_ingest.models import (
     SourceRecordingAssignmentRecord,
 )
 from music_ingest.models.jobs import JobRepository
+
+_TAGS: Final = TypeAdapter(dict[str, str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,10 +170,29 @@ class RecordingAssociationService:
                 .with_for_update()
             ).all()
         )
+        previous_record = next(record for record in locked_records if record.id == previous_record_id)
+        previous_final = next(
+            (
+                revision
+                for revision in reversed(previous_record.metadata_revisions)
+                if revision.source_id == source.id and revision.layer == 'final'
+            ),
+            None,
+        )
         source.library_record_id = target.id
         source.disappeared_at = None
         target.source_state = 'present'
         target.updated_at = now
+        if previous_final is not None and previous_record_id != target.id:
+            _ = append_metadata_revision(
+                self._session,
+                target.id,
+                source.id,
+                'final',
+                _TAGS.validate_json(previous_final.tags_json),
+                'reassociation',
+                now,
+            )
         self._session.add(
             SourceRecordingAssignmentRecord(
                 source_id=source.id,

@@ -81,6 +81,7 @@ from music_ingest.models import (
     CandidateRecord,
     EffectiveSourceDecisionRecord,
     JobRecord,
+    LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
     ProviderAttemptRecord,
@@ -511,6 +512,23 @@ class ProcessingWorker:
             ),
             None,
         )
+        if revision is None:
+            historical_final = self._session.scalar(
+                select(LibraryMetadataRevisionRecord)
+                .where(LibraryMetadataRevisionRecord.source_id == decision.source_id)
+                .where(LibraryMetadataRevisionRecord.layer == 'final')
+                .order_by(LibraryMetadataRevisionRecord.created_at.desc(), LibraryMetadataRevisionRecord.id.desc())
+            )
+            if historical_final is not None:
+                revision = append_metadata_revision(
+                    self._session,
+                    record.id,
+                    decision.source_id,
+                    'final',
+                    _TAGS_ADAPTER.validate_json(historical_final.tags_json),
+                    'reassociation_recovery',
+                    now,
+                )
         if revision is None:
             record_event(
                 self._session,
