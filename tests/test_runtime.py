@@ -76,7 +76,7 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             'musicbrainz_host': 'https://musicbrainz.internal',
             'musicbrainz_request_delay_seconds': 0,
             'acoustid_enabled': True,
-            'acoustid_request_delay_seconds': 1 / 3,
+            'acoustid_request_delay_seconds': 0.5,
             'acoustid_client_key': None,
             'artwork_enabled': True,
         },
@@ -86,7 +86,7 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
     assert response.json()['acoustid_client_key_configured'] is True
     assert response.json()['musicbrainz_host'] == 'https://musicbrainz.internal'
     assert response.json()['musicbrainz_request_delay_seconds'] == 0
-    assert response.json()['acoustid_request_delay_seconds'] == 1 / 3
+    assert response.json()['acoustid_request_delay_seconds'] == 0.5
     assert response.json()['worker_concurrency'] == 4
 
 

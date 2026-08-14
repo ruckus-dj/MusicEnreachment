@@ -1497,6 +1497,7 @@ def create_app(
                 musicbrainz_host=request.musicbrainz_host,
                 musicbrainz_request_delay_seconds=request.musicbrainz_request_delay_seconds,
                 acoustid_enabled=request.acoustid_enabled,
+                acoustid_request_delay_seconds=request.acoustid_request_delay_seconds,
                 acoustid_client_key=(
                     current.acoustid_client_key if request.acoustid_client_key is None else request.acoustid_client_key
                 ),
