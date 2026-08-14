@@ -73,6 +73,13 @@ class RecordingAssociationService:
                 request.source_id, 'automatic recording lacks confirmed MusicBrainz recording evidence', request.now
             )
             return None
+        if self._has_conflicting_content_recording(source, request.recording_mbid):
+            self._record_review(
+                request.source_id,
+                'exact-content source has conflicting automatic recording identity',
+                request.now,
+            )
+            return None
         return self._associate(
             request.source_id, request.recording_mbid, 'automatic', None, request.evidence_json, request.now
         )
@@ -218,6 +225,19 @@ class RecordingAssociationService:
             evidence.provider == 'musicbrainz' and evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid
             for candidate in source.candidates
             for evidence in (CandidateEvidencePayload.model_validate_json(candidate.evidence),)
+        )
+
+    def _has_conflicting_content_recording(self, source: SourceRecord, recording_mbid: str) -> bool:
+        return (
+            self._session.scalar(
+                select(SourceRecord.id)
+                .join(LibraryRecord, SourceRecord.library_record_id == LibraryRecord.id)
+                .where(SourceRecord.sha256 == source.sha256)
+                .where(SourceRecord.id != source.id)
+                .where(LibraryRecord.musicbrainz_recording_id.is_not(None))
+                .where(LibraryRecord.musicbrainz_recording_id != recording_mbid)
+            )
+            is not None
         )
 
     def _record_review(self, source_id: str, rationale: str, now: datetime) -> None:

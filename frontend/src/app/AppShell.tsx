@@ -4,6 +4,7 @@ import { titleFor } from "../domain/metadata";
 import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrackDetail } from "../screens/TrackDetail";
+import { WorkerQueueScreen } from "../screens/WorkerQueueScreen";
 import type { Summary } from "../types";
 import type { AppControllerModel } from "./useAppController";
 
@@ -99,6 +100,15 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             )}
             <span>Настройки</span>
           </button>
+          <button
+            type="button"
+            className={screen === "workers" ? "nav-item active" : "nav-item"}
+            data-testid="nav-workers"
+            onClick={() => controller.navigate({ screen: "workers" })}
+          >
+            {icon("M5 5h14M5 12h14M5 19h14M8 3v4m8-4v4M8 10v4m8-4v4m-8 3v4m8-4v4")}
+            <span>Очередь worker’ов</span>
+          </button>
         </nav>
         <div className="sidebar-bottom">
           <div className="storage">
@@ -131,13 +141,15 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                 ? "Настройки"
                 : screen === "manual-actions"
                   ? "Ручные действия"
-                  : screen === "artists"
-                    ? "Медиатека"
-                    : screen === "albums"
-                      ? artist
-                      : screen === "tracks"
-                        ? album
-                        : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                  : screen === "workers"
+                    ? "Очередь worker’ов"
+                    : screen === "artists"
+                      ? "Медиатека"
+                      : screen === "albums"
+                        ? artist
+                        : screen === "tracks"
+                          ? album
+                          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -154,45 +166,54 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
         <div className="content">
           <section className="hero">
             <div>
-              {screen !== "artists" && screen !== "settings" && screen !== "manual-actions" && (
-                <button type="button" className="back" onClick={controller.back}>
-                  ← Назад
-                </button>
-              )}
+              {screen !== "artists" &&
+                screen !== "settings" &&
+                screen !== "manual-actions" &&
+                screen !== "workers" && (
+                  <button type="button" className="back" onClick={controller.back}>
+                    ← Назад
+                  </button>
+                )}
               <p className="eyebrow">
                 {screen === "settings"
                   ? "Панель управления"
                   : screen === "manual-actions"
                     ? "Очередь оператора"
-                    : screen === "track"
-                      ? "Инспектор трека"
-                      : "Ваша медиатека"}
+                    : screen === "workers"
+                      ? "Состояние обработки"
+                      : screen === "track"
+                        ? "Инспектор трека"
+                        : "Ваша медиатека"}
               </p>
               <h1>
                 {screen === "settings"
                   ? "Настройки"
                   : screen === "manual-actions"
                     ? "Ручные действия"
-                    : screen === "artists"
-                      ? "Исполнители"
-                      : screen === "albums"
-                        ? artist
-                        : screen === "tracks"
-                          ? album
-                          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                    : screen === "workers"
+                      ? "Очередь worker’ов"
+                      : screen === "artists"
+                        ? "Исполнители"
+                        : screen === "albums"
+                          ? artist
+                          : screen === "tracks"
+                            ? album
+                            : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
               </h1>
               <p className="hero-copy">
                 {screen === "settings"
                   ? "Настройки runtime и провайдеров"
                   : screen === "manual-actions"
                     ? "Ошибки анализа и треки, для которых нельзя безопасно выбрать результат автоматически."
-                    : screen === "artists"
-                      ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
-                      : screen === "albums"
-                        ? "Альбомы исполнителя и их состояние обработки."
-                        : screen === "tracks"
-                          ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
-                          : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
+                    : screen === "workers"
+                      ? "Сохранённые задачи анализа, публикации и восстановления. Состояние процесса отдельно не измеряется."
+                      : screen === "artists"
+                        ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
+                        : screen === "albums"
+                          ? "Альбомы исполнителя и их состояние обработки."
+                          : screen === "tracks"
+                            ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
+                            : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
               </p>
             </div>
             <div className="hero-stat">
@@ -201,26 +222,30 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   ? "DB"
                   : screen === "manual-actions"
                     ? manualActionCount
-                    : screen === "artists"
-                      ? artists.length
-                      : screen === "albums"
-                        ? albums.length
-                        : screen === "tracks"
-                          ? albumTracks.length
-                          : "01"}
+                    : screen === "workers"
+                      ? (controller.workerQueue?.jobs.length ?? "—")
+                      : screen === "artists"
+                        ? artists.length
+                        : screen === "albums"
+                          ? albums.length
+                          : screen === "tracks"
+                            ? albumTracks.length
+                            : "01"}
               </strong>
               <span>
                 {screen === "settings"
                   ? "runtime параметров"
                   : screen === "manual-actions"
                     ? "треков"
-                    : screen === "artists"
-                      ? "артистов"
-                      : screen === "albums"
-                        ? "альбомов"
-                        : screen === "tracks"
-                          ? "треков"
-                          : "трек"}
+                    : screen === "workers"
+                      ? "активных задач"
+                      : screen === "artists"
+                        ? "артистов"
+                        : screen === "albums"
+                          ? "альбомов"
+                          : screen === "tracks"
+                            ? "треков"
+                            : "трек"}
               </span>
             </div>
           </section>
@@ -232,37 +257,40 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               </button>
             </div>
           )}
-          {screen !== "track" && screen !== "settings" && screen !== "manual-actions" && (
-            <div className="library-toolbar">
-              <label className="search">
-                {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
-                <input
-                  aria-label="Поиск"
-                  value={controller.query}
-                  onChange={(event) => controller.setQuery(event.target.value)}
-                  placeholder="Поиск по артисту, альбому или треку"
-                />
-              </label>
-              <div className="provider-actions">
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={controller.reprocessing}
-                  onClick={() => void controller.reprocessAll()}
-                >
-                  {controller.reprocessing ? "Ставим в очередь…" : "Переобработать всю медиатеку"}
-                </button>
-                <button
-                  type="button"
-                  className="primary scan"
-                  disabled={controller.scanning || controller.reprocessing}
-                  onClick={() => void controller.scan()}
-                >
-                  {controller.scanning ? "Сканируем…" : "Сканировать новые и изменённые"}
-                </button>
+          {screen !== "track" &&
+            screen !== "settings" &&
+            screen !== "manual-actions" &&
+            screen !== "workers" && (
+              <div className="library-toolbar">
+                <label className="search">
+                  {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
+                  <input
+                    aria-label="Поиск"
+                    value={controller.query}
+                    onChange={(event) => controller.setQuery(event.target.value)}
+                    placeholder="Поиск по артисту, альбому или треку"
+                  />
+                </label>
+                <div className="provider-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={controller.reprocessing}
+                    onClick={() => void controller.reprocessAll()}
+                  >
+                    {controller.reprocessing ? "Ставим в очередь…" : "Переобработать всю медиатеку"}
+                  </button>
+                  <button
+                    type="button"
+                    className="primary scan"
+                    disabled={controller.scanning || controller.reprocessing}
+                    onClick={() => void controller.scan()}
+                  >
+                    {controller.scanning ? "Сканируем…" : "Сканировать новые и изменённые"}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
           {screen === "settings" ? (
             <SettingsScreen
               draft={controller.settingsDraft}
@@ -298,6 +326,13 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onNavigate={controller.navigate}
               onRetry={(recordId, sourceId) => void controller.reprocessSource(recordId, sourceId)}
             />
+          ) : screen === "workers" ? (
+            <WorkerQueueScreen
+              queue={controller.workerQueue}
+              loading={controller.workerQueueLoading}
+              error={controller.workerQueueError}
+              onRefresh={() => void controller.loadWorkerQueue()}
+            />
           ) : screen === "track" ? (
             <TrackDetail
               detail={detail}
@@ -306,6 +341,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               setDraft={controller.setDraft}
               saving={controller.saving}
               reprocessing={controller.reprocessing}
+              musicbrainzHost={controller.settingsDraft?.musicbrainz_host ?? null}
               onSave={controller.saveMetadata}
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}

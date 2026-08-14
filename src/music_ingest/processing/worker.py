@@ -287,6 +287,21 @@ def _unique_acoustid_recording_match(
     return qualified_matches[0] if len(qualified_matches) == 1 else None
 
 
+def select_acoustid_recording_match(
+    album_matches: tuple[tuple[ProviderEvidenceResult, MatchResult], ...],
+    recording_matches: tuple[tuple[ProviderEvidenceResult, CandidateScore], ...],
+    confidence_threshold: float,
+) -> tuple[ProviderEvidenceResult, CandidateScore] | None:
+    selected_album_match = _unique_acoustid_album_match(album_matches)
+    if selected_album_match is not None:
+        provider_result, _ = selected_album_match
+        selected_recording_matches = tuple(
+            recording_match for recording_match in recording_matches if recording_match[0] == provider_result
+        )
+        return selected_recording_matches[0] if len(selected_recording_matches) == 1 else None
+    return _unique_acoustid_recording_match(recording_matches, confidence_threshold)
+
+
 def _acoustid_recording_mbid(source: SourceRecord) -> str | None:
     recording_mbids = _acoustid_recording_mbids(source)
     return recording_mbids[0] if recording_mbids else None
@@ -397,6 +412,13 @@ class ProcessingWorker:
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
         if claimed is None:
             return False
+        if (
+            claimed.reclaimed_stale
+            and claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}
+            and claimed.attempt.attempt_number > self._max_attempts()
+        ):
+            self._retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
+            return True
         try:
             self._process(claimed, now)
         except MetadataWriteError as error:
@@ -878,9 +900,13 @@ class ProcessingWorker:
                     case _:
                         continue
             selected_match = _unique_acoustid_album_match(tuple(candidate_matches))
+            recording_match = select_acoustid_recording_match(
+                tuple(candidate_matches),
+                tuple(recording_matches),
+                self._confidence_threshold(),
+            )
             if selected_match is not None:
                 provider_result, match_result = selected_match
-            recording_match = _unique_acoustid_recording_match(tuple(recording_matches), self._confidence_threshold())
             if recording_match is not None:
                 provider_result, _ = recording_match
         _ = self._capture_provider_attempt(source, 'musicbrainz', provider_result.musicbrainz, match_result, now)
@@ -1444,6 +1470,11 @@ class ProcessingWorker:
             return load_runtime_settings(self._session).timeout_seconds
         return self._config.timeout_seconds
 
+    def _max_attempts(self) -> int:
+        if self._config.live_transport is not None:
+            return load_runtime_settings(self._session).max_attempts
+        return self._config.max_attempts
+
     def _retry_claim(
         self,
         claimed: ClaimedJob,
@@ -1463,9 +1494,7 @@ class ProcessingWorker:
             timedelta(seconds=load_runtime_settings(self._session).retry_delay_seconds)
             if self._config.live_transport is not None
             else self._config.retry_delay,
-            load_runtime_settings(self._session).max_attempts
-            if self._config.live_transport is not None
-            else self._config.max_attempts,
+            self._max_attempts(),
             reason,
         )
         if claimed.job.library_record_id is not None:

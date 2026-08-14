@@ -8,6 +8,7 @@ export function parseRoute(pathname: string): Route {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] === "settings") return { screen: "settings" };
   if (parts[0] === "manual-actions") return { screen: "manual-actions" };
+  if (parts[0] === "workers") return { screen: "workers" };
   if (parts[0] !== "library") return { screen: "artists" };
   if (parts[1] === "artist" && parts[3] === "album" && parts[5] === "track" && parts[7])
     return {
@@ -42,6 +43,7 @@ export function parseRoute(pathname: string): Route {
 export function routePath(route: Route): string {
   if (route.screen === "settings") return "/settings";
   if (route.screen === "manual-actions") return "/manual-actions";
+  if (route.screen === "workers") return "/workers";
   if (route.screen === "track" && route.recordId && route.sourceId && route.artist && route.album)
     return `/library/artist/${encodeURIComponent(route.artist)}/album/${encodeURIComponent(route.album)}/track/${encodeURIComponent(route.recordId)}/${encodeURIComponent(route.sourceId)}`;
   if (route.screen === "track" && route.recordId && route.sourceId)

@@ -51,6 +51,7 @@ function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}
     setDraft: vi.fn(),
     saving: false,
     reprocessing: false,
+    musicbrainzHost: null,
     onSave: vi.fn(async () => true),
     onSelectCandidate: vi.fn(),
     onSelectEffectiveSource: vi.fn(),
@@ -96,6 +97,74 @@ describe("TrackDetail effective source", () => {
 
     expect(screen.getByRole("button", { name: /AcousticID.*Выбрано/ }).textContent).toContain(
       "Выбрано",
+    );
+  });
+
+  it("opens MusicBrainz candidates on the configured host", () => {
+    renderDetail({
+      musicbrainzHost: "https://musicbrainz.internal",
+      detail: {
+        ...detail,
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+                evidence: {
+                  provider: "musicbrainz",
+                  recording_mbid: undefined,
+                  artist: "Fixture Artist",
+                  release: "Fixture Release",
+                  title: "Fixture Track",
+                  album: "Fixture Release",
+                  score: 0.99,
+                  tags: { TITLE: "Fixture Track" },
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByRole("link", { name: "Открыть в MusicBrainz" }).getAttribute("href")).toBe(
+      "https://musicbrainz.internal/release/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+    );
+  });
+
+  it("opens AcousticID recording candidates on the configured host", () => {
+    renderDetail({
+      musicbrainzHost: "https://musicbrainz.internal/",
+      detail: {
+        ...detail,
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "acoustid-result",
+                evidence: {
+                  provider: "acoustid",
+                  recording_mbid: "47d13484-9eed-4460-babd-bca3a19fcd77",
+                  artist: "Fixture Artist",
+                  release: "Fixture Release",
+                  title: "Fixture Track",
+                  album: "Fixture Release",
+                  score: 0.99,
+                  tags: {},
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByRole("link", { name: "Открыть в MusicBrainz" }).getAttribute("href")).toBe(
+      "https://musicbrainz.internal/recording/47d13484-9eed-4460-babd-bca3a19fcd77",
     );
   });
 

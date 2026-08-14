@@ -17,6 +17,7 @@ export function TrackDetail({
   setDraft,
   saving,
   reprocessing,
+  musicbrainzHost,
   onSave,
   onRetryAcoustId,
   onRetryMusicBrainz,
@@ -36,6 +37,7 @@ export function TrackDetail({
   readonly setDraft: (value: Tags) => void;
   readonly saving: boolean;
   readonly reprocessing: boolean;
+  readonly musicbrainzHost?: string | null;
   readonly onSave: () => Promise<boolean>;
   readonly onRetryAcoustId?: () => void;
   readonly onRetryMusicBrainz?: () => void;
@@ -320,6 +322,7 @@ export function TrackDetail({
               selectedKey={selectedAcoustId}
               reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
               disabled={reprocessing}
+              musicbrainzHost={musicbrainzHost ?? null}
               onSelect={onSelectCandidate}
             />
           ) : null}
@@ -330,6 +333,7 @@ export function TrackDetail({
               selectedKey={selectedMusicBrainz}
               reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
               disabled={reprocessing}
+              musicbrainzHost={musicbrainzHost ?? null}
               onSelect={onSelectCandidate}
             />
           ) : null}

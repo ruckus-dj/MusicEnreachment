@@ -1010,6 +1010,62 @@ def test_worker_when_interrupted_job_is_stale_reclaims_it_with_a_new_attempt(tmp
         assert [attempt.state for attempt in job.attempts] == ['interrupted', 'succeeded']
 
 
+def test_worker_when_stale_attempts_exceed_limit_blocks_without_restarting_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a provider job whose third attempt was abandoned after the worker lease expired.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'fixture.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "stale-provider.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        job = JobRecord(
+            id='stale-provider',
+            source_id=source.id,
+            kind='musicbrainz_analysis',
+            state='running',
+            created_at=datetime.now(UTC) - timedelta(minutes=20),
+        )
+        job.attempts = [
+            JobAttemptRecord(
+                attempt_number=attempt_number,
+                state='interrupted' if attempt_number < 3 else 'running',
+                started_at=datetime.now(UTC) - timedelta(minutes=20 - attempt_number),
+                finished_at=datetime.now(UTC) - timedelta(minutes=19 - attempt_number) if attempt_number < 3 else None,
+            )
+            for attempt_number in range(1, 4)
+        ]
+        session.add(job)
+        session.commit()
+
+    processed_job_ids: list[str] = []
+
+    def record_processing(worker: ProcessingWorker, claimed: ClaimedJob, now: datetime) -> None:
+        _ = worker, now
+        processed_job_ids.append(claimed.job.id)
+
+    monkeypatch.setattr(ProcessingWorker, '_process', record_processing)
+
+    # When: a new worker observes the expired provider attempt.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config, lease_age=timedelta(seconds=1)).run_once()
+        session.commit()
+
+    # Then: it preserves history, blocks the exhausted job, and never starts a fourth provider call.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'stale-provider')
+        assert job is not None and job.state == 'blocked_infrastructure'
+        assert [attempt.state for attempt in job.attempts] == [
+            'interrupted',
+            'interrupted',
+            'interrupted',
+            'blocked_infrastructure',
+        ]
+    assert processed_job_ids == []
+
+
 def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

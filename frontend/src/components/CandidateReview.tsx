@@ -8,6 +8,7 @@ export function CandidateReview({
   candidates,
   reason,
   disabled,
+  musicbrainzHost,
   selectedKey,
   onSelect,
 }: {
@@ -15,6 +16,7 @@ export function CandidateReview({
   readonly candidates: readonly Candidate[];
   readonly reason: string;
   readonly disabled: boolean;
+  readonly musicbrainzHost: string | null;
   readonly selectedKey: string | null;
   readonly onSelect: (selection: string) => void;
 }) {
@@ -135,9 +137,9 @@ export function CandidateReview({
               {unique.map((candidate) => {
                 const hasMetadata = Object.keys(candidate.evidence.tags).length > 0;
                 const mbid = candidate.evidence.recording_mbid ?? candidate.candidate_key;
-                const href = isAcoustId
-                  ? `https://musicbrainz.org/recording/${mbid}`
-                  : `https://musicbrainz.org/release/${candidate.candidate_key}`;
+                const href = musicbrainzHost
+                  ? `${musicbrainzHost.replace(/\/$/, "")}/${isAcoustId ? "recording" : "release"}/${isAcoustId ? mbid : candidate.candidate_key}`
+                  : null;
                 const metadata = decoded[candidate.candidate_key];
                 const title =
                   metadata?.title ||
@@ -160,9 +162,11 @@ export function CandidateReview({
                     <div>
                       <strong>{title}</strong>
                       <small>{subtitle}</small>
-                      <a href={href} target="_blank" rel="noreferrer">
-                        Открыть в MusicBrainz
-                      </a>
+                      {href && (
+                        <a href={href} target="_blank" rel="noreferrer">
+                          Открыть в MusicBrainz
+                        </a>
+                      )}
                       {!hasMetadata && !isAcoustId && (
                         <small>Метаданные отсутствуют; повторите запрос</small>
                       )}

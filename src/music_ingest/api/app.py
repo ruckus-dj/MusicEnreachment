@@ -238,6 +238,7 @@ def create_app(
     @app.get('/review', response_class=HTMLResponse)
     @app.get('/settings', response_class=HTMLResponse)
     @app.get('/manual-actions', response_class=HTMLResponse)
+    @app.get('/workers', response_class=HTMLResponse)
     def review_page() -> str:
         return REVIEW_PAGE
 
@@ -366,6 +367,82 @@ def create_app(
                 raise HTTPException(status_code=404, detail='reconciliation scan job not found')
             result = ScanResult.model_validate_json(job.result_json) if job.result_json is not None else None
             return ScanJobResponse(job_id=job.id, state=job.state, result=result)
+
+    @app.get('/api/workers/queue')
+    def worker_queue() -> JSONResponse:
+        with session_factory() as session:
+            observed_at = datetime.now(UTC)
+            jobs = list(
+                session.scalars(
+                    select(JobRecord)
+                    .where(JobRecord.state.in_(['queued', 'running']))
+                    .order_by(JobRecord.created_at, JobRecord.id)
+                ).all()
+            )
+            running_count = sum(job.state == 'running' for job in jobs)
+            retry_wait_count = sum(
+                job.state == 'queued' and job.next_attempt_at is not None and job.next_attempt_at > observed_at
+                for job in jobs
+            )
+            source_ids = {job.source_id for job in jobs if job.source_id is not None}
+            sources = {
+                source.id: source
+                for source in session.scalars(select(SourceRecord).where(SourceRecord.id.in_(source_ids))).all()
+            }
+
+            def source_target(job: JobRecord) -> dict[str, str] | None:
+                if job.source_id is None:
+                    return None
+                source = sources.get(job.source_id)
+                if source is None or source.library_record_id is None:
+                    return None
+                tags = {item.tag_name.upper(): item.value for item in source.tag_observations}
+                return {
+                    'record_id': source.library_record_id,
+                    'source_id': source.id,
+                    'title': tags.get('TITLE', Path(source.source_path).stem),
+                    'artist': tags.get('ARTIST', ''),
+                    'album': tags.get('ALBUM', ''),
+                    'path': source.source_path,
+                }
+
+            return JSONResponse(
+                content={
+                    'observed_at': observed_at.isoformat(),
+                    'worker': {
+                        'configured_concurrency': load_runtime_settings(session).worker_concurrency,
+                        'liveness': 'unknown',
+                    },
+                    'summary': {
+                        'running': running_count,
+                        'ready': len(jobs) - running_count - retry_wait_count,
+                        'retry_wait': retry_wait_count,
+                    },
+                    'jobs': [
+                        {
+                            'job_id': job.id,
+                            'kind': job.kind,
+                            'state': job.state,
+                            'queue_state': (
+                                'retry_wait'
+                                if job.state == 'queued'
+                                and job.next_attempt_at is not None
+                                and job.next_attempt_at > observed_at
+                                else 'ready'
+                            ),
+                            'source_id': job.source_id,
+                            'library_record_id': job.library_record_id,
+                            'target': source_target(job),
+                            'created_at': job.created_at.isoformat(),
+                            'next_attempt_at': job.next_attempt_at.isoformat()
+                            if job.next_attempt_at is not None
+                            else None,
+                            'attempt_count': len(job.attempts),
+                        }
+                        for job in jobs
+                    ],
+                }
+            )
 
     @app.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
     def reprocess_all_library() -> FullReprocessResponse:

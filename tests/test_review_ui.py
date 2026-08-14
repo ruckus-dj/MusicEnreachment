@@ -65,6 +65,64 @@ def test_manual_actions_route_when_opened_serves_review_ui(tmp_path: Path) -> No
     assert 'type="module"' in response.text
 
 
+def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker-queue.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    source_path = tmp_path / 'queued.flac'
+    source_path.write_bytes(b'queued')
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        source = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        persisted_source = session.get(SourceRecord, source.source_id)
+        assert persisted_source is not None
+        assert persisted_source.library_record_id is not None
+        record_id = persisted_source.library_record_id
+        session.add_all(
+            [
+                JobRecord(
+                    id='queued-job',
+                    source_id=source.source_id,
+                    kind='filesystem_scan',
+                    state='queued',
+                    created_at=now,
+                ),
+                JobRecord(id='running-job', kind='reconciliation_scan', state='running', created_at=now),
+            ]
+        )
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).get('/api/workers/queue')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['worker']['liveness'] == 'unknown'
+    assert payload['summary'] == {'running': 1, 'ready': 1, 'retry_wait': 0}
+    assert [job['job_id'] for job in payload['jobs']] == ['queued-job', 'running-job']
+    assert payload['jobs'][0]['attempt_count'] == 0
+    assert payload['jobs'][0]['target'] == {
+        'record_id': record_id,
+        'source_id': source.source_id,
+        'title': 'queued',
+        'artist': '',
+        'album': '',
+        'path': str(source_path),
+    }
+    assert payload['jobs'][1]['target'] is None
+
+
 def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-all.db"}')
     Base.metadata.create_all(engine)

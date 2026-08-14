@@ -10,6 +10,7 @@ import type {
   StorageBrowser,
   StorageConfig,
   StorageOutputPreview,
+  WorkerQueue,
 } from "../types";
 
 export class ApiError extends Error {
@@ -69,6 +70,10 @@ export function browseStorage(path?: string): Promise<StorageBrowser> {
 
 export function getStorageConfig(): Promise<StorageConfig> {
   return api<StorageConfig>("/api/settings/storage");
+}
+
+export function getWorkerQueue(): Promise<WorkerQueue> {
+  return api<WorkerQueue>("/api/workers/queue");
 }
 
 export function previewStorageOutput(path: string): Promise<StorageOutputPreview> {

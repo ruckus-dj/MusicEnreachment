@@ -24,6 +24,171 @@
   --ease: 180ms ease;
   --shadow: 0 14px 34px color-mix(in srgb, var(--ink) 8%, transparent);
 }
+.worker-queue-screen {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.worker-summary {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(120px, 1fr));
+  border-block: 1px solid var(--line);
+  background: var(--selected);
+}
+.worker-summary > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  border-left: 1px solid var(--line);
+  padding: var(--space-5) var(--space-6);
+}
+.worker-summary > div:first-child {
+  border-left: 0;
+}
+.worker-summary span,
+.worker-summary small,
+.worker-observed {
+  color: var(--muted);
+  font-size: 11px;
+}
+.worker-summary strong {
+  font:
+    500 24px / 1 "DM Mono",
+    monospace;
+}
+.worker-summary .worker-status {
+  color: var(--accent);
+  font-size: 14px;
+}
+.worker-queue-error {
+  margin: var(--space-6);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: var(--space-3) var(--space-4);
+}
+.worker-job-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.worker-job {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.6fr) minmax(0, 1.5fr) minmax(180px, 1fr);
+  gap: var(--space-4);
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: var(--space-4) var(--space-6);
+}
+.worker-job:first-child {
+  border-top: 0;
+}
+.worker-job-state,
+.worker-job-main,
+.worker-job-times {
+  min-width: 0;
+}
+.worker-job-state {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--muted);
+  font:
+    10px "DM Mono",
+    monospace;
+}
+.job-state {
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tight);
+  padding: var(--space-1) var(--space-2);
+}
+.job-state.running {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  color: var(--green);
+}
+.job-state.queued {
+  color: var(--accent);
+}
+.worker-job-main strong,
+.worker-job-main small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.worker-track-link {
+  display: grid;
+  gap: var(--space-1);
+  width: fit-content;
+  max-width: 100%;
+  margin-top: var(--space-1);
+  color: var(--ink);
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.worker-track-link:hover {
+  color: var(--accent);
+}
+.worker-track-link:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.worker-track-link span {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+}
+.worker-job-main strong {
+  font-size: 13px;
+}
+.worker-job-main small,
+.worker-job-times {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font:
+    10px / 1.45 "DM Mono",
+    monospace;
+}
+.worker-job-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+}
+.worker-job-times div {
+  min-width: 0;
+}
+.worker-job-times dt {
+  color: var(--muted);
+}
+.worker-job-times dd {
+  margin: var(--space-1) 0 0;
+  color: var(--ink);
+}
+.worker-observed {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding: var(--space-3) var(--space-6);
+  font-family: "DM Mono", monospace;
+}
+@media (max-width: 700px) {
+  .worker-summary,
+  .worker-job {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .worker-summary > div {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+  .worker-summary > div:first-child {
+    border-top: 0;
+  }
+  .worker-job {
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+}
 * {
   box-sizing: border-box;
 }

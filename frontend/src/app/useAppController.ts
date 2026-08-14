@@ -5,6 +5,7 @@ import {
   browseStorage,
   createSourceRoot,
   getStorageConfig,
+  getWorkerQueue,
   listSourceRootCandidates,
   listSourceRoots,
   moveStorageOutput,
@@ -46,6 +47,7 @@ import type {
   Summary,
   Tags,
   WatchedRecord,
+  WorkerQueue,
 } from "../types";
 
 export type CatalogTrack = { item: Summary; source: Source };
@@ -100,6 +102,9 @@ export type AppControllerModel = {
   storageConfig: StorageConfig | null;
   storageOutputPreview: StorageOutputPreview | null;
   storageLoading: boolean;
+  workerQueue: WorkerQueue | null;
+  workerQueueLoading: boolean;
+  workerQueueError: string;
   watchedRecords: Record<string, WatchedRecord>;
   watchedLibraryUntil: number;
   tracks: CatalogTrack[];
@@ -127,6 +132,7 @@ export type AppControllerModel = {
   browseStorage: (path?: string) => Promise<void>;
   previewStorageOutput: (path: string) => Promise<void>;
   moveStorageOutput: (path: string) => Promise<void>;
+  loadWorkerQueue: () => Promise<void>;
   setQuery: (value: string) => void;
   setNotice: (value: string) => void;
   setLayer: (value: Layer) => void;
@@ -183,6 +189,9 @@ export function useAppController(): AppControllerModel {
     null,
   );
   const [storageLoading, setStorageLoading] = useState(false);
+  const [workerQueue, setWorkerQueue] = useState<WorkerQueue | null>(null);
+  const [workerQueueLoading, setWorkerQueueLoading] = useState(false);
+  const [workerQueueError, setWorkerQueueError] = useState("");
   const [watchedRecords, setWatchedRecords] = useState<Record<string, WatchedRecord>>({});
   const [watchedLibraryUntil, setWatchedLibraryUntil] = useState(0);
   const watchedRecordsRef = useRef(watchedRecords);
@@ -549,6 +558,19 @@ export function useAppController(): AppControllerModel {
       setStorageLoading(false);
     }
   }
+  async function loadWorkerQueue() {
+    setWorkerQueueLoading(true);
+    setWorkerQueueError("");
+    try {
+      setWorkerQueue(await getWorkerQueue());
+    } catch (error) {
+      setWorkerQueueError(
+        error instanceof Error ? error.message : "Не удалось загрузить очередь worker’ов",
+      );
+    } finally {
+      setWorkerQueueLoading(false);
+    }
+  }
   async function createConfiguredSourceRoot(request: SourceRootCreate) {
     setSourceRootCreating(true);
     setSourceRootsError("");
@@ -683,7 +705,8 @@ export function useAppController(): AppControllerModel {
     return () => window.clearInterval(timer);
   }, [scanJobId]);
   useEffect(() => {
-    if (screen === "settings" && !settingsDraft && !settingsLoading) void loadSettings();
+    if ((screen === "settings" || screen === "track") && !settingsDraft && !settingsLoading)
+      void loadSettings();
   }, [screen, settingsDraft, settingsLoading]);
   useEffect(() => {
     if (screen === "settings" && !genreCatalog && !genreLoading) void loadGenres();
@@ -699,6 +722,9 @@ export function useAppController(): AppControllerModel {
   useEffect(() => {
     if (screen === "settings" && !storageBrowser && !storageLoading) void loadStorage();
   }, [screen, storageBrowser, storageLoading]);
+  useEffect(() => {
+    if (screen === "workers" && !workerQueue && !workerQueueLoading) void loadWorkerQueue();
+  }, [screen, workerQueue, workerQueueLoading]);
   useEffect(() => {
     const onPopState = () => applyRoute(parseRoute(window.location.pathname));
     window.addEventListener("popstate", onPopState);
@@ -806,6 +832,9 @@ export function useAppController(): AppControllerModel {
     storageConfig,
     storageOutputPreview,
     storageLoading,
+    workerQueue,
+    workerQueueLoading,
+    workerQueueError,
     watchedRecords,
     watchedLibraryUntil,
     tracks,
@@ -833,6 +862,7 @@ export function useAppController(): AppControllerModel {
     browseStorage: loadStorage,
     previewStorageOutput: previewConfiguredStorageOutput,
     moveStorageOutput: moveConfiguredStorageOutput,
+    loadWorkerQueue,
     setQuery,
     setNotice,
     setLayer,

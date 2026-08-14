@@ -117,7 +117,46 @@ export type RecordingCorrectionResult = {
   readonly recording_mbid: string;
   readonly record_id: string;
 };
-export type Screen = "artists" | "albums" | "tracks" | "track" | "manual-actions" | "settings";
+export type WorkerQueueJob = {
+  readonly job_id: string;
+  readonly kind: string;
+  readonly state: "queued" | "running";
+  readonly queue_state: "ready" | "retry_wait";
+  readonly source_id: string | null;
+  readonly library_record_id: string | null;
+  readonly created_at: string;
+  readonly next_attempt_at: string | null;
+  readonly attempt_count: number;
+  readonly target: {
+    readonly record_id: string;
+    readonly source_id: string;
+    readonly title: string;
+    readonly artist: string;
+    readonly album: string;
+    readonly path: string;
+  } | null;
+};
+export type WorkerQueue = {
+  readonly observed_at: string;
+  readonly worker: {
+    readonly configured_concurrency: number;
+    readonly liveness: "unknown";
+  };
+  readonly summary: {
+    readonly running: number;
+    readonly ready: number;
+    readonly retry_wait: number;
+  };
+  readonly jobs: readonly WorkerQueueJob[];
+};
+export type Screen =
+  | "artists"
+  | "albums"
+  | "tracks"
+  | "track"
+  | "manual-actions"
+  | "workers"
+  | "settings";
 export type Layer = "original" | "analyzed" | "final";
 export type Route = {
   readonly screen: Screen;

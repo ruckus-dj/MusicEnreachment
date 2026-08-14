@@ -16,6 +16,7 @@ from music_ingest.models.entities import JobAttemptRecord, JobRecord
 class ClaimedJob:
     job: JobRecord
     attempt: JobAttemptRecord
+    reclaimed_stale: bool = False
 
 
 @final
@@ -28,9 +29,11 @@ class JobRepository:
         if candidate is None:
             return None
         stale_attempt = candidate.attempts[-1] if candidate.attempts else None
+        reclaimed_stale = False
         if candidate.state == 'running' and stale_attempt is not None:
             stale_attempt.state = 'interrupted'
             stale_attempt.finished_at = now
+            reclaimed_stale = True
         candidate.state = 'running'
         attempt = JobAttemptRecord(
             job=candidate,
@@ -41,7 +44,7 @@ class JobRepository:
         )
         self._session.add(attempt)
         self._session.flush()
-        return ClaimedJob(candidate, attempt)
+        return ClaimedJob(candidate, attempt, reclaimed_stale)
 
     def succeed(self, claimed: ClaimedJob, now: datetime) -> None:
         claimed.attempt.state = 'succeeded'
