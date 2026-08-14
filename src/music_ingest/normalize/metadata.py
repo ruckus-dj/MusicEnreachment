@@ -10,7 +10,7 @@ from typing import override
 
 from mutagen import MutagenError
 from mutagen.flac import FLAC
-from mutagen.id3 import ID3, TALB, TCON, TDOR, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSRC, UFID
+from mutagen.id3 import ID3, TALB, TCON, TDOR, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSRC, TXXX, UFID
 from mutagen.mp4 import MP4
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
@@ -42,7 +42,9 @@ class CanonicalMetadata:
     disc_number: int
     disc_total: int
     genres: tuple[str, ...]
-    musicbrainz_track_id: str | None
+    musicbrainz_recording_id: str | None
+    musicbrainz_artist_ids: tuple[str, ...]
+    musicbrainz_album_artist_ids: tuple[str, ...]
     musicbrainz_album_id: str | None
     musicbrainz_release_group_id: str | None
     isrc: str | None
@@ -116,8 +118,11 @@ def _write_vorbis_comments(path: Path, tags: tuple[tuple[str, str], ...], suffix
     try:
         audio = _open_vorbis_comments(path, suffix)
         audio.clear()
+        comments: dict[str, list[str]] = {}
         for name, value in tags:
-            audio[name] = [value]
+            comments.setdefault(name, []).append(value)
+        for name, values in comments.items():
+            audio[name] = values
         audio.save()
     except (MutagenError, OSError) as error:
         raise MetadataWriteError('Mutagen rejected canonical Vorbis comments') from error
@@ -126,7 +131,7 @@ def _write_vorbis_comments(path: Path, tags: tuple[tuple[str, str], ...], suffix
 def _verify_vorbis_comments(path: Path, expected: tuple[tuple[str, str], ...], suffix: str) -> None:
     try:
         audio = _open_vorbis_comments(path, suffix)
-        actual = tuple((name.upper(), values[0]) for name, values in audio.items() if values)
+        actual = tuple((name.upper(), value) for name, values in audio.items() for value in values)
     except (MutagenError, OSError) as error:
         raise MetadataWriteError('Mutagen could not reopen canonical Vorbis comments') from error
     if frozenset(actual) != frozenset(expected):
@@ -160,8 +165,24 @@ def _write_mp3_tags(path: Path, metadata: CanonicalMetadata) -> None:
         tags.add(TCON(encoding=3, text=list(metadata.genres)))
         if metadata.isrc is not None:
             tags.add(TSRC(encoding=3, text=metadata.isrc))
-        if metadata.musicbrainz_track_id is not None:
-            tags.add(UFID(owner='musicbrainz.org', data=metadata.musicbrainz_track_id.encode()))
+        if metadata.musicbrainz_recording_id is not None:
+            tags.add(UFID(owner='http://musicbrainz.org', data=metadata.musicbrainz_recording_id.encode()))
+        if metadata.musicbrainz_artist_ids:
+            tags.add(TXXX(encoding=3, desc='MusicBrainz Artist Id', text=list(metadata.musicbrainz_artist_ids)))
+        if metadata.musicbrainz_album_artist_ids:
+            tags.add(
+                TXXX(encoding=3, desc='MusicBrainz Album Artist Id', text=list(metadata.musicbrainz_album_artist_ids))
+            )
+        if metadata.musicbrainz_album_id is not None:
+            tags.add(TXXX(encoding=3, desc='MusicBrainz Album Id', text=metadata.musicbrainz_album_id))
+        if metadata.musicbrainz_release_group_id is not None:
+            tags.add(
+                TXXX(
+                    encoding=3,
+                    desc='MusicBrainz Release Group Id',
+                    text=metadata.musicbrainz_release_group_id,
+                )
+            )
         tags.save(path)
     except (MutagenError, OSError) as error:
         raise MetadataWriteError('Mutagen rejected canonical MP3 metadata') from error
@@ -196,11 +217,22 @@ def _verify_mp3_tags(path: Path, metadata: CanonicalMetadata) -> None:
         if metadata.isrc is not None:
             expected['TSRC'] = metadata.isrc
             actual['TSRC'] = tags['TSRC'].text[0]
-        ufid = tags.getall('UFID:musicbrainz.org')
-        if metadata.musicbrainz_track_id is not None and (
-            not ufid or ufid[0].data.decode() != metadata.musicbrainz_track_id
+        ufid = tags.getall('UFID:http://musicbrainz.org')
+        if metadata.musicbrainz_recording_id is not None and (
+            not ufid or ufid[0].data.decode() != metadata.musicbrainz_recording_id
         ):
             raise MetadataWriteError('Mutagen did not produce the required MusicBrainz UFID')
+        expected_txxx = {
+            'MusicBrainz Artist Id': metadata.musicbrainz_artist_ids,
+            'MusicBrainz Album Artist Id': metadata.musicbrainz_album_artist_ids,
+            'MusicBrainz Album Id': () if metadata.musicbrainz_album_id is None else (metadata.musicbrainz_album_id,),
+            'MusicBrainz Release Group Id': (
+                () if metadata.musicbrainz_release_group_id is None else (metadata.musicbrainz_release_group_id,)
+            ),
+        }
+        actual_txxx = {frame.desc: tuple(frame.text) for frame in tags.getall('TXXX')}
+        if actual_txxx != {name: values for name, values in expected_txxx.items() if values}:
+            raise MetadataWriteError('Mutagen did not produce the required MusicBrainz ID3 frames')
     except (MutagenError, OSError, KeyError) as error:
         raise MetadataWriteError('Mutagen could not reopen canonical MP3 metadata') from error
     if any(value is not None and actual[key] != value for key, value in expected.items()):
@@ -221,8 +253,22 @@ def _write_mp4_tags(path: Path, metadata: CanonicalMetadata) -> None:
         audio['©gen'] = ['; '.join(metadata.genres)]
         if metadata.isrc is not None:
             audio['----:com.apple.iTunes:ISRC'] = [metadata.isrc.encode()]
-        if metadata.musicbrainz_track_id is not None:
-            audio['----:com.apple.iTunes:MusicBrainz Track Id'] = [metadata.musicbrainz_track_id.encode()]
+        if metadata.musicbrainz_recording_id is not None:
+            audio['----:com.apple.iTunes:MusicBrainz Track Id'] = [metadata.musicbrainz_recording_id.encode()]
+        if metadata.musicbrainz_artist_ids:
+            audio['----:com.apple.iTunes:MusicBrainz Artist Id'] = [
+                item.encode() for item in metadata.musicbrainz_artist_ids
+            ]
+        if metadata.musicbrainz_album_artist_ids:
+            audio['----:com.apple.iTunes:MusicBrainz Album Artist Id'] = [
+                item.encode() for item in metadata.musicbrainz_album_artist_ids
+            ]
+        if metadata.musicbrainz_album_id is not None:
+            audio['----:com.apple.iTunes:MusicBrainz Album Id'] = [metadata.musicbrainz_album_id.encode()]
+        if metadata.musicbrainz_release_group_id is not None:
+            audio['----:com.apple.iTunes:MusicBrainz Release Group Id'] = [
+                metadata.musicbrainz_release_group_id.encode()
+            ]
         audio.save()
     except (MutagenError, OSError) as error:
         raise MetadataWriteError('Mutagen rejected canonical MP4 metadata') from error
@@ -244,7 +290,23 @@ def _verify_mp4_tags(path: Path, metadata: CanonicalMetadata) -> None:
             '©gen': ['; '.join(metadata.genres)],
             '----:com.apple.iTunes:ISRC': [metadata.isrc.encode()] if metadata.isrc is not None else None,
             '----:com.apple.iTunes:MusicBrainz Track Id': (
-                [metadata.musicbrainz_track_id.encode()] if metadata.musicbrainz_track_id is not None else None
+                [metadata.musicbrainz_recording_id.encode()] if metadata.musicbrainz_recording_id is not None else None
+            ),
+            '----:com.apple.iTunes:MusicBrainz Artist Id': (
+                [item.encode() for item in metadata.musicbrainz_artist_ids] if metadata.musicbrainz_artist_ids else None
+            ),
+            '----:com.apple.iTunes:MusicBrainz Album Artist Id': (
+                [item.encode() for item in metadata.musicbrainz_album_artist_ids]
+                if metadata.musicbrainz_album_artist_ids
+                else None
+            ),
+            '----:com.apple.iTunes:MusicBrainz Album Id': (
+                [metadata.musicbrainz_album_id.encode()] if metadata.musicbrainz_album_id is not None else None
+            ),
+            '----:com.apple.iTunes:MusicBrainz Release Group Id': (
+                [metadata.musicbrainz_release_group_id.encode()]
+                if metadata.musicbrainz_release_group_id is not None
+                else None
             ),
         }
         actual = {name: tags.get(name) for name, value in expected.items() if value is not None}
@@ -281,7 +343,9 @@ def _canonical_tags(
     match metadata.source:
         case CanonicalSource.REVIEWED_LOCAL_ONLY:
             identifiers = (
-                metadata.musicbrainz_track_id,
+                metadata.musicbrainz_recording_id,
+                *metadata.musicbrainz_artist_ids,
+                *metadata.musicbrainz_album_artist_ids,
                 metadata.musicbrainz_album_id,
                 metadata.musicbrainz_release_group_id,
             )
@@ -310,7 +374,9 @@ def _canonical_tags(
     )
     optional = (
         ('ORIGINALDATE', metadata.original_date),
-        ('MUSICBRAINZ_TRACKID', metadata.musicbrainz_track_id),
+        ('MUSICBRAINZ_RECORDINGID', metadata.musicbrainz_recording_id),
+        *(('MUSICBRAINZ_ARTISTID', item) for item in metadata.musicbrainz_artist_ids),
+        *(('MUSICBRAINZ_ALBUMARTISTID', item) for item in metadata.musicbrainz_album_artist_ids),
         ('MUSICBRAINZ_ALBUMID', metadata.musicbrainz_album_id),
         ('MUSICBRAINZ_RELEASEGROUPID', metadata.musicbrainz_release_group_id),
         ('ISRC', metadata.isrc),

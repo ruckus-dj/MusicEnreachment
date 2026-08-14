@@ -141,7 +141,9 @@ def _metadata(source: CanonicalSource = CanonicalSource.VERIFIED_RELEASE) -> Can
         disc_number=1,
         disc_total=1,
         genres=('Rock Rap',),
-        musicbrainz_track_id='track-id' if source is CanonicalSource.VERIFIED_RELEASE else None,
+        musicbrainz_recording_id='recording-id' if source is CanonicalSource.VERIFIED_RELEASE else None,
+        musicbrainz_artist_ids=('artist-id',) if source is CanonicalSource.VERIFIED_RELEASE else (),
+        musicbrainz_album_artist_ids=('album-artist-id',) if source is CanonicalSource.VERIFIED_RELEASE else (),
         musicbrainz_album_id='album-id' if source is CanonicalSource.VERIFIED_RELEASE else None,
         musicbrainz_release_group_id='group-id' if source is CanonicalSource.VERIFIED_RELEASE else None,
         isrc='USFIX2600001',
@@ -166,7 +168,11 @@ def test_write_canonical_metadata_when_verified_facts_writes_allowlisted_tags(tm
     assert listed['TITLE'] == 'Fixture Track'
     assert listed['ARTIST'] == 'Artist One; Artist Two'
     assert listed['GENRE'] == 'Hip Hop; Alternative Rock'
+    assert listed['MUSICBRAINZ_RECORDINGID'] == 'recording-id'
+    assert listed['MUSICBRAINZ_ARTISTID'] == 'artist-id'
+    assert listed['MUSICBRAINZ_ALBUMARTISTID'] == 'album-artist-id'
     assert listed['MUSICBRAINZ_ALBUMID'] == 'album-id'
+    assert listed['MUSICBRAINZ_RELEASEGROUPID'] == 'group-id'
     assert '/' not in listed['GENRE']
     assert snapshot == (source.stat().st_ino, sha256(source.read_bytes()).hexdigest())
 
@@ -267,7 +273,7 @@ def test_write_canonical_metadata_when_mp3_source_has_observed_tags_reopens_with
         MetadataWriteRequest(source, staging / 'track.mp3', staging, metadata, fields, genres)
     )
 
-    # Then: reopened ID3 contains only canonical contract frames and MusicBrainz UFID.
+    # Then: reopened ID3 contains only canonical contract frames and MusicBrainz IDs.
     tags = ID3(output.output_path)
     assert tags['TIT2'].text == ['Fixture Track']
     assert tags['TPE1'].text == ['Artist One', 'Artist Two']
@@ -279,7 +285,11 @@ def test_write_canonical_metadata_when_mp3_source_has_observed_tags_reopens_with
     assert str(tags['TDOR'].text[0]) == '2020-01-01'
     assert tags['TCON'].text == ['Rock Rap']
     assert tags['TSRC'].text == ['USFIX2600001']
-    assert tags['UFID:musicbrainz.org'].data == b'track-id'
+    assert tags['UFID:http://musicbrainz.org'].data == b'recording-id'
+    assert tags['TXXX:MusicBrainz Artist Id'].text == ['artist-id']
+    assert tags['TXXX:MusicBrainz Album Artist Id'].text == ['album-artist-id']
+    assert tags['TXXX:MusicBrainz Album Id'].text == ['album-id']
+    assert tags['TXXX:MusicBrainz Release Group Id'].text == ['group-id']
     assert 'Observed title' not in tags['TIT2'].text
 
 
@@ -332,7 +342,11 @@ def test_write_canonical_metadata_when_m4a_source_has_observed_tags_reopens_with
     assert tags['©day'] == ['2026-07-28']
     assert tags['©gen'] == ['Rock Rap']
     assert tags['----:com.apple.iTunes:ISRC'] == [b'USFIX2600001']
-    assert tags['----:com.apple.iTunes:MusicBrainz Track Id'] == [b'track-id']
+    assert tags['----:com.apple.iTunes:MusicBrainz Track Id'] == [b'recording-id']
+    assert tags['----:com.apple.iTunes:MusicBrainz Artist Id'] == [b'artist-id']
+    assert tags['----:com.apple.iTunes:MusicBrainz Album Artist Id'] == [b'album-artist-id']
+    assert tags['----:com.apple.iTunes:MusicBrainz Album Id'] == [b'album-id']
+    assert tags['----:com.apple.iTunes:MusicBrainz Release Group Id'] == [b'group-id']
     assert '----:com.apple.iTunes:source' not in tags
 
 
@@ -363,7 +377,11 @@ def test_write_canonical_metadata_when_ogg_source_has_observed_comments_reopens_
     assert tags['TITLE'] == ['Fixture Track']
     assert tags['ARTIST'] == ['Artist One; Artist Two']
     assert tags['GENRE'] == ['Hip Hop; Alternative Rock']
-    assert tags['MUSICBRAINZ_TRACKID'] == ['track-id']
+    assert tags['MUSICBRAINZ_RECORDINGID'] == ['recording-id']
+    assert tags['MUSICBRAINZ_ARTISTID'] == ['artist-id']
+    assert tags['MUSICBRAINZ_ALBUMARTISTID'] == ['album-artist-id']
+    assert tags['MUSICBRAINZ_ALBUMID'] == ['album-id']
+    assert tags['MUSICBRAINZ_RELEASEGROUPID'] == ['group-id']
     assert 'SOURCE' not in tags
     assert 'Observed title' not in tags['TITLE']
 
