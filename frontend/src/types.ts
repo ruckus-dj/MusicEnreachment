@@ -190,6 +190,7 @@ export type RuntimeSettings = {
   readonly musicbrainz_host: string;
   readonly musicbrainz_request_delay_seconds: number;
   readonly acoustid_enabled: boolean;
+  readonly acoustid_request_delay_seconds: number;
   readonly acoustid_client_key_configured: boolean;
   readonly artwork_enabled: boolean;
 };
@@ -253,6 +254,7 @@ export type RuntimeSettingsDraft = {
   readonly musicbrainz_host: string;
   readonly musicbrainz_request_delay_seconds: number;
   readonly acoustid_enabled: boolean;
+  readonly acoustid_request_delay_seconds: number;
   readonly acoustid_client_key: string;
   readonly artwork_enabled: boolean;
 };

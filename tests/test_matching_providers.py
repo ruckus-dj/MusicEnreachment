@@ -616,6 +616,27 @@ def test_provider_evidence_preserves_ambiguous_recording_candidates_after_persis
     assert tuple(candidate.release_mbid for candidate in result.musicbrainz.candidates) == ('release-a', 'release-b')
 
 
+def test_musicbrainz_when_search_media_omits_position_preserves_candidates() -> None:
+    # Given: a valid MusicBrainz search response whose summary media omits its disc position.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = url, headers
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"releases":[{"id":"release-a","title":"Fixture Album","media":[{"track-count":1}]},'
+                b'{"id":"release-b","title":"Fixture Album","media":[{"track-count":1}]}]}',
+            )
+
+    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: the adapter parses the response.
+    result = provider.lookup(MusicBrainzLookupRequest('artist:Fixture release:Fixture Album', FixtureCase.SUCCESS), NOW)
+
+    # Then: missing optional edition detail does not discard valid release candidates as malformed.
+    assert isinstance(result, Ambiguous)
+    assert tuple(candidate.release_mbid for candidate in result.candidates) == ('release-a', 'release-b')
+
+
 def test_provider_evidence_when_acoustid_confidence_is_low_uses_text_search_fallback(tmp_path: Path) -> None:
     # Given: AcoustID evidence below the configured confidence threshold.
     session, starts = _session(tmp_path)

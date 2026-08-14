@@ -23,6 +23,7 @@ class RuntimeSettingsRequest(BaseModel):
     musicbrainz_host: str = Field(pattern=r'^https?://[^/?#]+$')
     musicbrainz_request_delay_seconds: float = Field(ge=0.0, le=3600.0)
     acoustid_enabled: bool
+    acoustid_request_delay_seconds: float = Field(gt=0.0, le=3600.0)
     acoustid_client_key: str | None = Field(default=None, max_length=255)
     artwork_enabled: bool
 
@@ -40,6 +41,7 @@ class RuntimeSettingsResponse(BaseModel):
     musicbrainz_host: str
     musicbrainz_request_delay_seconds: float
     acoustid_enabled: bool
+    acoustid_request_delay_seconds: float
     acoustid_client_key_configured: bool
     artwork_enabled: bool
 
@@ -319,7 +321,7 @@ class Track(BaseModel):
 class Medium(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
-    position: int
+    position: int | None = None
     track_count: int | None = Field(default=None, alias='track-count')
     tracks: tuple[Track, ...] = ()
 

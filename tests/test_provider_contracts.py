@@ -421,13 +421,14 @@ def test_live_transport_when_musicbrainz_is_requested_acquires_rate_limit_for_ea
     limiter = _RecordingLimiter()
     transport = LiveTransport(_SuccessfulClient(), limiter=limiter)
 
-    # When: two MusicBrainz requests and one unrelated provider request cross the seam.
+    # When: two MusicBrainz requests, one AcoustID request, and one unrelated request cross the seam.
     _ = transport.get('https://musicbrainz.org/ws/2/release/one', headers={})
     _ = transport.get('https://musicbrainz.org/ws/2/release/two', headers={})
+    _ = transport.get('https://api.acoustid.org/v2/lookup', headers={})
     _ = transport.get('https://coverartarchive.org/release/one/front-500', headers={})
 
-    # Then: every MusicBrainz wire call is reserved, while unrelated hosts are unaffected.
-    assert limiter.providers == ['musicbrainz', 'musicbrainz']
+    # Then: each external metadata provider reserves its own persisted schedule.
+    assert limiter.providers == ['musicbrainz', 'musicbrainz', 'acoustid']
 
 
 @pytest.mark.live

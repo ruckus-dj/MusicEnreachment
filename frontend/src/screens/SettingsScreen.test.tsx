@@ -18,6 +18,7 @@ const draft: RuntimeSettingsDraft = {
   musicbrainz_host: "https://musicbrainz.org",
   musicbrainz_request_delay_seconds: 1.5,
   acoustid_enabled: false,
+  acoustid_request_delay_seconds: 1 / 3,
   acoustid_client_key: "",
   artwork_enabled: true,
 };

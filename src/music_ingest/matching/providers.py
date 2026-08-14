@@ -52,7 +52,11 @@ class ProvenanceState(StrEnum):
 
 
 _PROVIDER_NAMES: Final = frozenset(ProviderName)
-_REQUEST_INTERVAL = timedelta(seconds=1.5)
+_DEFAULT_REQUEST_INTERVALS: Final = {
+    ProviderName.MUSICBRAINZ: timedelta(seconds=1.5),
+    ProviderName.ACOUSTID: timedelta(seconds=1 / 3),
+}
+_ACOUSTID_HOST: Final = 'api.acoustid.org'
 _LEASE_DURATION = timedelta(minutes=1)
 
 
@@ -81,9 +85,9 @@ class DatabaseRequestRateLimiter:
         with self._session_factory() as session:
             configured_interval = self._request_interval
             if configured_interval is None:
-                stored_interval = session.get(RuntimeSettingRecord, 'providers.musicbrainz.request_delay_seconds')
+                stored_interval = session.get(RuntimeSettingRecord, f'providers.{provider_name}.request_delay_seconds')
                 if stored_interval is None:
-                    configured_interval = _REQUEST_INTERVAL
+                    configured_interval = _DEFAULT_REQUEST_INTERVALS[ProviderName(provider_name)]
                 else:
                     configured_interval = timedelta(seconds=float(stored_interval.value))
             if configured_interval <= timedelta():
@@ -364,8 +368,9 @@ class LiveTransport:
 
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
         for attempt in range(3):
-            if self.limiter is not None and urlsplit(url).hostname == urlsplit(self.musicbrainz_host()).hostname:
-                self.limiter.wait('musicbrainz')
+            provider_name = _provider_name_for_url(url, self.musicbrainz_host())
+            if self.limiter is not None and provider_name is not None:
+                self.limiter.wait(provider_name)
             try:
                 response = self.client.get(url, headers=headers, timeout=10.0)
             except requests.RequestException:
@@ -377,6 +382,15 @@ class LiveTransport:
                 with suppress(ValueError):
                     self.sleep(max(float(retry_after), 0.0))
         raise AssertionError('unreachable transport retry state')
+
+
+def _provider_name_for_url(url: str, musicbrainz_host: str) -> ProviderName | None:
+    hostname = urlsplit(url).hostname
+    if hostname == urlsplit(musicbrainz_host).hostname:
+        return ProviderName.MUSICBRAINZ
+    if hostname == _ACOUSTID_HOST:
+        return ProviderName.ACOUSTID
+    return None
 
 
 def _default_live_client() -> PublicHttpClient:

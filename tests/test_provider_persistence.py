@@ -105,6 +105,25 @@ def test_database_rate_limiter_when_called_twice_reserves_one_and_a_half_seconds
     assert 1.4 <= delays[-1] <= 1.6
 
 
+def test_database_rate_limiter_when_acoustid_is_called_twice_reserves_one_third_second(tmp_path: Path) -> None:
+    # Given: the official AcoustID provider schedule and no operator override.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)))
+        session.commit()
+    delays: list[float] = []
+    limiter = DatabaseRequestRateLimiter(lambda: Session(engine), delays.append)
+
+    # When: two AcoustID calls reserve starts through the durable limiter.
+    limiter.wait('acoustid')
+    limiter.wait('acoustid')
+
+    # Then: the second call cannot exceed AcoustID's three-requests-per-second policy.
+    assert delays
+    assert 0.3 <= delays[-1] <= 0.4
+
+
 def test_database_rate_limiter_when_custom_interval_is_configured_reserves_that_interval(tmp_path: Path) -> None:
     # Given: a shared schedule and a self-hosted MusicBrainz interval with no delay.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')

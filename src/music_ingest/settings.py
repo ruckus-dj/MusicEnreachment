@@ -21,6 +21,7 @@ def load_runtime_settings(session: Session) -> RuntimeSettings:
         'musicbrainz_host': _setting_value(session, 'providers.musicbrainz.host'),
         'musicbrainz_request_delay_seconds': _setting_value(session, 'providers.musicbrainz.request_delay_seconds'),
         'acoustid_enabled': _setting_value(session, 'providers.acoustid.enabled'),
+        'acoustid_request_delay_seconds': _setting_value(session, 'providers.acoustid.request_delay_seconds'),
         'acoustid_client_key': _setting_value(session, 'providers.acoustid.client_key'),
         'artwork_enabled': _setting_value(session, 'artwork.enabled'),
     }
@@ -41,6 +42,9 @@ def load_runtime_settings(session: Session) -> RuntimeSettings:
             values['musicbrainz_request_delay_seconds'], defaults.musicbrainz_request_delay_seconds
         ),
         acoustid_enabled=_parse_bool(values['acoustid_enabled'], defaults.acoustid_enabled),
+        acoustid_request_delay_seconds=_parse_float(
+            values['acoustid_request_delay_seconds'], defaults.acoustid_request_delay_seconds
+        ),
         acoustid_client_key=values['acoustid_client_key'] or defaults.acoustid_client_key,
         artwork_enabled=_parse_bool(values['artwork_enabled'], defaults.artwork_enabled),
         canonical_genres=canonical_genres,
@@ -60,6 +64,7 @@ def save_runtime_settings(session: Session, settings: RuntimeSettings) -> None:
         'providers.musicbrainz.host': settings.musicbrainz_host,
         'providers.musicbrainz.request_delay_seconds': str(settings.musicbrainz_request_delay_seconds),
         'providers.acoustid.enabled': str(settings.acoustid_enabled).lower(),
+        'providers.acoustid.request_delay_seconds': str(settings.acoustid_request_delay_seconds),
         'providers.acoustid.client_key': settings.acoustid_client_key or '',
         'artwork.enabled': str(settings.artwork_enabled).lower(),
     }

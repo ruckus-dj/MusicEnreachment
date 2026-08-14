@@ -210,6 +210,23 @@ export function SettingsScreen({
               onChange={(event) => update("acoustid_client_key", event.target.value)}
             />
           </label>
+          <label>
+            Задержка запросов AcousticID, секунд
+            <input
+              type="number"
+              min="0.01"
+              max="3600"
+              step="0.01"
+              value={draft.acoustid_request_delay_seconds}
+              onChange={(event) =>
+                update("acoustid_request_delay_seconds", Number(event.target.value))
+              }
+            />
+          </label>
+          <small className="settings-help">
+            Официальный AcousticID допускает не более трёх запросов в секунду; по умолчанию 0,333
+            секунды.
+          </small>
           <label className="settings-check">
             <input
               type="checkbox"

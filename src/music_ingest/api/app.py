@@ -119,6 +119,7 @@ def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
         musicbrainz_host=settings.musicbrainz_host,
         musicbrainz_request_delay_seconds=settings.musicbrainz_request_delay_seconds,
         acoustid_enabled=settings.acoustid_enabled,
+        acoustid_request_delay_seconds=settings.acoustid_request_delay_seconds,
         acoustid_client_key_configured=bool(settings.acoustid_client_key),
         artwork_enabled=settings.artwork_enabled,
     )
