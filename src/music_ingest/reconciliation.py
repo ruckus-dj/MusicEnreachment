@@ -50,9 +50,7 @@ class FileFingerprint:
     sha256: str
 
 
-def reconcile_incoming(session: Session, incoming_root: Path | None = None) -> ScanResult:
-    if incoming_root is not None:
-        _ensure_legacy_root(session, incoming_root)
+def reconcile_incoming(session: Session) -> ScanResult:
     roots = tuple(session.scalars(select(SourceRootRecord).where(SourceRootRecord.enabled.is_(True))).all())
     sources = list(session.scalars(select(SourceRecord).options(selectinload(SourceRecord.library_record))).all())
     sources_by_path = {(source.source_root_id, _stored_path(source)): source for source in sources}
@@ -132,25 +130,6 @@ def reconcile_incoming(session: Session, incoming_root: Path | None = None) -> S
         moved=moved,
         unchanged=scanned_file_count - observed,
         queued_jobs=queued_jobs,
-    )
-
-
-def _ensure_legacy_root(session: Session, incoming_root: Path) -> None:
-    canonical_path = str(incoming_root.resolve(strict=True))
-    existing = session.get(SourceRootRecord, 'legacy')
-    if existing is not None:
-        return
-    now = datetime.now(UTC)
-    session.add(
-        SourceRootRecord(
-            id='legacy',
-            display_name='legacy',
-            canonical_path=canonical_path,
-            enabled=True,
-            scan_state='never_scanned',
-            created_at=now,
-            updated_at=now,
-        )
     )
 
 

@@ -62,32 +62,6 @@ class SourceRootService:
             )
         )
 
-    def ensure_legacy(self, legacy_root: Path) -> SourceRootRecord:
-        canonical_path = self._canonical_immediate_child(legacy_root)
-        existing = self._session.get(SourceRootRecord, 'legacy')
-        if existing is not None:
-            if existing.canonical_path != canonical_path:
-                raise SourceRootValidationError('legacy source root does not match the mounted legacy directory')
-            return existing
-        duplicate = self._session.scalar(
-            select(SourceRootRecord).where(SourceRootRecord.canonical_path == canonical_path)
-        )
-        if duplicate is not None:
-            raise SourceRootConflictError(canonical_path)
-        now = datetime.now(UTC)
-        root = SourceRootRecord(
-            id='legacy',
-            display_name='legacy',
-            canonical_path=canonical_path,
-            enabled=True,
-            scan_state='never_scanned',
-            created_at=now,
-            updated_at=now,
-        )
-        self._session.add(root)
-        self._session.flush()
-        return root
-
     def create(self, path: str, display_name: str) -> SourceRootRecord:
         canonical_path = self._canonical_immediate_child(Path(path))
         duplicate = self._session.scalar(

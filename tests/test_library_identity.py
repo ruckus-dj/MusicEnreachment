@@ -903,6 +903,15 @@ def test_reconciliation_replaces_source_version_without_replacing_record(tmp_pat
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
     with Session(engine) as session:
         record = LibraryRecord(id='record-replaced', created_at=timestamp, updated_at=timestamp)
+        root = SourceRootRecord(
+            id='root-incoming',
+            display_name='Incoming',
+            canonical_path=str(incoming.resolve()),
+            enabled=True,
+            scan_state='never_scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         session.add(
             SourceRecord(
                 id='source-old',
@@ -914,12 +923,13 @@ def test_reconciliation_replaces_source_version_without_replacing_record(tmp_pat
                 duration_seconds=180,
                 origin='manual',
                 intake_state='present',
+                source_root=root,
                 library_record=record,
             )
         )
         session.commit()
 
-        result = reconcile_incoming(session, incoming)
+        result = reconcile_incoming(session)
         session.commit()
         session.expire_all()
         persisted = session.get(LibraryRecord, 'record-replaced')
@@ -942,6 +952,15 @@ def test_reconciliation_keeps_current_publication_until_replacement_publishes(tm
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
     with Session(engine) as session:
         record = LibraryRecord(id='record-replacement-publication', created_at=timestamp, updated_at=timestamp)
+        root = SourceRootRecord(
+            id='root-incoming',
+            display_name='Incoming',
+            canonical_path=str(incoming.resolve()),
+            enabled=True,
+            scan_state='never_scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         source = SourceRecord(
             id='source-old',
             source_path=str(source_path),
@@ -952,6 +971,7 @@ def test_reconciliation_keeps_current_publication_until_replacement_publishes(tm
             duration_seconds=180,
             origin='manual',
             intake_state='present',
+            source_root=root,
             library_record=record,
         )
         publication = LibraryPublicationRecord(
@@ -968,7 +988,7 @@ def test_reconciliation_keeps_current_publication_until_replacement_publishes(tm
         session.commit()
 
         # When: reconciliation discovers the replacement source generation.
-        _ = reconcile_incoming(session, incoming)
+        _ = reconcile_incoming(session)
         session.commit()
 
         # Then: the old publication remains current until the new audio is published.
