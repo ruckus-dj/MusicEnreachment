@@ -53,7 +53,7 @@ PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest serve
 ```
 
-The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT` and its legacy immediate child `MUSIC_INGEST_INCOMING_ROOT`, plus final media and transient staging roots, with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
+The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT`, then add each source root through Settings; configure final media and transient staging roots with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
 
 `MUSIC_INGEST_SOURCE_ROOTS_PARENT` must be an existing, non-symlink directory. Each configured source root must be an existing, non-symlink immediate child of that mounted parent. Source roots are read-only inputs. The final media root is writable, while the staging root is disposable.
 

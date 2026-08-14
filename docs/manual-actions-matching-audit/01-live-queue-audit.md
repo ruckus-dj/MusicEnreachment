@@ -103,7 +103,7 @@ Read-only запрос к test_stand PostgreSQL дал точный ответ:
 
 ### Почему есть `/data/sources/legacy`
 
-Это не третий Noize source. В запущенном test stand явно установлены `MUSIC_INGEST_INCOMING_ROOT=/data/sources/legacy`, `MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources` и `MUSIC_INGEST_E2E_SEED_ENABLED=true`. Таблица `source_roots` содержит root `legacy`, а под ним только два E2E fixture source (`e2e-source-a.flac`, `e2e-source-b.flac`); ни один не относится к Noize. Это тестовая конфигурация/migration compatibility root, который не должен участвовать в production reasoning о текущих `Incoming`/`Downloads` observations.
+Это не третий Noize source. E2E-фикстуры создают отдельный root `e2e` только при `MUSIC_INGEST_E2E_SEED_ENABLED=true`; ни один fixture source не относится к Noize. Он не участвует в production reasoning о текущих `Incoming`/`Downloads` observations.
 
 ## 2. Anacondaz — один AcoustID 100%, но recording не выбран
 

@@ -33,10 +33,10 @@ original MusicBrainz name for matching and shows a readable display label; the
 manual aliases JSON is not part of the runtime contract.
 
 Configure Lidarr to import into `/mnt/pool/data/music-incoming`, then mount that
-path read-only as `/data/sources/legacy` in `music-ingest` and set
-`MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources` and
-`MUSIC_INGEST_INCOMING_ROOT=/data/sources/legacy`. Operators may configure only
-existing, non-symlink immediate children of `/data/sources` through Settings.
+path read-only as an immediate child of `/data/sources` in `music-ingest` and set
+`MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources`. Configure the mounted directory
+through **Settings → Source roots** before enabling Lidarr. Operators may configure
+only existing, non-symlink immediate children of `/data/sources`.
 Mount
 `/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
 mount `/mnt/ssd/appdata/music-ingest` as `/appdata/music-ingest` for disposable
