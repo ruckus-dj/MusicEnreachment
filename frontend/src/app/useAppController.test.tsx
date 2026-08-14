@@ -7,6 +7,7 @@ import { useAppController } from "./useAppController";
 afterEach(() => {
   cleanup();
   window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -126,6 +127,33 @@ describe("useAppController effective source", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records", expect.anything());
+  });
+});
+
+describe("useAppController worker queue", () => {
+  it("refreshes the open worker queue every two seconds", async () => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, "", "/workers");
+    const queue = {
+      observed_at: "2026-08-14T10:00:00+00:00",
+      worker: { configured_concurrency: 1, liveness: "available", slots: [] },
+      summary: { running: 0, ready: 0, retry_wait: 0 },
+      total_jobs: 0,
+      jobs: [],
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/workers/queue") return Response.json(queue);
+      return Response.json({ items: [] });
+    });
+
+    render(<ControllerProbe />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === "/api/workers/queue"),
+    ).toHaveLength(3);
   });
 });
 

@@ -62,6 +62,55 @@
   color: var(--accent);
   font-size: 14px;
 }
+.worker-summary .worker-status.available {
+  color: var(--green);
+}
+.worker-slots {
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-5) var(--space-6);
+}
+.worker-slots h3 {
+  margin: 0 0 var(--space-3);
+  font:
+    600 12px "DM Mono",
+    monospace;
+}
+.worker-slots ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.worker-slots li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tight);
+  padding: var(--space-3);
+}
+.worker-slots li strong,
+.worker-slots li small {
+  font:
+    10px "DM Mono",
+    monospace;
+}
+.worker-slots li small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+.worker-slot-state {
+  color: var(--muted);
+  font-size: 11px;
+}
+.worker-slot-state.processing {
+  color: var(--green);
+}
+.worker-slot-state.error {
+  color: var(--accent);
+}
 .worker-queue-error {
   margin: var(--space-6);
   border-left: 3px solid var(--accent);
@@ -941,6 +990,26 @@ h2 {
   .sidebar {
     min-height: auto;
     padding: 16px;
+  }
+  .sidebar nav {
+    display: flex;
+    gap: var(--space-2);
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+  .nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    padding: var(--space-2) var(--space-3);
+  }
+  .nav-item span {
+    white-space: nowrap;
+  }
+  .nav-item:hover {
+    transform: translateY(-1px);
+  }
+  .nav-item.active {
+    box-shadow: inset 0 -3px var(--accent);
   }
   .brand {
     padding: 0 4px 16px;

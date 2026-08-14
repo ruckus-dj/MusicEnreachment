@@ -9,8 +9,30 @@ describe("WorkerQueueScreen", () => {
       <WorkerQueueScreen
         queue={{
           observed_at: "2026-08-14T10:00:00+00:00",
-          worker: { configured_concurrency: 1, liveness: "unknown" },
+          worker: {
+            configured_concurrency: 1,
+            liveness: "available",
+            slots: [
+              {
+                slot: 0,
+                state: "processing",
+                observed_at: "2026-08-14T10:00:00+00:00",
+                error: null,
+                job_id: "job-1",
+                job_kind: "filesystem_scan",
+              },
+              {
+                slot: 4,
+                state: "disabled",
+                observed_at: "2026-08-14T10:00:00+00:00",
+                error: null,
+                job_id: null,
+                job_kind: null,
+              },
+            ],
+          },
           summary: { running: 1, ready: 0, retry_wait: 0 },
+          total_jobs: 1,
           jobs: [
             {
               job_id: "job-1",
@@ -42,5 +64,7 @@ describe("WorkerQueueScreen", () => {
     const link = screen.getByRole("link", { name: "Открыть инспектор трека: Очередной трек" });
     expect(link.getAttribute("href")).toBe("/library/record/record-1/source/source-1");
     expect(screen.getByText("Исполнитель · Альбом")).toBeTruthy();
+    expect(screen.getByText("Обрабатывает: Проверка источника")).toBeTruthy();
+    expect(screen.queryByText("Отключён")).toBeNull();
   });
 });

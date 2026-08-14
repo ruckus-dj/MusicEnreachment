@@ -140,13 +140,22 @@ export type WorkerQueue = {
   readonly observed_at: string;
   readonly worker: {
     readonly configured_concurrency: number;
-    readonly liveness: "unknown";
+    readonly liveness: "available" | "unavailable";
+    readonly slots: readonly {
+      readonly slot: number;
+      readonly state: "disabled" | "error" | "idle" | "processing";
+      readonly observed_at: string;
+      readonly error: string | null;
+      readonly job_id: string | null;
+      readonly job_kind: string | null;
+    }[];
   };
   readonly summary: {
     readonly running: number;
     readonly ready: number;
     readonly retry_wait: number;
   };
+  readonly total_jobs: number;
   readonly jobs: readonly WorkerQueueJob[];
 };
 export type Screen =

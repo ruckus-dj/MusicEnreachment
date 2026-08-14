@@ -65,7 +65,10 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           <button
             type="button"
             className={
-              screen !== "track" && screen !== "settings" && screen !== "manual-actions"
+              screen !== "track" &&
+              screen !== "settings" &&
+              screen !== "manual-actions" &&
+              screen !== "workers"
                 ? "nav-item active"
                 : "nav-item"
             }

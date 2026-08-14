@@ -27,7 +27,19 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function slotLabel(state: string): string {
+  const labels: Record<string, string> = {
+    disabled: "Отключён",
+    error: "Ошибка цикла",
+    idle: "Ожидает задачу",
+    processing: "Обрабатывает",
+  };
+  return labels[state] ?? state;
+}
+
 export function WorkerQueueScreen({ queue, loading, error, onRefresh }: WorkerQueueScreenProps) {
+  const visibleSlots = queue?.worker.slots.filter((slot) => slot.state !== "disabled") ?? [];
+
   return (
     <section className="worker-queue-screen" aria-labelledby="worker-queue-heading">
       <div className="screen-heading">
@@ -49,10 +61,12 @@ export function WorkerQueueScreen({ queue, loading, error, onRefresh }: WorkerQu
           <section className="worker-summary" aria-label="Состояние обработки">
             <div>
               <span>Состояние worker’ов</span>
-              <strong className="worker-status unknown">Неизвестно</strong>
+              <strong className={`worker-status ${queue.worker.liveness}`}>
+                {queue.worker.liveness === "available" ? "Наблюдается" : "Недоступно"}
+              </strong>
               <small>
-                Runtime не сохраняет heartbeat; задано worker’ов:{" "}
-                {queue.worker.configured_concurrency}.
+                Активных слотов: {visibleSlots.filter((slot) => slot.state === "processing").length}{" "}
+                из {queue.worker.configured_concurrency}.
               </small>
             </div>
             <div>
@@ -68,6 +82,25 @@ export function WorkerQueueScreen({ queue, loading, error, onRefresh }: WorkerQu
               <strong>{queue.summary.retry_wait}</strong>
             </div>
           </section>
+          {queue.worker.liveness === "available" ? (
+            <section className="worker-slots" aria-labelledby="worker-slots-heading">
+              <h3 id="worker-slots-heading">Слоты worker’ов</h3>
+              <ul>
+                {visibleSlots.map((slot) => (
+                  <li key={slot.slot}>
+                    <strong>#{slot.slot + 1}</strong>
+                    <span className={`worker-slot-state ${slot.state}`}>
+                      {slot.job_kind
+                        ? `${slotLabel(slot.state)}: ${jobLabel(slot.job_kind)}`
+                        : slotLabel(slot.state)}
+                    </span>
+                    <small>{formatDate(slot.observed_at)}</small>
+                    {slot.error ? <small role="alert">{slot.error}</small> : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           {queue.jobs.length === 0 ? (
             <div className="empty-state">Активных задач нет. Worker ожидает следующую задачу.</div>
           ) : (
@@ -124,7 +157,15 @@ export function WorkerQueueScreen({ queue, loading, error, onRefresh }: WorkerQu
               ))}
             </ul>
           )}
-          <p className="worker-observed">Снимок очереди: {formatDate(queue.observed_at)}</p>
+          {queue.total_jobs > queue.jobs.length ? (
+            <p className="worker-observed">
+              Показаны первые {queue.jobs.length} из {queue.total_jobs} активных задач.
+            </p>
+          ) : null}
+          <p className="worker-observed">
+            Обновляется каждые 2 секунды, пока открыта страница. Снимок:{" "}
+            {formatDate(queue.observed_at)}
+          </p>
         </>
       ) : !loading ? (
         <div className="empty-state">Данные очереди пока не загружены.</div>

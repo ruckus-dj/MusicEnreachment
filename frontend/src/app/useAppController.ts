@@ -558,8 +558,8 @@ export function useAppController(): AppControllerModel {
       setStorageLoading(false);
     }
   }
-  async function loadWorkerQueue() {
-    setWorkerQueueLoading(true);
+  async function loadWorkerQueue(showLoader = true) {
+    if (showLoader) setWorkerQueueLoading(true);
     setWorkerQueueError("");
     try {
       setWorkerQueue(await getWorkerQueue());
@@ -568,7 +568,7 @@ export function useAppController(): AppControllerModel {
         error instanceof Error ? error.message : "Не удалось загрузить очередь worker’ов",
       );
     } finally {
-      setWorkerQueueLoading(false);
+      if (showLoader) setWorkerQueueLoading(false);
     }
   }
   async function createConfiguredSourceRoot(request: SourceRootCreate) {
@@ -723,8 +723,21 @@ export function useAppController(): AppControllerModel {
     if (screen === "settings" && !storageBrowser && !storageLoading) void loadStorage();
   }, [screen, storageBrowser, storageLoading]);
   useEffect(() => {
-    if (screen === "workers" && !workerQueue && !workerQueueLoading) void loadWorkerQueue();
-  }, [screen, workerQueue, workerQueueLoading]);
+    if (screen !== "workers") return;
+    let busy = false;
+    const refresh = async () => {
+      if (busy || document.visibilityState === "hidden") return;
+      busy = true;
+      try {
+        await loadWorkerQueue(false);
+      } finally {
+        busy = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [screen]);
   useEffect(() => {
     const onPopState = () => applyRoute(parseRoute(window.location.pathname));
     window.addEventListener("popstate", onPopState);
