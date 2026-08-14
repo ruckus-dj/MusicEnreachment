@@ -100,3 +100,20 @@ Any temporary fixture should own its generated incoming and published paths,
 remove them, and run
 `docker compose down --volumes --remove-orphans`. It does not clear any other
 bind-mounted fixture or configuration path.
+
+### Reset for a first library scan
+
+To repeat an initial import while retaining the configured source roots and the
+Lidarr/Navidrome settings, run:
+
+```sh
+./scripts/reset-library.sh
+```
+
+The script stops only `music-ingest`, clears its imported database tables, resets
+the saved source roots to `never_scanned`, and clears only the active `output_root`
+from Music Ingest's `storage_config`. It does not modify `data/incoming/`,
+`data/sources/`, `data/downloads/`, `appdata/`, `config/`, or `.env`; it does not
+stop or restart Lidarr or Navidrome. It then starts only `music-ingest` and checks
+its API from inside the service. After it completes, open the UI and select
+**«Сканировать новые и изменённые»** to process the source library as a first import.
