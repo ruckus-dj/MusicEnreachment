@@ -48,7 +48,9 @@ class SourceRecord(Base):
     candidate_runs: Mapped[list[ProviderCandidateRunRecord]] = relationship(back_populates='source', lazy='selectin')
     candidates: Mapped[list[CandidateRecord]] = relationship(back_populates='source', lazy='selectin')
     review_decisions: Mapped[list[ReviewDecisionRecord]] = relationship(back_populates='source', lazy='selectin')
-    fingerprints: Mapped[list[FingerprintRecord]] = relationship(back_populates='source', lazy='selectin')
+    fingerprints: Mapped[list[FingerprintRecord]] = relationship(
+        back_populates='source', lazy='selectin', order_by='FingerprintRecord.id'
+    )
     decoder_evidence: Mapped[list[DecoderEvidenceRecord]] = relationship(back_populates='source', lazy='selectin')
     library_record: Mapped[LibraryRecord | None] = relationship(back_populates='sources')
     library_publications: Mapped[list[LibraryPublicationRecord]] = relationship(

@@ -14,6 +14,7 @@ from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     Base,
     CandidateRecord,
+    FingerprintRecord,
     JobRecord,
     LibraryPublicationRecord,
     SourceRecord,
@@ -49,6 +50,61 @@ def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_pa
     assert response.status_code == 200
     for marker in ('Медиатека', 'assets/', 'type="module"', 'lang="ru"'):
         assert marker in response.text
+
+
+def test_library_record_api_when_fingerprints_are_repeated_returns_them_in_observation_order(
+    tmp_path: Path,
+) -> None:
+    # Given: a source with append-only fingerprint observations.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "fingerprint-order.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        source = session.get(SourceRecord, intake.source_id)
+        assert source is not None and source.library_record_id is not None
+        session.add_all(
+            (
+                FingerprintRecord(
+                    source_id=source.id,
+                    state='available',
+                    fingerprint='earlier',
+                    duration_seconds=60.0,
+                    output_sha256='a' * 64,
+                ),
+                FingerprintRecord(
+                    source_id=source.id,
+                    state='available',
+                    fingerprint='latest',
+                    duration_seconds=245.4,
+                    output_sha256='b' * 64,
+                ),
+            )
+        )
+        record_id = source.library_record_id
+        session.commit()
+
+    # When: the track inspector loads the record through the API.
+    response = TestClient(create_app(lambda: Session(engine))).get(f'/api/library/records/{record_id}')
+
+    # Then: its fingerprint evidence remains chronological for the UI's latest observation.
+    assert response.status_code == 200
+    assert SourceRecord.fingerprints.property.order_by == (FingerprintRecord.id,)
+    assert [item['duration_seconds'] for item in response.json()['sources'][0]['fingerprints']] == [60.0, 245.4]
 
 
 def test_manual_actions_route_when_opened_serves_review_ui(tmp_path: Path) -> None:
