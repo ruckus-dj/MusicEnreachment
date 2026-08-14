@@ -22,7 +22,7 @@ from music_ingest.api.app import create_app
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
-from music_ingest.processing.runtime import run_processing_worker
+from music_ingest.processing.runtime import ProcessingRuntimeMonitor, run_processing_worker
 from music_ingest.settings import load_runtime_settings
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
@@ -91,6 +91,7 @@ def create_runtime_app() -> FastAPI:
 
     session_factory = sessionmaker(engine)
     processing_config = _processing_config(os.environ, session_factory)
+    worker_monitor = ProcessingRuntimeMonitor()
     source_roots_parent = Path(
         os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE, str(processing_config.incoming_root.parent))
     )
@@ -102,7 +103,7 @@ def create_runtime_app() -> FastAPI:
             ensure_provider_schedules(session, (provider.value for provider in ProviderName), datetime.now(UTC))
             session.commit()
         async with anyio.create_task_group() as task_group:
-            _ = task_group.start_soon(run_processing_worker, session_factory, processing_config)
+            _ = task_group.start_soon(run_processing_worker, session_factory, processing_config, 1.0, worker_monitor)
             try:
                 yield
             finally:
@@ -124,6 +125,7 @@ def create_runtime_app() -> FastAPI:
             for item in os.environ.get(_STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE, '/data').split(':')
             if item
         ),
+        worker_monitor=worker_monitor,
     )
     return application
 

@@ -22,6 +22,7 @@ from music_ingest.models import (
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing.runtime import ProcessingRuntimeMonitor
 
 
 def _source_root(path: Path, *, enabled: bool = True) -> SourceRootRecord:
@@ -164,7 +165,11 @@ def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Pa
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload['worker']['liveness'] == 'unknown'
+    assert payload['worker'] == {
+        'configured_concurrency': 1,
+        'liveness': 'unavailable',
+        'slots': [],
+    }
     assert payload['summary'] == {'running': 1, 'ready': 1, 'retry_wait': 0}
     assert [job['job_id'] for job in payload['jobs']] == ['queued-job', 'running-job']
     assert payload['jobs'][0]['attempt_count'] == 0
@@ -177,6 +182,25 @@ def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Pa
         'path': str(source_path),
     }
     assert payload['jobs'][1]['target'] is None
+
+
+def test_worker_queue_api_overlays_the_runtime_claim_on_queued_job(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker-runtime-queue.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(JobRecord(id='queued-job', kind='reconciliation_scan', state='queued', created_at=now))
+        session.commit()
+    monitor = ProcessingRuntimeMonitor()
+    monitor.observe(0, 'processing', job_id='queued-job', job_kind='reconciliation_scan')
+
+    response = TestClient(create_app(lambda: Session(engine), worker_monitor=monitor)).get('/api/workers/queue')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['summary']['running'] == 1
+    assert payload['jobs'][0]['state'] == 'running'
+    assert payload['worker']['slots'][0]['job_id'] == 'queued-job'
 
 
 def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path) -> None:

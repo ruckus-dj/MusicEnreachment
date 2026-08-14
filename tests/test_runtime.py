@@ -221,10 +221,12 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
     incoming_root.mkdir(parents=True)
     monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
     monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
-    started: list[tuple[object, object]] = []
+    started: list[tuple[object, object, object, object]] = []
 
-    async def record_worker_start(session_factory: object, config: object) -> None:
-        started.append((session_factory, config))
+    async def record_worker_start(
+        session_factory: object, config: object, poll_seconds: object, monitor: object
+    ) -> None:
+        started.append((session_factory, config, poll_seconds, monitor))
         await _record_worker_start()
 
     monkeypatch.setattr(server, 'run_processing_worker', record_worker_start)

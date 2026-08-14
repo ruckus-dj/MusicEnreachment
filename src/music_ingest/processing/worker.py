@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -409,7 +410,7 @@ class ProcessingWorker:
         self._config: ProcessingConfig = config
         self._lease_age: timedelta = lease_age or timedelta(minutes=5)
 
-    def run_once(self) -> bool:
+    def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
             self._config = replace(self._config, media_root=Path(storage.output_root))
@@ -418,6 +419,8 @@ class ProcessingWorker:
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
         if claimed is None:
             return False
+        if on_claimed is not None:
+            on_claimed(claimed.job.id, claimed.job.kind)
         if (
             claimed.reclaimed_stale
             and claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}

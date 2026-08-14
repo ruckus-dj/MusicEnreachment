@@ -4,12 +4,12 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 from starlette.types import Lifespan
 
@@ -84,6 +84,7 @@ from music_ingest.models import (
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import CandidateView, LibraryRecordConsolidationRecord, SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
+from music_ingest.processing.runtime import ProcessingRuntimeMonitor
 from music_ingest.reconciliation import mark_disappeared_source
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
@@ -99,6 +100,7 @@ _E2E_RECORD_ID = 'e2e-record'
 _E2E_SOURCE_IDS = ('e2e-source-a', 'e2e-source-b')
 _E2E_RECORDING_MBID = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
 _E2E_CORRECTION_MBID = '11111111-1111-4111-8111-111111111111'
+_WORKER_QUEUE_JOB_LIMIT = 100
 
 
 class SessionFactory(Protocol):
@@ -223,6 +225,7 @@ def create_app(
     musicbrainz_transport: MusicBrainzTransport | None = None,
     genre_transport: GenreTransport | None = None,
     storage_browse_roots: tuple[Path, ...] | None = None,
+    worker_monitor: ProcessingRuntimeMonitor | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     app.state.e2e_seed_enabled = e2e_seed_enabled
@@ -372,17 +375,47 @@ def create_app(
     def worker_queue() -> JSONResponse:
         with session_factory() as session:
             observed_at = datetime.now(UTC)
+            slots = () if worker_monitor is None else worker_monitor.snapshots()
+            active_job_ids = {slot.job_id for slot in slots if slot.state == 'processing' and slot.job_id is not None}
+            counts = cast(
+                tuple[int, int, int],
+                cast(
+                    object,
+                    session.execute(
+                        select(
+                            func.count(JobRecord.id),
+                            func.coalesce(
+                                func.sum(
+                                    case(
+                                        (
+                                            (JobRecord.state == 'queued')
+                                            & (JobRecord.next_attempt_at.is_not(None))
+                                            & (JobRecord.next_attempt_at > observed_at),
+                                            1,
+                                        ),
+                                        else_=0,
+                                    )
+                                ),
+                                0,
+                            ),
+                            func.coalesce(
+                                func.sum(case((JobRecord.state == 'running', 1), else_=0)),
+                                0,
+                            ),
+                        ).where(JobRecord.state.in_(['queued', 'running']))
+                    ).one(),
+                ),
+            )
+            total_active = int(counts[0])
+            retry_wait_count = int(counts[1])
+            durable_running_count = int(counts[2])
             jobs = list(
                 session.scalars(
                     select(JobRecord)
                     .where(JobRecord.state.in_(['queued', 'running']))
-                    .order_by(JobRecord.created_at, JobRecord.id)
+                    .order_by(JobRecord.id.in_(active_job_ids).desc(), JobRecord.created_at, JobRecord.id)
+                    .limit(_WORKER_QUEUE_JOB_LIMIT)
                 ).all()
-            )
-            running_count = sum(job.state == 'running' for job in jobs)
-            retry_wait_count = sum(
-                job.state == 'queued' and job.next_attempt_at is not None and job.next_attempt_at > observed_at
-                for job in jobs
             )
             source_ids = {job.source_id for job in jobs if job.source_id is not None}
             sources = {
@@ -411,18 +444,32 @@ def create_app(
                     'observed_at': observed_at.isoformat(),
                     'worker': {
                         'configured_concurrency': load_runtime_settings(session).worker_concurrency,
-                        'liveness': 'unknown',
+                        'liveness': 'available' if worker_monitor is not None else 'unavailable',
+                        'slots': [
+                            {
+                                'slot': slot.slot,
+                                'state': slot.state,
+                                'observed_at': slot.observed_at.isoformat(),
+                                'error': slot.error,
+                                'job_id': slot.job_id,
+                                'job_kind': slot.job_kind,
+                            }
+                            for slot in slots
+                        ],
                     },
                     'summary': {
-                        'running': running_count,
-                        'ready': len(jobs) - running_count - retry_wait_count,
+                        'running': len(active_job_ids) if worker_monitor is not None else durable_running_count,
+                        'ready': total_active
+                        - (len(active_job_ids) if worker_monitor is not None else durable_running_count)
+                        - retry_wait_count,
                         'retry_wait': retry_wait_count,
                     },
+                    'total_jobs': total_active,
                     'jobs': [
                         {
                             'job_id': job.id,
                             'kind': job.kind,
-                            'state': job.state,
+                            'state': 'running' if job.id in active_job_ids else job.state,
                             'queue_state': (
                                 'retry_wait'
                                 if job.state == 'queued'
