@@ -217,7 +217,6 @@ def _current_candidates(source: SourceRecordView) -> tuple[CandidateView, ...]:
 def create_app(
     session_factory: SessionFactory,
     lifespan: Lifespan[FastAPI] | None = None,
-    incoming_root: Path = Path('/data/incoming'),
     source_roots_parent: Path | None = None,
     media_root: Path | None = None,
     e2e_seed_enabled: bool = False,
@@ -262,12 +261,12 @@ def create_app(
             raise HTTPException(status_code=404, detail='not found')
         now = datetime.now(UTC)
         with session_factory() as session:
-            root = session.scalar(select(SourceRootRecord).where(SourceRootRecord.id == 'legacy'))
+            root = session.scalar(select(SourceRootRecord).where(SourceRootRecord.id == 'e2e'))
             if root is None:
                 root = SourceRootRecord(
-                    id='legacy',
-                    display_name='legacy',
-                    canonical_path=str(incoming_root),
+                    id='e2e',
+                    display_name='E2E fixture source',
+                    canonical_path='e2e://',
                     enabled=True,
                     scan_state='never_scanned',
                     created_at=now,
@@ -283,7 +282,7 @@ def create_app(
                 if source is None:
                     source = SourceRecord(
                         id=source_id,
-                        source_path=f'/data/sources/legacy/e2e/{source_id}.flac',
+                        source_path=f'e2e://{source_id}.flac',
                         device=1,
                         inode=index + 1,
                         size_bytes=1,
@@ -345,7 +344,7 @@ def create_app(
         try:
             event = parse_lidarr_event(raw_payload)
             with session_factory() as session:
-                result = dispatch_lidarr_event(session, event, raw_payload, incoming_root)
+                result = dispatch_lidarr_event(session, event, raw_payload)
                 session.commit()
         except LidarrIntakeError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -1358,7 +1357,7 @@ def create_app(
         if media_root is None:
             raise HTTPException(status_code=503, detail='storage administration is not configured')
         browse_roots = storage_browse_roots or tuple(
-            root for root in (source_roots_parent, incoming_root.parent, media_root.parent) if root is not None
+            root for root in (source_roots_parent, media_root.parent) if root is not None
         )
         return StorageService(session, browse_roots, media_root)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ import music_ingest.api.server as server
 from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
-from music_ingest.models import Base, JobRecord, RuntimeSettingRecord
+from music_ingest.models import Base, JobRecord, RuntimeSettingRecord, SourceRootRecord
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing import runtime as processing_runtime
 
@@ -193,7 +194,6 @@ def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypat
     incoming_root = source_parent / 'legacy'
     incoming_root.mkdir(parents=True)
     monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
-    monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
 
     # When: Uvicorn's ASGI lifespan enters and exits through TestClient.
     with TestClient(server.create_runtime_app()) as client:
@@ -220,7 +220,6 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
     incoming_root = source_parent / 'legacy'
     incoming_root.mkdir(parents=True)
     monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
-    monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
     started: list[tuple[object, object, object, object]] = []
 
     async def record_worker_start(
@@ -266,18 +265,32 @@ def test_processing_runtime_when_started_supervises_all_configurable_worker_slot
     assert started == list(range(8))
 
 
-def test_runtime_app_when_non_default_incoming_root_receives_download_uses_the_configured_root(
+def test_runtime_app_when_configured_source_root_receives_download_uses_that_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: a configured runtime and an incoming file outside the application's default root.
+    # Given: a configured runtime and an incoming file below a durable source root.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "runtime.db"}')
     Base.metadata.create_all(engine)
-    incoming_root = tmp_path / 'configured-incoming'
-    incoming_root.mkdir()
+    source_parent = tmp_path / 'sources'
+    incoming_root = source_parent / 'incoming'
+    incoming_root.mkdir(parents=True)
     source_path = incoming_root / 'fixture.flac'
     _ = source_path.write_bytes(b'not a FLAC container')
-    monkeypatch.setenv('MUSIC_INGEST_INCOMING_ROOT', str(incoming_root))
+    with Session(engine) as session:
+        now = datetime.now(UTC)
+        session.add(
+            SourceRootRecord(
+                id='root-incoming',
+                display_name='Incoming',
+                canonical_path=str(incoming_root.resolve()),
+                enabled=True,
+                scan_state='never_scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
@@ -290,7 +303,7 @@ def test_runtime_app_when_non_default_incoming_root_receives_download_uses_the_c
             json={'eventType': 'Download', 'trackFiles': [{'path': str(source_path)}], 'isUpgrade': False},
         )
 
-    # Then: the configured root is accepted and creates source-linked durable work.
+    # Then: the configured source root is accepted and creates source-linked durable work.
     assert response.status_code == 202
     with Session(engine) as session:
         job = session.scalars(select(JobRecord)).one()
@@ -298,11 +311,12 @@ def test_runtime_app_when_non_default_incoming_root_receives_download_uses_the_c
 
 
 def test_migrations_when_runtime_starts_upgrades_to_head(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given: a configured PostgreSQL URL and a recorded Alembic command boundary.
+    # Given: a configured PostgreSQL URL without configured source paths.
     runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 7)
     captured: list[tuple[str, str, str]] = []
 
     def upgrade(config, revision: str) -> None:
+        bootstrap_root = Path(config.cmd_opts.x[0].split('=', 1)[1])
         captured.append(
             (
                 config.get_main_option('sqlalchemy.url'),
@@ -310,11 +324,16 @@ def test_migrations_when_runtime_starts_upgrades_to_head(monkeypatch: pytest.Mon
                 revision,
             )
         )
+        assert bootstrap_root.is_dir()
+        assert bootstrap_root.parent == Path(os.environ['MUSIC_INGEST_SOURCE_ROOTS_PARENT'])
 
     monkeypatch.setattr(server.command, 'upgrade', upgrade)
+    monkeypatch.delenv('MUSIC_INGEST_INCOMING_ROOT', raising=False)
+    monkeypatch.delenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', raising=False)
 
     # When: the runtime executes its migration boundary.
     server.run_migrations(runtime_config)
 
-    # Then: an outdated database is explicitly upgraded to Alembic head with bounded connection setup.
+    # Then: an outdated database reaches head using an isolated migration bootstrap.
     assert captured == [(runtime_config.database_url, '7', 'head')]
+    assert 'MUSIC_INGEST_SOURCE_ROOTS_PARENT' not in os.environ

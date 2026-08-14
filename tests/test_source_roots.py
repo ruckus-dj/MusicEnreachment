@@ -12,18 +12,11 @@ from music_ingest.models import Base
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path]:
     source_parent = tmp_path / 'sources'
-    legacy_root = source_parent / 'legacy'
-    legacy_root.mkdir(parents=True)
+    source_parent.mkdir()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "roots.db"}')
     Base.metadata.create_all(engine)
     return (
-        TestClient(
-            create_app(
-                lambda: Session(engine),
-                incoming_root=legacy_root,
-                source_roots_parent=source_parent,
-            )
-        ),
+        TestClient(create_app(lambda: Session(engine), source_roots_parent=source_parent)),
         source_parent,
     )
 
@@ -31,7 +24,7 @@ def _client(tmp_path: Path) -> tuple[TestClient, Path]:
 def test_source_roots_when_requests_are_unauthenticated_create_update_disable_and_restart_are_durable(
     tmp_path: Path,
 ) -> None:
-    # Given: a mounted source parent with the legacy root and another selectable immediate child.
+    # Given: a mounted source parent and a selectable immediate child.
     client, source_parent = _client(tmp_path)
     archive = source_parent / 'archive'
     archive.mkdir()
@@ -100,7 +93,6 @@ def test_source_roots_when_operator_uses_picker_can_list_and_remove_an_unused_ro
     assert candidates.status_code == 200
     assert candidates.json()['items'] == [
         {'name': 'archive', 'canonical_path': str(archive)},
-        {'name': 'legacy', 'canonical_path': str(source_parent / 'legacy')},
     ]
     assert removed.status_code == 204
     assert archive.is_dir()
@@ -108,16 +100,14 @@ def test_source_roots_when_operator_uses_picker_can_list_and_remove_an_unused_ro
 
 
 def test_source_roots_when_root_has_observations_archives_them_on_removal(tmp_path: Path) -> None:
-    # Given: a legacy root with a persisted source observation.
+    # Given: an E2E fixture root with a persisted source observation.
     source_parent = tmp_path / 'sources'
-    legacy_root = source_parent / 'legacy'
-    legacy_root.mkdir(parents=True)
+    source_parent.mkdir()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "roots-enabled.db"}')
     Base.metadata.create_all(engine)
     client = TestClient(
         create_app(
             lambda: Session(engine),
-            incoming_root=legacy_root,
             source_roots_parent=source_parent,
             e2e_seed_enabled=True,
         )
@@ -125,7 +115,7 @@ def test_source_roots_when_root_has_observations_archives_them_on_removal(tmp_pa
     seeded = client.post('/api/e2e/seed')
 
     # When: an operator tries to remove the root that owns the observation.
-    removed = client.delete('/api/settings/source-roots/legacy')
+    removed = client.delete('/api/settings/source-roots/e2e')
 
     # Then: the historical evidence remains intact and the configured root is gone.
     assert seeded.status_code == 200
@@ -136,20 +126,18 @@ def test_source_roots_when_root_has_observations_archives_them_on_removal(tmp_pa
 def test_full_reprocess_when_historical_sources_exist_skips_them(tmp_path: Path) -> None:
     # Given: an archived source root that retains its historical observations.
     source_parent = tmp_path / 'sources'
-    legacy_root = source_parent / 'legacy'
-    legacy_root.mkdir(parents=True)
+    source_parent.mkdir()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess.db"}')
     Base.metadata.create_all(engine)
     client = TestClient(
         create_app(
             lambda: Session(engine),
-            incoming_root=legacy_root,
             source_roots_parent=source_parent,
             e2e_seed_enabled=True,
         )
     )
     assert client.post('/api/e2e/seed').status_code == 200
-    assert client.delete('/api/settings/source-roots/legacy').status_code == 204
+    assert client.delete('/api/settings/source-roots/e2e').status_code == 204
 
     # When: the operator requests a full reprocess.
     response = client.post('/api/library/reprocess-all')

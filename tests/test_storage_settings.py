@@ -24,7 +24,6 @@ def _client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
         TestClient(
             create_app(
                 lambda: Session(engine),
-                incoming_root=incoming,
                 source_roots_parent=data,
                 media_root=media,
                 storage_browse_roots=(data,),

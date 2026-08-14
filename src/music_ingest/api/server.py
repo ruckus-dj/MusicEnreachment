@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Self, final
 
 import anyio
@@ -75,9 +76,20 @@ def run_migrations(runtime_config: RuntimeConfig) -> None:
     migration_config.set_main_option(
         'music_ingest.connect_timeout_seconds', str(runtime_config.connect_timeout_seconds)
     )
-    legacy_root = os.environ.get('MUSIC_INGEST_INCOMING_ROOT')
-    migration_config.cmd_opts = Namespace(x=[] if legacy_root is None else [f'legacy_incoming_root={legacy_root}'])
-    command.upgrade(migration_config, 'head')
+    with TemporaryDirectory(prefix='music-ingest-migration-') as temporary_parent:
+        parent = Path(temporary_parent)
+        bootstrap_root = parent / 'bootstrap'
+        bootstrap_root.mkdir()
+        previous_parent = os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE)
+        os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE] = str(parent)
+        migration_config.cmd_opts = Namespace(x=[f'legacy_incoming_root={bootstrap_root}'])
+        try:
+            command.upgrade(migration_config, 'head')
+        finally:
+            if previous_parent is None:
+                del os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE]
+            else:
+                os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE] = previous_parent
 
 
 def create_runtime_app() -> FastAPI:
@@ -92,9 +104,8 @@ def create_runtime_app() -> FastAPI:
     session_factory = sessionmaker(engine)
     processing_config = _processing_config(os.environ, session_factory)
     worker_monitor = ProcessingRuntimeMonitor()
-    source_roots_parent = Path(
-        os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE, str(processing_config.incoming_root.parent))
-    )
+    raw_source_roots_parent = os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE)
+    source_roots_parent = None if raw_source_roots_parent is None else Path(raw_source_roots_parent)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -113,7 +124,6 @@ def create_runtime_app() -> FastAPI:
     application = create_app(
         session_factory,
         lifespan=lifespan,
-        incoming_root=processing_config.incoming_root,
         source_roots_parent=source_roots_parent,
         media_root=processing_config.media_root,
         musicbrainz_provider=processing_config.musicbrainz_provider,
@@ -139,7 +149,7 @@ def _processing_config(environment: Mapping[str, str], session_factory: Callable
         limiter=DatabaseRequestRateLimiter(session_factory), musicbrainz_host=musicbrainz_host
     )
     return ProcessingConfig(
-        incoming_root=Path(environment.get('MUSIC_INGEST_INCOMING_ROOT', '/data/incoming')),
+        incoming_root=Path('/data/incoming'),
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
         live_transport=live_transport,

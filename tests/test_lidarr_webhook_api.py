@@ -37,8 +37,8 @@ def _client(tmp_path: Path) -> tuple[TestClient, Session]:
     with Session(engine) as session:
         session.add(
             SourceRootRecord(
-                id='legacy',
-                display_name='legacy',
+                id='root-incoming',
+                display_name='Incoming',
                 canonical_path=str(incoming_root.resolve()),
                 enabled=True,
                 scan_state='scanned',
@@ -47,7 +47,7 @@ def _client(tmp_path: Path) -> tuple[TestClient, Session]:
             )
         )
         session.commit()
-    return TestClient(create_app(lambda: Session(engine), incoming_root=incoming_root)), Session(engine)
+    return TestClient(create_app(lambda: Session(engine))), Session(engine)
 
 
 def _download(path: Path, *, upgrade: bool = False) -> dict[str, object]:
@@ -180,8 +180,8 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
     with Session(engine) as session:
         session.add(
             SourceRootRecord(
-                id='legacy',
-                display_name='legacy',
+                id='root-runtime-incoming',
+                display_name='Runtime incoming',
                 canonical_path=str(incoming_root.resolve()),
                 enabled=True,
                 scan_state='scanned',
@@ -190,7 +190,7 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
             )
         )
         session.commit()
-    client = TestClient(create_app(lambda: Session(engine), incoming_root=incoming_root))
+    client = TestClient(create_app(lambda: Session(engine)))
     source_path = _flac(incoming_root / 'fixture.flac', genre='Rock')
     _ = (incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
 

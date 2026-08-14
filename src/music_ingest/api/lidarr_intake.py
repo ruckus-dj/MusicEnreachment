@@ -21,7 +21,7 @@ from music_ingest.dto import (
 )
 from music_ingest.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.library.service import record_event
-from music_ingest.models import JobRecord, SourceRecord, WebhookReceiptRecord
+from music_ingest.models import JobRecord, SourceRecord, SourceRootRecord, WebhookReceiptRecord
 from music_ingest.models.repositories import WebhookReceiptInput, WebhookReceiptRepository
 
 _EVENT_ADAPTER: TypeAdapter[LidarrEvent] = TypeAdapter(LidarrEvent)
@@ -34,9 +34,7 @@ def parse_lidarr_event(raw_payload: bytes) -> LidarrEvent:
         raise LidarrIntakeError('Lidarr payload is malformed or unsupported') from error
 
 
-def dispatch_lidarr_event(
-    session: Session, event: LidarrEvent, raw_payload: bytes, incoming_root: Path
-) -> LidarrDispatchResult:
+def dispatch_lidarr_event(session: Session, event: LidarrEvent, raw_payload: bytes) -> LidarrDispatchResult:
     fingerprint = hashlib.sha256(raw_payload).hexdigest()
     payload_json = raw_payload.decode('utf-8')
     received_at = datetime.now(UTC)
@@ -49,11 +47,9 @@ def dispatch_lidarr_event(
             _ = receipt
             return LidarrDispatchResult(job_id=None, replayed=replayed)
         case LidarrDownloadPayload():
-            _validate_download_paths(event, incoming_root)
             source_ids = _intake_download_sources(session, event)
             return _record_job(session, event, fingerprint, payload_json, received_at, source_ids)
         case LidarrRenamePayload():
-            _validate_rename_paths(event, incoming_root)
             _record_renames(session, event)
             return _record_control_receipt(session, fingerprint, payload_json, received_at)
         case LidarrAlbumDeletePayload():
@@ -113,8 +109,8 @@ def _intake_download_sources(session: Session, event: LidarrDownloadPayload) -> 
         intake_source(
             session,
             IntakeRequest(
-                source_path=track_file.path.resolve(strict=True),
-                source_root_id='legacy',
+                source_path=_source_path(track_file.path),
+                source_root_id=_source_root_id(session, track_file.path),
                 origin=Origin.LIDARR,
                 duration_seconds=None,
                 tag_observations=(),
@@ -135,34 +131,13 @@ def _receipt_exists(session: Session, fingerprint: str) -> bool:
     )
 
 
-def _validate_download_paths(event: LidarrDownloadPayload, incoming_root: Path) -> None:
-    root = incoming_root.resolve(strict=True)
-    for track_file in event.track_files:
-        if track_file.path.is_symlink():
-            raise LidarrIntakeError('Download trackFiles[].path cannot be a symbolic link')
-        try:
-            source_path = track_file.path.resolve(strict=True)
-        except FileNotFoundError as error:
-            raise LidarrIntakeError('Download trackFiles[].path must name an existing incoming file') from error
-        if not source_path.is_file() or not source_path.is_relative_to(root):
-            raise LidarrIntakeError('Download trackFiles[].path must name a file below the incoming root')
-
-
-def _validate_rename_paths(event: LidarrRenamePayload, incoming_root: Path) -> None:
-    root = incoming_root.resolve(strict=True)
-    for track_file in event.renamed_track_files:
-        if not track_file.previous_path.is_absolute() or not track_file.path.is_absolute():
-            raise LidarrIntakeError('Rename paths must be absolute')
-        previous_path = track_file.previous_path.resolve(strict=False)
-        destination_path = track_file.path.resolve(strict=False)
-        if not previous_path.is_relative_to(root) or not destination_path.is_relative_to(root):
-            raise LidarrIntakeError('Rename paths must remain below the incoming root')
-
-
 def _record_renames(session: Session, event: LidarrRenamePayload) -> None:
     for track_file in event.renamed_track_files:
         source = session.scalar(select(SourceRecord).where(SourceRecord.source_path == str(track_file.previous_path)))
         if source is not None:
+            destination_root_id = _source_root_id(session, track_file.path, require_file=False)
+            if destination_root_id != source.source_root_id:
+                raise LidarrIntakeError('Rename paths must remain within the configured source root')
             source.source_path = str(track_file.path)
             if source.library_record is not None:
                 record_event(
@@ -174,3 +149,29 @@ def _record_renames(session: Session, event: LidarrRenamePayload) -> None:
                     datetime.now(UTC),
                     source.id,
                 )
+
+
+def _source_path(path: Path) -> Path:
+    if path.is_symlink():
+        raise LidarrIntakeError('Download trackFiles[].path cannot be a symbolic link')
+    try:
+        source_path = path.resolve(strict=True)
+    except FileNotFoundError as error:
+        raise LidarrIntakeError('Download trackFiles[].path must name an existing source file') from error
+    if not source_path.is_file():
+        raise LidarrIntakeError('Download trackFiles[].path must name an existing source file')
+    return source_path
+
+
+def _source_root_id(session: Session, path: Path, *, require_file: bool = True) -> str:
+    if not path.is_absolute():
+        raise LidarrIntakeError('Source paths must be absolute')
+    source_path = _source_path(path) if require_file else path.resolve(strict=False)
+    root_ids = tuple(
+        root.id
+        for root in session.scalars(select(SourceRootRecord).where(SourceRootRecord.enabled.is_(True)))
+        if source_path.is_relative_to(Path(root.canonical_path))
+    )
+    if len(root_ids) != 1:
+        raise LidarrIntakeError('Source path must be below exactly one configured source root')
+    return root_ids[0]
