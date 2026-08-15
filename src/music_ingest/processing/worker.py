@@ -1243,7 +1243,7 @@ class ProcessingWorker:
         )
         if musicbrainz is None and acoustid is None:
             return None
-        return ProviderEvidenceService(self._session, musicbrainz, acoustid).lookup(
+        return ProviderEvidenceService(self._session, musicbrainz, acoustid, commit_on_persist=False).lookup(
             ProviderEvidenceRequest(
                 query,
                 FixtureCase.SUCCESS,

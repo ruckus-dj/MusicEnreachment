@@ -110,6 +110,25 @@ def _service(session: Session, starts: list[datetime]) -> ProviderEvidenceServic
     )
 
 
+def test_provider_evidence_when_worker_owns_transaction_rolls_back_snapshots(tmp_path: Path) -> None:
+    # Given: a worker-owned session that must atomically persist its claim and provider evidence.
+    session, starts = _session(tmp_path)
+    service = ProviderEvidenceService(
+        session=session,
+        musicbrainz=MusicBrainzFixtureProvider(FIXTURES / 'musicbrainz'),
+        acoustid=AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
+        wait_until=starts.append,
+        commit_on_persist=False,
+    )
+
+    # When: provider evidence is persisted but the worker transaction is aborted.
+    _ = service.lookup(ProviderEvidenceRequest('fixture', FixtureCase.SUCCESS, None, None), NOW)
+    session.rollback()
+
+    # Then: no provider snapshot escapes the worker transaction.
+    assert session.scalars(select(ProviderSnapshotRecord)).all() == []
+
+
 def _session(tmp_path: Path) -> tuple[Session, list[datetime]]:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "providers.db"}')
     Base.metadata.create_all(engine)

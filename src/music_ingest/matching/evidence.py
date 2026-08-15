@@ -67,6 +67,7 @@ class ProviderEvidenceService:
     musicbrainz: MusicBrainzProvider | None
     acoustid: AcoustIdProvider | None
     wait_until: Callable[[datetime], None] | None = None
+    commit_on_persist: bool = True
 
     def lookup(self, request: ProviderEvidenceRequest, now: datetime) -> ProviderEvidenceResult:
         acoustid = self._lookup_acoustid(request, now)
@@ -168,7 +169,7 @@ class ProviderEvidenceService:
             age_seconds=int(age.total_seconds()),
             http_status=snapshot.http_status,
         )
-        self.session.commit()
+        self._persist()
         return None
 
     def _persist_musicbrainz(self, result: MusicBrainzResult, request_hash: str, now: datetime) -> MusicBrainzResult:
@@ -185,7 +186,7 @@ class ProviderEvidenceService:
             state='fresh',
             http_status=persisted.http_status,
         )
-        self.session.commit()
+        self._persist()
         return _with_musicbrainz_provenance(result, persisted)
 
     def _persist_acoustid(self, result: AcoustIdResult, request_hash: str, now: datetime) -> AcoustIdResult:
@@ -202,8 +203,14 @@ class ProviderEvidenceService:
             state='fresh',
             http_status=persisted.http_status,
         )
-        self.session.commit()
+        self._persist()
         return _with_acoustid_provenance(result, persisted)
+
+    def _persist(self) -> None:
+        if self.commit_on_persist:
+            self.session.commit()
+            return
+        self.session.flush()
 
 
 def _disabled_request_hash() -> str:
