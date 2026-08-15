@@ -16,7 +16,7 @@ from music_ingest.matching.providers import (
     RecordingCandidate,
     ReleaseCandidate,
 )
-from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, resolve_match
+from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, MatchResult, resolve_match
 from music_ingest.processing import worker as processing
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
@@ -115,3 +115,28 @@ def test_noize_vol_1_album_match_selects_its_recording_despite_equal_acoustid_sc
     assert vol_1_match.decision is MatchDecision.AUTO_SELECTED
     assert vol_2_match.decision is MatchDecision.NEEDS_REVIEW
     assert selected == (vol_1_result, CandidateScore(VOL_1_RECORDING, 0.96927744))
+
+
+def test_album_match_keeps_acoustid_recording_when_recording_projection_is_missing() -> None:
+    # Given: one album-compatible MusicBrainz match still carries its verified AcousticID score.
+    provider_result = _provider_result(
+        ReleaseCandidate(
+            'release-vol-1',
+            'The Greatest Hits Vol.1',
+            'Noize MC',
+            recording_mbids=(VOL_1_RECORDING,),
+        )
+    )
+    album_match = MatchResult(
+        MatchDecision.AUTO_SELECTED,
+        'release-vol-1',
+        CandidateScore(VOL_1_RECORDING, 0.96927744),
+        CandidateScore('release-vol-1', 0.8),
+        None,
+    )
+
+    # When: album resolution runs without a separately projected recording row.
+    selected = processing.select_acoustid_recording_match(((provider_result, album_match),), (), 0.7)
+
+    # Then: album evidence still selects the corresponding AcousticID recording.
+    assert selected == (provider_result, CandidateScore(VOL_1_RECORDING, 0.96927744))

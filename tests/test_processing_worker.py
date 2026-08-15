@@ -316,6 +316,52 @@ def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:
     }
 
 
+def test_stored_match_tags_preserves_musicbrainz_metadata_without_acoustid() -> None:
+    # Given: MusicBrainz selected a release, while AcousticID returned no recording.
+    release = (
+        'release-id',
+        CandidateEvidencePayload(
+            provider='musicbrainz',
+            score=0.8,
+            tags={
+                'ALBUM': 'Fixture Release',
+                'MUSICBRAINZ_ALBUMID': 'release-id',
+                'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                'TITLE': 'Fixture Track',
+            },
+        ),
+    )
+
+    # When: recovery reconstructs metadata from the available provider evidence.
+    tags = processing._stored_match_tags(None, release)
+
+    # Then: release metadata is retained even though recording identity remains reviewable.
+    assert tags == {
+        'ALBUM': 'Fixture Release',
+        'MUSICBRAINZ_ALBUMID': 'release-id',
+        'MUSICBRAINZ_RECORDINGID': 'recording-id',
+        'TITLE': 'Fixture Track',
+    }
+
+
+def test_stored_release_recording_mbid_comes_from_musicbrainz_tags() -> None:
+    # Given: a MusicBrainz release candidate with a recording identity and no AcoustID result.
+    release = (
+        'release-id',
+        CandidateEvidencePayload(
+            provider='musicbrainz',
+            score=0.8,
+            tags={'MUSICBRAINZ_RECORDINGID': 'recording-id'},
+        ),
+    )
+
+    # When: recovery extracts the recording identity from the release evidence.
+    recording_mbid = processing._stored_release_recording_mbid(release)
+
+    # Then: MusicBrainz supplies the LibraryRecord recording identity.
+    assert recording_mbid == 'recording-id'
+
+
 def test_independent_match_identity_preserves_a_selected_release_when_recording_is_unresolved() -> None:
     # Given: a record with no recording identity and one qualifying MusicBrainz release.
     record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
@@ -327,6 +373,81 @@ def test_independent_match_identity_preserves_a_selected_release_when_recording_
     assert record.musicbrainz_release_id == 'release-id'
     assert record.musicbrainz_recording_id is None
     assert record.match_state == 'needs_review'
+
+
+def test_match_identity_when_recording_is_already_owned_routes_the_source_to_review(
+    tmp_path: Path,
+) -> None:
+    # Given: another LibraryRecord already owns the verified recording identity.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "identity-conflict.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        owner = LibraryRecord(
+            id='record-owner',
+            created_at=now,
+            updated_at=now,
+            musicbrainz_recording_id='recording-id',
+        )
+        target = LibraryRecord(id='record-target', created_at=now, updated_at=now)
+        session.add_all((owner, target))
+        session.commit()
+
+        # When: the worker applies an automatic match to the other record.
+        applied = processing._apply_match_identity_safely(
+            session,
+            target,
+            MatchResult(
+                MatchDecision.AUTO_SELECTED,
+                'release-id',
+                CandidateScore('recording-id', 1.0),
+                CandidateScore('release-id', 1.0),
+                None,
+            ),
+            'source-target',
+            now,
+        )
+
+        # Then: the worker absorbs the duplicate-key conflict instead of exposing it.
+        assert not applied
+        assert target.musicbrainz_recording_id is None
+        assert target.match_state == 'needs_review'
+        session.flush()
+
+
+def test_independent_match_identity_when_recording_is_already_owned_routes_the_source_to_review(
+    tmp_path: Path,
+) -> None:
+    # Given: another LibraryRecord already owns the stored recording identity.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "independent-identity-conflict.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        owner = LibraryRecord(
+            id='record-owner',
+            created_at=now,
+            updated_at=now,
+            musicbrainz_recording_id='recording-id',
+        )
+        target = LibraryRecord(id='record-target', created_at=now, updated_at=now)
+        session.add_all((owner, target))
+        session.commit()
+
+        # When: stored provider evidence applies the identity to the other record.
+        applied = processing._apply_independent_match_identity_safely(
+            session,
+            target,
+            'recording-id',
+            'release-id',
+            'source-target',
+            now,
+        )
+
+        # Then: the worker absorbs the duplicate-key conflict and keeps the record reviewable.
+        assert not applied
+        assert target.musicbrainz_recording_id is None
+        assert target.match_state == 'needs_review'
+        session.flush()
 
 
 def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,6 +500,31 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
         assert job.state == 'completed'
         assert job.attempts[0].started_at == started_at
         assert job.attempts[0].finished_at == finished_at
+
+
+def test_worker_run_once_rolls_back_failed_flush_before_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: a claimed job whose processing raises after mutating the transaction.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker-rollback.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+
+    def fail_processing(worker: ProcessingWorker, claimed: ClaimedJob, processing_now: datetime) -> None:
+        _ = worker, claimed, processing_now
+        raise RuntimeError('simulated flush failure')
+
+    monkeypatch.setattr(ProcessingWorker, '_process', fail_processing)
+    with Session(engine) as session:
+        session.add(JobRecord(id='rollback-job', kind='reconciliation_scan', state='queued', created_at=now))
+        session.commit()
+
+        # When: the worker handles the failed processing attempt.
+        assert ProcessingWorker(session, _config(tmp_path)).run_once()
+
+        # Then: retry bookkeeping succeeds on a usable transaction instead of cascading the flush error.
+        job = session.get(JobRecord, 'rollback-job')
+        assert job is not None
+        assert job.state == 'queued'
+        assert job.attempts[0].state == 'retry_wait'
 
 
 def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None:

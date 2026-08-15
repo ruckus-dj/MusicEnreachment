@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
@@ -113,11 +114,13 @@ from music_ingest.processing.metadata import (
 from music_ingest.publication import (
     PublicationAttemptRequest,
     acquire_publication_destination_lock,
+    cleanup_attempt,
     expose_attempt,
-    finalize_and_cleanup_attempt,
+    finalize_attempt,
     mark_staged,
     reconcile_attempts,
     reserve_attempt,
+    try_acquire_publication_destination_lock,
 )
 from music_ingest.publication.service import (
     PublicationError,
@@ -279,8 +282,11 @@ def _stored_match_tags(
     recording: tuple[str, CandidateEvidencePayload] | None,
     release: tuple[str, CandidateEvidencePayload] | None,
 ) -> dict[str, str]:
-    if recording is None or release is None:
+    if release is None:
         return {}
+    if recording is None:
+        release_mbid, release_evidence = release
+        return {**release_evidence.tags, 'MUSICBRAINZ_ALBUMID': release_mbid}
     recording_mbid, _ = recording
     release_mbid, release_evidence = release
     release_recording_mbid = release_evidence.tags.get('MUSICBRAINZ_RECORDINGID') or release_evidence.tags.get(
@@ -293,6 +299,12 @@ def _stored_match_tags(
         'MUSICBRAINZ_ALBUMID': release_mbid,
         'MUSICBRAINZ_RECORDINGID': recording_mbid,
     }
+
+
+def _stored_release_recording_mbid(release: tuple[str, CandidateEvidencePayload] | None) -> str | None:
+    if release is None:
+        return None
+    return release[1].tags.get('MUSICBRAINZ_RECORDINGID') or release[1].tags.get('MUSICBRAINZ_TRACKID')
 
 
 def _unique_acoustid_album_match(
@@ -323,11 +335,16 @@ def select_acoustid_recording_match(
 ) -> tuple[ProviderEvidenceResult, CandidateScore] | None:
     selected_album_match = _unique_acoustid_album_match(album_matches)
     if selected_album_match is not None:
-        provider_result, _ = selected_album_match
+        provider_result, album_match = selected_album_match
         selected_recording_matches = tuple(
             recording_match for recording_match in recording_matches if recording_match[0] == provider_result
         )
-        return selected_recording_matches[0] if len(selected_recording_matches) == 1 else None
+        if len(selected_recording_matches) == 1:
+            return selected_recording_matches[0]
+        album_recording = album_match.recording_score
+        if album_recording.candidate_mbid is not None and album_recording.score >= confidence_threshold:
+            return provider_result, album_recording
+        return None
     return _unique_acoustid_recording_match(recording_matches, confidence_threshold)
 
 
@@ -409,6 +426,34 @@ def _apply_match_identity(record: LibraryRecord, match_result: MatchResult | Non
     record.musicbrainz_recording_id = match_result.recording_score.candidate_mbid
 
 
+def _apply_match_identity_safely(
+    session: Session,
+    record: LibraryRecord,
+    match_result: MatchResult | None,
+    source_id: str,
+    now: datetime,
+) -> bool:
+    if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
+        return True
+    try:
+        with session.begin_nested():
+            _apply_match_identity(record, match_result)
+            session.flush()
+    except IntegrityError:
+        record.match_state = 'needs_review'
+        record_event(
+            session,
+            record.id,
+            'recording_identity_conflict',
+            'needs_review',
+            'verified recording identity is already assigned to another library record',
+            now,
+            source_id,
+        )
+        return False
+    return True
+
+
 def _apply_independent_match_identity(
     record: LibraryRecord,
     recording_mbid: str | None,
@@ -423,6 +468,33 @@ def _apply_independent_match_identity(
         if record.musicbrainz_recording_id is not None and record.musicbrainz_release_id is not None
         else 'needs_review'
     )
+
+
+def _apply_independent_match_identity_safely(
+    session: Session,
+    record: LibraryRecord,
+    recording_mbid: str | None,
+    release_mbid: str | None,
+    source_id: str,
+    now: datetime,
+) -> bool:
+    try:
+        with session.begin_nested():
+            _apply_independent_match_identity(record, recording_mbid, release_mbid)
+            session.flush()
+    except IntegrityError:
+        record.match_state = 'needs_review'
+        record_event(
+            session,
+            record.id,
+            'recording_identity_conflict',
+            'needs_review',
+            'verified recording identity is already assigned to another library record',
+            now,
+            source_id,
+        )
+        return False
+    return True
 
 
 @final
@@ -451,7 +523,8 @@ class ProcessingWorker:
             self._retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
             return True
         try:
-            self._process(claimed, now)
+            with self._session.begin_nested():
+                self._process(claimed, now)
         except MetadataWriteError as error:
             self._retry_claim(claimed, str(error), now)
         except ProcessingInfrastructureError as error:
@@ -470,7 +543,7 @@ class ProcessingWorker:
         except ValueError as error:
             self._retry_claim(claimed, str(error), now, error)
         except Exception as error:  # noqa: BLE001
-            self._retry_claim(claimed, 'unexpected processing error', now, error)
+            self._retry_claim(claimed, f'unexpected processing error: {error}', now, error)
         finally:
             self._discard_staging(claimed.job.id)
             if claimed.attempt.state == 'running':
@@ -674,8 +747,9 @@ class ProcessingWorker:
             if current_publication is not None
             else self._config.media_root / relative_directory
         )
-        acquire_publication_destination_lock(self._session, destination_release)
         if relative_directory == 'Unsorted' and current_publication is None:
+            if not try_acquire_publication_destination_lock(self._session, destination_release):
+                raise ProcessingInfrastructureError('publication destination is busy; retrying filesystem scan')
             output_name = next_unsorted_filename(
                 self._config.media_root / relative_directory, source_path.suffix.casefold()
             )
@@ -716,6 +790,8 @@ class ProcessingWorker:
             ffmpeg_command=self._config.ffmpeg_command,
             timeout_seconds=self._timeout_seconds(),
         )
+        if not try_acquire_publication_destination_lock(self._session, destination_release):
+            raise ProcessingInfrastructureError('publication destination is busy; retrying filesystem scan')
         self._session.refresh(source)
         if source.intake_state == 'replaced':
             record_event(
@@ -859,7 +935,16 @@ class ProcessingWorker:
             run_musicbrainz=claimed.job.kind == 'musicbrainz_analysis',
         )
         if provider_result is None:
-            raise ValueError('provider analysis has no configured providers')
+            record_event(
+                self._session,
+                record.id,
+                'analysis_ready_for_review',
+                'needs_review',
+                'provider analysis could not build a query from the available source metadata',
+                now,
+                source.id,
+            )
+            return
         if claimed.job.kind == 'acoustid_analysis':
             acoustic_result = provider_result.acoustid
             match acoustic_result:
@@ -976,11 +1061,16 @@ class ProcessingWorker:
                 if associated is not None:
                     record = library_record_detail(self._session, associated.library_record_id)
             if stored_release is not None:
-                _apply_independent_match_identity(
+                release_recording_mbid = _stored_release_recording_mbid(stored_release)
+                if not _apply_independent_match_identity_safely(
+                    self._session,
                     record,
-                    record.musicbrainz_recording_id,
+                    record.musicbrainz_recording_id or release_recording_mbid,
                     stored_release[0],
-                )
+                    source.id,
+                    now,
+                ):
+                    return
             if stored_recording is not None or stored_release is not None:
                 analyzed_tags = _stored_match_tags(stored_recording, stored_release)
                 record_event(
@@ -1075,7 +1165,8 @@ class ProcessingWorker:
                 source.id,
             )
             return
-        _apply_match_identity(record, match_result)
+        if not _apply_match_identity_safely(self._session, record, match_result, source.id, now):
+            return
         analyzed_tags = _analyzed_tags(provider_result, match_result)
         source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
         if not analyzed_tags:
@@ -1161,7 +1252,6 @@ class ProcessingWorker:
         destination_release = (
             Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
         )
-        acquire_publication_destination_lock(self._session, destination_release)
         attempt_token = uuid4().hex
         attempt = reserve_attempt(
             self._session,
@@ -1215,8 +1305,10 @@ class ProcessingWorker:
         provider_artwork_staged = self._stage_artwork_for_release(source_path, staged_release, final_tags)
         _ = provider_artwork_staged
         mark_staged(self._session, attempt, now)
+        acquire_publication_destination_lock(self._session, destination_release)
         expose_attempt(self._session, attempt, now)
-        _ = finalize_and_cleanup_attempt(self._session, attempt, now)
+        _ = finalize_attempt(self._session, attempt, now)
+        cleanup_attempt(attempt)
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self._session, record.id, now)
         record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
