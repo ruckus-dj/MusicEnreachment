@@ -14,6 +14,16 @@ immutable SourceRecord
   -> existing staged atomic publication replacement
 ```
 
+## Подтверждённые исправления 2026-08-15
+
+Три live-кейса показали не одну общую проблему, а три разных разрыва данных:
+
+1. Album-compatible MusicBrainz winner мог потерять AcoustID recording при отсутствии промежуточной projection-записи. `select_acoustid_recording_match()` теперь сохраняет recording MBID и score из выбранного album match, если score проходит тот же порог.
+2. При MusicBrainz-only recovery `_stored_match_tags()` отбрасывал release tags, потому что требовал одновременно AcoustID и release candidate. Для уникального single-track release адаптер также сохраняет recording MBID из MusicBrainz; worker переносит его в `LibraryRecord` и recovery revisions. Если MusicBrainz recording identity действительно отсутствует, запись по-прежнему остаётся `match_state=needs_review`.
+3. При reassociation старый source final мог затереть уже подтверждённый provider final целевого `LibraryRecord`. Reassociation теперь предпочитает последний provider final целевого record, сохраняя immutable history и текущий staged publication flow.
+
+Добавлены регрессионные тесты в `tests/test_noize_matching_regression.py`, `tests/test_processing_worker.py` и `tests/test_recording_association.py`. Эти изменения не выбирают неоднозначные releases автоматически и не меняют incoming source.
+
 `LibraryRecord` остаётся identity recording/composition. `SourceRecord` остаётся неизменяемой наблюдаемой версией файла. `ReleaseResolutionGroup` — новая, отдельная aggregate для ответа на вопрос «какая edition объясняет этот набор дорожек?». Путь может быть evidence для grouping/debug, но никогда не является стабильным identity.
 
 ## P0-A. Устранить неверную зависимость recording от release
