@@ -8,7 +8,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Final, override
 
-from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
 from music_ingest.models import SourceRecord
 from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
@@ -254,20 +253,10 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
     return audio_paths
 
 
-def _validate_flac(path: Path, request: PublicationRequest) -> None:
-    try:
-        validate_decoder(path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds)
-    except DecoderValidationError as error:
-        raise PublicationError('FLAC decoder validation failed') from error
-
-
 def _validate_capability(path: Path, request: PublicationRequest) -> None:
     inspection = inspect_media_capability(path, timeout_seconds=request.timeout_seconds)
     if inspection.capability is None:
         raise PublicationError('audio has no declared publication capability')
-
-    if path.suffix.casefold() == '.flac':
-        _validate_flac(path, request)
 
 
 def _validate_tags(path: Path, request: PublicationRequest) -> None:
