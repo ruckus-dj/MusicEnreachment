@@ -49,8 +49,20 @@ uv run ruff format --check src tests alembic
 uv run ty check
 
 PYTHONPATH=src uv run python -m music_ingest dry-run SOURCE_DIRECTORY REPORT_DIRECTORY
+PYTHONPATH=src uv run python -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest serve
+```
+
+`media-stage` runs the same database-free media inspection, fingerprint calculation, staging, metadata, artwork,
+and final decoder validation stages used by the production worker. It writes one derived audio file below
+`OUTPUT_DIRECTORY`, keeps temporary files below `TMP_DIRECTORY`, and never mutates the input. It does not persist
+fingerprint evidence or publish to the managed library, because those are database-backed worker orchestration steps.
+
+For a local profile, wrap the same command with Python's profiler:
+
+```bash
+PYTHONPATH=src uv run python -m cProfile -o media-stage.prof -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
 ```
 
 The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT`, then add each source root through Settings; configure final media and transient staging roots with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
