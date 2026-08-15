@@ -27,7 +27,7 @@ from music_ingest.models import (
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.publication import acquire_publication_destination_lock
+from music_ingest.publication import acquire_publication_destination_lock, try_acquire_publication_destination_lock
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
@@ -75,6 +75,27 @@ def test_publication_destination_lock_when_two_transactions_target_one_release_b
             # Then: it acquires the lock only after the first transaction releases it.
             contender.result(timeout=5)
             assert contender_acquired.is_set()
+        engine.dispose()
+
+
+@pytest.mark.live
+def test_publication_destination_try_lock_when_contended_returns_without_blocking_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: one PostgreSQL transaction already owns a managed release destination lock.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        destination = Path('/managed/Artist/Album')
+        with Session(engine) as holder:
+            acquire_publication_destination_lock(holder, destination)
+            with Session(engine) as contender:
+                # When: a second worker attempts the non-blocking lock.
+                acquired = try_acquire_publication_destination_lock(contender, destination)
+
+                # Then: the worker can retry another job instead of waiting on the destination.
+                assert not acquired
         engine.dispose()
 
 

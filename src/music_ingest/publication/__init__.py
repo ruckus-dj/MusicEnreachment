@@ -29,6 +29,18 @@ def acquire_publication_destination_lock(session: Session, destination: Path) ->
     _ = session.execute(text('SELECT pg_advisory_xact_lock(:lock_key)'), {'lock_key': lock_key})
 
 
+def try_acquire_publication_destination_lock(session: Session, destination: Path) -> bool:
+    """Try to serialize one publication without blocking a worker slot."""
+    if session.get_bind().dialect.name != _POSTGRESQL_DIALECT:
+        return True
+    lock_key = int.from_bytes(
+        sha256(str(destination.resolve(strict=False)).encode()).digest()[:8], byteorder='big', signed=True
+    )
+    return bool(
+        session.execute(text('SELECT pg_try_advisory_xact_lock(:lock_key)'), {'lock_key': lock_key}).scalar_one()
+    )
+
+
 __all__ = [
     'PublicationAttemptRequest',
     'acquire_publication_destination_lock',
@@ -39,4 +51,5 @@ __all__ = [
     'mark_staged',
     'reconcile_attempts',
     'reserve_attempt',
+    'try_acquire_publication_destination_lock',
 ]
