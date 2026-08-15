@@ -32,7 +32,6 @@ from music_ingest.external.musicbrainz_genres import display_genre_name
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
-from music_ingest.inspectors.media_capabilities import inspect_media_capability
 from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
 from music_ingest.inspectors.mp3 import inspect_mp3
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
@@ -101,6 +100,14 @@ from music_ingest.normalize.metadata import (
     MetadataWriteRequest,
     write_canonical_metadata,
     write_observed_metadata,
+)
+from music_ingest.processing.media_stage import (
+    MediaStageRequest,
+    inspect_source_capability,
+    inspect_source_media,
+    plan_media_stage,
+    stage_media,
+    stage_source_artwork,
 )
 from music_ingest.processing.metadata import (
     fallback_metadata,
@@ -675,7 +682,7 @@ class ProcessingWorker:
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
-        capability = inspect_media_capability(source_path, timeout_seconds=self._timeout_seconds()).capability
+        capability = inspect_source_capability(source_path, timeout_seconds=self._timeout_seconds())
         if capability is None:
             self._quarantine(claimed, source, 'source has no declared media capability', now)
             return
@@ -690,57 +697,64 @@ class ProcessingWorker:
                 provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
                 _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
             return
+        inspection = inspect_source_media(
+            source_path,
+            ffmpeg_command=self._config.ffmpeg_command,
+            timeout_seconds=self._timeout_seconds(),
+            cached_decoder_evidence=self._cached_decoder_evidence(source),
+            capability=capability,
+        )
         if is_flac:
-            inspection = inspect_flac(
-                source_path,
-                ffmpeg_command=self._config.ffmpeg_command,
-                timeout_seconds=self._timeout_seconds(),
-                cached_decoder_evidence=self._cached_decoder_evidence(source),
-            )
+            flac_inspection = inspection.flac
+            if flac_inspection is None:
+                raise ProcessingInfrastructureError('FLAC inspection result is missing')
             if self._cached_decoder_evidence(source) is None:
-                self._record_decoder_evidence(source, inspection.flac_test, now)
-            malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings)
+                self._record_decoder_evidence(source, flac_inspection.flac_test, now)
+            malformed = any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in flac_inspection.findings)
             if malformed:
                 self._invalid_audio(claimed, source, 'malformed FLAC container', now)
                 return
             has_repairable_wrapper = any(
-                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
+                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in flac_inspection.findings
             )
-            if inspection.flac_test.state is ToolState.FAILED and not has_repairable_wrapper:
+            if flac_inspection.flac_test.state is ToolState.FAILED and not has_repairable_wrapper:
                 self._invalid_audio(claimed, source, 'FLAC decoder rejected audio', now)
                 return
-            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
-                raise ProcessingInfrastructureError(f'flac inspection unavailable: {inspection.flac_test.state}')
+            if flac_inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
+                raise ProcessingInfrastructureError(f'flac inspection unavailable: {flac_inspection.flac_test.state}')
             _ = fingerprint_source(
                 self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                FingerprintRequest(SourceId(source.id), source_path, flac_inspection),
                 fpcalc_command=self._config.fpcalc_command,
                 timeout_seconds=self._timeout_seconds(),
             )
         elif suffix == '.mp3':
-            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
-            if inspection.state is Mp3InspectionState.QUARANTINE:
+            mp3_inspection = inspection.mp3
+            if mp3_inspection is None:
+                raise ProcessingInfrastructureError('MP3 inspection result is missing')
+            if mp3_inspection.state is Mp3InspectionState.QUARANTINE:
                 self._invalid_audio(claimed, source, 'malformed MP3 container', now)
                 return
-            if inspection.state is Mp3InspectionState.INFRASTRUCTURE:
-                raise ProcessingInfrastructureError(f'mp3 inspection unavailable: {inspection.ffprobe.state}')
+            if mp3_inspection.state is Mp3InspectionState.INFRASTRUCTURE:
+                raise ProcessingInfrastructureError(f'mp3 inspection unavailable: {mp3_inspection.ffprobe.state}')
             _ = fingerprint_source(
                 self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                FingerprintRequest(SourceId(source.id), source_path, mp3_inspection),
                 fpcalc_command=self._config.fpcalc_command,
                 timeout_seconds=self._timeout_seconds(),
             )
         else:
-            self._validate_source_decoder(source, source_path, now)
-        tags = read_tags(source_path)
+            if self._cached_decoder_evidence(source) is None and inspection.decoder is not None:
+                self._record_decoder_evidence(source, inspection.decoder, now)
+        plan = plan_media_stage(source_path)
+        tags = plan.source_tags
         self._capture_observations(source, source_path, tags)
         original_tags = dict(tags)
-        metadata = fallback_metadata(tags)
+        metadata = plan.metadata
         record = ensure_source_record(self._session, source, now)
         _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
         staged_release = self._staging_directory(claimed.job.id)
-        sanitized_path = staged_release / ('.sanitized.flac' if is_flac else f'.staged{source_path.suffix}')
-        relative_directory, output_name = publication_layout(tags, source_path.name)
+        relative_directory, output_name = plan.relative_directory, plan.output_name
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
         destination_release = (
             Path(current_publication.path).parent
@@ -753,43 +767,28 @@ class ProcessingWorker:
             output_name = next_unsorted_filename(
                 self._config.media_root / relative_directory, source_path.suffix.casefold()
             )
-        if is_flac:
-            sanitized = sanitize_flac(
-                FlacSanitizationRequest(
-                    source_path, sanitized_path, staged_release, self._config.ffmpeg_command, self._timeout_seconds()
-                )
+        stage_result = stage_media(
+            MediaStageRequest(
+                plan,
+                staged_release,
+                output_name,
+                self._config.ffmpeg_command,
+                self._timeout_seconds(),
+                load_runtime_settings(self._session) if metadata is not None else None,
             )
+        )
+        if is_flac:
+            if stage_result.flac_streaminfo is None:
+                raise ProcessingInfrastructureError('FLAC stage result has no streaminfo')
             source.media_codec = 'FLAC'
-            source.media_bit_depth = sanitized.streaminfo.bits_per_sample
-            source.media_sample_rate = sanitized.streaminfo.sample_rate
-            source.media_channels = sanitized.streaminfo.channels
+            source.media_bit_depth = stage_result.flac_streaminfo.bits_per_sample
+            source.media_sample_rate = stage_result.flac_streaminfo.sample_rate
+            source.media_channels = stage_result.flac_streaminfo.channels
             source.media_bitrate = None
         else:
-            _ = shutil.copy2(source_path, sanitized_path)
             source.media_codec = capability.codec.upper()
-        output_path = staged_release / output_name
-        if metadata is None:
-            observed = write_observed_metadata(sanitized_path, tags)
-            _ = sanitized_path.rename(output_path)
-            written = replace(observed, output_path=output_path)
-        else:
-            written = write_canonical_metadata(
-                MetadataWriteRequest(
-                    sanitized_path,
-                    output_path,
-                    staged_release,
-                    metadata,
-                    field_policy(),
-                    genre_policy(metadata.genres, load_runtime_settings(self._session)),
-                )
-            )
-            sanitized_path.unlink()
-        self._stage_artwork(source_path, staged_release)
-        validate_decoder(
-            output_path,
-            ffmpeg_command=self._config.ffmpeg_command,
-            timeout_seconds=self._timeout_seconds(),
-        )
+        written_tags = stage_result.written_tags
+        self._session.flush()
         if not try_acquire_publication_destination_lock(self._session, destination_release):
             raise ProcessingInfrastructureError('publication destination is busy; retrying filesystem scan')
         self._session.refresh(source)
@@ -821,7 +820,7 @@ class ProcessingWorker:
             else replace_published_audio(request, Path(current_publication.path))
         )
         final_revision = append_metadata_revision(
-            self._session, record.id, source.id, 'final', dict(written.tags), 'worker', now
+            self._session, record.id, source.id, 'final', dict(written_tags), 'worker', now
         )
         audio_path = result.published_audio
         if audio_path is None:
@@ -857,7 +856,7 @@ class ProcessingWorker:
         if providers_enabled:
             provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
             _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
-        if not written.tags:
+        if not written_tags:
             record_event(
                 self._session,
                 record.id,
@@ -1582,13 +1581,7 @@ class ProcessingWorker:
             shutil.rmtree(directory)
 
     def _stage_artwork(self, source_path: Path, staged_release: Path) -> None:
-        artwork = next(
-            (path for path in (source_path.parent / 'cover.jpg', source_path.parent / 'cover.webp') if path.is_file()),
-            None,
-        )
-        if artwork is None:
-            return
-        _ = shutil.copy2(artwork, staged_release / artwork.name)
+        stage_source_artwork(source_path, staged_release)
 
     def _stage_artwork_for_release(self, source_path: Path, staged_release: Path, final_tags: dict[str, str]) -> bool:
         self._stage_artwork(source_path, staged_release)

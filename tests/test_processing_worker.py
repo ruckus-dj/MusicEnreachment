@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+import music_ingest.processing.media_stage as media_stage
 import music_ingest.processing.worker as processing
 from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
@@ -701,17 +702,17 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         ),
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
-    monkeypatch.setattr(processing, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(media_stage, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
     if suffix == '.mp3':
         monkeypatch.setattr(
-            processing,
+            media_stage,
             'inspect_mp3',
             lambda *_args, **_kwargs: Mp3InspectionResult(
                 Mp3InspectionState.VALID, (), None, None, ToolEvidence(ToolState.SUCCESS, 0, '', '')
             ),
         )
     monkeypatch.setattr(
-        processing,
+        media_stage,
         'read_tags',
         lambda *_args, **_kwargs: [
             ('TITLE', 'Fixture Track'),
@@ -726,7 +727,12 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
             ('GENRE', 'Hip Hop; Alternative Rock'),
         ],
     )
-    monkeypatch.setattr(processing, 'validate_decoder', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(media_stage, 'validate_decoder', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        media_stage,
+        'decoder_evidence',
+        lambda *_args, **_kwargs: ToolEvidence(ToolState.SUCCESS, 0, '', ''),
+    )
 
     def preserve_audio(request: processing.MetadataWriteRequest) -> MetadataWriteResult:
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -734,7 +740,7 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         return MetadataWriteResult(request.output_path, (('TITLE', 'Fixture Track'),))
 
     monkeypatch.setattr(
-        processing,
+        media_stage,
         'write_canonical_metadata',
         preserve_audio,
     )
@@ -814,7 +820,7 @@ def test_worker_when_decoder_rejects_staged_audio_quarantines_without_publishing
         nonlocal published
         published = True
 
-    monkeypatch.setattr(processing, 'validate_decoder', reject_decoder)
+    monkeypatch.setattr(media_stage, 'validate_decoder', reject_decoder)
     monkeypatch.setattr(processing, 'publish_release', fail_publish)
 
     # When: the worker processes the queued initial job.
@@ -1012,7 +1018,7 @@ def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerpri
     def unexpected_media_tool(*_args: object, **_kwargs: object) -> None:
         raise AssertionError('unchanged source must reuse durable media evidence')
 
-    monkeypatch.setattr(processing, 'inspect_flac', unexpected_media_tool)
+    monkeypatch.setattr(media_stage, 'inspect_flac', unexpected_media_tool)
     monkeypatch.setattr(processing, 'fingerprint_source', unexpected_media_tool)
 
     # When: the full reanalysis scans the same unchanged source observation.
