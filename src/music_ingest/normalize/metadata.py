@@ -16,7 +16,7 @@ from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 
 from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
-from music_ingest.inspectors.media_capabilities import inspect_media_capability
+from music_ingest.inspectors.media_capabilities import MediaCapability, inspect_media_capability
 from music_ingest.normalize.genres import GenreNormalizationError, normalize_genres
 from music_ingest.normalize.tags import MetadataTagError, write_normalized_tags
 
@@ -59,6 +59,7 @@ class MetadataWriteRequest:
     metadata: CanonicalMetadata
     fields: FieldPolicy
     genres: GenrePolicy
+    capability: MediaCapability | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +94,7 @@ def write_canonical_metadata(request: MetadataWriteRequest) -> MetadataWriteResu
     """Write only canonical Vorbis comments into a new staged FLAC."""
     source_path, output_path, staging_directory = _validate_paths(request)
     tags = _canonical_tags(request.metadata, request.fields, request.genres)
-    temporary_path = _copy_to_staging(source_path, staging_directory, output_path.suffix)
+    temporary_path = _copy_to_staging(source_path, staging_directory, output_path.suffix, request.capability)
     try:
         if output_path.suffix.casefold() == '.mp3':
             _write_mp3_tags(temporary_path, request.metadata)
@@ -385,9 +386,11 @@ def _canonical_tags(
     return required + tuple((name, value) for name, value in optional if value is not None)
 
 
-def _copy_to_staging(source_path: Path, staging_directory: Path, suffix: str) -> Path:
-    inspection = inspect_media_capability(source_path)
-    if inspection.capability is None and suffix.casefold() != '.mp3':
+def _copy_to_staging(
+    source_path: Path, staging_directory: Path, suffix: str, capability: MediaCapability | None = None
+) -> Path:
+    inspection = inspect_media_capability(source_path) if capability is None else None
+    if capability is None and (inspection is None or inspection.capability is None) and suffix.casefold() != '.mp3':
         raise MetadataWriteError('source has no declared capability')
     descriptor, name = tempfile.mkstemp(prefix='.metadata-', suffix=suffix, dir=staging_directory)
     temporary_path = Path(name)

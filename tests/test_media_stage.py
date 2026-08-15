@@ -4,17 +4,22 @@ from hashlib import sha256
 from pathlib import Path
 from shutil import which
 from subprocess import run
+from threading import Barrier
 
 import pytest
 
 from music_ingest.cli.media_stage import run_media_stage_cli
+from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
+from music_ingest.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.processing import media_stage
 from music_ingest.processing.media_stage import (
-    MediaStageRequest,
+    MediaPipelineRequest,
+    SourceAudioCorruptionError,
     inspect_source_capability,
-    inspect_source_media,
     plan_media_stage,
-    stage_media,
+    process_media,
 )
+from music_ingest.processing.remux import RemuxRequest, _muxer
 
 _FFMPEG = which('ffmpeg') or ''
 assert _FFMPEG
@@ -54,20 +59,18 @@ def test_shared_stage_when_worker_processes_audio_writes_valid_output_without_mu
     staging.mkdir()
     capability = inspect_source_capability(source)
     assert capability is not None
-    inspection = inspect_source_media(source, capability=capability)
     plan = plan_media_stage(source)
 
-    result = stage_media(MediaStageRequest(plan, staging, plan.output_name))
+    result = process_media(MediaPipelineRequest(plan, capability, staging, plan.output_name, run_fingerprint=False))
 
     assert result.output_path.is_file()
     assert result.output_path.suffix == suffix
     assert sha256(source.read_bytes()).hexdigest() == original_hash
-    assert inspection.capability == capability
     assert not list(staging.glob('.staged*'))
     if suffix == '.flac':
-        assert result.flac_streaminfo is not None
+        assert result.flac_properties is not None
     else:
-        assert result.flac_streaminfo is None
+        assert result.flac_properties is None
 
 
 def test_cli_when_processing_real_service_stage_writes_only_derived_audio(tmp_path: Path) -> None:
@@ -83,3 +86,72 @@ def test_cli_when_processing_real_service_stage_writes_only_derived_audio(tmp_pa
     assert result.output_path.parent == output_directory / 'Unsorted'
     assert tuple(path for path in output_directory.rglob('*') if path.is_file()) == (result.output_path,)
     assert tuple(temporary_directory.iterdir()) == ()
+
+
+@pytest.mark.parametrize(
+    ('suffix', 'muxer'),
+    [('.flac', 'flac'), ('.m4a', 'ipod'), ('.mp3', 'mp3'), ('.ogg', 'ogg'), ('.opus', 'opus')],
+)
+def test_stream_copy_remux_when_declared_format_uses_native_muxer(suffix: str, muxer: str) -> None:
+    assert _muxer(suffix) == muxer
+
+
+def test_process_media_when_remux_and_fingerprint_run_can_overlap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _audio(tmp_path / 'source.mp3', 'libmp3lame')
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    capability = inspect_source_capability(source)
+    assert capability is not None
+    plan = plan_media_stage(source)
+    barrier = Barrier(2)
+    entered: list[str] = []
+
+    def remux(request: RemuxRequest) -> ToolEvidence:
+        entered.append('remux')
+        barrier.wait(timeout=2)
+        request.output_path.write_bytes(request.source_path.read_bytes())
+        return ToolEvidence(ToolState.SUCCESS, 0, '', '')
+
+    def fingerprint(*_args: object, **_kwargs: object) -> FingerprintResult:
+        entered.append('fingerprint')
+        barrier.wait(timeout=2)
+        return FingerprintResult(FingerprintState.SUCCESS, 'fixture', 1, 'fixture', 'a' * 64, None, None)
+
+    monkeypatch.setattr(media_stage, 'remux_stream_copy', remux)
+    monkeypatch.setattr(media_stage, 'calculate_fingerprint', fingerprint)
+    monkeypatch.setattr(
+        media_stage,
+        'decoder_evidence',
+        lambda *_args, **_kwargs: ToolEvidence(ToolState.SUCCESS, 0, '', ''),
+    )
+
+    _ = process_media(MediaPipelineRequest(plan, capability, staging, plan.output_name))
+
+    assert sorted(entered) == ['fingerprint', 'remux']
+
+
+def test_process_media_when_remuxed_output_and_source_fail_reports_source_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _audio(tmp_path / 'source.mp3', 'libmp3lame')
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    capability = inspect_source_capability(source)
+    assert capability is not None
+    plan = plan_media_stage(source)
+
+    def remux(request: RemuxRequest) -> ToolEvidence:
+        request.output_path.write_bytes(request.source_path.read_bytes())
+        return ToolEvidence(ToolState.SUCCESS, 0, '', '')
+
+    monkeypatch.setattr(media_stage, 'remux_stream_copy', remux)
+    monkeypatch.setattr(
+        media_stage,
+        'decoder_evidence',
+        lambda *_args, **_kwargs: ToolEvidence(ToolState.FAILED, 1, '', 'decode failed'),
+    )
+
+    with pytest.raises(SourceAudioCorruptionError):
+        process_media(MediaPipelineRequest(plan, capability, staging, plan.output_name, run_fingerprint=False))

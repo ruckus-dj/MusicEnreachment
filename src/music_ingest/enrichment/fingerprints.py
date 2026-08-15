@@ -75,8 +75,12 @@ def fingerprint_source(
         fpcalc_command=fpcalc_command,
         timeout_seconds=timeout_seconds,
     )
-    _ = FingerprintRepository(session).add_evidence(_record(request.source_id, result))
+    persist_fingerprint(session, request.source_id, result)
     return result
+
+
+def persist_fingerprint(session: Session, source_id: SourceId, result: FingerprintResult) -> None:
+    _ = FingerprintRepository(session).add_evidence(_record(source_id, result))
 
 
 def calculate_fingerprint(

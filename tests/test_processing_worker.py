@@ -18,10 +18,7 @@ import music_ingest.processing.worker as processing
 from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.decoder import DecoderValidationError
 from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
-from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
-from music_ingest.inspectors.mp3 import Mp3InspectionResult
 from music_ingest.matching.evidence import ProviderEvidenceResult
 from music_ingest.matching.providers import (
     FixtureProvenance,
@@ -43,9 +40,10 @@ from music_ingest.models import (
     SourceRootRecord,
 )
 from music_ingest.models.jobs import ClaimedJob
-from music_ingest.normalize.metadata import MetadataWriteResult
+from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteResult
 from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing.remux import RemuxRequest
 from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
@@ -703,14 +701,6 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
     monkeypatch.setattr(media_stage, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
-    if suffix == '.mp3':
-        monkeypatch.setattr(
-            media_stage,
-            'inspect_mp3',
-            lambda *_args, **_kwargs: Mp3InspectionResult(
-                Mp3InspectionState.VALID, (), None, None, ToolEvidence(ToolState.SUCCESS, 0, '', '')
-            ),
-        )
     monkeypatch.setattr(
         media_stage,
         'read_tags',
@@ -727,14 +717,21 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
             ('GENRE', 'Hip Hop; Alternative Rock'),
         ],
     )
-    monkeypatch.setattr(media_stage, 'validate_decoder', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         media_stage,
         'decoder_evidence',
         lambda *_args, **_kwargs: ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
 
-    def preserve_audio(request: processing.MetadataWriteRequest) -> MetadataWriteResult:
+    def copy_remux(request: RemuxRequest) -> ToolEvidence:
+        source = request.source_path
+        output = request.output_path
+        output.write_bytes(source.read_bytes())
+        return ToolEvidence(ToolState.SUCCESS, 0, '', '')
+
+    monkeypatch.setattr(media_stage, 'remux_stream_copy', copy_remux)
+
+    def preserve_audio(request: MetadataWriteRequest) -> MetadataWriteResult:
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
         request.output_path.write_bytes(request.source_path.read_bytes())
         return MetadataWriteResult(request.output_path, (('TITLE', 'Fixture Track'),))
@@ -789,7 +786,7 @@ def _publish_stub(request: processing.PublicationRequest, suffix: str) -> Public
     return PublicationResult(published_release, published_audio)
 
 
-def test_worker_when_decoder_rejects_staged_audio_quarantines_without_publishing(
+def test_worker_when_staged_decoder_rejects_but_source_passes_retries_without_publishing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given: a valid source whose staged output fails the decoder validation seam.
@@ -811,16 +808,21 @@ def test_worker_when_decoder_rejects_staged_audio_quarantines_without_publishing
         )
         session.commit()
 
-    def reject_decoder(path: Path, **_kwargs: object) -> None:
-        raise DecoderValidationError(path)
-
     published = False
 
     def fail_publish(*_args: object, **_kwargs: object) -> None:
         nonlocal published
         published = True
 
-    monkeypatch.setattr(media_stage, 'validate_decoder', reject_decoder)
+    monkeypatch.setattr(
+        media_stage,
+        'decoder_evidence',
+        lambda path, **_kwargs: (
+            ToolEvidence(ToolState.FAILED, 1, '', '')
+            if path != source_path
+            else ToolEvidence(ToolState.SUCCESS, 0, '', '')
+        ),
+    )
     monkeypatch.setattr(processing, 'publish_release', fail_publish)
 
     # When: the worker processes the queued initial job.
@@ -828,12 +830,14 @@ def test_worker_when_decoder_rejects_staged_audio_quarantines_without_publishing
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: decoder failure quarantines the job/source and leaves publication absent.
+    # Then: a pipeline-produced decoder failure is retryable and leaves publication absent.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-decoder')
         source = session.get(SourceRecord, job.source_id) if job is not None else None
-        assert job is not None and job.state == 'quarantined'
-        assert source is not None and source.intake_state == 'quarantined'
+        assert job is not None and job.state == 'queued'
+        assert source is not None and source.intake_state == 'discovered'
+        assert source.library_record is not None
+        assert source.library_record.events[-1].kind == 'processing_retry'
         assert source.library_publications == []
     assert not published
     assert not list(config.media_root.rglob('*.flac'))
@@ -881,9 +885,7 @@ def test_worker_when_unexpected_processing_error_retries_without_quarantining_so
         assert source.library_record.events[-1].kind == 'processing_retry'
 
 
-def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: an import with both providers configured and durable provider schedules.
     config = replace(
         _config(tmp_path),
@@ -892,7 +894,6 @@ def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
     )
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
-    _ = source_path.write_bytes(source_path.read_bytes() + b'TAG' + (b'\x00' * 125))
     fingerprint = FingerprintResult(
         FingerprintState.SUCCESS,
         'fixture-fingerprint',
@@ -902,7 +903,7 @@ def test_worker_analyzes_flac_with_trailing_id3v1_in_staged_provider_phases(
         None,
         None,
     )
-    monkeypatch.setattr(processing, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
+    monkeypatch.setattr(media_stage, 'calculate_fingerprint', lambda *_args, **_kwargs: fingerprint)
     _ = (config.incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
@@ -1018,8 +1019,7 @@ def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerpri
     def unexpected_media_tool(*_args: object, **_kwargs: object) -> None:
         raise AssertionError('unchanged source must reuse durable media evidence')
 
-    monkeypatch.setattr(media_stage, 'inspect_flac', unexpected_media_tool)
-    monkeypatch.setattr(processing, 'fingerprint_source', unexpected_media_tool)
+    monkeypatch.setattr(media_stage, 'calculate_fingerprint', unexpected_media_tool)
 
     # When: the full reanalysis scans the same unchanged source observation.
     with Session(engine) as session:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import override
 
 from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
@@ -10,11 +12,21 @@ from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
 from music_ingest.settings import RuntimeSettings
 
 
+@dataclass(frozen=True, slots=True)
+class SourceMetadataError(Exception):
+    path: Path
+
+    @override
+    def __str__(self) -> str:
+        suffix = self.path.suffix.casefold()
+        return f'malformed {suffix.removeprefix(".").upper()} container'
+
+
 def read_tags(path: Path) -> tuple[tuple[str, str], ...]:
     try:
         return read_normalized_tags(path)
     except MetadataTagError as error:
-        raise ValueError('Mutagen could not read source tags') from error
+        raise SourceMetadataError(path) from error
 
 
 def fallback_metadata(

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import shutil
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
+
+from mutagen.flac import FLAC
 
 from music_ingest.dto.settings import RuntimeSettings
+from music_ingest.enrichment.fingerprints import FingerprintResult, calculate_fingerprint
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.decoder import DecoderValidationError, decoder_evidence, validate_decoder
-from music_ingest.inspectors.flac import FlacInspectionResult, inspect_flac
+from music_ingest.inspectors.decoder import decoder_evidence
 from music_ingest.inspectors.media_capabilities import MediaCapability, inspect_media_capability
-from music_ingest.inspectors.mp3 import Mp3InspectionResult, inspect_mp3
 from music_ingest.normalize.metadata import (
     CanonicalMetadata,
     MetadataWriteRequest,
@@ -24,15 +27,7 @@ from music_ingest.processing.metadata import (
     publication_layout,
     read_tags,
 )
-from music_ingest.sanitizers.flac import FlacSanitizationRequest, FlacStreamIdentity, sanitize_flac
-
-
-@dataclass(frozen=True, slots=True)
-class SourceMediaInspection:
-    capability: MediaCapability | None
-    flac: FlacInspectionResult | None
-    mp3: Mp3InspectionResult | None
-    decoder: ToolEvidence | None
+from music_ingest.processing.remux import RemuxRequest, remux_stream_copy
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,55 +40,68 @@ class MediaStagePlan:
 
 
 @dataclass(frozen=True, slots=True)
-class MediaStageRequest:
+class MediaPipelineRequest:
     plan: MediaStagePlan
+    capability: MediaCapability
     staging_directory: Path
     output_name: str
     ffmpeg_command: str = 'ffmpeg'
+    fpcalc_command: str = 'fpcalc'
     timeout_seconds: float = 10.0
     runtime_settings: RuntimeSettings | None = None
+    run_fingerprint: bool = True
 
 
 @dataclass(frozen=True, slots=True)
-class MediaStageResult:
+class MediaPipelineResult:
     output_path: Path
     written_tags: tuple[tuple[str, str], ...]
-    flac_streaminfo: FlacStreamIdentity | None
+    fingerprint: FingerprintResult | None
+    flac_properties: FlacProperties | None
+
+
+@dataclass(frozen=True, slots=True)
+class FlacProperties:
+    bit_depth: int
+    sample_rate: int
+    channels: int
+
+
+@dataclass(frozen=True, slots=True)
+class MediaPipelineInfrastructureError(Exception):
+    reason: str
+
+    @override
+    def __str__(self) -> str:
+        return self.reason
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAudioCorruptionError(Exception):
+    source_path: Path
+    staged_path: Path
+    source_evidence: ToolEvidence
+    staged_evidence: ToolEvidence
+
+    @override
+    def __str__(self) -> str:
+        return f'source decoder rejected audio: {self.source_path}'
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineOutputFailure(Exception):
+    source_path: Path
+    staged_path: Path
+    source_evidence: ToolEvidence
+    staged_evidence: ToolEvidence
+
+    @override
+    def __str__(self) -> str:
+        return f'staged decoder rejected remuxed media while source passed: {self.staged_path}'
 
 
 def inspect_source_capability(source_path: Path, *, timeout_seconds: float = 10.0) -> MediaCapability | None:
     return inspect_media_capability(source_path, timeout_seconds=timeout_seconds).capability
-
-
-def inspect_source_media(
-    source_path: Path,
-    *,
-    ffmpeg_command: str = 'ffmpeg',
-    timeout_seconds: float = 10.0,
-    cached_decoder_evidence: ToolEvidence | None = None,
-    capability: MediaCapability | None = None,
-) -> SourceMediaInspection:
-    if capability is None:
-        capability = inspect_source_capability(source_path, timeout_seconds=timeout_seconds)
-    if capability is None:
-        return SourceMediaInspection(None, None, None, None)
-    suffix = source_path.suffix.casefold()
-    if suffix == '.flac':
-        inspection = inspect_flac(
-            source_path,
-            ffmpeg_command=ffmpeg_command,
-            timeout_seconds=timeout_seconds,
-            cached_decoder_evidence=cached_decoder_evidence,
-        )
-        return SourceMediaInspection(capability, inspection, None, None)
-    if suffix == '.mp3':
-        return SourceMediaInspection(capability, None, inspect_mp3(source_path, timeout_seconds=timeout_seconds), None)
-    evidence = cached_decoder_evidence or decoder_evidence(
-        source_path, ffmpeg_command=ffmpeg_command, timeout_seconds=timeout_seconds
-    )
-    if evidence.state is not ToolState.SUCCESS:
-        raise DecoderValidationError(source_path)
-    return SourceMediaInspection(capability, None, None, evidence)
 
 
 def plan_media_stage(source_path: Path) -> MediaStagePlan:
@@ -103,51 +111,88 @@ def plan_media_stage(source_path: Path) -> MediaStagePlan:
     return MediaStagePlan(source_path, source_tags, metadata, relative_directory, output_name)
 
 
-def stage_media(request: MediaStageRequest) -> MediaStageResult:
+def process_media(request: MediaPipelineRequest) -> MediaPipelineResult:
     staging_directory = request.staging_directory.resolve(strict=True)
     if not staging_directory.is_dir():
         raise ValueError('staging directory must be a directory')
     source_path = request.plan.source_path.resolve(strict=True)
     output_path = staging_directory / request.output_name
-    if output_path.exists():
-        raise FileExistsError(output_path)
-    is_flac = source_path.suffix.casefold() == '.flac'
-    sanitized_path = staging_directory / ('.sanitized.flac' if is_flac else f'.staged{source_path.suffix}')
-    flac_streaminfo: FlacStreamIdentity | None = None
-    if is_flac:
-        sanitized = sanitize_flac(
-            FlacSanitizationRequest(
-                source_path,
-                sanitized_path,
-                staging_directory,
-                request.ffmpeg_command,
-                request.timeout_seconds,
-            )
-        )
-        flac_streaminfo = sanitized.streaminfo
-    else:
-        _ = shutil.copy2(source_path, sanitized_path)
+    remux_path = staging_directory / f'.remux{source_path.suffix}'
+    _ = output_path.unlink(missing_ok=True)
+    _ = remux_path.unlink(missing_ok=True)
 
-    metadata_result: MetadataWriteResult
-    if request.plan.metadata is None:
-        metadata_result = write_observed_metadata(sanitized_path, request.plan.source_tags)
-        _ = sanitized_path.rename(output_path)
-        metadata_result = MetadataWriteResult(output_path, metadata_result.tags)
-    else:
-        metadata_result = write_canonical_metadata(
-            MetadataWriteRequest(
-                sanitized_path,
-                output_path,
-                staging_directory,
-                request.plan.metadata,
-                field_policy(),
-                genre_policy(request.plan.metadata.genres, request.runtime_settings),
-            )
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix='media-tool') as executor:
+        remux_future = executor.submit(
+            remux_stream_copy,
+            RemuxRequest(source_path, remux_path, request.ffmpeg_command, request.timeout_seconds),
         )
-        sanitized_path.unlink()
+        fingerprint_future: Future[FingerprintResult] | None = None
+        if request.run_fingerprint:
+            fingerprint_future = executor.submit(
+                calculate_fingerprint,
+                source_path,
+                None,
+                fpcalc_command=request.fpcalc_command,
+                timeout_seconds=request.timeout_seconds,
+            )
+        remux_error: BaseException | None = None
+        try:
+            _ = remux_future.result()
+        except BaseException as error:
+            remux_error = error
+        fingerprint = None if fingerprint_future is None else fingerprint_future.result()
+        if remux_error is not None:
+            raise remux_error
+
+    metadata_result = _write_staged_metadata(request, remux_path, output_path)
     stage_source_artwork(source_path, staging_directory)
-    validate_decoder(output_path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds)
-    return MediaStageResult(output_path, metadata_result.tags, flac_streaminfo)
+    _validate_final_output(source_path, output_path, request.ffmpeg_command, request.timeout_seconds)
+    _ = remux_path.unlink(missing_ok=True)
+    flac_properties = _flac_properties(output_path) if source_path.suffix.casefold() == '.flac' else None
+    return MediaPipelineResult(output_path, metadata_result.tags, fingerprint, flac_properties)
+
+
+def _write_staged_metadata(
+    request: MediaPipelineRequest,
+    remux_path: Path,
+    output_path: Path,
+) -> MetadataWriteResult:
+    if request.plan.metadata is None:
+        observed = write_observed_metadata(remux_path, request.plan.source_tags)
+        remux_path.rename(output_path)
+        return MetadataWriteResult(output_path, observed.tags)
+    result = write_canonical_metadata(
+        MetadataWriteRequest(
+            remux_path,
+            output_path,
+            request.staging_directory,
+            request.plan.metadata,
+            field_policy(),
+            genre_policy(request.plan.metadata.genres, request.runtime_settings),
+            request.capability,
+        )
+    )
+    remux_path.unlink()
+    return result
+
+
+def _validate_final_output(source_path: Path, output_path: Path, ffmpeg_command: str, timeout_seconds: float) -> None:
+    staged_evidence = decoder_evidence(output_path, ffmpeg_command=ffmpeg_command, timeout_seconds=timeout_seconds)
+    if staged_evidence.state is ToolState.SUCCESS:
+        return
+    if staged_evidence.state is not ToolState.FAILED:
+        raise MediaPipelineInfrastructureError(f'final staged decoder unavailable: {staged_evidence.state}')
+    source_evidence = decoder_evidence(source_path, ffmpeg_command=ffmpeg_command, timeout_seconds=timeout_seconds)
+    if source_evidence.state is ToolState.FAILED:
+        raise SourceAudioCorruptionError(source_path, output_path, source_evidence, staged_evidence)
+    if source_evidence.state is ToolState.SUCCESS:
+        raise PipelineOutputFailure(source_path, output_path, source_evidence, staged_evidence)
+    raise MediaPipelineInfrastructureError(f'source decoder unavailable after staged failure: {source_evidence.state}')
+
+
+def _flac_properties(path: Path) -> FlacProperties:
+    info = FLAC(path).info
+    return FlacProperties(info.bits_per_sample, info.sample_rate, info.channels)
 
 
 def stage_source_artwork(source_path: Path, staging_directory: Path) -> None:
