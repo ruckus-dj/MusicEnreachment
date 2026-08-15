@@ -116,7 +116,12 @@ class ProviderEvidenceService:
                 )
                 request_hash = sha256(f'recording:{evidence.recording_mbid}'.encode()).hexdigest()
             case _:
-                musicbrainz_request = MusicBrainzLookupRequest(request.query, request.musicbrainz_case)
+                musicbrainz_request = MusicBrainzLookupRequest(
+                    request.query,
+                    request.musicbrainz_case,
+                    release_title=request.release_title,
+                    artist_name=request.artist_name,
+                )
                 request_hash = sha256(request.query.encode()).hexdigest()
         cached = None if request.force_refresh else self._fresh_snapshot('musicbrainz', request_hash, now)
         if cached is not None:

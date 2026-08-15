@@ -121,7 +121,16 @@ class MusicBrainzV2Adapter:
                 enriched, enriched_provenance = self._enrich_release(release, provenance)
                 return MusicBrainzMatch(enriched_provenance, self._candidate(enriched))
             case _:
-                return Ambiguous(provenance, tuple(self._candidate(release) for release in eligible))
+                enriched_provenance = provenance
+                candidates: list[ReleaseCandidate] = []
+                requested_title = None if request.release_title is None else _title_key(request.release_title)
+                for release in eligible:
+                    if requested_title is not None and _title_key(release.title) == requested_title:
+                        enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
+                    else:
+                        enriched = release
+                    candidates.append(self._candidate(enriched, request.artist_name))
+                return Ambiguous(enriched_provenance, tuple(candidates))
 
     def _resolve_recording_releases(
         self,
@@ -186,20 +195,21 @@ class MusicBrainzV2Adapter:
     def _candidate(
         release: Release, artist_name: str | None = None, recording_mbid: str | None = None
     ) -> ReleaseCandidate:
+        release_tracks = tuple(track for medium in release.media for track in medium.tracks)
         track = next(
-            (
-                track
-                for medium in release.media
-                for track in medium.tracks
-                if recording_mbid is None or track.recording.id == recording_mbid
-            ),
-            None,
+            (track for track in release_tracks if recording_mbid is None or track.recording.id == recording_mbid), None
         )
         release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
         artist = artist_name if artist_name is not None else release_artist_name
         if not artist and track is not None:
             artist = ''.join(f'{item.name}{item.joinphrase}' for item in track.recording.artist_credit)
-        recording_mbids = () if recording_mbid is None else (recording_mbid,)
+        recording_mbids = (
+            (recording_mbid,)
+            if recording_mbid is not None
+            else (track.recording.id,)
+            if len(release_tracks) == 1 and track is not None
+            else ()
+        )
         medium = next(
             (medium for medium in release.media if track is not None and track in medium.tracks),
             None,
