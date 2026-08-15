@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import logging
 import re
 import socket
 import ssl
@@ -27,6 +28,7 @@ LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
 SHA256_HEX_PATTERN: Final = re.compile(r'^[0-9a-f]{64}$')
 HTTP_STATUS_MINIMUM: Final = 100
 HTTP_STATUS_MAXIMUM: Final = 599
+LOGGER = logging.getLogger(__name__)
 
 
 class FixtureCase(StrEnum):
@@ -369,12 +371,38 @@ class LiveTransport:
     def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
         for attempt in range(3):
             provider_name = _provider_name_for_url(url, self.musicbrainz_host())
+            host = urlsplit(url).hostname or ''
+            waiting_started = time.monotonic()
             if self.limiter is not None and provider_name is not None:
+                LOGGER.info('provider rate-limit wait provider=%s host=%s attempt=%s', provider_name, host, attempt + 1)
                 self.limiter.wait(provider_name)
+            LOGGER.info(
+                'provider request start provider=%s host=%s attempt=%s wait_seconds=%.3f',
+                provider_name,
+                host,
+                attempt + 1,
+                time.monotonic() - waiting_started,
+            )
+            request_started = time.monotonic()
             try:
                 response = self.client.get(url, headers=headers, timeout=10.0)
             except requests.RequestException:
+                LOGGER.warning(
+                    'provider request failed provider=%s host=%s attempt=%s request_seconds=%.3f',
+                    provider_name,
+                    host,
+                    attempt + 1,
+                    time.monotonic() - request_started,
+                )
                 return MusicBrainzHttpResponse(status_code=None, body=b'')
+            LOGGER.info(
+                'provider request complete provider=%s host=%s attempt=%s status=%s request_seconds=%.3f',
+                provider_name,
+                host,
+                attempt + 1,
+                response.status_code,
+                time.monotonic() - request_started,
+            )
             if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
                 return MusicBrainzHttpResponse(status_code=response.status_code, body=response.content)
             retry_after = response.headers.get('Retry-After')
