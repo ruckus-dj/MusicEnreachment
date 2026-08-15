@@ -69,17 +69,28 @@ def fingerprint_source(
             None,
             None,
         )
-    result = _fingerprint(request, fpcalc_command, timeout_seconds)
+    result = calculate_fingerprint(
+        request.source_path,
+        request.inspection,
+        fpcalc_command=fpcalc_command,
+        timeout_seconds=timeout_seconds,
+    )
     _ = FingerprintRepository(session).add_evidence(_record(request.source_id, result))
     return result
 
 
-def _fingerprint(request: FingerprintRequest, fpcalc_command: str, timeout_seconds: float) -> FingerprintResult:
-    if not _is_valid_inspection(request.inspection):
+def calculate_fingerprint(
+    source_path: Path,
+    inspection: FlacInspectionResult | Mp3InspectionResult | None,
+    *,
+    fpcalc_command: str = 'fpcalc',
+    timeout_seconds: float = 30.0,
+) -> FingerprintResult:
+    if not _is_valid_inspection(inspection):
         return FingerprintResult(
             FingerprintState.SKIPPED_QUARANTINED, None, None, None, sha256(b'').hexdigest(), None, None
         )
-    tool = run_tool((fpcalc_command, '-json', str(request.source_path)), timeout_seconds)
+    tool = run_tool((fpcalc_command, '-json', str(source_path)), timeout_seconds)
     return _from_tool(tool, fpcalc_command, timeout_seconds)
 
 
@@ -101,7 +112,6 @@ def _is_valid_flac_state(state: FlacInspectionState) -> bool:
             return False
         case FlacInspectionState.INFRASTRUCTURE:
             return False
-    return False
 
 
 def _is_valid_mp3_state(state: Mp3InspectionState) -> bool:
@@ -110,7 +120,8 @@ def _is_valid_mp3_state(state: Mp3InspectionState) -> bool:
             return True
         case Mp3InspectionState.QUARANTINE:
             return False
-    return False
+        case Mp3InspectionState.INFRASTRUCTURE:
+            return False
 
 
 def _from_tool(tool: ToolEvidence, fpcalc_command: str, timeout_seconds: float) -> FingerprintResult:

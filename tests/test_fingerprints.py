@@ -6,7 +6,12 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.enrichment.fingerprints import FingerprintRequest, FingerprintState, fingerprint_source
+from music_ingest.enrichment.fingerprints import (
+    FingerprintRequest,
+    FingerprintState,
+    calculate_fingerprint,
+    fingerprint_source,
+)
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.inspectors.flac import FlacFinding, FlacFindingKind, FlacInspectionResult, InspectionState
 from music_ingest.intake.service import SourceId
@@ -105,6 +110,30 @@ def test_fingerprint_source_when_inspection_is_valid_persists_local_evidence(tmp
     assert result.tool is not None
     assert all(item.output_sha256 == sha256(result.tool.stdout.encode()).hexdigest() for item in persisted)
     assert source_path.read_bytes() == b'not decoded by the fake executable'
+
+
+def test_calculate_fingerprint_when_inspection_is_valid_runs_without_database(tmp_path: Path) -> None:
+    # Given: a valid inspection and a deterministic local fpcalc executable.
+    source_path = tmp_path / 'valid.flac'
+    _ = source_path.write_bytes(b'not decoded by the fake executable')
+    executable = _fake_fpcalc(
+        tmp_path,
+        '; '.join(
+            (
+                'if [ "$1" = "-version" ]; then printf \'%s\\n\' \'fpcalc version 1.6.0\'',
+                'else printf \'%s\\n\' \'{"duration":241,"fingerprint":"12345"}\'; fi',
+            )
+        ),
+    )
+
+    # When: the database-free fingerprint calculation runs.
+    result = calculate_fingerprint(source_path, _valid_flac_inspection(), fpcalc_command=str(executable))
+
+    # Then: the parsed result is returned without requiring a Session or persistence record.
+    assert result.state is FingerprintState.SUCCESS
+    assert result.fingerprint == '12345'
+    assert result.duration_seconds == 241
+    assert result.tool_version == '1.6.0'
 
 
 def test_fingerprint_source_when_inspection_is_quarantined_skips_fpcalc_and_persists_evidence(tmp_path: Path) -> None:
