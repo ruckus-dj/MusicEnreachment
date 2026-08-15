@@ -5,15 +5,16 @@ from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import CandidateEvidencePayload, _candidate_is_displayable, create_app
-from music_ingest.library.service import attach_source
+from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
     Base,
     CandidateRecord,
     JobRecord,
+    LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
     LibraryRecordConsolidationRecord,
@@ -84,6 +85,56 @@ def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path:
     assert persisted.musicbrainz_recording_id == '11111111-1111-4111-8111-111111111111'
     assert {source.id for source in persisted.sources} == {'source-mp3', 'source-flac'}
     assert persisted.publications[0].source_id == 'source-mp3'
+
+
+def test_append_metadata_revision_when_relationship_is_stale_uses_durable_revision(tmp_path: Path) -> None:
+    # Given: a loaded metadata relationship while another write adds the next final revision.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "metadata-revisions.db"}')
+    Base.metadata.create_all(engine)
+    observed_at = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-revisions', created_at=observed_at, updated_at=observed_at)
+        source = SourceRecord(
+            id='source-revisions',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        session.add_all((record, source))
+        _ = append_metadata_revision(session, record.id, source.id, 'final', {'TITLE': 'First'}, 'worker', observed_at)
+        session.commit()
+        _ = record.metadata_revisions
+        _ = session.execute(
+            insert(LibraryMetadataRevisionRecord).values(
+                library_record_id=record.id,
+                source_id=source.id,
+                layer='final',
+                revision=2,
+                tags_json='{"TITLE":"Second"}',
+                actor='provider',
+                created_at=observed_at,
+            )
+        )
+
+        # When: a provider appends final metadata through the stale relationship.
+        appended = append_metadata_revision(
+            session,
+            record.id,
+            source.id,
+            'final',
+            {'TITLE': 'Third'},
+            'provider',
+            observed_at,
+        )
+
+        # Then: its revision follows the durable maximum rather than colliding.
+        assert appended.revision == 3
 
 
 def test_attach_source_when_moving_a_source_keeps_existing_publication_history(tmp_path: Path) -> None:

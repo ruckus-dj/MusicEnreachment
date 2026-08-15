@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.models import SourceRecord
@@ -176,18 +176,29 @@ def append_metadata_revision(
     now: datetime,
 ) -> LibraryMetadataRevisionRecord:
     """Append one immutable metadata revision for a source layer."""
-    record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id))
+    record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id).with_for_update())
     if record is None:
         raise LookupError(library_record_id)
     if layer == 'original':
-        existing = next((item for item in record.metadata_revisions if item.layer == layer), None)
+        existing = session.scalar(
+            select(LibraryMetadataRevisionRecord)
+            .where(LibraryMetadataRevisionRecord.library_record_id == record.id)
+            .where(LibraryMetadataRevisionRecord.layer == layer)
+            .order_by(LibraryMetadataRevisionRecord.revision)
+            .limit(1)
+        )
         if existing is not None:
             return existing
+    latest_revision = session.scalar(
+        select(func.max(LibraryMetadataRevisionRecord.revision))
+        .where(LibraryMetadataRevisionRecord.library_record_id == record.id)
+        .where(LibraryMetadataRevisionRecord.layer == layer)
+    )
     revision = LibraryMetadataRevisionRecord(
         library_record_id=record.id,
         source_id=source_id,
         layer=layer,
-        revision=max((item.revision for item in record.metadata_revisions if item.layer == layer), default=0) + 1,
+        revision=(latest_revision or 0) + 1,
         tags_json=json.dumps(tags, ensure_ascii=False, sort_keys=True),
         actor=actor,
         created_at=now,
