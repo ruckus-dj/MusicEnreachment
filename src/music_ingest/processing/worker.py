@@ -112,6 +112,7 @@ from music_ingest.processing.metadata import (
 )
 from music_ingest.publication import (
     PublicationAttemptRequest,
+    acquire_publication_destination_lock,
     expose_attempt,
     finalize_and_cleanup_attempt,
     mark_staged,
@@ -668,6 +669,12 @@ class ProcessingWorker:
         sanitized_path = staged_release / ('.sanitized.flac' if is_flac else f'.staged{source_path.suffix}')
         relative_directory, output_name = publication_layout(tags, source_path.name)
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
+        destination_release = (
+            Path(current_publication.path).parent
+            if current_publication is not None
+            else self._config.media_root / relative_directory
+        )
+        acquire_publication_destination_lock(self._session, destination_release)
         if relative_directory == 'Unsorted' and current_publication is None:
             output_name = next_unsorted_filename(
                 self._config.media_root / relative_directory, source_path.suffix.casefold()
@@ -721,11 +728,6 @@ class ProcessingWorker:
                 source.id,
             )
             return
-        destination_release = (
-            Path(current_publication.path).parent
-            if current_publication is not None
-            else self._config.media_root / relative_directory
-        )
         request = PublicationRequest(
             staged_release,
             self._config.staging_root,
@@ -1159,6 +1161,7 @@ class ProcessingWorker:
         destination_release = (
             Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
         )
+        acquire_publication_destination_lock(self._session, destination_release)
         attempt_token = uuid4().hex
         attempt = reserve_attempt(
             self._session,

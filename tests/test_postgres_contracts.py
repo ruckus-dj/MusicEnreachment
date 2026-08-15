@@ -4,7 +4,7 @@ from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 from alembic.config import Config
@@ -27,10 +27,55 @@ from music_ingest.models import (
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.publication import acquire_publication_destination_lock
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
 _HEAD_REVISION = '20260812_0004'
+
+
+@pytest.mark.live
+def test_publication_destination_lock_when_two_transactions_target_one_release_blocks_second_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: two independent PostgreSQL transactions publishing to one release directory.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        destination = Path('/managed/Artist/Album')
+        holder_acquired = Event()
+        release_holder = Event()
+        contender_acquired = Event()
+
+        def hold_destination_lock() -> None:
+            with Session(engine) as session:
+                acquire_publication_destination_lock(session, destination)
+                holder_acquired.set()
+                assert release_holder.wait(timeout=5)
+                session.commit()
+
+        def acquire_contended_lock() -> None:
+            assert holder_acquired.wait(timeout=5)
+            with Session(engine) as session:
+                acquire_publication_destination_lock(session, destination)
+                contender_acquired.set()
+                session.rollback()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            holder = executor.submit(hold_destination_lock)
+            assert holder_acquired.wait(timeout=5)
+            contender = executor.submit(acquire_contended_lock)
+
+            # When: the second transaction requests the same destination before the first commits.
+            assert not contender_acquired.wait(timeout=0.1)
+            release_holder.set()
+            holder.result(timeout=5)
+
+            # Then: it acquires the lock only after the first transaction releases it.
+            contender.result(timeout=5)
+            assert contender_acquired.is_set()
+        engine.dispose()
 
 
 @pytest.mark.live
