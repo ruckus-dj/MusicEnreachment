@@ -179,17 +179,26 @@ class RecordingAssociationService:
             ),
             None,
         )
+        provider_final = next(
+            (
+                revision
+                for revision in reversed(target.metadata_revisions)
+                if revision.layer == 'final' and revision.actor == 'provider'
+            ),
+            None,
+        )
         source.library_record_id = target.id
         source.disappeared_at = None
         target.source_state = 'present'
         target.updated_at = now
-        if previous_final is not None and previous_record_id != target.id:
+        inherited_final = provider_final or previous_final
+        if inherited_final is not None and previous_record_id != target.id:
             _ = append_metadata_revision(
                 self._session,
                 target.id,
                 source.id,
                 'final',
-                _TAGS.validate_json(previous_final.tags_json),
+                _TAGS.validate_json(inherited_final.tags_json),
                 'reassociation',
                 now,
             )

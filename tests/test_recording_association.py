@@ -220,6 +220,73 @@ def test_automatic_association_when_source_has_final_metadata_recreates_it_on_ta
         ]
 
 
+def test_automatic_association_prefers_target_provider_metadata_over_source_fallback(tmp_path: Path) -> None:
+    # Given: the target recording already has provider metadata from another source.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "association-provider-final.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    with Session(engine) as session:
+        previous = LibraryRecord(id='record-previous-provider', created_at=now, updated_at=now)
+        target = LibraryRecord(
+            id='record-target-provider',
+            musicbrainz_recording_id=recording_mbid,
+            match_state='matched',
+            created_at=now,
+            updated_at=now,
+        )
+        source = SourceRecord(
+            id='source-provider-fallback',
+            source_path='/incoming/provider-fallback.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=previous,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='musicbrainz', outcome='musicbrainzmatch', snapshot_sha256='b' * 64, snapshot='{}'
+                )
+            ],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='recording',
+                    evidence=(
+                        '{"provider":"musicbrainz","score":0.98,"tags":'
+                        '{"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                    ),
+                )
+            ],
+        )
+        session.add_all((previous, target, source))
+        session.flush()
+        _ = append_metadata_revision(session, previous.id, source.id, 'final', {'TITLE': 'Source'}, 'worker', now)
+        _ = append_metadata_revision(
+            session, target.id, 'other-source', 'final', {'TITLE': 'Provider'}, 'provider', now
+        )
+        session.commit()
+
+        # When: automatic association moves the source to the provider-backed target record.
+        result = RecordingAssociationService(session).associate_automatic(
+            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+        )
+        session.commit()
+
+        # Then: the reassociated source receives the target's analyzed final metadata.
+        assert result is not None
+        revisions = [
+            revision
+            for revision in target.metadata_revisions
+            if revision.source_id == source.id and revision.layer == 'final'
+        ]
+        assert [(revision.tags_json, revision.actor) for revision in revisions] == [
+            ('{"TITLE": "Provider"}', 'reassociation')
+        ]
+
+
 def test_automatic_association_when_recording_is_not_durably_confirmed_requires_review(tmp_path: Path) -> None:
     # Given: a high-score request with no persisted MusicBrainz recording confirmation.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unverified-association.db"}')
