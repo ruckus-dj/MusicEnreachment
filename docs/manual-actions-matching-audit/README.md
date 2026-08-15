@@ -3,13 +3,14 @@
 Дата наблюдения: 14 августа 2026 г.  
 Поверхность: `http://192.168.64.2:8787/manual-actions` и read-only API `GET /api/library/records`.
 
-В каталоге пять связанных документов:
+В каталоге шесть связанных документов:
 
 1. [01-live-queue-audit.md](01-live-queue-audit.md) — live-снимок queue/manual actions и повторный разбор Noize MC, Anacondaz, Linkin Park, Busta Rhymes и кис-кис.
 2. [02-matching-diagnosis.md](02-matching-diagnosis.md) — текущая логика matcher и наблюдаемые пробелы в объяснимости.
 3. [03-automation-roadmap.md](03-automation-roadmap.md) — предметный план: recording-first, source audit, album-level release group, edition scorer и fallback без AcoustID.
 4. [04-clean-run-2026-08-14.md](04-clean-run-2026-08-14.md) — воспроизводимый чистый прогон, исправленный MusicBrainz parser defect и фактическая разбивка 796 строк.
 5. [05-fresh-rerun-2026-08-14.md](05-fresh-rerun-2026-08-14.md) — baseline повторной чистой переобработки через live API и worker; run выполнен до пересборки image и не измеряет recovery metadata.
+6. [06-clean-run-rebuilt-image-2026-08-14.md](06-clean-run-rebuilt-image-2026-08-14.md) — clean run на актуальном image: 303 Manual Actions, но 254 provider/filesystem infrastructure errors.
 
 ## Короткий вывод
 
