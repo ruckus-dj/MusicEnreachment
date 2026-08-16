@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import override
+from typing import final, override
+
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
 from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.models import UnsortedFilenameCounterRecord
 from music_ingest.normalize.metadata import CanonicalMetadata, CanonicalSource
 from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
 from music_ingest.settings import RuntimeSettings
@@ -128,17 +133,44 @@ def _track_prefix(track_number: int | None, disc_number: int | None, disc_total:
     return f'{track_number:02d}'
 
 
-def next_unsorted_filename(directory: Path, suffix: str) -> str:
-    """Return the lowest unused Track NN name across supported audio formats."""
-    used_numbers = {
-        int(match.group(1))
-        for path in directory.glob('Track *')
-        if (match := re.fullmatch(r'Track (\d{2})\.[^.]+', path.name)) is not None
-    }
-    number = 1
-    while number in used_numbers:
-        number += 1
-    return f'Track {number:02d}{suffix}'
+@final
+class UnsortedFilenameSuffixError(ValueError):
+    suffix: str
+
+    def __init__(self, suffix: str) -> None:
+        super().__init__(suffix)
+        self.suffix = suffix
+
+    @override
+    def __str__(self) -> str:
+        return f'unsupported Unsorted filename suffix: {self.suffix}'
+
+
+def allocate_unsorted_filename(session: Session, suffix: str) -> str:
+    normalized_suffix = _normalize_suffix(suffix)
+    number = session.scalar(
+        update(UnsortedFilenameCounterRecord)
+        .where(UnsortedFilenameCounterRecord.id == 1)
+        .values(next_number=UnsortedFilenameCounterRecord.next_number + 1)
+        .returning(UnsortedFilenameCounterRecord.next_number)
+    )
+    if number is None:
+        raise RuntimeError('Unsorted filename counter row is missing')
+    return f'Track {number:02d}{normalized_suffix}'
+
+
+def allocate_unsorted_filename_with_factory(session_factory: Callable[[], Session], suffix: str) -> str:
+    with session_factory() as session:
+        filename = allocate_unsorted_filename(session, suffix)
+        session.commit()
+        return filename
+
+
+def _normalize_suffix(suffix: str) -> str:
+    normalized = suffix.casefold()
+    if normalized not in {'.flac', '.m4a', '.mp3', '.ogg', '.opus'}:
+        raise UnsortedFilenameSuffixError(suffix)
+    return normalized
 
 
 def _safe_component(value: str, fallback: str) -> str:

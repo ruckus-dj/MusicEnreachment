@@ -38,6 +38,7 @@ from music_ingest.models import (
     ReviewDecisionRecord,
     SourceRecord,
     SourceRootRecord,
+    UnsortedFilenameCounterRecord,
 )
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteResult
@@ -1034,9 +1035,16 @@ def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerpri
 
 def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_publishing(tmp_path: Path) -> None:
     # Given: a valid FLAC with no source tags and an immutable queued job.
+    allocated_suffixes: list[str] = []
+
+    def allocate_filename(suffix: str) -> str:
+        allocated_suffixes.append(suffix)
+        return f'Track 77{suffix}'
+
     config = replace(
         _config(tmp_path),
         acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+        unsorted_filename_allocator=allocate_filename,
     )
     config.incoming_root.mkdir()
     source_path = _tagless_flac(config.incoming_root / 'tagless.flac')
@@ -1078,7 +1086,8 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
             revision.layer: json.loads(revision.tags_json) for revision in source.library_record.metadata_revisions
         }
         assert revisions == {'original': {}, 'final': {}}
-    assert list(config.media_root.rglob('*.flac'))
+    assert allocated_suffixes == ['.flac']
+    assert [path.name for path in config.media_root.rglob('*.flac')] == ['Track 77.flac']
 
 
 def test_worker_quarantines_source_when_persisted_root_is_disabled(tmp_path: Path) -> None:
@@ -1312,6 +1321,7 @@ def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
+        session.add(UnsortedFilenameCounterRecord(id=1, next_number=0))
         source = _source(session, source_path)
         session.add(
             JobRecord(

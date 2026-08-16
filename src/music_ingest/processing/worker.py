@@ -112,9 +112,9 @@ from music_ingest.processing.media_stage import (
 )
 from music_ingest.processing.metadata import (
     SourceMetadataError,
+    allocate_unsorted_filename,
     fallback_metadata,
     file_hash,
-    next_unsorted_filename,
     publication_layout,
     read_tags,
 )
@@ -128,7 +128,6 @@ from music_ingest.publication import (
     mark_staged,
     reconcile_attempts,
     reserve_attempt,
-    try_acquire_publication_destination_lock,
 )
 from music_ingest.publication.service import (
     PublicationError,
@@ -174,6 +173,7 @@ class ProcessingConfig:
     acoustid_provider: AcoustIdProvider | None = None
     artwork_provider: ArtworkProvider | None = None
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    unsorted_filename_allocator: Callable[[str], str] | None = None
 
 
 def _analyzed_tags(
@@ -715,12 +715,9 @@ class ProcessingWorker:
             if current_publication is not None
             else self._config.media_root / relative_directory
         )
-        if relative_directory == 'Unsorted' and current_publication is None:
-            if not try_acquire_publication_destination_lock(self._session, destination_release):
-                raise ProcessingInfrastructureError('publication destination is busy; retrying filesystem scan')
-            output_name = next_unsorted_filename(
-                self._config.media_root / relative_directory, source_path.suffix.casefold()
-            )
+        unsorted_destination = relative_directory == 'Unsorted' and current_publication is None
+        if unsorted_destination:
+            output_name = f'.{claimed.job.id}{source_path.suffix.casefold()}'
         pipeline_result = process_media(
             MediaPipelineRequest(
                 plan,
@@ -744,8 +741,10 @@ class ProcessingWorker:
         source.media_bitrate = None
         written_tags = pipeline_result.written_tags
         self._session.flush()
-        if not try_acquire_publication_destination_lock(self._session, destination_release):
-            raise ProcessingInfrastructureError('publication destination is busy; retrying filesystem scan')
+        if unsorted_destination:
+            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
+        else:
+            acquire_publication_destination_lock(self._session, destination_release)
         self._session.refresh(source)
         if source.intake_state == 'replaced':
             record_event(
@@ -766,7 +765,13 @@ class ProcessingWorker:
             require_canonical_tags=False,
             destination_release=destination_release,
             replace_existing=current_publication is not None,
-            destination_audio_name=None if current_publication is None else Path(current_publication.path).name,
+            destination_audio_name=(
+                output_name
+                if unsorted_destination
+                else Path(current_publication.path).name
+                if current_publication is not None
+                else None
+            ),
             sources=(source,),
         )
         result = (
@@ -1199,10 +1204,9 @@ class ProcessingWorker:
                 source.id,
             )
             return
-        if relative_directory == 'Unsorted' and publication is None:
-            output_name = next_unsorted_filename(
-                self._config.media_root / relative_directory, source_path.suffix.casefold()
-            )
+        unsorted_destination = relative_directory == 'Unsorted' and publication is None
+        if unsorted_destination:
+            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
         destination_release = (
             Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
         )
@@ -1250,7 +1254,8 @@ class ProcessingWorker:
         provider_artwork_staged = self._stage_artwork_for_release(source_path, staged_release, final_tags)
         _ = provider_artwork_staged
         mark_staged(self._session, attempt, now)
-        acquire_publication_destination_lock(self._session, destination_release)
+        if not unsorted_destination:
+            acquire_publication_destination_lock(self._session, destination_release)
         expose_attempt(self._session, attempt, now)
         _ = finalize_attempt(self._session, attempt, now)
         cleanup_attempt(attempt)
@@ -1571,6 +1576,12 @@ class ProcessingWorker:
         if self._config.live_transport is not None:
             return load_runtime_settings(self._session).timeout_seconds
         return self._config.timeout_seconds
+
+    def _allocate_unsorted_filename(self, suffix: str) -> str:
+        allocator = self._config.unsorted_filename_allocator
+        if allocator is not None:
+            return allocator(suffix)
+        return allocate_unsorted_filename(self._session, suffix)
 
     def _max_attempts(self) -> int:
         if self._config.live_transport is not None:
