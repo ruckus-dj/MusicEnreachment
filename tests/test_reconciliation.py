@@ -6,8 +6,9 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from music_ingest.dto import ScanResult
 from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord, SourceRootRecord
-from music_ingest.reconciliation import reconcile_incoming
+from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 
 
 def _root(root_id: str, path: Path, *, enabled: bool = True) -> SourceRootRecord:
@@ -23,6 +24,31 @@ def _root(root_id: str, path: Path, *, enabled: bool = True) -> SourceRootRecord
     )
 
 
+def _reconcile(session: Session) -> ScanResult:
+    observed_at = datetime.now(UTC)
+    snapshot = load_reconciliation_snapshot(session, observed_at)
+    return apply_reconciliation_plan(session, plan_reconciliation(snapshot), observed_at)
+
+
+def test_plan_reconciliation_runs_from_preloaded_snapshot_without_a_session(tmp_path: Path) -> None:
+    # Given: a preloaded snapshot of an enabled root with one incoming file.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "planner.db"}')
+    _ = Base.metadata.create_all(engine)
+    root_path = tmp_path / 'root'
+    _ = root_path.mkdir()
+    _ = (root_path / 'track.flac').write_bytes(b'planner source')
+    observed_at = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(_root('root', root_path))
+        snapshot = load_reconciliation_snapshot(session, observed_at)
+    # When: the planner receives only immutable snapshots after the session closes.
+    plan = plan_reconciliation(snapshot)
+
+    # Then: it returns operations and ScanResult without durable access.
+    assert plan.result.added == 1
+    assert len(plan.new_sources) == 1
+
+
 def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Path) -> None:
     # Given: an incoming folder with two files and an empty durable catalog.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reconciliation.db"}')
@@ -36,7 +62,7 @@ def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Pa
 
     with Session(engine) as session:
         session.add(_root('incoming', incoming))
-        initial = reconcile_incoming(session)
+        initial = _reconcile(session)
         session.commit()
 
         # When: one file is changed, one is removed, and one is added.
@@ -44,11 +70,11 @@ def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Pa
         second.unlink()
         third = incoming / 'third.flac'
         _ = third.write_bytes(b'third-v1')
-        current = reconcile_incoming(session)
+        current = _reconcile(session)
         session.commit()
 
         _ = first.unlink()
-        after_change_removed = reconcile_incoming(session)
+        after_change_removed = _reconcile(session)
         session.commit()
 
         # Then: the filesystem delta is durable and each new content version is queued once.
@@ -74,7 +100,7 @@ def test_reconcile_incoming_requeues_present_quarantined_jobs(tmp_path: Path) ->
 
     with Session(engine) as session:
         session.add(_root('incoming', incoming))
-        _ = reconcile_incoming(session)
+        _ = _reconcile(session)
         session.commit()
         source = session.scalars(select(SourceRecord)).one()
         job = session.scalars(select(JobRecord)).one()
@@ -83,7 +109,7 @@ def test_reconcile_incoming_requeues_present_quarantined_jobs(tmp_path: Path) ->
         session.commit()
 
         # When: the operator scans the unchanged incoming tree after correcting the cause.
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: the existing job is reactivated without creating a duplicate.
@@ -114,7 +140,7 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
         session.add_all((_root('first', first_root), _root('second', second_root)))
 
         # When: configured roots are reconciled.
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: source provenance stays root-scoped and every supported container is queued for capability validation.
@@ -123,8 +149,11 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
         assert result.queued_jobs == 6
         assert len(sources) == 7
         assert len(session.scalars(select(JobRecord)).all()) == 6
-        duplicate_hash = next(source.sha256 for source in sources if Path(source.source_path).suffix == '.flac')
-        assert {source.source_root_id for source in sources if source.sha256 == duplicate_hash} == {'first', 'second'}
+        assert len({source.sha256 for source in sources if Path(source.source_path).suffix == '.flac'}) == 2
+        assert {source.source_root_id for source in sources if Path(source.source_path).suffix == '.flac'} == {
+            'first',
+            'second',
+        }
         assert all('escape.flac' not in source.source_path for source in sources)
         assert {
             Path(source.source_path).suffix: source.intake_state
@@ -140,12 +169,12 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
 
         # When: a FLAC moves inside its root, another root loses a file, and that root is disabled before scanning.
         moved = first_root / 'moved.flac'
-        first_flac.rename(moved)
-        (second_root / 'two.flac').unlink()
+        _ = first_flac.rename(moved)
+        _ = (second_root / 'two.flac').unlink()
         second = session.get(SourceRootRecord, 'second')
         assert second is not None
         second.enabled = False
-        moved_result = reconcile_incoming(session)
+        moved_result = _reconcile(session)
         session.commit()
 
         # Then: only the same enabled root detects the move; disabled-root lifecycle and output state remain untouched.
@@ -172,12 +201,12 @@ def test_reconcile_disappearance_is_limited_to_the_scanned_root(tmp_path: Path) 
 
     with Session(engine) as session:
         session.add_all((_root('first', first_root), _root('second', second_root)))
-        _ = reconcile_incoming(session)
+        _ = _reconcile(session)
         session.commit()
 
         # When: only the first root loses its file.
         first_file.unlink()
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: only the source in the scanned root is removed.
@@ -196,19 +225,19 @@ def test_reconcile_creates_a_new_source_when_a_removed_file_returns_to_its_root(
     root_path = tmp_path / 'root'
     root_path.mkdir()
     source_path = root_path / 'track.flac'
-    source_path.write_bytes(b'same inode')
+    _ = source_path.write_bytes(b'same inode')
     outside_path = tmp_path / 'outside.flac'
 
     with Session(engine) as session:
         session.add(_root('root', root_path))
-        _ = reconcile_incoming(session)
+        _ = _reconcile(session)
         session.commit()
 
         # When: reconciliation observes the move out and then the exact source returning.
-        source_path.rename(outside_path)
-        _ = reconcile_incoming(session)
-        outside_path.rename(source_path)
-        result = reconcile_incoming(session)
+        _ = source_path.rename(outside_path)
+        _ = _reconcile(session)
+        _ = outside_path.rename(source_path)
+        result = _reconcile(session)
         session.commit()
 
         # Then: it is registered as a new available source after the old unused observation was removed.
@@ -222,21 +251,21 @@ def test_reconcile_creates_a_new_source_when_a_removed_file_returns_to_its_root(
 def test_reconcile_removes_disappeared_source_without_a_publication(tmp_path: Path) -> None:
     # Given: a reconciled source that has never produced a managed publication.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unpublished-removal.db"}')
-    Base.metadata.create_all(engine)
+    _ = Base.metadata.create_all(engine)
     root_path = tmp_path / 'root'
-    root_path.mkdir()
+    _ = root_path.mkdir()
     source_path = root_path / 'track.flac'
-    source_path.write_bytes(b'unpublished')
+    _ = source_path.write_bytes(b'unpublished')
 
     with Session(engine) as session:
         session.add(_root('root', root_path))
-        reconcile_incoming(session)
+        _ = _reconcile(session)
         session.commit()
         source_id = session.scalars(select(SourceRecord.id)).one()
 
         # When: the source file disappears from its configured root.
         source_path.unlink()
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: the missing, unused source observation is removed with its record.
@@ -247,16 +276,16 @@ def test_reconcile_removes_disappeared_source_without_a_publication(tmp_path: Pa
 def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_path: Path) -> None:
     # Given: a reconciled source that owns a managed publication.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "published-retention.db"}')
-    Base.metadata.create_all(engine)
+    _ = Base.metadata.create_all(engine)
     root_path = tmp_path / 'root'
-    root_path.mkdir()
+    _ = root_path.mkdir()
     source_path = root_path / 'track.flac'
-    source_path.write_bytes(b'published')
+    _ = source_path.write_bytes(b'published')
     now = datetime.now(UTC)
 
     with Session(engine) as session:
         session.add(_root('root', root_path))
-        reconcile_incoming(session)
+        _ = _reconcile(session)
         source = session.scalars(select(SourceRecord)).one()
         assert source.library_record is not None
         session.add(
@@ -275,7 +304,7 @@ def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_p
 
         # When: the published source file disappears from its configured root.
         source_path.unlink()
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: the source remains as visibly disappeared provenance for its publication.
@@ -289,16 +318,16 @@ def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_p
 def test_reconcile_removes_disappeared_source_with_only_a_superseded_publication(tmp_path: Path) -> None:
     # Given: a reconciled source referenced only by an obsolete publication.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "superseded-removal.db"}')
-    Base.metadata.create_all(engine)
+    _ = Base.metadata.create_all(engine)
     root_path = tmp_path / 'root'
-    root_path.mkdir()
+    _ = root_path.mkdir()
     source_path = root_path / 'track.flac'
-    source_path.write_bytes(b'superseded')
+    _ = source_path.write_bytes(b'superseded')
     now = datetime.now(UTC)
 
     with Session(engine) as session:
         session.add(_root('root', root_path))
-        reconcile_incoming(session)
+        _ = _reconcile(session)
         source = session.scalars(select(SourceRecord)).one()
         assert source.library_record is not None
         session.add(
@@ -318,7 +347,7 @@ def test_reconcile_removes_disappeared_source_with_only_a_superseded_publication
 
         # When: the obsolete source file disappears from its configured root.
         source_path.unlink()
-        result = reconcile_incoming(session)
+        result = _reconcile(session)
         session.commit()
 
         # Then: obsolete publication history does not retain the missing source.

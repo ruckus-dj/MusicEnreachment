@@ -26,7 +26,7 @@ from music_ingest.models import (
     SourceRootRecord,
     SourceTagRecord,
 )
-from music_ingest.reconciliation import reconcile_incoming
+from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 from tests.support.providers import MusicBrainzFixtureProvider
 
 
@@ -980,7 +980,10 @@ def test_reconciliation_replaces_source_version_without_replacing_record(tmp_pat
         )
         session.commit()
 
-        result = reconcile_incoming(session)
+        observed_at = datetime.now(UTC)
+        result = apply_reconciliation_plan(
+            session, plan_reconciliation(load_reconciliation_snapshot(session, observed_at)), observed_at
+        )
         session.commit()
         session.expire_all()
         persisted = session.get(LibraryRecord, 'record-replaced')
@@ -1039,7 +1042,10 @@ def test_reconciliation_keeps_current_publication_until_replacement_publishes(tm
         session.commit()
 
         # When: reconciliation discovers the replacement source generation.
-        _ = reconcile_incoming(session)
+        observed_at = datetime.now(UTC)
+        _ = apply_reconciliation_plan(
+            session, plan_reconciliation(load_reconciliation_snapshot(session, observed_at)), observed_at
+        )
         session.commit()
 
         # Then: the old publication remains current until the new audio is published.

@@ -135,7 +135,7 @@ from music_ingest.publication.service import (
     publish_release,
     replace_published_audio,
 )
-from music_ingest.reconciliation import reconcile_incoming
+from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
 from music_ingest.settings import load_runtime_settings
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
@@ -569,7 +569,9 @@ class ProcessingWorker:
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
         if claimed.job.kind == 'reconciliation_scan':
-            claimed.job.result_json = reconcile_incoming(self._session).model_dump_json()
+            snapshot = load_reconciliation_snapshot(self._session, now)
+            plan = plan_reconciliation(snapshot)
+            claimed.job.result_json = apply_reconciliation_plan(self._session, plan, now).model_dump_json()
             return
         if claimed.job.kind == 'selection_refresh':
             self._process_selection_refresh(claimed, now)
@@ -1453,12 +1455,14 @@ class ProcessingWorker:
             return None
 
     def _changed(self, source: SourceRecord, path: Path) -> bool:
+        if source.mtime_ns == 0:
+            return False
         stat = path.stat()
-        return (stat.st_dev, stat.st_ino, stat.st_size, file_hash(path)) != (
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) != (
             source.device,
             source.inode,
             source.size_bytes,
-            source.sha256,
+            source.mtime_ns,
         )
 
     def _cached_fingerprint(self, source: SourceRecord) -> FingerprintResult | None:
