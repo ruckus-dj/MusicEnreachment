@@ -21,6 +21,7 @@ from music_ingest.models.entities import (
     SourceRootRecord,
     SourceTagRecord,
     StorageConfigRecord,
+    UnsortedFilenameCounterRecord,
     WebhookReceiptRecord,
 )
 from music_ingest.models.library import (
@@ -61,5 +62,6 @@ __all__ = [
     'SourceRootRecord',
     'SourceTagRecord',
     'StorageConfigRecord',
+    'UnsortedFilenameCounterRecord',
     'WebhookReceiptRecord',
 ]

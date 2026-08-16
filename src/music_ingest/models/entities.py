@@ -277,6 +277,14 @@ class StorageConfigRecord(Base):
 
 
 @final
+class UnsortedFilenameCounterRecord(Base):
+    __tablename__ = 'unsorted_filename_counters'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    next_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+@final
 class GenreCatalogRecord(Base):
     __tablename__ = 'genre_catalog'
 
@@ -313,5 +321,7 @@ __all__ = [
     'SourceRecordingAssignmentRecord',
     'SourceRootRecord',
     'SourceTagRecord',
+    'StorageConfigRecord',
+    'UnsortedFilenameCounterRecord',
     'WebhookReceiptRecord',
 ]
