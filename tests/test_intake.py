@@ -51,7 +51,10 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_databa
     # Given: a manual source with mutually conflicting observations.
     source = tmp_path / 'manual.mp3'
     _ = source.write_bytes(b'manual source bytes')
-    original_hash = sha256(source.read_bytes()).hexdigest()
+    source_stat = source.stat()
+    metadata_fingerprint = sha256(
+        f'{source_stat.st_size}:{source_stat.st_mtime_ns}:{source_stat.st_ino}'.encode()
+    ).hexdigest()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "intake.db"}')
     Base.metadata.create_all(engine)
 
@@ -67,7 +70,8 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_databa
     assert persisted.device is not None
     assert persisted.inode is not None
     assert persisted.size_bytes == len(b'manual source bytes')
-    assert persisted.sha256 == original_hash
+    assert persisted.sha256 == metadata_fingerprint
+    assert persisted.mtime_ns == source_stat.st_mtime_ns
     assert persisted.duration_seconds == 241
     assert persisted.intake_state == 'needs_review'
     assert [(item.format_name, item.value) for item in persisted.tag_observations] == [
@@ -103,7 +107,7 @@ def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(t
     assert len(persisted.provider_attempts) == 1
 
 
-def test_intake_source_when_distinct_paths_have_identical_bytes_shares_library_record(tmp_path: Path) -> None:
+def test_intake_source_when_distinct_paths_have_identical_bytes_keeps_records_separate(tmp_path: Path) -> None:
     # Given: two immutable observations at distinct paths with exactly the same bytes.
     first = tmp_path / 'first.flac'
     second = tmp_path / 'second.flac'
@@ -120,12 +124,12 @@ def test_intake_source_when_distinct_paths_have_identical_bytes_shares_library_r
         first_source = session.get(SourceRecord, first_result.source_id)
         second_source = session.get(SourceRecord, second_result.source_id)
 
-    # Then: provenance is retained for both paths in one stable aggregate.
+    # Then: metadata-only intake retains independent path observations.
     assert first_source is not None
     assert second_source is not None
     assert first_source.id != second_source.id
     assert first_source.source_path != second_source.source_path
-    assert first_source.library_record_id == second_source.library_record_id
+    assert first_source.library_record_id != second_source.library_record_id
 
 
 def test_intake_source_when_repeated_database_identity_does_not_create_files(tmp_path: Path) -> None:

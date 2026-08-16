@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -50,8 +49,8 @@ __all__ = [
 
 def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
     source_stat = request.source_path.stat()
-    source_hash = _source_sha256(request.source_path)
-    source_id = _source_id(request.source_root_id, source_stat.st_dev, source_stat.st_ino, source_hash)
+    source_fingerprint = _source_fingerprint(source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_ino)
+    source_id = _source_id(request.source_root_id, source_stat.st_dev, source_stat.st_ino, source_fingerprint)
     repository = IntakeRepository(session)
     source = repository.find_source(source_id)
     if source is None:
@@ -64,7 +63,8 @@ def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
                     source_stat.st_dev,
                     source_stat.st_ino,
                     source_stat.st_size,
-                    source_hash,
+                    source_stat.st_mtime_ns,
+                    source_fingerprint,
                 )
         except IntegrityError:
             session.expire_all()
@@ -81,7 +81,8 @@ def _persist_source(
     device: int,
     inode: int,
     size_bytes: int,
-    source_hash: str,
+    mtime_ns: int,
+    source_fingerprint: str,
 ) -> SourceRecord:
     now = datetime.now(UTC)
     library_record = LibraryRecord(id=f'record-{uuid4().hex}', created_at=now, updated_at=now)
@@ -91,7 +92,8 @@ def _persist_source(
         device=device,
         inode=inode,
         size_bytes=size_bytes,
-        sha256=source_hash,
+        sha256=source_fingerprint,
+        mtime_ns=mtime_ns,
         duration_seconds=request.duration_seconds,
         origin=request.origin.value,
         intake_state=IntakeState.NEEDS_REVIEW.value,
@@ -119,19 +121,11 @@ def _persist_source(
         ReviewDecisionRecord(state=item.state, rationale=item.rationale) for item in request.review_decisions
     ]
     source = repository.add_source(source)
-    existing_source = repository.find_other_source_by_sha256(source_hash, source.id)
-    if existing_source is not None and existing_source.library_record is not None:
-        source.library_record = existing_source.library_record
-        _ = repository.add_source(source)
     return source
 
 
-def _source_sha256(source_path: Path) -> str:
-    digest = sha256()
-    with source_path.open('rb') as source_file:
-        for chunk in iter(lambda: source_file.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _source_fingerprint(size_bytes: int, mtime_ns: int, inode: int) -> str:
+    return sha256(f'{size_bytes}:{mtime_ns}:{inode}'.encode()).hexdigest()
 
 
 def _source_id(source_root_id: str, device: int, inode: int, source_hash: str) -> SourceId:
