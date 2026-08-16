@@ -30,6 +30,7 @@ class SourceRecord(Base):
     inode: Mapped[int] = mapped_column(BigInteger, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    mtime_ns: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default='0')
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     origin: Mapped[str] = mapped_column(Text, nullable=False)
     intake_state: Mapped[str] = mapped_column(Text, nullable=False)

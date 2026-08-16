@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260816_0012'
+_HEAD_REVISION = '20260816_0013'
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
@@ -83,6 +83,6 @@ def test_baseline_migration_when_upgraded_exposes_existing_source_lineage(tmp_pa
 
         # Then: source provenance still owns its stable source and record linkage fields.
         columns = {column['name'] for column in inspect(engine).get_columns('source_records')}
-        assert {'id', 'source_path', 'library_record_id', 'sha256'}.issubset(columns)
+        assert {'id', 'source_path', 'library_record_id', 'sha256', 'mtime_ns'}.issubset(columns)
     finally:
         engine.dispose()
