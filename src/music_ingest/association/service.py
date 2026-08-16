@@ -18,6 +18,7 @@ from music_ingest.library.service import (
 )
 from music_ingest.matching.providers import FixtureCase, MusicBrainzLookupRequest, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.models import (
+    FingerprintRecord,
     LibraryEventRecord,
     LibraryRecord,
     ReviewDecisionRecord,
@@ -265,11 +266,23 @@ class RecordingAssociationService:
         )
 
     def _has_conflicting_content_recording(self, source: SourceRecord, recording_mbid: str) -> bool:
+        source_fingerprint = next(
+            (
+                item.fingerprint
+                for item in source.fingerprints
+                if item.state == 'success' and item.fingerprint is not None
+            ),
+            None,
+        )
+        if source_fingerprint is None:
+            return False
         return (
             self._session.scalar(
                 select(SourceRecord.id)
+                .join(FingerprintRecord, FingerprintRecord.source_id == SourceRecord.id)
                 .join(LibraryRecord, SourceRecord.library_record_id == LibraryRecord.id)
-                .where(SourceRecord.sha256 == source.sha256)
+                .where(FingerprintRecord.fingerprint == source_fingerprint)
+                .where(FingerprintRecord.state == 'success')
                 .where(SourceRecord.id != source.id)
                 .where(LibraryRecord.musicbrainz_recording_id.is_not(None))
                 .where(LibraryRecord.musicbrainz_recording_id != recording_mbid)

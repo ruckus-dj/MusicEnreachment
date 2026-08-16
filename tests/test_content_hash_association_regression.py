@@ -7,7 +7,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
-from music_ingest.models import Base, CandidateRecord, LibraryRecord, ProviderAttemptRecord, SourceRecord
+from music_ingest.models import (
+    Base,
+    CandidateRecord,
+    FingerprintRecord,
+    LibraryRecord,
+    ProviderAttemptRecord,
+    SourceRecord,
+)
 
 
 def test_automatic_association_when_identical_content_has_other_recording_requires_review(tmp_path: Path) -> None:
@@ -65,7 +72,29 @@ def test_automatic_association_when_identical_content_has_other_recording_requir
                 )
             ],
         )
-        session.add_all((record, source_one, source_two))
+        session.add_all(
+            (
+                record,
+                source_one,
+                source_two,
+                FingerprintRecord(
+                    source=source_one,
+                    state='success',
+                    fingerprint='identical-acoustic-fingerprint',
+                    duration_seconds=241,
+                    tool_version='fixture',
+                    output_sha256='e' * 64,
+                ),
+                FingerprintRecord(
+                    source=source_two,
+                    state='success',
+                    fingerprint='identical-acoustic-fingerprint',
+                    duration_seconds=241,
+                    tool_version='fixture',
+                    output_sha256='f' * 64,
+                ),
+            )
+        )
         session.commit()
 
         # When: automatic evidence proposes recording B for only one identical-content observation.
