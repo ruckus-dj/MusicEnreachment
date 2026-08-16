@@ -21,8 +21,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from alembic import command
 from music_ingest.api.app import create_app
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
+from music_ingest.models import UnsortedFilenameCounterRecord
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
+from music_ingest.processing.metadata import allocate_unsorted_filename_with_factory
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor, run_processing_worker
 from music_ingest.settings import load_runtime_settings
 
@@ -92,6 +94,11 @@ def run_migrations(runtime_config: RuntimeConfig) -> None:
                 os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE] = previous_parent
 
 
+def ensure_unsorted_filename_counter(session: Session) -> None:
+    if session.get(UnsortedFilenameCounterRecord, 1) is None:
+        session.add(UnsortedFilenameCounterRecord(id=1, next_number=0))
+
+
 def create_runtime_app() -> FastAPI:
     runtime_config = RuntimeConfig.from_environment(os.environ)
     run_migrations(runtime_config)
@@ -111,6 +118,7 @@ def create_runtime_app() -> FastAPI:
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         del application
         with session_factory() as session:
+            ensure_unsorted_filename_counter(session)
             ensure_provider_schedules(session, (provider.value for provider in ProviderName), datetime.now(UTC))
             session.commit()
         async with anyio.create_task_group() as task_group:
@@ -153,4 +161,5 @@ def _processing_config(environment: Mapping[str, str], session_factory: Callable
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
         live_transport=live_transport,
+        unsorted_filename_allocator=lambda suffix: allocate_unsorted_filename_with_factory(session_factory, suffix),
     )

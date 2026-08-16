@@ -31,6 +31,7 @@ from music_ingest.dto import (
     MatchingSettings,
     MetadataUpdate,
     MusicBrainzOverride,
+    NextUnsortedFilenameResponse,
     ProviderRetryRequest,
     ProviderRetryResponse,
     ProviderRetryResult,
@@ -84,6 +85,7 @@ from music_ingest.models import (
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import CandidateView, LibraryRecordConsolidationRecord, SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
+from music_ingest.processing.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor
 from music_ingest.reconciliation import mark_disappeared_source
 from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
@@ -1417,6 +1419,16 @@ def create_app(
                 state=config.state,
                 generation=config.generation,
             )
+
+    @app.get('/api/settings/storage/next-unsorted-filename', response_model=NextUnsortedFilenameResponse)
+    def next_unsorted_filename(suffix: str = '.flac') -> NextUnsortedFilenameResponse:
+        try:
+            with session_factory() as session:
+                filename = allocate_unsorted_filename(session, suffix)
+                session.commit()
+                return NextUnsortedFilenameResponse(filename=filename)
+        except UnsortedFilenameSuffixError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post('/api/settings/storage/output/preview', response_model=StorageOutputPreviewResponse)
     def preview_storage_output(request: StoragePathRequest) -> StorageOutputPreviewResponse:
