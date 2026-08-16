@@ -23,8 +23,18 @@ docker compose run --rm --no-deps --env "OUTPUT_ROOT=$output_root" music-ingest 
 '
 
 docker compose start music-ingest
-docker compose exec -T music-ingest python -c "
+ready=0
+for _ in $(seq 1 60); do
+  health_status="$(docker inspect --format '{{.State.Health.Status}}' music-enrichment-ingest 2>/dev/null || true)"
+  if [ "$health_status" = healthy ]; then
+    docker compose exec -T music-ingest python -c "
 import urllib.request
-urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).read()
-urllib.request.urlopen('http://127.0.0.1:8000/api/settings/source-roots', timeout=5).read()
+urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()
+urllib.request.urlopen('http://127.0.0.1:8000/api/settings/source-roots', timeout=2).read()
 "
+    ready=1
+    break
+  fi
+  sleep 1
+done
+test "$ready" -eq 1
