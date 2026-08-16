@@ -118,6 +118,12 @@ class StorageOutputPreviewResponse(BaseModel):
     file_count: int
 
 
+class NextUnsortedFilenameResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    filename: str
+
+
 class StorageConfigResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
