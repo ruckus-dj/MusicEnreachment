@@ -64,7 +64,7 @@ def test_shared_stage_when_worker_processes_audio_writes_valid_output_without_mu
     result = process_media(MediaPipelineRequest(plan, capability, staging, plan.output_name, run_fingerprint=False))
 
     assert result.output_path.is_file()
-    assert result.output_path.suffix == suffix
+    assert result.output_path.suffix == '.mka'
     assert sha256(source.read_bytes()).hexdigest() == original_hash
     assert not list(staging.glob('.staged*'))
     if suffix == '.flac':
@@ -90,7 +90,7 @@ def test_cli_when_processing_real_service_stage_writes_only_derived_audio(tmp_pa
 
 @pytest.mark.parametrize(
     ('suffix', 'muxer'),
-    [('.flac', 'flac'), ('.m4a', 'ipod'), ('.mp3', 'mp3'), ('.ogg', 'ogg'), ('.opus', 'opus')],
+    [('.mka', 'matroska'), ('.flac', 'flac'), ('.m4a', 'ipod'), ('.mp3', 'mp3'), ('.ogg', 'ogg'), ('.opus', 'opus')],
 )
 def test_stream_copy_remux_when_declared_format_uses_native_muxer(suffix: str, muxer: str) -> None:
     assert _muxer(suffix) == muxer

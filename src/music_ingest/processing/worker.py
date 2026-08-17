@@ -656,12 +656,11 @@ class ProcessingWorker:
                 decision.source_id,
             )
             return
-        source = next(item for item in record.sources if item.id == decision.source_id)
         publication = next((item for item in record.publications if item.state == 'current'), None)
         if publication is not None and (
             publication.source_id == decision.source_id
             and publication.metadata_revision_id == revision.id
-            and publication.path.casefold().endswith(Path(source.source_path).suffix.casefold())
+            and publication.path.casefold().endswith('.mka')
         ):
             record_event(
                 self._session,
@@ -722,6 +721,11 @@ class ProcessingWorker:
         if decoder_evidence is not None:
             self._record_decoder_evidence(source, decoder_evidence, now)
         source.media_codec = capability.codec.upper()
+        technical = inspection.technical
+        source.media_bit_depth = None if technical is None else technical.bit_depth
+        source.media_sample_rate = None if technical is None else technical.sample_rate
+        source.media_channels = None if technical is None else technical.channels
+        source.media_bitrate = None if technical is None else technical.bitrate
         cached_fingerprint = self._cached_fingerprint(source)
         plan = plan_media_stage(source_path)
         tags = plan.source_tags
@@ -772,7 +776,7 @@ class ProcessingWorker:
         )
         unsorted_destination = relative_directory == 'Unsorted' and current_publication is None
         if unsorted_destination:
-            output_name = f'.{claimed.job.id}{source_path.suffix.casefold()}'
+            output_name = f'.{claimed.job.id}.mka'
         pipeline_result = process_media(
             MediaPipelineRequest(
                 plan,
@@ -789,15 +793,10 @@ class ProcessingWorker:
         if pipeline_result.fingerprint is not None and cached_fingerprint is None:
             persist_fingerprint(self._session, SourceId(source.id), pipeline_result.fingerprint)
         source.media_codec = capability.codec.upper()
-        properties = pipeline_result.flac_properties
-        source.media_bit_depth = None if properties is None else properties.bit_depth
-        source.media_sample_rate = None if properties is None else properties.sample_rate
-        source.media_channels = None if properties is None else properties.channels
-        source.media_bitrate = None
         written_tags = pipeline_result.written_tags
         self._session.flush()
         if unsorted_destination:
-            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
+            output_name = self._allocate_unsorted_filename('.mka')
         target_audio = destination_release / output_name
         path_owner = self._session.scalar(
             select(LibraryPublicationRecord)
@@ -855,7 +854,7 @@ class ProcessingWorker:
             audio_path = (
                 Path(current_publication.path)
                 if current_publication is not None
-                else next(result.published_release.glob(f'*{source_path.suffix}'))
+                else next(result.published_release.glob('*.mka'))
             )
         _ = record_publication(
             self._session,
@@ -1185,7 +1184,7 @@ class ProcessingWorker:
         source = self._source(claimed)
         record = ensure_source_record(self._session, source, now)
         decision = reevaluate_effective_source_decision(self._session, record.id, now)
-        if decision.source_id != source.id:
+        if decision.source_id is not None and decision.source_id != source.id:
             record_event(
                 self._session,
                 record.id,
@@ -1215,7 +1214,7 @@ class ProcessingWorker:
         publication = next((item for item in record.publications if item.state == 'current'), None)
         unsorted_destination = relative_directory == 'Unsorted' and publication is None
         if unsorted_destination:
-            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
+            output_name = self._allocate_unsorted_filename('.mka')
         target_audio = self._config.media_root / relative_directory / output_name
         if publication is not None and (
             publication.source_id == source.id

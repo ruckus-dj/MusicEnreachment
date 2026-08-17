@@ -14,7 +14,7 @@ from music_ingest.normalize.tags import MetadataTagError, read_normalized_tags
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 
 _AUDIO_SUFFIXES: Final = frozenset(
-    {'.aac', '.aiff', '.alac', '.ape', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.wma'}
+    {'.aac', '.aiff', '.alac', '.ape', '.flac', '.m4a', '.mka', '.mp3', '.ogg', '.opus', '.wav', '.wma'}
 )
 _REQUIRED_TAGS: Final = frozenset({'ARTIST', 'ALBUM', 'GENRE'})
 _MAX_ARTWORK_BYTES: Final = 20 * 1024 * 1024

@@ -29,7 +29,7 @@ class RemuxFailure(Exception):
 def remux_stream_copy(request: RemuxRequest) -> ToolEvidence:
     source_path = request.source_path.resolve(strict=True)
     output_path = request.output_path.resolve()
-    muxer = _muxer(source_path.suffix)
+    muxer = _muxer(output_path.suffix)
     evidence = run_tool(
         (
             request.ffmpeg_command,
@@ -63,6 +63,8 @@ def remux_stream_copy(request: RemuxRequest) -> ToolEvidence:
 
 def _muxer(suffix: str) -> str:
     match suffix.casefold():
+        case '.mka':
+            return 'matroska'
         case '.flac':
             return 'flac'
         case '.m4a' | '.mp4':

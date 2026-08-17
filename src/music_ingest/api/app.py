@@ -1421,7 +1421,7 @@ def create_app(
             )
 
     @app.get('/api/settings/storage/next-unsorted-filename', response_model=NextUnsortedFilenameResponse)
-    def next_unsorted_filename(suffix: str = '.flac') -> NextUnsortedFilenameResponse:
+    def next_unsorted_filename(suffix: str = '.mka') -> NextUnsortedFilenameResponse:
         try:
             with session_factory() as session:
                 filename = allocate_unsorted_filename(session, suffix)

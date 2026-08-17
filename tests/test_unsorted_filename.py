@@ -18,16 +18,16 @@ def test_allocate_unsorted_filename_increments_the_persisted_counter(tmp_path: P
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         ensure_unsorted_filename_counter(session)
-        # When: two independent allocations request different source extensions.
-        first = allocate_unsorted_filename(session, '.flac')
+        # When: two independent allocations request the canonical publication extension.
+        first = allocate_unsorted_filename(session, '.mka')
         session.commit()
     with Session(engine) as session:
-        second = allocate_unsorted_filename(session, '.mp3')
+        second = allocate_unsorted_filename(session, '.mka')
         session.commit()
 
     # Then: each allocation receives the next database-backed number.
-    assert first == 'Track 01.flac'
-    assert second == 'Track 02.mp3'
+    assert first == 'Track 01.mka'
+    assert second == 'Track 02.mka'
 
 
 def test_next_unsorted_filename_endpoint_commits_each_allocation(tmp_path: Path) -> None:
@@ -40,12 +40,12 @@ def test_next_unsorted_filename_endpoint_commits_each_allocation(tmp_path: Path)
     client = TestClient(create_app(lambda: Session(engine)))
 
     # When: the endpoint is requested twice.
-    first = client.get('/api/settings/storage/next-unsorted-filename', params={'suffix': '.ogg'})
-    second = client.get('/api/settings/storage/next-unsorted-filename', params={'suffix': '.opus'})
+    first = client.get('/api/settings/storage/next-unsorted-filename', params={'suffix': '.mka'})
+    second = client.get('/api/settings/storage/next-unsorted-filename', params={'suffix': '.mka'})
 
     # Then: committed allocations are sequential and preserve supported suffixes.
-    assert first.json() == {'filename': 'Track 01.ogg'}
-    assert second.json() == {'filename': 'Track 02.opus'}
+    assert first.json() == {'filename': 'Track 01.mka'}
+    assert second.json() == {'filename': 'Track 02.mka'}
 
 
 def test_startup_initializes_missing_unsorted_filename_counter(tmp_path: Path) -> None:
@@ -77,9 +77,9 @@ def test_factory_allocator_uses_a_separate_committed_session(tmp_path: Path) -> 
         return Session(engine)
 
     # When: allocation runs through the factory.
-    filename = allocate_unsorted_filename_with_factory(factory, '.m4a')
+    filename = allocate_unsorted_filename_with_factory(factory, '.mka')
 
     # Then: the caller receives the committed next filename.
     with Session(engine) as session:
-        assert filename == 'Track 01.m4a'
-        assert allocate_unsorted_filename(session, '.flac') == 'Track 02.flac'
+        assert filename == 'Track 01.mka'
+        assert allocate_unsorted_filename(session, '.mka') == 'Track 02.mka'

@@ -225,7 +225,7 @@ def test_selection_refresh_when_better_source_replaces_output_atomically(tmp_pat
         )
         session.add(better_revision)
         session.flush()
-        output = config.media_root / 'Fixture Artist' / 'Fixture Album' / '01 - Old Track.flac'
+        output = config.media_root / 'Fixture Artist' / 'Fixture Album' / '01 - Old Track.mka'
         output.parent.mkdir(parents=True)
         output.write_bytes(old_source_path.read_bytes())
         old_bytes = output.read_bytes()
@@ -235,7 +235,7 @@ def test_selection_refresh_when_better_source_replaces_output_atomically(tmp_pat
                 library_record=record,
                 source=old_source,
                 path=str(output),
-                format_name='flac',
+                format_name='mka',
                 content_sha256=sha256(old_bytes).hexdigest(),
                 metadata_revision_id=old_revision.id,
                 state='current',
@@ -424,8 +424,8 @@ def test_selection_refresh_when_current_publication_matches_revision_records_no_
                 id='publication-unchanged',
                 library_record=record,
                 source=source,
-                path=str(tmp_path / 'media' / 'audio.flac'),
-                format_name='flac',
+                path=str(tmp_path / 'media' / 'audio.mka'),
+                format_name='mka',
                 content_sha256='b' * 64,
                 metadata_revision_id=revision.id,
                 state='current',

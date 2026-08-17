@@ -115,8 +115,8 @@ def process_media(request: MediaPipelineRequest) -> MediaPipelineResult:
     if not staging_directory.is_dir():
         raise ValueError('staging directory must be a directory')
     source_path = request.plan.source_path.resolve(strict=True)
-    output_path = staging_directory / request.output_name
-    remux_path = staging_directory / f'.remux{source_path.suffix}'
+    output_path = staging_directory / Path(request.output_name).with_suffix('.mka')
+    remux_path = staging_directory / '.remux.mka'
     _ = output_path.unlink(missing_ok=True)
     _ = remux_path.unlink(missing_ok=True)
 
@@ -146,7 +146,7 @@ def process_media(request: MediaPipelineRequest) -> MediaPipelineResult:
     metadata_result = _write_staged_metadata(request, remux_path, output_path)
     _validate_final_output(source_path, output_path, request.ffmpeg_command, request.timeout_seconds)
     _ = remux_path.unlink(missing_ok=True)
-    flac_properties = _flac_properties(output_path) if source_path.suffix.casefold() == '.flac' else None
+    flac_properties = _flac_properties(source_path) if source_path.suffix.casefold() == '.flac' else None
     return MediaPipelineResult(output_path, metadata_result.tags, fingerprint, flac_properties)
 
 
@@ -168,6 +168,9 @@ def _write_staged_metadata(
             field_policy(),
             genre_policy(request.plan.metadata.genres, request.runtime_settings),
             request.capability,
+            request.ffmpeg_command,
+            'ffprobe',
+            request.timeout_seconds,
         )
     )
     remux_path.unlink()

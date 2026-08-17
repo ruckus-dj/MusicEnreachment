@@ -86,11 +86,11 @@ def fallback_metadata(
     )
 
 
-def publication_layout(tags: tuple[tuple[str, str], ...], source_name: str) -> tuple[str, str]:
+def publication_layout(tags: tuple[tuple[str, str], ...], _source_name: str) -> tuple[str, str]:
     """Return the stable media directory and filename for one source track."""
     metadata = fallback_metadata(tags)
     values = {name: value for name, value in tags}
-    suffix = Path(source_name).suffix.casefold() or '.flac'
+    suffix = '.mka'
     if metadata is None:
         artist = values.get('ALBUMARTIST') or values.get('ARTIST')
         album = values.get('ALBUM')
@@ -167,7 +167,7 @@ def allocate_unsorted_filename_with_factory(session_factory: Callable[[], Sessio
 
 def _normalize_suffix(suffix: str) -> str:
     normalized = suffix.casefold()
-    if normalized not in {'.flac', '.m4a', '.mp3', '.ogg', '.opus'}:
+    if normalized != '.mka':
         raise UnsortedFilenameSuffixError(suffix)
     return normalized
 

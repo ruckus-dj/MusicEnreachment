@@ -748,9 +748,9 @@ def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_re
         assert source is not None
         assert source.intake_state == 'present'
         assert source.media_codec == 'FLAC'
-        assert source.media_bit_depth is None
-        assert source.media_sample_rate is None
-        assert source.media_channels is None
+        assert source.media_bit_depth == 16
+        assert source.media_sample_rate == 44_100
+        assert source.media_channels == 1
         decision = session.get(EffectiveSourceDecisionRecord, source.library_record_id)
         assert decision is not None and decision.source_id is None
         assert source.review_decisions == []
@@ -765,7 +765,7 @@ def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_re
     ('suffix', 'codec_name'),
     [('.m4a', 'aac'), ('.m4a', 'alac'), ('.mp3', 'mp3'), ('.opus', 'opus'), ('.ogg', 'vorbis')],
 )
-def test_worker_preserves_declared_non_flac_suffix_and_bytes(
+def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str, codec_name: str
 ) -> None:
     # Given: a declared non-FLAC source and probes that avoid external capability/decoder tools.
@@ -842,7 +842,7 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
     monkeypatch.setattr(
         processing,
         'publish_release',
-        lambda request: _publish_stub(request, suffix),
+        lambda request: _publish_stub(request, '.mka'),
     )
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
@@ -870,8 +870,8 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         assert job is not None
         assert job.state == 'completed'
         assert job.failure_reason is None
-        published_audio = next(config.media_root.rglob(f'*{suffix}'))
-        assert published_audio.suffix == suffix
+        published_audio = next(config.media_root.rglob('*.mka'))
+        assert published_audio.suffix == '.mka'
         assert published_audio.read_bytes() == original_bytes
 
 
