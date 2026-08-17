@@ -225,7 +225,8 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     return tags
 
 
-def _candidate_record(source_id: str, candidate: ReleaseCandidate, score: float | None) -> CandidateRecord:
+def _candidate_record(source_id: str, candidate: ReleaseCandidate, score: CandidateScore | None) -> CandidateRecord:
+    score_value = None if score is None else score.score
     return CandidateRecord(
         source_id=source_id,
         candidate_key=candidate.release_mbid,
@@ -234,7 +235,16 @@ def _candidate_record(source_id: str, candidate: ReleaseCandidate, score: float 
                 'provider': 'musicbrainz',
                 'artist': candidate.artist_name,
                 'release': candidate.release_title,
-                'score': score,
+                'score': score_value,
+                'score_components': (
+                    None
+                    if score is None
+                    else {
+                        'artist': score.artist_component,
+                        'release': score.release_component,
+                        'duration': score.duration_component,
+                    }
+                ),
                 'tags': _candidate_tags(candidate),
             },
             sort_keys=True,
@@ -391,10 +401,14 @@ def _matching_request(
     record: LibraryRecord, source: SourceRecord, tags: tuple[tuple[str, str], ...]
 ) -> MatchingRequest:
     values = {name: value for name, value in tags}
+    duration_seconds = source.duration_seconds
+    if duration_seconds is None and source.fingerprints:
+        fingerprint_duration = source.fingerprints[-1].duration_seconds
+        duration_seconds = None if fingerprint_duration is None else round(fingerprint_duration)
     return MatchingRequest(
         values.get('ARTIST', ''),
         values.get('ALBUM', ''),
-        source.duration_seconds,
+        duration_seconds,
         _reviewer_selected_musicbrainz_ids(record, source),
         recording_title=values.get('TITLE', ''),
         track_number=_tag_number(values.get('TRACKNUMBER')),
@@ -402,6 +416,7 @@ def _matching_request(
         disc_number=_tag_number(values.get('DISCNUMBER')),
         disc_total=_tag_number(values.get('DISCTOTAL')),
         source_path=source.source_path,
+        album_artist_name=values.get('ALBUMARTIST', ''),
     )
 
 
@@ -1406,7 +1421,7 @@ class ProcessingWorker:
                 candidate_scores = (
                     {}
                     if match_result is None
-                    else {item.candidate_mbid: item.score for item in match_result.candidate_scores}
+                    else {item.candidate_mbid: item for item in match_result.candidate_scores}
                 )
                 match result:
                     case MusicBrainzMatch(candidate=candidate):
