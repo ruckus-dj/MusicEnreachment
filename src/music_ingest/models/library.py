@@ -152,6 +152,14 @@ _ = Index(
     sqlite_where=LibraryPublicationRecord.state == 'current',
 )
 
+_ = Index(
+    'uq_current_library_publication_path',
+    LibraryPublicationRecord.path,
+    unique=True,
+    postgresql_where=LibraryPublicationRecord.state == 'current',
+    sqlite_where=LibraryPublicationRecord.state == 'current',
+)
+
 
 @final
 class EffectiveSourceDecisionRecord(Base):
