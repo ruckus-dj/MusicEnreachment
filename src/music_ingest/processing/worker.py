@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
-from music_ingest.enrichment.artwork import ArtworkProvider, ArtworkWriteRequest, write_release_artwork
+from music_ingest.enrichment.artwork import ArtworkProvider
 from music_ingest.enrichment.fingerprints import (
     FingerprintRequest,
     FingerprintResult,
@@ -108,7 +108,6 @@ from music_ingest.processing.media_stage import (
     inspect_source_capability,
     plan_media_stage,
     process_media,
-    stage_source_artwork,
 )
 from music_ingest.processing.metadata import (
     SourceMetadataError,
@@ -132,7 +131,7 @@ from music_ingest.publication import (
 from music_ingest.publication.service import (
     PublicationError,
     PublicationRequest,
-    publish_release,
+    publish_release,  # noqa: F401 - retained as a test seam for legacy publication failure cases
     replace_published_audio,
 )
 from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
@@ -424,6 +423,10 @@ def _final_tags(
         if verified_analysis or name.startswith('MUSICBRAINZ_'):
             final[name] = value
     return final
+
+
+def _has_explicit_musicbrainz_identity(tags: dict[str, str]) -> bool:
+    return all(tags.get(name, '').strip() for name in ('MUSICBRAINZ_RECORDINGID', 'MUSICBRAINZ_ALBUMID'))
 
 
 def _apply_match_identity(record: LibraryRecord, match_result: MatchResult | None) -> None:
@@ -743,10 +746,57 @@ class ProcessingWorker:
         source.media_bitrate = None
         written_tags = pipeline_result.written_tags
         self._session.flush()
+        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+        providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
+        if not _has_explicit_musicbrainz_identity(dict(written_tags)):
+            source.intake_state = 'present'
+            _ = reevaluate_effective_source_decision(self._session, record.id, now)
+            if providers_enabled:
+                provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
+                _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
+                record_event(
+                    self._session,
+                    record.id,
+                    'publication_deferred_for_identity',
+                    'needs_review',
+                    'audio remains unpublished until explicit MusicBrainz recording and release identities are '
+                    'available',
+                    now,
+                    source.id,
+                )
+            else:
+                record_event(
+                    self._session,
+                    record.id,
+                    'publication_deferred_for_identity',
+                    'needs_review',
+                    'audio remains unpublished because explicit MusicBrainz recording and release identities are '
+                    'missing',
+                    now,
+                    source.id,
+                )
+            return
         if unsorted_destination:
             output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
-        else:
-            acquire_publication_destination_lock(self._session, destination_release)
+        target_audio = destination_release / output_name
+        path_owner = self._session.scalar(
+            select(LibraryPublicationRecord)
+            .where(LibraryPublicationRecord.path == str(target_audio.resolve()))
+            .where(LibraryPublicationRecord.state == 'current')
+            .with_for_update()
+        )
+        if path_owner is not None and path_owner.library_record_id != record.id:
+            record_event(
+                self._session,
+                record.id,
+                'publication_path_conflict',
+                'needs_review',
+                'canonical audio path is already owned by another library record',
+                now,
+                source.id,
+            )
+            return
+        acquire_publication_destination_lock(self._session, target_audio)
         self._session.refresh(source)
         if source.intake_state == 'replaced':
             record_event(
@@ -776,11 +826,7 @@ class ProcessingWorker:
             ),
             sources=(source,),
         )
-        result = (
-            publish_release(request)
-            if current_publication is None
-            else replace_published_audio(request, Path(current_publication.path))
-        )
+        result = replace_published_audio(request, target_audio)
         final_revision = append_metadata_revision(
             self._session, record.id, source.id, 'final', dict(written_tags), 'worker', now
         )
@@ -802,8 +848,6 @@ class ProcessingWorker:
         )
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self._session, record.id, now)
-        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
-        providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
         record_event(
             self._session,
             record.id,
@@ -1191,10 +1235,14 @@ class ProcessingWorker:
             return
         relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
         publication = next((item for item in record.publications if item.state == 'current'), None)
+        unsorted_destination = relative_directory == 'Unsorted' and publication is None
+        if unsorted_destination:
+            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
+        target_audio = self._config.media_root / relative_directory / output_name
         if publication is not None and (
             publication.source_id == source.id
             and publication.metadata_revision_id == revision.id
-            and Path(publication.path).suffix.casefold() == source_path.suffix.casefold()
+            and Path(publication.path).resolve() == target_audio.resolve()
         ):
             record_event(
                 self._session,
@@ -1206,12 +1254,24 @@ class ProcessingWorker:
                 source.id,
             )
             return
-        unsorted_destination = relative_directory == 'Unsorted' and publication is None
-        if unsorted_destination:
-            output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
-        destination_release = (
-            Path(publication.path).parent if publication is not None else self._config.media_root / relative_directory
+        path_owner = self._session.scalar(
+            select(LibraryPublicationRecord)
+            .where(LibraryPublicationRecord.path == str(target_audio.resolve()))
+            .where(LibraryPublicationRecord.state == 'current')
+            .with_for_update()
         )
+        if path_owner is not None and path_owner.library_record_id != record.id:
+            record_event(
+                self._session,
+                record.id,
+                'publication_path_conflict',
+                'needs_review',
+                'canonical audio path is already owned by another library record',
+                now,
+                source.id,
+            )
+            return
+        destination_release = target_audio.parent
         attempt_token = uuid4().hex
         attempt = reserve_attempt(
             self._session,
@@ -1229,10 +1289,7 @@ class ProcessingWorker:
         )
         staged_release = Path(attempt.staging_directory)
         staged_release.parent.mkdir(parents=True, exist_ok=True)
-        if destination_release.is_dir():
-            _ = shutil.copytree(destination_release, staged_release)
-        else:
-            staged_release.mkdir()
+        staged_release.mkdir()
         capability = inspect_source_capability(source_path, timeout_seconds=self._timeout_seconds())
         if capability is None:
             raise ProcessingInfrastructureError('source has no declared media capability')
@@ -1253,11 +1310,9 @@ class ProcessingWorker:
                 False,
             )
         )
-        provider_artwork_staged = self._stage_artwork_for_release(source_path, staged_release, final_tags)
-        _ = provider_artwork_staged
         mark_staged(self._session, attempt, now)
         if not unsorted_destination:
-            acquire_publication_destination_lock(self._session, destination_release)
+            acquire_publication_destination_lock(self._session, target_audio)
         expose_attempt(self._session, attempt, now)
         _ = finalize_attempt(self._session, attempt, now)
         cleanup_attempt(attempt)
@@ -1520,7 +1575,6 @@ class ProcessingWorker:
     def _staging_directory(self, job_id: str) -> Path:
         directory = self._config.staging_root / job_id
         self._config.staging_root.mkdir(parents=True, exist_ok=True)
-        self._config.media_root.mkdir(parents=True, exist_ok=True)
         if directory.exists():
             shutil.rmtree(directory)
         directory.mkdir()
@@ -1530,30 +1584,6 @@ class ProcessingWorker:
         directory = self._config.staging_root / job_id
         if directory.is_dir():
             shutil.rmtree(directory)
-
-    def _stage_artwork(self, source_path: Path, staged_release: Path) -> None:
-        stage_source_artwork(source_path, staged_release)
-
-    def _stage_artwork_for_release(self, source_path: Path, staged_release: Path, final_tags: dict[str, str]) -> bool:
-        self._stage_artwork(source_path, staged_release)
-        release_id = final_tags.get('MUSICBRAINZ_ALBUMID')
-        _, _, provider = self._configured_providers()
-        if release_id is None or provider is None:
-            return False
-        setting_key = f'artwork:{release_id}'
-        if self._session.get(RuntimeSettingRecord, setting_key) is not None:
-            return False
-        candidate = provider.fetch_artwork(release_id)
-        setting_value = 'missing'
-        if candidate is not None:
-            for name in ('cover.jpg', 'cover.webp'):
-                (staged_release / name).unlink(missing_ok=True)
-            _ = write_release_artwork(
-                ArtworkWriteRequest(self._config.staging_root, staged_release, release_id, candidate)
-            )
-            setting_value = candidate.format.value
-        self._session.add(RuntimeSettingRecord(key=setting_key, value=setting_value, updated_at=datetime.now(UTC)))
-        return candidate is not None
 
     def _configured_providers(
         self,

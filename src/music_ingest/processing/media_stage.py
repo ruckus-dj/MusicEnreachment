@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -145,7 +144,6 @@ def process_media(request: MediaPipelineRequest) -> MediaPipelineResult:
             raise remux_error
 
     metadata_result = _write_staged_metadata(request, remux_path, output_path)
-    stage_source_artwork(source_path, staging_directory)
     _validate_final_output(source_path, output_path, request.ffmpeg_command, request.timeout_seconds)
     _ = remux_path.unlink(missing_ok=True)
     flac_properties = _flac_properties(output_path) if source_path.suffix.casefold() == '.flac' else None
@@ -193,12 +191,3 @@ def _validate_final_output(source_path: Path, output_path: Path, ffmpeg_command:
 def _flac_properties(path: Path) -> FlacProperties:
     info = FLAC(path).info
     return FlacProperties(info.bits_per_sample, info.sample_rate, info.channels)
-
-
-def stage_source_artwork(source_path: Path, staging_directory: Path) -> None:
-    artwork = next(
-        (path for path in (source_path.parent / 'cover.jpg', source_path.parent / 'cover.webp') if path.is_file()),
-        None,
-    )
-    if artwork is not None:
-        _ = shutil.copy2(artwork, staging_directory / artwork.name)

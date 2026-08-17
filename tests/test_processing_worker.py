@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 import music_ingest.processing.media_stage as media_stage
 import music_ingest.processing.worker as processing
+import music_ingest.publication.service as publication_service
 from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.inspectors._tool import ToolEvidence, ToolState
@@ -622,13 +623,12 @@ def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identit
     assert processing.musicbrainz_lookup_ids(record, source) == ('reviewer-recording', None)
 
 
-def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallback_and_review(tmp_path: Path) -> None:
+def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_reviewable(tmp_path: Path) -> None:
     # Given: a DB-backed queued job with a valid immutable incoming FLAC and artwork.
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
     _ = (config.incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
-    source_identity = source_path.stat().st_dev, source_path.stat().st_ino, sha256(source_path.read_bytes()).hexdigest()
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -649,7 +649,7 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         assert job.state == 'completed'
         session.commit()
 
-    # Then: initial final media is independently published before provider analysis.
+    # Then: the source remains reviewable without creating a managed publication.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-1')
         assert job is not None and job.state == 'completed'
@@ -665,20 +665,10 @@ def test_worker_when_valid_source_has_no_provider_match_publishes_original_fallb
         assert decision is not None and decision.source_id is None
         assert source.review_decisions == []
         assert source.library_record is not None
-        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
-    published = next(config.media_root.rglob('*.flac'))
-    assert published.relative_to(config.media_root).as_posix() == (
-        'Fixture Artist & Fixture Guest/Fixture Album/01 - Fixture Track.flac'
-    )
-    assert source_identity == (
-        source_path.stat().st_dev,
-        source_path.stat().st_ino,
-        sha256(source_path.read_bytes()).hexdigest(),
-    )
-    assert published.stat().st_ino != source_path.stat().st_ino
-    tags = dict(read_normalized_tags(published))
-    assert tags['TITLE'] == 'Fixture Track'
-    assert tags['GENRE'] == 'Hip Hop; Alternative Rock'
+        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original'}
+        assert source.library_record.processing_state == 'needs_review'
+        assert source.library_publications == []
+    assert not config.media_root.exists()
 
 
 @pytest.mark.parametrize(
@@ -702,6 +692,8 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
     monkeypatch.setattr(media_stage, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(publication_service, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(publication_service, '_validate_tags', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         media_stage,
         'read_tags',
@@ -716,7 +708,14 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
             ('DISCNUMBER', '1'),
             ('DISCTOTAL', '1'),
             ('GENRE', 'Hip Hop; Alternative Rock'),
+            ('MUSICBRAINZ_RECORDINGID', 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'),
+            ('MUSICBRAINZ_ALBUMID', '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'),
         ],
+    )
+    monkeypatch.setattr(
+        publication_service,
+        'read_normalized_tags',
+        lambda *_args, **_kwargs: (('TITLE', 'Fixture Track'),),
     )
     monkeypatch.setattr(
         media_stage,
@@ -735,7 +734,14 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
     def preserve_audio(request: MetadataWriteRequest) -> MetadataWriteResult:
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
         request.output_path.write_bytes(request.source_path.read_bytes())
-        return MetadataWriteResult(request.output_path, (('TITLE', 'Fixture Track'),))
+        return MetadataWriteResult(
+            request.output_path,
+            (
+                ('TITLE', 'Fixture Track'),
+                ('MUSICBRAINZ_RECORDINGID', 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'),
+                ('MUSICBRAINZ_ALBUMID', '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'),
+            ),
+        )
 
     monkeypatch.setattr(
         media_stage,
@@ -773,7 +779,7 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         assert job is not None
         assert job.state == 'completed'
         assert job.failure_reason is None
-        published_audio = config.media_root / 'Artist' / 'Release' / f'track{suffix}'
+        published_audio = next(config.media_root.rglob(f'*{suffix}'))
         assert published_audio.suffix == suffix
         assert published_audio.read_bytes() == original_bytes
 
@@ -824,7 +830,7 @@ def test_worker_when_staged_decoder_rejects_but_source_passes_retries_without_pu
             else ToolEvidence(ToolState.SUCCESS, 0, '', '')
         ),
     )
-    monkeypatch.setattr(processing, 'publish_release', fail_publish)
+    monkeypatch.setattr(processing, 'replace_published_audio', fail_publish)
 
     # When: the worker processes the queued initial job.
     with Session(engine) as session:
@@ -961,12 +967,7 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
         assert source.library_record.musicbrainz_recording_id == 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
         assert source.library_record.musicbrainz_release_id is None
         assert source.library_record.processing_state == 'needs_review'
-        current = next(item for item in source.library_publications if item.state == 'current')
-        assert current.metadata_revision_id is not None
-        published_path = Path(current.path)
-        tags = dict(read_normalized_tags(published_path))
-        assert tags['ALBUM'] == 'Fixture Album'
-        assert 'MUSICBRAINZ_ALBUMID' not in tags
+        assert source.library_publications == []
 
 
 def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerprint_evidence(
@@ -1069,14 +1070,14 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-        # Then: the source is reviewable, the job is complete, and audio is published without usable metadata.
+        # Then: the source is reviewable, the job is complete, and audio remains unpublished.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-tagless')
         assert job is not None and job.state == 'completed'
         source = session.get(SourceRecord, job.source_id)
         assert source is not None and source.intake_state == 'present'
-        assert len(source.library_publications) == 1
-        assert source.library_record is not None and source.library_record.processing_state == 'analyzing'
+        assert source.library_publications == []
+        assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert [evidence.state for evidence in source.fingerprints] == ['success']
         assert source.fingerprints[0].fingerprint
         assert source.provider_attempts == []
@@ -1085,9 +1086,9 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
         revisions = {
             revision.layer: json.loads(revision.tags_json) for revision in source.library_record.metadata_revisions
         }
-        assert revisions == {'original': {}, 'final': {}}
-    assert allocated_suffixes == ['.flac']
-    assert [path.name for path in config.media_root.rglob('*.flac')] == ['Track 77.flac']
+        assert revisions == {'original': {}}
+    assert allocated_suffixes == []
+    assert not config.media_root.exists()
 
 
 def test_worker_quarantines_source_when_persisted_root_is_disabled(tmp_path: Path) -> None:
@@ -1095,6 +1096,14 @@ def test_worker_quarantines_source_when_persisted_root_is_disabled(tmp_path: Pat
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
+    _ = write_normalized_tags(
+        source_path,
+        (
+            *read_normalized_tags(source_path),
+            ('MUSICBRAINZ_RECORDINGID', 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'),
+            ('MUSICBRAINZ_ALBUMID', '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'),
+        ),
+    )
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "root-boundary.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -1267,6 +1276,14 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
+    _ = write_normalized_tags(
+        source_path,
+        (
+            *read_normalized_tags(source_path),
+            ('MUSICBRAINZ_RECORDINGID', 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'),
+            ('MUSICBRAINZ_ALBUMID', '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'),
+        ),
+    )
     _ = (config.incoming_root / 'cover.jpg').write_bytes(b'\xff\xd8\xfffixture\xff\xd9')
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
     Base.metadata.create_all(engine)
@@ -1282,12 +1299,12 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
             )
         )
         session.commit()
-    publish = processing.publish_release
+        publish = processing.replace_published_audio
 
     def transient_failure(*_args: object, **_kwargs: object) -> None:
         raise PublicationError('temporary publish failure')
 
-    monkeypatch.setattr(processing, 'publish_release', transient_failure)
+    monkeypatch.setattr(processing, 'replace_published_audio', transient_failure)
 
     # When: the worker records the transient failure, then polls before the retry deadline.
     with Session(engine) as session:
@@ -1302,7 +1319,7 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         session.commit()
 
     # Then: a due retry reclaims the source and reaches success.
-    monkeypatch.setattr(processing, 'publish_release', publish)
+    monkeypatch.setattr(processing, 'replace_published_audio', publish)
     with Session(engine) as session:
         assert ProcessingWorker(session, config).run_once()
         session.commit()
@@ -1339,7 +1356,7 @@ def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: the claim is terminal and observed tags are published for later analysis.
+    # Then: the claim is terminal and observed tags remain reviewable without publication.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-invalid-tags')
         source = session.get(SourceRecord, job.source_id) if job is not None else None
@@ -1348,6 +1365,6 @@ def test_worker_when_source_tags_cannot_form_a_fallback_publishes_observed_tags(
         assert source is not None and source.intake_state == 'present'
         assert source.library_record is not None and source.library_record.processing_state == 'needs_review'
         assert source.review_decisions == []
-        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original', 'final'}
-        assert len(source.library_publications) == 1
-    assert list(config.media_root.rglob('*.flac'))
+        assert {revision.layer for revision in source.library_record.metadata_revisions} == {'original'}
+        assert source.library_publications == []
+    assert not config.media_root.exists()

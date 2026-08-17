@@ -150,7 +150,7 @@ def test_lidarr_download_when_valid_flac_reaches_the_worker_through_its_durable_
     assert job.state == 'completed'
     assert source is not None and source.intake_state == 'present'
     assert source.review_decisions == []
-    assert next(config.media_root.rglob('*.flac')).is_file()
+    assert not config.media_root.exists()
 
 
 def test_lidarr_release_import_when_delivered_uses_the_same_source_independent_intake(tmp_path: Path) -> None:
@@ -214,7 +214,7 @@ def test_lidarr_download_when_genre_is_unknown_publishes_original_fallback_for_r
         assert [attempt.state for attempt in job.attempts] == ['succeeded']
         assert source is not None
         assert source.review_decisions == []
-    assert next(config.media_root.rglob('*.flac')).is_file()
+    assert not config.media_root.exists()
 
 
 def test_lidarr_download_when_malformed_source_is_claimed_quarantines_its_webhook_job(tmp_path: Path) -> None:

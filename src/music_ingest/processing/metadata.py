@@ -102,7 +102,7 @@ def publication_layout(tags: tuple[tuple[str, str], ...], source_name: str) -> t
         if not artist or not album:
             return 'Unsorted', f'Track 01{suffix}'
         safe_artist = _safe_component(artist, 'Unknown Artist')
-        safe_album = _safe_component(album, 'Unknown Album')
+        safe_album = _album_directory(album, values.get('MUSICBRAINZ_ALBUMID'))
         if not title:
             filename = f'Track {track_number:02d}{suffix}' if track_number is not None else f'Track 01{suffix}'
         else:
@@ -111,7 +111,7 @@ def publication_layout(tags: tuple[tuple[str, str], ...], source_name: str) -> t
             filename = f'{prefix} - {safe_title}{suffix}' if prefix else f'{safe_title}{suffix}'
         return f'{safe_artist}/{safe_album}', filename
     artist = _safe_component(' & '.join(metadata.album_artists), 'Unknown Artist')
-    album = _safe_component(metadata.album, 'Unknown Album')
+    album = _album_directory(metadata.album, values.get('MUSICBRAINZ_ALBUMID'))
     title = _safe_component(metadata.title, 'Unknown Track')
     prefix = _track_prefix(metadata.track_number, metadata.disc_number, metadata.disc_total)
     return f'{artist}/{album}', f'{prefix} - {title}{suffix}'
@@ -177,6 +177,11 @@ def _safe_component(value: str, fallback: str) -> str:
     cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '-', value)
     cleaned = re.sub(r'\s*-\s*', ' - ', cleaned).strip(' .')
     return cleaned or fallback
+
+
+def _album_directory(album: str, release_mbid: str | None) -> str:
+    suffix = '' if release_mbid is None or not release_mbid.strip() else f' [{release_mbid.strip()[:8]}]'
+    return _safe_component(f'{album}{suffix}', 'Unknown Album')
 
 
 def field_policy() -> FieldPolicy:
