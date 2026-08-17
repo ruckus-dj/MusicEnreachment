@@ -179,6 +179,55 @@ def test_initial_job_without_identity_defers_before_media_staging(
         assert event is not None
 
 
+def test_initial_job_accepts_wav_through_unified_audio_intake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: a real PCM WAV source with no metadata and a fingerprint result for the next stage.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = config.incoming_root / 'incoming.wav'
+    completed = run(  # noqa: S603
+        [
+            _FFMPEG,
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-f',
+            'lavfi',
+            '-i',
+            'sine=frequency=440:duration=0.1',
+            '-c:a',
+            'pcm_s16le',
+            str(source_path),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    fingerprint = FingerprintResult(FingerprintState.SUCCESS, 'wav-fingerprint', 0.1, 'test', 'a' * 64, None, None)
+    monkeypatch.setattr(processing, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "wav-intake.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(
+            JobRecord(id='wav-intake', source_id=source.id, kind='filesystem_scan', state='queued', created_at=now)
+        )
+        session.commit()
+
+        # When: the worker runs the initial source intake.
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+        # Then: WAV is accepted by the same ffprobe/ffmpeg/Mutagen path as other audio sources.
+        job = session.get(JobRecord, 'wav-intake')
+        persisted = session.get(SourceRecord, source.id)
+        assert job is not None and job.state == 'completed'
+        assert persisted is not None and persisted.intake_state == 'present'
+        assert persisted.media_codec == 'PCM_S16LE'
+
+
 def test_automatic_match_persists_acoustid_recording_and_release_identity() -> None:
     # Given: source album matching selected a MusicBrainz release and verified its AcousticID recording.
     record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
@@ -698,7 +747,7 @@ def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_re
         source = session.get(SourceRecord, job.source_id)
         assert source is not None
         assert source.intake_state == 'present'
-        assert source.media_codec is None
+        assert source.media_codec == 'FLAC'
         assert source.media_bit_depth is None
         assert source.media_sample_rate is None
         assert source.media_channels is None
@@ -732,7 +781,8 @@ def test_worker_preserves_declared_non_flac_suffix_and_bytes(
         ),
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
-    monkeypatch.setattr(media_stage, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(processing, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(processing, 'validate_decoder', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(publication_service, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
     monkeypatch.setattr(publication_service, '_validate_tags', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

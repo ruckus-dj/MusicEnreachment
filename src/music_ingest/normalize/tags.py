@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from mutagen import MutagenError
+from mutagen import File, MutagenError
 from mutagen.flac import FLAC
 from mutagen.id3 import ID3, TALB, TCON, TDOR, TDRC, TIT2, TPE1, TPE2, TPE3, TPOS, TRCK, TSRC, TXXX, UFID
 from mutagen.mp4 import MP4
@@ -72,17 +72,60 @@ class MetadataTagError(Exception):
 
 
 def read_normalized_tags(path: Path) -> tuple[tuple[str, str], ...]:
-    """Read supported container metadata into the product's canonical tag names."""
+    """Read tags from any Mutagen-recognized audio container into canonical names."""
     try:
-        match path.suffix.casefold():
-            case '.flac' | '.ogg' | '.opus':
-                return _read_vorbis(path)
-            case '.mp3':
-                return _read_mp3(path)
-            case '.m4a' | '.mp4':
-                return _read_mp4(path)
-            case _:
-                raise MetadataTagError(path)
+        audio = File(path, easy=True)
+        if audio is None:
+            raise MetadataTagError(path)
+        if audio.tags is None:
+            return ()
+        values: dict[str, str] = {}
+        aliases = {
+            'title': 'TITLE',
+            'artist': 'ARTIST',
+            'album': 'ALBUM',
+            'albumartist': 'ALBUMARTIST',
+            'album artist': 'ALBUMARTIST',
+            'date': 'DATE',
+            'originaldate': 'ORIGINALDATE',
+            'tracknumber': 'TRACKNUMBER',
+            'tracktotal': 'TRACKTOTAL',
+            'discnumber': 'DISCNUMBER',
+            'disctotal': 'DISCTOTAL',
+            'genre': 'GENRE',
+            'musicbrainz_recordingid': 'MUSICBRAINZ_RECORDINGID',
+            'musicbrainz_artistid': 'MUSICBRAINZ_ARTISTID',
+            'musicbrainz_albumartistid': 'MUSICBRAINZ_ALBUMARTISTID',
+            'musicbrainz_albumid': 'MUSICBRAINZ_ALBUMID',
+            'musicbrainz_releasegroupid': 'MUSICBRAINZ_RELEASEGROUPID',
+            'isrc': 'ISRC',
+            'performer': 'PERFORMER',
+        }
+        tag_items = getattr(audio.tags, 'items', None)
+        if not isinstance(tag_items, Callable):
+            return ()
+        for name, raw_values in tag_items():
+            canonical_name = aliases.get(str(name).casefold())
+            if canonical_name is None or not raw_values:
+                continue
+            values[canonical_name] = (
+                _LIST_SEPARATOR.join(str(value) for value in raw_values)
+                if isinstance(raw_values, list)
+                else str(raw_values)
+            )
+        position = values.get('TRACKNUMBER')
+        if position is not None and '/' in position:
+            number, total = position.split('/', 1)
+            values['TRACKNUMBER'] = number
+            if total:
+                values['TRACKTOTAL'] = total
+        position = values.get('DISCNUMBER')
+        if position is not None and '/' in position:
+            number, total = position.split('/', 1)
+            values['DISCNUMBER'] = number
+            if total:
+                values['DISCTOTAL'] = total
+        return tuple((name, value) for name, value in values.items() if name in ALLOWED_TAG_KEYS)
     except (MutagenError, OSError, KeyError, UnicodeDecodeError) as error:
         raise MetadataTagError(path) from error
 

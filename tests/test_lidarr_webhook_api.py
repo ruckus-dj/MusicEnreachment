@@ -240,7 +240,12 @@ def test_lidarr_download_when_malformed_source_is_claimed_quarantines_its_webhoo
     assert job.state == 'quarantined'
     assert source_path.read_bytes() == b'not a FLAC container'
     assert job.source_id is not None
-    assert job.failure_reason == 'malformed FLAC container'
+    assert job.failure_reason is not None
+    assert job.failure_reason.startswith(f'job={job.id} attempt=1 source={job.source_id};')
+    assert (
+        'input audio stream policy rejected source' in job.failure_reason
+        or 'ffmpeg decoder rejected audio stream' in job.failure_reason
+    )
     assert not (tmp_path / 'quarantine').exists()
 
 

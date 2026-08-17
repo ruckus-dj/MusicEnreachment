@@ -100,7 +100,7 @@ class PipelineOutputFailure(Exception):
 
 
 def inspect_source_capability(source_path: Path, *, timeout_seconds: float = 10.0) -> MediaCapability | None:
-    return inspect_media_capability(source_path, timeout_seconds=timeout_seconds).capability
+    return inspect_media_capability(source_path, timeout_seconds=timeout_seconds, publication_only=True).capability
 
 
 def plan_media_stage(source_path: Path) -> MediaStagePlan:

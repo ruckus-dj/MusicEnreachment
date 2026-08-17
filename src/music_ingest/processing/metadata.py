@@ -23,8 +23,7 @@ class SourceMetadataError(Exception):
 
     @override
     def __str__(self) -> str:
-        suffix = self.path.suffix.casefold()
-        return f'malformed {suffix.removeprefix(".").upper()} container'
+        return f'input metadata could not be read by Mutagen: {self.path}'
 
 
 def read_tags(path: Path) -> tuple[tuple[str, str], ...]:

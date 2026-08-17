@@ -30,11 +30,9 @@ from music_ingest.enrichment.fingerprints import (
 from music_ingest.external.acoustid import AcoustIdV2Adapter
 from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.external.musicbrainz_genres import display_genre_name
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.inspectors._tool import ToolEvidence
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
-from music_ingest.inspectors.flac import FlacFindingKind, inspect_flac
-from music_ingest.inspectors.mp3 import InspectionState as Mp3InspectionState
-from music_ingest.inspectors.mp3 import inspect_mp3
+from music_ingest.inspectors.media_capabilities import inspect_media_capability
 from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
 from music_ingest.library.service import (
     append_metadata_revision,
@@ -105,7 +103,7 @@ from music_ingest.processing.media_stage import (
     MediaStagePlan,
     PipelineOutputFailure,
     SourceAudioCorruptionError,
-    inspect_source_capability,
+    inspect_source_capability,  # noqa: F401 - retained as a compatibility test seam
     plan_media_stage,
     process_media,
 )
@@ -537,21 +535,23 @@ class ProcessingWorker:
             with self._session.begin_nested():
                 self._process(claimed, now)
         except MetadataWriteError as error:
-            self._retry_claim(claimed, str(error), now)
+            self._retry_claim(claimed, str(error), now, error)
         except ProcessingInfrastructureError as error:
-            self._retry_claim(claimed, str(error), now)
+            self._retry_claim(claimed, str(error), now, error)
         except SourceAudioCorruptionError as error:
             source = self._source(claimed)
             self._record_decoder_evidence(source, error.source_evidence, now)
-            self._invalid_audio(claimed, source, str(error), now)
+            self._invalid_audio(claimed, source, str(error), now, error)
         except (PipelineOutputFailure, MediaPipelineInfrastructureError, RemuxFailure) as error:
-            self._retry_claim(claimed, str(error), now)
+            self._retry_claim(claimed, str(error), now, error)
         except DecoderValidationError as error:
             source = self._source(claimed)
-            self._quarantine(claimed, source, str(error), now)
+            if error.evidence is not None:
+                self._record_decoder_evidence(source, error.evidence, now)
+            self._quarantine(claimed, source, str(error), now, error)
         except SourceMetadataError as error:
             source = self._source(claimed)
-            self._quarantine(claimed, source, str(error), now)
+            self._quarantine(claimed, source, str(error), now, error)
         except (
             OSError,
             PublicationError,
@@ -697,13 +697,31 @@ class ProcessingWorker:
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
-        capability = inspect_source_capability(source_path, timeout_seconds=self._timeout_seconds())
-        if capability is None:
-            self._quarantine(claimed, source, 'source has no declared media capability', now)
-            return
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
+        inspection = inspect_media_capability(source_path, timeout_seconds=self._timeout_seconds())
+        capability = inspection.capability
+        if capability is None:
+            detail = inspection.ffprobe.stderr.strip() or inspection.ffprobe.stdout.strip() or 'no ffprobe output'
+            self._quarantine(
+                claimed,
+                source,
+                (
+                    f'input audio stream policy rejected source: ffprobe={inspection.ffprobe.state}; '
+                    f'audio_streams={inspection.audio_stream_count}; {detail}'
+                ),
+                now,
+            )
+            return
+        decoder_evidence = validate_decoder(
+            source_path,
+            ffmpeg_command=self._config.ffmpeg_command,
+            timeout_seconds=self._timeout_seconds(),
+        )
+        if decoder_evidence is not None:
+            self._record_decoder_evidence(source, decoder_evidence, now)
+        source.media_codec = capability.codec.upper()
         cached_fingerprint = self._cached_fingerprint(source)
         plan = plan_media_stage(source_path)
         tags = plan.source_tags
@@ -715,7 +733,7 @@ class ProcessingWorker:
         configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
         providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
         if not _has_explicit_musicbrainz_identity(original_tags):
-            if self._analyze_source(source, source_path, claimed, now) is None:
+            if self._analyze_source(source, source_path) is None:
                 return
             source.intake_state = 'present'
             _ = reevaluate_effective_source_decision(self._session, record.id, now)
@@ -883,7 +901,7 @@ class ProcessingWorker:
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
-        fingerprint = self._analyze_source(source, source_path, claimed, now)
+        fingerprint = self._analyze_source(source, source_path)
         if fingerprint is None:
             return
         tags = read_tags(source_path)
@@ -1494,69 +1512,16 @@ class ProcessingWorker:
             None,
         )
 
-    def _analyze_source(
-        self, source: SourceRecord, source_path: Path, claimed: ClaimedJob, now: datetime
-    ) -> FingerprintResult | None:
-        suffix = source_path.suffix.casefold()
+    def _analyze_source(self, source: SourceRecord, source_path: Path) -> FingerprintResult | None:
         cached_fingerprint = self._cached_fingerprint(source)
         if cached_fingerprint is not None:
             return cached_fingerprint
-        if suffix == '.flac':
-            inspection = inspect_flac(
-                source_path,
-                ffmpeg_command=self._config.ffmpeg_command,
-                timeout_seconds=self._timeout_seconds(),
-                cached_decoder_evidence=self._cached_decoder_evidence(source),
-            )
-            if self._cached_decoder_evidence(source) is None:
-                self._record_decoder_evidence(source, inspection.flac_test, now)
-            if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
-                self._invalid_audio(claimed, source, 'malformed FLAC container', now)
-                return None
-            has_repairable_wrapper = any(
-                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
-            )
-            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
-                raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
-            return fingerprint_source(
-                self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
-                fpcalc_command=self._config.fpcalc_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
-        if suffix == '.mp3':
-            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
-            if inspection.state is not Mp3InspectionState.VALID:
-                raise ProcessingInfrastructureError(f'mp3 analysis unavailable: {inspection.ffprobe.state}')
-            return fingerprint_source(
-                self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
-                fpcalc_command=self._config.fpcalc_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
-        self._validate_source_decoder(source, source_path, now)
         return fingerprint_source(
             self._session,
             FingerprintRequest(SourceId(source.id), source_path, None),
             fpcalc_command=self._config.fpcalc_command,
             timeout_seconds=self._timeout_seconds(),
         )
-
-    def _cached_decoder_evidence(self, source: SourceRecord) -> ToolEvidence | None:
-        evidence = DecoderEvidenceRepository(self._session).successful_evidence(source.id, self._config.ffmpeg_command)
-        if evidence is None:
-            return None
-        return ToolEvidence(ToolState(evidence.tool_state), evidence.return_code, '', '')
-
-    def _validate_source_decoder(self, source: SourceRecord, source_path: Path, now: datetime) -> None:
-        if self._cached_decoder_evidence(source) is not None:
-            return
-        validate_decoder(
-            source_path,
-            ffmpeg_command=self._config.ffmpeg_command,
-            timeout_seconds=self._timeout_seconds(),
-        )
-        self._record_decoder_evidence(source, ToolEvidence(ToolState.SUCCESS, 0, '', ''), now)
 
     def _record_decoder_evidence(self, source: SourceRecord, evidence: ToolEvidence, now: datetime) -> None:
         _ = DecoderEvidenceRepository(self._session).add_evidence(
@@ -1637,6 +1602,7 @@ class ProcessingWorker:
         now: datetime,
         error: BaseException | None = None,
     ) -> None:
+        reason = self._history_reason(claimed, reason, error)
         LOGGER.warning(
             'processing job retry',
             extra={'job_id': claimed.job.id, 'attempt': claimed.attempt.attempt_number},
@@ -1679,6 +1645,17 @@ class ProcessingWorker:
             source.id,
         )
 
+    def _history_reason(self, claimed: ClaimedJob, reason: str, error: BaseException | None = None) -> str:
+        error_name = type(error).__name__ if error is not None else 'InputValidationError'
+        source_id = claimed.job.source_id or 'record-only'
+        cause = ''
+        if error is not None and error.__cause__ is not None:
+            cause = f' caused_by={type(error.__cause__).__name__}: {error.__cause__}'
+        return (
+            f'job={claimed.job.id} attempt={claimed.attempt.attempt_number} source={source_id}; '
+            f'{error_name}: {reason}{cause}'
+        )
+
     def _requeue_changed_source(self, claimed: ClaimedJob, source: SourceRecord, path: Path, now: datetime) -> None:
         record = ensure_source_record(self._session, source, now)
         origin = Origin.LIDARR if source.origin == Origin.LIDARR.value else Origin.MANUAL
@@ -1710,16 +1687,32 @@ class ProcessingWorker:
         claimed.job.next_attempt_at = None
         _ = JobRepository(self._session).enqueue(replacement.source_id, 'filesystem_scan', now)
 
-    def _quarantine(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
+    def _quarantine(
+        self,
+        claimed: ClaimedJob,
+        source: SourceRecord,
+        reason: str,
+        now: datetime,
+        error: BaseException | None = None,
+    ) -> None:
+        event_type = 'root_boundary' if reason.startswith('root boundary:') else 'processing_quarantined'
+        reason = self._history_reason(claimed, reason, error)
         source.intake_state = 'quarantined'
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
         _ = reevaluate_effective_source_decision(self._session, record.id, now)
-        event_type = 'root_boundary' if reason.startswith('root boundary:') else 'processing_quarantined'
         record_event(self._session, record.id, event_type, 'quarantined', reason, now, source.id)
         JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
 
-    def _invalid_audio(self, claimed: ClaimedJob, source: SourceRecord, reason: str, now: datetime) -> None:
+    def _invalid_audio(
+        self,
+        claimed: ClaimedJob,
+        source: SourceRecord,
+        reason: str,
+        now: datetime,
+        error: BaseException | None = None,
+    ) -> None:
+        reason = self._history_reason(claimed, reason, error)
         source.intake_state = 'invalid_audio'
         claimed.job.failure_reason = reason
         record = ensure_source_record(self._session, source, now)
