@@ -41,6 +41,70 @@ def test_inspect_media_capability_accepts_declared_source(
     assert result.capability.codec == expected_codec
 
 
+def test_inspect_media_capability_preserves_quality_properties_for_selection_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / 'source.mp3'
+    _ = source.write_bytes(b'fixture')
+    probe_output = json.dumps(
+        {
+            'streams': [
+                {
+                    'codec_type': 'audio',
+                    'codec_name': 'mp3',
+                    'sample_rate': 44_100,
+                    'channels': 2,
+                    'bit_rate': 320_000,
+                }
+            ],
+            'format': {'format_name': 'mp3'},
+        }
+    )
+    monkeypatch.setattr(
+        'music_ingest.inspectors.media_capabilities.run_tool',
+        lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
+    )
+
+    result = inspect_media_capability(source)
+
+    assert result.technical is not None
+    assert result.technical.sample_rate == 44_100
+    assert result.technical.channels == 2
+    assert result.technical.bitrate == 320_000
+
+
+def test_inspect_media_capability_uses_raw_bit_depth_when_codec_bit_depth_is_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / 'source.flac'
+    _ = source.write_bytes(b'fixture')
+    probe_output = json.dumps(
+        {
+            'streams': [
+                {
+                    'codec_type': 'audio',
+                    'codec_name': 'flac',
+                    'bits_per_sample': 0,
+                    'bits_per_raw_sample': '24',
+                    'sample_rate': '96000',
+                    'channels': 2,
+                }
+            ],
+            'format': {'format_name': 'flac'},
+        }
+    )
+    monkeypatch.setattr(
+        'music_ingest.inspectors.media_capabilities.run_tool',
+        lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
+    )
+
+    result = inspect_media_capability(source)
+
+    assert result.technical is not None
+    assert result.technical.bit_depth == 24
+    assert result.technical.sample_rate == 96_000
+
+
 @pytest.mark.parametrize('name', ['raw.aac', 'non-vorbis.ogg', 'unknown.bin'])
 def test_inspect_media_capability_rejects_undeclared_source(name: str, tmp_path: Path) -> None:
     source = tmp_path / name
