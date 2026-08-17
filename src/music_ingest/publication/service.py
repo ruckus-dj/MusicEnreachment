@@ -237,7 +237,7 @@ def _validate_release(release: Path, request: PublicationRequest) -> tuple[Path,
 
 
 def _validate_capability(path: Path, request: PublicationRequest) -> None:
-    inspection = inspect_media_capability(path, timeout_seconds=request.timeout_seconds)
+    inspection = inspect_media_capability(path, timeout_seconds=request.timeout_seconds, publication_only=True)
     if inspection.capability is None:
         raise PublicationError('audio has no declared publication capability')
 

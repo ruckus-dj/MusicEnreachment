@@ -18,9 +18,10 @@ class MediaCapability:
 class MediaCapabilityInspection:
     capability: MediaCapability | None
     ffprobe: ToolEvidence
+    audio_stream_count: int = 0
 
 
-_DECLARED_CAPABILITIES: Final[frozenset[MediaCapability]] = frozenset(
+_DECLARED_PUBLICATION_CAPABILITIES: Final[frozenset[MediaCapability]] = frozenset(
     {
         MediaCapability('flac', 'flac'),
         MediaCapability('mov,mp4,m4a,3gp,3g2,mj2', 'alac'),
@@ -37,7 +38,11 @@ def _is_json_mapping(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def inspect_media_capability(
-    source_path: Path, *, ffprobe_command: str = 'ffprobe', timeout_seconds: float = 10.0
+    source_path: Path,
+    *,
+    ffprobe_command: str = 'ffprobe',
+    timeout_seconds: float = 10.0,
+    publication_only: bool = False,
 ) -> MediaCapabilityInspection:
     ffprobe = run_tool(
         (
@@ -45,7 +50,7 @@ def inspect_media_capability(
             '-v',
             'error',
             '-show_entries',
-            'format=format_name:stream=codec_name',
+            'format=format_name:stream=codec_type,codec_name',
             '-of',
             'json',
             str(source_path),
@@ -53,28 +58,33 @@ def inspect_media_capability(
         timeout_seconds,
     )
     if ffprobe.state is not ToolState.SUCCESS:
-        return MediaCapabilityInspection(None, ffprobe)
-    capability = _parse_capability(ffprobe.stdout)
-    return MediaCapabilityInspection(capability, ffprobe)
+        return MediaCapabilityInspection(None, ffprobe, 0)
+    capability, audio_stream_count = _parse_capability(ffprobe.stdout, publication_only)
+    return MediaCapabilityInspection(capability, ffprobe, audio_stream_count)
 
 
-def _parse_capability(payload: str) -> MediaCapability | None:
+def _parse_capability(payload: str, publication_only: bool) -> tuple[MediaCapability | None, int]:
     parsed_value: object = json.loads(payload)
     if not _is_json_mapping(parsed_value):
-        return None
+        return None, 0
     format_value = parsed_value.get('format')
     streams_value = parsed_value.get('streams')
     if not _is_json_mapping(format_value) or not isinstance(streams_value, list):
-        return None
+        return None, 0
     format_names = format_value.get('format_name')
-    codec_names = tuple(
-        stream.get('codec_name')
+    audio_streams = tuple(
+        stream
         for stream in streams_value
-        if _is_json_mapping(stream) and isinstance(stream.get('codec_name'), str)
+        if _is_json_mapping(stream)
+        and isinstance(stream.get('codec_name'), str)
+        and stream.get('codec_type') == 'audio'
     )
-    if not isinstance(format_names, str):
-        return None
-    for capability in _DECLARED_CAPABILITIES:
-        if capability.container == format_names and capability.codec in codec_names:
-            return capability
-    return None
+    if not isinstance(format_names, str) or len(audio_streams) != 1:
+        return None, len(audio_streams)
+    codec_name = audio_streams[0].get('codec_name')
+    if not isinstance(codec_name, str):
+        return None, len(audio_streams)
+    capability = MediaCapability(format_names, codec_name)
+    if publication_only and capability not in _DECLARED_PUBLICATION_CAPABILITIES:
+        return None, len(audio_streams)
+    return capability, len(audio_streams)
