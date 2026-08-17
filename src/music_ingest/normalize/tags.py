@@ -12,6 +12,7 @@ from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 
 from music_ingest.dto import ALLOWED_TAG_KEYS
+from music_ingest.inspectors._tool import ToolState, run_tool
 
 _LIST_SEPARATOR = '; '
 _MP4_FREEFORM_PREFIX = '----:com.apple.iTunes:'
@@ -73,6 +74,8 @@ class MetadataTagError(Exception):
 
 def read_normalized_tags(path: Path) -> tuple[tuple[str, str], ...]:
     """Read tags from any Mutagen-recognized audio container into canonical names."""
+    if path.suffix.casefold() == '.mka':
+        return _read_mka(path)
     try:
         audio = File(path, easy=True)
         if audio is None:
@@ -128,6 +131,67 @@ def read_normalized_tags(path: Path) -> tuple[tuple[str, str], ...]:
         return tuple((name, value) for name, value in values.items() if name in ALLOWED_TAG_KEYS)
     except (MutagenError, OSError, KeyError, UnicodeDecodeError) as error:
         raise MetadataTagError(path) from error
+
+
+def _read_mka(path: Path) -> tuple[tuple[str, str], ...]:
+    evidence = run_tool(
+        (
+            'ffprobe',
+            '-v',
+            'error',
+            '-show_entries',
+            'format_tags',
+            '-of',
+            'default=noprint_wrappers=1:nokey=0',
+            str(path),
+        ),
+        10.0,
+    )
+    if evidence.state is not ToolState.SUCCESS:
+        raise MetadataTagError(path)
+    aliases = {
+        'title': 'TITLE',
+        'artist': 'ARTIST',
+        'album': 'ALBUM',
+        'albumartist': 'ALBUMARTIST',
+        'album artist': 'ALBUMARTIST',
+        'date': 'DATE',
+        'originaldate': 'ORIGINALDATE',
+        'tracknumber': 'TRACKNUMBER',
+        'tracktotal': 'TRACKTOTAL',
+        'discnumber': 'DISCNUMBER',
+        'disctotal': 'DISCTOTAL',
+        'genre': 'GENRE',
+        'musicbrainz_recordingid': 'MUSICBRAINZ_RECORDINGID',
+        'musicbrainz_artistid': 'MUSICBRAINZ_ARTISTID',
+        'musicbrainz_albumartistid': 'MUSICBRAINZ_ALBUMARTISTID',
+        'musicbrainz_albumid': 'MUSICBRAINZ_ALBUMID',
+        'musicbrainz_releasegroupid': 'MUSICBRAINZ_RELEASEGROUPID',
+        'isrc': 'ISRC',
+        'performer': 'PERFORMER',
+    }
+    values: dict[str, list[str]] = {}
+    for line in evidence.stdout.splitlines():
+        if not line.startswith('TAG:') or '=' not in line:
+            continue
+        name, value = line[4:].split('=', 1)
+        canonical_name = aliases.get(name.casefold())
+        if canonical_name is not None:
+            values.setdefault(canonical_name, []).append(value)
+    normalized = {name: _LIST_SEPARATOR.join(items) for name, items in values.items()}
+    position = normalized.get('TRACKNUMBER')
+    if position is not None and '/' in position:
+        number, total = position.split('/', 1)
+        normalized['TRACKNUMBER'] = number
+        if total:
+            normalized['TRACKTOTAL'] = total
+    position = normalized.get('DISCNUMBER')
+    if position is not None and '/' in position:
+        number, total = position.split('/', 1)
+        normalized['DISCNUMBER'] = number
+        if total:
+            normalized['DISCTOTAL'] = total
+    return tuple((name, value) for name, value in normalized.items() if name in ALLOWED_TAG_KEYS)
 
 
 def write_normalized_tags(path: Path, tags: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:

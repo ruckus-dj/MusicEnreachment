@@ -16,6 +16,7 @@ from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 
 from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.inspectors._tool import ToolState, run_tool
 from music_ingest.inspectors.media_capabilities import MediaCapability, inspect_media_capability
 from music_ingest.normalize.genres import GenreNormalizationError, normalize_genres
 from music_ingest.normalize.tags import MetadataTagError, write_normalized_tags
@@ -60,6 +61,9 @@ class MetadataWriteRequest:
     fields: FieldPolicy
     genres: GenrePolicy
     capability: MediaCapability | None = None
+    ffmpeg_command: str = 'ffmpeg'
+    ffprobe_command: str = 'ffprobe'
+    timeout_seconds: float = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +78,11 @@ def write_observed_metadata(
 ) -> MetadataWriteResult:
     """Replace a staged file's tags with the observed allowlisted source tags."""
     filtered = tuple((name, value) for name, value in tags if name in ALLOWED_TAG_KEYS)
+    if path.suffix.casefold() == '.mka':
+        temporary_path = path.with_name(f'.{path.name}.metadata')
+        _write_mka_tags(path, temporary_path, filtered, 'ffmpeg', 'ffprobe', 10.0)
+        temporary_path.replace(path)
+        return MetadataWriteResult(path, filtered)
     try:
         _ = write_normalized_tags(path, filtered)
     except MetadataTagError as error:
@@ -91,12 +100,21 @@ class MetadataWriteError(Exception):
 
 
 def write_canonical_metadata(request: MetadataWriteRequest) -> MetadataWriteResult:
-    """Write only canonical Vorbis comments into a new staged FLAC."""
+    """Write only canonical metadata into a new staged publication."""
     source_path, output_path, staging_directory = _validate_paths(request)
     tags = _canonical_tags(request.metadata, request.fields, request.genres)
     temporary_path = _copy_to_staging(source_path, staging_directory, output_path.suffix, request.capability)
     try:
-        if output_path.suffix.casefold() == '.mp3':
+        if output_path.suffix.casefold() == '.mka':
+            _write_mka_tags(
+                temporary_path,
+                output_path,
+                tags,
+                request.ffmpeg_command,
+                request.ffprobe_command,
+                request.timeout_seconds,
+            )
+        elif output_path.suffix.casefold() == '.mp3':
             _write_mp3_tags(temporary_path, request.metadata)
             _verify_mp3_tags(temporary_path, request.metadata)
         elif output_path.suffix.casefold() in {'.m4a', '.mp4'}:
@@ -105,10 +123,11 @@ def write_canonical_metadata(request: MetadataWriteRequest) -> MetadataWriteResu
         else:
             _write_vorbis_comments(temporary_path, tags, output_path.suffix)
             _verify_vorbis_comments(temporary_path, tags, output_path.suffix)
-        try:
-            shutil.copy2(temporary_path, output_path)
-        except FileExistsError as error:
-            raise MetadataWriteError('metadata destination already exists') from error
+        if output_path.suffix.casefold() != '.mka':
+            try:
+                shutil.copy2(temporary_path, output_path)
+            except FileExistsError as error:
+                raise MetadataWriteError('metadata destination already exists') from error
     finally:
         if temporary_path.exists():
             temporary_path.unlink()
@@ -137,6 +156,85 @@ def _verify_vorbis_comments(path: Path, expected: tuple[tuple[str, str], ...], s
         raise MetadataWriteError('Mutagen could not reopen canonical Vorbis comments') from error
     if frozenset(actual) != frozenset(expected):
         raise MetadataWriteError('Mutagen did not produce the required canonical tags')
+
+
+def _write_mka_tags(
+    source_path: Path,
+    output_path: Path,
+    tags: tuple[tuple[str, str], ...],
+    ffmpeg_command: str,
+    ffprobe_command: str,
+    timeout_seconds: float,
+) -> None:
+    metadata_arguments = tuple(
+        argument for name, value in _collapse_tags(tags).items() for argument in ('-metadata', f'{name}={value}')
+    )
+    evidence = run_tool(
+        (
+            ffmpeg_command,
+            '-nostdin',
+            '-hide_banner',
+            '-v',
+            'error',
+            '-xerror',
+            '-i',
+            str(source_path),
+            '-map',
+            '0:a:0',
+            '-map_metadata',
+            '-1',
+            '-map_chapters',
+            '-1',
+            '-c:a',
+            'copy',
+            *metadata_arguments,
+            '-f',
+            'matroska',
+            '-n',
+            str(output_path),
+        ),
+        timeout_seconds,
+    )
+    if evidence.state is not ToolState.SUCCESS or not output_path.is_file():
+        output_path.unlink(missing_ok=True)
+        raise MetadataWriteError('FFmpeg could not write canonical Matroska metadata')
+    actual = _read_mka_tags(output_path, ffprobe_command, timeout_seconds)
+    expected = _collapse_tags(tags)
+    if actual != expected:
+        output_path.unlink(missing_ok=True)
+        raise MetadataWriteError('FFprobe did not observe the required canonical Matroska tags')
+
+
+def _read_mka_tags(path: Path, ffprobe_command: str, timeout_seconds: float) -> dict[str, str]:
+    evidence = run_tool(
+        (
+            ffprobe_command,
+            '-v',
+            'error',
+            '-show_entries',
+            'format_tags',
+            '-of',
+            'default=noprint_wrappers=1:nokey=0',
+            str(path),
+        ),
+        timeout_seconds,
+    )
+    if evidence.state is not ToolState.SUCCESS:
+        raise MetadataWriteError('FFprobe could not reopen Matroska metadata')
+    values: dict[str, list[str]] = {}
+    for line in evidence.stdout.splitlines():
+        if not line.startswith('TAG:') or '=' not in line:
+            continue
+        name, value = line[4:].split('=', 1)
+        values.setdefault(name.upper(), []).append(value)
+    return {name: '; '.join(items) for name, items in values.items() if name in ALLOWED_TAG_KEYS}
+
+
+def _collapse_tags(tags: tuple[tuple[str, str], ...]) -> dict[str, str]:
+    values: dict[str, list[str]] = {}
+    for name, value in tags:
+        values.setdefault(name, []).append(value)
+    return {name: '; '.join(items) for name, items in values.items()}
 
 
 def _open_vorbis_comments(path: Path, suffix: str) -> FLAC | OggVorbis | OggOpus:
@@ -323,8 +421,8 @@ def _validate_paths(request: MetadataWriteRequest) -> tuple[Path, Path, Path]:
     staging_directory = request.staging_directory.resolve(strict=True)
     if not staging_directory.is_dir() or output_path.parent != staging_directory:
         raise MetadataWriteError('metadata output must be directly inside controlled staging')
-    if output_path.suffix.casefold() not in {'.flac', '.ogg', '.opus', '.mp3', '.m4a', '.mp4'}:
-        raise MetadataWriteError('canonical metadata output must be a FLAC, Ogg Vorbis, Opus, MP3, or MP4 file')
+    if output_path.suffix.casefold() not in {'.flac', '.ogg', '.opus', '.mp3', '.m4a', '.mp4', '.mka'}:
+        raise MetadataWriteError('canonical metadata output must be a supported audio publication file')
     if source_path == output_path or output_path.exists():
         raise MetadataWriteError('metadata source and destination must be distinct and unused')
     return source_path, output_path, staging_directory

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from shutil import which
 from subprocess import run
 
 import pytest
@@ -21,6 +23,9 @@ from music_ingest.normalize.metadata import (
     write_canonical_metadata,
 )
 from music_ingest.normalize.tags import read_normalized_tags
+
+_FFPROBE = which('ffprobe') or ''
+assert _FFPROBE
 
 
 def _create_flac(directory: Path, name: str) -> Path:
@@ -175,6 +180,71 @@ def test_write_canonical_metadata_when_verified_facts_writes_allowlisted_tags(tm
     assert listed['MUSICBRAINZ_RELEASEGROUPID'] == 'group-id'
     assert '/' not in listed['GENRE']
     assert snapshot == (source.stat().st_ino, sha256(source.read_bytes()).hexdigest())
+
+
+def test_write_canonical_metadata_when_output_is_mka_stream_copies_audio_and_writes_matroska_tags(
+    tmp_path: Path,
+) -> None:
+    # Given: a FLAC source and a canonical metadata decision.
+    source = _create_flac(tmp_path, 'source.flac')
+    source_probe = run(  # noqa: S603,S607
+        [
+            _FFPROBE,
+            '-v',
+            'error',
+            '-show_entries',
+            'stream=index,codec_name,channels,sample_rate,bits_per_sample',
+            '-of',
+            'json',
+            str(source),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert source_probe.returncode == 0, source_probe.stderr
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    fields, genres = _policies()
+    source_hash = sha256(source.read_bytes()).hexdigest()
+
+    # When: canonical metadata is written to a distinct staged MKA.
+    metadata = replace(_metadata(), musicbrainz_artist_ids=('artist-id', 'artist-id-2'))
+    output = write_canonical_metadata(
+        MetadataWriteRequest(source, staging / 'track.mka', staging, metadata, fields, genres)
+    )
+
+    # Then: the MKA preserves the source audio stream and exposes canonical tags.
+    output_probe = run(  # noqa: S603,S607
+        [
+            _FFPROBE,
+            '-v',
+            'error',
+            '-show_entries',
+            'format=format_name:format_tags:stream=index,codec_name,channels,sample_rate,bits_per_sample',
+            '-of',
+            'json',
+            str(output.output_path),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert output_probe.returncode == 0, output_probe.stderr
+    source_stream = json.loads(source_probe.stdout)['streams'][0]
+    output_payload = json.loads(output_probe.stdout)
+    output_stream = output_payload['streams'][0]
+    output_tags = {name.upper(): value for name, value in output_payload['format']['tags'].items()}
+    assert output_stream == source_stream
+    assert output_tags['TITLE'] == 'Fixture Track'
+    assert output_tags['ARTIST'] == 'Artist One; Artist Two'
+    assert output_tags['GENRE'] == 'Hip Hop; Alternative Rock'
+    assert output_tags['MUSICBRAINZ_RECORDINGID'] == 'recording-id'
+    assert output_tags['MUSICBRAINZ_ARTISTID'] == 'artist-id; artist-id-2'
+    assert dict(read_normalized_tags(output.output_path))['TITLE'] == 'Fixture Track'
+    assert sha256(source.read_bytes()).hexdigest() == source_hash
 
 
 @pytest.mark.parametrize(
