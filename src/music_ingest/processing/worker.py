@@ -712,6 +712,38 @@ class ProcessingWorker:
         metadata = plan.metadata
         record = ensure_source_record(self._session, source, now)
         _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
+        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+        providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
+        if not _has_explicit_musicbrainz_identity(original_tags):
+            if self._analyze_source(source, source_path, claimed, now) is None:
+                return
+            source.intake_state = 'present'
+            _ = reevaluate_effective_source_decision(self._session, record.id, now)
+            if providers_enabled:
+                provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
+                _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
+                record_event(
+                    self._session,
+                    record.id,
+                    'publication_deferred_for_identity',
+                    'needs_review',
+                    'audio remains unpublished until explicit MusicBrainz recording and release identities are '
+                    + 'available',
+                    now,
+                    source.id,
+                )
+            else:
+                record_event(
+                    self._session,
+                    record.id,
+                    'publication_deferred_for_identity',
+                    'needs_review',
+                    'audio remains unpublished because explicit MusicBrainz recording and release identities are '
+                    + 'missing',
+                    now,
+                    source.id,
+                )
+            return
         staged_release = self._staging_directory(claimed.job.id)
         relative_directory, output_name = plan.relative_directory, plan.output_name
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
@@ -746,36 +778,6 @@ class ProcessingWorker:
         source.media_bitrate = None
         written_tags = pipeline_result.written_tags
         self._session.flush()
-        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
-        providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
-        if not _has_explicit_musicbrainz_identity(dict(written_tags)):
-            source.intake_state = 'present'
-            _ = reevaluate_effective_source_decision(self._session, record.id, now)
-            if providers_enabled:
-                provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
-                _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
-                record_event(
-                    self._session,
-                    record.id,
-                    'publication_deferred_for_identity',
-                    'needs_review',
-                    'audio remains unpublished until explicit MusicBrainz recording and release identities are '
-                    'available',
-                    now,
-                    source.id,
-                )
-            else:
-                record_event(
-                    self._session,
-                    record.id,
-                    'publication_deferred_for_identity',
-                    'needs_review',
-                    'audio remains unpublished because explicit MusicBrainz recording and release identities are '
-                    'missing',
-                    now,
-                    source.id,
-                )
-            return
         if unsorted_destination:
             output_name = self._allocate_unsorted_filename(source_path.suffix.casefold())
         target_audio = destination_release / output_name
@@ -881,51 +883,9 @@ class ProcessingWorker:
         if self._changed(source, source_path):
             self._requeue_changed_source(claimed, source, source_path, now)
             return
-        suffix = source_path.suffix.casefold()
-        cached_fingerprint = self._cached_fingerprint(source)
-        if cached_fingerprint is not None:
-            fingerprint = cached_fingerprint
-        elif suffix == '.flac':
-            inspection = inspect_flac(
-                source_path,
-                ffmpeg_command=self._config.ffmpeg_command,
-                timeout_seconds=self._timeout_seconds(),
-                cached_decoder_evidence=self._cached_decoder_evidence(source),
-            )
-            if self._cached_decoder_evidence(source) is None:
-                self._record_decoder_evidence(source, inspection.flac_test, now)
-            if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
-                self._invalid_audio(claimed, source, 'malformed FLAC container', now)
-                return
-            has_repairable_wrapper = any(
-                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
-            )
-            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
-                raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
-            fingerprint = fingerprint_source(
-                self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
-                fpcalc_command=self._config.fpcalc_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
-        elif suffix == '.mp3':
-            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
-            if inspection.state is not Mp3InspectionState.VALID:
-                raise ProcessingInfrastructureError(f'mp3 analysis unavailable: {inspection.ffprobe.state}')
-            fingerprint = fingerprint_source(
-                self._session,
-                FingerprintRequest(SourceId(source.id), source_path, inspection),
-                fpcalc_command=self._config.fpcalc_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
-        else:
-            self._validate_source_decoder(source, source_path, now)
-            fingerprint = fingerprint_source(
-                self._session,
-                FingerprintRequest(SourceId(source.id), source_path, None),
-                fpcalc_command=self._config.fpcalc_command,
-                timeout_seconds=self._timeout_seconds(),
-            )
+        fingerprint = self._analyze_source(source, source_path, claimed, now)
+        if fingerprint is None:
+            return
         tags = read_tags(source_path)
         record = ensure_source_record(self._session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
@@ -1532,6 +1492,54 @@ class ProcessingWorker:
             fingerprint.output_sha256,
             None,
             None,
+        )
+
+    def _analyze_source(
+        self, source: SourceRecord, source_path: Path, claimed: ClaimedJob, now: datetime
+    ) -> FingerprintResult | None:
+        suffix = source_path.suffix.casefold()
+        cached_fingerprint = self._cached_fingerprint(source)
+        if cached_fingerprint is not None:
+            return cached_fingerprint
+        if suffix == '.flac':
+            inspection = inspect_flac(
+                source_path,
+                ffmpeg_command=self._config.ffmpeg_command,
+                timeout_seconds=self._timeout_seconds(),
+                cached_decoder_evidence=self._cached_decoder_evidence(source),
+            )
+            if self._cached_decoder_evidence(source) is None:
+                self._record_decoder_evidence(source, inspection.flac_test, now)
+            if any(finding.kind is FlacFindingKind.MALFORMED_CONTAINER for finding in inspection.findings):
+                self._invalid_audio(claimed, source, 'malformed FLAC container', now)
+                return None
+            has_repairable_wrapper = any(
+                finding.kind is FlacFindingKind.TRAILING_ID3V1 for finding in inspection.findings
+            )
+            if inspection.flac_test.state is not ToolState.SUCCESS and not has_repairable_wrapper:
+                raise ProcessingInfrastructureError(f'flac analysis unavailable: {inspection.flac_test.state}')
+            return fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
+        if suffix == '.mp3':
+            inspection = inspect_mp3(source_path, timeout_seconds=self._timeout_seconds())
+            if inspection.state is not Mp3InspectionState.VALID:
+                raise ProcessingInfrastructureError(f'mp3 analysis unavailable: {inspection.ffprobe.state}')
+            return fingerprint_source(
+                self._session,
+                FingerprintRequest(SourceId(source.id), source_path, inspection),
+                fpcalc_command=self._config.fpcalc_command,
+                timeout_seconds=self._timeout_seconds(),
+            )
+        self._validate_source_decoder(source, source_path, now)
+        return fingerprint_source(
+            self._session,
+            FingerprintRequest(SourceId(source.id), source_path, None),
+            fpcalc_command=self._config.fpcalc_command,
+            timeout_seconds=self._timeout_seconds(),
         )
 
     def _cached_decoder_evidence(self, source: SourceRecord) -> ToolEvidence | None:

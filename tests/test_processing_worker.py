@@ -138,6 +138,47 @@ def _config(tmp_path: Path) -> ProcessingConfig:
     )
 
 
+def test_initial_job_without_identity_defers_before_media_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an initial source with ordinary metadata but no explicit MusicBrainz identities.
+    config = _config(tmp_path)
+    source_path = _flac(tmp_path / 'incoming.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "initial-defer.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 17, tzinfo=UTC)
+    monkeypatch.setattr(
+        processing, 'inspect_source_capability', lambda path, timeout_seconds: MediaCapability('flac', 'flac')
+    )
+
+    def fail_if_media_is_staged(request: object) -> None:
+        _ = request
+        pytest.fail('initial source without identity must not stage media')
+
+    monkeypatch.setattr(processing, 'process_media', fail_if_media_is_staged)
+    with Session(engine) as session:
+        source = _source(session, source_path)
+        session.add(
+            JobRecord(id='initial-defer', source_id=source.id, kind='filesystem_scan', state='queued', created_at=now)
+        )
+        session.commit()
+
+        # When: the initial source job is processed.
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+        # Then: provenance is retained, but no derived audio or staging directory is created.
+        assert not config.staging_root.exists()
+        assert not config.media_root.exists()
+        refreshed = session.get(SourceRecord, source.id)
+        assert refreshed is not None
+        assert refreshed.intake_state == 'present'
+        event = session.scalar(
+            select(LibraryEventRecord).where(LibraryEventRecord.kind == 'publication_deferred_for_identity')
+        )
+        assert event is not None
+
+
 def test_automatic_match_persists_acoustid_recording_and_release_identity() -> None:
     # Given: source album matching selected a MusicBrainz release and verified its AcousticID recording.
     record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
@@ -657,10 +698,10 @@ def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_re
         source = session.get(SourceRecord, job.source_id)
         assert source is not None
         assert source.intake_state == 'present'
-        assert source.media_codec == 'FLAC'
-        assert source.media_bit_depth is not None and source.media_bit_depth > 0
-        assert source.media_sample_rate is not None and source.media_sample_rate > 0
-        assert source.media_channels is not None and source.media_channels > 0
+        assert source.media_codec is None
+        assert source.media_bit_depth is None
+        assert source.media_sample_rate is None
+        assert source.media_channels is None
         decision = session.get(EffectiveSourceDecisionRecord, source.library_record_id)
         assert decision is not None and decision.source_id is None
         assert source.review_decisions == []
@@ -793,10 +834,10 @@ def _publish_stub(request: processing.PublicationRequest, suffix: str) -> Public
     return PublicationResult(published_release, published_audio)
 
 
-def test_worker_when_staged_decoder_rejects_but_source_passes_retries_without_publishing(
+def test_worker_when_source_lacks_identity_skips_decoder_and_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: a valid source whose staged output fails the decoder validation seam.
+    # Given: a valid source without explicit identity.
     config = _config(tmp_path)
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
@@ -815,39 +856,28 @@ def test_worker_when_staged_decoder_rejects_but_source_passes_retries_without_pu
         )
         session.commit()
 
-    published = False
+    def fail_media_stage(request: object) -> None:
+        _ = request
+        pytest.fail('source without identity must not invoke media staging')
 
-    def fail_publish(*_args: object, **_kwargs: object) -> None:
-        nonlocal published
-        published = True
-
-    monkeypatch.setattr(
-        media_stage,
-        'decoder_evidence',
-        lambda path, **_kwargs: (
-            ToolEvidence(ToolState.FAILED, 1, '', '')
-            if path != source_path
-            else ToolEvidence(ToolState.SUCCESS, 0, '', '')
-        ),
-    )
-    monkeypatch.setattr(processing, 'replace_published_audio', fail_publish)
+    monkeypatch.setattr(processing, 'process_media', fail_media_stage)
 
     # When: the worker processes the queued initial job.
     with Session(engine) as session:
         assert ProcessingWorker(session, config).run_once()
         session.commit()
 
-    # Then: a pipeline-produced decoder failure is retryable and leaves publication absent.
+    # Then: the job completes without media-tool work or publication.
     with Session(engine) as session:
         job = session.get(JobRecord, 'job-decoder')
         source = session.get(SourceRecord, job.source_id) if job is not None else None
-        assert job is not None and job.state == 'queued'
-        assert source is not None and source.intake_state == 'discovered'
+        assert job is not None and job.state == 'completed'
+        assert source is not None and source.intake_state == 'present'
         assert source.library_record is not None
-        assert source.library_record.events[-1].kind == 'processing_retry'
+        assert source.library_record.events[-1].kind == 'publication_deferred_for_identity'
         assert source.library_publications == []
-    assert not published
-    assert not list(config.media_root.rglob('*.flac'))
+    assert not config.staging_root.exists()
+    assert not config.media_root.exists()
 
 
 def test_worker_when_unexpected_processing_error_retries_without_quarantining_source(
