@@ -143,12 +143,12 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
         result = _reconcile(session)
         session.commit()
 
-        # Then: source provenance stays root-scoped and every supported container is queued for capability validation.
+        # Then: provenance stays root-scoped and whitelisted audio files are queued.
         sources = list(session.scalars(select(SourceRecord).order_by(SourceRecord.source_path)))
         assert result.added == 7
-        assert result.queued_jobs == 6
+        assert result.queued_jobs == 7
         assert len(sources) == 7
-        assert len(session.scalars(select(JobRecord)).all()) == 6
+        assert len(session.scalars(select(JobRecord)).all()) == 7
         assert len({source.sha256 for source in sources if Path(source.source_path).suffix == '.flac'}) == 2
         assert {source.source_root_id for source in sources if Path(source.source_path).suffix == '.flac'} == {
             'first',
@@ -164,9 +164,8 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
             '.mp3': 'needs_review',
             '.opus': 'needs_review',
             '.ogg': 'needs_review',
-            '.wav': 'unsupported:container_unsupported',
+            '.wav': 'needs_review',
         }
-
         # When: a FLAC moves inside its root, another root loses a file, and that root is disabled before scanning.
         moved = first_root / 'moved.flac'
         _ = first_flac.rename(moved)
@@ -184,6 +183,33 @@ def test_reconcile_enabled_roots_keeps_provenance_and_inventory_scoped(tmp_path:
         assert moved_result.removed == 0
         assert second_source.intake_state != 'disappeared'
         assert second_source.disappeared_at is None
+
+
+def test_reconcile_skips_non_audio_files_before_source_creation(tmp_path: Path) -> None:
+    # Given: an input root with obvious non-audio files and a whitelisted audio candidate.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "scan-filter.db"}')
+    _ = Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    _ = (incoming / 'player.exe').write_bytes(b'executable')
+    _ = (incoming / 'library.dll').write_bytes(b'library')
+    audio = incoming / 'track.wav'
+    _ = audio.write_bytes(b'audio candidate')
+
+    with Session(engine) as session:
+        session.add(_root('incoming', incoming))
+
+        # When: the configured root is reconciled.
+        result = _reconcile(session)
+        session.commit()
+
+        # Then: non-audio files create no source, job, or processing history.
+        sources = list(session.scalars(select(SourceRecord)).all())
+        jobs = list(session.scalars(select(JobRecord)).all())
+        assert result.added == 1
+        assert result.queued_jobs == 1
+        assert [Path(source.source_path) for source in sources] == [audio]
+        assert [job.source_id for job in jobs] == [sources[0].id]
 
 
 def test_reconcile_disappearance_is_limited_to_the_scanned_root(tmp_path: Path) -> None:

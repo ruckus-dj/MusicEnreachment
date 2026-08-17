@@ -36,8 +36,34 @@ from music_ingest.models import (
 from music_ingest.models.jobs import JobRepository
 from music_ingest.source_boundary import SourceBoundaryError, resolve_regular_file
 
-_SUPPORTED_SUFFIXES = frozenset({'.flac', '.m4a', '.mp3', '.opus', '.ogg'})
-_PERMANENTLY_UNSUPPORTED_SUFFIXES = frozenset({'.aac', '.aiff', '.aif', '.wav', '.wma'})
+_AUDIO_SUFFIXES = frozenset(
+    {
+        '.aac',
+        '.aiff',
+        '.alac',
+        '.ape',
+        '.asf',
+        '.dff',
+        '.dsf',
+        '.flac',
+        '.m4a',
+        '.mka',
+        '.mp3',
+        '.mp4',
+        '.mpc',
+        '.ofr',
+        '.ofs',
+        '.oga',
+        '.ogg',
+        '.opus',
+        '.spx',
+        '.tak',
+        '.tta',
+        '.wav',
+        '.wma',
+        '.wv',
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,8 +248,7 @@ def plan_reconciliation(snapshot: ReconciliationSnapshot) -> ReconciliationPlan:
                     moved += 1
                 if existing.intake_state == 'disappeared' and existing.library_record_id is not None:
                     reappeared_sources.append((existing.id, existing.library_record_id))
-                if file.path.suffix.casefold() in _SUPPORTED_SUFFIXES:
-                    enqueue(existing.id)
+                enqueue(existing.id)
                 continue
             path_source = sources_by_path.get((root.id, file.path))
             library_record_id = path_source.library_record_id if path_source is not None else None
@@ -245,8 +270,7 @@ def plan_reconciliation(snapshot: ReconciliationSnapshot) -> ReconciliationPlan:
                 if library_record_id is not None:
                     replacement_pairs.append((path_source.id, new_source_id, library_record_id))
                     selection_refresh_record_ids.add(library_record_id)
-            if file.path.suffix.casefold() in _SUPPORTED_SUFFIXES:
-                enqueue(new_source_id)
+            enqueue(new_source_id)
         for source in snapshot.sources:
             if (
                 source.source_root_id != root.id
@@ -521,7 +545,7 @@ def _root_files(root: RootSnapshot) -> tuple[FileFingerprint, ...] | None:
         directories[:] = [name for name in directories if not (Path(directory) / name).is_symlink()]
         for name in names:
             candidate = Path(directory) / name
-            if candidate.suffix.casefold() not in _SUPPORTED_SUFFIXES | _PERMANENTLY_UNSUPPORTED_SUFFIXES:
+            if candidate.suffix.casefold() not in _AUDIO_SUFFIXES:
                 continue
             try:
                 files.append(_fingerprint(candidate, canonical_root, root.id))
@@ -542,7 +566,8 @@ def _fingerprint(path: Path, root: Path, root_id: str) -> FileFingerprint:
 
 
 def _inventory_state(path: Path) -> str:
-    return 'needs_review' if path.suffix.casefold() in _SUPPORTED_SUFFIXES else 'unsupported:container_unsupported'
+    _ = path
+    return 'needs_review'
 
 
 def _stored_path(source: SourceSnapshot) -> Path:
