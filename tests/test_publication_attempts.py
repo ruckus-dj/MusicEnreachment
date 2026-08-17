@@ -73,7 +73,7 @@ def test_publication_attempt_finalizes_exposed_manifest_and_supersedes_current_o
         assert publication.content_sha256 == sha256(b'new-output').hexdigest()
         persisted_attempt = session.get(PublicationAttemptRecord, attempt.id)
         assert persisted_attempt is not None and persisted_attempt.state == 'finalized'
-        assert (target / 'manifest.json').is_file()
+        assert (staging / 'manifest.json').is_file()
         assert (target / 'audio.flac').read_bytes() == b'new-output'
         assert backup.is_dir()
 
@@ -165,7 +165,7 @@ def test_finalization_rollback_preserves_transient_paths(tmp_path: Path) -> None
         # Then: transient paths and the pre-finalization database state remain recoverable.
         assert backup.is_dir()
         assert target.is_dir()
-        assert not staging.exists()
+        assert staging.exists()
         assert session.get(PublicationAttemptRecord, attempt.id) is None
 
 
@@ -232,13 +232,13 @@ def test_publication_attempt_crash_matrix_recovers_complete_destination(
         # Then: only a complete old or validated new destination remains.
         assert (target / 'audio.flac').read_bytes() == expected_output
         assert attempt.state == expected_state
-        assert not staging.exists()
+        assert staging.exists() is (checkpoint == 'before-commit')
         if checkpoint == 'before-commit':
             assert backup.is_dir()
         else:
             assert not backup.exists()
         if expected_output == b'new-output':
-            assert (target / 'manifest.json').is_file()
+            assert not (target / 'manifest.json').exists()
 
 
 def test_expose_attempt_atomically_replaces_managed_directory_with_persisted_manifest(tmp_path: Path) -> None:
@@ -280,7 +280,7 @@ def test_expose_attempt_atomically_replaces_managed_directory_with_persisted_man
         expose_attempt(session, attempt, now)
 
         # Then: the destination is complete, manifest fields are durable, and the old output is retained.
-        manifest = json.loads((target / 'manifest.json').read_text(encoding='utf-8'))
+        manifest = json.loads((staging / 'manifest.json').read_text(encoding='utf-8'))
         assert (target / 'audio.flac').read_bytes() == b'new-output'
         assert manifest == {
             'attempt_id': 'attempt-atomic',
@@ -290,7 +290,7 @@ def test_expose_attempt_atomically_replaces_managed_directory_with_persisted_man
         }
         assert backup.is_dir()
         assert (backup / 'audio.flac').read_bytes() == b'old-output'
-        assert not staging.exists()
+        assert staging.exists()
 
 
 def test_publication_attempt_when_exposed_output_is_tampered_restores_persisted_backup(tmp_path: Path) -> None:
@@ -469,7 +469,8 @@ def test_reconcile_after_target_moves_to_backup_restores_old_output(tmp_path: Pa
             ),
         )
         mark_staged(session, attempt, now)
-        _ = os.replace(target, backup)
+        backup.mkdir(parents=True, exist_ok=True)
+        _ = os.replace(target / 'audio.flac', backup / 'audio.flac')
 
         # When: restart reconciliation runs before the staging directory is exposed.
         reconcile_attempts(session, now)

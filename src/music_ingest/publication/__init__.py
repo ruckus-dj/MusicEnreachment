@@ -20,7 +20,7 @@ _POSTGRESQL_DIALECT: Final = 'postgresql'
 
 
 def acquire_publication_destination_lock(session: Session, destination: Path) -> None:
-    """Serialize publication operations targeting one managed release directory."""
+    """Serialize publication operations targeting one managed audio file."""
     if session.get_bind().dialect.name != _POSTGRESQL_DIALECT:
         return
     lock_key = int.from_bytes(
@@ -30,7 +30,7 @@ def acquire_publication_destination_lock(session: Session, destination: Path) ->
 
 
 def try_acquire_publication_destination_lock(session: Session, destination: Path) -> bool:
-    """Try to serialize one publication without blocking a worker slot."""
+    """Try to serialize one audio publication without blocking a worker slot."""
     if session.get_bind().dialect.name != _POSTGRESQL_DIALECT:
         return True
     lock_key = int.from_bytes(

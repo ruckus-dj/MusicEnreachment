@@ -355,7 +355,7 @@ def test_replace_published_audio_when_album_exists_touches_only_target_track_and
     assert sha256((destination / '01 - First.flac').read_bytes()).hexdigest() == first_hash
     assert sha256((destination / '02 - Second.flac').read_bytes()).hexdigest() == replacement_hash
     assert sha256((destination / '02 - Second.flac').read_bytes()).hexdigest() != existing_target_hash
-    assert (destination / 'cover.jpg').read_bytes() == b'\xff\xd8\xffnew-cover\xff\xd9'
+    assert (destination / 'cover.jpg').read_bytes() == b'\xff\xd8\xffold-cover\xff\xd9'
     assert not release.exists()
 
 

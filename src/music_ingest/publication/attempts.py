@@ -75,8 +75,8 @@ def mark_staged(session: Session, attempt: PublicationAttemptRecord, now: dateti
 
 def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: datetime) -> None:
     staging = Path(attempt.staging_directory)
-    target = Path(attempt.target_directory)
-    backup = Path(attempt.backup_directory)
+    target = Path(attempt.target_directory) / attempt.target_audio_name
+    backup = Path(attempt.backup_directory) / attempt.target_audio_name
     output = staging / attempt.target_audio_name
     if attempt.state != 'staged' or attempt.output_sha256 != _sha256(output):
         raise ValueError('publication attempt is not a valid staged output')
@@ -92,7 +92,7 @@ def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: dat
     if target.exists():
         _ = os.replace(target, backup)
     try:
-        _ = os.replace(staging, target)
+        _ = os.replace(output, target)
     except OSError:
         if backup.exists() and not target.exists():
             os.replace(backup, target)
@@ -111,14 +111,14 @@ def finalize_attempt(session: Session, attempt: PublicationAttemptRecord, now: d
         if publication is None:
             raise LookupError(attempt.id)
         return publication
-    target = Path(attempt.target_directory)
-    manifest_path = target / 'manifest.json'
+    target = Path(attempt.target_directory) / attempt.target_audio_name
+    manifest_path = Path(attempt.staging_directory) / 'manifest.json'
+    output = target
     manifest = manifest_path.read_text(encoding='utf-8')
     if attempt.state != 'exposed' or attempt.manifest_sha256 != sha256(manifest.encode()).hexdigest():
         raise ValueError('publication attempt manifest is invalid')
     parsed = _MANIFEST_ADAPTER.validate_json(manifest)
-    output = target / attempt.target_audio_name
-    if parsed != _manifest_values(attempt) or attempt.output_sha256 != _sha256(output):
+    if parsed != _manifest_values(attempt) or attempt.output_sha256 != _sha256(target):
         raise ValueError('publication attempt output is invalid')
     current = session.scalars(
         select(LibraryPublicationRecord)
@@ -184,8 +184,8 @@ def reconcile_attempts(session: Session, now: datetime) -> None:
         if attempt.state in {'reserved', 'staged'}:
             if (
                 attempt.state == 'staged'
-                and Path(attempt.backup_directory).is_dir()
-                and not Path(attempt.target_directory).exists()
+                and (Path(attempt.backup_directory) / attempt.target_audio_name).is_file()
+                and not (Path(attempt.target_directory) / attempt.target_audio_name).exists()
             ):
                 _restore_backup(attempt)
             cleanup_attempt(attempt)
@@ -252,20 +252,20 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _restore_backup(attempt: PublicationAttemptRecord) -> None:
-    target = Path(attempt.target_directory)
-    backup = Path(attempt.backup_directory)
+    target = Path(attempt.target_directory) / attempt.target_audio_name
+    backup = Path(attempt.backup_directory) / attempt.target_audio_name
     if not backup.exists():
         return
     if target.exists():
-        shutil.rmtree(target)
+        target.unlink()
     _ = os.replace(backup, target)
     _fsync_directory(target.parent)
 
 
 def _exposed_output_is_recoverable(attempt: PublicationAttemptRecord) -> bool:
-    target = Path(attempt.target_directory)
-    manifest_path = target / 'manifest.json'
-    if not target.is_dir() or not manifest_path.is_file():
+    target = Path(attempt.target_directory) / attempt.target_audio_name
+    manifest_path = Path(attempt.staging_directory) / 'manifest.json'
+    if not target.is_file() or not manifest_path.is_file():
         return False
     try:
         manifest = manifest_path.read_text(encoding='utf-8')
@@ -275,5 +275,5 @@ def _exposed_output_is_recoverable(attempt: PublicationAttemptRecord) -> bool:
     return (
         parsed == _manifest_values(attempt)
         and attempt.manifest_sha256 == sha256(manifest.encode()).hexdigest()
-        and attempt.output_sha256 == _sha256(target / attempt.target_audio_name)
+        and attempt.output_sha256 == _sha256(target)
     )
