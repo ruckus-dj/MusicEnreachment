@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from rapidfuzz.fuzz import ratio
+
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     AcoustIdResult,
@@ -41,6 +43,7 @@ class ReviewReason(StrEnum):
 
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.70
+_TEXT_MATCH_THRESHOLD: Final = 0.85
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,12 +74,16 @@ class MatchingRequest:
     disc_number: int | None = None
     disc_total: int | None = None
     source_path: str = ''
+    album_artist_name: str = ''
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateScore:
     candidate_mbid: str | None
     score: float
+    artist_component: float = 0.0
+    release_component: float = 0.0
+    duration_component: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +130,7 @@ def resolve_match(
             MatchDecision.AUTO_SELECTED,
             automatic_candidate.release_mbid,
             recording_score,
-            CandidateScore(automatic_candidate.release_mbid, _candidate_score(request, automatic_candidate)),
+            _candidate_score_result(request, automatic_candidate),
             None,
             candidate_scores,
         )
@@ -163,11 +170,9 @@ def _recording_score(explicit_ids: ExplicitMusicBrainzIds, acoustid: AcoustIdRes
 def _candidate_scores(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> tuple[CandidateScore, ...]:
     match musicbrainz:
         case MusicBrainzMatch(candidate=candidate):
-            return (CandidateScore(candidate.release_mbid, _candidate_score(request, candidate)),)
+            return (_candidate_score_result(request, candidate),)
         case Ambiguous(candidates=candidates):
-            return tuple(
-                CandidateScore(candidate.release_mbid, _candidate_score(request, candidate)) for candidate in candidates
-            )
+            return tuple(_candidate_score_result(request, candidate) for candidate in candidates)
         case Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
             return ()
 
@@ -180,21 +185,9 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
         return None
     match musicbrainz:
         case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
-            return (
-                candidate
-                if _normalized(request.artist_name) == _normalized(_release_artist_name(candidate))
-                and _normalized(request.release_title) == _normalized(candidate.release_title)
-                and not _candidate_has_unsafe_text(candidate)
-                else None
-            )
+            return candidate if _source_candidate_matches(request, candidate) else None
         case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
-            matches = tuple(
-                candidate
-                for candidate in candidates
-                if _normalized(request.artist_name) == _normalized(_release_artist_name(candidate))
-                and _normalized(request.release_title) == _normalized(candidate.release_title)
-                and not _candidate_has_unsafe_text(candidate)
-            )
+            matches = tuple(candidate for candidate in candidates if _source_candidate_matches(request, candidate))
             return matches[0] if len(matches) == 1 else None
         case MusicBrainzMatch() | Ambiguous():
             return None
@@ -229,30 +222,42 @@ def _has_recording_context(candidate: ReleaseCandidate) -> bool:
     return candidate.recording_title is not None and candidate.duration_seconds is not None
 
 
-def _candidate_score(request: MatchingRequest, candidate: ReleaseCandidate) -> float:
+def _source_candidate_matches(request: MatchingRequest, candidate: ReleaseCandidate) -> bool:
+    if _candidate_has_unsafe_text(candidate):
+        return False
+    artist_name = _album_artist_name(request)
+    return _normalized(artist_name) == _normalized(_release_artist_name(candidate)) and _normalized(
+        request.release_title
+    ) == _normalized(candidate.release_title)
+
+
+def _candidate_score_result(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
     if _candidate_matches_explicit_ids(request.explicit_ids, candidate):
-        return 1.0
-    source_score = _text_duration_score(
-        request.artist_name,
-        request.release_title,
-        request.duration_seconds,
-        candidate,
+        return CandidateScore(candidate.release_mbid, 1.0)
+    source_score = _score_components(
+        _album_artist_name(request), request.release_title, request.duration_seconds, candidate
     )
     if request.lidarr is None:
-        return source_score
-    lidarr_score = _text_duration_score(
-        request.lidarr.artist_name,
-        request.lidarr.release_title,
-        request.lidarr.duration_seconds,
-        candidate,
+        selected = source_score
+    else:
+        lidarr_score = _score_components(
+            request.lidarr.artist_name, request.lidarr.release_title, request.lidarr.duration_seconds, candidate
+        )
+        selected = source_score if source_score.total >= lidarr_score.total else lidarr_score
+    return CandidateScore(
+        candidate.release_mbid,
+        selected.total,
+        selected.artist_component,
+        selected.release_component,
+        selected.duration_component,
     )
-    return max(source_score, lidarr_score)
 
 
 def recording_candidate_matches(request: MatchingRequest, candidate: ReleaseCandidate) -> bool:
     return (
         (
-            _text_matches(request.artist_name, candidate.release_artist_name)
+            _text_matches(_album_artist_name(request), candidate.release_artist_name)
+            or _text_matches(request.artist_name, candidate.release_artist_name)
             or any(_text_matches(request.artist_name, artist_name) for artist_name in candidate.recording_artist_names)
         )
         and _title_matches(request.recording_title, candidate.recording_title)
@@ -267,12 +272,14 @@ def recording_candidate_matches(request: MatchingRequest, candidate: ReleaseCand
 
 def _title_matches(source_title: str, candidate_title: str | None) -> bool:
     return candidate_title is None or (
-        bool(source_title) and _recording_title_key(source_title) == _recording_title_key(candidate_title)
+        bool(source_title)
+        and _text_similarity(_recording_title_key(source_title), _recording_title_key(candidate_title))
+        >= _TEXT_MATCH_THRESHOLD
     )
 
 
 def _text_matches(source_value: str, candidate_value: str | None) -> bool:
-    return candidate_value is None or (bool(source_value) and _normalized(source_value) == _normalized(candidate_value))
+    return candidate_value is None or _text_similarity(source_value, candidate_value) >= _TEXT_MATCH_THRESHOLD
 
 
 def _duration_matches(expected: int | None, actual: int | None) -> bool:
@@ -291,16 +298,39 @@ def _country_matches(source_path: str, candidate_country: str | None) -> bool:
     return candidate_country is None or 'japan' not in source_path.casefold() or candidate_country == 'JP'
 
 
-def _text_duration_score(
+@dataclass(frozen=True, slots=True)
+class _ScoreComponents:
+    artist_component: float
+    release_component: float
+    duration_component: float
+
+    @property
+    def total(self) -> float:
+        return self.artist_component + self.release_component + self.duration_component
+
+
+def _score_components(
     artist_name: str, release_title: str, duration_seconds: int | None, candidate: ReleaseCandidate
-) -> float:
-    artist_score = 0.4 if _normalized(artist_name) == _normalized(_release_artist_name(candidate)) else 0.0
-    title_score = 0.4 if _normalized(release_title) == _normalized(candidate.release_title) else 0.0
-    return artist_score + title_score + _duration_score(duration_seconds, candidate.duration_seconds)
+) -> _ScoreComponents:
+    return _ScoreComponents(
+        artist_component=0.4 * _text_similarity(artist_name, _release_artist_name(candidate)),
+        release_component=0.4 * _text_similarity(release_title, candidate.release_title),
+        duration_component=_duration_score(duration_seconds, candidate.duration_seconds),
+    )
 
 
 def _release_artist_name(candidate: ReleaseCandidate) -> str:
     return candidate.release_artist_name or candidate.artist_name
+
+
+def _album_artist_name(request: MatchingRequest) -> str:
+    return request.album_artist_name or request.artist_name
+
+
+def _text_similarity(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    return ratio(_normalized(left), _normalized(right)) / 100.0
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:
@@ -330,6 +360,8 @@ def _review_reason(
                 return ReviewReason.MANUAL_MBID_UNVERIFIED
             if request.lidarr is not None and _lidarr_conflicts(request.lidarr, candidate):
                 return ReviewReason.CONFLICTING_CONTEXT
+            if not _has_manual_mbid(request.explicit_ids) and release_score.release_component < 0.4:
+                return ReviewReason.INSUFFICIENT_RELEASE_SCORE
             if release_score.score < confidence_threshold:
                 return ReviewReason.INSUFFICIENT_RELEASE_SCORE
             match candidate, musicbrainz.provenance:
@@ -390,9 +422,10 @@ def _contains_control_character(value: str) -> bool:
 
 
 def _lidarr_conflicts(context: LidarrContext, candidate: ReleaseCandidate) -> bool:
-    return _normalized(context.artist_name) != _normalized(candidate.artist_name) or _normalized(
-        context.release_title
-    ) != _normalized(candidate.release_title)
+    return (
+        _text_similarity(context.artist_name, candidate.artist_name) < _TEXT_MATCH_THRESHOLD
+        or _text_similarity(context.release_title, candidate.release_title) < _TEXT_MATCH_THRESHOLD
+    )
 
 
 def _normalized(value: str) -> str:

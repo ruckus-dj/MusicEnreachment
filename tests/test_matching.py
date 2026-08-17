@@ -186,6 +186,60 @@ def test_matching_when_single_fresh_release_matches_source_artist_and_album_sele
     assert result.selected_release_mbid == 'release-vol-1'
 
 
+def test_recording_matching_when_album_artist_and_feature_suffix_differ_selects_release() -> None:
+    # Given: source tags use the track artist and include a featured-credit suffix in the title.
+    request = MatchingRequest(
+        artist_name='Олег Груз',
+        release_title='Хипхопера: Орфей & Эвридика',
+        duration_seconds=160,
+        album_artist_name='Noize MC',
+        recording_title='Подписание контракта (Аид, Орфей, Фортуна) (feat. Noize MC & Анастасия Александрина)',
+        track_number=13,
+        track_total=30,
+        disc_number=1,
+        disc_total=1,
+    )
+    candidate = ReleaseCandidate(
+        'release-noize',
+        'Хипхопера: Орфей & Эвридика',
+        'Олег Груз',
+        160,
+        recording_title='Подписание контракта (Аид, Орфей, Фортуна)',
+        track_number=13,
+        track_total=30,
+        disc_number=1,
+        disc_total=1,
+        release_artist_name='Noize MC',
+        recording_artist_names=('Олег Груз', 'Noize MC', 'Анастасия Александрина'),
+    )
+
+    # When: the release is scored against its album artist and fuzzy recording title.
+    result = resolve_match(request, MusicBrainzMatch(_provenance('fresh'), candidate), None)
+
+    # Then: the feature suffix does not block the unique authoritative release selection.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == 'release-noize'
+    assert result.release_score.score == 1.0
+    assert result.release_score.artist_component == 0.4
+    assert result.release_score.release_component == 0.4
+    assert result.release_score.duration_component == 0.2
+
+
+def test_matching_when_album_artist_is_missing_falls_back_to_track_artist() -> None:
+    # Given: older source metadata has no ALBUMARTIST value.
+    request = MatchingRequest('Fixture Artist', 'Fixture Release', None)
+    evidence = MusicBrainzMatch(
+        _provenance('fresh'), ReleaseCandidate(RELEASE_MBID, 'Fixture Release', 'Fixture Artist')
+    )
+
+    # When: matching evaluates the candidate using the fallback artist.
+    result = resolve_match(request, evidence, None)
+
+    # Then: the existing exact artist behavior remains available.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == RELEASE_MBID
+
+
 def test_matching_when_recording_lookup_echoes_source_artist_but_release_artist_conflicts_requires_review() -> None:
     # Given: a recording lookup carries the source artist as context, but MusicBrainz names a different release artist.
     request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.1', None)
