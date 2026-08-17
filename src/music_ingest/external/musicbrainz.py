@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 
 from pydantic import ValidationError
 
-from music_ingest.dto import RecordingResponse, Release, ReleaseResponse
+from music_ingest.dto import LabelInfo, RecordingResponse, Release, ReleaseResponse
 from music_ingest.enrichment.artwork import ArtworkCandidate, ArtworkFormat
 from music_ingest.matching.providers import (
     Ambiguous,
@@ -26,7 +26,7 @@ from music_ingest.matching.providers import (
 )
 
 _COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
-_RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels'
+_RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels+labels'
 
 
 class MusicBrainzTransport(Protocol):
@@ -268,6 +268,7 @@ class MusicBrainzV2Adapter:
                 if any(credit.artist is None for credit in release.artist_credit)
                 else tuple(credit.artist.id for credit in release.artist_credit if credit.artist is not None)
             ),
+            catalog_numbers=_catalog_numbers(release),
         )
 
 
@@ -277,6 +278,11 @@ def _matching_releases(releases: tuple[Release, ...], release_title: str | None)
     requested = _title_key(release_title)
     exact = tuple(release for release in releases if _title_key(release.title) == requested)
     return exact or releases
+
+
+def _catalog_numbers(release: Release) -> tuple[str, ...]:
+    label_info: tuple[LabelInfo, ...] = release.label_info
+    return tuple(number for number in (release.barcode, *(item.catalog_number for item in label_info)) if number)
 
 
 def _without_pseudo_releases(releases: tuple[Release, ...]) -> tuple[Release, ...]:

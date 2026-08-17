@@ -505,6 +505,28 @@ def test_musicbrainz_v2_adapter_keeps_ambiguous_release_candidates() -> None:
     assert tuple(candidate.release_mbid for candidate in result.candidates) == ('release-a', 'release-b')
 
 
+def test_musicbrainz_v2_adapter_preserves_release_catalog_numbers() -> None:
+    # Given: a detailed release response includes barcode and label catalog numbers.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = url, headers
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"id":"release-eu","title":"Burn It Down","barcode":"093624950509",'
+                b'"label-info":[{"catalog-number":"9362-49505-0"}],"media":[]}',
+            )
+
+    # When: the provider parses the detailed release.
+    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+        MusicBrainzLookupRequest('', FixtureCase.SUCCESS, release_mbid='release-eu'),
+        NOW,
+    )
+
+    # Then: both edition identifiers remain available to the matcher.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.catalog_numbers == ('093624950509', '9362-49505-0')
+
+
 def test_provider_adapters_reject_false_acoustid_recording_and_select_japanese_maxi_release() -> None:
     # Given: mocked AcoustID and MusicBrainz responses for We Made It (Album Version).
     class AcoustIdTransport:
