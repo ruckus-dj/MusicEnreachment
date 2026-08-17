@@ -19,6 +19,11 @@ export type Candidate = {
     readonly title?: string;
     readonly album?: string;
     readonly score: number | null;
+    readonly score_components?: {
+      readonly artist: number;
+      readonly release: number;
+      readonly duration: number;
+    } | null;
     readonly tags: Tags;
   };
 };
