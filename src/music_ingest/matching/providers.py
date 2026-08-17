@@ -222,6 +222,7 @@ class ReleaseCandidate:
     release_artist_names: tuple[str, ...] = ()
     recording_artist_mbids: tuple[str, ...] = ()
     release_artist_mbids: tuple[str, ...] = ()
+    catalog_numbers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

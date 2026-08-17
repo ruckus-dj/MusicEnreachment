@@ -332,6 +332,12 @@ class Medium(BaseModel):
     tracks: tuple[Track, ...] = ()
 
 
+class LabelInfo(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True, populate_by_name=True)
+
+    catalog_number: str | None = Field(default=None, alias='catalog-number')
+
+
 class Release(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True, populate_by_name=True)
 
@@ -341,6 +347,8 @@ class Release(BaseModel):
     artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     date: str | None = None
     country: str | None = None
+    barcode: str | None = None
+    label_info: tuple[LabelInfo, ...] = Field(default=(), alias='label-info')
     genres: tuple[Genre, ...] = ()
     release_group: ReleaseGroup | None = Field(default=None, alias='release-group')
     media: tuple[Medium, ...] = ()
