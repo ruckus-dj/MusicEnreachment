@@ -44,4 +44,4 @@ def decoder_evidence(
 
 
 def _command(input_path: Path, ffmpeg_command: str) -> tuple[str, ...]:
-    return (ffmpeg_command, '-v', 'error', '-xerror', '-i', str(input_path), '-map', '0:a:0', '-f', 'null', '-')
+    return (ffmpeg_command, '-v', 'error', '-i', str(input_path), '-map', '0:a:0', '-f', 'null', '-')
