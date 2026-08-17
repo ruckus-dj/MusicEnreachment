@@ -281,6 +281,49 @@ def test_matching_when_source_album_matches_multiple_candidates_keeps_review() -
     assert result.review_reason is ReviewReason.MUSICBRAINZ_AMBIGUOUS
 
 
+def test_matching_when_source_catalog_selects_one_release_edition() -> None:
+    # Given: the source path identifies an edition while MusicBrainz returns several same-title releases.
+    request = MatchingRequest(
+        'Linkin Park',
+        'Burn It Down',
+        230,
+        source_path='/downloads/2012 - Burn It Down [EU 9362-49505-0]/01 - Burn It Down.flac',
+    )
+    evidence = Ambiguous(
+        _provenance('fresh'),
+        (
+            ReleaseCandidate('release-eu', 'Burn It Down', 'Linkin Park', 230, catalog_numbers=('9362-49505-0',)),
+            ReleaseCandidate('release-us', 'Burn It Down', 'Linkin Park', 230, catalog_numbers=('093624950387',)),
+        ),
+    )
+
+    # When: matching evaluates the edition evidence together with source artist and album.
+    result = resolve_match(request, evidence, None)
+
+    # Then: only the release whose catalog number is present in the source path is selected.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == 'release-eu'
+
+
+def test_matching_when_source_has_no_catalog_evidence_keeps_same_title_releases_in_review() -> None:
+    # Given: same-title releases have catalog numbers, but the source path carries no edition identifier.
+    request = MatchingRequest('Linkin Park', 'Burn It Down', 230, source_path='/downloads/Burn It Down/track.flac')
+    evidence = Ambiguous(
+        _provenance('fresh'),
+        (
+            ReleaseCandidate('release-eu', 'Burn It Down', 'Linkin Park', 230, catalog_numbers=('093624950509',)),
+            ReleaseCandidate('release-us', 'Burn It Down', 'Linkin Park', 230, catalog_numbers=('093624950387',)),
+        ),
+    )
+
+    # When: matching evaluates the ambiguous releases without edition evidence.
+    result = resolve_match(request, evidence, None)
+
+    # Then: it does not guess an edition from release order or score.
+    assert result.decision is MatchDecision.NEEDS_REVIEW
+    assert result.review_reason is ReviewReason.MUSICBRAINZ_AMBIGUOUS
+
+
 def test_matching_when_exact_musicbrainz_facts_are_freshly_cached_selects_the_release() -> None:
     # Given: an exact normalized candidate retained inside the 24-hour cache window.
     request = MatchingRequest('Fíxture Artist', 'fixture release', None)

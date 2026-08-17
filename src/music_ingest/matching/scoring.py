@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
@@ -44,6 +45,7 @@ class ReviewReason(StrEnum):
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.70
 _TEXT_MATCH_THRESHOLD: Final = 0.85
+_CATALOG_TOKEN_PATTERN: Final = re.compile(r'(?i)(?:[a-z]{1,8}[- ]?)?\d(?:[\d-]{3,})')
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +127,16 @@ def resolve_match(
             candidate_scores,
         )
     automatic_candidate = _unique_recording_context_match(request, musicbrainz)
+    if automatic_candidate is not None:
+        return MatchResult(
+            MatchDecision.AUTO_SELECTED,
+            automatic_candidate.release_mbid,
+            recording_score,
+            _candidate_score_result(request, automatic_candidate),
+            None,
+            candidate_scores,
+        )
+    automatic_candidate = _unique_catalog_match(request, musicbrainz)
     if automatic_candidate is not None:
         return MatchResult(
             MatchDecision.AUTO_SELECTED,
@@ -229,6 +241,36 @@ def _source_candidate_matches(request: MatchingRequest, candidate: ReleaseCandid
     return _normalized(artist_name) == _normalized(_release_artist_name(candidate)) and _normalized(
         request.release_title
     ) == _normalized(candidate.release_title)
+
+
+def _unique_catalog_match(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> ReleaseCandidate | None:
+    path_catalogs = _path_catalog_keys(request.source_path)
+    if not path_catalogs or _has_unsafe_text(request):
+        return None
+    match musicbrainz:
+        case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
+            matches = tuple(
+                candidate
+                for candidate in candidates
+                if _source_candidate_matches(request, candidate)
+                and path_catalogs.intersection(_catalog_keys(candidate.catalog_numbers))
+            )
+            return matches[0] if len(matches) == 1 else None
+        case _:
+            return None
+
+
+def _path_catalog_keys(source_path: str) -> frozenset[str]:
+    keys: set[str] = set()
+    for token in _CATALOG_TOKEN_PATTERN.findall(source_path):
+        normalized = _normalized(token)
+        keys.add(normalized)
+        keys.add(_normalized(re.sub(r'^[a-z]+', '', token, flags=re.IGNORECASE)))
+    return frozenset(keys)
+
+
+def _catalog_keys(catalog_numbers: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(_normalized(number) for number in catalog_numbers if number)
 
 
 def _candidate_score_result(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
