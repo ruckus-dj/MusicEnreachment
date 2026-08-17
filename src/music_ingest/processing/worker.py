@@ -999,7 +999,6 @@ class ProcessingWorker:
                 )
                 if candidate_result is None:
                     continue
-                candidate_match = self._resolve_provider_match(record, source, tags, candidate_result)
                 match candidate_result.musicbrainz:
                     case MusicBrainzMatch(candidate=candidate):
                         verified_candidates = (candidate,)
@@ -1023,10 +1022,11 @@ class ProcessingWorker:
                             candidate_result,
                             musicbrainz=MusicBrainzMatch(candidate_result.musicbrainz.provenance, candidate),
                         )
+                        verified_match = self._resolve_provider_match(record, source, tags, verified_result)
                         recording_matches.append((verified_result, recording_score))
-                        if candidate_match is not None and candidate_match.decision is MatchDecision.AUTO_SELECTED:
+                        if verified_match is not None and verified_match.decision is MatchDecision.AUTO_SELECTED:
                             candidate_matches.append(
-                                (verified_result, replace(candidate_match, recording_score=recording_score))
+                                (verified_result, replace(verified_match, recording_score=recording_score))
                             )
                     case _:
                         continue
