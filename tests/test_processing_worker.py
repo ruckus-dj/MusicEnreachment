@@ -129,7 +129,38 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
     assert recording.entity == 'recording'
     assert recording.compatible_ids == ('release-id',)
     assert recording.score is not None
-    assert recording.score != release.score
+    assert release.score == 1.0
+    assert recording.score == 1.0
+
+
+def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lacks_entry() -> None:
+    # Given: a MusicBrainz candidate has a request but no precomputed result-map entry.
+    candidate = ReleaseCandidate('release-id', 'Fixture Album', 'Fixture Artist', 215, ('recording-id',))
+    request = processing.MatchingRequest('Fixture Artist', 'Fixture Album', 215)
+
+    # When: candidate evidence is persisted without an incoming release score.
+    records = processing._candidate_records('source-id', candidate, None, request)
+
+    # Then: the release receives the same component score as every other candidate.
+    release = CandidateEvidencePayload.model_validate_json(records[0].evidence)
+    assert release.score is not None
+    assert release.score > 0.0
+
+
+def test_musicbrainz_candidate_tags_preserve_release_disambiguation_in_album() -> None:
+    # Given: MusicBrainz identifies an edition through its release disambiguation.
+    candidate = ReleaseCandidate(
+        '3b98979b-6494-4a7c-8de6-2165902f8a87',
+        'юность в стиле панк',
+        'Кис-Кис',
+        disambiguation='baby punk version',
+    )
+
+    # When: canonical tags are built from the release candidate.
+    tags = processing._candidate_tags(candidate)
+
+    # Then: the edition remains visible in the persisted album tag.
+    assert tags['ALBUM'] == 'юность в стиле панк (baby punk version)'
 
 
 def test_single_scored_musicbrainz_candidate_ignores_related_recording_evidence() -> None:
@@ -399,6 +430,55 @@ def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> No
 
     # Then: it selects the only recording verified for the source album.
     assert selected == (correct_result, correct_match)
+
+
+def test_unique_acoustid_album_match_selects_highest_scored_release() -> None:
+    # Given: two verified editions for the same track, with disambiguation making one release stronger.
+    provenance = FixtureProvenance(Path('fixture.json'), 'a' * 64)
+    standard_result = ProviderEvidenceResult(
+        MusicBrainzMatch(
+            provenance,
+            ReleaseCandidate(
+                'release-standard', 'юность в стиле панк', 'Кис-Кис', recording_mbids=('recording-standard',)
+            ),
+        ),
+        None,
+    )
+    baby_punk_result = ProviderEvidenceResult(
+        MusicBrainzMatch(
+            provenance,
+            ReleaseCandidate(
+                'release-baby-punk',
+                'юность в стиле панк',
+                'Кис-Кис',
+                recording_mbids=('recording-baby-punk',),
+                disambiguation='baby punk version',
+            ),
+        ),
+        None,
+    )
+    standard_match = MatchResult(
+        MatchDecision.AUTO_SELECTED,
+        'release-standard',
+        CandidateScore('recording-standard', 0.9999341),
+        CandidateScore('release-standard', 0.8723404255319149),
+        None,
+    )
+    baby_punk_match = MatchResult(
+        MatchDecision.AUTO_SELECTED,
+        'release-baby-punk',
+        CandidateScore('recording-baby-punk', 0.9999341),
+        CandidateScore('release-baby-punk', 1.0),
+        None,
+    )
+
+    # When: the worker evaluates both verified release editions.
+    selected = processing._unique_acoustid_album_match(
+        ((standard_result, standard_match), (baby_punk_result, baby_punk_match)),
+    )
+
+    # Then: the strongest release and its linked recording are selected together.
+    assert selected == (baby_punk_result, baby_punk_match)
 
 
 def test_unique_acoustid_recording_match_selects_verified_recording_without_release_match() -> None:

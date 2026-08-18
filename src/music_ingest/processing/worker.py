@@ -69,6 +69,7 @@ from music_ingest.matching.providers import (
     ReleaseCandidate,
     Timeout,
     Unavailable,
+    release_display_title,
 )
 from music_ingest.matching.scoring import (
     DEFAULT_CONFIDENCE_THRESHOLD,
@@ -80,6 +81,7 @@ from music_ingest.matching.scoring import (
     recording_candidate_matches,
     resolve_match,
     score_recording_candidate,
+    score_release_candidate,
 )
 from music_ingest.models import (
     ArtworkRecord,
@@ -204,7 +206,7 @@ def _analyzed_tags(
 
 def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     tags: dict[str, str] = {
-        'ALBUM': candidate.release_title,
+        'ALBUM': release_display_title(candidate),
         'ARTIST': '; '.join(candidate.recording_artist_names) or candidate.artist_name,
         'ALBUMARTIST': (
             '; '.join(candidate.release_artist_names) or candidate.release_artist_name or candidate.artist_name
@@ -238,7 +240,8 @@ def _candidate_records(
     release_score: CandidateScore | None,
     request: MatchingRequest | None,
 ) -> tuple[CandidateRecord, ...]:
-    release_score_value = None if release_score is None else release_score.score
+    effective_release_score = score_release_candidate(request, candidate) if request is not None else release_score
+    release_score_value = None if effective_release_score is None else effective_release_score.score
     release_record = CandidateRecord(
         source_id=source_id,
         candidate_key=candidate.release_mbid,
@@ -248,15 +251,18 @@ def _candidate_records(
                 'entity': 'release',
                 'artist': candidate.artist_name,
                 'release': candidate.release_title,
+                'disambiguation': candidate.disambiguation,
                 'score': release_score_value,
                 'compatible_ids': candidate.recording_mbids,
                 'score_components': (
                     None
-                    if release_score is None
+                    if effective_release_score is None
                     else {
-                        'artist': release_score.artist_component,
-                        'release': release_score.release_component,
-                        'duration': release_score.duration_component,
+                        'artist': effective_release_score.artist_component,
+                        'release': effective_release_score.release_component,
+                        'duration': effective_release_score.duration_component,
+                        'title': effective_release_score.title_component,
+                        'track': effective_release_score.track_component,
                     }
                 ),
                 'tags': _candidate_tags(candidate),
@@ -264,6 +270,7 @@ def _candidate_records(
             sort_keys=True,
         ),
     )
+    recording_score = None if request is None else score_recording_candidate(request, candidate)
     recording_records = tuple(
         CandidateRecord(
             source_id=source_id,
@@ -276,7 +283,17 @@ def _candidate_records(
                     'release': candidate.release_title,
                     'title': candidate.recording_title or '',
                     'album': candidate.release_title,
-                    'score': None if request is None else score_recording_candidate(request, candidate).score,
+                    'score': None if recording_score is None else recording_score.score,
+                    'score_components': (
+                        None
+                        if recording_score is None
+                        else {
+                            'artist': recording_score.artist_component,
+                            'title': recording_score.title_component,
+                            'duration': recording_score.duration_component,
+                            'track': recording_score.track_component,
+                        }
+                    ),
                     'recording_mbid': recording_mbid,
                     'compatible_ids': (candidate.release_mbid,),
                     'tags': _candidate_tags(candidate),
@@ -407,7 +424,11 @@ def _unique_acoustid_album_match(
         for candidate_match in candidate_matches
         if candidate_match[1].decision is MatchDecision.AUTO_SELECTED
     )
-    return automatic_matches[0] if len(automatic_matches) == 1 else None
+    if not automatic_matches:
+        return None
+    best_score = max(match[1].release_score.score for match in automatic_matches)
+    best_matches = tuple(match for match in automatic_matches if match[1].release_score.score == best_score)
+    return best_matches[0] if len(best_matches) == 1 else None
 
 
 def _unique_acoustid_recording_match(
