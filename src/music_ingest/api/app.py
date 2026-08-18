@@ -209,7 +209,7 @@ def _candidate_is_displayable(evidence: CandidateEvidencePayload) -> bool:
 def _current_candidates(source: SourceRecordView) -> tuple[CandidateView, ...]:
     latest_run_ids: dict[str, int] = {}
     for run in source.candidate_runs:
-        latest_run_ids[run.provider_name] = run.id
+        latest_run_ids[run.provider_name] = max(latest_run_ids.get(run.provider_name, 0), run.id)
     return tuple(
         candidate
         for candidate in source.candidates

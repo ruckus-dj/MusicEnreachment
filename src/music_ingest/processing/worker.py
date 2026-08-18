@@ -353,6 +353,42 @@ def _stored_release_recording_mbid(release: tuple[str, CandidateEvidencePayload]
     return release[1].tags.get('MUSICBRAINZ_RECORDINGID') or release[1].tags.get('MUSICBRAINZ_TRACKID')
 
 
+def _aggregate_musicbrainz_results(results: tuple[ProviderEvidenceResult, ...]) -> MusicBrainzResult:
+    candidates: dict[str, ReleaseCandidate] = {}
+    provenance: LiveProvenance | FixtureProvenance | None = None
+    for result in results:
+        match result.musicbrainz:
+            case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
+                provenance = result_provenance
+                _merge_release_candidate(candidates, candidate)
+            case Ambiguous(provenance=result_provenance, candidates=result_candidates):
+                provenance = result_provenance
+                for candidate in result_candidates:
+                    _merge_release_candidate(candidates, candidate)
+            case _:
+                continue
+    if provenance is None or not candidates:
+        return results[0].musicbrainz
+    unique_candidates = tuple(candidates.values())
+    return (
+        MusicBrainzMatch(provenance, unique_candidates[0])
+        if len(unique_candidates) == 1
+        else Ambiguous(provenance, unique_candidates)
+    )
+
+
+def _merge_release_candidate(candidates: dict[str, ReleaseCandidate], candidate: ReleaseCandidate) -> None:
+    existing = candidates.get(candidate.release_mbid)
+    candidates[candidate.release_mbid] = (
+        candidate
+        if existing is None
+        else replace(
+            existing,
+            recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
+        )
+    )
+
+
 def _unique_acoustid_album_match(
     candidate_matches: tuple[tuple[ProviderEvidenceResult, MatchResult], ...],
 ) -> tuple[ProviderEvidenceResult, MatchResult] | None:
@@ -1015,6 +1051,7 @@ class ProcessingWorker:
         candidate_request = _matching_request(record, source, tags)
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
         recording_match: tuple[ProviderEvidenceResult, CandidateScore] | None = None
+        candidate_results: list[ProviderEvidenceResult] = []
         if claimed.job.kind == 'musicbrainz_analysis':
             candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
             recording_matches: list[tuple[ProviderEvidenceResult, CandidateScore]] = []
@@ -1028,13 +1065,14 @@ class ProcessingWorker:
                         now,
                         force_refresh=True,
                         recording_mbid=candidate_recording_mbid,
-                        release_mbid=release_mbid,
+                        release_mbid=None,
                         run_acoustid=False,
                         run_musicbrainz=True,
                     )
                 )
                 if candidate_result is None:
                     continue
+                candidate_results.append(candidate_result)
                 match candidate_result.musicbrainz:
                     case MusicBrainzMatch(candidate=candidate):
                         verified_candidates = (candidate,)
@@ -1077,7 +1115,14 @@ class ProcessingWorker:
             if recording_match is not None:
                 provider_result, _ = recording_match
         _ = self._capture_provider_attempt(
-            source, 'musicbrainz', provider_result.musicbrainz, match_result, now, candidate_request
+            source,
+            'musicbrainz',
+            _aggregate_musicbrainz_results(tuple(candidate_results))
+            if claimed.job.kind == 'musicbrainz_analysis' and candidate_results
+            else provider_result.musicbrainz,
+            match_result,
+            now,
+            candidate_request,
         )
         if recording_match is None:
             stored_recording = _single_scored_candidate(source, 'acoustid', self._confidence_threshold())
