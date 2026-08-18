@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
-from music_ingest.enrichment.artwork import ArtworkProvider
+from music_ingest.enrichment.artwork import (
+    ArtworkProvider,
+    ArtworkWriteError,
+    ManagedArtworkWriteRequest,
+    write_managed_release_artwork,
+)
 from music_ingest.enrichment.fingerprints import (
     FingerprintRequest,
     FingerprintResult,
@@ -86,6 +91,7 @@ from music_ingest.models import (
     LibraryRecord,
     ProviderAttemptRecord,
     ProviderCandidateRunRecord,
+    ReleaseArtworkRecord,
     RuntimeSettingRecord,
     SourceRecord,
     SourceTagRecord,
@@ -671,6 +677,9 @@ class ProcessingWorker:
             return
         if claimed.job.kind == 'final_publish':
             self._process_final_publish(claimed, now)
+            return
+        if claimed.job.kind == 'artwork_enrichment':
+            self._process_artwork_enrichment(claimed, now)
             return
         if claimed.job.kind in _INITIAL_JOB_KINDS:
             self._process_initial(claimed, now)
@@ -1393,7 +1402,93 @@ class ProcessingWorker:
         cleanup_attempt(attempt)
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self._session, record.id, now)
+        release_mbid = final_tags.get('MUSICBRAINZ_ALBUMID', '').strip()
+        if release_mbid and self._artwork_enabled():
+            _ = JobRepository(self._session).enqueue_release_artwork(release_mbid, now)
         record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
+
+    def _process_artwork_enrichment(self, claimed: ClaimedJob, now: datetime) -> None:
+        release_mbid = claimed.job.release_mbid
+        if release_mbid is None:
+            raise ProcessingInfrastructureError('artwork enrichment requires a release MBID target')
+        if not self._artwork_enabled():
+            return
+        artwork = self._session.get(ReleaseArtworkRecord, release_mbid)
+        if artwork is not None and artwork.state == 'ready' and artwork.path is not None:
+            if Path(artwork.path).is_file():
+                return
+            artwork.state = 'missing'
+            artwork.path = None
+            artwork.format_name = None
+            artwork.updated_at = now
+        if self._config.artwork_provider is None:
+            raise ProcessingInfrastructureError('artwork provider is unavailable')
+        publication = self._session.scalar(
+            select(LibraryPublicationRecord)
+            .join(LibraryRecord, LibraryRecord.id == LibraryPublicationRecord.library_record_id)
+            .where(LibraryRecord.musicbrainz_release_id == release_mbid)
+            .where(LibraryPublicationRecord.state == 'current')
+            .order_by(LibraryPublicationRecord.created_at.desc())
+        )
+        if publication is None:
+            raise ProcessingInfrastructureError('published album for artwork release is missing')
+        release_directory = Path(publication.path).resolve().parent
+        media_root = self._config.media_root.resolve(strict=True)
+        if release_directory == media_root or media_root not in release_directory.parents:
+            raise ProcessingInfrastructureError('published album is outside the managed media root')
+        existing_cover = next(
+            (path for path in (release_directory / 'cover.jpg', release_directory / 'cover.webp') if path.is_file()),
+            None,
+        )
+        if existing_cover is not None:
+            self._save_artwork_state(artwork, release_mbid, existing_cover, now)
+            return
+        candidate = self._config.artwork_provider.fetch_artwork(release_mbid)
+        if candidate is None:
+            raise ProcessingInfrastructureError('artwork provider returned no cover')
+        try:
+            output = write_managed_release_artwork(
+                ManagedArtworkWriteRequest(self._config.media_root, release_directory, release_mbid, candidate)
+            )
+        except ArtworkWriteError as error:
+            if str(error) != 'release already has artwork':
+                raise
+            output = next(
+                (
+                    path
+                    for path in (release_directory / 'cover.jpg', release_directory / 'cover.webp')
+                    if path.is_file()
+                ),
+                None,
+            )
+            if output is None:
+                raise
+        self._save_artwork_state(artwork, release_mbid, output, now)
+
+    def _save_artwork_state(
+        self, artwork: ReleaseArtworkRecord | None, release_mbid: str, output: Path, now: datetime
+    ) -> None:
+        if artwork is None:
+            artwork = ReleaseArtworkRecord(
+                release_mbid=release_mbid,
+                path=str(output),
+                format_name=output.suffix.removeprefix('.'),
+                provider='musicbrainz',
+                state='ready',
+                created_at=now,
+                updated_at=now,
+            )
+            self._session.add(artwork)
+        else:
+            artwork.path = str(output)
+            artwork.format_name = output.suffix.removeprefix('.')
+            artwork.provider = 'musicbrainz'
+            artwork.state = 'ready'
+            artwork.updated_at = now
+        self._session.flush()
+
+    def _artwork_enabled(self) -> bool:
+        return load_runtime_settings(self._session).artwork_enabled
 
     def _lookup_providers(
         self,

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from music_ingest.api.app import create_app
+from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
 from music_ingest.models import UnsortedFilenameCounterRecord
 from music_ingest.models.repositories import ensure_provider_schedules
@@ -161,5 +162,6 @@ def _processing_config(environment: Mapping[str, str], session_factory: Callable
         staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
         media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
         live_transport=live_transport,
+        artwork_provider=MusicBrainzV2Adapter(live_transport, 'music-ingest/0.1.0 (music-ingest@example.com)'),
         unsorted_filename_allocator=lambda suffix: allocate_unsorted_filename_with_factory(session_factory, suffix),
     )
