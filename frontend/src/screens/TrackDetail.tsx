@@ -80,14 +80,29 @@ export function TrackDetail({
   const originalTags = tagsFor(detail, sourceId, "original");
   const analyzedTags = tagsFor(detail, sourceId, "analyzed");
   const candidates = source.candidates ?? [];
-  const acoustIdCandidates = candidates.filter(
-    (candidate) => candidate.evidence.provider === "acoustid",
-  );
   const selectedAcoustId = detail.musicbrainz_recording_id ?? null;
   const selectedMusicBrainz = detail.musicbrainz_release_id ?? null;
-  const musicBrainzCandidates = candidates.filter(
-    (candidate) => candidate.evidence.provider === "musicbrainz",
+  const releaseCandidates = candidates.filter(
+    (candidate) =>
+      (candidate.evidence.entity ??
+        (candidate.evidence.provider === "acoustid" ? "recording" : "release")) === "release",
   );
+  const recordingCandidates = candidates
+    .filter(
+      (candidate) =>
+        (candidate.evidence.entity ??
+          (candidate.evidence.provider === "acoustid" ? "recording" : "release")) === "recording",
+    )
+    .map((candidate) => {
+      if ((candidate.evidence.compatible_ids?.length ?? 0) > 0) return candidate;
+      const compatibleReleaseIds = releaseCandidates
+        .filter((release) => release.evidence.compatible_ids?.includes(candidate.candidate_key))
+        .map((release) => release.candidate_key);
+      return {
+        ...candidate,
+        evidence: { ...candidate.evidence, compatible_ids: compatibleReleaseIds },
+      };
+    });
   const visibleTagFields = [
     ...new Set([
       ...TAG_FIELDS,
@@ -102,8 +117,8 @@ export function TrackDetail({
   const selectableSources = detail.sources.filter((item) => item.state !== "disappeared");
   const effectiveSource = detail.sources.find((item) => item.source_id === effectiveSourceId);
   const hasProviderEvidence =
-    acoustIdCandidates.length > 0 ||
-    musicBrainzCandidates.length > 0 ||
+    recordingCandidates.length > 0 ||
+    releaseCandidates.length > 0 ||
     selectedAcoustId ||
     selectedMusicBrainz;
   const retryAcoustId = onRetryAcoustId ?? (() => undefined);
@@ -324,22 +339,24 @@ export function TrackDetail({
             </span>
             <small>Списки кандидатов скрыты до раскрытия.</small>
           </div>
-          {acoustIdCandidates.length > 0 || selectedAcoustId ? (
+          {recordingCandidates.length > 0 || selectedAcoustId ? (
             <CandidateReview
-              provider="acoustid"
-              candidates={acoustIdCandidates}
+              entity="recording"
+              candidates={recordingCandidates}
               selectedKey={selectedAcoustId}
+              compatibleWith={selectedMusicBrainz}
               reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
               disabled={reprocessing}
               musicbrainzHost={musicbrainzHost ?? null}
               onSelect={onSelectCandidate}
             />
           ) : null}
-          {musicBrainzCandidates.length > 0 || selectedMusicBrainz ? (
+          {releaseCandidates.length > 0 || selectedMusicBrainz ? (
             <CandidateReview
-              provider="musicbrainz"
-              candidates={musicBrainzCandidates}
+              entity="release"
+              candidates={releaseCandidates}
               selectedKey={selectedMusicBrainz}
+              compatibleWith={selectedAcoustId}
               reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
               disabled={reprocessing}
               musicbrainzHost={musicbrainzHost ?? null}

@@ -138,7 +138,7 @@ describe("TrackDetail effective source", () => {
                 candidate_key: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
                 evidence: {
                   provider: "musicbrainz",
-                  recording_mbid: undefined,
+                  recording_mbid: "recording-result",
                   artist: "Fixture Artist",
                   release: "Fixture Release",
                   title: "Fixture Track",
@@ -154,9 +154,14 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    expect(screen.getByRole("link", { name: "Открыть в MusicBrainz" }).getAttribute("href")).toBe(
-      "https://musicbrainz.internal/release/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
-    );
+    expect(
+      screen
+        .getByRole("link", { name: "Релиз: f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a" })
+        .getAttribute("href"),
+    ).toBe("https://musicbrainz.internal/release/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a");
+    expect(
+      screen.getByRole("link", { name: "Запись: recording-result" }).getAttribute("href"),
+    ).toBe("https://musicbrainz.internal/recording/recording-result");
   });
 
   it("opens AcousticID recording candidates on the configured host", () => {
@@ -188,9 +193,48 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    expect(screen.getByRole("link", { name: "Открыть в MusicBrainz" }).getAttribute("href")).toBe(
-      "https://musicbrainz.internal/recording/47d13484-9eed-4460-babd-bca3a19fcd77",
-    );
+    expect(
+      screen
+        .getByRole("link", { name: "Запись: 47d13484-9eed-4460-babd-bca3a19fcd77" })
+        .getAttribute("href"),
+    ).toBe("https://musicbrainz.internal/recording/47d13484-9eed-4460-babd-bca3a19fcd77");
+  });
+
+  it("keeps identical recording MBIDs distinct by provider", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "shared-recording",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "recording",
+                  recording_mbid: "shared-recording",
+                  artist: "Fixture Artist",
+                  release: "Fixture Release",
+                  title: "Fixture Track",
+                  album: "Fixture Release",
+                  score: 0.99,
+                  acoustid_score: 0.99,
+                  musicbrainz_score: 0.98,
+                  tags: { TITLE: "Fixture Track" },
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByText("AcousticID: 99%")).toBeTruthy();
+    expect(screen.getByText("MusicBrainz: 98%")).toBeTruthy();
+    expect(screen.queryByText("Источник: AcousticID")).toBeNull();
+    expect(screen.getAllByRole("article")).toHaveLength(1);
   });
 
   it("shows every provider attempt with its actual provider and outcome", () => {

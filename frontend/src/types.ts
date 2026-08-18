@@ -13,12 +13,16 @@ export type Candidate = {
   readonly candidate_key: string;
   readonly evidence: {
     readonly provider: ProviderName;
+    readonly entity?: "recording" | "release";
     readonly recording_mbid?: string;
+    readonly compatible_ids?: readonly string[];
     readonly artist: string;
     readonly release: string;
     readonly title?: string;
     readonly album?: string;
     readonly score: number | null;
+    readonly acoustid_score?: number | null;
+    readonly musicbrainz_score?: number | null;
     readonly score_components?: {
       readonly artist: number;
       readonly release: number;

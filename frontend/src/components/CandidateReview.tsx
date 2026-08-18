@@ -1,29 +1,38 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { parseRoute } from "../routing";
-import type { Candidate, ProviderName } from "../types";
+import type { Candidate } from "../types";
 
 export function CandidateReview({
-  provider = "musicbrainz",
+  entity,
   candidates,
   reason,
   disabled,
   musicbrainzHost,
   selectedKey,
+  compatibleWith,
   onSelect,
 }: {
-  readonly provider?: ProviderName;
+  readonly entity: "recording" | "release";
   readonly candidates: readonly Candidate[];
   readonly reason: string;
   readonly disabled: boolean;
   readonly musicbrainzHost: string | null;
   readonly selectedKey: string | null;
+  readonly compatibleWith: string | null;
   readonly onSelect: (selection: string) => void;
 }) {
   const unique = [
-    ...new Map(candidates.map((candidate) => [candidate.candidate_key, candidate])).values(),
+    ...new Map(
+      candidates.map((candidate) => [`${entity}-${candidate.candidate_key}`, candidate]),
+    ).values(),
   ].sort((left, right) => (right.evidence.score ?? 0) - (left.evidence.score ?? 0));
-  const isAcoustId = provider === "acoustid";
+  const isAcoustId =
+    entity === "recording" &&
+    candidates.some(
+      (candidate) =>
+        candidate.evidence.acoustid_score != null || candidate.evidence.provider === "acoustid",
+    );
   const route = parseRoute(window.location.pathname);
   const [decoded, setDecoded] = useState<
     Record<string, { readonly artist: string; readonly title: string; readonly album: string }>
@@ -54,12 +63,15 @@ export function CandidateReview({
     setIsOpen(!selectedKey && unique.length > 0);
   }, [selectedKey, candidateKeys]);
   useEffect(() => {
-    if (!isAcoustId || !route.recordId || !route.sourceId) return;
+    if (!route.recordId || !route.sourceId) return;
     let cancelled = false;
     async function loadDecodedCandidates() {
       const results = await Promise.all(
         unique.map(async (candidate) => {
-          if (candidate.evidence.artist && candidate.evidence.title && candidate.evidence.album)
+          if (
+            candidate.evidence.provider !== "acoustid" ||
+            (candidate.evidence.artist && candidate.evidence.title && candidate.evidence.album)
+          )
             return [
               candidate.candidate_key,
               {
@@ -100,19 +112,25 @@ export function CandidateReview({
     return () => {
       cancelled = true;
     };
-  }, [candidateKeys, isAcoustId, route.recordId, route.sourceId]);
+  }, [candidateKeys, route.recordId, route.sourceId]);
   return (
-    <section className="candidate-review" aria-labelledby={`${provider}-candidate-title`}>
+    <section className="candidate-review" aria-labelledby={`${entity}-candidate-title`}>
       <button
         type="button"
         className={`candidate-disclosure ${selectedKey ? "selected" : "needs-selection"}`}
         aria-expanded={isOpen}
-        aria-controls={`${provider}-candidate-options`}
+        aria-controls={`${entity}-candidate-options`}
         onClick={() => setIsOpen((open) => !open)}
       >
         <span className="candidate-disclosure-copy">
-          <span className="eyebrow">{isAcoustId ? "AcousticID" : "MusicBrainz"}</span>
-          <strong id={`${provider}-candidate-title`}>{selectedTitle}</strong>
+          <span className="eyebrow">
+            {isAcoustId
+              ? "AcousticID recording"
+              : entity === "recording"
+                ? "Recording MBID"
+                : "Release MBID"}
+          </span>
+          <strong id={`${entity}-candidate-title`}>{selectedTitle}</strong>
           <small>{selectedSubtitle}</small>
         </span>
         <span className="candidate-disclosure-meta">
@@ -125,7 +143,7 @@ export function CandidateReview({
         </span>
       </button>
       {isOpen && (
-        <div id={`${provider}-candidate-options`} className="candidate-options">
+        <div id={`${entity}-candidate-options`} className="candidate-options">
           <p className="candidate-reason">
             {reason ||
               (isAcoustId
@@ -136,10 +154,28 @@ export function CandidateReview({
             <div className="candidate-list">
               {unique.map((candidate) => {
                 const hasMetadata = Object.keys(candidate.evidence.tags).length > 0;
-                const mbid = candidate.evidence.recording_mbid ?? candidate.candidate_key;
-                const href = musicbrainzHost
-                  ? `${musicbrainzHost.replace(/\/$/, "")}/${isAcoustId ? "recording" : "release"}/${isAcoustId ? mbid : candidate.candidate_key}`
+                const candidateEntity = candidate.evidence.entity ?? entity;
+                const candidateIsAcoustId = candidate.evidence.provider === "acoustid";
+                const acoustidScore =
+                  candidate.evidence.acoustid_score ??
+                  (candidateIsAcoustId ? candidate.evidence.score : null);
+                const musicbrainzScore =
+                  candidate.evidence.musicbrainz_score ??
+                  (!candidateIsAcoustId ? candidate.evidence.score : null);
+                const compatible =
+                  compatibleWith === null ||
+                  (candidate.evidence.compatible_ids?.length ?? 0) === 0 ||
+                  candidate.evidence.compatible_ids?.includes(compatibleWith) === true;
+                const candidateMbid = candidate.candidate_key;
+                const linkedMbid =
+                  candidateEntity === "recording"
+                    ? (candidate.evidence.recording_mbid ?? candidateMbid)
+                    : candidateMbid;
+                const musicbrainzBase = musicbrainzHost?.replace(/\/$/, "");
+                const candidateHref = musicbrainzBase
+                  ? `${musicbrainzBase}/${candidateEntity}/${linkedMbid}`
                   : null;
+                const linkedRecordingMbid = candidate.evidence.recording_mbid;
                 const metadata = decoded[candidate.candidate_key];
                 const title =
                   metadata?.title ||
@@ -157,17 +193,35 @@ export function CandidateReview({
                 return (
                   <article
                     className="candidate-card"
-                    key={`${provider}-${candidate.candidate_key}`}
+                    key={`${candidate.evidence.provider}-${candidateEntity}-${candidate.candidate_key}`}
                   >
                     <div>
                       <strong>{title}</strong>
                       <small>{subtitle}</small>
-                      {href && (
-                        <a href={href} target="_blank" rel="noreferrer">
-                          Открыть в MusicBrainz
+                      {acoustidScore != null && (
+                        <small>AcousticID: {Math.round(acoustidScore * 100)}%</small>
+                      )}
+                      {musicbrainzScore != null && (
+                        <small>MusicBrainz: {Math.round(musicbrainzScore * 100)}%</small>
+                      )}
+                      <small>
+                        {compatible ? "Совместимо" : "Несовместимо: выбор сбросит второй вариант"}
+                      </small>
+                      {candidateHref && (
+                        <a href={candidateHref} target="_blank" rel="noreferrer">
+                          {candidateEntity === "recording" ? "Запись" : "Релиз"}: {linkedMbid}
                         </a>
                       )}
-                      {!hasMetadata && !isAcoustId && (
+                      {candidateEntity === "release" && linkedRecordingMbid && (
+                        <a
+                          href={`${musicbrainzBase}/recording/${linkedRecordingMbid}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Запись: {linkedRecordingMbid}
+                        </a>
+                      )}
+                      {!hasMetadata && !candidateIsAcoustId && (
                         <small>Метаданные отсутствуют; повторите запрос</small>
                       )}
                     </div>
@@ -175,15 +229,24 @@ export function CandidateReview({
                       {candidate.evidence.score === null
                         ? "—"
                         : `${Math.round(candidate.evidence.score * 100)}%`}
-                      <small>оценка</small>
+                      <small>приоритетная оценка</small>
                     </div>
                     <button
                       type="button"
                       className="primary"
-                      disabled={disabled || (!isAcoustId && !hasMetadata)}
-                      onClick={() => onSelect(`${provider}:${candidate.candidate_key}`)}
+                      disabled={disabled || (!candidateIsAcoustId && !hasMetadata)}
+                      onClick={() =>
+                        onSelect(
+                          `${candidate.evidence.provider}:${candidateEntity}:${candidateMbid}`,
+                        )
+                      }
+                      aria-label={
+                        candidateEntity === "recording"
+                          ? `Выбрать запись ${candidateMbid}, оценка ${candidate.evidence.score === null ? "неизвестна" : `${Math.round(candidate.evidence.score * 100)}%`}`
+                          : `Выбрать релиз ${candidateMbid}, оценка ${candidate.evidence.score === null ? "неизвестна" : `${Math.round(candidate.evidence.score * 100)}%`}`
+                      }
                     >
-                      {isAcoustId
+                      {candidateEntity === "recording"
                         ? "Выбрать запись"
                         : hasMetadata
                           ? "Выбрать и подтвердить"
