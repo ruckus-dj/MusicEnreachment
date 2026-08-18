@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -77,6 +77,7 @@ from music_ingest.models import (
     JobRecord,
     LibraryRecord,
     ProviderAttemptRecord,
+    ReleaseArtworkRecord,
     ReviewDecisionRecord,
     SourceRecord,
     SourceRootRecord,
@@ -532,6 +533,7 @@ def create_app(
                             ),
                             'source_id': job.source_id,
                             'library_record_id': job.library_record_id,
+                            'release_mbid': job.release_mbid,
                             'target': source_target(job),
                             'created_at': job.created_at.isoformat(),
                             'next_attempt_at': job.next_attempt_at.isoformat()
@@ -568,6 +570,23 @@ def create_app(
                     _ = require_owned_source(session, source.id)
                     if jobs.enqueue(source.id, 'filesystem_scan', now) is not None:
                         queued += 1
+            session.commit()
+        return FullReprocessResponse(queued=queued)
+
+    @app.post('/api/library/artwork/reprocess', response_model=FullReprocessResponse)
+    def reprocess_library_artwork() -> FullReprocessResponse:
+        now = datetime.now(UTC)
+        with session_factory() as session:
+            queued = 0
+            release_mbids = {
+                record.musicbrainz_release_id.strip()
+                for record in library_records(session)
+                if record.musicbrainz_release_id is not None and record.musicbrainz_release_id.strip()
+            }
+            jobs = JobRepository(session)
+            for release_mbid in release_mbids:
+                if jobs.enqueue_release_artwork(release_mbid, now) is not None:
+                    queued += 1
             session.commit()
         return FullReprocessResponse(queued=queued)
 
@@ -756,6 +775,19 @@ def create_app(
                             'musicbrainz_recording_id': record.musicbrainz_recording_id,
                             'musicbrainz_release_id': record.musicbrainz_release_id,
                             'musicbrainz_artist_id': record.musicbrainz_artist_id,
+                            'artwork': (
+                                {
+                                    'url': f'/api/library/release-artwork/{record.musicbrainz_release_id}',
+                                    'state': artwork.state,
+                                }
+                                if record.musicbrainz_release_id is not None
+                                and (artwork := session.get(ReleaseArtworkRecord, record.musicbrainz_release_id))
+                                is not None
+                                and artwork.state == 'ready'
+                                and artwork.path is not None
+                                and Path(artwork.path).is_file()
+                                else None
+                            ),
                             'source_state': record.source_state,
                             'processing_state': record.processing_state,
                             'match_state': record.match_state,
@@ -804,6 +836,20 @@ def create_app(
                     ]
                 }
             )
+
+    @app.get('/api/library/release-artwork/{release_mbid}')
+    def release_artwork(release_mbid: str) -> FileResponse:
+        if media_root is None:
+            raise HTTPException(status_code=404, detail='artwork not found')
+        with session_factory() as session:
+            artwork = session.get(ReleaseArtworkRecord, release_mbid)
+            if artwork is None or artwork.state != 'ready' or artwork.path is None:
+                raise HTTPException(status_code=404, detail='artwork not found')
+            path = Path(artwork.path).resolve()
+            root = media_root.resolve()
+            if path == root or root not in path.parents or not path.is_file():
+                raise HTTPException(status_code=404, detail='artwork not found')
+            return FileResponse(path, media_type=f'image/{artwork.format_name or "jpeg"}')
 
     @app.get('/api/library/records/{record_id}')
     def library_catalog_detail(record_id: str) -> JSONResponse:
