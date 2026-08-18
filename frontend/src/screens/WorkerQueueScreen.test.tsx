@@ -41,6 +41,7 @@ describe("WorkerQueueScreen", () => {
               queue_state: "ready",
               source_id: "source-1",
               library_record_id: "record-1",
+              release_mbid: null,
               created_at: "2026-08-14T10:00:00+00:00",
               next_attempt_at: null,
               attempt_count: 1,

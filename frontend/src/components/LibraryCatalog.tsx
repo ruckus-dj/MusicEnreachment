@@ -65,30 +65,47 @@ export function LibraryCatalog({
   if (screen === "albums") {
     return (
       <section className="catalog-grid">
-        {albums.map((name) => (
-          <button
-            type="button"
-            className="entity-card album-card"
-            key={name}
-            onClick={() => onNavigate({ screen: "tracks", artist, album: name })}
-          >
-            <span className="entity-art disc">◉</span>
-            <span>
-              <strong>{name}</strong>
-              <small>
-                {
-                  tracks.filter(
-                    ({ item, source }) =>
-                      albumArtistsFor(item, source.source_id).includes(artist) &&
-                      albumFor(item, source.source_id) === name,
-                  ).length
-                }{" "}
-                треков
-              </small>
-            </span>
-            <b>→</b>
-          </button>
-        ))}
+        {albums.map((name) => {
+          const albumTrack = tracks.find(
+            ({ item, source }) =>
+              albumArtistsFor(item, source.source_id).includes(artist) &&
+              albumFor(item, source.source_id) === name,
+          );
+          return (
+            <button
+              type="button"
+              className="entity-card album-card"
+              key={name}
+              onClick={() => onNavigate({ screen: "tracks", artist, album: name })}
+            >
+              {albumTrack?.item.artwork?.url ? (
+                <img
+                  className="entity-art album-cover"
+                  src={albumTrack.item.artwork.url}
+                  alt=""
+                  width={56}
+                  height={56}
+                />
+              ) : (
+                <span className="entity-art disc">◉</span>
+              )}
+              <span>
+                <strong>{name}</strong>
+                <small>
+                  {
+                    tracks.filter(
+                      ({ item, source }) =>
+                        albumArtistsFor(item, source.source_id).includes(artist) &&
+                        albumFor(item, source.source_id) === name,
+                    ).length
+                  }{" "}
+                  треков
+                </small>
+              </span>
+              <b>→</b>
+            </button>
+          );
+        })}
       </section>
     );
   }

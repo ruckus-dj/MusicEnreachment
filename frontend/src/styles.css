@@ -649,6 +649,9 @@ h2 {
   color: var(--accent);
   font-family: "DM Mono", monospace;
 }
+.entity-art.album-cover {
+  object-fit: cover;
+}
 .entity-card strong,
 .entity-card small {
   display: block;

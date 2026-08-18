@@ -88,6 +88,10 @@ export type Summary = {
   readonly match_state: string;
   readonly publication_state: string;
   readonly metadata_state: string;
+  readonly artwork?: {
+    readonly url: string;
+    readonly state: string;
+  } | null;
   readonly sources: readonly Source[];
   readonly publications: readonly Publication[];
   readonly metadata_revisions?: readonly Revision[];
@@ -133,6 +137,7 @@ export type WorkerQueueJob = {
   readonly queue_state: "ready" | "retry_wait";
   readonly source_id: string | null;
   readonly library_record_id: string | null;
+  readonly release_mbid: string | null;
   readonly created_at: string;
   readonly next_attempt_at: string | null;
   readonly attempt_count: number;

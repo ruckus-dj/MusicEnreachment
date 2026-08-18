@@ -16,6 +16,7 @@ function jobLabel(kind: string): string {
     musicbrainz_analysis: "Анализ MusicBrainz",
     reconciliation_scan: "Сверка источников",
     selection_refresh: "Обновление выбора",
+    artwork_enrichment: "Обогащение обложкой",
   };
   return labels[kind] ?? kind.replaceAll("_", " ");
 }
