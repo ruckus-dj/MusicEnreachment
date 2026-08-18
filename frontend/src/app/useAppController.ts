@@ -205,7 +205,26 @@ export function useAppController(): AppControllerModel {
     if (showLoader) setLoading(true);
     try {
       const payload = await api<{ items?: Summary[] }>("/api/library/records");
-      setItems(payload.items ?? []);
+      const nextItems = payload.items ?? [];
+      setItems(nextItems);
+      if (screen === "track" && recordId && sourceId) {
+        const currentItem = nextItems.find((item) => item.record_id === recordId);
+        const currentSource = currentItem?.sources.some((source) => source.source_id === sourceId);
+        if (!currentSource) {
+          const reassignedItem = nextItems.find((item) =>
+            item.sources.some((source) => source.source_id === sourceId),
+          );
+          if (reassignedItem !== undefined && reassignedItem.record_id !== recordId) {
+            navigate({
+              screen: "track",
+              recordId: reassignedItem.record_id,
+              sourceId,
+              artist: artist || albumArtistsFor(reassignedItem, sourceId)[0] || "",
+              album: album || albumFor(reassignedItem, sourceId),
+            });
+          }
+        }
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось загрузить медиатеку");
     } finally {
@@ -753,7 +772,21 @@ export function useAppController(): AppControllerModel {
     const item = items.find((entry) => entry.record_id === recordId);
     const source = item?.sources.find((entry) => entry.source_id === sourceId);
     if (item && source) void loadTrack(item, source);
-  }, [items, screen, recordId, sourceId, detail]);
+    if (!item) {
+      const reassignedItem = items.find((entry) =>
+        entry.sources.some((entrySource) => entrySource.source_id === sourceId),
+      );
+      if (reassignedItem !== undefined && reassignedItem.record_id !== recordId) {
+        navigate({
+          screen: "track",
+          recordId: reassignedItem.record_id,
+          sourceId,
+          artist: artist || albumArtistsFor(reassignedItem, sourceId)[0] || "",
+          album: album || albumFor(reassignedItem, sourceId),
+        });
+      }
+    }
+  }, [album, artist, detail, items, recordId, screen, sourceId]);
   const tracks = useMemo(
     () =>
       items

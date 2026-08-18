@@ -201,6 +201,9 @@ export function CandidateReview({
                     <div>
                       <strong>{title}</strong>
                       <small>{subtitle}</small>
+                      {candidateEntity === "release" && candidate.evidence.disambiguation && (
+                        <small>Приписка MusicBrainz: {candidate.evidence.disambiguation}</small>
+                      )}
                       {acoustidScore != null && (
                         <small>AcousticID: {Math.round(acoustidScore * 100)}%</small>
                       )}

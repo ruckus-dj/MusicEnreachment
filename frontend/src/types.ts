@@ -18,6 +18,7 @@ export type Candidate = {
     readonly compatible_ids?: readonly string[];
     readonly artist: string;
     readonly release: string;
+    readonly disambiguation?: string | null;
     readonly title?: string;
     readonly album?: string;
     readonly score: number | null;
@@ -27,6 +28,8 @@ export type Candidate = {
       readonly artist: number;
       readonly release: number;
       readonly duration: number;
+      readonly title: number;
+      readonly track: number;
     } | null;
     readonly tags: Tags;
   };
