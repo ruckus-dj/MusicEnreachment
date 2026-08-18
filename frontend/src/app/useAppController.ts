@@ -368,9 +368,10 @@ export function useAppController(): AppControllerModel {
   }
   async function selectCandidate(selection: string) {
     const separator = selection.indexOf(":");
-    const selectedProvider: ProviderName =
-      separator > 0 && selection.slice(0, separator) === "acoustid" ? "acoustid" : "musicbrainz";
-    const selectedKey = separator > 0 ? selection.slice(separator + 1) : selection;
+    const parts = selection.split(":");
+    const selectedProvider: ProviderName = parts[0] === "acoustid" ? "acoustid" : "musicbrainz";
+    const selectedEntity = parts[1] === "recording" ? "recording" : "release";
+    const selectedKey = separator > 0 ? parts.slice(2).join(":") : selection;
     if (!recordId || !sourceId) return;
     setReprocessing(true);
     try {
@@ -378,7 +379,11 @@ export function useAppController(): AppControllerModel {
         `/api/library/records/${recordId}/sources/${sourceId}/candidates/select`,
         {
           method: "POST",
-          body: JSON.stringify({ candidate_key: selectedKey, provider: selectedProvider }),
+          body: JSON.stringify({
+            candidate_key: selectedKey,
+            provider: selectedProvider,
+            entity: selectedEntity,
+          }),
         },
       );
       setNotice(
