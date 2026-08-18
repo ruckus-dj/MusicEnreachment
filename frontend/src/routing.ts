@@ -4,6 +4,10 @@ function decodeRoutePart(value: string | undefined): string {
   return value ? decodeURIComponent(value) : "";
 }
 
+function decodeRouteIdentifier(value: string | undefined): string {
+  return decodeRoutePart(value).trim();
+}
+
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] === "settings") return { screen: "settings" };
@@ -15,8 +19,8 @@ export function parseRoute(pathname: string): Route {
       screen: "track",
       artist: decodeRoutePart(parts[2]),
       album: decodeRoutePart(parts[4]),
-      recordId: decodeRoutePart(parts[6]),
-      sourceId: decodeRoutePart(parts[7]),
+      recordId: decodeRouteIdentifier(parts[6]),
+      sourceId: decodeRouteIdentifier(parts[7]),
     };
   if (parts[1] === "artist" && parts[3] === "album" && parts[5] === "tracks")
     return {
@@ -34,8 +38,8 @@ export function parseRoute(pathname: string): Route {
   if (parts[1] === "record" && parts[3] === "source")
     return {
       screen: "track",
-      recordId: decodeRoutePart(parts[2]),
-      sourceId: decodeRoutePart(parts[4]),
+      recordId: decodeRouteIdentifier(parts[2]),
+      sourceId: decodeRouteIdentifier(parts[4]),
     };
   return { screen: "artists" };
 }
