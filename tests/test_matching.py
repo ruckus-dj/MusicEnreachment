@@ -171,6 +171,38 @@ def test_matching_when_source_album_disambiguates_musicbrainz_candidates_selects
     assert result.selected_release_mbid == 'release-vol-2'
 
 
+def test_matching_when_one_release_has_related_recording_candidate_uses_confidence_threshold() -> None:
+    # Given: MusicBrainz returns release and recording evidence for the same release,
+    # while the source album contains a small title difference.
+    request = MatchingRequest(
+        'Кис-Кис & Turbosh',
+        'ЛБТЛ (Dance Remix)',
+        173,
+        recording_title='ЛБТЛ (Dance Remix)',
+        album_artist_name='Кис-Кис & Turbosh',
+    )
+    release_mbid = '588907d5-ed2a-44af-880d-f99738711f1a'
+    evidence = MusicBrainzMatch(
+        _provenance('fresh'),
+        ReleaseCandidate(
+            release_mbid,
+            'лбтд (dance remix)',
+            'Кис-Кис & Turbosh',
+            173,
+            ('0b11859c-8da5-4071-bad8-9fab85283fb2',),
+            release_artist_name='Кис-Кис & Turbosh',
+        ),
+    )
+
+    # When: matching resolves the related candidate set at the configured threshold.
+    result = resolve_match(request, evidence, None, confidence_threshold=0.70)
+
+    # Then: the unique release is selected despite its related recording evidence.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == release_mbid
+    assert result.release_score.score >= 0.70
+
+
 def test_matching_when_single_fresh_release_matches_source_artist_and_album_selects_automatically() -> None:
     # Given: MusicBrainz returns one release with an exact source artist and album match.
     request = MatchingRequest('Noize MC', 'The Greatest Hits Vol.1', None)

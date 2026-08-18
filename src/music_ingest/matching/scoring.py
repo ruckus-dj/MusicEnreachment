@@ -4,7 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Final, cast
 
 from rapidfuzz.fuzz import ratio
 
@@ -123,6 +123,16 @@ def resolve_match(
             automatic_candidate.release_mbid,
             recording_score,
             release_score,
+            None,
+            candidate_scores,
+        )
+    automatic_candidate = _unique_confident_match(request, musicbrainz, confidence_threshold)
+    if automatic_candidate is not None:
+        return MatchResult(
+            MatchDecision.AUTO_SELECTED,
+            automatic_candidate.release_mbid,
+            recording_score,
+            _candidate_score_result(request, automatic_candidate),
             None,
             candidate_scores,
         )
@@ -248,6 +258,44 @@ def _unique_source_match(request: MatchingRequest, musicbrainz: MusicBrainzResul
             return None
 
 
+def _unique_confident_match(
+    request: MatchingRequest, musicbrainz: MusicBrainzResult, confidence_threshold: float
+) -> ReleaseCandidate | None:
+    if (
+        request.explicit_ids.release_mbid
+        or request.explicit_ids.recording_mbid
+        or request.explicit_ids.track_mbid
+        or not request.artist_name.strip()
+        or not request.release_title.strip()
+        or _has_unsafe_text(request)
+    ):
+        return None
+    match musicbrainz:
+        case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
+            score = _candidate_score_result(request, candidate)
+            return (
+                candidate
+                if not _candidate_has_unsafe_text(candidate)
+                and score.duration_component > 0.0
+                and score.score >= confidence_threshold
+                else None
+            )
+        case Ambiguous(provenance=LiveProvenance(state='fresh' | 'cached'), candidates=candidates):
+            qualified = tuple(
+                candidate
+                for candidate in candidates
+                if not _candidate_has_unsafe_text(candidate)
+                and (score := _candidate_score_result(request, candidate)).duration_component > 0.0
+                and score.score >= confidence_threshold
+            )
+            release_mbids = {candidate.release_mbid for candidate in qualified}
+            if len(release_mbids) != 1:
+                return None
+            return qualified[0]
+        case _:
+            return None
+
+
 def _unique_recording_context_match(
     request: MatchingRequest, musicbrainz: MusicBrainzResult
 ) -> ReleaseCandidate | None:
@@ -303,7 +351,8 @@ def _unique_catalog_match(request: MatchingRequest, musicbrainz: MusicBrainzResu
 
 def _path_catalog_keys(source_path: str) -> frozenset[str]:
     keys: set[str] = set()
-    for token in _CATALOG_TOKEN_PATTERN.findall(source_path):
+    tokens = cast(list[str], _CATALOG_TOKEN_PATTERN.findall(source_path))
+    for token in tokens:
         normalized = _normalized(token)
         keys.add(normalized)
         keys.add(_normalized(re.sub(r'^[a-z]+', '', token, flags=re.IGNORECASE)))
