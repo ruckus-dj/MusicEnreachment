@@ -8,7 +8,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session
 
-from music_ingest.api.app import CandidateEvidencePayload, _candidate_is_displayable, create_app
+from music_ingest.api.app import (
+    CandidateEvidencePayload,
+    _candidate_is_displayable,
+    _merge_candidate_evidence,
+    create_app,
+)
 from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
     Base,
@@ -28,6 +33,34 @@ from music_ingest.models import (
 )
 from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 from tests.support.providers import MusicBrainzFixtureProvider
+
+
+def test_candidate_evidence_merges_provider_scores_for_one_recording_mbid() -> None:
+    acoustid = CandidateEvidencePayload(
+        provider='acoustid',
+        entity='recording',
+        recording_mbid='recording-id',
+        score=0.92,
+        tags={'MUSICBRAINZ_RECORDINGID': 'recording-id'},
+    )
+    musicbrainz = CandidateEvidencePayload(
+        provider='musicbrainz',
+        entity='recording',
+        recording_mbid='recording-id',
+        artist='Fixture Artist',
+        title='Fixture Track',
+        release='Fixture Album',
+        score=0.88,
+        tags={'TITLE': 'Fixture Track'},
+    )
+
+    merged = _merge_candidate_evidence(acoustid, musicbrainz)
+
+    assert merged.provider == 'musicbrainz'
+    assert merged.score == 0.92
+    assert merged.acoustid_score == 0.92
+    assert merged.musicbrainz_score == 0.88
+    assert merged.title == 'Fixture Track'
 
 
 def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path: Path) -> None:
@@ -749,7 +782,7 @@ def test_library_api_hides_legacy_musicbrainz_recording_candidates() -> None:
     )
 
     assert not _candidate_is_displayable(legacy)
-    assert _candidate_is_displayable(release)
+    assert not _candidate_is_displayable(release)
 
 
 def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path: Path) -> None:

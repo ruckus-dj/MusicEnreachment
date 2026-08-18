@@ -197,6 +197,8 @@ def _needs_analysis_retry(source: SourceRecordView) -> bool:
 
 
 def _candidate_is_displayable(evidence: CandidateEvidencePayload) -> bool:
+    if evidence.provider == 'musicbrainz' and evidence.entity == 'release' and not evidence.compatible_ids:
+        return False
     if evidence.provider != 'musicbrainz':
         return True
     return bool(
@@ -215,6 +217,55 @@ def _current_candidates(source: SourceRecordView) -> tuple[CandidateView, ...]:
         or latest_run_ids.get(CandidateEvidencePayload.model_validate_json(candidate.evidence).provider)
         == candidate.run_id
     )
+
+
+def _merge_candidate_evidence(
+    existing: CandidateEvidencePayload,
+    incoming: CandidateEvidencePayload,
+) -> CandidateEvidencePayload:
+    acoustid_score = existing.acoustid_score
+    musicbrainz_score = existing.musicbrainz_score
+    if existing.provider == 'acoustid' and acoustid_score is None:
+        acoustid_score = existing.score
+    if existing.provider == 'musicbrainz' and musicbrainz_score is None:
+        musicbrainz_score = existing.score
+    if incoming.provider == 'acoustid' and incoming.score is not None:
+        acoustid_score = incoming.score
+    if incoming.provider == 'musicbrainz' and incoming.score is not None:
+        musicbrainz_score = incoming.score
+    provider = 'musicbrainz' if musicbrainz_score is not None else 'acoustid'
+    compatible_ids = tuple(dict.fromkeys((*existing.compatible_ids, *incoming.compatible_ids)))
+    tags = {**existing.tags, **incoming.tags}
+    return CandidateEvidencePayload(
+        provider=provider,
+        entity=incoming.entity,
+        artist=incoming.artist or existing.artist,
+        release=incoming.release or existing.release,
+        title=incoming.title or existing.title,
+        album=incoming.album or existing.album,
+        recording_mbid=incoming.recording_mbid or existing.recording_mbid,
+        compatible_ids=compatible_ids,
+        score=acoustid_score if acoustid_score is not None else musicbrainz_score,
+        acoustid_score=acoustid_score,
+        musicbrainz_score=musicbrainz_score,
+        tags=tags,
+        releases=tuple((*existing.releases, *[item for item in incoming.releases if item not in existing.releases])),
+    )
+
+
+def _display_candidates(source: SourceRecordView) -> tuple[tuple[str, CandidateEvidencePayload], ...]:
+    merged: dict[tuple[str, str], tuple[str, CandidateEvidencePayload]] = {}
+    for candidate in _current_candidates(source):
+        evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+        if not _candidate_is_displayable(evidence):
+            continue
+        key = (evidence.entity, candidate.candidate_key)
+        current = merged.get(key)
+        merged[key] = (
+            candidate.candidate_key,
+            evidence if current is None else _merge_candidate_evidence(current[1], evidence),
+        )
+    return tuple(merged.values())
 
 
 def create_app(
@@ -804,16 +855,8 @@ def create_app(
                                     for attempt in source.provider_attempts
                                 ],
                                 'candidates': [
-                                    {
-                                        'candidate_key': candidate.candidate_key,
-                                        'evidence': CandidateEvidencePayload.model_validate_json(
-                                            candidate.evidence
-                                        ).model_dump(),
-                                    }
-                                    for candidate in _current_candidates(source)
-                                    if _candidate_is_displayable(
-                                        CandidateEvidencePayload.model_validate_json(candidate.evidence)
-                                    )
+                                    {'candidate_key': candidate_key, 'evidence': evidence.model_dump()}
+                                    for candidate_key, evidence in _display_candidates(source)
                                 ],
                                 'review_decisions': [
                                     {
@@ -1145,7 +1188,12 @@ def create_app(
                     raise LookupError(source_id)
                 _ = require_owned_source(session, source.id)
                 candidate = next(
-                    (item for item in reversed(source.candidates) if item.candidate_key == request.candidate_key),
+                    (
+                        item
+                        for item in reversed(source.candidates)
+                        if item.candidate_key == request.candidate_key
+                        and CandidateEvidencePayload.model_validate_json(item.evidence).entity == request.entity
+                    ),
                     None,
                 )
                 if candidate is None:
@@ -1154,7 +1202,7 @@ def create_app(
                 if evidence.provider != request.provider:
                     raise HTTPException(status_code=409, detail='candidate belongs to another provider')
                 now = datetime.now(UTC)
-                if request.provider == 'acoustid':
+                if request.entity == 'recording' or request.provider == 'acoustid':
                     existing_record = session.scalar(
                         select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == candidate.candidate_key)
                     )
@@ -1168,12 +1216,19 @@ def create_app(
                         existing_record.musicbrainz_recording_id = None
                         session.flush()
                     record.musicbrainz_recording_id = candidate.candidate_key
+                    compatible_ids = evidence.compatible_ids
+                    if (
+                        record.musicbrainz_release_id is not None
+                        and compatible_ids
+                        and record.musicbrainz_release_id not in compatible_ids
+                    ):
+                        record.musicbrainz_release_id = None
                     queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
                     session.add(
                         ReviewDecisionRecord(
                             source_id=source.id,
-                            state='acoustid_confirmed',
-                            rationale=f'AcousticID recording {candidate.candidate_key} selected by reviewer',
+                            state='acoustid_confirmed' if request.provider == 'acoustid' else 'recording_confirmed',
+                            rationale=f'{request.provider} recording {candidate.candidate_key} selected by reviewer',
                         )
                     )
                     session.flush()
@@ -1203,6 +1258,15 @@ def create_app(
                 final = append_metadata_revision(session, record.id, source.id, 'final', final_tags, 'review', now)
                 record.match_state = 'matched'
                 record.musicbrainz_release_id = candidate.candidate_key
+                compatible_ids = evidence.compatible_ids or (
+                    (evidence.recording_mbid,) if evidence.recording_mbid is not None else ()
+                )
+                if (
+                    record.musicbrainz_recording_id is not None
+                    and compatible_ids
+                    and record.musicbrainz_recording_id not in compatible_ids
+                ):
+                    record.musicbrainz_recording_id = None
                 session.add(
                     ReviewDecisionRecord(
                         source_id=source.id,

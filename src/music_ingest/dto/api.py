@@ -193,6 +193,7 @@ class CandidateSelection(BaseModel):
 
     candidate_key: str = Field(min_length=1, max_length=255)
     provider: Literal['acoustid', 'musicbrainz'] = 'musicbrainz'
+    entity: Literal['recording', 'release'] = 'release'
 
 
 class ManualSourceSelection(BaseModel):
@@ -223,11 +224,16 @@ class CandidateEvidencePayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     provider: str = 'musicbrainz'
+    entity: Literal['recording', 'release'] = 'release'
     artist: str = ''
     release: str = ''
     title: str = ''
     album: str = ''
+    recording_mbid: str | None = None
+    compatible_ids: tuple[str, ...] = ()
     score: float | None = None
+    acoustid_score: float | None = None
+    musicbrainz_score: float | None = None
     tags: dict[str, str] = Field(default_factory=dict)
     releases: tuple[CandidateReleasePayload, ...] = ()
 
