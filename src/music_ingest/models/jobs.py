@@ -177,6 +177,28 @@ class JobRepository:
         self._session.flush()
         return job
 
+    def enqueue_release_artwork(self, release_mbid: str, now: datetime) -> JobRecord | None:
+        """Queue one independent artwork enrichment job for a release MBID."""
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.release_mbid == release_mbid)
+            .where(JobRecord.kind == 'artwork_enrichment')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return None
+        job = JobRecord(
+            id=f'artwork-enrichment-{uuid4().hex}',
+            release_mbid=release_mbid,
+            kind='artwork_enrichment',
+            state='queued',
+            created_at=now,
+        )
+        self._session.add(job)
+        self._session.flush()
+        return job
+
     def _claimable_statement(self, now: datetime, lease_age: timedelta) -> Select[tuple[JobRecord]]:
         stale_before = now - lease_age
         return (

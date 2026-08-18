@@ -32,6 +32,7 @@ from music_ingest.models.library import (
     LibraryRecord,
     LibraryRecordConsolidationRecord,
     PublicationAttemptRecord,
+    ReleaseArtworkRecord,
 )
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     'LibraryRecord',
     'LibraryRecordConsolidationRecord',
     'PublicationAttemptRecord',
+    'ReleaseArtworkRecord',
     'ProviderAttemptRecord',
     'ProviderCandidateRunRecord',
     'ProviderScheduleRecord',

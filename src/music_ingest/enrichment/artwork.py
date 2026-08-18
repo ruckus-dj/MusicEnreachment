@@ -33,6 +33,14 @@ class ArtworkWriteRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedArtworkWriteRequest:
+    media_root: Path
+    release_directory: Path
+    verified_release_id: str
+    candidate: ArtworkCandidate
+
+
+@dataclass(frozen=True, slots=True)
 class ArtworkWriteError(Exception):
     reason: str
 
@@ -47,6 +55,28 @@ def write_release_artwork(request: ArtworkWriteRequest) -> Path:
     release_directory = request.release_directory.resolve(strict=True)
     if staging_directory not in release_directory.parents:
         raise ArtworkWriteError('release artwork must be inside controlled staging')
+    if request.candidate.release_id != request.verified_release_id:
+        raise ArtworkWriteError('artwork is not linked to the selected release')
+    if len(request.candidate.payload) > _MAX_ARTWORK_BYTES or not _valid_artwork(request.candidate):
+        raise ArtworkWriteError('artwork payload has an invalid image envelope')
+    names = ('cover.jpg', 'cover.webp')
+    if any((release_directory / name).exists() for name in names):
+        raise ArtworkWriteError('release already has artwork')
+    output_path = release_directory / f'cover.{request.candidate.format.value}'
+    try:
+        with output_path.open('xb') as artwork_file:
+            _ = artwork_file.write(request.candidate.payload)
+    except FileExistsError as error:
+        raise ArtworkWriteError('release already has artwork') from error
+    return output_path
+
+
+def write_managed_release_artwork(request: ManagedArtworkWriteRequest) -> Path:
+    """Write one verified cover sidecar inside the managed media root."""
+    media_root = request.media_root.resolve(strict=True)
+    release_directory = request.release_directory.resolve(strict=True)
+    if release_directory == media_root or media_root not in release_directory.parents:
+        raise ArtworkWriteError('managed release artwork must be inside media root')
     if request.candidate.release_id != request.verified_release_id:
         raise ArtworkWriteError('artwork is not linked to the selected release')
     if len(request.candidate.payload) > _MAX_ARTWORK_BYTES or not _valid_artwork(request.candidate):

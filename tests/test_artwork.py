@@ -9,6 +9,8 @@ from music_ingest.enrichment.artwork import (
     ArtworkFormat,
     ArtworkWriteError,
     ArtworkWriteRequest,
+    ManagedArtworkWriteRequest,
+    write_managed_release_artwork,
     write_release_artwork,
 )
 
@@ -61,3 +63,18 @@ def test_write_release_artwork_when_stale_cover_exists_rejects_second_sidecar(tm
 
     # Then: exactly one external artwork sidecar remains.
     assert tuple(path.name for path in release.iterdir()) == ('cover.webp',)
+
+
+def test_write_managed_release_artwork_when_release_is_under_media_root_writes_sidecar(tmp_path: Path) -> None:
+    # Given: a managed album directory below the configured media root.
+    media_root = tmp_path / 'media'
+    release = media_root / 'Artist' / 'Album [release-i]'
+    release.mkdir(parents=True)
+    candidate = ArtworkCandidate('release-id', ArtworkFormat.WEBP, WEBP)
+
+    # When: the verified release artwork is enriched after publication.
+    output = write_managed_release_artwork(ManagedArtworkWriteRequest(media_root, release, 'release-id', candidate))
+
+    # Then: the managed album receives exactly one cover sidecar.
+    assert output == release / 'cover.webp'
+    assert output.read_bytes() == WEBP

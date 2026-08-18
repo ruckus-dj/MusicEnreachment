@@ -144,6 +144,21 @@ class LibraryPublicationRecord(Base):
     metadata_revision: Mapped[LibraryMetadataRevisionRecord | None] = relationship(back_populates='publications')
 
 
+@final
+class ReleaseArtworkRecord(Base):
+    """Current managed artwork state for one MusicBrainz release."""
+
+    __tablename__ = 'release_artwork'
+
+    release_mbid: Mapped[str] = mapped_column(Text, primary_key=True)
+    path: Mapped[str | None] = mapped_column(Text)
+    format_name: Mapped[str | None] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 _ = Index(
     'uq_current_library_publication',
     LibraryPublicationRecord.library_record_id,

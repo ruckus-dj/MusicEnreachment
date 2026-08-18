@@ -27,7 +27,10 @@ class JobRecord(Base):
     __tablename__ = 'jobs'
     __table_args__: tuple[CheckConstraint, ...] = (
         CheckConstraint(
-            "((source_id IS NOT NULL) != (library_record_id IS NOT NULL)) OR kind = 'reconciliation_scan'",
+            '(CASE WHEN source_id IS NOT NULL THEN 1 ELSE 0 END + '
+            + 'CASE WHEN library_record_id IS NOT NULL THEN 1 ELSE 0 END + '
+            + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
+            + "kind = 'reconciliation_scan'",
             name='ck_jobs_target_or_reconciliation',
         ),
     )
@@ -35,6 +38,7 @@ class JobRecord(Base):
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
+    release_mbid: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
     state: Mapped[str] = mapped_column(Text, nullable=False)
