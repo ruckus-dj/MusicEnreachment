@@ -100,8 +100,8 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 - Accessibility: every input has a visible field label and save result is inline.
 
 ### Candidate review panel
-- Structure: selected provider identity in a disclosure header, review reason, selectable MusicBrainz candidates, score, identity summary, and explicit confirmation action.
-- States: unresolved and expanded, selected and collapsed, candidates available, no candidates, confirming, confirmed and publishing.
+- Structure: two disclosure sections, `Recording MBID` and `Release MBID`; recording candidates may be sourced from AcousticID or MusicBrainz, while release candidates are derived from linked recordings only. Each section has a review reason, score, identity summary, and explicit confirmation action.
+- States: unresolved and expanded, selected and collapsed, related candidate highlighted, incompatible candidate, candidates available, no candidates, confirming, confirmed and publishing.
 - Accessibility: each candidate is a native button with a text score and readable identity, never color alone.
 
 ### Scan action
