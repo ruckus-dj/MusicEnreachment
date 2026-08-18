@@ -74,6 +74,7 @@ from music_ingest.matching.scoring import (
     MatchResult,
     recording_candidate_matches,
     resolve_match,
+    score_recording_candidate,
 )
 from music_ingest.models import (
     ArtworkRecord,
@@ -225,24 +226,31 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     return tags
 
 
-def _candidate_record(source_id: str, candidate: ReleaseCandidate, score: CandidateScore | None) -> CandidateRecord:
-    score_value = None if score is None else score.score
-    return CandidateRecord(
+def _candidate_records(
+    source_id: str,
+    candidate: ReleaseCandidate,
+    release_score: CandidateScore | None,
+    request: MatchingRequest | None,
+) -> tuple[CandidateRecord, ...]:
+    release_score_value = None if release_score is None else release_score.score
+    release_record = CandidateRecord(
         source_id=source_id,
         candidate_key=candidate.release_mbid,
         evidence=json.dumps(
             {
                 'provider': 'musicbrainz',
+                'entity': 'release',
                 'artist': candidate.artist_name,
                 'release': candidate.release_title,
-                'score': score_value,
+                'score': release_score_value,
+                'compatible_ids': candidate.recording_mbids,
                 'score_components': (
                     None
-                    if score is None
+                    if release_score is None
                     else {
-                        'artist': score.artist_component,
-                        'release': score.release_component,
-                        'duration': score.duration_component,
+                        'artist': release_score.artist_component,
+                        'release': release_score.release_component,
+                        'duration': release_score.duration_component,
                     }
                 ),
                 'tags': _candidate_tags(candidate),
@@ -250,6 +258,29 @@ def _candidate_record(source_id: str, candidate: ReleaseCandidate, score: Candid
             sort_keys=True,
         ),
     )
+    recording_records = tuple(
+        CandidateRecord(
+            source_id=source_id,
+            candidate_key=recording_mbid,
+            evidence=json.dumps(
+                {
+                    'provider': 'musicbrainz',
+                    'entity': 'recording',
+                    'artist': '; '.join(candidate.recording_artist_names) or candidate.artist_name,
+                    'release': candidate.release_title,
+                    'title': candidate.recording_title or '',
+                    'album': candidate.release_title,
+                    'score': None if request is None else score_recording_candidate(request, candidate).score,
+                    'recording_mbid': recording_mbid,
+                    'compatible_ids': (candidate.release_mbid,),
+                    'tags': _candidate_tags(candidate),
+                },
+                sort_keys=True,
+            ),
+        )
+        for recording_mbid in candidate.recording_mbids
+    )
+    return (*((release_record,) if candidate.recording_mbids else ()), *recording_records)
 
 
 def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
@@ -379,6 +410,7 @@ def musicbrainz_lookup_ids(record: LibraryRecord, source: SourceRecord) -> tuple
         else (
             record.musicbrainz_recording_id
             if _has_reviewer_decision(source, 'acoustid_confirmed')
+            or _has_reviewer_decision(source, 'recording_confirmed')
             else _acoustid_recording_mbid(source)
         )
     )
@@ -392,7 +424,11 @@ def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceReco
         if _has_reviewer_decision(source, 'confirmed') and record.musicbrainz_release_id is not None
         else None,
         record.musicbrainz_recording_id
-        if _has_reviewer_decision(source, 'acoustid_confirmed') and record.musicbrainz_recording_id is not None
+        if (
+            _has_reviewer_decision(source, 'acoustid_confirmed')
+            or _has_reviewer_decision(source, 'recording_confirmed')
+        )
+        and record.musicbrainz_recording_id is not None
         else None,
     )
 
@@ -976,10 +1012,10 @@ class ProcessingWorker:
                     source.id,
                 )
             return
+        candidate_request = _matching_request(record, source, tags)
         match_result = self._resolve_provider_match(record, source, tags, provider_result)
         recording_match: tuple[ProviderEvidenceResult, CandidateScore] | None = None
         if claimed.job.kind == 'musicbrainz_analysis':
-            candidate_request = _matching_request(record, source, tags)
             candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
             recording_matches: list[tuple[ProviderEvidenceResult, CandidateScore]] = []
             for candidate_recording_mbid in _acoustid_recording_mbids(source):
@@ -1040,7 +1076,9 @@ class ProcessingWorker:
                 provider_result, match_result = selected_match
             if recording_match is not None:
                 provider_result, _ = recording_match
-        _ = self._capture_provider_attempt(source, 'musicbrainz', provider_result.musicbrainz, match_result, now)
+        _ = self._capture_provider_attempt(
+            source, 'musicbrainz', provider_result.musicbrainz, match_result, now, candidate_request
+        )
         if recording_match is None:
             stored_recording = _single_scored_candidate(source, 'acoustid', self._confidence_threshold())
             stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
@@ -1324,7 +1362,12 @@ class ProcessingWorker:
         run_musicbrainz: bool = True,
     ) -> ProviderEvidenceResult | None:
         values = {name: value for name, value in tags}
-        query = f'artist:{values["ARTIST"]} release:{values["ALBUM"]}' if {'ARTIST', 'ALBUM'} <= values.keys() else ''
+        query = (
+            f'artist:"{values["ARTIST"]}" release:"{values["ALBUM"]}" '
+            + (f'recording:"{values["TITLE"]}"' if values.get('TITLE') else '')
+            if {'ARTIST', 'ALBUM'} <= values.keys()
+            else ''
+        )
         configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
         musicbrainz = configured_musicbrainz if run_musicbrainz and (query or recording_mbid or release_mbid) else None
         acoustid = (
@@ -1343,6 +1386,8 @@ class ProcessingWorker:
                 duration_seconds=fingerprint.duration_seconds,
                 force_refresh=force_refresh,
                 release_title=values.get('ALBUM'),
+                recording_title=values.get('TITLE'),
+                track_number=_tag_number(values.get('TRACKNUMBER')),
                 acoustid_confidence_threshold=self._confidence_threshold(),
                 artist_name=values.get('ARTIST'),
                 recording_mbid=recording_mbid,
@@ -1388,6 +1433,7 @@ class ProcessingWorker:
         result: MusicBrainzResult | AcoustIdResult,
         match_result: MatchResult | None,
         now: datetime,
+        request: MatchingRequest | None = None,
     ) -> str | None:
         match result:
             case (
@@ -1431,11 +1477,11 @@ class ProcessingWorker:
                             created_at=now,
                         )
                         source.candidate_runs.append(run)
-                        candidate_record = _candidate_record(
-                            source.id, candidate, candidate_scores.get(candidate.release_mbid)
+                        candidate_records = _candidate_records(
+                            source.id, candidate, candidate_scores.get(candidate.release_mbid), request
                         )
-                        source.candidates.append(candidate_record)
-                        run.candidates.append(candidate_record)
+                        source.candidates.extend(candidate_records)
+                        run.candidates.extend(candidate_records)
                     case Ambiguous(candidates=candidates):
                         run = ProviderCandidateRunRecord(
                             source_id=source.id,
@@ -1444,8 +1490,11 @@ class ProcessingWorker:
                         )
                         source.candidate_runs.append(run)
                         candidate_records = tuple(
-                            _candidate_record(source.id, candidate, candidate_scores.get(candidate.release_mbid))
+                            record
                             for candidate in candidates
+                            for record in _candidate_records(
+                                source.id, candidate, candidate_scores.get(candidate.release_mbid), request
+                            )
                         )
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)
@@ -1466,12 +1515,14 @@ class ProcessingWorker:
                                 evidence=json.dumps(
                                     {
                                         'provider': 'acoustid',
+                                        'entity': 'recording',
                                         'recording_mbid': recording.recording_mbid,
                                         'score': recording.score,
                                         'artist': '',
                                         'release': '',
                                         'title': '',
                                         'album': '',
+                                        'compatible_ids': (),
                                         'tags': {'MUSICBRAINZ_RECORDINGID': recording.recording_mbid},
                                     },
                                     sort_keys=True,

@@ -92,6 +92,59 @@ def _flac(path: Path) -> Path:
     return path
 
 
+def test_musicbrainz_candidate_persistence_separates_release_and_recording_evidence() -> None:
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Fixture Album',
+        'Fixture Artist',
+        215,
+        ('recording-id',),
+        recording_title='Target Song',
+        track_number=2,
+        release_artist_name='Fixture Artist',
+        recording_artist_names=('Fixture Artist',),
+    )
+    request = processing.MatchingRequest(
+        'Fixture Artist',
+        'Fixture Album',
+        215,
+        recording_title='Target Song',
+        track_number=2,
+    )
+
+    records = processing._candidate_records(
+        'source-id',
+        candidate,
+        CandidateScore('release-id', 0.61, artist_component=0.4, release_component=0.6),
+        request,
+    )
+
+    assert [record.candidate_key for record in records] == ['release-id', 'recording-id']
+    release = CandidateEvidencePayload.model_validate_json(records[0].evidence)
+    recording = CandidateEvidencePayload.model_validate_json(records[1].evidence)
+    assert release.entity == 'release'
+    assert release.recording_mbid is None
+    assert release.compatible_ids == ('recording-id',)
+    assert recording.entity == 'recording'
+    assert recording.compatible_ids == ('release-id',)
+    assert recording.score is not None
+    assert recording.score != release.score
+
+
+def test_musicbrainz_release_without_recording_link_is_not_persisted() -> None:
+    candidate = ReleaseCandidate(
+        'unrelated-release-id',
+        'Unrelated Album',
+        'Fixture Artist',
+        215,
+        (),
+    )
+
+    records = processing._candidate_records('source-id', candidate, None, None)
+
+    assert records == ()
+
+
 def _tagless_flac(path: Path) -> Path:
     source = _flac(path)
     _ = write_normalized_tags(source, ())
