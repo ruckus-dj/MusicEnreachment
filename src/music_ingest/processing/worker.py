@@ -320,7 +320,11 @@ def _single_scored_candidate(
     candidates = source.candidates if latest_run is None else latest_run.candidates
     for candidate in reversed(candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
-        if evidence.provider == provider and candidate.candidate_key not in candidates_by_key:
+        if (
+            evidence.provider == provider
+            and not (provider == 'musicbrainz' and evidence.entity != 'release')
+            and candidate.candidate_key not in candidates_by_key
+        ):
             candidates_by_key[candidate.candidate_key] = evidence
     qualified = tuple(
         (candidate_key, evidence)

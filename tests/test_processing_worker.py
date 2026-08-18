@@ -7,7 +7,8 @@ from hashlib import sha256
 from pathlib import Path
 from shutil import which
 from subprocess import run
-from typing import Final
+from types import SimpleNamespace
+from typing import Final, cast
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -129,6 +130,31 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
     assert recording.compatible_ids == ('release-id',)
     assert recording.score is not None
     assert recording.score != release.score
+
+
+def test_single_scored_musicbrainz_candidate_ignores_related_recording_evidence() -> None:
+    source = SimpleNamespace(
+        candidate_runs=(),
+        candidates=(
+            CandidateRecord(
+                candidate_key='release-id',
+                evidence=json.dumps(
+                    {'provider': 'musicbrainz', 'entity': 'release', 'score': 0.97, 'tags': {}},
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='recording-id',
+                evidence=json.dumps(
+                    {'provider': 'musicbrainz', 'entity': 'recording', 'score': 0.91, 'tags': {}},
+                ),
+            ),
+        ),
+    )
+
+    selected = processing._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
+
+    assert selected is not None
+    assert selected[0] == 'release-id'
 
 
 def test_musicbrainz_release_without_recording_link_is_not_persisted() -> None:
