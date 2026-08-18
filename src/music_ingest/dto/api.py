@@ -370,6 +370,20 @@ class RecordingResponse(ReleaseResponse):
     pass
 
 
+class RecordingSearchResult(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    id: str
+    title: str = ''
+    artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
+
+
+class RecordingSearchResponse(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    recordings: tuple[RecordingSearchResult, ...]
+
+
 class EvidenceFixturePayload(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
