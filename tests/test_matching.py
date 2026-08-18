@@ -186,6 +186,36 @@ def test_matching_when_single_fresh_release_matches_source_artist_and_album_sele
     assert result.selected_release_mbid == 'release-vol-1'
 
 
+def test_matching_when_musicbrainz_text_candidate_has_recording_context_selects_recording_without_acoustid() -> None:
+    # Given: MusicBrainz text search returned the source track and no fingerprint evidence exists.
+    request = MatchingRequest(
+        'Fixture Artist',
+        'Fixture Album',
+        215,
+        recording_title='Target Song',
+        track_number=2,
+    )
+    candidate = ReleaseCandidate(
+        RELEASE_MBID,
+        'Fixture Album',
+        'Fixture Artist',
+        215,
+        ('recording-from-search',),
+        recording_title='Target Song',
+        track_number=2,
+        release_artist_name='Fixture Artist',
+        recording_artist_names=('Fixture Artist',),
+    )
+
+    # When: matching resolves the MusicBrainz-only candidate.
+    result = resolve_match(request, MusicBrainzMatch(_provenance('fresh'), candidate), None)
+
+    # Then: recording identity comes from the ranked MusicBrainz candidate and remains high confidence.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.recording_score.candidate_mbid == 'recording-from-search'
+    assert result.recording_score.score >= 0.9
+
+
 def test_recording_matching_when_album_artist_and_feature_suffix_differ_selects_release() -> None:
     # Given: source tags use the track artist and include a featured-credit suffix in the title.
     request = MatchingRequest(

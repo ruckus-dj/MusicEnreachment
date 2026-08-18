@@ -104,7 +104,7 @@ def resolve_match(
     acoustid: AcoustIdResult | None,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
 ) -> MatchResult:
-    recording_score = _recording_score(request.explicit_ids, acoustid)
+    recording_score = _recording_score(request, acoustid, _recording_candidate(request, musicbrainz))
     candidate_scores = _candidate_scores(request, musicbrainz)
     release_score = candidate_scores[0] if candidate_scores else CandidateScore(None, 0.0)
     if request.local_only:
@@ -170,13 +170,54 @@ def resolve_match(
             )
 
 
-def _recording_score(explicit_ids: ExplicitMusicBrainzIds, acoustid: AcoustIdResult | None) -> CandidateScore:
+def _recording_score(
+    request: MatchingRequest, acoustid: AcoustIdResult | None, candidate: ReleaseCandidate | None
+) -> CandidateScore:
     match acoustid:
         case AcoustIdMatch(evidence=evidence):
-            exact_score = 1.0 if explicit_ids.recording_mbid == evidence.recording_mbid else evidence.score
+            exact_score = 1.0 if request.explicit_ids.recording_mbid == evidence.recording_mbid else evidence.score
             return CandidateScore(evidence.recording_mbid, exact_score)
-        case None | Ambiguous() | Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
-            return CandidateScore(explicit_ids.recording_mbid, 0.0)
+        case _:
+            pass
+    if candidate is None:
+        return CandidateScore(request.explicit_ids.recording_mbid, 0.0)
+    return score_recording_candidate(request, candidate)
+
+
+def score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
+    """Score one recording identity independently from its release identity."""
+    if not candidate.recording_mbids or not recording_candidate_matches(request, candidate):
+        return CandidateScore(None, 0.0)
+    title_component = 0.55 * _text_similarity(request.recording_title, candidate.recording_title or '')
+    artist_component = 0.25 * _text_similarity(request.artist_name, _recording_artist_name(candidate))
+    duration_component = _duration_score(request.duration_seconds, candidate.duration_seconds)
+    track_component = 0.0 if request.track_number is None or candidate.track_number is None else 0.05
+    return CandidateScore(
+        candidate.recording_mbids[0],
+        artist_component + title_component + duration_component + track_component,
+        artist_component,
+        title_component,
+        duration_component + track_component,
+    )
+
+
+def _recording_candidate(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> ReleaseCandidate | None:
+    match musicbrainz:
+        case MusicBrainzMatch(candidate=candidate) if candidate.recording_mbids:
+            return candidate
+        case Ambiguous(candidates=candidates):
+            matches = tuple(
+                candidate
+                for candidate in candidates
+                if candidate.recording_mbids and recording_candidate_matches(request, candidate)
+            )
+            return matches[0] if len(matches) == 1 else None
+        case _:
+            return None
+
+
+def _recording_artist_name(candidate: ReleaseCandidate) -> str:
+    return candidate.recording_artist_names[0] if candidate.recording_artist_names else _release_artist_name(candidate)
 
 
 def _candidate_scores(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> tuple[CandidateScore, ...]:

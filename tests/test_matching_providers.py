@@ -409,6 +409,45 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
     assert result.candidate.genres == ('Electronic',)
 
 
+def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_duration_and_number_match() -> None:
+    # Given: a text search returns the album, whose first track is not the source recording.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"id":"release-id","title":"Fixture Album","media":[{"track-count":2,"tracks":['
+                b'{"position":1,"title":"Other Song","length":120000,"recording":'
+                b'{"id":"wrong-id","title":"Other Song"}},'
+                b'{"position":2,"title":"Target Song","length":215000,"recording":'
+                b'{"id":"right-id","title":"Target Song"}}]}]}',
+            )
+
+    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: MusicBrainz ranks the enriched release against the source track context.
+    result = adapter.lookup(
+        MusicBrainzLookupRequest(
+            'artist:"Fixture Artist" release:"Fixture Album" recording:"Target Song"',
+            FixtureCase.SUCCESS,
+            release_title='Fixture Album',
+            artist_name='Fixture Artist',
+            recording_title='Target Song',
+            duration_seconds=215,
+            track_number=2,
+        ),
+        NOW,
+    )
+
+    # Then: the candidate carries the matching recording MBID, not the album's first track.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.recording_mbids == ('right-id',)
+    assert result.candidate.recording_title == 'Target Song'
+    assert result.candidate.track_number == 2
+
+
 def test_musicbrainz_v2_adapter_preserves_release_artist_separately_from_track_artist() -> None:
     # Given: the source track artist differs from the artist credited for the matched release.
     class FixtureTransport:

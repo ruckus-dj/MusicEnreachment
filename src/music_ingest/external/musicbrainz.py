@@ -8,8 +8,10 @@ from unicodedata import normalize
 from urllib.parse import quote, urlencode
 
 from pydantic import ValidationError
+from rapidfuzz.fuzz import ratio
 
 from music_ingest.dto import LabelInfo, RecordingResponse, Release, ReleaseResponse
+from music_ingest.dto.api import Track
 from music_ingest.enrichment.artwork import ArtworkCandidate, ArtworkFormat
 from music_ingest.matching.providers import (
     Ambiguous,
@@ -95,7 +97,14 @@ class MusicBrainzV2Adapter:
                 return Malformed(provenance)
             return MusicBrainzMatch(
                 provenance,
-                self._candidate(release_payload, request.artist_name, request.recording_mbid),
+                self._candidate(
+                    release_payload,
+                    request.artist_name,
+                    request.recording_mbid,
+                    request.recording_title,
+                    request.duration_seconds,
+                    request.track_number,
+                ),
             )
         if request.recording_mbid is not None:
             try:
@@ -119,7 +128,16 @@ class MusicBrainzV2Adapter:
                 return NoMatch(provenance)
             case (release,):
                 enriched, enriched_provenance = self._enrich_release(release, provenance)
-                return MusicBrainzMatch(enriched_provenance, self._candidate(enriched))
+                return MusicBrainzMatch(
+                    enriched_provenance,
+                    self._candidate(
+                        enriched,
+                        request.artist_name,
+                        recording_title=request.recording_title,
+                        duration_seconds=request.duration_seconds,
+                        track_number=request.track_number,
+                    ),
+                )
             case _:
                 enriched_provenance = provenance
                 candidates: list[ReleaseCandidate] = []
@@ -129,7 +147,15 @@ class MusicBrainzV2Adapter:
                         enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
                     else:
                         enriched = release
-                    candidates.append(self._candidate(enriched, request.artist_name))
+                    candidates.append(
+                        self._candidate(
+                            enriched,
+                            request.artist_name,
+                            recording_title=request.recording_title,
+                            duration_seconds=request.duration_seconds,
+                            track_number=request.track_number,
+                        )
+                    )
                 return Ambiguous(enriched_provenance, tuple(candidates))
 
     def _resolve_recording_releases(
@@ -193,12 +219,24 @@ class MusicBrainzV2Adapter:
 
     @staticmethod
     def _candidate(
-        release: Release, artist_name: str | None = None, recording_mbid: str | None = None
+        release: Release,
+        artist_name: str | None = None,
+        recording_mbid: str | None = None,
+        recording_title: str | None = None,
+        duration_seconds: int | None = None,
+        track_number: int | None = None,
     ) -> ReleaseCandidate:
         release_tracks = tuple(track for medium in release.media for track in medium.tracks)
-        track = next(
-            (track for track in release_tracks if recording_mbid is None or track.recording.id == recording_mbid), None
-        )
+        if recording_mbid is not None:
+            track = next((track for track in release_tracks if track.recording.id == recording_mbid), None)
+        elif recording_title is not None:
+            track = max(
+                release_tracks,
+                key=lambda item: _track_match_score(item, recording_title, duration_seconds, track_number),
+                default=None,
+            )
+        else:
+            track = release_tracks[0] if len(release_tracks) == 1 else None
         release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
         artist = artist_name if artist_name is not None else release_artist_name
         if not artist and track is not None:
@@ -206,6 +244,8 @@ class MusicBrainzV2Adapter:
         recording_mbids = (
             (recording_mbid,)
             if recording_mbid is not None
+            else (track.recording.id,)
+            if recording_title is not None and track is not None
             else (track.recording.id,)
             if len(release_tracks) == 1 and track is not None
             else ()
@@ -270,6 +310,17 @@ class MusicBrainzV2Adapter:
             ),
             catalog_numbers=_catalog_numbers(release),
         )
+
+
+def _track_match_score(track: Track, title: str, duration_seconds: int | None, track_number: int | None) -> float:
+    title_score = ratio(_title_key(title), _title_key(track.recording.title)) / 100
+    duration_score = (
+        0.0
+        if duration_seconds is None or track.length is None
+        else max(0.0, 1.0 - abs(duration_seconds - round(track.length / 1000)) / 10)
+    )
+    number_score = 1.0 if track_number is not None and track.position == track_number else 0.0
+    return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
 
 
 def _matching_releases(releases: tuple[Release, ...], release_title: str | None) -> tuple[Release, ...]:

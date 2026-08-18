@@ -46,6 +46,8 @@ class ProviderEvidenceRequest:
     duration_seconds: float | None = None
     force_refresh: bool = False
     release_title: str | None = None
+    recording_title: str | None = None
+    track_number: int | None = None
     acoustid_confidence_threshold: float = 0.7
     artist_name: str | None = None
     recording_mbid: str | None = None
@@ -93,6 +95,9 @@ class ProviderEvidenceService:
                     request.release_title,
                     request.artist_name,
                     release_mbid,
+                    request.recording_title,
+                    None if request.duration_seconds is None else round(request.duration_seconds),
+                    request.track_number,
                 )
                 request_hash = sha256(f'release:{release_mbid}'.encode()).hexdigest()
             case None, str() as recording_mbid, _:
@@ -102,6 +107,9 @@ class ProviderEvidenceService:
                     recording_mbid,
                     request.release_title,
                     request.artist_name,
+                    recording_title=request.recording_title,
+                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                    track_number=request.track_number,
                 )
                 request_hash = sha256(f'recording:{recording_mbid}'.encode()).hexdigest()
             case None, None, AcoustIdMatch(evidence=evidence) if (
@@ -113,6 +121,9 @@ class ProviderEvidenceService:
                     evidence.recording_mbid,
                     request.release_title,
                     request.artist_name,
+                    recording_title=request.recording_title,
+                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                    track_number=request.track_number,
                 )
                 request_hash = sha256(f'recording:{evidence.recording_mbid}'.encode()).hexdigest()
             case _:
@@ -121,6 +132,9 @@ class ProviderEvidenceService:
                     request.musicbrainz_case,
                     release_title=request.release_title,
                     artist_name=request.artist_name,
+                    recording_title=request.recording_title,
+                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                    track_number=request.track_number,
                 )
                 request_hash = sha256(request.query.encode()).hexdigest()
         cached = None if request.force_refresh else self._fresh_snapshot('musicbrainz', request_hash, now)

@@ -188,6 +188,9 @@ class MusicBrainzLookupRequest:
     release_title: str | None = None
     artist_name: str | None = None
     release_mbid: str | None = None
+    recording_title: str | None = None
+    duration_seconds: int | None = None
+    track_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
