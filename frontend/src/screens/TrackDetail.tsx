@@ -339,30 +339,26 @@ export function TrackDetail({
             </span>
             <small>Списки кандидатов скрыты до раскрытия.</small>
           </div>
-          {recordingCandidates.length > 0 || selectedAcoustId ? (
-            <CandidateReview
-              entity="recording"
-              candidates={recordingCandidates}
-              selectedKey={selectedAcoustId}
-              compatibleWith={selectedMusicBrainz}
-              reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
-              disabled={reprocessing}
-              musicbrainzHost={musicbrainzHost ?? null}
-              onSelect={onSelectCandidate}
-            />
-          ) : null}
-          {releaseCandidates.length > 0 || selectedMusicBrainz ? (
-            <CandidateReview
-              entity="release"
-              candidates={releaseCandidates}
-              selectedKey={selectedMusicBrainz}
-              compatibleWith={selectedAcoustId}
-              reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
-              disabled={reprocessing}
-              musicbrainzHost={musicbrainzHost ?? null}
-              onSelect={onSelectCandidate}
-            />
-          ) : null}
+          <CandidateReview
+            entity="recording"
+            candidates={recordingCandidates}
+            selectedKey={selectedAcoustId}
+            compatibleWith={selectedMusicBrainz}
+            reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
+            disabled={reprocessing}
+            musicbrainzHost={musicbrainzHost ?? null}
+            onSelect={onSelectCandidate}
+          />
+          <CandidateReview
+            entity="release"
+            candidates={releaseCandidates}
+            selectedKey={selectedMusicBrainz}
+            compatibleWith={selectedAcoustId}
+            reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
+            disabled={reprocessing}
+            musicbrainzHost={musicbrainzHost ?? null}
+            onSelect={onSelectCandidate}
+          />
           <details className="release-override">
             <summary>Выбрать release MBID вручную</summary>
             <p className="candidate-reason">Используйте это только если найденный релиз неверен.</p>

@@ -1087,6 +1087,21 @@ h2 {
 .revision {
   white-space: nowrap;
 }
+@media (max-width: 1100px) {
+  .evidence-card .section-heading {
+    flex-wrap: wrap;
+  }
+  .evidence-card .section-heading > div {
+    min-width: 0;
+    flex: 1 1 18rem;
+  }
+  .evidence-card .section-heading > .badge {
+    max-width: 100%;
+    flex: 1 1 14rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
 @media (max-width: 700px) {
   .provider-actions {
     width: 100%;
@@ -1309,6 +1324,19 @@ h2 {
   border: 1px solid var(--line);
   background: var(--panel);
   padding: 14px;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+.candidate-card-selected {
+  border-color: var(--accent);
+  background: var(--selected);
+  transform: translateX(4px);
+}
+.candidate-card-related {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: var(--green-soft);
 }
 .candidate-card strong,
 .candidate-card small {
@@ -1345,7 +1373,7 @@ h2 {
   color: var(--muted);
   font-size: 12px;
 }
-@media (max-width: 700px) {
+@media (max-width: 1100px) {
   .candidate-card {
     grid-template-columns: minmax(0, 1fr) auto;
   }

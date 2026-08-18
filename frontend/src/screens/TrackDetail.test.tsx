@@ -120,8 +120,136 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    expect(screen.getByRole("button", { name: /AcousticID.*Выбрано/ }).textContent).toContain(
+    expect(screen.getByRole("button", { name: /Recording MBID.*Выбрано/ }).textContent).toContain(
       "Выбрано",
+    );
+  });
+
+  it("keeps recording and release sections linked through selected candidates", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        musicbrainz_recording_id: "recording-a",
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "recording-a",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "recording",
+                  recording_mbid: "recording-a",
+                  compatible_ids: ["release-a"],
+                  artist: "Fixture Artist",
+                  release: "Fixture Album",
+                  title: "Fixture Track",
+                  album: "Fixture Album",
+                  score: 0.9,
+                  tags: {},
+                },
+              },
+              {
+                candidate_key: "recording-b",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "recording",
+                  recording_mbid: "recording-b",
+                  compatible_ids: ["release-b"],
+                  artist: "Fixture Artist",
+                  release: "Other Album",
+                  title: "Other Track",
+                  album: "Other Album",
+                  score: 0.4,
+                  tags: {},
+                },
+              },
+              {
+                candidate_key: "release-a",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "release",
+                  compatible_ids: ["recording-a"],
+                  artist: "Fixture Artist",
+                  release: "Fixture Album",
+                  score: 0.9,
+                  tags: { MUSICBRAINZ_ALBUMID: "release-a" },
+                },
+              },
+              {
+                candidate_key: "release-b",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "release",
+                  compatible_ids: ["recording-b"],
+                  artist: "Fixture Artist",
+                  release: "Other Album",
+                  score: 0.4,
+                  tags: { MUSICBRAINZ_ALBUMID: "release-b" },
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Recording MBID/ }));
+
+    expect(screen.getByRole("article", { name: /Fixture Track/ }).className).toContain(
+      "candidate-card-selected",
+    );
+    expect(screen.getByRole("article", { name: /Fixture Album/ }).className).toContain(
+      "candidate-card-related",
+    );
+    expect(screen.queryByText("AcousticID recording")).toBeNull();
+  });
+
+  it("highlights a compatible recording when the release is selected", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        musicbrainz_release_id: "release-a",
+        sources: [
+          {
+            ...detail.sources[0],
+            candidates: [
+              {
+                candidate_key: "recording-a",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "recording",
+                  recording_mbid: "recording-a",
+                  artist: "Fixture Artist",
+                  release: "Fixture Album",
+                  title: "Fixture Track",
+                  album: "Fixture Album",
+                  score: 0.9,
+                  tags: {},
+                },
+              },
+              {
+                candidate_key: "release-a",
+                evidence: {
+                  provider: "musicbrainz",
+                  entity: "release",
+                  compatible_ids: ["recording-a"],
+                  artist: "Fixture Artist",
+                  release: "Fixture Album",
+                  score: 0.9,
+                  tags: { MUSICBRAINZ_ALBUMID: "release-a" },
+                },
+              },
+            ],
+          },
+          detail.sources[1],
+        ],
+      },
+    });
+
+    expect(screen.getByRole("article", { name: /Fixture Track/ }).className).toContain(
+      "candidate-card-related",
     );
   });
 

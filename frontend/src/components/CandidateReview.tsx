@@ -27,12 +27,6 @@ export function CandidateReview({
       candidates.map((candidate) => [`${entity}-${candidate.candidate_key}`, candidate]),
     ).values(),
   ].sort((left, right) => (right.evidence.score ?? 0) - (left.evidence.score ?? 0));
-  const isAcoustId =
-    entity === "recording" &&
-    candidates.some(
-      (candidate) =>
-        candidate.evidence.acoustid_score != null || candidate.evidence.provider === "acoustid",
-    );
   const route = parseRoute(window.location.pathname);
   const [decoded, setDecoded] = useState<
     Record<string, { readonly artist: string; readonly title: string; readonly album: string }>
@@ -47,7 +41,9 @@ export function CandidateReview({
     selectedMetadata?.title ||
     selectedCandidate?.evidence.title ||
     selectedCandidate?.evidence.release ||
-    (selectedKey ? `${isAcoustId ? "Запись" : "Релиз"} ${selectedKey}` : "Вариант не выбран");
+    (selectedKey
+      ? `${entity === "recording" ? "Запись" : "Релиз"} ${selectedKey}`
+      : "Вариант не выбран");
   const selectedSubtitle = selectedCandidate
     ? [
         selectedMetadata?.artist || selectedCandidate.evidence.artist,
@@ -124,11 +120,7 @@ export function CandidateReview({
       >
         <span className="candidate-disclosure-copy">
           <span className="eyebrow">
-            {isAcoustId
-              ? "AcousticID recording"
-              : entity === "recording"
-                ? "Recording MBID"
-                : "Release MBID"}
+            {entity === "recording" ? "Recording MBID" : "Release MBID"}
           </span>
           <strong id={`${entity}-candidate-title`}>{selectedTitle}</strong>
           <small>{selectedSubtitle}</small>
@@ -146,8 +138,8 @@ export function CandidateReview({
         <div id={`${entity}-candidate-options`} className="candidate-options">
           <p className="candidate-reason">
             {reason ||
-              (isAcoustId
-                ? "Выберите запись, чтобы запросить её метаданные в MusicBrainz."
+              (entity === "recording"
+                ? "Выберите запись MusicBrainz для продолжения."
                 : "Выберите подтверждённый релиз MusicBrainz.")}
           </p>
           {unique.length ? (
@@ -167,6 +159,14 @@ export function CandidateReview({
                   (candidate.evidence.compatible_ids?.length ?? 0) === 0 ||
                   candidate.evidence.compatible_ids?.includes(compatibleWith) === true;
                 const candidateMbid = candidate.candidate_key;
+                const selected =
+                  selectedKey !== null &&
+                  (candidateMbid === selectedKey ||
+                    candidate.evidence.recording_mbid === selectedKey);
+                const related =
+                  !selected &&
+                  compatibleWith !== null &&
+                  candidate.evidence.compatible_ids?.includes(compatibleWith) === true;
                 const linkedMbid =
                   candidateEntity === "recording"
                     ? (candidate.evidence.recording_mbid ?? candidateMbid)
@@ -181,8 +181,10 @@ export function CandidateReview({
                   metadata?.title ||
                   candidate.evidence.title ||
                   candidate.evidence.release ||
-                  (isAcoustId ? "MusicBrainz recording" : "Без названия релиза");
-                const subtitle = isAcoustId
+                  (candidateEntity === "recording"
+                    ? "MusicBrainz recording"
+                    : "Без названия релиза");
+                const subtitle = candidateIsAcoustId
                   ? [
                       metadata?.artist || candidate.evidence.artist,
                       metadata?.album || candidate.evidence.album,
@@ -192,7 +194,8 @@ export function CandidateReview({
                   : candidate.evidence.artist || "Исполнитель не указан";
                 return (
                   <article
-                    className="candidate-card"
+                    className={`candidate-card ${selected ? "candidate-card-selected" : ""} ${related ? "candidate-card-related" : ""}`}
+                    aria-label={`${candidateEntity === "recording" ? "Запись" : "Релиз"}: ${title}`}
                     key={`${candidate.evidence.provider}-${candidateEntity}-${candidate.candidate_key}`}
                   >
                     <div>
@@ -205,7 +208,13 @@ export function CandidateReview({
                         <small>MusicBrainz: {Math.round(musicbrainzScore * 100)}%</small>
                       )}
                       <small>
-                        {compatible ? "Совместимо" : "Несовместимо: выбор сбросит второй вариант"}
+                        {selected
+                          ? "Выбрано"
+                          : related
+                            ? "Связано с выбранным вариантом"
+                            : compatible
+                              ? "Совместимо"
+                              : "Несовместимо: выбор сбросит второй вариант"}
                       </small>
                       {candidateHref && (
                         <a href={candidateHref} target="_blank" rel="noreferrer">
