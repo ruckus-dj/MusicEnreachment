@@ -226,6 +226,12 @@ class ReleaseCandidate:
     recording_artist_mbids: tuple[str, ...] = ()
     release_artist_mbids: tuple[str, ...] = ()
     catalog_numbers: tuple[str, ...] = ()
+    disambiguation: str | None = None
+
+
+def release_display_title(candidate: ReleaseCandidate) -> str:
+    disambiguation = (candidate.disambiguation or '').strip()
+    return f'{candidate.release_title} ({disambiguation})' if disambiguation else candidate.release_title
 
 
 @dataclass(frozen=True, slots=True)

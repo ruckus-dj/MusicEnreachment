@@ -22,6 +22,7 @@ from music_ingest.matching.providers import (
     ReleaseCandidate,
     Timeout,
     Unavailable,
+    release_display_title,
 )
 
 
@@ -86,6 +87,8 @@ class CandidateScore:
     artist_component: float = 0.0
     release_component: float = 0.0
     duration_component: float = 0.0
+    title_component: float = 0.0
+    track_component: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +124,7 @@ def resolve_match(
         return MatchResult(
             MatchDecision.AUTO_SELECTED,
             automatic_candidate.release_mbid,
-            recording_score,
+            _recording_score_for_candidate(recording_score, automatic_candidate),
             release_score,
             None,
             candidate_scores,
@@ -131,8 +134,8 @@ def resolve_match(
         return MatchResult(
             MatchDecision.AUTO_SELECTED,
             automatic_candidate.release_mbid,
-            recording_score,
-            _candidate_score_result(request, automatic_candidate),
+            _recording_score_for_candidate(recording_score, automatic_candidate),
+            score_release_candidate(request, automatic_candidate),
             None,
             candidate_scores,
         )
@@ -141,8 +144,8 @@ def resolve_match(
         return MatchResult(
             MatchDecision.AUTO_SELECTED,
             automatic_candidate.release_mbid,
-            recording_score,
-            _candidate_score_result(request, automatic_candidate),
+            _recording_score_for_candidate(recording_score, automatic_candidate),
+            score_release_candidate(request, automatic_candidate),
             None,
             candidate_scores,
         )
@@ -151,8 +154,8 @@ def resolve_match(
         return MatchResult(
             MatchDecision.AUTO_SELECTED,
             automatic_candidate.release_mbid,
-            recording_score,
-            _candidate_score_result(request, automatic_candidate),
+            _recording_score_for_candidate(recording_score, automatic_candidate),
+            score_release_candidate(request, automatic_candidate),
             None,
             candidate_scores,
         )
@@ -194,20 +197,36 @@ def _recording_score(
     return score_recording_candidate(request, candidate)
 
 
+def _recording_score_for_candidate(score: CandidateScore, candidate: ReleaseCandidate) -> CandidateScore:
+    if not candidate.recording_mbids:
+        return score
+    return CandidateScore(
+        candidate.recording_mbids[0],
+        score.score,
+        score.artist_component,
+        score.release_component,
+        score.duration_component,
+        score.title_component,
+        score.track_component,
+    )
+
+
 def score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
     """Score one recording identity independently from its release identity."""
-    if not candidate.recording_mbids or not recording_candidate_matches(request, candidate):
+    if not candidate.recording_mbids:
         return CandidateScore(None, 0.0)
-    title_component = 0.55 * _text_similarity(request.recording_title, candidate.recording_title or '')
+    title_component = 0.5 * _text_similarity(request.recording_title, candidate.recording_title or '')
     artist_component = 0.25 * _text_similarity(request.artist_name, _recording_artist_name(candidate))
     duration_component = _duration_score(request.duration_seconds, candidate.duration_seconds)
-    track_component = 0.0 if request.track_number is None or candidate.track_number is None else 0.05
+    track_component = 0.05 * _number_similarity(request.track_number, candidate.track_number)
     return CandidateScore(
         candidate.recording_mbids[0],
         artist_component + title_component + duration_component + track_component,
         artist_component,
+        0.0,
+        duration_component,
         title_component,
-        duration_component + track_component,
+        track_component,
     )
 
 
@@ -233,9 +252,9 @@ def _recording_artist_name(candidate: ReleaseCandidate) -> str:
 def _candidate_scores(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> tuple[CandidateScore, ...]:
     match musicbrainz:
         case MusicBrainzMatch(candidate=candidate):
-            return (_candidate_score_result(request, candidate),)
+            return (score_release_candidate(request, candidate),)
         case Ambiguous(candidates=candidates):
-            return tuple(_candidate_score_result(request, candidate) for candidate in candidates)
+            return tuple(score_release_candidate(request, candidate) for candidate in candidates)
         case Disabled() | Malformed() | NoMatch() | RateLimited() | Timeout() | Unavailable():
             return ()
 
@@ -272,7 +291,7 @@ def _unique_confident_match(
         return None
     match musicbrainz:
         case MusicBrainzMatch(provenance=LiveProvenance(state='fresh' | 'cached'), candidate=candidate):
-            score = _candidate_score_result(request, candidate)
+            score = score_release_candidate(request, candidate)
             return (
                 candidate
                 if not _candidate_has_unsafe_text(candidate)
@@ -285,7 +304,7 @@ def _unique_confident_match(
                 candidate
                 for candidate in candidates
                 if not _candidate_has_unsafe_text(candidate)
-                and (score := _candidate_score_result(request, candidate)).duration_component > 0.0
+                and (score := score_release_candidate(request, candidate)).duration_component > 0.0
                 and score.score >= confidence_threshold
             )
             release_mbids = {candidate.release_mbid for candidate in qualified}
@@ -329,7 +348,7 @@ def _source_candidate_matches(request: MatchingRequest, candidate: ReleaseCandid
     artist_name = _album_artist_name(request)
     return _normalized(artist_name) == _normalized(_release_artist_name(candidate)) and _normalized(
         request.release_title
-    ) == _normalized(candidate.release_title)
+    ) == _normalized(release_display_title(candidate))
 
 
 def _unique_catalog_match(request: MatchingRequest, musicbrainz: MusicBrainzResult) -> ReleaseCandidate | None:
@@ -363,7 +382,7 @@ def _catalog_keys(catalog_numbers: tuple[str, ...]) -> frozenset[str]:
     return frozenset(_normalized(number) for number in catalog_numbers if number)
 
 
-def _candidate_score_result(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
+def score_release_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
     if _candidate_matches_explicit_ids(request.explicit_ids, candidate):
         return CandidateScore(candidate.release_mbid, 1.0)
     source_score = _score_components(
@@ -382,6 +401,7 @@ def _candidate_score_result(request: MatchingRequest, candidate: ReleaseCandidat
         selected.artist_component,
         selected.release_component,
         selected.duration_component,
+        selected.release_component,
     )
 
 
@@ -426,6 +446,10 @@ def _number_matches(expected: int | None, actual: int | None) -> bool:
     return expected is None or actual is None or expected == actual
 
 
+def _number_similarity(expected: int | None, actual: int | None) -> float:
+    return 0.0 if expected is None or actual is None else float(expected == actual)
+
+
 def _country_matches(source_path: str, candidate_country: str | None) -> bool:
     return candidate_country is None or 'japan' not in source_path.casefold() or candidate_country == 'JP'
 
@@ -446,7 +470,7 @@ def _score_components(
 ) -> _ScoreComponents:
     return _ScoreComponents(
         artist_component=0.4 * _text_similarity(artist_name, _release_artist_name(candidate)),
-        release_component=0.4 * _text_similarity(release_title, candidate.release_title),
+        release_component=0.4 * _text_similarity(release_title, release_display_title(candidate)),
         duration_component=_duration_score(duration_seconds, candidate.duration_seconds),
     )
 

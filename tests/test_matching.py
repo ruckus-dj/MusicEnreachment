@@ -14,6 +14,7 @@ from music_ingest.matching.providers import (
     RecordingEvidence,
     ReleaseCandidate,
     Unavailable,
+    release_display_title,
 )
 from music_ingest.matching.scoring import (
     ExplicitMusicBrainzIds,
@@ -23,6 +24,7 @@ from music_ingest.matching.scoring import (
     ReviewReason,
     recording_candidate_matches,
     resolve_match,
+    score_recording_candidate,
 )
 from tests.support.providers import MusicBrainzFixtureProvider
 
@@ -171,6 +173,35 @@ def test_matching_when_source_album_disambiguates_musicbrainz_candidates_selects
     assert result.selected_release_mbid == 'release-vol-2'
 
 
+def test_matching_when_source_album_contains_release_disambiguation_selects_matching_edition() -> None:
+    # Given: the source album includes the MusicBrainz release disambiguation in parentheses.
+    request = MatchingRequest('Кис-Кис', 'Юность в стиле панк (Baby Punk Version)', 212)
+    baby_punk = ReleaseCandidate(
+        '3b98979b-6494-4a7c-8de6-2165902f8a87',
+        'юность в стиле панк',
+        'Кис-Кис',
+        212,
+        ('cddf7780-179f-4abe-b706-65fd10be8975',),
+        disambiguation='baby punk version',
+    )
+    standard = ReleaseCandidate(
+        '55c7242f-1b4b-485d-b5f2-d6a8feeee088',
+        'юность в стиле панк',
+        'Кис-Кис',
+        212,
+        ('5a0a6087-6be1-4833-aa3b-7b4c891a5c3a',),
+    )
+
+    # When: matching compares the complete release display title for both editions.
+    result = resolve_match(request, Ambiguous(_provenance('fresh'), (baby_punk, standard)), None)
+
+    # Then: the annotated release and its linked recording are selected together.
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == baby_punk.release_mbid
+    assert result.recording_score.candidate_mbid == 'cddf7780-179f-4abe-b706-65fd10be8975'
+    assert release_display_title(baby_punk) == 'юность в стиле панк (baby punk version)'
+
+
 def test_matching_when_one_release_has_related_recording_candidate_uses_confidence_threshold() -> None:
     # Given: MusicBrainz returns release and recording evidence for the same release,
     # while the source album contains a small title difference.
@@ -285,6 +316,38 @@ def test_recording_matching_when_album_artist_and_feature_suffix_differ_selects_
     assert result.release_score.artist_component == 0.4
     assert result.release_score.release_component == 0.4
     assert result.release_score.duration_component == 0.2
+
+
+def test_recording_score_when_track_number_differs_keeps_other_components() -> None:
+    # Given: the source track metadata disagrees with MusicBrainz only on track position.
+    request = MatchingRequest(
+        'Fixture Artist',
+        'Fixture Album',
+        240,
+        recording_title='Fixture Track',
+        track_number=1,
+    )
+    candidate = ReleaseCandidate(
+        RELEASE_MBID,
+        'Fixture Album',
+        'Fixture Artist',
+        240,
+        ('recording-id',),
+        recording_title='Fixture Track',
+        track_number=6,
+        release_artist_name='Fixture Artist',
+        recording_artist_names=('Fixture Artist',),
+    )
+
+    # When: the recording candidate is scored component by component.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: the position mismatch contributes zero without erasing the matching evidence.
+    assert score.score > 0.0
+    assert score.title_component == 0.5
+    assert score.artist_component == 0.25
+    assert score.duration_component == 0.2
+    assert score.track_component == 0.0
 
 
 def test_matching_when_album_artist_is_missing_falls_back_to_track_artist() -> None:
