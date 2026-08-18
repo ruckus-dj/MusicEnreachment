@@ -249,6 +249,7 @@ def _merge_candidate_evidence(
         score=acoustid_score if acoustid_score is not None else musicbrainz_score,
         acoustid_score=acoustid_score,
         musicbrainz_score=musicbrainz_score,
+        score_components=incoming.score_components or existing.score_components,
         tags=tags,
         releases=tuple((*existing.releases, *[item for item in incoming.releases if item not in existing.releases])),
     )

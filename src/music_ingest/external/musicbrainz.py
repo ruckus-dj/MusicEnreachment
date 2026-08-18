@@ -332,6 +332,7 @@ class MusicBrainzV2Adapter:
             release.id,
             release.title,
             artist,
+            disambiguation=getattr(release, 'disambiguation', None),
             duration_seconds=None if track is None or track.length is None else round(track.length / 1000),
             recording_mbids=recording_mbids,
             recording_title=None if track is None else track.recording.title,

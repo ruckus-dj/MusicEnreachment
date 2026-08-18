@@ -220,6 +220,16 @@ class CandidateReleasePayload(BaseModel):
     tags: dict[str, str] = Field(default_factory=dict)
 
 
+class CandidateScoreComponents(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    artist: float = 0.0
+    release: float = 0.0
+    duration: float = 0.0
+    title: float = 0.0
+    track: float = 0.0
+
+
 class CandidateEvidencePayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -229,11 +239,13 @@ class CandidateEvidencePayload(BaseModel):
     release: str = ''
     title: str = ''
     album: str = ''
+    disambiguation: str | None = None
     recording_mbid: str | None = None
     compatible_ids: tuple[str, ...] = ()
     score: float | None = None
     acoustid_score: float | None = None
     musicbrainz_score: float | None = None
+    score_components: CandidateScoreComponents | None = None
     tags: dict[str, str] = Field(default_factory=dict)
     releases: tuple[CandidateReleasePayload, ...] = ()
 
@@ -349,6 +361,7 @@ class Release(BaseModel):
 
     id: str
     title: str
+    disambiguation: str | None = None
     status: str | None = None
     artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
     date: str | None = None

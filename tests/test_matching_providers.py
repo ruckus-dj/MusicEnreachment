@@ -597,7 +597,7 @@ def test_musicbrainz_v2_adapter_preserves_release_catalog_numbers() -> None:
             return MusicBrainzHttpResponse(
                 200,
                 b'{"id":"release-eu","title":"Burn It Down","barcode":"093624950509",'
-                b'"label-info":[{"catalog-number":"9362-49505-0"}],"media":[]}',
+                b'"disambiguation":"European edition","label-info":[{"catalog-number":"9362-49505-0"}],"media":[]}',
             )
 
     # When: the provider parses the detailed release.
@@ -609,6 +609,7 @@ def test_musicbrainz_v2_adapter_preserves_release_catalog_numbers() -> None:
     # Then: both edition identifiers remain available to the matcher.
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.catalog_numbers == ('093624950509', '9362-49505-0')
+    assert result.candidate.disambiguation == 'European edition'
 
 
 def test_provider_adapters_reject_false_acoustid_recording_and_select_japanese_maxi_release() -> None:
