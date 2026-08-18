@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -112,20 +112,11 @@ class ProviderEvidenceService:
                     track_number=request.track_number,
                 )
                 request_hash = sha256(f'recording:{recording_mbid}'.encode()).hexdigest()
-            case None, None, AcoustIdMatch(evidence=evidence) if (
-                evidence.score >= request.acoustid_confidence_threshold
-            ):
-                musicbrainz_request = MusicBrainzLookupRequest(
-                    request.query,
-                    request.musicbrainz_case,
-                    evidence.recording_mbid,
-                    request.release_title,
-                    request.artist_name,
-                    recording_title=request.recording_title,
-                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
-                    track_number=request.track_number,
+            case None, None, AcoustIdMatch(evidence=evidence):
+                recording_mbids = tuple(
+                    dict.fromkeys(recording.recording_mbid for recording in (evidence.candidates or (evidence,)))
                 )
-                request_hash = sha256(f'recording:{evidence.recording_mbid}'.encode()).hexdigest()
+                return self._lookup_musicbrainz_recordings(request, recording_mbids, now)
             case _:
                 musicbrainz_request = MusicBrainzLookupRequest(
                     request.query,
@@ -137,12 +128,82 @@ class ProviderEvidenceService:
                     track_number=request.track_number,
                 )
                 request_hash = sha256(request.query.encode()).hexdigest()
+        return self._lookup_musicbrainz_request(request, musicbrainz_request, request_hash, now)
+
+    def _lookup_musicbrainz_recordings(
+        self,
+        request: ProviderEvidenceRequest,
+        recording_mbids: tuple[str, ...],
+        now: datetime,
+    ) -> MusicBrainzResult:
+        results = tuple(
+            self._lookup_musicbrainz_request(
+                request,
+                MusicBrainzLookupRequest(
+                    request.query,
+                    request.musicbrainz_case,
+                    recording_mbid=recording_mbid,
+                    release_title=request.release_title,
+                    artist_name=request.artist_name,
+                    recording_title=request.recording_title,
+                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                    track_number=request.track_number,
+                ),
+                sha256(f'recording:{recording_mbid}'.encode()).hexdigest(),
+                now,
+            )
+            for recording_mbid in recording_mbids
+        )
+        candidates: dict[str, ReleaseCandidate] = {}
+        provenance = None
+        for result in results:
+            match result:
+                case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
+                    provenance = result_provenance
+                    self._merge_release_candidate(candidates, candidate)
+                case Ambiguous(provenance=result_provenance, candidates=result_candidates):
+                    provenance = result_provenance
+                    for candidate in result_candidates:
+                        self._merge_release_candidate(candidates, candidate)
+                case _:
+                    continue
+        if not candidates or provenance is None:
+            return results[0]
+        unique_candidates = tuple(candidates.values())
+        match unique_candidates:
+            case (candidate,):
+                return MusicBrainzMatch(provenance, candidate)
+            case multiple_candidates:
+                return Ambiguous(provenance, multiple_candidates)
+
+    @staticmethod
+    def _merge_release_candidate(candidates: dict[str, ReleaseCandidate], candidate: ReleaseCandidate) -> None:
+        existing = candidates.get(candidate.release_mbid)
+        candidates[candidate.release_mbid] = (
+            candidate
+            if existing is None
+            else replace(
+                existing,
+                recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
+            )
+        )
+
+    def _lookup_musicbrainz_request(
+        self,
+        request: ProviderEvidenceRequest,
+        musicbrainz_request: MusicBrainzLookupRequest,
+        request_hash: str,
+        now: datetime,
+    ) -> MusicBrainzResult:
         cached = None if request.force_refresh else self._fresh_snapshot('musicbrainz', request_hash, now)
         if cached is not None:
             return _decode_musicbrainz(cached, 'cached')
         if self.wait_until is not None:
             self.wait_until(now)
-        result = self.musicbrainz.lookup(musicbrainz_request, now)
+        provider = self.musicbrainz
+        if provider is None:
+            return Disabled(_provenance('musicbrainz', request_hash, b'', None, now, 'fresh'))
+        result = provider.lookup(musicbrainz_request, now)
         return self._persist_musicbrainz(result, request_hash, now)
 
     def _lookup_acoustid(self, request: ProviderEvidenceRequest, now: datetime) -> AcoustIdResult | None:

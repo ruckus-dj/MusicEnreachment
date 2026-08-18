@@ -10,7 +10,14 @@ from urllib.parse import quote, urlencode
 from pydantic import ValidationError
 from rapidfuzz.fuzz import ratio
 
-from music_ingest.dto import LabelInfo, RecordingResponse, Release, ReleaseResponse
+from music_ingest.dto import (
+    LabelInfo,
+    RecordingResponse,
+    RecordingSearchResponse,
+    RecordingSearchResult,
+    Release,
+    ReleaseResponse,
+)
 from music_ingest.dto.api import Track
 from music_ingest.enrichment.artwork import ArtworkCandidate, ArtworkFormat
 from music_ingest.matching.providers import (
@@ -70,7 +77,7 @@ class MusicBrainzV2Adapter:
             )
             request_key = f'recording:{request.recording_mbid}'
         else:
-            url = f'{self._release_endpoint}?{urlencode({"query": request.query, "fmt": "json"})}'
+            url = f'{self._recording_endpoint}?{urlencode({"query": request.query, "fmt": "json", "limit": 25})}'
             request_key = f'query:{request.query}'
         response = self.transport.get(url, headers={'User-Agent': self.user_agent, 'Accept': 'application/json'})
         provenance = LiveProvenance(
@@ -113,16 +120,110 @@ class MusicBrainzV2Adapter:
                 return Malformed(provenance)
             return self._resolve_recording_releases(
                 recording_payload.releases,
-                request.release_title,
                 request.artist_name,
                 request.recording_mbid,
                 provenance,
             )
         try:
-            search_payload = ReleaseResponse.model_validate_json(response.body)
+            search_payload = RecordingSearchResponse.model_validate_json(response.body)
         except ValidationError:
-            return Malformed(provenance)
-        eligible = _without_pseudo_releases(search_payload.releases)
+            try:
+                legacy_payload = ReleaseResponse.model_validate_json(response.body)
+            except ValidationError:
+                return Malformed(provenance)
+            return self._resolve_legacy_release_search(legacy_payload, request, provenance)
+        return self._resolve_recording_search(search_payload.recordings, request, provenance, captured_at)
+
+    def _resolve_recording_releases(
+        self,
+        releases: tuple[Release, ...],
+        artist_name: str | None,
+        recording_mbid: str,
+        provenance: LiveProvenance,
+    ) -> MusicBrainzResult:
+        eligible = _without_pseudo_releases(releases)
+        match eligible:
+            case (release,):
+                enriched, enriched_provenance = self._enrich_release(release, provenance)
+                return MusicBrainzMatch(
+                    enriched_provenance,
+                    self._candidate(enriched, artist_name, recording_mbid),
+                )
+            case () if not eligible:
+                return NoMatch(provenance)
+            case _:
+                enriched_releases: list[Release] = []
+                enriched_provenance = provenance
+                for release in eligible:
+                    enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
+                    enriched_releases.append(enriched)
+                return Ambiguous(
+                    enriched_provenance,
+                    tuple(self._candidate(release, artist_name, recording_mbid) for release in enriched_releases),
+                )
+
+    def _resolve_recording_search(
+        self,
+        recordings: tuple[RecordingSearchResult, ...],
+        request: MusicBrainzLookupRequest,
+        provenance: LiveProvenance,
+        now: datetime,
+    ) -> MusicBrainzResult:
+        candidates: list[ReleaseCandidate] = []
+        enriched_provenance = provenance
+        for recording in recordings:
+            if not _recording_search_matches(recording, request):
+                continue
+            recording_id = recording.id
+            result = self.lookup(
+                MusicBrainzLookupRequest(
+                    '',
+                    request.fixture_case,
+                    recording_mbid=recording_id,
+                    release_title=request.release_title,
+                    artist_name=request.artist_name,
+                    recording_title=request.recording_title,
+                    duration_seconds=request.duration_seconds,
+                    track_number=request.track_number,
+                ),
+                now,
+            )
+            match result:
+                case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
+                    enriched_provenance = result_provenance
+                    candidates.append(candidate)
+                case Ambiguous(provenance=result_provenance, candidates=result_candidates):
+                    enriched_provenance = result_provenance
+                    candidates.extend(result_candidates)
+                case _:
+                    continue
+        unique: dict[str, ReleaseCandidate] = {}
+        for candidate in candidates:
+            existing = unique.get(candidate.release_mbid)
+            unique[candidate.release_mbid] = (
+                candidate
+                if existing is None
+                else replace(
+                    existing,
+                    recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
+                )
+            )
+        unique_candidates = tuple(unique.values())
+        match unique_candidates:
+            case ():
+                return NoMatch(enriched_provenance)
+            case (candidate,):
+                return MusicBrainzMatch(enriched_provenance, candidate)
+            case multiple_candidates:
+                return Ambiguous(enriched_provenance, multiple_candidates)
+
+    def _resolve_legacy_release_search(
+        self,
+        payload: ReleaseResponse,
+        request: MusicBrainzLookupRequest,
+        provenance: LiveProvenance,
+    ) -> MusicBrainzResult:
+        eligible = _without_pseudo_releases(payload.releases)
         match eligible:
             case ():
                 return NoMatch(provenance)
@@ -157,36 +258,6 @@ class MusicBrainzV2Adapter:
                         )
                     )
                 return Ambiguous(enriched_provenance, tuple(candidates))
-
-    def _resolve_recording_releases(
-        self,
-        releases: tuple[Release, ...],
-        release_title: str | None,
-        artist_name: str | None,
-        recording_mbid: str,
-        provenance: LiveProvenance,
-    ) -> MusicBrainzResult:
-        eligible = _without_pseudo_releases(releases)
-        matching = _matching_releases(eligible, release_title)
-        match matching:
-            case (release,):
-                enriched, enriched_provenance = self._enrich_release(release, provenance)
-                return MusicBrainzMatch(
-                    enriched_provenance,
-                    self._candidate(enriched, artist_name, recording_mbid),
-                )
-            case () if not eligible:
-                return NoMatch(provenance)
-            case _:
-                enriched_releases: list[Release] = []
-                enriched_provenance = provenance
-                for release in matching:
-                    enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
-                    enriched_releases.append(enriched)
-                return Ambiguous(
-                    enriched_provenance,
-                    tuple(self._candidate(release, artist_name, recording_mbid) for release in enriched_releases),
-                )
 
     def _enrich_release(
         self,
@@ -323,12 +394,15 @@ def _track_match_score(track: Track, title: str, duration_seconds: int | None, t
     return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
 
 
-def _matching_releases(releases: tuple[Release, ...], release_title: str | None) -> tuple[Release, ...]:
-    if release_title is None:
-        return releases
-    requested = _title_key(release_title)
-    exact = tuple(release for release in releases if _title_key(release.title) == requested)
-    return exact or releases
+def _recording_search_matches(recording: RecordingSearchResult, request: MusicBrainzLookupRequest) -> bool:
+    if not recording.title or not recording.artist_credit:
+        return True
+    artist = ''.join(f'{credit.name}{credit.joinphrase}' for credit in recording.artist_credit)
+    artist_matches = not request.artist_name or ratio(_title_key(request.artist_name), _title_key(artist)) >= 80
+    title_matches = not request.recording_title or (
+        ratio(_title_key(request.recording_title), _title_key(recording.title)) >= 65
+    )
+    return artist_matches and title_matches
 
 
 def _catalog_numbers(release: Release) -> tuple[str, ...]:
