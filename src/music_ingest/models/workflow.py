@@ -29,7 +29,8 @@ class JobRecord(Base):
         CheckConstraint(
             '(CASE WHEN source_id IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN library_record_id IS NOT NULL THEN 1 ELSE 0 END + '
-            + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
+            + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END + '
+            + 'CASE WHEN folder_path IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
             + "kind = 'reconciliation_scan'",
             name='ck_jobs_target_or_reconciliation',
         ),
@@ -39,6 +40,7 @@ class JobRecord(Base):
     source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
     release_mbid: Mapped[str | None] = mapped_column(Text)
+    folder_path: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_revision_id: Mapped[int | None] = mapped_column(ForeignKey('library_metadata_revisions.id'))
     state: Mapped[str] = mapped_column(Text, nullable=False)
@@ -73,6 +75,15 @@ _ = Index(
     unique=True,
     postgresql_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
     sqlite_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
+)
+
+_ = Index(
+    'uq_active_folder_release_selection_job',
+    JobRecord.folder_path,
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'folder_release_selection') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'folder_release_selection') & JobRecord.state.in_(['queued', 'running']),
 )
 
 _ = Index(

@@ -114,6 +114,28 @@ class JobRepository:
                 raise
             return None
 
+    def enqueue_folder_release_selection(self, folder_path: str, now: datetime) -> JobRecord | None:
+        """Queue one release-selection pass for a source folder."""
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.folder_path == folder_path)
+            .where(JobRecord.kind == 'folder_release_selection')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return None
+        job = JobRecord(
+            id=f'folder-release-selection-{uuid4().hex}',
+            folder_path=folder_path,
+            kind='folder_release_selection',
+            state='queued',
+            created_at=now,
+        )
+        self._session.add(job)
+        self._session.flush()
+        return job
+
     def enqueue_reconciliation_scan(self, now: datetime) -> tuple[JobRecord, bool]:
         active = self._session.scalar(
             select(JobRecord)
