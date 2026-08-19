@@ -91,10 +91,15 @@ class CandidateScore:
     track_component: float = 0.0
 
 
-def select_folder_release(candidate_scores: tuple[tuple[CandidateScore, ...], ...]) -> str | None:
-    """Select one release shared by every source candidate group."""
-    groups = tuple(group for group in candidate_scores if group)
-    if not groups:
+def select_folder_release(
+    candidate_scores: tuple[tuple[CandidateScore, ...], ...], confidence_threshold: float = 0.0
+) -> str | None:
+    """Select the highest-scoring release shared by every qualified source group."""
+    groups = tuple(
+        tuple(score for score in group if score.candidate_mbid is not None and score.score >= confidence_threshold)
+        for group in candidate_scores
+    )
+    if not groups or any(not group for group in groups):
         return None
     shared_mbids = set(score.candidate_mbid for score in groups[0] if score.candidate_mbid is not None)
     for group in groups[1:]:

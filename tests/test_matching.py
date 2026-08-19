@@ -86,6 +86,34 @@ def test_folder_release_selection_when_scores_tie_uses_stable_mbid_order() -> No
     assert selected == 'release-one'
 
 
+def test_folder_release_selection_when_low_score_candidate_has_larger_sum_ignores_it() -> None:
+    # Given: a low-confidence release would win the raw sum, but another release clears the threshold for every file.
+    candidate_scores = (
+        (CandidateScore('low-release', 0.69), CandidateScore('qualified-release', 0.71)),
+        (CandidateScore('low-release', 0.99), CandidateScore('qualified-release', 0.72)),
+    )
+
+    # When: the folder-level release is selected using the configured confidence threshold.
+    selected = select_folder_release(candidate_scores, confidence_threshold=0.70)
+
+    # Then: only the release qualified for every source participates in the aggregate.
+    assert selected == 'qualified-release'
+
+
+def test_folder_release_selection_when_one_source_has_no_qualified_release_returns_none() -> None:
+    # Given: one source has no release candidate at the configured confidence threshold.
+    candidate_scores = (
+        (CandidateScore('release-one', 0.9),),
+        (CandidateScore('release-one', 0.69),),
+    )
+
+    # When: the folder-level release is selected.
+    selected = select_folder_release(candidate_scores, confidence_threshold=0.70)
+
+    # Then: no release is selected for only part of the folder.
+    assert selected is None
+
+
 def test_matching_when_fresh_musicbrainz_maps_explicit_recording_mbid_selects_its_release() -> None:
     # Given: a supplied recording ID mapped to one release by fresh MusicBrainz evidence.
     request = MatchingRequest(
