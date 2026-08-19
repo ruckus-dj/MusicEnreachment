@@ -348,8 +348,8 @@ def test_recording_matching_when_album_artist_and_feature_suffix_differ_selects_
     assert result.release_score.duration_component == 0.2
 
 
-def test_recording_score_when_track_number_differs_keeps_other_components() -> None:
-    # Given: the source track metadata disagrees with MusicBrainz only on track position.
+def test_recording_score_ignores_release_track_position() -> None:
+    # Given: the source track metadata disagrees with MusicBrainz only on release track position.
     request = MatchingRequest(
         'Fixture Artist',
         'Fixture Album',
@@ -372,10 +372,10 @@ def test_recording_score_when_track_number_differs_keeps_other_components() -> N
     # When: the recording candidate is scored component by component.
     score = score_recording_candidate(request, candidate)
 
-    # Then: the position mismatch contributes zero without erasing the matching evidence.
-    assert score.score > 0.0
-    assert score.title_component == 0.5
-    assert score.artist_component == 0.25
+    # Then: recording score uses only artist, title, and duration evidence.
+    assert score.score == 1.0
+    assert score.title_component == 0.4
+    assert score.artist_component == 0.4
     assert score.duration_component == 0.2
     assert score.track_component == 0.0
 

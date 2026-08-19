@@ -229,21 +229,19 @@ def _recording_score_for_candidate(score: CandidateScore, candidate: ReleaseCand
 
 
 def score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
-    """Score one recording identity independently from its release identity."""
+    """Score recording identity using recording artist, title, and duration evidence."""
     if not candidate.recording_mbids:
         return CandidateScore(None, 0.0)
-    title_component = 0.5 * _text_similarity(request.recording_title, candidate.recording_title or '')
-    artist_component = 0.25 * _text_similarity(request.artist_name, _recording_artist_name(candidate))
+    title_component = 0.4 * _text_similarity(request.recording_title, candidate.recording_title or '')
+    artist_component = 0.4 * _text_similarity(request.artist_name, _recording_artist_name(candidate))
     duration_component = _duration_score(request.duration_seconds, candidate.duration_seconds)
-    track_component = 0.05 * _number_similarity(request.track_number, candidate.track_number)
     return CandidateScore(
         candidate.recording_mbids[0],
-        artist_component + title_component + duration_component + track_component,
+        artist_component + title_component + duration_component,
         artist_component,
         0.0,
         duration_component,
         title_component,
-        track_component,
     )
 
 
@@ -431,11 +429,6 @@ def recording_candidate_matches(request: MatchingRequest, candidate: ReleaseCand
         )
         and _title_matches(request.recording_title, candidate.recording_title)
         and _duration_matches(request.duration_seconds, candidate.duration_seconds)
-        and _number_matches(request.track_number, candidate.track_number)
-        and _number_matches(request.track_total, candidate.track_total)
-        and _number_matches(request.disc_number, candidate.disc_number)
-        and _number_matches(request.disc_total, candidate.disc_total)
-        and _country_matches(request.source_path, candidate.country)
     )
 
 
