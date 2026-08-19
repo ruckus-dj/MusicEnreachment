@@ -37,6 +37,7 @@ from music_ingest.models import (
     LibraryEventRecord,
     LibraryRecord,
     ProviderAttemptRecord,
+    ProviderCandidateRunRecord,
     ProviderScheduleRecord,
     ReviewDecisionRecord,
     SourceRecord,
@@ -48,6 +49,7 @@ from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteR
 from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.processing.remux import RemuxRequest
+from music_ingest.processing.worker import _latest_candidate_run, _release_candidates_for_recording
 from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
@@ -161,6 +163,64 @@ def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lack
     release = CandidateEvidencePayload.model_validate_json(records[0].evidence)
     assert release.score is not None
     assert release.score > 0.0
+
+
+def test_musicbrainz_releases_keep_every_acoustid_recording_association() -> None:
+    # Given: MusicBrainz returned several releases for one AcousticID recording, including
+    # a release whose title differs from the source filename.
+    candidates = (
+        ReleaseCandidate(
+            'release-mismatch',
+            'Promo Compilation',
+            'Fixture Artist',
+            recording_mbids=('acoustid-recording',),
+            recording_title='Different Provider Title',
+        ),
+        ReleaseCandidate(
+            'release-match',
+            'Fixture Album',
+            'Fixture Artist',
+            recording_mbids=('acoustid-recording',),
+            recording_title='Fixture Track',
+        ),
+        ReleaseCandidate(
+            'release-unrelated',
+            'Other Album',
+            'Other Artist',
+            recording_mbids=('other-recording',),
+        ),
+    )
+
+    # When: the worker associates MusicBrainz release results with the AcousticID recording.
+    associated = _release_candidates_for_recording('acoustid-recording', candidates)
+
+    # Then: every release attached to that recording remains available for scoring and review.
+    assert tuple(candidate.release_mbid for candidate in associated) == ('release-mismatch', 'release-match')
+
+
+def test_latest_candidate_run_uses_maximum_id_not_relationship_order() -> None:
+    # Given: candidate runs are attached in an order unrelated to their database IDs.
+    source = SourceRecord(
+        id='source-id',
+        source_path='/source/track.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='a' * 64,
+        duration_seconds=1,
+        origin='manual',
+        intake_state='present',
+        candidate_runs=[
+            ProviderCandidateRunRecord(id=2178, provider_name='musicbrainz', created_at=datetime.now(UTC)),
+            ProviderCandidateRunRecord(id=1776, provider_name='musicbrainz', created_at=datetime.now(UTC)),
+        ],
+    )
+
+    # When: the worker resolves the latest MusicBrainz candidate run.
+    latest = _latest_candidate_run(source, 'musicbrainz')
+
+    # Then: the highest persisted run ID is selected regardless of relationship order.
+    assert latest is not None and latest.id == 2178
 
 
 def test_musicbrainz_candidate_tags_preserve_release_disambiguation_in_album() -> None:

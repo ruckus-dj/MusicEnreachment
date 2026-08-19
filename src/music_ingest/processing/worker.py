@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -77,7 +77,6 @@ from music_ingest.matching.scoring import (
     MatchDecision,
     MatchingRequest,
     MatchResult,
-    recording_candidate_matches,
     score_recording_candidate,
     score_release_candidate,
     select_folder_release,
@@ -305,6 +304,11 @@ def _candidate_records(
     return (*((release_record,) if candidate.recording_mbids else ()), *recording_records)
 
 
+def _latest_candidate_run(source: SourceRecord, provider: str) -> ProviderCandidateRunRecord | None:
+    runs = tuple(run for run in source.candidate_runs if run.provider_name == provider)
+    return None if not runs else max(runs, key=lambda run: run.id)
+
+
 def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
     recording_mbids: list[str] = []
     for candidate in reversed(source.candidates):
@@ -332,7 +336,7 @@ def _single_scored_candidate(
     source: SourceRecord, provider: str, confidence_threshold: float
 ) -> tuple[str, CandidateEvidencePayload] | None:
     candidates_by_key: dict[str, CandidateEvidencePayload] = {}
-    latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == provider), None)
+    latest_run = _latest_candidate_run(source, provider)
     candidates = source.candidates if latest_run is None else latest_run.candidates
     for candidate in reversed(candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
@@ -359,7 +363,7 @@ def _single_scored_recording_candidate(
 ) -> tuple[str, CandidateEvidencePayload] | None:
     candidates_by_recording: dict[str, tuple[float, CandidateEvidencePayload]] = {}
     for provider in ('acoustid', 'musicbrainz'):
-        latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == provider), None)
+        latest_run = _latest_candidate_run(source, provider)
         candidates = source.candidates if latest_run is None else latest_run.candidates
         for candidate in reversed(candidates):
             evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
@@ -442,6 +446,12 @@ def _aggregate_musicbrainz_results(results: tuple[ProviderEvidenceResult, ...]) 
         if len(unique_candidates) == 1
         else Ambiguous(provenance, unique_candidates)
     )
+
+
+def _release_candidates_for_recording(
+    recording_mbid: str, candidates: Iterable[ReleaseCandidate]
+) -> tuple[ReleaseCandidate, ...]:
+    return tuple(candidate for candidate in candidates if recording_mbid in candidate.recording_mbids)
 
 
 def _merge_release_candidate(candidates: dict[str, ReleaseCandidate], candidate: ReleaseCandidate) -> None:
@@ -566,7 +576,7 @@ def _matching_request(
 
 
 def _stored_release_scores(source: SourceRecord) -> tuple[CandidateScore, ...]:
-    latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == 'musicbrainz'), None)
+    latest_run = _latest_candidate_run(source, 'musicbrainz')
     candidates = source.candidates if latest_run is None else latest_run.candidates
     scores: dict[str, float] = {}
     for candidate in reversed(candidates):
@@ -577,7 +587,7 @@ def _stored_release_scores(source: SourceRecord) -> tuple[CandidateScore, ...]:
 
 
 def _stored_release_candidate(source: SourceRecord, release_mbid: str) -> tuple[str, CandidateEvidencePayload] | None:
-    latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == 'musicbrainz'), None)
+    latest_run = _latest_candidate_run(source, 'musicbrainz')
     candidates = source.candidates if latest_run is None else latest_run.candidates
     for candidate in reversed(candidates):
         if candidate.candidate_key != release_mbid:
@@ -1106,20 +1116,18 @@ class ProcessingWorker:
                         pass
                     case _:
                         continue
-                matching_candidates = tuple(
-                    candidate
-                    for candidate in candidates
-                    if candidate_recording_mbid in candidate.recording_mbids
-                    and recording_candidate_matches(candidate_request, candidate)
-                )
-                if len(matching_candidates) == 1:
+                matching_candidates = _release_candidates_for_recording(candidate_recording_mbid, candidates)
+                if matching_candidates:
+                    provenance = candidate_result.musicbrainz.provenance
+                    musicbrainz = (
+                        MusicBrainzMatch(provenance, matching_candidates[0])
+                        if len(matching_candidates) == 1
+                        else Ambiguous(provenance, matching_candidates)
+                    )
                     candidate_results.append(
                         replace(
                             candidate_result,
-                            musicbrainz=MusicBrainzMatch(
-                                candidate_result.musicbrainz.provenance,
-                                matching_candidates[0],
-                            ),
+                            musicbrainz=musicbrainz,
                         )
                     )
         _ = self._capture_provider_attempt(
