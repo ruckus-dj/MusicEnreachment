@@ -79,9 +79,9 @@ from music_ingest.matching.scoring import (
     MatchingRequest,
     MatchResult,
     recording_candidate_matches,
-    resolve_match,
     score_recording_candidate,
     score_release_candidate,
+    select_folder_release,
 )
 from music_ingest.models import (
     ArtworkRecord,
@@ -501,7 +501,9 @@ def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceReco
 
 
 def _matching_request(
-    record: LibraryRecord, source: SourceRecord, tags: tuple[tuple[str, str], ...]
+    record: LibraryRecord,
+    source: SourceRecord,
+    tags: tuple[tuple[str, str], ...],
 ) -> MatchingRequest:
     values = {name: value for name, value in tags}
     duration_seconds = source.duration_seconds
@@ -521,6 +523,29 @@ def _matching_request(
         source_path=source.source_path,
         album_artist_name=values.get('ALBUMARTIST', ''),
     )
+
+
+def _stored_release_scores(source: SourceRecord) -> tuple[CandidateScore, ...]:
+    latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == 'musicbrainz'), None)
+    candidates = source.candidates if latest_run is None else latest_run.candidates
+    scores: dict[str, float] = {}
+    for candidate in reversed(candidates):
+        evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+        if evidence.provider == 'musicbrainz' and evidence.entity == 'release' and evidence.score is not None:
+            _ = scores.setdefault(candidate.candidate_key, evidence.score)
+    return tuple(CandidateScore(candidate_key, score) for candidate_key, score in scores.items())
+
+
+def _stored_release_candidate(source: SourceRecord, release_mbid: str) -> tuple[str, CandidateEvidencePayload] | None:
+    latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == 'musicbrainz'), None)
+    candidates = source.candidates if latest_run is None else latest_run.candidates
+    for candidate in reversed(candidates):
+        if candidate.candidate_key != release_mbid:
+            continue
+        evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+        if evidence.provider == 'musicbrainz' and evidence.entity == 'release':
+            return candidate.candidate_key, evidence
+    return None
 
 
 def _tag_number(value: str | None) -> int | None:
@@ -697,8 +722,14 @@ class ProcessingWorker:
         if claimed.job.kind == 'selection_refresh':
             self._process_selection_refresh(claimed, now)
             return
+        if claimed.job.kind == 'candidate_selection':
+            self._process_candidate_selection(claimed, now)
+            return
         if claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}:
             self._process_analysis(claimed, now)
+            return
+        if claimed.job.kind == 'folder_release_selection':
+            self._process_folder_release_selection(claimed, now)
             return
         if claimed.job.kind == 'final_publish':
             self._process_final_publish(claimed, now)
@@ -1072,6 +1103,7 @@ class ProcessingWorker:
                     source.id,
                 )
             else:
+                self._enqueue_candidate_selection_if_ready(source, claimed.job.id, now)
                 record_event(
                     self._session,
                     record.id,
@@ -1083,12 +1115,8 @@ class ProcessingWorker:
                 )
             return
         candidate_request = _matching_request(record, source, tags)
-        match_result = self._resolve_provider_match(record, source, tags, provider_result)
-        recording_match: tuple[ProviderEvidenceResult, CandidateScore] | None = None
-        candidate_results: list[ProviderEvidenceResult] = []
+        candidate_results = [provider_result]
         if claimed.job.kind == 'musicbrainz_analysis':
-            candidate_matches: list[tuple[ProviderEvidenceResult, MatchResult]] = []
-            recording_matches: list[tuple[ProviderEvidenceResult, CandidateScore]] = []
             for candidate_recording_mbid in _acoustid_recording_mbids(source):
                 candidate_result = (
                     provider_result
@@ -1106,211 +1134,38 @@ class ProcessingWorker:
                 )
                 if candidate_result is None:
                     continue
-                candidate_results.append(candidate_result)
                 match candidate_result.musicbrainz:
                     case MusicBrainzMatch(candidate=candidate):
-                        verified_candidates = (candidate,)
+                        candidates = (candidate,)
                     case Ambiguous(candidates=candidates):
-                        verified_candidates = candidates
+                        pass
                     case _:
                         continue
                 matching_candidates = tuple(
                     candidate
-                    for candidate in verified_candidates
+                    for candidate in candidates
                     if candidate_recording_mbid in candidate.recording_mbids
                     and recording_candidate_matches(candidate_request, candidate)
                 )
-                match matching_candidates:
-                    case (candidate,):
-                        recording_score = CandidateScore(
-                            candidate_recording_mbid,
-                            _acoustid_recording_score(source, candidate_recording_mbid),
-                        )
-                        verified_result = replace(
+                if len(matching_candidates) == 1:
+                    candidate_results.append(
+                        replace(
                             candidate_result,
-                            musicbrainz=MusicBrainzMatch(candidate_result.musicbrainz.provenance, candidate),
+                            musicbrainz=MusicBrainzMatch(
+                                candidate_result.musicbrainz.provenance,
+                                matching_candidates[0],
+                            ),
                         )
-                        verified_match = self._resolve_provider_match(record, source, tags, verified_result)
-                        recording_matches.append((verified_result, recording_score))
-                        if verified_match is not None and verified_match.decision is MatchDecision.AUTO_SELECTED:
-                            candidate_matches.append(
-                                (verified_result, replace(verified_match, recording_score=recording_score))
-                            )
-                    case _:
-                        continue
-            selected_match = _unique_acoustid_album_match(tuple(candidate_matches))
-            recording_match = select_acoustid_recording_match(
-                tuple(candidate_matches),
-                tuple(recording_matches),
-                self._confidence_threshold(),
-            )
-            if selected_match is not None:
-                provider_result, match_result = selected_match
-            if recording_match is not None:
-                provider_result, _ = recording_match
+                    )
         _ = self._capture_provider_attempt(
             source,
             'musicbrainz',
-            _aggregate_musicbrainz_results(tuple(candidate_results))
-            if claimed.job.kind == 'musicbrainz_analysis' and candidate_results
-            else provider_result.musicbrainz,
-            match_result,
+            _aggregate_musicbrainz_results(tuple(candidate_results)),
+            None,
             now,
             candidate_request,
         )
-        if recording_match is None:
-            stored_recording = _single_scored_candidate(source, 'acoustid', self._confidence_threshold())
-            stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
-            if stored_recording is not None:
-                associated = RecordingAssociationService(self._session).associate_automatic(
-                    AutomaticAssociationRequest(
-                        source.id,
-                        stored_recording[0],
-                        stored_recording[1].score or 0.0,
-                        self._confidence_threshold(),
-                        json.dumps({'recording_mbid': stored_recording[0]}, sort_keys=True),
-                        now,
-                    )
-                )
-                if associated is not None:
-                    record = library_record_detail(self._session, associated.library_record_id)
-            if stored_release is not None:
-                release_recording_mbid = _stored_release_recording_mbid(stored_release)
-                if not _apply_independent_match_identity_safely(
-                    self._session,
-                    record,
-                    record.musicbrainz_recording_id or release_recording_mbid,
-                    stored_release[0],
-                    source.id,
-                    now,
-                ):
-                    return
-            if stored_recording is not None or stored_release is not None:
-                analyzed_tags = _stored_match_tags(stored_recording, stored_release)
-                record_event(
-                    self._session,
-                    record.id,
-                    'stored_candidates_auto_selected',
-                    record.match_state,
-                    'stored qualifying provider candidates selected despite the latest provider outcome',
-                    now,
-                    source.id,
-                )
-                if analyzed_tags:
-                    source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
-                    _ = append_metadata_revision(
-                        self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
-                    )
-                    final_revision = append_metadata_revision(
-                        self._session,
-                        record.id,
-                        source.id,
-                        'final',
-                        {**source_tags, **analyzed_tags},
-                        'provider',
-                        now,
-                    )
-                    _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
-                    record_event(
-                        self._session,
-                        record.id,
-                        'analysis_ready_for_publish',
-                        'publishing',
-                        'stored provider metadata is ready for final publication',
-                        now,
-                        source.id,
-                    )
-                return
-            record_event(
-                self._session,
-                record.id,
-                'analysis_ready_for_review',
-                'needs_review',
-                'AcousticID and MusicBrainz analysis completed without a safe automatic match',
-                now,
-                source.id,
-            )
-            return
-        recording_mbid = recording_match[1].candidate_mbid
-        match recording_mbid, provider_result.musicbrainz:
-            case str() as verified_recording_mbid, MusicBrainzMatch(candidate=candidate) if (
-                verified_recording_mbid in candidate.recording_mbids
-            ):
-                pass
-            case _:
-                record_event(
-                    self._session,
-                    record.id,
-                    'analysis_ready_for_review',
-                    'needs_review',
-                    'automatic match has no verified recording identity',
-                    now,
-                    source.id,
-                )
-                return
-        associated = RecordingAssociationService(self._session).associate_automatic(
-            AutomaticAssociationRequest(
-                source.id,
-                verified_recording_mbid,
-                recording_match[1].score,
-                self._confidence_threshold(),
-                json.dumps(
-                    {
-                        'release_mbid': None if match_result is None else match_result.selected_release_mbid,
-                        'recording_mbid': verified_recording_mbid,
-                        'score': recording_match[1].score,
-                    },
-                    sort_keys=True,
-                ),
-                now,
-            )
-        )
-        if associated is None:
-            return
-        record = library_record_detail(self._session, associated.library_record_id)
-        if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
-            record_event(
-                self._session,
-                record.id,
-                'analysis_ready_for_review',
-                'needs_review',
-                'AcousticID recording was confirmed; MusicBrainz release requires review',
-                now,
-                source.id,
-            )
-            return
-        if not _apply_match_identity_safely(self._session, record, match_result, source.id, now):
-            return
-        analyzed_tags = _analyzed_tags(provider_result, match_result)
-        source_tags = {name: value for name, value in tags if name in ALLOWED_TAG_KEYS}
-        if not analyzed_tags:
-            record_event(
-                self._session,
-                record.id,
-                'analysis_unavailable',
-                'needs_review',
-                'providers returned no usable metadata',
-                now,
-                source.id,
-            )
-            return
-        analyzed_revision = append_metadata_revision(
-            self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider', now
-        )
-        final_tags = _final_tags(source_tags, analyzed_tags, match_result)
-        final_revision = append_metadata_revision(
-            self._session, record.id, source.id, 'final', final_tags, 'provider', now
-        )
-        _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
-        record_event(
-            self._session,
-            record.id,
-            'analysis_ready_for_publish',
-            'publishing',
-            f'analysis revision {analyzed_revision.id} is ready for final publication',
-            now,
-            source.id,
-        )
+        self._enqueue_candidate_selection_if_ready(source, claimed.job.id, now)
 
     def _process_final_publish(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
@@ -1563,21 +1418,249 @@ class ProcessingWorker:
             now,
         )
 
-    def _resolve_provider_match(
-        self,
-        record: LibraryRecord,
-        source: SourceRecord,
-        tags: tuple[tuple[str, str], ...],
-        result: ProviderEvidenceResult | None,
-    ) -> MatchResult | None:
-        if result is None:
-            return None
-        return resolve_match(
-            _matching_request(record, source, tags),
-            result.musicbrainz,
-            result.acoustid,
-            self._confidence_threshold(),
+    def _enqueue_candidate_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
+        active_collection = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.source_id == source.id)
+            .where(JobRecord.kind.in_(['filesystem_scan', 'acoustid_analysis', 'musicbrainz_analysis']))
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .where(JobRecord.id != current_job_id)
         )
+        if active_collection is not None:
+            return
+        musicbrainz, acoustid, _ = self._configured_providers()
+        required_providers = tuple(
+            provider_name
+            for provider_name, provider in (('musicbrainz', musicbrainz), ('acoustid', acoustid))
+            if provider is not None
+        )
+        if any(
+            not any(run.provider_name == provider_name for run in reversed(source.candidate_runs))
+            for provider_name in required_providers
+        ):
+            return
+        _ = JobRepository(self._session).enqueue(source.id, 'candidate_selection', now)
+
+    def _process_candidate_selection(self, claimed: ClaimedJob, now: datetime) -> None:
+        source = self._source(claimed)
+        record = ensure_source_record(self._session, source, now)
+        stored_recording = _single_scored_candidate(source, 'acoustid', self._confidence_threshold())
+        stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
+        if stored_recording is not None:
+            associated = RecordingAssociationService(self._session).associate_automatic(
+                AutomaticAssociationRequest(
+                    source.id,
+                    stored_recording[0],
+                    stored_recording[1].score or 0.0,
+                    self._confidence_threshold(),
+                    json.dumps({'recording_mbid': stored_recording[0]}, sort_keys=True),
+                    now,
+                )
+            )
+            if associated is not None:
+                record = library_record_detail(self._session, associated.library_record_id)
+        if stored_release is not None:
+            release_recording_mbid = _stored_release_recording_mbid(stored_release)
+            if not _apply_independent_match_identity_safely(
+                self._session,
+                record,
+                record.musicbrainz_recording_id or release_recording_mbid,
+                stored_release[0],
+                source.id,
+                now,
+            ):
+                return
+        if stored_recording is None and stored_release is None:
+            record_event(
+                self._session,
+                record.id,
+                'analysis_ready_for_review',
+                'needs_review',
+                'AcousticID and MusicBrainz analysis completed without a safe automatic match',
+                now,
+                source.id,
+            )
+            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
+            return
+        analyzed_tags = _stored_match_tags(stored_recording, stored_release)
+        record_event(
+            self._session,
+            record.id,
+            'stored_candidates_auto_selected',
+            record.match_state,
+            'stored qualifying provider candidates selected after provider collection completed',
+            now,
+            source.id,
+        )
+        if analyzed_tags:
+            source_tags = {
+                item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
+            }
+            _ = append_metadata_revision(
+                self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider_selection', now
+            )
+            final_revision = append_metadata_revision(
+                self._session,
+                record.id,
+                source.id,
+                'final',
+                {**source_tags, **analyzed_tags},
+                'provider_selection',
+                now,
+            )
+            _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+            record_event(
+                self._session,
+                record.id,
+                'analysis_ready_for_publish',
+                'publishing',
+                'stored provider metadata is ready for final publication',
+                now,
+                source.id,
+            )
+        self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
+
+    def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
+        folder = Path(source.source_path).parent
+        members = tuple(
+            item
+            for item in self._session.scalars(
+                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
+            ).all()
+            if Path(item.source_path).parent == folder
+            and item.disappeared_at is None
+            and item.intake_state != 'replaced'
+        )
+        if len(members) < 2:
+            return
+        member_ids = tuple(item.id for item in members)
+        active_collection = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.source_id.in_(member_ids))
+            .where(
+                JobRecord.kind.in_(
+                    [
+                        'filesystem_scan',
+                        'acoustid_analysis',
+                        'musicbrainz_analysis',
+                        'candidate_selection',
+                    ]
+                )
+            )
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .where(JobRecord.id != current_job_id)
+        )
+        if active_collection is not None:
+            return
+        if any(
+            not any(run.provider_name == 'musicbrainz' for run in reversed(item.candidate_runs)) for item in members
+        ):
+            return
+        _ = JobRepository(self._session).enqueue_folder_release_selection(str(folder), now)
+
+    def _process_folder_release_selection(self, claimed: ClaimedJob, now: datetime) -> None:
+        folder_path = claimed.job.folder_path
+        if folder_path is None:
+            raise ProcessingInfrastructureError('folder release selection requires a folder target')
+        folder = Path(folder_path)
+        members = tuple(
+            item
+            for item in self._session.scalars(
+                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
+            ).all()
+            if Path(item.source_path).parent == folder
+            and item.disappeared_at is None
+            and item.intake_state != 'replaced'
+        )
+        if not members:
+            return
+        member_ids = tuple(item.id for item in members)
+        if (
+            self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.source_id.in_(member_ids))
+                .where(JobRecord.kind.in_(['filesystem_scan', 'acoustid_analysis', 'musicbrainz_analysis']))
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            is not None
+        ):
+            return
+        groups = tuple(_stored_release_scores(item) for item in members)
+        selected_release = select_folder_release(groups)
+        selected_scores = (
+            tuple(
+                next((score.score for score in group if score.candidate_mbid == selected_release), 0.0)
+                for group in groups
+            )
+            if selected_release is not None
+            else ()
+        )
+        if selected_release is None or any(score < self._confidence_threshold() for score in selected_scores):
+            for source in members:
+                if source.library_record_id is not None:
+                    record = library_record_detail(self._session, source.library_record_id)
+                    record.processing_state = 'needs_review'
+                    record.match_state = 'needs_review'
+                    record_event(
+                        self._session,
+                        source.library_record_id,
+                        'folder_release_selection_review',
+                        'needs_review',
+                        'folder candidates have no unique shared release',
+                        now,
+                        source.id,
+                    )
+            return
+        for source in members:
+            if source.library_record_id is None:
+                continue
+            release = _stored_release_candidate(source, selected_release)
+            if release is None:
+                record = library_record_detail(self._session, source.library_record_id)
+                record.processing_state = 'needs_review'
+                record.match_state = 'needs_review'
+                record_event(
+                    self._session,
+                    source.library_record_id,
+                    'folder_release_selection_review',
+                    'needs_review',
+                    'selected folder release is absent from the source candidate run',
+                    now,
+                    source.id,
+                )
+                continue
+            record = library_record_detail(self._session, source.library_record_id)
+            recording_mbid = record.musicbrainz_recording_id or _stored_release_recording_mbid(release)
+            if not _apply_independent_match_identity_safely(
+                self._session, record, recording_mbid, selected_release, source.id, now
+            ):
+                continue
+            analyzed_tags = _stored_match_tags(None, release)
+            source_tags = {
+                item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
+            }
+            _ = append_metadata_revision(
+                self._session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
+            )
+            final_revision = append_metadata_revision(
+                self._session,
+                record.id,
+                source.id,
+                'final',
+                {**source_tags, **analyzed_tags},
+                'folder_selection',
+                now,
+            )
+            _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
+            record_event(
+                self._session,
+                record.id,
+                'folder_release_selected',
+                'publishing',
+                f'folder release {selected_release} selected from complete candidate runs',
+                now,
+                source.id,
+            )
 
     def _confidence_threshold(self) -> float:
         if self._config.live_transport is not None:
@@ -1596,7 +1679,7 @@ class ProcessingWorker:
         source: SourceRecord,
         provider_name: str,
         result: MusicBrainzResult | AcoustIdResult,
-        match_result: MatchResult | None,
+        _match_result: MatchResult | None,
         now: datetime,
         request: MatchingRequest | None = None,
     ) -> str | None:
@@ -1629,31 +1712,32 @@ class ProcessingWorker:
                         created_at=now,
                     )
                 )
-                candidate_scores = (
-                    {}
-                    if match_result is None
-                    else {item.candidate_mbid: item for item in match_result.candidate_scores}
+                run = ProviderCandidateRunRecord(
+                    source_id=source.id,
+                    provider_name=provider_name,
+                    created_at=now,
                 )
+                source.candidate_runs.append(run)
+                candidate_scores: dict[str | None, CandidateScore] = {}
+                if provider_name == 'musicbrainz' and request is not None:
+                    match result:
+                        case MusicBrainzMatch(candidate=candidate):
+                            score = score_release_candidate(request, candidate)
+                            candidate_scores[score.candidate_mbid] = score
+                        case Ambiguous(candidates=candidates):
+                            for candidate in candidates:
+                                score = score_release_candidate(request, candidate)
+                                candidate_scores[score.candidate_mbid] = score
+                        case _:
+                            pass
                 match result:
                     case MusicBrainzMatch(candidate=candidate):
-                        run = ProviderCandidateRunRecord(
-                            source_id=source.id,
-                            provider_name=provider_name,
-                            created_at=now,
-                        )
-                        source.candidate_runs.append(run)
                         candidate_records = _candidate_records(
                             source.id, candidate, candidate_scores.get(candidate.release_mbid), request
                         )
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)
                     case Ambiguous(candidates=candidates):
-                        run = ProviderCandidateRunRecord(
-                            source_id=source.id,
-                            provider_name=provider_name,
-                            created_at=now,
-                        )
-                        source.candidate_runs.append(run)
                         candidate_records = tuple(
                             record
                             for candidate in candidates
@@ -1664,12 +1748,6 @@ class ProcessingWorker:
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)
                     case AcoustIdMatch(evidence=evidence):
-                        run = ProviderCandidateRunRecord(
-                            source_id=source.id,
-                            provider_name=provider_name,
-                            created_at=now,
-                        )
-                        source.candidate_runs.append(run)
                         recordings = evidence.candidates or (
                             RecordingCandidate(evidence.recording_mbid, evidence.score),
                         )

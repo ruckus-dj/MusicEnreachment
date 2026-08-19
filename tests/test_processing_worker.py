@@ -1189,24 +1189,40 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
         assert worker.run_once()
         session.commit()
 
-        # Then: the recording is confirmed while the low-score release stays in review.
+        # Then: collection is complete and selection is deferred to a source-targeted job.
         with Session(engine) as session:
             jobs = list(session.query(JobRecord).order_by(JobRecord.created_at, JobRecord.id))
             assert [job.kind for job in jobs] == [
                 'filesystem_scan',
                 'acoustid_analysis',
                 'musicbrainz_analysis',
-                'selection_refresh',
-                'selection_refresh',
+                'candidate_selection',
             ]
-        assert [job.state for job in jobs] == ['completed', 'completed', 'completed', 'queued', 'queued']
+        assert [job.state for job in jobs] == ['completed', 'completed', 'completed', 'queued']
         source = session.get(SourceRecord, source_id)
         assert source is not None and source.library_record is not None
         assert [attempt.provider_name for attempt in source.provider_attempts] == ['acoustid', 'musicbrainz']
-        assert source.library_record.musicbrainz_recording_id == 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+        assert source.library_record.musicbrainz_recording_id is None
         assert source.library_record.musicbrainz_release_id is None
-        assert source.library_record.processing_state == 'needs_review'
+        assert source.library_record.processing_state == 'analyzing'
         assert source.library_publications == []
+        claimed: list[str] = []
+        assert worker.run_once(on_claimed=lambda _job_id, kind: claimed.append(kind))
+        worker._session.commit()
+        with Session(engine) as check:
+            source = check.get(SourceRecord, source_id)
+            job = check.query(JobRecord).filter_by(kind='candidate_selection').one()
+            assert claimed == ['candidate_selection']
+            assert job.state == 'completed', (
+                job.state,
+                job.failure_reason,
+                job.next_attempt_at,
+                [(attempt.state, attempt.finished_at) for attempt in job.attempts],
+            )
+            assert source is not None and source.library_record is not None
+            assert source.library_record.processing_state == 'matched'
+            assert source.library_record.musicbrainz_recording_id is not None
+            assert source.library_record.musicbrainz_release_id is None
 
 
 def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerprint_evidence(
