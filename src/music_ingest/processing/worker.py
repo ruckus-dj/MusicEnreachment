@@ -594,8 +594,7 @@ def _tag_number(value: str | None) -> int | None:
 
 
 def _folder_selection_root(source_path: str) -> Path:
-    folder = Path(source_path).parent
-    return folder.parent if folder.name.casefold() == 'tracks' else folder
+    return Path(source_path).parent
 
 
 def _final_tags(

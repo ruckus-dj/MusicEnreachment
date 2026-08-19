@@ -94,6 +94,21 @@ def _flac(path: Path) -> Path:
     return path
 
 
+def test_folder_selection_uses_each_source_file_parent_directory() -> None:
+    # Given: one source file below a tracks subdirectory and one beside that directory.
+    track_path = '/library/2015 - _кустик_/tracks/01.flac'
+    album_path = '/library/2015 - _кустик_/album.flac'
+
+    # When: the worker determines the folder-selection root for each source.
+    track_folder = processing._folder_selection_root(track_path)
+    album_folder = processing._folder_selection_root(album_path)
+
+    # Then: only files with the same immediate parent directory share a group.
+    assert track_folder == Path('/library/2015 - _кустик_/tracks')
+    assert album_folder == Path('/library/2015 - _кустик_')
+    assert track_folder != album_folder
+
+
 def test_musicbrainz_candidate_persistence_separates_release_and_recording_evidence() -> None:
     candidate = ReleaseCandidate(
         'release-id',
