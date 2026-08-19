@@ -92,11 +92,25 @@ export function albumFor(item: Summary, sourceId: string): string {
   );
 }
 
+export function releaseMbidFor(item: Summary): string | null {
+  const releaseMbid = item.musicbrainz_release_id?.trim();
+  return releaseMbid ? releaseMbid : null;
+}
+
+export function albumKeyFor(item: Summary, sourceId: string): string {
+  return releaseMbidFor(item) ?? `album:${albumFor(item, sourceId).trim().toLowerCase()}`;
+}
+
 export function trackNumberFor(item: Summary, sourceId: string): number | null {
   const value =
     tagsFor(item, sourceId, "final").TRACKNUMBER || tagsFor(item, sourceId, "original").TRACKNUMBER;
   const parsed = Number.parseInt(value?.split("/", 1)[0]?.trim() ?? "", 10);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+export function trackNumberLabelFor(item: Summary, sourceId: string): string {
+  const trackNumber = trackNumberFor(item, sourceId);
+  return trackNumber === null ? "—" : String(trackNumber).padStart(2, "0");
 }
 
 export function compareNames(left: string, right: string): number {

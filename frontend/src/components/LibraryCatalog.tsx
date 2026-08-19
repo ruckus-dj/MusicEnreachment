@@ -1,5 +1,5 @@
-import type { CatalogTrack } from "../app/useAppController";
-import { albumArtistsFor, albumFor, titleFor } from "../domain/metadata";
+import type { CatalogAlbum, CatalogTrack } from "../app/useAppController";
+import { albumArtistsFor, albumKeyFor, titleFor, trackNumberLabelFor } from "../domain/metadata";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -7,7 +7,7 @@ type LibraryCatalogProps = {
   artist: string;
   album: string;
   artists: string[];
-  albums: string[];
+  albums: CatalogAlbum[];
   tracks: CatalogTrack[];
   albumTracks: CatalogTrack[];
   loading: boolean;
@@ -65,18 +65,18 @@ export function LibraryCatalog({
   if (screen === "albums") {
     return (
       <section className="catalog-grid">
-        {albums.map((name) => {
+        {albums.map((albumEntry) => {
           const albumTrack = tracks.find(
             ({ item, source }) =>
               albumArtistsFor(item, source.source_id).includes(artist) &&
-              albumFor(item, source.source_id) === name,
+              albumKeyFor(item, source.source_id) === albumEntry.key,
           );
           return (
             <button
               type="button"
               className="entity-card album-card"
-              key={name}
-              onClick={() => onNavigate({ screen: "tracks", artist, album: name })}
+              key={albumEntry.key}
+              onClick={() => onNavigate({ screen: "tracks", artist, album: albumEntry.key })}
             >
               {albumTrack?.item.artwork?.url ? (
                 <img
@@ -90,13 +90,13 @@ export function LibraryCatalog({
                 <span className="entity-art disc">◉</span>
               )}
               <span>
-                <strong>{name}</strong>
+                <strong>{albumEntry.title}</strong>
                 <small>
                   {
                     tracks.filter(
                       ({ item, source }) =>
                         albumArtistsFor(item, source.source_id).includes(artist) &&
-                        albumFor(item, source.source_id) === name,
+                        albumKeyFor(item, source.source_id) === albumEntry.key,
                     ).length
                   }{" "}
                   треков
@@ -121,7 +121,7 @@ export function LibraryCatalog({
         </button>
       </div>
       <div className="track-table">
-        {albumTracks.map(({ item, source }, index) => (
+        {albumTracks.map(({ item, source }) => (
           <button
             type="button"
             className={`track-line ${source.state === "disappeared" ? "unavailable" : ""}`}
@@ -136,7 +136,7 @@ export function LibraryCatalog({
               })
             }
           >
-            <b>{String(index + 1).padStart(2, "0")}</b>
+            <b>{trackNumberLabelFor(item, source.source_id)}</b>
             <span>
               <strong>{titleFor(item, source.source_id)}</strong>
               <small>{source.path}</small>

@@ -1,6 +1,6 @@
 import { Icon as icon } from "../components/Icon";
 import { LibraryCatalog } from "../components/LibraryCatalog";
-import { titleFor } from "../domain/metadata";
+import { albumFor, titleFor } from "../domain/metadata";
 import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrackDetail } from "../screens/TrackDetail";
@@ -151,7 +151,10 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                       : screen === "albums"
                         ? artist
                         : screen === "tracks"
-                          ? album
+                          ? albumFor(
+                              albumTracks[0]?.item ?? emptySummary,
+                              albumTracks[0]?.source.source_id ?? "",
+                            )
                           : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
             </strong>
           </div>
@@ -200,7 +203,10 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                         : screen === "albums"
                           ? artist
                           : screen === "tracks"
-                            ? album
+                            ? albumFor(
+                                albumTracks[0]?.item ?? emptySummary,
+                                albumTracks[0]?.source.source_id ?? "",
+                              )
                             : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
               </h1>
               <p className="hero-copy">

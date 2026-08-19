@@ -17,6 +17,7 @@ import {
 import {
   albumArtistsFor,
   albumFor,
+  albumKeyFor,
   compareNames,
   detailIsPending,
   tagsFor,
@@ -51,6 +52,11 @@ import type {
 } from "../types";
 
 export type CatalogTrack = { item: Summary; source: Source };
+
+export type CatalogAlbum = {
+  readonly key: string;
+  readonly title: string;
+};
 
 function catalogSource(item: Summary): Source | undefined {
   const currentPublication = item.publications.find(
@@ -109,7 +115,7 @@ export type AppControllerModel = {
   watchedLibraryUntil: number;
   tracks: CatalogTrack[];
   artists: string[];
-  albums: string[];
+  albums: CatalogAlbum[];
   albumTracks: CatalogTrack[];
   currentTrack: CatalogTrack | undefined;
   currentTags: Tags;
@@ -804,18 +810,31 @@ export function useAppController(): AppControllerModel {
   const artists = [
     ...new Set(tracks.flatMap(({ item, source }) => albumArtistsFor(item, source.source_id))),
   ].sort(compareNames);
-  const albums = [
-    ...new Set(
-      tracks
-        .filter(({ item, source }) => albumArtistsFor(item, source.source_id).includes(artist))
-        .map(({ item, source }) => albumFor(item, source.source_id)),
-    ),
-  ].sort(compareNames);
+  const albums = tracks
+    .filter(({ item, source }) => albumArtistsFor(item, source.source_id).includes(artist))
+    .reduce<CatalogAlbum[]>((groups, { item, source }) => {
+      const key = albumKeyFor(item, source.source_id);
+      if (groups.some((group) => group.key === key)) return groups;
+      groups.push({
+        key,
+        title: albumFor(item, source.source_id),
+      });
+      return groups;
+    }, [])
+    .sort(
+      (left, right) => compareNames(left.title, right.title) || left.key.localeCompare(right.key),
+    );
+  const legacyAlbumTrack = album.startsWith("record:")
+    ? tracks.find(({ item }) => item.record_id === album.slice("record:".length))
+    : undefined;
+  const selectedAlbumKey = legacyAlbumTrack
+    ? albumKeyFor(legacyAlbumTrack.item, legacyAlbumTrack.source.source_id)
+    : album;
   const albumTracks = tracks
     .filter(
       ({ item, source }) =>
         albumArtistsFor(item, source.source_id).includes(artist) &&
-        albumFor(item, source.source_id) === album,
+        albumKeyFor(item, source.source_id) === selectedAlbumKey,
     )
     .sort(({ item: leftItem, source: leftSource }, { item: rightItem, source: rightSource }) => {
       const leftNumber = trackNumberFor(leftItem, leftSource.source_id);
