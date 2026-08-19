@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from music_ingest.models import (
     FingerprintRecord,
     JobRecord,
     LibraryPublicationRecord,
+    LibraryRecord,
     SourceRecord,
     SourceRootRecord,
 )
@@ -120,6 +122,91 @@ def test_manual_actions_route_when_opened_serves_review_ui(tmp_path: Path) -> No
     # Then: the single-page review application is available for client-side routing.
     assert response.status_code == 200
     assert 'type="module"' in response.text
+
+
+def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_path: Path) -> None:
+    # Given: a source with a release candidate compatible with another recording aggregate.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "release-selection.db"}')
+    Base.metadata.create_all(engine)
+    first_path = tmp_path / 'first.flac'
+    second_path = tmp_path / 'second.flac'
+    first_path.write_bytes(b'first')
+    second_path.write_bytes(b'second')
+    recording_mbid = '11111111-1111-4111-8111-111111111111'
+    release_mbid = '22222222-2222-4222-8222-222222222222'
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        first = intake_source(
+            session,
+            IntakeRequest(
+                source_path=first_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        second = intake_source(
+            session,
+            IntakeRequest(
+                source_path=second_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        first_source = session.get(SourceRecord, first.source_id)
+        second_source = session.get(SourceRecord, second.source_id)
+        assert first_source is not None and first_source.library_record_id is not None
+        assert second_source is not None and second_source.library_record_id is not None
+        first_record = session.get(LibraryRecord, first_source.library_record_id)
+        assert first_record is not None
+        first_record.musicbrainz_recording_id = recording_mbid
+        second_source.candidates.append(
+            CandidateRecord(
+                candidate_key=release_mbid,
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'release',
+                        'compatible_ids': [recording_mbid],
+                        'tags': {
+                            'ALBUM': 'Selected Album',
+                            'MUSICBRAINZ_ALBUMID': release_mbid,
+                            'MUSICBRAINZ_TRACKID': recording_mbid,
+                        },
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        second_record_id = second_source.library_record_id
+        first_record_id = first_source.library_record_id
+        second_source_id = second_source.id
+        session.commit()
+
+    # When: the operator selects the compatible release candidate in the UI.
+    response = TestClient(create_app(lambda: Session(engine))).post(
+        f'/api/library/records/{second_record_id}/sources/{second_source_id}/candidates/select',
+        json={'candidate_key': release_mbid, 'provider': 'musicbrainz', 'entity': 'release'},
+    )
+
+    # Then: the source joins the existing recording aggregate before release metadata is applied.
+    assert response.status_code == 200
+    with Session(engine) as session:
+        moved_source = session.get(SourceRecord, second_source_id)
+        assert moved_source is not None
+        assert moved_source.library_record_id == first_record_id
+        target = session.get(LibraryRecord, first_record_id)
+        assert target is not None
+        assert target.musicbrainz_release_id == release_mbid
 
 
 def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Path) -> None:

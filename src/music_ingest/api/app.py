@@ -1297,6 +1297,26 @@ def create_app(
                 candidate_tags = evidence.tags
                 if not candidate_tags:
                     raise HTTPException(status_code=409, detail='provider candidate has no metadata')
+                candidate_recording_mbid = (
+                    evidence.tags.get('MUSICBRAINZ_RECORDINGID')
+                    or evidence.tags.get('MUSICBRAINZ_TRACKID')
+                    or evidence.recording_mbid
+                )
+                if candidate_recording_mbid is None and len(evidence.compatible_ids) == 1:
+                    candidate_recording_mbid = evidence.compatible_ids[0]
+                target_record = (
+                    session.scalar(
+                        select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == candidate_recording_mbid)
+                    )
+                    if candidate_recording_mbid is not None
+                    else None
+                )
+                if candidate_recording_mbid is not None and target_record is not None and target_record.id != record.id:
+                    association = RecordingAssociationService(session).associate_verified_manual(
+                        ManualAssociationRequest(source.id, candidate_recording_mbid, now)
+                    )
+                    session.expire_all()
+                    record = library_record_detail(session, association.library_record_id)
                 source_tags = _catalog_tags(record, source.id)
                 final_tags = {**source_tags, **candidate_tags}
                 analyzed = append_metadata_revision(

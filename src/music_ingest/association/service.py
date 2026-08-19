@@ -94,6 +94,13 @@ class RecordingAssociationService:
 
     def associate_manual(self, request: ManualAssociationRequest) -> AssociationResult:
         self._verify_recording(request.recording_mbid, request.now)
+        return self._associate_manual(request)
+
+    def associate_verified_manual(self, request: ManualAssociationRequest) -> AssociationResult:
+        """Reassign using already persisted provider evidence selected by a reviewer."""
+        return self._associate_manual(request)
+
+    def _associate_manual(self, request: ManualAssociationRequest) -> AssociationResult:
         source = self._source(request.source_id)
         evidence = json.dumps(
             {'recording_mbid': request.recording_mbid},
