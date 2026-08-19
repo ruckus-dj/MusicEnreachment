@@ -37,12 +37,16 @@ function ControllerProbe() {
   );
 }
 
-function CatalogProbe() {
+function CatalogProbe({
+  albumRoute = "release-collision-course",
+}: {
+  readonly albumRoute?: string;
+}) {
   const controller = useAppController();
   const selectedAlbumRoute = {
     screen: "tracks" as const,
     artist: controller.artist,
-    album: "Collision Course",
+    album: albumRoute,
   };
   return (
     <>
@@ -62,7 +66,7 @@ function CatalogProbe() {
         album
       </button>
       <output data-testid="artists">{controller.artists.join("|")}</output>
-      <output data-testid="albums">{controller.albums.join("|")}</output>
+      <output data-testid="albums">{controller.albums.map(({ title }) => title).join("|")}</output>
       <output data-testid="album-tracks">{controller.albumTracks.length}</output>
     </>
   );
@@ -78,6 +82,7 @@ describe("useAppController effective source", () => {
       match_state: "matched",
       publication_state: "current",
       metadata_state: "final",
+      musicbrainz_release_id: "release-collision-course",
       sources: [
         { source_id: "source-a", path: "/old.flac", sha256: "a", state: "present" },
         { source_id: "source-b", path: "/new.flac", sha256: "b", state: "present" },
@@ -215,6 +220,7 @@ describe("useAppController catalog", () => {
       match_state: "matched",
       publication_state: "current",
       metadata_state: "final",
+      musicbrainz_release_id: "release-collision-course",
       sources: [
         {
           source_id: "source-collaboration",
@@ -264,5 +270,56 @@ describe("useAppController catalog", () => {
     await waitFor(() => {
       expect(screen.getByTestId("album-tracks").textContent).toBe("1");
     });
+  });
+
+  it("groups same-named albums when release MBID is missing", async () => {
+    const firstTrack = {
+      record_id: "record-without-release-a",
+      source_state: "present",
+      processing_state: "complete",
+      match_state: "matched",
+      publication_state: "current",
+      metadata_state: "final",
+      sources: [
+        {
+          source_id: "source-without-release-a",
+          path: "/track-a.flac",
+          sha256: "a",
+          state: "present",
+          tag_observations: [
+            { name: "ALBUMARTIST", value: "Busta Rhymes", format: "flac" },
+            { name: "ALBUM", value: "Collision Course", format: "flac" },
+          ],
+        },
+      ],
+      publications: [],
+    };
+    const secondTrack = {
+      ...firstTrack,
+      record_id: "record-without-release-b",
+      sources: [
+        {
+          ...firstTrack.sources[0],
+          source_id: "source-without-release-b",
+          path: "/track-b.flac",
+        },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ items: [firstTrack, secondTrack] }),
+    );
+
+    window.history.replaceState({}, "", "/library/artists");
+    render(<CatalogProbe albumRoute="record:record-without-release-a" />);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "busta" }).click();
+    });
+    await waitFor(() => expect(screen.getByTestId("albums").textContent).toBe("Collision Course"));
+
+    await act(async () => {
+      screen.getByRole("button", { name: "album" }).click();
+    });
+    await waitFor(() => expect(screen.getByTestId("album-tracks").textContent).toBe("2"));
   });
 });
