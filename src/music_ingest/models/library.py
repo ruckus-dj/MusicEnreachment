@@ -72,9 +72,12 @@ class LibraryRecord(Base):
     """Stable identity for one composition across source and publication changes."""
 
     __tablename__ = 'library_records'
+    __table_args__: tuple[UniqueConstraint, ...] = (
+        UniqueConstraint('musicbrainz_recording_id', 'musicbrainz_release_id'),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    musicbrainz_recording_id: Mapped[str | None] = mapped_column(Text, unique=True)
+    musicbrainz_recording_id: Mapped[str | None] = mapped_column(Text)
     musicbrainz_release_id: Mapped[str | None] = mapped_column(Text)
     musicbrainz_artist_id: Mapped[str | None] = mapped_column(Text)
     source_state: Mapped[str] = mapped_column(Text, nullable=False, default='present')
@@ -107,8 +110,12 @@ class LibraryRecord(Base):
         return session.get(LibraryRecord, record_id)
 
     @staticmethod
-    def get_by_recording(session: Session, recording_id: str) -> LibraryRecord | None:
-        return session.scalar(select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == recording_id))
+    def get_by_identity(session: Session, recording_id: str, release_id: str) -> LibraryRecord | None:
+        return session.scalar(
+            select(LibraryRecord)
+            .where(LibraryRecord.musicbrainz_recording_id == recording_id)
+            .where(LibraryRecord.musicbrainz_release_id == release_id)
+        )
 
 
 @final

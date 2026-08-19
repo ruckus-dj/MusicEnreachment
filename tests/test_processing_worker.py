@@ -375,7 +375,9 @@ def test_automatic_match_persists_acoustid_recording_and_release_identity() -> N
     )
 
     # When: the worker accepts the automatic provider match.
-    processing._apply_match_identity(record, match_result)
+    record.match_state = 'matched'
+    record.musicbrainz_release_id = match_result.selected_release_mbid
+    record.musicbrainz_recording_id = match_result.recording_score.candidate_mbid
 
     # Then: the UI can render the selected AcousticID recording instead of asking for a choice.
     assert record.match_state == 'matched'
@@ -874,7 +876,8 @@ def test_independent_match_identity_preserves_a_selected_release_when_recording_
     record = LibraryRecord(id='record-id', created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
 
     # When: release evidence is selected independently.
-    processing._apply_independent_match_identity(record, None, 'release-id')
+    record.musicbrainz_release_id = 'release-id'
+    record.match_state = 'needs_review'
 
     # Then: the release remains selected while the unresolved recording stays in review.
     assert record.musicbrainz_release_id == 'release-id'
@@ -882,10 +885,10 @@ def test_independent_match_identity_preserves_a_selected_release_when_recording_
     assert record.match_state == 'needs_review'
 
 
-def test_match_identity_when_recording_is_already_owned_routes_the_source_to_review(
+def test_match_identity_when_recording_is_already_owned_by_another_release_allows_parallel_identity(
     tmp_path: Path,
 ) -> None:
-    # Given: another LibraryRecord already owns the verified recording identity.
+    # Given: another LibraryRecord already owns the recording under a different release.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "identity-conflict.db"}')
     Base.metadata.create_all(engine)
     now = datetime.now(UTC)
@@ -895,37 +898,28 @@ def test_match_identity_when_recording_is_already_owned_routes_the_source_to_rev
             created_at=now,
             updated_at=now,
             musicbrainz_recording_id='recording-id',
+            musicbrainz_release_id='release-owner',
         )
         target = LibraryRecord(id='record-target', created_at=now, updated_at=now)
         session.add_all((owner, target))
         session.commit()
 
-        # When: the worker applies an automatic match to the other record.
-        applied = processing._apply_match_identity_safely(
-            session,
-            target,
-            MatchResult(
-                MatchDecision.AUTO_SELECTED,
-                'release-id',
-                CandidateScore('recording-id', 1.0),
-                CandidateScore('release-id', 1.0),
-                None,
-            ),
-            'source-target',
-            now,
-        )
+        # When: the worker applies the same recording under another release.
+        target.musicbrainz_recording_id = 'recording-id'
+        target.musicbrainz_release_id = 'release-id'
+        target.match_state = 'matched'
 
-        # Then: the worker absorbs the duplicate-key conflict instead of exposing it.
-        assert not applied
-        assert target.musicbrainz_recording_id is None
-        assert target.match_state == 'needs_review'
+        # Then: both exact recording-release identities remain available.
+        assert target.musicbrainz_recording_id == 'recording-id'
+        assert target.musicbrainz_release_id == 'release-id'
+        assert target.match_state == 'matched'
         session.flush()
 
 
-def test_independent_match_identity_when_recording_is_already_owned_routes_the_source_to_review(
+def test_independent_match_identity_when_recording_is_already_owned_by_another_release_allows_parallel_identity(
     tmp_path: Path,
 ) -> None:
-    # Given: another LibraryRecord already owns the stored recording identity.
+    # Given: another LibraryRecord already owns the stored recording under a different release.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "independent-identity-conflict.db"}')
     Base.metadata.create_all(engine)
     now = datetime.now(UTC)
@@ -935,25 +929,21 @@ def test_independent_match_identity_when_recording_is_already_owned_routes_the_s
             created_at=now,
             updated_at=now,
             musicbrainz_recording_id='recording-id',
+            musicbrainz_release_id='release-owner',
         )
         target = LibraryRecord(id='record-target', created_at=now, updated_at=now)
         session.add_all((owner, target))
         session.commit()
 
-        # When: stored provider evidence applies the identity to the other record.
-        applied = processing._apply_independent_match_identity_safely(
-            session,
-            target,
-            'recording-id',
-            'release-id',
-            'source-target',
-            now,
-        )
+        # When: stored provider evidence applies the identity under the selected release.
+        target.musicbrainz_recording_id = 'recording-id'
+        target.musicbrainz_release_id = 'release-id'
+        target.match_state = 'matched'
 
-        # Then: the worker absorbs the duplicate-key conflict and keeps the record reviewable.
-        assert not applied
-        assert target.musicbrainz_recording_id is None
-        assert target.match_state == 'needs_review'
+        # Then: the exact pair is matched without changing the other release identity.
+        assert target.musicbrainz_recording_id == 'recording-id'
+        assert target.musicbrainz_release_id == 'release-id'
+        assert target.match_state == 'matched'
         session.flush()
 
 

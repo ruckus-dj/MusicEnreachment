@@ -14,7 +14,6 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
@@ -594,6 +593,11 @@ def _tag_number(value: str | None) -> int | None:
     return int(normalized) if normalized.isdecimal() else None
 
 
+def _folder_selection_root(source_path: str) -> Path:
+    folder = Path(source_path).parent
+    return folder.parent if folder.name.casefold() == 'tracks' else folder
+
+
 def _final_tags(
     source_tags: dict[str, str],
     analyzed_tags: dict[str, str],
@@ -609,85 +613,6 @@ def _final_tags(
 
 def _has_explicit_musicbrainz_identity(tags: dict[str, str]) -> bool:
     return all(tags.get(name, '').strip() for name in ('MUSICBRAINZ_RECORDINGID', 'MUSICBRAINZ_ALBUMID'))
-
-
-def _apply_match_identity(record: LibraryRecord, match_result: MatchResult | None) -> None:
-    if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
-        return
-    record.match_state = 'matched'
-    record.musicbrainz_release_id = match_result.selected_release_mbid
-    record.musicbrainz_recording_id = match_result.recording_score.candidate_mbid
-
-
-def _apply_match_identity_safely(
-    session: Session,
-    record: LibraryRecord,
-    match_result: MatchResult | None,
-    source_id: str,
-    now: datetime,
-) -> bool:
-    if match_result is None or match_result.decision is not MatchDecision.AUTO_SELECTED:
-        return True
-    try:
-        with session.begin_nested():
-            _apply_match_identity(record, match_result)
-            session.flush()
-    except IntegrityError:
-        record.match_state = 'needs_review'
-        record_event(
-            session,
-            record.id,
-            'recording_identity_conflict',
-            'needs_review',
-            'verified recording identity is already assigned to another library record',
-            now,
-            source_id,
-        )
-        return False
-    return True
-
-
-def _apply_independent_match_identity(
-    record: LibraryRecord,
-    recording_mbid: str | None,
-    release_mbid: str | None,
-) -> None:
-    if recording_mbid is not None:
-        record.musicbrainz_recording_id = recording_mbid
-    if release_mbid is not None:
-        record.musicbrainz_release_id = release_mbid
-    record.match_state = (
-        'matched'
-        if record.musicbrainz_recording_id is not None and record.musicbrainz_release_id is not None
-        else 'needs_review'
-    )
-
-
-def _apply_independent_match_identity_safely(
-    session: Session,
-    record: LibraryRecord,
-    recording_mbid: str | None,
-    release_mbid: str | None,
-    source_id: str,
-    now: datetime,
-) -> bool:
-    try:
-        with session.begin_nested():
-            _apply_independent_match_identity(record, recording_mbid, release_mbid)
-            session.flush()
-    except IntegrityError:
-        record.match_state = 'needs_review'
-        record_event(
-            session,
-            record.id,
-            'recording_identity_conflict',
-            'needs_review',
-            'verified recording identity is already assigned to another library record',
-            now,
-            source_id,
-        )
-        return False
-    return True
 
 
 @final
@@ -1512,6 +1437,19 @@ class ProcessingWorker:
             )
             self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
             return
+        folder = _folder_selection_root(source.source_path)
+        folder_members = tuple(
+            item
+            for item in self._session.scalars(
+                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
+            ).all()
+            if _folder_selection_root(item.source_path) == folder
+            and item.disappeared_at is None
+            and item.intake_state != 'replaced'
+        )
+        if len(folder_members) >= 2:
+            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
+            return
         if stored_release is None or stored_recording is None:
             self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
             return
@@ -1570,13 +1508,13 @@ class ProcessingWorker:
         self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
 
     def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
-        folder = Path(source.source_path).parent
+        folder = _folder_selection_root(source.source_path)
         members = tuple(
             item
             for item in self._session.scalars(
                 select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
             ).all()
-            if Path(item.source_path).parent == folder
+            if _folder_selection_root(item.source_path) == folder
             and item.disappeared_at is None
             and item.intake_state != 'replaced'
         )
@@ -1617,7 +1555,7 @@ class ProcessingWorker:
             for item in self._session.scalars(
                 select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
             ).all()
-            if Path(item.source_path).parent == folder
+            if _folder_selection_root(item.source_path) == folder
             and item.disappeared_at is None
             and item.intake_state != 'replaced'
         )
@@ -1635,16 +1573,8 @@ class ProcessingWorker:
         ):
             return
         groups = tuple(_stored_release_scores(item) for item in members)
-        selected_release = select_folder_release(groups)
-        selected_scores = (
-            tuple(
-                next((score.score for score in group if score.candidate_mbid == selected_release), 0.0)
-                for group in groups
-            )
-            if selected_release is not None
-            else ()
-        )
-        if selected_release is None or any(score < self._confidence_threshold() for score in selected_scores):
+        selected_release = select_folder_release(groups, self._confidence_threshold())
+        if selected_release is None:
             for source in members:
                 if source.library_record_id is not None:
                     record = library_record_detail(self._session, source.library_record_id)
@@ -1678,13 +1608,41 @@ class ProcessingWorker:
                     source.id,
                 )
                 continue
-            record = library_record_detail(self._session, source.library_record_id)
-            recording_mbid = record.musicbrainz_recording_id or _stored_release_recording_mbid(release)
-            if not _apply_independent_match_identity_safely(
-                self._session, record, recording_mbid, selected_release, source.id, now
-            ):
+            release_recording_mbid = _stored_release_recording_mbid(release)
+            recording = (
+                _single_scored_recording_candidate(source, self._confidence_threshold(), release_recording_mbid)
+                if release_recording_mbid is not None
+                else None
+            )
+            if recording is None or recording[0] != release_recording_mbid:
+                record = library_record_detail(self._session, source.library_record_id)
+                record.processing_state = 'needs_review'
+                record.match_state = 'needs_review'
+                record_event(
+                    self._session,
+                    source.library_record_id,
+                    'folder_recording_selection_review',
+                    'needs_review',
+                    'selected folder release has no confidence-qualified recording candidate',
+                    now,
+                    source.id,
+                )
                 continue
-            analyzed_tags = _stored_match_tags(None, release)
+            associated = RecordingAssociationService(self._session).associate_automatic(
+                AutomaticAssociationRequest(
+                    source.id,
+                    recording[0],
+                    recording[1].score or 0.0,
+                    self._confidence_threshold(),
+                    json.dumps({'recording_mbid': recording[0], 'release_mbid': selected_release}, sort_keys=True),
+                    now,
+                    release_mbid=selected_release,
+                )
+            )
+            if associated is None:
+                continue
+            record = library_record_detail(self._session, associated.library_record_id)
+            analyzed_tags = _stored_match_tags(recording, release)
             source_tags = {
                 item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
             }
