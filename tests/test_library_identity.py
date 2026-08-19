@@ -388,8 +388,8 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
         assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
 
 
-def test_library_api_confirms_acoustid_candidate_when_alias_keeps_the_recording_id(tmp_path: Path) -> None:
-    # Given: a consolidated historical alias that retains the selected recording identity.
+def test_library_api_confirms_acoustid_candidate_without_erasing_another_release_identity(tmp_path: Path) -> None:
+    # Given: a historical alias that retains the same recording identity without a release identity.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "acoustid-alias.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
@@ -455,7 +455,7 @@ def test_library_api_confirms_acoustid_candidate_when_alias_keeps_the_recording_
         json={'candidate_key': 'recording-id', 'provider': 'acoustid'},
     )
 
-    # Then: the canonical record takes the current identity without a server error.
+    # Then: the canonical record takes the current identity without erasing the other exact identity.
     assert response.status_code == 200
     with Session(engine) as session:
         canonical = session.get(LibraryRecord, 'record-canonical')
@@ -463,7 +463,7 @@ def test_library_api_confirms_acoustid_candidate_when_alias_keeps_the_recording_
         assert canonical is not None
         assert retained_alias is not None
         assert canonical.musicbrainz_recording_id == 'recording-id'
-        assert retained_alias.musicbrainz_recording_id is None
+        assert retained_alias.musicbrainz_recording_id == 'recording-id'
 
 
 def test_library_api_recording_override_moves_only_selected_source_and_preserves_evidence(tmp_path: Path) -> None:

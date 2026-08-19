@@ -198,13 +198,13 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         json={'candidate_key': release_mbid, 'provider': 'musicbrainz', 'entity': 'release'},
     )
 
-    # Then: the source joins the existing recording aggregate before release metadata is applied.
+    # Then: the source gets the selected recording-release identity without merging a different pair.
     assert response.status_code == 200
     with Session(engine) as session:
         moved_source = session.get(SourceRecord, second_source_id)
         assert moved_source is not None
-        assert moved_source.library_record_id == first_record_id
-        target = session.get(LibraryRecord, first_record_id)
+        assert moved_source.library_record_id != first_record_id
+        target = session.get(LibraryRecord, moved_source.library_record_id)
         assert target is not None
         assert target.musicbrainz_release_id == release_mbid
 

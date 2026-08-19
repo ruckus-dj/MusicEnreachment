@@ -84,7 +84,7 @@ from music_ingest.models import (
     SourceTagRecord,
 )
 from music_ingest.models.jobs import JobRepository
-from music_ingest.models.library import CandidateView, LibraryRecordConsolidationRecord, SourceRecordView
+from music_ingest.models.library import CandidateView, SourceRecordView
 from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.processing.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor
@@ -1250,18 +1250,6 @@ def create_app(
                     raise HTTPException(status_code=409, detail='candidate belongs to another provider')
                 now = datetime.now(UTC)
                 if request.entity == 'recording' or request.provider == 'acoustid':
-                    existing_record = session.scalar(
-                        select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == candidate.candidate_key)
-                    )
-                    if existing_record is not None and existing_record.id != record.id:
-                        consolidation = session.get(LibraryRecordConsolidationRecord, existing_record.id)
-                        if consolidation is None or consolidation.canonical_library_record_id != record.id:
-                            raise HTTPException(
-                                status_code=409,
-                                detail='AcousticID recording is already assigned to another library record',
-                            )
-                        existing_record.musicbrainz_recording_id = None
-                        session.flush()
                     record.musicbrainz_recording_id = candidate.candidate_key
                     compatible_ids = evidence.compatible_ids
                     if (
@@ -1306,7 +1294,9 @@ def create_app(
                     candidate_recording_mbid = evidence.compatible_ids[0]
                 target_record = (
                     session.scalar(
-                        select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == candidate_recording_mbid)
+                        select(LibraryRecord)
+                        .where(LibraryRecord.musicbrainz_recording_id == candidate_recording_mbid)
+                        .where(LibraryRecord.musicbrainz_release_id == candidate.candidate_key)
                     )
                     if candidate_recording_mbid is not None
                     else None
