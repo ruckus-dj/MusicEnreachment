@@ -39,6 +39,7 @@ class AutomaticAssociationRequest:
     confidence_threshold: float
     evidence_json: str
     now: datetime
+    release_mbid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,14 +72,18 @@ class RecordingAssociationService:
 
     def associate_automatic(self, request: AutomaticAssociationRequest) -> AssociationResult | None:
         source = self._source(request.source_id)
+        release_mbid = request.release_mbid
         if (
             source.association_override is not None
             and source.association_override.cleared_at is None
             or request.score < request.confidence_threshold
-            or not self._has_confirmed_recording(request.source_id, request.recording_mbid)
+            or release_mbid is None
+            or not self._has_confirmed_pair(request.source_id, request.recording_mbid, release_mbid)
         ):
             self._record_review(
-                request.source_id, 'automatic recording lacks confirmed MusicBrainz recording evidence', request.now
+                request.source_id,
+                'automatic recording and release pair lacks confirmed MusicBrainz evidence',
+                request.now,
             )
             return None
         if self._has_conflicting_content_recording(source, request.recording_mbid):
@@ -88,8 +93,24 @@ class RecordingAssociationService:
                 request.now,
             )
             return None
+        target = self._session.scalar(
+            select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == request.recording_mbid)
+        )
+        if target is not None and target.musicbrainz_release_id != release_mbid:
+            self._record_review(
+                request.source_id,
+                'recording identity is assigned to a different MusicBrainz release',
+                request.now,
+            )
+            return None
         return self._associate(
-            request.source_id, request.recording_mbid, 'automatic', None, request.evidence_json, request.now
+            request.source_id,
+            request.recording_mbid,
+            'automatic',
+            None,
+            request.evidence_json,
+            request.now,
+            release_mbid,
         )
 
     def associate_manual(self, request: ManualAssociationRequest) -> AssociationResult:
@@ -106,7 +127,7 @@ class RecordingAssociationService:
             {'recording_mbid': request.recording_mbid},
             sort_keys=True,
         )
-        result = self._associate(request.source_id, request.recording_mbid, 'manual', None, evidence, request.now)
+        result = self._associate(request.source_id, request.recording_mbid, 'manual', None, evidence, request.now, None)
         override = source.association_override
         if override is None:
             self._session.add(
@@ -147,6 +168,7 @@ class RecordingAssociationService:
         rationale: str | None,
         evidence_json: str,
         now: datetime,
+        release_mbid: str | None,
     ) -> AssociationResult:
         source = self._source(source_id)
         previous_record_id = source.library_record_id
@@ -160,6 +182,7 @@ class RecordingAssociationService:
                 with self._session.begin_nested():
                     target = new_library_record(self._session, now)
                     target.musicbrainz_recording_id = recording_mbid
+                    target.musicbrainz_release_id = release_mbid
                     target.match_state = 'matched'
                     self._session.flush()
             except IntegrityError:
@@ -238,6 +261,7 @@ class RecordingAssociationService:
                             'after_record_id': target.id,
                             'before_record_id': previous_record_id,
                             'recording_mbid': recording_mbid,
+                            'release_mbid': release_mbid,
                         },
                         sort_keys=True,
                     ),
@@ -256,7 +280,7 @@ class RecordingAssociationService:
             raise LookupError(source_id)
         return source
 
-    def _has_confirmed_recording(self, source_id: str, recording_mbid: str) -> bool:
+    def _has_confirmed_pair(self, source_id: str, recording_mbid: str, release_mbid: str) -> bool:
         source = self._source(source_id)
         has_musicbrainz_recording_evidence = any(
             attempt.provider_name == 'musicbrainz' and attempt.outcome in {'musicbrainzmatch', 'ambiguous'}
@@ -266,8 +290,13 @@ class RecordingAssociationService:
             return False
         return any(
             evidence.provider == 'musicbrainz'
-            and (evidence.tags.get('MUSICBRAINZ_RECORDINGID') or evidence.tags.get('MUSICBRAINZ_TRACKID'))
-            == recording_mbid
+            and evidence.entity == 'release'
+            and (
+                recording_mbid in evidence.compatible_ids
+                or evidence.tags.get('MUSICBRAINZ_RECORDINGID') == recording_mbid
+                or evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid
+            )
+            and evidence.tags.get('MUSICBRAINZ_ALBUMID') == release_mbid
             for candidate in source.candidates
             for evidence in (CandidateEvidencePayload.model_validate_json(candidate.evidence),)
         )

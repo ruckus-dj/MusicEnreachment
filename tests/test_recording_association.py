@@ -29,6 +29,7 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 12, tzinfo=UTC)
     recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
     with Session(engine) as session:
         first = LibraryRecord(id='record-first', created_at=now, updated_at=now)
         second = LibraryRecord(id='record-second', created_at=now, updated_at=now)
@@ -53,7 +54,8 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
                     candidate_key='release-one',
                     evidence=(
                         '{"provider":"musicbrainz","score":0.98,"tags":'
-                        '{"MUSICBRAINZ_TRACKID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                        '{"MUSICBRAINZ_ALBUMID":"release-id",'
+                        '"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
                     ),
                 )
             ],
@@ -79,7 +81,8 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
                     candidate_key='release-two',
                     evidence=(
                         '{"provider":"musicbrainz","score":0.98,"tags":'
-                        '{"MUSICBRAINZ_TRACKID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                        '{"MUSICBRAINZ_ALBUMID":"release-id",'
+                        '"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
                     ),
                 )
             ],
@@ -91,7 +94,9 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
         service = RecordingAssociationService(session)
         for source_id in (source_one.id, source_two.id):
             _ = service.associate_automatic(
-                AutomaticAssociationRequest(source_id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now)
+                AutomaticAssociationRequest(
+                    source_id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+                )
             )
         session.commit()
 
@@ -140,20 +145,20 @@ def test_automatic_association_when_ambiguous_release_has_confirmed_recording_mo
         session.add_all((record, source))
         session.commit()
 
-        # When: the worker selects the only context-compatible AcousticID recording.
+        # When: automatic association receives a recording without a confirmed release pair.
         result = RecordingAssociationService(session).associate_automatic(
-            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+            AutomaticAssociationRequest(
+                source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now, 'release-id'
+            )
         )
         session.commit()
 
-        # Then: recording identity is retained although choosing a release still requires review.
+        # Then: the source remains reviewable instead of merging by Recording MBID alone.
         persisted = session.get(SourceRecord, source.id)
-        target = session.get(LibraryRecord, result.library_record_id) if result is not None else None
-        assert result is not None
         assert persisted is not None
-        assert persisted.library_record_id == result.library_record_id
-        assert target is not None
-        assert target.musicbrainz_recording_id == recording_mbid
+        assert result is None
+        assert persisted.library_record_id == record.id
+        assert persisted.review_decisions[-1].state == 'association_review_required'
 
 
 def test_automatic_association_when_source_has_final_metadata_recreates_it_on_target(tmp_path: Path) -> None:
@@ -162,6 +167,7 @@ def test_automatic_association_when_source_has_final_metadata_recreates_it_on_ta
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 12, tzinfo=UTC)
     recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
     with Session(engine) as session:
         previous = LibraryRecord(id='record-previous', created_at=now, updated_at=now)
         source = SourceRecord(
@@ -185,7 +191,8 @@ def test_automatic_association_when_source_has_final_metadata_recreates_it_on_ta
                     candidate_key='recording',
                     evidence=(
                         '{"provider":"musicbrainz","score":0.98,"tags":'
-                        '{"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                        '{"MUSICBRAINZ_ALBUMID":"release-id",'
+                        '"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
                     ),
                 )
             ],
@@ -199,7 +206,9 @@ def test_automatic_association_when_source_has_final_metadata_recreates_it_on_ta
 
         # When: automatic association moves the source to the verified recording aggregate.
         result = RecordingAssociationService(session).associate_automatic(
-            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+            AutomaticAssociationRequest(
+                source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now, release_mbid
+            )
         )
         session.commit()
 
@@ -226,11 +235,13 @@ def test_automatic_association_prefers_target_provider_metadata_over_source_fall
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 12, tzinfo=UTC)
     recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
     with Session(engine) as session:
         previous = LibraryRecord(id='record-previous-provider', created_at=now, updated_at=now)
         target = LibraryRecord(
             id='record-target-provider',
             musicbrainz_recording_id=recording_mbid,
+            musicbrainz_release_id=release_mbid,
             match_state='matched',
             created_at=now,
             updated_at=now,
@@ -256,7 +267,8 @@ def test_automatic_association_prefers_target_provider_metadata_over_source_fall
                     candidate_key='recording',
                     evidence=(
                         '{"provider":"musicbrainz","score":0.98,"tags":'
-                        '{"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
+                        '{"MUSICBRAINZ_ALBUMID":"release-id",'
+                        '"MUSICBRAINZ_RECORDINGID":"f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a"}}'
                     ),
                 )
             ],
@@ -271,7 +283,9 @@ def test_automatic_association_prefers_target_provider_metadata_over_source_fall
 
         # When: automatic association moves the source to the provider-backed target record.
         result = RecordingAssociationService(session).associate_automatic(
-            AutomaticAssociationRequest(source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now)
+            AutomaticAssociationRequest(
+                source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now, release_mbid
+            )
         )
         session.commit()
 

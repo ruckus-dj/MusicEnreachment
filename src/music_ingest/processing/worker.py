@@ -348,6 +348,42 @@ def _single_scored_candidate(
         for candidate_key, evidence in candidates_by_key.items()
         if evidence.score is not None and evidence.score >= confidence_threshold
     )
+    if not qualified:
+        return None
+    best_score = max(evidence.score or 0.0 for _, evidence in qualified)
+    leaders = tuple(candidate for candidate in qualified if (candidate[1].score or 0.0) == best_score)
+    return leaders[0] if len(leaders) == 1 else None
+
+
+def _single_scored_recording_candidate(
+    source: SourceRecord, confidence_threshold: float, preferred_recording_mbid: str | None = None
+) -> tuple[str, CandidateEvidencePayload] | None:
+    candidates_by_recording: dict[str, tuple[float, CandidateEvidencePayload]] = {}
+    for provider in ('acoustid', 'musicbrainz'):
+        latest_run = next((run for run in reversed(source.candidate_runs) if run.provider_name == provider), None)
+        candidates = source.candidates if latest_run is None else latest_run.candidates
+        for candidate in reversed(candidates):
+            evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+            if evidence.provider != provider or evidence.entity != 'recording' or evidence.score is None:
+                continue
+            recording_mbid = (
+                evidence.recording_mbid
+                or evidence.tags.get('MUSICBRAINZ_RECORDINGID')
+                or evidence.tags.get('MUSICBRAINZ_TRACKID')
+                or candidate.candidate_key
+            )
+            current = candidates_by_recording.get(recording_mbid)
+            if current is None or current[0] < evidence.score:
+                candidates_by_recording[recording_mbid] = (evidence.score, evidence)
+    if preferred_recording_mbid is not None:
+        preferred = candidates_by_recording.get(preferred_recording_mbid)
+        if preferred is not None and preferred[0] >= confidence_threshold:
+            return preferred_recording_mbid, preferred[1]
+    qualified = tuple(
+        (recording_mbid, candidate[1])
+        for recording_mbid, candidate in candidates_by_recording.items()
+        if candidate[0] >= confidence_threshold
+    )
     return qualified[0] if len(qualified) == 1 else None
 
 
@@ -377,7 +413,12 @@ def _stored_match_tags(
 def _stored_release_recording_mbid(release: tuple[str, CandidateEvidencePayload] | None) -> str | None:
     if release is None:
         return None
-    return release[1].tags.get('MUSICBRAINZ_RECORDINGID') or release[1].tags.get('MUSICBRAINZ_TRACKID')
+    evidence = release[1]
+    return (
+        evidence.tags.get('MUSICBRAINZ_RECORDINGID')
+        or evidence.tags.get('MUSICBRAINZ_TRACKID')
+        or (evidence.compatible_ids[0] if len(evidence.compatible_ids) == 1 else None)
+    )
 
 
 def _aggregate_musicbrainz_results(results: tuple[ProviderEvidenceResult, ...]) -> MusicBrainzResult:
@@ -1444,44 +1485,52 @@ class ProcessingWorker:
     def _process_candidate_selection(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
         record = ensure_source_record(self._session, source, now)
-        stored_recording = _single_scored_candidate(source, 'acoustid', self._confidence_threshold())
         stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
-        if stored_recording is not None:
-            associated = RecordingAssociationService(self._session).associate_automatic(
-                AutomaticAssociationRequest(
-                    source.id,
-                    stored_recording[0],
-                    stored_recording[1].score or 0.0,
-                    self._confidence_threshold(),
-                    json.dumps({'recording_mbid': stored_recording[0]}, sort_keys=True),
-                    now,
-                )
-            )
-            if associated is not None:
-                record = library_record_detail(self._session, associated.library_record_id)
-        if stored_release is not None:
-            release_recording_mbid = _stored_release_recording_mbid(stored_release)
-            if not _apply_independent_match_identity_safely(
-                self._session,
-                record,
-                record.musicbrainz_recording_id or release_recording_mbid,
-                stored_release[0],
-                source.id,
-                now,
-            ):
-                return
-        if stored_recording is None and stored_release is None:
+        release_recording_mbid = _stored_release_recording_mbid(stored_release)
+        stored_recording = (
+            _single_scored_recording_candidate(source, self._confidence_threshold(), release_recording_mbid)
+            if stored_release is not None and release_recording_mbid is not None
+            else None
+        )
+        pair_is_qualified = (
+            stored_release is not None
+            and release_recording_mbid is not None
+            and stored_recording is not None
+            and stored_recording[0] == release_recording_mbid
+        )
+        if not pair_is_qualified:
+            record.processing_state = 'needs_review'
+            record.match_state = 'needs_review'
             record_event(
                 self._session,
                 record.id,
                 'analysis_ready_for_review',
                 'needs_review',
-                'AcousticID and MusicBrainz analysis completed without a safe automatic match',
+                'recording and release candidates did not form one confidence-qualified pair',
                 now,
                 source.id,
             )
             self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
             return
+        if stored_release is None or stored_recording is None:
+            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
+            return
+        recording_mbid = stored_recording[0]
+        recording_evidence = stored_recording[1]
+        associated = RecordingAssociationService(self._session).associate_automatic(
+            AutomaticAssociationRequest(
+                source.id,
+                recording_mbid,
+                recording_evidence.score or 0.0,
+                self._confidence_threshold(),
+                json.dumps({'recording_mbid': recording_mbid, 'release_mbid': stored_release[0]}, sort_keys=True),
+                now,
+                release_mbid=stored_release[0],
+            )
+        )
+        if associated is None:
+            return
+        record = library_record_detail(self._session, associated.library_record_id)
         analyzed_tags = _stored_match_tags(stored_recording, stored_release)
         record_event(
             self._session,

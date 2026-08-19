@@ -36,6 +36,7 @@ from music_ingest.models import (
     JobRecord,
     LibraryEventRecord,
     LibraryRecord,
+    ProviderAttemptRecord,
     ProviderScheduleRecord,
     ReviewDecisionRecord,
     SourceRecord,
@@ -186,6 +187,30 @@ def test_single_scored_musicbrainz_candidate_ignores_related_recording_evidence(
 
     assert selected is not None
     assert selected[0] == 'release-id'
+
+
+def test_single_scored_candidate_selects_strict_best_release_above_threshold() -> None:
+    # Given: two qualifying releases, with one clearly scoring higher than the other.
+    source = SimpleNamespace(
+        candidate_runs=(),
+        candidates=(
+            CandidateRecord(
+                candidate_key='baby-punk-release',
+                evidence=json.dumps({'provider': 'musicbrainz', 'entity': 'release', 'score': 1.0, 'tags': {}}),
+            ),
+            CandidateRecord(
+                candidate_key='standard-release',
+                evidence=json.dumps({'provider': 'musicbrainz', 'entity': 'release', 'score': 0.87, 'tags': {}}),
+            ),
+        ),
+    )
+
+    # When: the best qualifying release is selected.
+    selected = processing._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
+
+    # Then: the strict score leader is selected instead of leaving both candidates unresolved.
+    assert selected is not None
+    assert selected[0] == 'baby-punk-release'
 
 
 def test_musicbrainz_release_without_recording_link_is_not_persisted() -> None:
@@ -532,6 +557,238 @@ def test_single_scored_candidate_selects_the_only_current_candidate_despite_othe
     # Then: the qualifying sole candidate remains selectable.
     assert selected is not None
     assert selected[0] == 'recording-id'
+
+
+def test_single_scored_recording_candidate_uses_musicbrainz_when_acoustid_is_missing() -> None:
+    # Given: one qualifying MusicBrainz recording candidate and no AcousticID result.
+    source = SourceRecord(
+        id='source-id',
+        source_path='/source.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='a' * 64,
+        duration_seconds=1,
+        origin='manual',
+        intake_state='present',
+        candidates=[
+            CandidateRecord(
+                candidate_key='release-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'release',
+                        'score': 1.0,
+                        'recording_mbid': 'recording-id',
+                        'tags': {
+                            'MUSICBRAINZ_ALBUMID': 'release-id',
+                            'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                        },
+                    }
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='recording-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording',
+                        'score': 1.0,
+                        'recording_mbid': 'recording-id',
+                        'tags': {
+                            'MUSICBRAINZ_ALBUMID': 'release-id',
+                            'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                        },
+                    }
+                ),
+            ),
+        ],
+    )
+
+    # When: the provider-independent recording candidate is selected.
+    selected = processing._single_scored_recording_candidate(source, 0.7)
+
+    # Then: the MusicBrainz recording identity is eligible for the common association path.
+    assert selected is not None
+    assert selected[0] == 'recording-id'
+
+
+def test_single_scored_recording_candidate_prefers_release_compatible_recording() -> None:
+    # Given: two recording candidates and a selected release linked to the first one.
+    source = SourceRecord(
+        id='source-id',
+        source_path='/source.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='a' * 64,
+        duration_seconds=1,
+        origin='manual',
+        intake_state='present',
+        candidates=[
+            CandidateRecord(
+                candidate_key='release-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'release',
+                        'score': 1.0,
+                        'recording_mbid': 'preferred-recording',
+                        'tags': {'MUSICBRAINZ_RECORDINGID': 'preferred-recording'},
+                    }
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='preferred-recording',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording',
+                        'score': 0.997,
+                        'recording_mbid': 'preferred-recording',
+                        'tags': {'MUSICBRAINZ_RECORDINGID': 'preferred-recording'},
+                    }
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='other-recording',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording',
+                        'score': 1.0,
+                        'recording_mbid': 'other-recording',
+                        'tags': {'MUSICBRAINZ_RECORDINGID': 'other-recording'},
+                    }
+                ),
+            ),
+        ],
+    )
+
+    # When: the release-compatible recording is selected.
+    selected = processing._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
+
+    # Then: release compatibility wins over an unrelated marginally higher recording score.
+    assert selected is not None
+    assert selected[0] == 'preferred-recording'
+
+
+def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp_path: Path) -> None:
+    # Given: a MusicBrainz-only source and an existing record with its recording MBID.
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "musicbrainz-only-merge.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        target = LibraryRecord(
+            id='target-record',
+            musicbrainz_recording_id='recording-id',
+            musicbrainz_release_id='release-id',
+            source_state='present',
+            processing_state='complete',
+            match_state='matched',
+            publication_state='current',
+            metadata_state='final',
+            created_at=now,
+            updated_at=now,
+        )
+        duplicate = LibraryRecord(
+            id='duplicate-record',
+            source_state='present',
+            processing_state='analyzing',
+            match_state='needs_review',
+            publication_state='absent',
+            metadata_state='original',
+            created_at=now,
+            updated_at=now,
+        )
+        source = SourceRecord(
+            id='musicbrainz-only-source',
+            source_path='/source/track.mp3',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=1,
+            origin='manual',
+            intake_state='present',
+            source_root_id='legacy',
+            library_record=duplicate,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='musicbrainz',
+                    outcome='musicbrainzmatch',
+                    snapshot_sha256='b' * 64,
+                    snapshot='{}',
+                    created_at=now,
+                )
+            ],
+            candidates=[
+                CandidateRecord(
+                    candidate_key='release-id',
+                    evidence=json.dumps(
+                        {
+                            'provider': 'musicbrainz',
+                            'entity': 'release',
+                            'score': 1.0,
+                            'recording_mbid': 'recording-id',
+                            'tags': {
+                                'MUSICBRAINZ_ALBUMID': 'release-id',
+                                'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                            },
+                        }
+                    ),
+                ),
+                CandidateRecord(
+                    candidate_key='recording-id',
+                    evidence=json.dumps(
+                        {
+                            'provider': 'musicbrainz',
+                            'entity': 'recording',
+                            'score': 1.0,
+                            'recording_mbid': 'recording-id',
+                            'tags': {
+                                'MUSICBRAINZ_ALBUMID': 'release-id',
+                                'MUSICBRAINZ_RECORDINGID': 'recording-id',
+                            },
+                        }
+                    ),
+                ),
+            ],
+        )
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path='/source',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add_all(
+            (
+                target,
+                duplicate,
+                source,
+                JobRecord(
+                    id='musicbrainz-only-selection',
+                    source_id=source.id,
+                    kind='candidate_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+
+        # When: candidate selection processes the source without an AcousticID match.
+        assert ProcessingWorker(session, _config(tmp_path)).run_once()
+        session.commit()
+
+        # Then: the source is reassociated into the existing recording aggregate.
+        refreshed = session.get(SourceRecord, source.id)
+        assert refreshed is not None
+        assert refreshed.library_record_id == target.id
+        assert any(event.kind == 'source_recording_reassigned' for event in target.events)
 
 
 def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:
@@ -1220,8 +1477,8 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
                 [(attempt.state, attempt.finished_at) for attempt in job.attempts],
             )
             assert source is not None and source.library_record is not None
-            assert source.library_record.processing_state == 'matched'
-            assert source.library_record.musicbrainz_recording_id is not None
+            assert source.library_record.processing_state == 'needs_review'
+            assert source.library_record.musicbrainz_recording_id is None
             assert source.library_record.musicbrainz_release_id is None
 
 
