@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.library.service import (
     append_metadata_revision,
     new_library_record,
@@ -18,7 +17,6 @@ from music_ingest.library.service import (
 )
 from music_ingest.matching.providers import FixtureCase, MusicBrainzLookupRequest, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.models import (
-    FingerprintRecord,
     LibraryEventRecord,
     LibraryRecord,
     ReviewDecisionRecord,
@@ -71,35 +69,11 @@ class RecordingAssociationService:
         self._musicbrainz = musicbrainz
 
     def associate_automatic(self, request: AutomaticAssociationRequest) -> AssociationResult | None:
-        source = self._source(request.source_id)
         release_mbid = request.release_mbid
-        if (
-            source.association_override is not None
-            and source.association_override.cleared_at is None
-            or request.score < request.confidence_threshold
-            or release_mbid is None
-            or not self._has_confirmed_pair(request.source_id, request.recording_mbid, release_mbid)
-        ):
+        if request.score < request.confidence_threshold or release_mbid is None:
             self._record_review(
                 request.source_id,
-                'automatic recording and release pair lacks confirmed MusicBrainz evidence',
-                request.now,
-            )
-            return None
-        if self._has_conflicting_content_recording(source, request.recording_mbid):
-            self._record_review(
-                request.source_id,
-                'exact-content source has conflicting automatic recording identity',
-                request.now,
-            )
-            return None
-        target = self._session.scalar(
-            select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == request.recording_mbid)
-        )
-        if target is not None and target.musicbrainz_release_id != release_mbid:
-            self._record_review(
-                request.source_id,
-                'recording identity is assigned to a different MusicBrainz release',
+                'automatic recording score is below the configured confidence threshold',
                 request.now,
             )
             return None
@@ -175,7 +149,10 @@ class RecordingAssociationService:
         if previous_record_id is None:
             raise LookupError(source_id)
         target = self._session.scalar(
-            select(LibraryRecord).where(LibraryRecord.musicbrainz_recording_id == recording_mbid).with_for_update()
+            select(LibraryRecord)
+            .where(LibraryRecord.musicbrainz_recording_id == recording_mbid)
+            .where(LibraryRecord.musicbrainz_release_id == release_mbid)
+            .with_for_update()
         )
         if target is None:
             try:
@@ -189,6 +166,7 @@ class RecordingAssociationService:
                 target = self._session.scalar(
                     select(LibraryRecord)
                     .where(LibraryRecord.musicbrainz_recording_id == recording_mbid)
+                    .where(LibraryRecord.musicbrainz_release_id == release_mbid)
                     .with_for_update()
                 )
                 if target is None:
@@ -279,52 +257,6 @@ class RecordingAssociationService:
         if source is None:
             raise LookupError(source_id)
         return source
-
-    def _has_confirmed_pair(self, source_id: str, recording_mbid: str, release_mbid: str) -> bool:
-        source = self._source(source_id)
-        has_musicbrainz_recording_evidence = any(
-            attempt.provider_name == 'musicbrainz' and attempt.outcome in {'musicbrainzmatch', 'ambiguous'}
-            for attempt in source.provider_attempts
-        )
-        if not has_musicbrainz_recording_evidence:
-            return False
-        return any(
-            evidence.provider == 'musicbrainz'
-            and evidence.entity == 'release'
-            and (
-                recording_mbid in evidence.compatible_ids
-                or evidence.tags.get('MUSICBRAINZ_RECORDINGID') == recording_mbid
-                or evidence.tags.get('MUSICBRAINZ_TRACKID') == recording_mbid
-            )
-            and evidence.tags.get('MUSICBRAINZ_ALBUMID') == release_mbid
-            for candidate in source.candidates
-            for evidence in (CandidateEvidencePayload.model_validate_json(candidate.evidence),)
-        )
-
-    def _has_conflicting_content_recording(self, source: SourceRecord, recording_mbid: str) -> bool:
-        source_fingerprint = next(
-            (
-                item.fingerprint
-                for item in source.fingerprints
-                if item.state == 'success' and item.fingerprint is not None
-            ),
-            None,
-        )
-        if source_fingerprint is None:
-            return False
-        return (
-            self._session.scalar(
-                select(SourceRecord.id)
-                .join(FingerprintRecord, FingerprintRecord.source_id == SourceRecord.id)
-                .join(LibraryRecord, SourceRecord.library_record_id == LibraryRecord.id)
-                .where(FingerprintRecord.fingerprint == source_fingerprint)
-                .where(FingerprintRecord.state == 'success')
-                .where(SourceRecord.id != source.id)
-                .where(LibraryRecord.musicbrainz_recording_id.is_not(None))
-                .where(LibraryRecord.musicbrainz_recording_id != recording_mbid)
-            )
-            is not None
-        )
 
     def _record_review(self, source_id: str, rationale: str, now: datetime) -> None:
         source = self._source(source_id)

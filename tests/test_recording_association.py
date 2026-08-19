@@ -108,8 +108,8 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
         assert first_source.library_record_id == second_source.library_record_id
 
 
-def test_automatic_association_when_ambiguous_release_has_confirmed_recording_moves_source(tmp_path: Path) -> None:
-    # Given: durable MusicBrainz evidence confirms a high-confidence recording, but releases are ambiguous.
+def test_automatic_association_when_release_pair_is_unconfirmed_uses_the_qualified_score(tmp_path: Path) -> None:
+    # Given: a high-confidence recording and release request without an extra persisted-pair guard.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "ambiguous-release-association.db"}')
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 12, tzinfo=UTC)
@@ -145,7 +145,7 @@ def test_automatic_association_when_ambiguous_release_has_confirmed_recording_mo
         session.add_all((record, source))
         session.commit()
 
-        # When: automatic association receives a recording without a confirmed release pair.
+        # When: automatic association receives a confidence-qualified recording and release.
         result = RecordingAssociationService(session).associate_automatic(
             AutomaticAssociationRequest(
                 source.id, recording_mbid, 0.98, 0.9, '{"provider":"worker"}', now, 'release-id'
@@ -153,12 +153,15 @@ def test_automatic_association_when_ambiguous_release_has_confirmed_recording_mo
         )
         session.commit()
 
-        # Then: the source remains reviewable instead of merging by Recording MBID alone.
+        # Then: the source moves to the exact recording-release identity selected by scoring.
         persisted = session.get(SourceRecord, source.id)
         assert persisted is not None
-        assert result is None
-        assert persisted.library_record_id == record.id
-        assert persisted.review_decisions[-1].state == 'association_review_required'
+        assert result is not None
+        assert persisted.library_record_id == result.library_record_id
+        target = session.get(LibraryRecord, result.library_record_id)
+        assert target is not None
+        assert target.musicbrainz_recording_id == recording_mbid
+        assert target.musicbrainz_release_id == 'release-id'
 
 
 def test_automatic_association_when_source_has_final_metadata_recreates_it_on_target(tmp_path: Path) -> None:
