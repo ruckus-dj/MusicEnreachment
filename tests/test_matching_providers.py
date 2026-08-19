@@ -228,7 +228,7 @@ def test_acoustid_when_disabled_or_enabled_only_contributes_recording_evidence(t
     assert disabled.acoustid is not None
     assert enabled.acoustid is not None
     assert enabled.selected_release is None
-    assert len(starts) == 3
+    assert len(starts) == 4
 
 
 def test_provider_evidence_when_force_refresh_is_requested_bypasses_fresh_provider_cache(tmp_path: Path) -> None:
@@ -246,7 +246,7 @@ def test_provider_evidence_when_force_refresh_is_requested_bypasses_fresh_provid
 
     # Then: the provider is scheduled again instead of returning the cached snapshot.
     assert isinstance(forced.acoustid, AcoustIdMatch)
-    assert starts == [NOW, NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=1)]
+    assert starts == [NOW, NOW, NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=1), NOW + timedelta(seconds=1)]
 
 
 def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(tmp_path: Path) -> None:
@@ -776,15 +776,14 @@ def test_provider_evidence_expands_every_acoustid_recording_and_deduplicates_rel
     class MusicBrainzProvider:
         def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzMatch:
             _ = now
-            assert request.recording_mbid is not None
-            calls.append(request.recording_mbid)
+            calls.append(request.recording_mbid or 'text-search')
             return MusicBrainzMatch(
                 FixtureProvenance(FIXTURES / 'musicbrainz' / 'success.json', 'musicbrainz'),
                 ReleaseCandidate(
                     'shared-release',
                     'Shared Album',
                     'Fixture Artist',
-                    recording_mbids=(request.recording_mbid,),
+                    recording_mbids=() if request.recording_mbid is None else (request.recording_mbid,),
                 ),
             )
 
@@ -801,7 +800,7 @@ def test_provider_evidence_expands_every_acoustid_recording_and_deduplicates_rel
         NOW,
     )
 
-    assert calls == list(recording_ids)
+    assert calls == [*recording_ids, 'text-search']
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
     assert result.musicbrainz.candidate.release_mbid == 'shared-release'
     assert result.musicbrainz.candidate.recording_mbids == recording_ids

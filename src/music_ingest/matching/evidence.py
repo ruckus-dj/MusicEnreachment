@@ -101,22 +101,42 @@ class ProviderEvidenceService:
                 )
                 request_hash = sha256(f'release:{release_mbid}'.encode()).hexdigest()
             case None, str() as recording_mbid, _:
-                musicbrainz_request = MusicBrainzLookupRequest(
-                    request.query,
-                    request.musicbrainz_case,
-                    recording_mbid,
-                    request.release_title,
-                    request.artist_name,
-                    recording_title=request.recording_title,
-                    duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
-                    track_number=request.track_number,
+                recording_result = self._lookup_musicbrainz_recordings(request, (recording_mbid,), now)
+                text_result = self._lookup_musicbrainz_request(
+                    request,
+                    MusicBrainzLookupRequest(
+                        request.query,
+                        request.musicbrainz_case,
+                        release_title=request.release_title,
+                        artist_name=request.artist_name,
+                        recording_title=request.recording_title,
+                        duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                        track_number=request.track_number,
+                    ),
+                    sha256(request.query.encode()).hexdigest(),
+                    now,
                 )
-                request_hash = sha256(f'recording:{recording_mbid}'.encode()).hexdigest()
+                return self._merge_musicbrainz_results((recording_result, text_result))
             case None, None, AcoustIdMatch(evidence=evidence):
                 recording_mbids = tuple(
                     dict.fromkeys(recording.recording_mbid for recording in (evidence.candidates or (evidence,)))
                 )
-                return self._lookup_musicbrainz_recordings(request, recording_mbids, now)
+                recording_result = self._lookup_musicbrainz_recordings(request, recording_mbids, now)
+                text_result = self._lookup_musicbrainz_request(
+                    request,
+                    MusicBrainzLookupRequest(
+                        request.query,
+                        request.musicbrainz_case,
+                        release_title=request.release_title,
+                        artist_name=request.artist_name,
+                        recording_title=request.recording_title,
+                        duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                        track_number=request.track_number,
+                    ),
+                    sha256(request.query.encode()).hexdigest(),
+                    now,
+                )
+                return self._merge_musicbrainz_results((recording_result, text_result))
             case _:
                 musicbrainz_request = MusicBrainzLookupRequest(
                     request.query,
@@ -154,6 +174,29 @@ class ProviderEvidenceService:
             )
             for recording_mbid in recording_mbids
         )
+        candidates: dict[str, ReleaseCandidate] = {}
+        provenance = None
+        for result in results:
+            match result:
+                case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
+                    provenance = result_provenance
+                    self._merge_release_candidate(candidates, candidate)
+                case Ambiguous(provenance=result_provenance, candidates=result_candidates):
+                    provenance = result_provenance
+                    for candidate in result_candidates:
+                        self._merge_release_candidate(candidates, candidate)
+                case _:
+                    continue
+        if not candidates or provenance is None:
+            return results[0]
+        unique_candidates = tuple(candidates.values())
+        match unique_candidates:
+            case (candidate,):
+                return MusicBrainzMatch(provenance, candidate)
+            case multiple_candidates:
+                return Ambiguous(provenance, multiple_candidates)
+
+    def _merge_musicbrainz_results(self, results: tuple[MusicBrainzResult, ...]) -> MusicBrainzResult:
         candidates: dict[str, ReleaseCandidate] = {}
         provenance = None
         for result in results:

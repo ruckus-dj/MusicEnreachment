@@ -17,6 +17,7 @@ from music_ingest.matching.providers import (
     release_display_title,
 )
 from music_ingest.matching.scoring import (
+    CandidateScore,
     ExplicitMusicBrainzIds,
     LidarrContext,
     MatchDecision,
@@ -25,6 +26,7 @@ from music_ingest.matching.scoring import (
     recording_candidate_matches,
     resolve_match,
     score_recording_candidate,
+    select_folder_release,
 )
 from tests.support.providers import MusicBrainzFixtureProvider
 
@@ -54,6 +56,34 @@ def test_matching_when_verified_explicit_release_mbid_matches_fresh_musicbrainz_
     assert result.selected_release_mbid == RELEASE_MBID
     assert result.recording_score.score == 0.0
     assert result.release_score.score == 1.0
+
+
+def test_folder_release_selection_when_candidates_intersect_prefers_highest_score_sum() -> None:
+    # Given: two source tracks share two releases, with one release scoring higher across the folder.
+    candidate_scores = (
+        (CandidateScore('release-one', 0.9), CandidateScore('release-two', 0.8)),
+        (CandidateScore('release-one', 0.7), CandidateScore('release-two', 0.95)),
+    )
+
+    # When: the folder-level release is selected from the shared candidate intersection.
+    selected = select_folder_release(candidate_scores)
+
+    # Then: the release with the greatest combined score wins.
+    assert selected == 'release-two'
+
+
+def test_folder_release_selection_when_scores_tie_uses_stable_mbid_order() -> None:
+    # Given: every source has the same two release candidates and equal total scores.
+    candidate_scores = (
+        (CandidateScore('release-two', 0.8), CandidateScore('release-one', 0.9)),
+        (CandidateScore('release-one', 0.8), CandidateScore('release-two', 0.9)),
+    )
+
+    # When: the folder-level release is selected.
+    selected = select_folder_release(candidate_scores)
+
+    # Then: a deterministic member of the tied intersection is returned.
+    assert selected == 'release-one'
 
 
 def test_matching_when_fresh_musicbrainz_maps_explicit_recording_mbid_selects_its_release() -> None:

@@ -91,6 +91,23 @@ class CandidateScore:
     track_component: float = 0.0
 
 
+def select_folder_release(candidate_scores: tuple[tuple[CandidateScore, ...], ...]) -> str | None:
+    """Select one release shared by every source candidate group."""
+    groups = tuple(group for group in candidate_scores if group)
+    if not groups:
+        return None
+    shared_mbids = set(score.candidate_mbid for score in groups[0] if score.candidate_mbid is not None)
+    for group in groups[1:]:
+        shared_mbids.intersection_update(score.candidate_mbid for score in group if score.candidate_mbid is not None)
+    if not shared_mbids:
+        return None
+    totals = {
+        mbid: sum(score.score for group in groups for score in group if score.candidate_mbid == mbid)
+        for mbid in shared_mbids
+    }
+    return min(shared_mbids, key=lambda mbid: (-totals[mbid], mbid))
+
+
 @dataclass(frozen=True, slots=True)
 class MatchResult:
     decision: MatchDecision
