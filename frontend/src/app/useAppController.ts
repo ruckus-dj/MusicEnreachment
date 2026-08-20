@@ -53,6 +53,8 @@ import type {
 
 export type CatalogTrack = { item: Summary; source: Source };
 
+export type PublicationFilter = "all" | "published" | "unpublished";
+
 export type CatalogAlbum = {
   readonly key: string;
   readonly title: string;
@@ -80,6 +82,7 @@ export type AppControllerModel = {
   layer: Layer;
   draft: Tags;
   query: string;
+  publicationFilter: PublicationFilter;
   notice: string;
   loading: boolean;
   scanning: boolean;
@@ -140,6 +143,7 @@ export type AppControllerModel = {
   moveStorageOutput: (path: string) => Promise<void>;
   loadWorkerQueue: () => Promise<void>;
   setQuery: (value: string) => void;
+  setPublicationFilter: (value: PublicationFilter) => void;
   setNotice: (value: string) => void;
   setLayer: (value: Layer) => void;
   setDraft: (value: Tags) => void;
@@ -159,6 +163,7 @@ export function useAppController(): AppControllerModel {
   const [layer, setLayer] = useState<Layer>("final");
   const [draft, setDraft] = useState<Tags>({});
   const [query, setQuery] = useState("");
+  const [publicationFilter, setPublicationFilter] = useState<PublicationFilter>("all");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -800,12 +805,19 @@ export function useAppController(): AppControllerModel {
           const source = catalogSource(item);
           return source ? [{ item, source }] : [];
         })
+        .filter(({ item }) =>
+          publicationFilter === "all"
+            ? true
+            : publicationFilter === "published"
+              ? item.publication_state === "current"
+              : item.publication_state !== "current",
+        )
         .filter(({ item, source }) =>
           `${albumArtistsFor(item, source.source_id).join(" ")} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [items, query],
+    [items, publicationFilter, query],
   );
   const artists = [
     ...new Set(tracks.flatMap(({ item, source }) => albumArtistsFor(item, source.source_id))),
@@ -874,6 +886,7 @@ export function useAppController(): AppControllerModel {
     layer,
     draft,
     query,
+    publicationFilter,
     notice,
     loading,
     scanning,
@@ -934,6 +947,7 @@ export function useAppController(): AppControllerModel {
     moveStorageOutput: moveConfiguredStorageOutput,
     loadWorkerQueue,
     setQuery,
+    setPublicationFilter,
     setNotice,
     setLayer,
     setDraft,
