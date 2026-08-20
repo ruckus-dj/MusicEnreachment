@@ -280,6 +280,28 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                     placeholder="Поиск по артисту, альбому или треку"
                   />
                 </label>
+                <fieldset className="publication-filter">
+                  <legend>Публикация</legend>
+                  {(
+                    [
+                      ["all", "Все"],
+                      ["published", "Только опубликованные"],
+                      ["unpublished", "Только неопубликованные"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      type="button"
+                      className={
+                        controller.publicationFilter === value ? "secondary active" : "secondary"
+                      }
+                      aria-pressed={controller.publicationFilter === value}
+                      key={value}
+                      onClick={() => controller.setPublicationFilter(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </fieldset>
                 <div className="provider-actions">
                   <button
                     type="button"
