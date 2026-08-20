@@ -37,66 +37,23 @@ export function LibraryCatalog({
   if (screen === "artists") {
     return (
       <section className="catalog-grid">
-        {artists.map((name) => (
-          <button
-            type="button"
-            className="entity-card"
-            key={name}
-            onClick={() => onNavigate({ screen: "albums", artist: name })}
-          >
-            <span className="entity-art">{name.slice(0, 1)}</span>
-            <span>
-              <strong>{name}</strong>
-              <small>
-                {
-                  tracks.filter(({ item, source }) =>
-                    albumArtistsFor(item, source.source_id).includes(name),
-                  ).length
-                }{" "}
-                треков
-              </small>
-            </span>
-            <b>→</b>
-          </button>
-        ))}
-      </section>
-    );
-  }
-  if (screen === "albums") {
-    return (
-      <section className="catalog-grid">
-        {albums.map((albumEntry) => {
-          const albumTrack = tracks.find(
-            ({ item, source }) =>
-              albumArtistsFor(item, source.source_id).includes(artist) &&
-              albumKeyFor(item, source.source_id) === albumEntry.key,
-          );
-          return (
+        {artists.length === 0 ? (
+          <div className="empty-state">По выбранному фильтру исполнителей нет.</div>
+        ) : (
+          artists.map((name) => (
             <button
               type="button"
-              className="entity-card album-card"
-              key={albumEntry.key}
-              onClick={() => onNavigate({ screen: "tracks", artist, album: albumEntry.key })}
+              className="entity-card"
+              key={name}
+              onClick={() => onNavigate({ screen: "albums", artist: name })}
             >
-              {albumTrack?.item.artwork?.url ? (
-                <img
-                  className="entity-art album-cover"
-                  src={albumTrack.item.artwork.url}
-                  alt=""
-                  width={56}
-                  height={56}
-                />
-              ) : (
-                <span className="entity-art disc">◉</span>
-              )}
+              <span className="entity-art">{name.slice(0, 1)}</span>
               <span>
-                <strong>{albumEntry.title}</strong>
+                <strong>{name}</strong>
                 <small>
                   {
-                    tracks.filter(
-                      ({ item, source }) =>
-                        albumArtistsFor(item, source.source_id).includes(artist) &&
-                        albumKeyFor(item, source.source_id) === albumEntry.key,
+                    tracks.filter(({ item, source }) =>
+                      albumArtistsFor(item, source.source_id).includes(name),
                     ).length
                   }{" "}
                   треков
@@ -104,8 +61,59 @@ export function LibraryCatalog({
               </span>
               <b>→</b>
             </button>
-          );
-        })}
+          ))
+        )}
+      </section>
+    );
+  }
+  if (screen === "albums") {
+    return (
+      <section className="catalog-grid">
+        {albums.length === 0 ? (
+          <div className="empty-state">По выбранному фильтру альбомов нет.</div>
+        ) : (
+          albums.map((albumEntry) => {
+            const albumTrack = tracks.find(
+              ({ item, source }) =>
+                albumArtistsFor(item, source.source_id).includes(artist) &&
+                albumKeyFor(item, source.source_id) === albumEntry.key,
+            );
+            return (
+              <button
+                type="button"
+                className="entity-card album-card"
+                key={albumEntry.key}
+                onClick={() => onNavigate({ screen: "tracks", artist, album: albumEntry.key })}
+              >
+                {albumTrack?.item.artwork?.url ? (
+                  <img
+                    className="entity-art album-cover"
+                    src={albumTrack.item.artwork.url}
+                    alt=""
+                    width={56}
+                    height={56}
+                  />
+                ) : (
+                  <span className="entity-art disc">◉</span>
+                )}
+                <span>
+                  <strong>{albumEntry.title}</strong>
+                  <small>
+                    {
+                      tracks.filter(
+                        ({ item, source }) =>
+                          albumArtistsFor(item, source.source_id).includes(artist) &&
+                          albumKeyFor(item, source.source_id) === albumEntry.key,
+                      ).length
+                    }{" "}
+                    треков
+                  </small>
+                </span>
+                <b>→</b>
+              </button>
+            );
+          })
+        )}
       </section>
     );
   }
@@ -121,38 +129,42 @@ export function LibraryCatalog({
         </button>
       </div>
       <div className="track-table">
-        {albumTracks.map(({ item, source }) => (
-          <button
-            type="button"
-            className={`track-line ${source.state === "disappeared" ? "unavailable" : ""}`}
-            key={`${item.record_id}-${source.source_id}`}
-            onClick={() =>
-              onNavigate({
-                screen: "track",
-                recordId: item.record_id,
-                sourceId: source.source_id,
-                artist,
-                album,
-              })
-            }
-          >
-            <b>{trackNumberLabelFor(item, source.source_id)}</b>
-            <span>
-              <strong>{titleFor(item, source.source_id)}</strong>
-              <small>{source.path}</small>
-            </span>
-            <span className="track-meta">
-              {source.state === "disappeared"
-                ? "Исходный файл отсутствует"
-                : item.processing_state === "analyzing"
-                  ? "Анализируется"
-                  : item.match_state === "matched"
-                    ? "MusicBrainz подтверждён"
-                    : "Нужна проверка"}
-            </span>
-            <i>→</i>
-          </button>
-        ))}
+        {albumTracks.length === 0 ? (
+          <div className="empty-state">По выбранному фильтру треков нет.</div>
+        ) : (
+          albumTracks.map(({ item, source }) => (
+            <button
+              type="button"
+              className={`track-line ${source.state === "disappeared" ? "unavailable" : ""}`}
+              key={`${item.record_id}-${source.source_id}`}
+              onClick={() =>
+                onNavigate({
+                  screen: "track",
+                  recordId: item.record_id,
+                  sourceId: source.source_id,
+                  artist,
+                  album,
+                })
+              }
+            >
+              <b>{trackNumberLabelFor(item, source.source_id)}</b>
+              <span>
+                <strong>{titleFor(item, source.source_id)}</strong>
+                <small>{source.path}</small>
+              </span>
+              <span className="track-meta">
+                {source.state === "disappeared"
+                  ? "Исходный файл отсутствует"
+                  : item.processing_state === "analyzing"
+                    ? "Анализируется"
+                    : item.match_state === "matched"
+                      ? "MusicBrainz подтверждён"
+                      : "Нужна проверка"}
+              </span>
+              <i>→</i>
+            </button>
+          ))
+        )}
       </div>
     </section>
   );
