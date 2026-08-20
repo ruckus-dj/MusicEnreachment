@@ -94,6 +94,12 @@ Use semantic headings, native buttons and labeled inputs, visible focus rings, r
 - States: selected filter, unselected filter, empty category.
 - Accessibility: `aria-pressed` communicates the selected category; category labels never rely on color alone.
 
+### Publication filter
+- Structure: three native toggle buttons in the media-library toolbar: `Все`, `Только опубликованные`, and `Только неопубликованные`.
+- Scope: filters the artist, album, and track catalog from the record publication state; `current` is published and every other state is not published.
+- States: selected filter, unselected filter, and explicit empty result for each catalog level.
+- Accessibility: a fieldset legend labels the group, exactly one button exposes `aria-pressed="true"`, and labels remain readable when the controls wrap on narrow screens.
+
 ### Metadata inspector
 - Structure: compact Original/Analyzed/Final comparison, labeled Final inputs only in edit mode, revision badge, save action, history.
 - States: read-only comparison, editing Final, saving, success, stale revision/error.
