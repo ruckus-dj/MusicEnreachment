@@ -560,6 +560,24 @@ describe("TrackDetail effective source", () => {
 });
 
 describe("TrackDetail recording correction", () => {
+  it("keeps manual recording MBID correction available without provider evidence", () => {
+    const onOverrideRecording = vi.fn();
+    renderDetail({ onOverrideRecording });
+
+    expect(screen.getByText("Провайдеры не вернули варианты для этого трека")).toBeTruthy();
+    expect(screen.queryByText("Выберите варианты, чтобы продолжить")).toBeNull();
+
+    fireEvent.click(screen.getByText("Выбрать recording MBID вручную"));
+    fireEvent.change(screen.getByTestId("recording-mbid-input"), {
+      target: { value: "  f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a  " },
+    });
+    fireEvent.click(screen.getByTestId("recording-correction-submit"));
+
+    expect(onOverrideRecording).toHaveBeenCalledWith({
+      recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+    });
+  });
+
   it("submits only the trimmed recording MBID", () => {
     const onOverrideRecording = vi.fn();
     renderDetail({

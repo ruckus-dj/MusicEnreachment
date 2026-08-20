@@ -305,7 +305,7 @@ export function TrackDetail({
         onSave={() => void saveEditing()}
       />
 
-      {hasProviderEvidence && (
+      {(hasProviderEvidence || !detail.musicbrainz_recording_id) && (
         <section className="evidence-card provider-panel" aria-labelledby="provider-panel-title">
           <div className="section-heading">
             <div>
@@ -333,32 +333,42 @@ export function TrackDetail({
           </div>
           <div className="provider-summary">
             <span>
-              {detail.states.match === "matched"
-                ? "Выбранные варианты сохранены"
-                : "Выберите варианты, чтобы продолжить"}
+              {hasProviderEvidence
+                ? detail.states.match === "matched"
+                  ? "Выбранные варианты сохранены"
+                  : "Выберите варианты, чтобы продолжить"
+                : "Провайдеры не вернули варианты для этого трека"}
             </span>
-            <small>Списки кандидатов скрыты до раскрытия.</small>
+            <small>
+              {hasProviderEvidence
+                ? "Списки кандидатов скрыты до раскрытия."
+                : "Укажите известный recording MBID вручную или повторите анализ."}
+            </small>
           </div>
-          <CandidateReview
-            entity="recording"
-            candidates={recordingCandidates}
-            selectedKey={selectedAcoustId}
-            compatibleWith={selectedMusicBrainz}
-            reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
-            disabled={reprocessing}
-            musicbrainzHost={musicbrainzHost ?? null}
-            onSelect={onSelectCandidate}
-          />
-          <CandidateReview
-            entity="release"
-            candidates={releaseCandidates}
-            selectedKey={selectedMusicBrainz}
-            compatibleWith={selectedAcoustId}
-            reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
-            disabled={reprocessing}
-            musicbrainzHost={musicbrainzHost ?? null}
-            onSelect={onSelectCandidate}
-          />
+          {hasProviderEvidence && (
+            <>
+              <CandidateReview
+                entity="recording"
+                candidates={recordingCandidates}
+                selectedKey={selectedAcoustId}
+                compatibleWith={selectedMusicBrainz}
+                reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
+                disabled={reprocessing}
+                musicbrainzHost={musicbrainzHost ?? null}
+                onSelect={onSelectCandidate}
+              />
+              <CandidateReview
+                entity="release"
+                candidates={releaseCandidates}
+                selectedKey={selectedMusicBrainz}
+                compatibleWith={selectedAcoustId}
+                reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
+                disabled={reprocessing}
+                musicbrainzHost={musicbrainzHost ?? null}
+                onSelect={onSelectCandidate}
+              />
+            </>
+          )}
           <details className="release-override">
             <summary>Выбрать release MBID вручную</summary>
             <p className="candidate-reason">Используйте это только если найденный релиз неверен.</p>
@@ -382,7 +392,9 @@ export function TrackDetail({
           <details className="release-override">
             <summary>Выбрать recording MBID вручную</summary>
             <p className="candidate-reason">
-              Используйте это, если автоматически выбрана неверная запись трека.
+              {hasProviderEvidence
+                ? "Используйте это, если автоматически выбрана неверная запись трека."
+                : "Если анализ не нашёл вариантов, укажите известный MBID записи трека."}
             </p>
             <div className="provider-actions">
               <input
