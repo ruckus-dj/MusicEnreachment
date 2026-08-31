@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -36,6 +37,7 @@ from music_ingest.matching.providers import (
 
 _COVER_ART_ENDPOINT = 'https://coverartarchive.org/release/'
 _RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels+labels'
+_RECORDING_SEARCH_CONCURRENCY = 4
 
 
 class MusicBrainzTransport(Protocol):
@@ -169,25 +171,27 @@ class MusicBrainzV2Adapter:
         provenance: LiveProvenance,
         now: datetime,
     ) -> MusicBrainzResult:
+        if not recordings:
+            return NoMatch(provenance)
+        lookup_requests = tuple(
+            MusicBrainzLookupRequest(
+                '',
+                request.fixture_case,
+                recording_mbid=recording.id,
+                release_title=request.release_title,
+                artist_name=request.artist_name,
+                recording_title=request.recording_title,
+                duration_seconds=request.duration_seconds,
+                track_number=request.track_number,
+            )
+            for recording in recordings
+        )
+        with ThreadPoolExecutor(max_workers=min(_RECORDING_SEARCH_CONCURRENCY, len(lookup_requests))) as executor:
+            futures = tuple(executor.submit(self.lookup, lookup_request, now) for lookup_request in lookup_requests)
+            results = tuple(future.result() for future in futures)
         candidates: list[ReleaseCandidate] = []
         enriched_provenance = provenance
-        for recording in recordings:
-            if not _recording_search_matches(recording, request):
-                continue
-            recording_id = recording.id
-            result = self.lookup(
-                MusicBrainzLookupRequest(
-                    '',
-                    request.fixture_case,
-                    recording_mbid=recording_id,
-                    release_title=request.release_title,
-                    artist_name=request.artist_name,
-                    recording_title=request.recording_title,
-                    duration_seconds=request.duration_seconds,
-                    track_number=request.track_number,
-                ),
-                now,
-            )
+        for result in results:
             match result:
                 case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
                     enriched_provenance = result_provenance
@@ -393,17 +397,6 @@ def _track_match_score(track: Track, title: str, duration_seconds: int | None, t
     )
     number_score = 1.0 if track_number is not None and track.position == track_number else 0.0
     return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
-
-
-def _recording_search_matches(recording: RecordingSearchResult, request: MusicBrainzLookupRequest) -> bool:
-    if not recording.title or not recording.artist_credit:
-        return True
-    artist = ''.join(f'{credit.name}{credit.joinphrase}' for credit in recording.artist_credit)
-    artist_matches = not request.artist_name or ratio(_title_key(request.artist_name), _title_key(artist)) >= 80
-    title_matches = not request.recording_title or (
-        ratio(_title_key(request.recording_title), _title_key(recording.title)) >= 65
-    )
-    return artist_matches and title_matches
 
 
 def _catalog_numbers(release: Release) -> tuple[str, ...]:

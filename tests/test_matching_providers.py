@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -420,7 +421,7 @@ def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_durati
             _ = headers
             if '/recording/?' in url:
                 return MusicBrainzHttpResponse(200, b'{"recordings":[{"id":"right-id"}]}')
-            if '/recording/right-id?' in url:
+            if '/recording/' in url and '/recording/?' not in url:
                 return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
             return MusicBrainzHttpResponse(
                 200,
@@ -454,8 +455,8 @@ def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_durati
     assert result.candidate.track_number == 2
 
 
-def test_musicbrainz_v2_adapter_recording_search_filters_artist_and_title_before_release_expansion() -> None:
-    # Given: a recording search contains one matching recording and two same-artist/title false positives.
+def test_musicbrainz_v2_adapter_recording_search_expands_all_results_before_ranking() -> None:
+    # Given: a recording search contains a likely match and two lower-ranked results.
     calls: list[str] = []
 
     class FixtureTransport:
@@ -470,13 +471,13 @@ def test_musicbrainz_v2_adapter_recording_search_filters_artist_and_title_before
                     b'{"id":"wrong-title","title":"Other Song","artist-credit":[{"name":"Fixture Artist"}]},'
                     b'{"id":"wrong-artist","title":"Target Song","artist-credit":[{"name":"Other Artist"}]}]}',
                 )
-            if '/recording/right-id?' in url:
+            if '/recording/' in url and '/recording/?' not in url:
                 return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
             return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
 
     adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
-    # When: MusicBrainz expands a recording search using the requested artist and title.
+    # When: MusicBrainz expands every recording returned by the provider.
     result = adapter.lookup(
         MusicBrainzLookupRequest(
             'artist:"Fixture Artist" recording:"Target Song"',
@@ -487,10 +488,46 @@ def test_musicbrainz_v2_adapter_recording_search_filters_artist_and_title_before
         NOW,
     )
 
-    # Then: only the matching recording is expanded into a release candidate.
+    # Then: every returned recording is expanded into release candidates for later ranking.
     assert isinstance(result, MusicBrainzMatch)
-    assert result.candidate.recording_mbids == ('right-id',)
-    assert all('/recording/wrong-' not in url for url in calls)
+    assert result.candidate.recording_mbids == ('right-id', 'wrong-title', 'wrong-artist')
+    assert any('/recording/wrong-title?' in url for url in calls)
+    assert any('/recording/wrong-artist?' in url for url in calls)
+
+
+def test_musicbrainz_v2_adapter_recording_search_expands_independent_recordings_concurrently() -> None:
+    # Given: two recording details that both must begin before either can return.
+    started = Barrier(2)
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
+                )
+            if '/recording/' in url:
+                started.wait(timeout=1)
+                recording_id = url.split('/recording/', 1)[1].split('?', 1)[0]
+                return MusicBrainzHttpResponse(
+                    200,
+                    f'{{"releases":[{{"id":"release-{recording_id}","title":"Fixture Album"}}]}}'.encode(),
+                )
+            release_id = url.split('/release/', 1)[1].split('?', 1)[0]
+            return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Fixture Album"}}'.encode())
+
+    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: the text search expands its independent recording candidates.
+    result = adapter.lookup(MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS), NOW)
+
+    # Then: both recording candidates are preserved after the concurrent expansion.
+    assert isinstance(result, Ambiguous)
+    assert tuple(candidate.release_mbid for candidate in result.candidates) == (
+        'release-recording-a',
+        'release-recording-b',
+    )
 
 
 def test_musicbrainz_v2_adapter_preserves_release_artist_separately_from_track_artist() -> None:
