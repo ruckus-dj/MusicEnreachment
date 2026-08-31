@@ -76,7 +76,7 @@ npm run build --prefix frontend
 Playwright requires a live service URL and seeds its own test state:
 
 ```bash
-MUSIC_INGEST_E2E_BASE_URL=http://localhost:8787 npm run test:e2e --prefix frontend
+MUSIC_INGEST_E2E_BASE_URL=http://127.0.0.1:8787 npm run test:e2e --prefix frontend
 ```
 
 For UI work, use a real browser and verify responsive behavior, keyboard/focus treatment, loading/error feedback, and reduced-motion behavior. `DESIGN.md` is authoritative: source, publication, match, and metadata evidence belongs in the selected track inspector; only final metadata is editable.
@@ -96,7 +96,7 @@ Use the disposable integration stand only for end-to-end changes that need it:
 ```bash
 cd test_stand
 docker compose up --build --wait
-curl --fail http://localhost:8787/healthz
+curl --fail http://127.0.0.1:8787/healthz
 docker compose down
 ```
 
