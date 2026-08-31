@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Final, cast
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 import music_ingest.processing.media_stage as media_stage
@@ -866,6 +866,81 @@ def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp
         assert refreshed is not None
         assert refreshed.library_record_id == target.id
         assert any(event.kind == 'source_recording_reassigned' for event in target.events)
+
+
+def test_candidate_selection_queries_folder_membership_in_sql(tmp_path: Path) -> None:
+    # Given: an incomplete candidate selection with unrelated source evidence persisted.
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-selection-loader.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='legacy',
+            canonical_path='/source',
+            created_at=now,
+            updated_at=now,
+        )
+        record = LibraryRecord(
+            id='candidate-record',
+            source_state='present',
+            processing_state='analyzing',
+            match_state='unknown',
+            publication_state='absent',
+            metadata_state='original',
+            created_at=now,
+            updated_at=now,
+        )
+        source = SourceRecord(
+            id='candidate-source',
+            source_path='/source/album/track.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=1,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+            provider_attempts=[
+                ProviderAttemptRecord(
+                    provider_name='musicbrainz',
+                    outcome='nomatch',
+                    snapshot_sha256='b' * 64,
+                    snapshot='{}',
+                    created_at=now,
+                )
+            ],
+        )
+        session.add_all(
+            (
+                source,
+                JobRecord(
+                    id='candidate-selection-loader',
+                    source_id=source.id,
+                    kind='candidate_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+    statements: list[str] = []
+
+    def listener(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        statements.append(statement.lower())
+
+    with Session(engine) as worker_session:
+        # When: the worker marks the incomplete evidence set as reviewable.
+        assert ProcessingWorker(worker_session, _config(tmp_path)).run_once(
+            on_claimed=lambda _job_id, _kind: event.listen(engine, 'before_cursor_execute', listener)
+        )
+        worker_session.commit()
+    event.remove(engine, 'before_cursor_execute', listener)
+
+    # Then: candidate selection constrains members to the source folder in SQL.
+    assert any('source_records.source_path like' in statement for statement in statements)
 
 
 def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:

@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, raiseload, selectinload
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
@@ -43,6 +43,7 @@ from music_ingest.library.service import (
     attach_source,
     ensure_source_record,
     library_record_detail,
+    new_library_record,
     record_event,
     record_publication,
     reevaluate_effective_source_decision,
@@ -1415,8 +1416,17 @@ class ProcessingWorker:
         _ = JobRepository(self._session).enqueue(source.id, 'candidate_selection', now)
 
     def _process_candidate_selection(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._source(claimed)
-        record = ensure_source_record(self._session, source, now)
+        source = self._candidate_selection_source(claimed)
+        if source.library_record_id is None:
+            record = new_library_record(self._session, now)
+            source.library_record = record
+            self._session.flush()
+        else:
+            record = self._session.scalar(
+                select(LibraryRecord).where(LibraryRecord.id == source.library_record_id).options(raiseload('*'))
+            )
+        if record is None:
+            raise ProcessingInfrastructureError('candidate selection source has no library record')
         stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
         release_recording_mbid = _stored_release_recording_mbid(stored_release)
         stored_recording = (
@@ -1445,15 +1455,7 @@ class ProcessingWorker:
             self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
             return
         folder = _folder_selection_root(source.source_path)
-        folder_members = tuple(
-            item
-            for item in self._session.scalars(
-                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
-            ).all()
-            if _folder_selection_root(item.source_path) == folder
-            and item.disappeared_at is None
-            and item.intake_state != 'replaced'
-        )
+        folder_members = self._folder_members(folder)
         if len(folder_members) >= 2:
             self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
             return
@@ -1516,15 +1518,7 @@ class ProcessingWorker:
 
     def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
         folder = _folder_selection_root(source.source_path)
-        members = tuple(
-            item
-            for item in self._session.scalars(
-                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
-            ).all()
-            if _folder_selection_root(item.source_path) == folder
-            and item.disappeared_at is None
-            and item.intake_state != 'replaced'
-        )
+        members = self._folder_members(folder)
         if len(members) < 2:
             return
         member_ids = tuple(item.id for item in members)
@@ -1557,15 +1551,7 @@ class ProcessingWorker:
         if folder_path is None:
             raise ProcessingInfrastructureError('folder release selection requires a folder target')
         folder = Path(folder_path)
-        members = tuple(
-            item
-            for item in self._session.scalars(
-                select(SourceRecord).where(SourceRecord.library_record_id.is_not(None))
-            ).all()
-            if _folder_selection_root(item.source_path) == folder
-            and item.disappeared_at is None
-            and item.intake_state != 'replaced'
-        )
+        members = self._folder_members(folder)
         if not members:
             return
         member_ids = tuple(item.id for item in members)
@@ -1801,6 +1787,39 @@ class ProcessingWorker:
         if source is None:
             raise ValueError('processing job source is missing')
         return source
+
+    def _candidate_selection_source(self, claimed: ClaimedJob) -> SourceRecord:
+        if claimed.job.source_id is None:
+            raise ValueError('processing job has no source')
+        source = self._session.scalar(
+            select(SourceRecord)
+            .where(SourceRecord.id == claimed.job.source_id)
+            .options(
+                raiseload('*'),
+                selectinload(SourceRecord.candidates),
+                selectinload(SourceRecord.candidate_runs).selectinload(ProviderCandidateRunRecord.candidates),
+                selectinload(SourceRecord.tag_observations),
+            )
+        )
+        if source is None:
+            raise ValueError('processing job source is missing')
+        return source
+
+    def _folder_members(self, folder: Path) -> tuple[SourceRecord, ...]:
+        members = self._session.scalars(
+            select(SourceRecord)
+            .where(SourceRecord.source_path.startswith(f'{folder}/', autoescape=True))
+            .where(SourceRecord.library_record_id.is_not(None))
+            .where(SourceRecord.disappeared_at.is_(None))
+            .where(SourceRecord.intake_state != 'replaced')
+            .options(
+                raiseload('*'),
+                selectinload(SourceRecord.candidates),
+                selectinload(SourceRecord.candidate_runs).selectinload(ProviderCandidateRunRecord.candidates),
+                selectinload(SourceRecord.tag_observations),
+            )
+        ).all()
+        return tuple(item for item in members if _folder_selection_root(item.source_path) == folder)
 
     def _owned_source_path(self, claimed: ClaimedJob, source: SourceRecord, now: datetime) -> Path | None:
         try:
