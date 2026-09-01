@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from base64 import b64decode, b64encode
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import ClassVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session
 
 from music_ingest.dto import EvidenceFixturePayload as _FixturePayload
@@ -26,6 +28,7 @@ from music_ingest.matching.providers import (
     MusicBrainzResult,
     NoMatch,
     RateLimited,
+    RecordingCandidate,
     RecordingEvidence,
     ReleaseCandidate,
     Timeout,
@@ -35,6 +38,42 @@ from music_ingest.models import ProviderSnapshotRecord
 from music_ingest.models.repositories import ProviderPersistenceRepository
 
 _FRESHNESS = timedelta(hours=24)
+_MUSICBRAINZ_SNAPSHOT_VERSION = 1
+_ACOUSTID_SNAPSHOT_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class _MusicBrainzSnapshot:
+    outcome: str
+    response_body: bytes
+    candidates: tuple[ReleaseCandidate, ...]
+
+
+class _MusicBrainzSnapshotPayload(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    version: int
+    outcome: str
+    response_body: str
+    candidates: tuple[ReleaseCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _AcoustIdSnapshot:
+    outcome: str
+    response_body: bytes
+    evidence: RecordingEvidence | None
+
+
+class _AcoustIdSnapshotPayload(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    version: int
+    outcome: str
+    response_body: str
+    recording_mbid: str | None
+    score: float | None
+    candidates: tuple[RecordingCandidate, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,12 +122,17 @@ class ProviderEvidenceService:
         if (
             not request.run_musicbrainz
             or self.musicbrainz is None
-            or (not request.query and request.recording_mbid is None and request.release_mbid is None)
+            or (
+                not request.query
+                and request.recording_mbid is None
+                and not request.recording_mbids
+                and request.release_mbid is None
+            )
         ):
             return Disabled(_provenance('musicbrainz', _disabled_request_hash(), b'', None, now, 'fresh'))
 
-        match request.release_mbid, request.recording_mbid, acoustid:
-            case str() as release_mbid, str() as recording_mbid, _:
+        match request.release_mbid, request.recording_mbids, request.recording_mbid, acoustid:
+            case str() as release_mbid, _, str() as recording_mbid, _:
                 musicbrainz_request = MusicBrainzLookupRequest(
                     request.query,
                     request.musicbrainz_case,
@@ -101,7 +145,23 @@ class ProviderEvidenceService:
                     request.track_number,
                 )
                 request_hash = sha256(f'release:{release_mbid}'.encode()).hexdigest()
-            case None, str() as recording_mbid, _:
+            case None, tuple() as recording_mbids, _, _ if recording_mbids:
+                return self._lookup_musicbrainz_request(
+                    request,
+                    MusicBrainzLookupRequest(
+                        request.query,
+                        request.musicbrainz_case,
+                        release_title=request.release_title,
+                        artist_name=request.artist_name,
+                        recording_title=request.recording_title,
+                        duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
+                        track_number=request.track_number,
+                        recording_mbids=recording_mbids,
+                    ),
+                    _musicbrainz_request_hash(request.query, recording_mbids),
+                    now,
+                )
+            case None, _, str() as recording_mbid, _:
                 if not request.query:
                     return self._lookup_musicbrainz_recordings(request, (recording_mbid,), now)
                 return self._lookup_musicbrainz_request(
@@ -117,10 +177,10 @@ class ProviderEvidenceService:
                         track_number=request.track_number,
                         recording_mbids=(recording_mbid,),
                     ),
-                    sha256(request.query.encode()).hexdigest(),
+                    _musicbrainz_request_hash(request.query, (recording_mbid,)),
                     now,
                 )
-            case None, None, AcoustIdMatch(evidence=evidence):
+            case None, _, None, AcoustIdMatch(evidence=evidence):
                 recording_mbids = tuple(
                     dict.fromkeys(recording.recording_mbid for recording in (evidence.candidates or (evidence,)))
                 )
@@ -136,7 +196,7 @@ class ProviderEvidenceService:
                         track_number=request.track_number,
                         recording_mbids=recording_mbids,
                     ),
-                    sha256(request.query.encode()).hexdigest(),
+                    _musicbrainz_request_hash(request.query, recording_mbids),
                     now,
                 )
             case _:
@@ -149,7 +209,7 @@ class ProviderEvidenceService:
                     duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
                     track_number=request.track_number,
                 )
-                request_hash = sha256(request.query.encode()).hexdigest()
+                request_hash = _musicbrainz_request_hash(request.query)
         return self._lookup_musicbrainz_request(request, musicbrainz_request, request_hash, now)
 
     def _lookup_musicbrainz_recordings(
@@ -265,7 +325,7 @@ class ProviderEvidenceService:
             case None, _, _:
                 return Disabled(_provenance('acoustid', _disabled_request_hash(), b'', None, now, 'fresh'))
             case provider, str() as fingerprint, FixtureCase() as fixture_case:
-                request_hash = sha256(fingerprint.encode()).hexdigest()
+                request_hash = sha256(f'acoustid:v2:{fingerprint}'.encode()).hexdigest()
                 cached = None if request.force_refresh else self._fresh_snapshot('acoustid', request_hash, now)
                 if cached is not None:
                     return _decode_acoustid(cached, 'cached')
@@ -298,7 +358,7 @@ class ProviderEvidenceService:
         return None
 
     def _persist_musicbrainz(self, result: MusicBrainzResult, request_hash: str, now: datetime) -> MusicBrainzResult:
-        raw = _raw_response(result)
+        raw = serialize_musicbrainz_snapshot(result)
         persisted = _provenance('musicbrainz', request_hash, raw, _status(result), now, 'fresh')
         _ = ProviderPersistenceRepository(self.session).append_snapshot(
             provider_name='musicbrainz',
@@ -315,7 +375,7 @@ class ProviderEvidenceService:
         return _with_musicbrainz_provenance(result, persisted)
 
     def _persist_acoustid(self, result: AcoustIdResult, request_hash: str, now: datetime) -> AcoustIdResult:
-        raw = _raw_response(result)
+        raw = serialize_acoustid_snapshot(result)
         persisted = _provenance('acoustid', request_hash, raw, _status(result), now, 'fresh')
         _ = ProviderPersistenceRepository(self.session).append_snapshot(
             provider_name='acoustid',
@@ -340,6 +400,10 @@ class ProviderEvidenceService:
 
 def _disabled_request_hash() -> str:
     return sha256(b'acoustid-disabled').hexdigest()
+
+
+def _musicbrainz_request_hash(query: str, recording_mbids: tuple[str, ...] = ()) -> str:
+    return sha256('\x00'.join((query, *recording_mbids)).encode()).hexdigest()
 
 
 def _utc(value: datetime) -> datetime:
@@ -429,6 +493,25 @@ def _with_acoustid_provenance(result: AcoustIdResult, provenance: LiveProvenance
 
 
 def _decode_musicbrainz(snapshot: ProviderSnapshotRecord, state: str) -> MusicBrainzResult:
+    cached = parse_musicbrainz_snapshot(snapshot.response_body)
+    if cached is not None:
+        provenance = _provenance(
+            'musicbrainz',
+            snapshot.request_hash,
+            cached.response_body,
+            snapshot.http_status,
+            _utc(snapshot.captured_at),
+            state,
+        )
+        match cached.outcome, cached.candidates:
+            case 'success', (candidate,):
+                return MusicBrainzMatch(provenance, candidate)
+            case 'success', candidates if candidates:
+                return Ambiguous(provenance, candidates)
+            case 'success', ():
+                return Malformed(provenance)
+            case outcome, _:
+                return _failed(FixtureCase(outcome), provenance)
     provenance = _provenance(
         'musicbrainz',
         snapshot.request_hash,
@@ -450,10 +533,24 @@ def _decode_musicbrainz(snapshot: ProviderSnapshotRecord, state: str) -> MusicBr
             return _failed(FixtureCase(outcome), provenance)
         case None:
             return Malformed(provenance)
-    return Malformed(provenance)
 
 
 def _decode_acoustid(snapshot: ProviderSnapshotRecord, state: str) -> AcoustIdResult:
+    cached = parse_acoustid_snapshot(snapshot.response_body)
+    if cached is not None:
+        provenance = _provenance(
+            'acoustid',
+            snapshot.request_hash,
+            cached.response_body,
+            snapshot.http_status,
+            _utc(snapshot.captured_at),
+            state,
+        )
+        match cached.outcome, cached.evidence:
+            case 'success', RecordingEvidence() as evidence:
+                return AcoustIdMatch(provenance, evidence)
+            case outcome, _:
+                return _failed(FixtureCase(outcome), provenance)
     provenance = _provenance(
         'acoustid',
         snapshot.request_hash,
@@ -470,13 +567,76 @@ def _decode_acoustid(snapshot: ProviderSnapshotRecord, state: str) -> AcoustIdRe
             return _failed(FixtureCase(outcome), provenance)
         case None:
             return Malformed(provenance)
-    return Malformed(provenance)
 
 
 def _payload(raw: bytes | None) -> _FixturePayload | None:
     try:
         return _FixturePayload.model_validate_json(raw or b'')
     except ValidationError:
+        return None
+
+
+def serialize_musicbrainz_snapshot(result: MusicBrainzResult) -> bytes:
+    candidates: tuple[ReleaseCandidate, ...]
+    match result:
+        case MusicBrainzMatch(candidate=candidate):
+            candidates = (candidate,)
+        case Ambiguous(candidates=result_candidates):
+            candidates = result_candidates
+        case _:
+            candidates = ()
+    return (
+        _MusicBrainzSnapshotPayload(
+            version=_MUSICBRAINZ_SNAPSHOT_VERSION,
+            outcome=_outcome(result),
+            response_body=b64encode(_raw_response(result)).decode(),
+            candidates=candidates,
+        )
+        .model_dump_json()
+        .encode()
+    )
+
+
+def parse_musicbrainz_snapshot(raw: bytes | None) -> _MusicBrainzSnapshot | None:
+    try:
+        payload = _MusicBrainzSnapshotPayload.model_validate_json(raw or b'')
+        if payload.version != _MUSICBRAINZ_SNAPSHOT_VERSION:
+            return None
+        response_body = b64decode(payload.response_body, validate=True)
+        return _MusicBrainzSnapshot(payload.outcome, response_body, payload.candidates)
+    except ValidationError, ValueError:
+        return None
+
+
+def serialize_acoustid_snapshot(result: AcoustIdResult) -> bytes:
+    evidence = result.evidence if isinstance(result, AcoustIdMatch) else None
+    return (
+        _AcoustIdSnapshotPayload(
+            version=_ACOUSTID_SNAPSHOT_VERSION,
+            outcome=_outcome(result),
+            response_body=b64encode(_raw_response(result)).decode(),
+            recording_mbid=None if evidence is None else evidence.recording_mbid,
+            score=None if evidence is None else evidence.score,
+            candidates=() if evidence is None else evidence.candidates,
+        )
+        .model_dump_json()
+        .encode()
+    )
+
+
+def parse_acoustid_snapshot(raw: bytes | None) -> _AcoustIdSnapshot | None:
+    try:
+        payload = _AcoustIdSnapshotPayload.model_validate_json(raw or b'')
+        if payload.version != _ACOUSTID_SNAPSHOT_VERSION:
+            return None
+        response_body = b64decode(payload.response_body, validate=True)
+        evidence = (
+            None
+            if payload.recording_mbid is None or payload.score is None
+            else RecordingEvidence(payload.recording_mbid, payload.score, payload.candidates)
+        )
+        return _AcoustIdSnapshot(payload.outcome, response_body, evidence)
+    except ValidationError, ValueError:
         return None
 
 

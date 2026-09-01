@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from music_ingest.dto import RuntimeSettings
-from music_ingest.external.musicbrainz_genres import load_genre_catalog
+from music_ingest.matching.genre_catalog import load_genre_catalog
 from music_ingest.models import RuntimeSettingRecord
 
 

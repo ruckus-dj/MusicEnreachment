@@ -9,8 +9,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.external.acoustid import AcoustIdV2Adapter
-from music_ingest.external.musicbrainz import MusicBrainzV2Adapter, select_genres
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
+from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
+from music_ingest.matching.musicbrainz_mapping import select_genres
 from music_ingest.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
@@ -260,7 +261,7 @@ def test_musicbrainz_v2_adapter_uses_the_configured_user_agent_without_network(t
             calls.append((url, headers))
             return MusicBrainzHttpResponse(200, b'{"releases": []}')
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the public v2 adapter performs a release lookup through the injected seam.
     result = adapter.lookup(
@@ -285,7 +286,7 @@ def test_musicbrainz_v2_adapter_uses_the_configured_host_without_network() -> No
             calls.append(url)
             return MusicBrainzHttpResponse(200, b'{"releases": []}')
 
-    adapter = MusicBrainzV2Adapter(
+    adapter = MusicBrainzProviderAdapter(
         FixtureTransport(), 'music-ingest/1.0 (operator@example.test)', 'https://musicbrainz.internal'
     )
 
@@ -305,7 +306,7 @@ def test_musicbrainz_v2_adapter_fetches_front_artwork_for_release_once() -> None
             calls.append((url, headers))
             return MusicBrainzHttpResponse(200, b'\xff\xd8\xffcover\xff\xd9')
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter requests artwork for a MusicBrainz release.
     artwork = adapter.fetch_artwork('release-id')
@@ -334,7 +335,7 @@ def test_musicbrainz_v2_adapter_when_recording_id_is_known_looks_up_linked_relea
                 )
             return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter resolves the recording through MusicBrainz.
     result = adapter.lookup(
@@ -365,7 +366,7 @@ def test_musicbrainz_v2_adapter_excludes_pseudo_releases_from_recording_results(
                 b'{"id":"official-id","title":"Official Album","status":"Official"}]}',
             )
 
-    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest('', FixtureCase.SUCCESS, 'recording-id'),
         NOW,
     )
@@ -394,7 +395,7 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
                 )
             return MusicBrainzHttpResponse(200, body)
 
-    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest(
             'artist:Fixture release:Fixture Album',
             FixtureCase.SUCCESS,
@@ -433,7 +434,7 @@ def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_durati
                 b'{"id":"right-id","title":"Target Song"}}]}]}',
             )
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: MusicBrainz ranks the enriched release against the source track context.
     result = adapter.lookup(
@@ -476,7 +477,7 @@ def test_musicbrainz_v2_adapter_recording_search_expands_all_results_before_rank
                 return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
             return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: MusicBrainz expands every recording returned by the provider.
     result = adapter.lookup(
@@ -518,7 +519,7 @@ def test_musicbrainz_v2_adapter_recording_search_expands_independent_recordings_
             release_id = url.split('/release/', 1)[1].split('?', 1)[0]
             return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Fixture Album"}}'.encode())
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the text search expands its independent recording candidates.
     result = adapter.lookup(MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS), NOW)
@@ -546,7 +547,7 @@ def test_musicbrainz_v2_adapter_preserves_release_artist_separately_from_track_a
                 b'"recording":{"id":"recording-id","title":"Fixture Track"}}]}]}',
             )
 
-    adapter = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter resolves the recording to its release.
     result = adapter.lookup(
@@ -589,7 +590,7 @@ def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() 
                 )
             return MusicBrainzHttpResponse(200, body)
 
-    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS, 'recording-id', 'Fixture Album'),
         NOW,
     )
@@ -617,7 +618,7 @@ def test_musicbrainz_v2_adapter_keeps_ambiguous_release_candidates() -> None:
                 b'{"releases":[{"id":"release-a","title":"Album A"},{"id":"release-b","title":"Album B"}]}',
             )
 
-    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS),
         NOW,
     )
@@ -639,7 +640,7 @@ def test_musicbrainz_v2_adapter_preserves_release_catalog_numbers() -> None:
             )
 
     # When: the provider parses the detailed release.
-    result = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest('', FixtureCase.SUCCESS, release_mbid='release-eu'),
         NOW,
     )
@@ -687,7 +688,7 @@ def test_provider_adapters_reject_false_acoustid_recording_and_select_japanese_m
     acoustid = AcoustIdV2Adapter(AcoustIdTransport(), 'client').lookup(
         AcoustIdLookupRequest('fingerprint', FixtureCase.SUCCESS, 238.17), NOW
     )
-    musicbrainz = MusicBrainzV2Adapter(MusicBrainzTransport(), 'music-ingest/1.0 (operator@example.test)')
+    musicbrainz = MusicBrainzProviderAdapter(MusicBrainzTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: each equally scored recording is resolved against MusicBrainz facts.
     assert isinstance(acoustid, AcoustIdMatch)
@@ -727,7 +728,7 @@ def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
         starts.append,
     )
@@ -765,7 +766,7 @@ def test_provider_evidence_recording_only_lookup_skips_text_search(tmp_path: Pat
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         None,
         starts.append,
     )
@@ -806,7 +807,7 @@ def test_provider_evidence_preserves_ambiguous_recording_candidates_after_persis
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
         starts.append,
     )
@@ -891,7 +892,7 @@ def test_musicbrainz_when_search_media_omits_position_preserves_candidates() -> 
                 b'{"id":"release-b","title":"Fixture Album","media":[{"track-count":1}]}]}',
             )
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter parses the response.
     result = provider.lookup(MusicBrainzLookupRequest('artist:Fixture release:Fixture Album', FixtureCase.SUCCESS), NOW)
@@ -920,7 +921,7 @@ def test_musicbrainz_searches_recordings_then_expands_each_recording_to_releases
                 return MusicBrainzHttpResponse(200, b'{"id":"release-b","title":"Album B"}')
             raise AssertionError(f'unexpected MusicBrainz URL: {url}')
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     result = provider.lookup(
         MusicBrainzLookupRequest('artist:Fixture recording:Track', FixtureCase.SUCCESS),
@@ -942,7 +943,7 @@ def test_musicbrainz_search_with_recordings_without_releases_returns_no_match() 
                 return MusicBrainzHttpResponse(200, b'{"releases":[]}')
             raise AssertionError(f'unexpected MusicBrainz URL: {url}')
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     result = provider.lookup(
         MusicBrainzLookupRequest('artist:Fixture recording:Track', FixtureCase.SUCCESS),
@@ -981,7 +982,7 @@ def test_musicbrainz_search_deduplicates_release_enrichment_across_recordings() 
                 return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Shared Album"}}'.encode())
             raise AssertionError(f'unexpected MusicBrainz URL: {url}')
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter resolves the recording search and its linked releases.
     result = provider.lookup(
@@ -1021,7 +1022,7 @@ def test_musicbrainz_search_keeps_recording_metadata_for_the_best_recording() ->
                 )
             raise AssertionError(f'unexpected MusicBrainz URL: {url}')
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     result = provider.lookup(
         MusicBrainzLookupRequest(
@@ -1065,7 +1066,7 @@ def test_musicbrainz_search_merges_acoustid_recordings_before_detail_lookup() ->
                 raise AssertionError(f'unexpected MusicBrainz URL: {url}')
             return MusicBrainzHttpResponse(200, body)
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     result = provider.lookup(
         MusicBrainzLookupRequest(
@@ -1098,7 +1099,7 @@ def test_musicbrainz_when_unique_single_track_release_is_selected_preserves_reco
                 '"title":"Вебкам","artist-credit":[{"name":"кис-кис"}]}}]}]}'.encode(),
             )
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter resolves the unique release without AcoustID input.
     result = provider.lookup(MusicBrainzLookupRequest('artist:кис-кис release:Вебкам', FixtureCase.SUCCESS), NOW)
@@ -1126,7 +1127,7 @@ def test_musicbrainz_when_exact_release_is_inside_ambiguous_search_enriches_its_
                 '"title":"Вебкам","artist-credit":[{"name":"кис-кис"}]}}]}]}'.encode(),
             )
 
-    provider = MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
     # When: the adapter resolves the ambiguous release search with the source album title.
     result = provider.lookup(
@@ -1158,7 +1159,7 @@ def test_provider_evidence_when_acoustid_confidence_is_low_uses_text_search_fall
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
         starts.append,
     )
@@ -1202,7 +1203,7 @@ def test_provider_evidence_when_acoustid_has_no_match_uses_text_search_fallback(
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         AcoustIdFixtureProvider(FIXTURES / 'acoustid'),
         starts.append,
     )
@@ -1227,6 +1228,55 @@ def test_provider_evidence_when_acoustid_has_no_match_uses_text_search_fallback(
     assert result.musicbrainz.candidate.recording_mbids == ('recording-id',)
 
 
+def test_provider_evidence_uses_every_persisted_acoustid_recording_mbid(tmp_path: Path) -> None:
+    # Given: a MusicBrainz retry has persisted multiple AcoustID recording candidates.
+    session, starts = _session(tmp_path)
+    recording_mbids = tuple(_RECORDING_RELEASES)[:2]
+    calls: list[str] = []
+
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            if '/recording/?' in url:
+                return MusicBrainzHttpResponse(200, b'{"recordings": []}')
+            for recording_mbid in recording_mbids:
+                if f'/recording/{recording_mbid}?' in url:
+                    return MusicBrainzHttpResponse(200, _recording_releases_response(recording_mbid))
+            for release_mbid, *_ in (_RECORDING_RELEASES[recording_mbid] for recording_mbid in recording_mbids):
+                if f'/release/{release_mbid}?' in url:
+                    return MusicBrainzHttpResponse(200, _release_response(release_mbid))
+            raise AssertionError(f'unexpected MusicBrainz request: {url}')
+
+    service = ProviderEvidenceService(
+        session,
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        None,
+        starts.append,
+    )
+
+    # When: the retry supplies the whole persisted candidate set alongside its primary recording.
+    result = service.lookup(
+        ProviderEvidenceRequest(
+            'artist:Fixture release:Fixture Album',
+            FixtureCase.SUCCESS,
+            None,
+            None,
+            recording_mbid=recording_mbids[0],
+            recording_mbids=recording_mbids,
+            run_acoustid=False,
+        ),
+        NOW,
+    )
+
+    # Then: every recording is resolved and all of their linked releases remain reviewable.
+    assert isinstance(result.musicbrainz, Ambiguous)
+    assert {candidate.release_mbid for candidate in result.musicbrainz.candidates} == {
+        _RECORDING_RELEASES[recording_mbid][0] for recording_mbid in recording_mbids
+    }
+    assert all(any(f'/recording/{recording_mbid}?' in url for url in calls) for recording_mbid in recording_mbids)
+
+
 def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_cached(tmp_path: Path) -> None:
     # Given: the public adapter and service share an injected, socket-free transport.
     session, starts = _session(tmp_path)
@@ -1238,7 +1288,7 @@ def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_
 
     service = ProviderEvidenceService(
         session,
-        MusicBrainzV2Adapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
+        MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)'),
         None,
         starts.append,
     )

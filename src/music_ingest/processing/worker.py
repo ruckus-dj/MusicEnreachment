@@ -32,8 +32,6 @@ from music_ingest.enrichment.fingerprints import (
     persist_fingerprint,
 )
 from music_ingest.external.acoustid import AcoustIdV2Adapter
-from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
-from music_ingest.external.musicbrainz_genres import display_genre_name
 from music_ingest.inspectors._tool import ToolEvidence
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
@@ -49,6 +47,7 @@ from music_ingest.library.service import (
     reevaluate_effective_source_decision,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
+from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     AcoustIdProvider,
@@ -101,6 +100,7 @@ from music_ingest.models import (
 from music_ingest.models.entities import DecoderEvidenceRecord
 from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.models.repositories import DecoderEvidenceRepository, FingerprintRepository
+from music_ingest.normalize.genre_names import display_genre_name
 from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
@@ -1891,7 +1891,7 @@ class ProcessingWorker:
         )
         defaults = RuntimeSettings()
         musicbrainz = (
-            MusicBrainzV2Adapter(
+            MusicBrainzProviderAdapter(
                 self._config.live_transport,
                 settings.get(SettingKey.MUSICBRAINZ_USER_AGENT, defaults.musicbrainz_user_agent),
                 settings.get(SettingKey.MUSICBRAINZ_HOST, defaults.musicbrainz_host),

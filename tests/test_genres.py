@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from music_ingest.external.musicbrainz_genres import GenreCatalogEntry, GenreCatalogSyncError, sync_genres
+from music_ingest.matching.genres import GenreCatalogEntry, GenreCatalogSyncError, sync_genres
 from music_ingest.matching.providers import MusicBrainzHttpResponse
 
 

@@ -54,14 +54,7 @@ from music_ingest.dto import (
     StorageOutputPreviewResponse,
     StoragePathRequest,
 )
-from music_ingest.external.musicbrainz import MusicBrainzTransport, MusicBrainzV2Adapter
-from music_ingest.external.musicbrainz_genres import (
-    GenreCatalogSyncError,
-    GenreTransport,
-    load_genre_catalog,
-    replace_genre_catalog,
-    sync_genres,
-)
+from music_ingest.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.library.service import (
     append_metadata_revision,
     attach_source,
@@ -71,6 +64,9 @@ from music_ingest.library.service import (
     reevaluate_effective_source_decision,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
+from music_ingest.matching.genre_catalog import load_genre_catalog, replace_genre_catalog
+from music_ingest.matching.genres import GenreCatalogSyncError, sync_genres
+from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
 from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.models import (
     CandidateRecord,
@@ -284,8 +280,8 @@ def create_app(
     media_root: Path | None = None,
     e2e_seed_enabled: bool = False,
     musicbrainz_provider: MusicBrainzProvider | None = None,
-    musicbrainz_transport: MusicBrainzTransport | None = None,
-    genre_transport: GenreTransport | None = None,
+    musicbrainz_transport: SyncMusicBrainzTransport | None = None,
+    genre_transport: SyncMusicBrainzTransport | None = None,
     storage_browse_roots: tuple[Path, ...] | None = None,
     worker_monitor: ProcessingRuntimeMonitor | None = None,
     on_runtime_settings_updated: Callable[[RuntimeSettings], None] | None = None,
@@ -1131,7 +1127,7 @@ def create_app(
                 provider = musicbrainz_provider
                 if provider is None and musicbrainz_transport is not None:
                     settings = build_runtime_settings(session)
-                    provider = MusicBrainzV2Adapter(
+                    provider = MusicBrainzProviderAdapter(
                         musicbrainz_transport,
                         settings.musicbrainz_user_agent,
                         settings.musicbrainz_host,
@@ -1399,7 +1395,7 @@ def create_app(
                 provider = musicbrainz_provider
                 if provider is None and musicbrainz_transport is not None:
                     settings = build_runtime_settings(session)
-                    provider = MusicBrainzV2Adapter(
+                    provider = MusicBrainzProviderAdapter(
                         musicbrainz_transport,
                         settings.musicbrainz_user_agent,
                         settings.musicbrainz_host,
