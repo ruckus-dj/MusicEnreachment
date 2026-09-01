@@ -387,6 +387,7 @@ class RecordingSearchResult(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
     id: str
+    score: float | None = None
     title: str = ''
     artist_credit: tuple[ArtistCredit, ...] = Field(default=(), alias='artist-credit')
 
