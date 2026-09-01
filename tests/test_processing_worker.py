@@ -24,6 +24,7 @@ from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCap
 from music_ingest.matching.evidence import ProviderEvidenceResult
 from music_ingest.matching.providers import (
     FixtureProvenance,
+    MusicBrainzLookupRequest,
     MusicBrainzMatch,
     ReleaseCandidate,
 )
@@ -491,6 +492,41 @@ def test_musicbrainz_lookup_when_acoustid_supplies_recording_mbid_works_without_
     # Then: missing tags cannot disable the authoritative MBID lookup.
     assert result is not None
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
+
+
+def test_musicbrainz_lookup_uses_artist_and_title_without_album(tmp_path: Path) -> None:
+    # Given: source metadata has an artist and title but no album.
+    requests: list[MusicBrainzLookupRequest] = []
+
+    class Provider:
+        def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzMatch:
+            _ = now
+            requests.append(request)
+            return MusicBrainzMatch(
+                FixtureProvenance(Path(__file__).parent / 'fixtures' / 'musicbrainz' / 'success.json', 'a' * 64),
+                ReleaseCandidate('release-id', 'Страна дождей', 'Noize MC'),
+            )
+
+    config = replace(_config(tmp_path), musicbrainz_provider=Provider())
+    fingerprint = FingerprintResult(
+        FingerprintState.SUCCESS, 'fixture-fingerprint', 138, 'fixture', 'a' * 64, None, None
+    )
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "worker.db"}')
+    Base.metadata.create_all(engine)
+
+    # When: the worker builds a provider lookup from the available source tags.
+    with Session(engine) as session:
+        result = ProcessingWorker(session, config)._lookup_providers(
+            (('ARTIST', 'Noize MC'), ('TITLE', 'Страна дождей')),
+            fingerprint,
+            datetime.now(UTC),
+            run_acoustid=False,
+        )
+
+    # Then: the text query keeps both available fields instead of becoming empty.
+    assert result is not None
+    assert len(requests) == 1
+    assert requests[0].query == 'artist:"Noize MC" recording:"Страна дождей"'
 
 
 def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> None:
