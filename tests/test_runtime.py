@@ -8,16 +8,18 @@ from pathlib import Path
 import anyio
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 import music_ingest.api.server as server
 from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
+from music_ingest.dto import RuntimeSettings
 from music_ingest.models import Base, JobRecord, RuntimeSettingRecord, SourceRootRecord
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing import runtime as processing_runtime
+from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -61,7 +63,8 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             )
         )
         session.commit()
-    client = TestClient(create_app(lambda: Session(engine)))
+    updates: list[RuntimeSettings] = []
+    client = TestClient(create_app(lambda: Session(engine), on_runtime_settings_updated=updates.append))
 
     response = client.put(
         '/api/settings',
@@ -88,6 +91,77 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
     assert response.json()['musicbrainz_request_delay_seconds'] == 0
     assert response.json()['acoustid_request_delay_seconds'] == 0.5
     assert response.json()['worker_concurrency'] == 4
+    assert updates[-1].musicbrainz_request_delay_seconds == 0
+
+
+def test_setting_values_when_requested_keys_are_persisted_uses_one_query_and_omits_missing_keys(
+    tmp_path: Path,
+) -> None:
+    # Given: two persisted settings and one requested key that is absent.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "scalar-settings.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add_all(
+            (
+                RuntimeSettingRecord(
+                    key=SettingKey.MUSICBRAINZ_HOST.value,
+                    value='https://musicbrainz.internal',
+                    updated_at=datetime.now(UTC),
+                ),
+                RuntimeSettingRecord(
+                    key=SettingKey.WORKER_CONCURRENCY.value,
+                    value='6',
+                    updated_at=datetime.now(UTC),
+                ),
+            )
+        )
+        session.commit()
+
+    statements: list[str] = []
+
+    def capture_select(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        if statement.lstrip().upper().startswith('SELECT'):
+            statements.append(statement)
+
+    event.listen(engine, 'before_cursor_execute', capture_select)
+    try:
+        with Session(engine) as session:
+            values = get_setting_values(
+                session,
+                (
+                    SettingKey.MUSICBRAINZ_HOST,
+                    SettingKey.WORKER_CONCURRENCY,
+                    SettingKey.ACOUSTID_ENABLED,
+                ),
+            )
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture_select)
+
+    assert values == {
+        SettingKey.MUSICBRAINZ_HOST: 'https://musicbrainz.internal',
+        SettingKey.WORKER_CONCURRENCY: '6',
+    }
+    assert len(statements) == 1
+
+
+def test_build_runtime_settings_when_values_are_missing_uses_defaults_without_loading_genres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an empty settings database and a genre loader that must not be touched.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "default-settings.db"}')
+    Base.metadata.create_all(engine)
+
+    def fail_if_genres_are_loaded(_session: Session) -> tuple[object, ...]:
+        raise AssertionError('genre catalog should be opt-in')
+
+    monkeypatch.setattr('music_ingest.settings.load_genre_catalog', fail_if_genres_are_loaded)
+    with Session(engine) as session:
+        settings = build_runtime_settings(session)
+        missing = get_setting_value(session, SettingKey.MUSICBRAINZ_HOST)
+
+    assert settings.musicbrainz_host == RuntimeSettings().musicbrainz_host
+    assert settings.worker_concurrency == RuntimeSettings().worker_concurrency
+    assert missing is None
 
 
 @pytest.mark.parametrize(
@@ -130,6 +204,7 @@ def test_runtime_app_when_e2e_seed_flag_is_explicitly_enabled_sets_seed_state(
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
     monkeypatch.setenv('MUSIC_INGEST_E2E_SEED_ENABLED', 'true')
+    Base.metadata.create_all(engine)
 
     # When: the runtime application is composed.
     application = server.create_runtime_app()
@@ -146,6 +221,7 @@ def test_runtime_app_when_started_upgrades_schema_before_it_serves_requests(monk
     monkeypatch.setattr(server, 'run_migrations', migrations.append)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    Base.metadata.create_all(engine)
 
     # When: Uvicorn constructs the application factory.
     client = TestClient(server.create_runtime_app())
@@ -168,6 +244,7 @@ def test_runtime_app_passes_live_transport_to_musicbrainz_review_endpoint(
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
     monkeypatch.setattr(server, 'build_live_transport', lambda **_kwargs: transport)
+    Base.metadata.create_all(engine)
 
     def capture_app(*_args: object, **kwargs: object):
         captured.update(kwargs)
@@ -180,6 +257,39 @@ def test_runtime_app_passes_live_transport_to_musicbrainz_review_endpoint(
 
     # Then: the API receives the same transport used by the worker.
     assert captured['musicbrainz_transport'] is transport
+
+
+def test_runtime_config_when_resolving_musicbrainz_host_reads_only_host_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a persisted custom host and a runtime settings loader that must not be used by transport callbacks.
+    runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "runtime-host.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(
+            RuntimeSettingRecord(
+                key='providers.musicbrainz.host', value='https://musicbrainz.internal', updated_at=datetime.now(UTC)
+            )
+        )
+        session.commit()
+    monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
+    monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    captured: list[Callable[[], str]] = []
+
+    def capture_transport(*, musicbrainz_host: Callable[[], str], **_kwargs: object) -> object:
+        captured.append(musicbrainz_host)
+        return object()
+
+    monkeypatch.setattr(server, 'build_live_transport', capture_transport)
+    monkeypatch.setattr(server, 'create_app', lambda *_args, **_kwargs: server.FastAPI())
+
+    # When: the runtime composes its live provider transport.
+    _ = server.create_runtime_app()
+
+    # Then: the callback returns the persisted host without loading the genre catalog or other settings.
+    assert captured[0]() == 'https://musicbrainz.internal'
 
 
 def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -11,7 +11,7 @@ from anyio.to_thread import run_sync
 from sqlalchemy.orm import Session
 
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.settings import load_runtime_settings
+from music_ingest.settings import SettingKey, get_setting_value
 
 LOGGER = logging.getLogger(__name__)
 _MAX_WORKER_CONCURRENCY = 8
@@ -114,4 +114,5 @@ def _run_processing_once(
 
 def _worker_concurrency(session_factory: Callable[[], Session]) -> int:
     with session_factory() as session:
-        return load_runtime_settings(session).worker_concurrency
+        value = get_setting_value(session, SettingKey.WORKER_CONCURRENCY)
+        return 1 if value is None else int(value)

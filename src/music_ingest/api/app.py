@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
@@ -89,7 +90,13 @@ from music_ingest.models.repositories import ReceiptReplayConflictError
 from music_ingest.processing.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor
 from music_ingest.reconciliation import mark_disappeared_source
-from music_ingest.settings import RuntimeSettings, load_runtime_settings, save_runtime_settings
+from music_ingest.settings import (
+    RuntimeSettings,
+    SettingKey,
+    build_runtime_settings,
+    get_setting_value,
+    save_runtime_settings,
+)
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 from music_ingest.source_roots import (
     SourceRootConflictError,
@@ -281,6 +288,7 @@ def create_app(
     genre_transport: GenreTransport | None = None,
     storage_browse_roots: tuple[Path, ...] | None = None,
     worker_monitor: ProcessingRuntimeMonitor | None = None,
+    on_runtime_settings_updated: Callable[[RuntimeSettings], None] | None = None,
 ) -> FastAPI:
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     app.state.e2e_seed_enabled = e2e_seed_enabled
@@ -498,7 +506,7 @@ def create_app(
                 content={
                     'observed_at': observed_at.isoformat(),
                     'worker': {
-                        'configured_concurrency': load_runtime_settings(session).worker_concurrency,
+                        'configured_concurrency': int(get_setting_value(session, SettingKey.WORKER_CONCURRENCY) or '1'),
                         'liveness': 'available' if worker_monitor is not None else 'unavailable',
                         'slots': [
                             {
@@ -1122,10 +1130,11 @@ def create_app(
             with session_factory() as session:
                 provider = musicbrainz_provider
                 if provider is None and musicbrainz_transport is not None:
+                    settings = build_runtime_settings(session)
                     provider = MusicBrainzV2Adapter(
                         musicbrainz_transport,
-                        load_runtime_settings(session).musicbrainz_user_agent,
-                        load_runtime_settings(session).musicbrainz_host,
+                        settings.musicbrainz_user_agent,
+                        settings.musicbrainz_host,
                     )
                 if provider is None:
                     raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
@@ -1389,10 +1398,11 @@ def create_app(
                 now = datetime.now(UTC)
                 provider = musicbrainz_provider
                 if provider is None and musicbrainz_transport is not None:
+                    settings = build_runtime_settings(session)
                     provider = MusicBrainzV2Adapter(
                         musicbrainz_transport,
-                        load_runtime_settings(session).musicbrainz_user_agent,
-                        load_runtime_settings(session).musicbrainz_host,
+                        settings.musicbrainz_user_agent,
+                        settings.musicbrainz_host,
                     )
                 result = RecordingAssociationService(session, provider).associate_manual(
                     ManualAssociationRequest(
@@ -1472,7 +1482,7 @@ def create_app(
     @app.get('/api/settings', response_model=RuntimeSettingsResponse)
     def runtime_settings() -> RuntimeSettingsResponse:
         with session_factory() as session:
-            return _settings_response(load_runtime_settings(session))
+            return _settings_response(build_runtime_settings(session))
 
     def source_root_service(session: Session) -> SourceRootService:
         return SourceRootService(session, source_roots_parent if media_root is None else None)
@@ -1618,7 +1628,7 @@ def create_app(
     @app.put('/api/settings', response_model=RuntimeSettingsResponse)
     def update_runtime_settings(request: RuntimeSettingsRequest) -> RuntimeSettingsResponse:
         with session_factory() as session:
-            current = load_runtime_settings(session)
+            current = build_runtime_settings(session)
             settings = RuntimeSettings(
                 confidence_threshold=request.confidence_threshold,
                 timeout_seconds=request.timeout_seconds,
@@ -1640,6 +1650,8 @@ def create_app(
                 raise HTTPException(status_code=422, detail='AcoustID requires a client key when enabled')
             save_runtime_settings(session, settings)
             session.commit()
+            if on_runtime_settings_updated is not None:
+                on_runtime_settings_updated(settings)
             return _settings_response(settings)
 
     @app.get('/api/genres', response_model=GenreCatalogResponse)
@@ -1647,7 +1659,7 @@ def create_app(
         with session_factory() as session:
             entries = load_genre_catalog(session)
             if not entries and genre_transport is not None:
-                settings = load_runtime_settings(session)
+                settings = build_runtime_settings(session)
                 try:
                     synced_entries = sync_genres(
                         genre_transport, user_agent=settings.musicbrainz_user_agent, host=settings.musicbrainz_host
@@ -1664,7 +1676,7 @@ def create_app(
         if genre_transport is None:
             raise HTTPException(status_code=503, detail='MusicBrainz genre sync is unavailable')
         with session_factory() as session:
-            settings = load_runtime_settings(session)
+            settings = build_runtime_settings(session)
             try:
                 entries = sync_genres(
                     genre_transport, user_agent=settings.musicbrainz_user_agent, host=settings.musicbrainz_host
@@ -1679,12 +1691,12 @@ def create_app(
     @app.get('/api/settings/matching', response_model=MatchingSettings)
     def matching_settings() -> MatchingSettings:
         with session_factory() as session:
-            return MatchingSettings(confidence_threshold=load_runtime_settings(session).confidence_threshold)
+            return MatchingSettings(confidence_threshold=build_runtime_settings(session).confidence_threshold)
 
     @app.put('/api/settings/matching', response_model=MatchingSettings)
     def update_matching_settings(request: MatchingSettings) -> MatchingSettings:
         with session_factory() as session:
-            current = load_runtime_settings(session)
+            current = build_runtime_settings(session)
             save_runtime_settings(
                 session,
                 current.model_copy(update={'confidence_threshold': request.confidence_threshold}),

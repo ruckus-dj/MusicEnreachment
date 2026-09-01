@@ -20,14 +20,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from music_ingest.api.app import create_app
+from music_ingest.dto import RuntimeSettings
 from music_ingest.external.musicbrainz import MusicBrainzV2Adapter
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
-from music_ingest.models import UnsortedFilenameCounterRecord
+from music_ingest.models import RuntimeSettingRecord, UnsortedFilenameCounterRecord
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.metadata import allocate_unsorted_filename_with_factory
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor, run_processing_worker
-from music_ingest.settings import load_runtime_settings
+from music_ingest.settings import build_runtime_settings
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
 _CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_CONNECT_TIMEOUT_SECONDS'
@@ -110,7 +111,7 @@ def create_runtime_app() -> FastAPI:
     )
 
     session_factory = sessionmaker(engine)
-    processing_config = _processing_config(os.environ, session_factory)
+    processing_config, on_runtime_settings_updated = _processing_config(os.environ, session_factory)
     worker_monitor = ProcessingRuntimeMonitor()
     raw_source_roots_parent = os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE)
     source_roots_parent = None if raw_source_roots_parent is None else Path(raw_source_roots_parent)
@@ -145,23 +146,48 @@ def create_runtime_app() -> FastAPI:
             if item
         ),
         worker_monitor=worker_monitor,
+        on_runtime_settings_updated=on_runtime_settings_updated,
     )
     return application
 
 
-def _processing_config(environment: Mapping[str, str], session_factory: Callable[[], Session]) -> ProcessingConfig:
+def _processing_config(
+    environment: Mapping[str, str], session_factory: Callable[[], Session]
+) -> tuple[ProcessingConfig, Callable[[RuntimeSettings], None]]:
+    with session_factory() as session:
+        settings = build_runtime_settings(session)
+
+    disabled_providers = frozenset(
+        provider_name
+        for provider_name, interval in (
+            ('musicbrainz', settings.musicbrainz_request_delay_seconds),
+            ('acoustid', settings.acoustid_request_delay_seconds),
+        )
+        if interval <= 0
+    )
+    limiter = DatabaseRequestRateLimiter(session_factory, disabled_providers=disabled_providers)
+
+    def on_runtime_settings_updated(updated: RuntimeSettings) -> None:
+        limiter.set_provider_disabled('musicbrainz', updated.musicbrainz_request_delay_seconds <= 0)
+        limiter.set_provider_disabled('acoustid', updated.acoustid_request_delay_seconds <= 0)
+
     def musicbrainz_host() -> str:
         with session_factory() as session:
-            return load_runtime_settings(session).musicbrainz_host
+            setting = session.get(RuntimeSettingRecord, 'providers.musicbrainz.host')
+            return RuntimeSettings().musicbrainz_host if setting is None or not setting.value else setting.value
 
     live_transport = build_live_transport(
-        limiter=DatabaseRequestRateLimiter(session_factory), musicbrainz_host=musicbrainz_host
+        limiter=limiter,
+        musicbrainz_host=musicbrainz_host,
     )
-    return ProcessingConfig(
-        incoming_root=Path('/data/incoming'),
-        staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
-        media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
-        live_transport=live_transport,
-        artwork_provider=MusicBrainzV2Adapter(live_transport, 'music-ingest/0.1.0 (music-ingest@example.com)'),
-        unsorted_filename_allocator=lambda suffix: allocate_unsorted_filename_with_factory(session_factory, suffix),
+    return (
+        ProcessingConfig(
+            incoming_root=Path('/data/incoming'),
+            staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
+            media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
+            live_transport=live_transport,
+            artwork_provider=MusicBrainzV2Adapter(live_transport, 'music-ingest/0.1.0 (music-ingest@example.com)'),
+            unsorted_filename_allocator=lambda suffix: allocate_unsorted_filename_with_factory(session_factory, suffix),
+        ),
+        on_runtime_settings_updated,
     )

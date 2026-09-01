@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, raiseload, selectinload
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
-from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy
+from music_ingest.dto import ALLOWED_TAG_KEYS, CandidateEvidencePayload, FieldPolicy, GenrePolicy, RuntimeSettings
 from music_ingest.enrichment.artwork import (
     ArtworkProvider,
     ArtworkWriteError,
@@ -142,7 +142,7 @@ from music_ingest.publication.service import (
 )
 from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
-from music_ingest.settings import load_runtime_settings
+from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 
 LOGGER = logging.getLogger(__name__)
@@ -914,7 +914,7 @@ class ProcessingWorker:
                 self._config.ffmpeg_command,
                 self._config.fpcalc_command,
                 self._timeout_seconds(),
-                load_runtime_settings(self._session) if metadata is not None else None,
+                build_runtime_settings(self._session, include_genres=True) if metadata is not None else None,
                 cached_fingerprint is None,
             )
         )
@@ -1034,6 +1034,9 @@ class ProcessingWorker:
         tags = read_tags(source_path)
         record = ensure_source_record(self._session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
+        recording_mbids = tuple(
+            dict.fromkeys((*_acoustid_recording_mbids(source), *((recording_mbid,) if recording_mbid else ())))
+        )
         provider_result = self._lookup_providers(
             tags,
             fingerprint,
@@ -1041,6 +1044,7 @@ class ProcessingWorker:
             force_refresh=True,
             recording_mbid=recording_mbid,
             release_mbid=release_mbid,
+            recording_mbids=recording_mbids,
             run_acoustid=claimed.job.kind == 'acoustid_analysis',
             run_musicbrainz=claimed.job.kind == 'musicbrainz_analysis',
         )
@@ -1091,50 +1095,10 @@ class ProcessingWorker:
                 )
             return
         candidate_request = _matching_request(record, source, tags)
-        candidate_results = [provider_result]
-        if claimed.job.kind == 'musicbrainz_analysis':
-            for candidate_recording_mbid in _acoustid_recording_mbids(source):
-                candidate_result = (
-                    provider_result
-                    if candidate_recording_mbid == recording_mbid
-                    else self._lookup_providers(
-                        tags,
-                        fingerprint,
-                        now,
-                        force_refresh=True,
-                        recording_mbid=candidate_recording_mbid,
-                        release_mbid=None,
-                        run_acoustid=False,
-                        run_musicbrainz=True,
-                    )
-                )
-                if candidate_result is None:
-                    continue
-                match candidate_result.musicbrainz:
-                    case MusicBrainzMatch(candidate=candidate):
-                        candidates = (candidate,)
-                    case Ambiguous(candidates=candidates):
-                        pass
-                    case _:
-                        continue
-                matching_candidates = _release_candidates_for_recording(candidate_recording_mbid, candidates)
-                if matching_candidates:
-                    provenance = candidate_result.musicbrainz.provenance
-                    musicbrainz = (
-                        MusicBrainzMatch(provenance, matching_candidates[0])
-                        if len(matching_candidates) == 1
-                        else Ambiguous(provenance, matching_candidates)
-                    )
-                    candidate_results.append(
-                        replace(
-                            candidate_result,
-                            musicbrainz=musicbrainz,
-                        )
-                    )
         _ = self._capture_provider_attempt(
             source,
             'musicbrainz',
-            _aggregate_musicbrainz_results(tuple(candidate_results)),
+            provider_result.musicbrainz,
             None,
             now,
             candidate_request,
@@ -1244,7 +1208,7 @@ class ProcessingWorker:
                 self._config.ffmpeg_command,
                 self._config.fpcalc_command,
                 self._timeout_seconds(),
-                load_runtime_settings(self._session) if metadata is not None else None,
+                build_runtime_settings(self._session, include_genres=True) if metadata is not None else None,
                 False,
             )
         )
@@ -1342,7 +1306,8 @@ class ProcessingWorker:
         self._session.flush()
 
     def _artwork_enabled(self) -> bool:
-        return load_runtime_settings(self._session).artwork_enabled
+        value = get_setting_value(self._session, SettingKey.ARTWORK_ENABLED)
+        return value is None or value.casefold() == 'true'
 
     def _lookup_providers(
         self,
@@ -1352,6 +1317,7 @@ class ProcessingWorker:
         force_refresh: bool = False,
         recording_mbid: str | None = None,
         release_mbid: str | None = None,
+        recording_mbids: tuple[str, ...] = (),
         run_acoustid: bool = True,
         run_musicbrainz: bool = True,
     ) -> ProviderEvidenceResult | None:
@@ -1386,6 +1352,7 @@ class ProcessingWorker:
                 artist_name=values.get('ARTIST'),
                 recording_mbid=recording_mbid,
                 release_mbid=release_mbid,
+                recording_mbids=recording_mbids,
                 run_acoustid=run_acoustid,
                 run_musicbrainz=run_musicbrainz,
             ),
@@ -1664,7 +1631,14 @@ class ProcessingWorker:
 
     def _confidence_threshold(self) -> float:
         if self._config.live_transport is not None:
-            return load_runtime_settings(self._session).confidence_threshold
+            value = get_setting_value(self._session, SettingKey.CONFIDENCE_THRESHOLD)
+            if value is None:
+                return self._config.confidence_threshold
+            try:
+                parsed = float(value)
+            except ValueError:
+                return self._config.confidence_threshold
+            return parsed if 0.0 <= parsed <= 1.0 else self._config.confidence_threshold
         setting = self._session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
         if setting is None:
             return self._config.confidence_threshold
@@ -1904,25 +1878,48 @@ class ProcessingWorker:
     ) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
         if self._config.live_transport is None:
             return self._config.musicbrainz_provider, self._config.acoustid_provider, self._config.artwork_provider
-        settings = load_runtime_settings(self._session)
+        settings = get_setting_values(
+            self._session,
+            (
+                SettingKey.MUSICBRAINZ_ENABLED,
+                SettingKey.MUSICBRAINZ_USER_AGENT,
+                SettingKey.MUSICBRAINZ_HOST,
+                SettingKey.ACOUSTID_ENABLED,
+                SettingKey.ACOUSTID_CLIENT_KEY,
+                SettingKey.ARTWORK_ENABLED,
+            ),
+        )
+        defaults = RuntimeSettings()
         musicbrainz = (
             MusicBrainzV2Adapter(
-                self._config.live_transport, settings.musicbrainz_user_agent, settings.musicbrainz_host
+                self._config.live_transport,
+                settings.get(SettingKey.MUSICBRAINZ_USER_AGENT, defaults.musicbrainz_user_agent),
+                settings.get(SettingKey.MUSICBRAINZ_HOST, defaults.musicbrainz_host),
             )
-            if settings.musicbrainz_enabled
+            if settings.get(SettingKey.MUSICBRAINZ_ENABLED, str(defaults.musicbrainz_enabled).lower()) == 'true'
             else None
         )
         acoustid = (
-            AcoustIdV2Adapter(self._config.live_transport, settings.acoustid_client_key)
-            if settings.acoustid_enabled and settings.acoustid_client_key
+            AcoustIdV2Adapter(self._config.live_transport, client_key)
+            if settings.get(SettingKey.ACOUSTID_ENABLED, str(defaults.acoustid_enabled).lower()) == 'true'
+            and (client_key := settings.get(SettingKey.ACOUSTID_CLIENT_KEY, ''))
             else None
         )
-        artwork = musicbrainz if settings.artwork_enabled else None
+        artwork = (
+            musicbrainz
+            if settings.get(SettingKey.ARTWORK_ENABLED, str(defaults.artwork_enabled).lower()) == 'true'
+            else None
+        )
         return musicbrainz, acoustid, artwork
 
     def _timeout_seconds(self) -> float:
         if self._config.live_transport is not None:
-            return load_runtime_settings(self._session).timeout_seconds
+            value = get_setting_value(self._session, SettingKey.TIMEOUT_SECONDS)
+            if value is not None:
+                try:
+                    return float(value)
+                except ValueError:
+                    pass
         return self._config.timeout_seconds
 
     def _allocate_unsorted_filename(self, suffix: str) -> str:
@@ -1933,7 +1930,12 @@ class ProcessingWorker:
 
     def _max_attempts(self) -> int:
         if self._config.live_transport is not None:
-            return load_runtime_settings(self._session).max_attempts
+            value = get_setting_value(self._session, SettingKey.MAX_ATTEMPTS)
+            if value is not None:
+                try:
+                    return int(value)
+                except ValueError:
+                    pass
         return self._config.max_attempts
 
     def _retry_claim(
@@ -1953,7 +1955,12 @@ class ProcessingWorker:
         repository.retry(
             claimed,
             datetime.now(UTC),
-            timedelta(seconds=load_runtime_settings(self._session).retry_delay_seconds)
+            timedelta(
+                seconds=float(
+                    get_setting_value(self._session, SettingKey.RETRY_DELAY_SECONDS)
+                    or self._config.retry_delay.total_seconds()
+                )
+            )
             if self._config.live_transport is not None
             else self._config.retry_delay,
             self._max_attempts(),
