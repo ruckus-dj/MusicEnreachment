@@ -1,121 +1,87 @@
-# Music Ingest: worker guide
+# Music Ingest contributor guide
 
-## Purpose and non-negotiable safety model
+## Project map
 
-Music Ingest receives Lidarr/manual incoming audio, records immutable provenance, analyzes it, and publishes a managed copy for review. The application is **source-agnostic**: Lidarr is only one intake mechanism.
+- `src/music_ingest/` is the Python 3.14 FastAPI service. Follow the domain flow: intake → persisted provenance → processing worker → inspection/sanitization/normalization → staged publication and review.
+- `frontend/` is a separate React, TypeScript, and Vite application. Its build output is served by FastAPI from `src/music_ingest/ui/dist`.
+- `tests/` contains the backend test suite and fixtures; `alembic/` contains database migrations.
+- `test_stand/` is disposable Docker integration infrastructure for PostgreSQL, Lidarr, the worker, and Navidrome.
 
-Treat every configured source root and its files as read-only evidence:
+## Setup and validation
 
-- Never edit, rename, move, replace, or delete an incoming source file, including `.nfo` files.
-- A changed source is a new observation/version, never an overwrite of prior provenance.
-- Source roots must be existing, non-symlink immediate children of `MUSIC_INGEST_SOURCE_ROOTS_PARENT`.
-- Write derived files only to the staging, managed-media, or report roots. Dry-run reports must be outside the source tree.
-- Publish through the existing staged-validation/atomic-replacement flow. Do not expose a new publication before its manifest and hashes are validated; preserve publication history.
-- Uncertain, stale, unsafe, unavailable, ambiguous, or low-confidence matching results must remain reviewable rather than being auto-selected.
+Use `uv` for Python and `npm` for the frontend:
 
-The stable domain identity is `LibraryRecord`, not a source path, filename, webhook, or current publication. Preserve append-only source, metadata, and event history.
-
-## Repository map
-
-| Path | What belongs here |
-| --- | --- |
-| `src/music_ingest/api/` | FastAPI routes, startup/runtime composition, and static UI serving |
-| `src/music_ingest/cli/` | CLI commands, notably the non-mutating `dry-run` |
-| `src/music_ingest/intake/`, `processing/`, `publication/` | Intake, worker orchestration, and safe staged publication pipeline |
-| `src/music_ingest/persistence/` | SQLAlchemy models, repositories, and durable state |
-| `src/music_ingest/matching/`, `enrichment/`, `inspectors/`, `sanitizers/`, `normalize/`, `lyrics/` | Media analysis and optional provider capabilities |
-| `src/music_ingest/review/`, `integrations/`, `config/` | Review domain, Lidarr/Navidrome adapters, typed policy parsing |
-| `alembic/` | PostgreSQL schema migrations; add a migration for persisted-schema changes |
-| `tests/` | Unit and contract tests; `tests/integration/` holds opt-in/disposable-infrastructure scenarios |
-| `frontend/src/` | React/Vite review UI, API client, types, and components |
-| `frontend/e2e/` | Playwright end-to-end tests against an externally started service |
-| `test_stand/` | Disposable local Docker Compose stand: PostgreSQL, application, Lidarr, and Navidrome |
-| `komodo/` and `docs/deployment.md` | Production deployment contract; production is Komodo-only, not Docker Compose |
-| `DESIGN.md` | UI/product contract: library model, visual tokens, layouts, accessibility, and accepted debt |
-
-## Runtime flow
-
-`Lidarr webhook -> api/lidarr_intake.py -> intake/service.py -> persistence -> processing/worker.py -> inspection/sanitization/normalization -> publication/service.py -> managed media + review records`
-
-`serve` starts FastAPI plus an in-process polling worker. Migrations run before readiness. Production uses PostgreSQL; test code may use SQLite where the relevant model behavior is portable.
-
-## Tooling and validation
-
-Python requires 3.14+ and uses `uv`. Install dependencies once with:
-
-```bash
-uv sync
+```sh
+uv sync --locked
+npm ci --prefix frontend
 ```
 
-Run the applicable checks after changes:
+Run the checks relevant to changed code. Before handing off a cross-stack change, run the full CI-equivalent set:
 
-```bash
+```sh
 uv run pytest
 uv run ruff check src tests alembic
 uv run ruff format --check src tests alembic
-uv run ty check
-```
-
-Ruff targets Python 3.14, has a 120-character line limit, and formats with single quotes. `pytest` already adds `src` to `pythonpath`. `ty` is also required by pre-commit. Do not weaken tests or suppress typing errors.
-
-For focused work, run the affected test module first, then the full suite when practical:
-
-```bash
-uv run pytest tests/test_source_roots.py
-uv run pytest tests/test_publication_attempts.py
-```
-
-The frontend has its own Node toolchain and Biome conventions: two-space indentation, double quotes, semicolons, trailing commas, and a 100-column formatter width.
-
-```bash
-npm run check --prefix frontend
-npm run test --prefix frontend
+uv run ty check src
 npm run build --prefix frontend
+npm run check --prefix frontend
 ```
 
-Playwright requires a live service URL and seeds its own test state:
+Useful focused frontend commands:
 
-```bash
-MUSIC_INGEST_E2E_BASE_URL=http://127.0.0.1:8787 npm run test:e2e --prefix frontend
+```sh
+npm run test --prefix frontend
+npm run test:e2e --prefix frontend
+npm run format:check --prefix frontend
+npm run lint --prefix frontend
+npm run typecheck --prefix frontend
 ```
 
-For UI work, use a real browser and verify responsive behavior, keyboard/focus treatment, loading/error feedback, and reduced-motion behavior. `DESIGN.md` is authoritative: source, publication, match, and metadata evidence belongs in the selected track inspector; only final metadata is editable.
+Python media paths require `ffmpeg`, `ffprobe`, and `fpcalc` (Chromaprint). The default pytest suite is offline: do not add network dependencies to it. Live-provider tests are an explicit opt-in only:
 
-## Running the application
+```sh
+MUSIC_INGEST_ENABLE_LIVE_TESTS=1 uv run pytest -m live -q
+```
 
-```bash
+Pre-commit runs repository-wide Python checks, pytest, and frontend checks:
+
+```sh
+uv run pre-commit run --all-files
+```
+
+## Runtime and manual verification
+
+```sh
 PYTHONPATH=src uv run python -m music_ingest dry-run SOURCE_DIRECTORY REPORT_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
+PYTHONPATH=src uv run python -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
 PYTHONPATH=src uv run python -m music_ingest serve
 ```
 
-`serve` needs `MUSIC_INGEST_DATABASE_URL` plus configured source, incoming, staging, and media roots. The local UI/API is public; production authentication is handled by the reverse proxy. Do not add app-level token authentication merely because the deployment is public.
+- `dry-run` and `media-stage` must not mutate their input source files.
+- `serve` starts FastAPI on port 8000, applies Alembic migrations before readiness, and starts the in-process worker. It requires a PostgreSQL `MUSIC_INGEST_DATABASE_URL`; SQLite is not a supported runtime database.
+- Runtime filesystem paths are security boundaries: `MUSIC_INGEST_SOURCE_ROOTS_PARENT` and configured source roots must be existing non-symlink directories; source roots are immediate children of the parent and read-only. `MUSIC_INGEST_STAGING_ROOT` is disposable and writable; `MUSIC_INGEST_MEDIA_ROOT` is writable managed output.
 
-Use the disposable integration stand only for end-to-end changes that need it:
+For end-to-end integration work:
 
-```bash
+```sh
 cd test_stand
 docker compose up --build --wait
 curl --fail http://127.0.0.1:8787/healthz
 docker compose down
 ```
 
-Live tests require explicit opt-in with `MUSIC_INGEST_ENABLE_LIVE_TESTS=1`. Never use the local stand's environment files as production configuration. Production deployment changes must preserve the Komodo stack contract and avoid committing secrets or `.env` values.
+Do not use `docker compose down --volumes` unless an intentional database reset is required.
 
-## Implementation conventions
+## Implementation rules
 
-- Follow the existing layer boundary: routes parse/return HTTP models, services own domain decisions, repositories/persistence own durable access, and adapters isolate external systems.
-- Use typed models and explicit domain states. Keep `original`, `analyzed`, and editable `final` metadata distinct.
-- Add or update Alembic migrations with model/schema changes, and test migration behavior in `tests/test_migrations.py` where relevant.
-- Keep external/provider failures contained as capability outcomes; they must not erase provenance or bypass review.
-- Test behavior at its boundary: FastAPI/API changes with API tests, worker/publication changes with focused unit or contract tests, and browser-visible UI changes with frontend checks plus browser QA.
-- Keep backend and frontend API types in sync. The browser client lives in `frontend/src/api/client.ts`; avoid duplicating untyped request/response shapes in components.
-- Preserve accessible native controls, visible focus indicators, text equivalents for state, and Russian UI copy where the existing surface uses it.
-- Do not change `test_stand/` or `komodo/` as a side effect of ordinary application changes; topology and deployment documentation have explicit contract tests.
+- Preserve provenance and immutability: never edit, delete, replace, or move incoming source media. Changed inputs are a new observed source version; invalid or changed files are quarantined.
+- Preserve staged publication: validate staged output, manifest, and hashes before superseding current managed media. Never remove `.nfo` files.
+- Keep provider/enrichment code optional and failure-aware. Ambiguous, unsafe, stale, unavailable, or low-confidence matches must remain reviewable rather than auto-selected.
+- Keep Python code fully typed and follow existing package boundaries. Use Pydantic DTOs at API boundaries, SQLAlchemy repositories for persistence, and UTC-aware datetimes for persisted/provider timestamps.
+- Follow Ruff formatting: 120-character lines and single quotes in Python. Do not bypass typing or linting with suppression comments.
+- In frontend code, follow Biome conventions: 2-space indentation, 100-column width, double quotes, semicolons, and trailing commas. Keep API data typed and use the existing client/error patterns.
+- When changing database models or persisted behavior, add an Alembic migration and test the migration-sensitive behavior. When changing backend endpoints consumed by the UI, update the typed frontend client and its tests in the same change.
 
-## Before handing off
+## UI requirements
 
-1. Re-read the safety boundaries above and confirm no source mutation path was introduced.
-2. Run the narrowest relevant tests and formatter/linter/type checks for each changed runtime.
-3. If behavior is user-facing, use its surface: CLI command, HTTP endpoint, or browser UI. Build/test success alone is not sufficient.
-4. State any environment-bound validation you could not run, especially PostgreSQL, Docker, provider, or live-test checks.
+The product design contract is in `DESIGN.md`. Preserve semantic HTML, labeled native controls, visible focus, responsive reflow, readable contrast, and non-color-only status communication. Respect `prefers-reduced-motion`. Only Final metadata is editable; saving creates a new revision and must not mutate the source file.
