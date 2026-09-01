@@ -82,7 +82,7 @@ Published audio uses the `.mka` extension and stable artist, album, and track la
 ```bash
 cd test_stand
 docker compose up --build --wait
-curl --fail http://localhost:8787/healthz
+curl --fail http://127.0.0.1:8787/healthz
 docker compose down
 ```
 

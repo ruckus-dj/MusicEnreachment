@@ -126,7 +126,7 @@ def write_failure_artifact(
             'container_inspect': "docker inspect --format '{{.Image}}\\n{{.Config.Image}}' music-enrichment-lidarr",
             'driver': (
                 'PYTHONPATH=. uv run python tests/integration/task_9a_reconciliation.py '
-                f'--lidarr-url http://localhost:8686 --pin {result.requested_pin} '
+                f'--lidarr-url http://127.0.0.1:8686 --pin {result.requested_pin} '
                 f'--upgrade-pin {result.upgrade_pin}'
             ),
         },

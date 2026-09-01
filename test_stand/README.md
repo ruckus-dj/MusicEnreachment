@@ -36,21 +36,21 @@ docker compose up --build --wait
 
 2. Compose starts PostgreSQL, runs Alembic during API startup, starts the
    in-process worker, configures and tests Lidarr's `music-ingest` webhook, and
-   exposes the ready API at <http://localhost:8787/healthz>.
-3. Open Lidarr at <http://localhost:8686> and Navidrome at
-   <http://localhost:4533>.
+   exposes the ready API at <http://127.0.0.1:8787/healthz>.
+3. Open Lidarr at <http://127.0.0.1:8686> and Navidrome at
+   <http://127.0.0.1:4533>.
 
 ### Colima host-port recovery
 
 On macOS with Colima, recreating a container can leave the SSH port-forwarder
 holding an old `8787` connection. If the container is healthy but
-`curl http://localhost:8787/healthz` returns an empty reply, refresh Colima's
+`curl http://127.0.0.1:8787/healthz` returns an empty reply, refresh Colima's
 forwarder and retry:
 
 ```sh
 colima restart
 docker compose up --wait
-curl --fail --silent --show-error http://localhost:8787/healthz
+curl --fail --silent --show-error http://127.0.0.1:8787/healthz
 ```
 
 If the old SSH multiplex forward is still holding the port, use the current
@@ -65,8 +65,8 @@ curl --fail --silent --show-error "http://$(colima status --json | jq -r .ip_add
 Verify the actual API and its migrated PostgreSQL runtime with:
 
 ```sh
-curl --fail --silent --show-error http://localhost:8787/healthz
-curl --fail --silent --show-error http://localhost:8787/api/settings/source-roots
+curl --fail --silent --show-error http://127.0.0.1:8787/healthz
+curl --fail --silent --show-error http://127.0.0.1:8787/api/settings/source-roots
 docker compose exec postgres psql -U music_ingest -d music_ingest -tAc 'select version_num from alembic_version'
 docker compose logs lidarr-webhook
 ```
