@@ -17,6 +17,7 @@ def candidate_for_release(
     recording_title: str | None = None,
     duration_seconds: int | None = None,
     track_number: int | None = None,
+    musicbrainz_score: float | None = None,
 ) -> ReleaseCandidate:
     release_tracks = tuple(track for medium in release.media for track in medium.tracks)
     if recording_mbid is not None:
@@ -84,6 +85,7 @@ def candidate_for_release(
         if any(credit.artist is None for credit in release.artist_credit)
         else tuple(credit.artist.id for credit in release.artist_credit if credit.artist is not None),
         catalog_numbers=catalog_numbers(release),
+        musicbrainz_score=musicbrainz_score,
     )
 
 

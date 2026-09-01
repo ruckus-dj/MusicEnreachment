@@ -98,8 +98,13 @@ class MusicBrainzProviderAdapter:
         recording_mbids = request.recording_mbids or (
             () if search.payload is None else tuple(item.id for item in search.payload.recordings)
         )
+        recording_scores = (
+            ()
+            if search.payload is None
+            else tuple((item.id, item.score) for item in search.payload.recordings if item.score is not None)
+        )
         return await self._resolve_recordings(
-            recording_mbids, request, captured_at, f'query:{request.query}', provenance
+            recording_mbids, request, captured_at, f'query:{request.query}', provenance, recording_scores
         )
 
     async def _resolve_legacy_releases(
@@ -137,6 +142,7 @@ class MusicBrainzProviderAdapter:
         captured_at: datetime,
         request_key: str,
         initial_provenance: LiveProvenance | None = None,
+        recording_scores: tuple[tuple[str, float], ...] = (),
     ) -> MusicBrainzResult:
         if not recording_mbids:
             return NoMatch(initial_provenance or self._empty_provenance(request_key, captured_at))
@@ -166,6 +172,7 @@ class MusicBrainzProviderAdapter:
                 enriched[detail.release_mbid] = detail.response.payload
                 provenance = self._append_provenance(provenance, detail.response)
         candidates: dict[str, ReleaseCandidate] = {}
+        search_scores = dict(recording_scores)
         for release_id, matched_recording_ids in recording_ids_by_release.items():
             for recording_mbid in dict.fromkeys(matched_recording_ids):
                 candidate = candidate_for_release(
@@ -175,6 +182,7 @@ class MusicBrainzProviderAdapter:
                     request.recording_title,
                     request.duration_seconds,
                     request.track_number,
+                    search_scores.get(recording_mbid),
                 )
                 existing = candidates.get(release_id)
                 candidates[release_id] = (

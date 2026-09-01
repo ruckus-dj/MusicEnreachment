@@ -15,6 +15,7 @@ from music_ingest.matching.providers import (
     LiveProvenance,
     MusicBrainzHttpResponse,
     MusicBrainzLookupRequest,
+    MusicBrainzMatch,
     RateLimited,
     ReleaseCandidate,
 )
@@ -48,6 +49,33 @@ def test_recording_details_when_ids_repeat_deduplicates_and_fans_out() -> None:
     # Then: each ID is fetched once and both independent calls can make progress.
     assert recording_ids == ('recording-a', 'recording-b')
     assert len(calls) == 2
+
+
+def test_search_when_musicbrainz_returns_scores_preserves_them_on_candidates() -> None:
+    # Given: a text search response with provider ranking and one recording detail.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"recordings":[{"id":"recording-id","score":100,"title":"Fixture Track"}]}',
+                )
+            if '/recording/' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}',
+                )
+            return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
+
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/test (operator@example.test)')
+
+    # When: the adapter resolves a recording search result into release candidates.
+    result = provider.lookup(MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS), NOW)
+
+    # Then: the candidate retains the provider score for downstream matching.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.musicbrainz_score == 100
 
 
 def test_recording_lookup_when_rate_limited_preserves_rate_limited_outcome() -> None:
