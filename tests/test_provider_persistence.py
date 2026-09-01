@@ -142,6 +142,19 @@ def test_database_rate_limiter_when_custom_interval_is_configured_reserves_that_
     assert delays == []
 
 
+def test_database_rate_limiter_when_configured_interval_is_zero_skips_session_creation() -> None:
+    # Given: a configured zero interval and a session factory that must not be entered.
+    def fail_if_session_is_created() -> Session:
+        raise AssertionError('zero interval should bypass the database limiter')
+
+    limiter = DatabaseRequestRateLimiter(fail_if_session_is_created, request_interval=timedelta())
+
+    # When: a MusicBrainz request enters the limiter.
+    limiter.wait('musicbrainz')
+
+    # Then: no database session or sleep is required.
+
+
 def test_repository_rejects_naive_provider_timestamps(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
     Base.metadata.create_all(engine)

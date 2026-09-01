@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from threading import Lock
 from typing import Final, Protocol, final, override
 from urllib.parse import urlsplit
 
@@ -77,12 +78,27 @@ class DatabaseRequestRateLimiter:
         session_factory: SessionFactory,
         sleep: Callable[[float], None] = time.sleep,
         request_interval: timedelta | None = None,
+        disabled_providers: frozenset[str] = frozenset(),
     ) -> None:
         self._session_factory: SessionFactory = session_factory
         self._sleep: Callable[[float], None] = sleep
         self._request_interval = request_interval
+        self._disabled_providers = set(disabled_providers)
+        self._disabled_providers_lock = Lock()
+
+    def set_provider_disabled(self, provider_name: str, disabled: bool) -> None:
+        with self._disabled_providers_lock:
+            if disabled:
+                self._disabled_providers.add(provider_name)
+            else:
+                self._disabled_providers.discard(provider_name)
 
     def wait(self, provider_name: str) -> None:
+        with self._disabled_providers_lock:
+            if provider_name in self._disabled_providers:
+                return
+        if self._request_interval is not None and self._request_interval <= timedelta():
+            return
         now = datetime.now(UTC)
         with self._session_factory() as session:
             configured_interval = self._request_interval
@@ -191,6 +207,7 @@ class MusicBrainzLookupRequest:
     recording_title: str | None = None
     duration_seconds: int | None = None
     track_number: int | None = None
+    recording_mbids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

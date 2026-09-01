@@ -51,6 +51,7 @@ class ProviderEvidenceRequest:
     acoustid_confidence_threshold: float = 0.7
     artist_name: str | None = None
     recording_mbid: str | None = None
+    recording_mbids: tuple[str, ...] = ()
     release_mbid: str | None = None
     run_acoustid: bool = True
     run_musicbrainz: bool = True
@@ -101,28 +102,29 @@ class ProviderEvidenceService:
                 )
                 request_hash = sha256(f'release:{release_mbid}'.encode()).hexdigest()
             case None, str() as recording_mbid, _:
-                recording_result = self._lookup_musicbrainz_recordings(request, (recording_mbid,), now)
-                text_result = self._lookup_musicbrainz_request(
+                if not request.query:
+                    return self._lookup_musicbrainz_recordings(request, (recording_mbid,), now)
+                return self._lookup_musicbrainz_request(
                     request,
                     MusicBrainzLookupRequest(
                         request.query,
                         request.musicbrainz_case,
+                        recording_mbid=recording_mbid,
                         release_title=request.release_title,
                         artist_name=request.artist_name,
                         recording_title=request.recording_title,
                         duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
                         track_number=request.track_number,
+                        recording_mbids=(recording_mbid,),
                     ),
                     sha256(request.query.encode()).hexdigest(),
                     now,
                 )
-                return self._merge_musicbrainz_results((recording_result, text_result))
             case None, None, AcoustIdMatch(evidence=evidence):
                 recording_mbids = tuple(
                     dict.fromkeys(recording.recording_mbid for recording in (evidence.candidates or (evidence,)))
                 )
-                recording_result = self._lookup_musicbrainz_recordings(request, recording_mbids, now)
-                text_result = self._lookup_musicbrainz_request(
+                return self._lookup_musicbrainz_request(
                     request,
                     MusicBrainzLookupRequest(
                         request.query,
@@ -132,11 +134,11 @@ class ProviderEvidenceService:
                         recording_title=request.recording_title,
                         duration_seconds=None if request.duration_seconds is None else round(request.duration_seconds),
                         track_number=request.track_number,
+                        recording_mbids=recording_mbids,
                     ),
                     sha256(request.query.encode()).hexdigest(),
                     now,
                 )
-                return self._merge_musicbrainz_results((recording_result, text_result))
             case _:
                 musicbrainz_request = MusicBrainzLookupRequest(
                     request.query,

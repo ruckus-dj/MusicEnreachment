@@ -45,6 +45,13 @@ class MusicBrainzTransport(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class _RecordingLookup:
+    recording_mbid: str
+    releases: tuple[Release, ...]
+    provenance: LiveProvenance
+
+
+@dataclass(frozen=True, slots=True)
 class MusicBrainzV2Adapter:
     transport: MusicBrainzTransport
     user_agent: str
@@ -72,6 +79,9 @@ class MusicBrainzV2Adapter:
                 f'?{urlencode({"inc": _RELEASE_INCLUDES, "fmt": "json"})}'
             )
             request_key = f'release:{request.release_mbid}'
+        elif request.query and request.recording_mbids:
+            url = f'{self._recording_endpoint}?{urlencode({"query": request.query, "fmt": "json", "limit": 25})}'
+            request_key = f'query:{request.query}'
         elif request.recording_mbid is not None:
             url = (
                 f'{self._recording_endpoint}{quote(request.recording_mbid, safe="")}'
@@ -115,6 +125,18 @@ class MusicBrainzV2Adapter:
                     request.track_number,
                 ),
             )
+        if request.query and request.recording_mbids:
+            try:
+                search_payload = RecordingSearchResponse.model_validate_json(response.body)
+            except ValidationError:
+                try:
+                    legacy_payload = ReleaseResponse.model_validate_json(response.body)
+                except ValidationError:
+                    return Malformed(provenance)
+                if request.recording_mbids:
+                    return self._resolve_recording_search((), request, provenance, captured_at)
+                return self._resolve_legacy_release_search(legacy_payload, request, provenance)
+            return self._resolve_recording_search(search_payload.recordings, request, provenance, captured_at)
         if request.recording_mbid is not None:
             try:
                 recording_payload = RecordingResponse.model_validate_json(response.body)
@@ -154,14 +176,14 @@ class MusicBrainzV2Adapter:
             case () if not eligible:
                 return NoMatch(provenance)
             case _:
-                enriched_releases: list[Release] = []
-                enriched_provenance = provenance
-                for release in eligible:
-                    enriched, enriched_provenance = self._enrich_release(release, enriched_provenance)
-                    enriched_releases.append(enriched)
+                enriched_by_id, enriched_provenance = self._enrich_release_set(eligible, provenance)
+                enriched_releases = tuple(enriched_by_id[release.id] for release in eligible)
+                candidates = tuple(
+                    self._candidate(release, artist_name, recording_mbid) for release in enriched_releases
+                )
                 return Ambiguous(
                     enriched_provenance,
-                    tuple(self._candidate(release, artist_name, recording_mbid) for release in enriched_releases),
+                    candidates,
                 )
 
     def _resolve_recording_search(
@@ -171,46 +193,61 @@ class MusicBrainzV2Adapter:
         provenance: LiveProvenance,
         now: datetime,
     ) -> MusicBrainzResult:
-        if not recordings:
+        recording_ids = request.recording_mbids or tuple(recording.id for recording in recordings)
+        if not recording_ids:
             return NoMatch(provenance)
-        lookup_requests = tuple(
-            MusicBrainzLookupRequest(
-                '',
-                request.fixture_case,
-                recording_mbid=recording.id,
-                release_title=request.release_title,
-                artist_name=request.artist_name,
-                recording_title=request.recording_title,
-                duration_seconds=request.duration_seconds,
-                track_number=request.track_number,
+        with ThreadPoolExecutor(max_workers=min(_RECORDING_SEARCH_CONCURRENCY, len(recording_ids))) as executor:
+            futures = tuple(
+                executor.submit(self._lookup_recording, recording_id, now) for recording_id in recording_ids
             )
-            for recording in recordings
-        )
-        with ThreadPoolExecutor(max_workers=min(_RECORDING_SEARCH_CONCURRENCY, len(lookup_requests))) as executor:
-            futures = tuple(executor.submit(self.lookup, lookup_request, now) for lookup_request in lookup_requests)
-            results = tuple(future.result() for future in futures)
-        candidates: list[ReleaseCandidate] = []
+            recording_lookups = tuple(future.result() for future in futures)
+        available_lookups = tuple(lookup for lookup in recording_lookups if lookup is not None)
+        if not available_lookups:
+            return NoMatch(provenance)
+
+        releases_by_id: dict[str, Release] = {}
+        recording_ids_by_release: dict[str, list[str]] = {}
         enriched_provenance = provenance
-        for result in results:
-            match result:
-                case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
-                    enriched_provenance = result_provenance
-                    candidates.append(candidate)
-                case Ambiguous(provenance=result_provenance, candidates=result_candidates):
-                    enriched_provenance = result_provenance
-                    candidates.extend(result_candidates)
-                case _:
-                    continue
+        for lookup in available_lookups:
+            enriched_provenance = lookup.provenance
+            for release in _without_pseudo_releases(lookup.releases):
+                releases_by_id.setdefault(release.id, release)
+                recording_ids = recording_ids_by_release.setdefault(release.id, [])
+                if lookup.recording_mbid not in recording_ids:
+                    recording_ids.append(lookup.recording_mbid)
+        if not releases_by_id:
+            return NoMatch(enriched_provenance)
+        enriched_by_id, enriched_provenance = self._enrich_release_set(
+            tuple(releases_by_id.values()), enriched_provenance
+        )
+        candidates: list[ReleaseCandidate] = []
+        for release_id, recording_ids in recording_ids_by_release.items():
+            enriched = enriched_by_id[release_id]
+            candidates.extend(
+                self._candidate(
+                    enriched,
+                    request.artist_name,
+                    recording_mbid=recording_mbid,
+                    recording_title=request.recording_title,
+                    duration_seconds=request.duration_seconds,
+                    track_number=request.track_number,
+                )
+                for recording_mbid in recording_ids
+            )
         unique: dict[str, ReleaseCandidate] = {}
         for candidate in candidates:
             existing = unique.get(candidate.release_mbid)
-            unique[candidate.release_mbid] = (
-                candidate
-                if existing is None
-                else replace(
-                    existing,
-                    recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
-                )
+            if existing is None:
+                unique[candidate.release_mbid] = candidate
+                continue
+            candidate_score = _recording_match_score(candidate, request)
+            existing_score = _recording_match_score(existing, request)
+            if request.recording_title is not None and candidate_score > existing_score:
+                unique[candidate.release_mbid] = candidate
+                continue
+            unique[candidate.release_mbid] = replace(
+                existing,
+                recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
             )
         unique_candidates = tuple(unique.values())
         match unique_candidates:
@@ -220,6 +257,45 @@ class MusicBrainzV2Adapter:
                 return MusicBrainzMatch(enriched_provenance, candidate)
             case multiple_candidates:
                 return Ambiguous(enriched_provenance, multiple_candidates)
+
+    def _lookup_recording(self, recording_mbid: str, now: datetime) -> _RecordingLookup | None:
+        response = self.transport.get(
+            f'{self._recording_endpoint}{quote(recording_mbid, safe="")}'
+            f'?{urlencode({"inc": "releases", "fmt": "json"})}',
+            headers={'User-Agent': self.user_agent, 'Accept': 'application/json'},
+        )
+        provenance = LiveProvenance(
+            'musicbrainz',
+            sha256(f'recording:{recording_mbid}'.encode()).hexdigest(),
+            sha256(response.body).hexdigest(),
+            response.status_code,
+            now,
+            'fresh',
+            response.body,
+        )
+        if response.status_code != 200:
+            return None
+        try:
+            payload = RecordingResponse.model_validate_json(response.body)
+        except ValidationError:
+            return None
+        return _RecordingLookup(recording_mbid, payload.releases, provenance)
+
+    def _enrich_release_set(
+        self, releases: tuple[Release, ...], provenance: LiveProvenance
+    ) -> tuple[dict[str, Release], LiveProvenance]:
+        unique_releases: dict[str, Release] = {}
+        for release in releases:
+            unique_releases.setdefault(release.id, release)
+        with ThreadPoolExecutor(max_workers=min(_RECORDING_SEARCH_CONCURRENCY, len(unique_releases))) as executor:
+            futures = tuple(
+                executor.submit(self._enrich_release, release, provenance) for release in unique_releases.values()
+            )
+            results = tuple(future.result() for future in futures)
+        return (
+            {release.id: release for release, _ in results},
+            results[-1][1] if results else provenance,
+        )
 
     def _resolve_legacy_release_search(
         self,
@@ -396,6 +472,17 @@ def _track_match_score(track: Track, title: str, duration_seconds: int | None, t
         else max(0.0, 1.0 - abs(duration_seconds - round(track.length / 1000)) / 10)
     )
     number_score = 1.0 if track_number is not None and track.position == track_number else 0.0
+    return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
+
+
+def _recording_match_score(candidate: ReleaseCandidate, request: MusicBrainzLookupRequest) -> float:
+    title_score = ratio(_title_key(request.recording_title or ''), _title_key(candidate.recording_title or '')) / 100
+    duration_score = (
+        0.0
+        if request.duration_seconds is None or candidate.duration_seconds is None
+        else max(0.0, 1.0 - abs(request.duration_seconds - candidate.duration_seconds) / 10)
+    )
+    number_score = 1.0 if request.track_number is not None and candidate.track_number == request.track_number else 0.0
     return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
 
 
