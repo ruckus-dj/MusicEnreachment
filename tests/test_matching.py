@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     Ambiguous,
@@ -26,6 +28,7 @@ from music_ingest.matching.scoring import (
     recording_candidate_matches,
     resolve_match,
     score_recording_candidate,
+    score_release_candidate,
     select_folder_release,
 )
 from tests.support.providers import MusicBrainzFixtureProvider
@@ -305,6 +308,77 @@ def test_matching_when_single_fresh_release_matches_source_artist_and_album_sele
     # Then: exact album evidence does not remain pending merely because the duration is unavailable.
     assert result.decision is MatchDecision.AUTO_SELECTED
     assert result.selected_release_mbid == 'release-vol-1'
+
+
+def test_matching_when_source_album_is_missing_normalizes_available_release_evidence() -> None:
+    # Given: a fresh release candidate with exact artist and duration evidence but no source album.
+    request = MatchingRequest('Noize MC', '', 138, recording_title='Страна дождей')
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Страна дождей',
+        'Noize MC',
+        138,
+        recording_mbids=('recording-id',),
+        recording_title='Страна дождей',
+    )
+    evidence = MusicBrainzMatch(_provenance('fresh'), candidate)
+
+    # When: matching scores the release using only the source evidence that exists.
+    score = score_release_candidate(request, candidate)
+    result = resolve_match(request, evidence, None)
+
+    # Then: the missing album does not reduce exact available evidence below the threshold.
+    assert score.score == 1.0
+    assert result.decision is MatchDecision.AUTO_SELECTED
+    assert result.selected_release_mbid == 'release-id'
+
+
+def test_matching_when_musicbrainz_search_score_is_present_weights_provider_evidence() -> None:
+    # Given: a candidate whose local evidence is incomplete but MusicBrainz ranked it exactly.
+    request = MatchingRequest('кис-кис', 'Харакири', 164)
+    candidate = ReleaseCandidate(
+        'release-id',
+        'харакири (трибьют Егору Летову)',
+        'кис-кис',
+        164,
+        musicbrainz_score=100,
+    )
+
+    # When: the release candidate is scored with its provider search score.
+    score = score_release_candidate(request, candidate)
+
+    # Then: the weighted score stays bounded and includes the provider evidence.
+    assert score.score == 0.7784615384615385
+    assert score.score <= 1.0
+
+
+def test_matching_when_acoustid_and_musicbrainz_scores_are_present_combines_recording_evidence() -> None:
+    # Given: linked provider evidence for the same recording candidate.
+    request = MatchingRequest(
+        'кис-кис',
+        'Харакири',
+        164,
+        recording_title='харакири (Гражданская Оборона cover)',
+    )
+    candidate = ReleaseCandidate(
+        'release-id',
+        'харакири (трибьют Егору Летову)',
+        'кис-кис',
+        164,
+        recording_mbids=('recording-id',),
+        recording_title='харакири (трибьют Егору Летову)',
+        musicbrainz_score=100,
+    )
+    evidence = MusicBrainzMatch(_provenance('fresh'), candidate)
+    acoustid = AcoustIdMatch(_provenance('fresh', 'acoustid'), RecordingEvidence('recording-id', 0.9))
+
+    # When: both provider scores contribute to the linked recording score.
+    result = resolve_match(request, evidence, acoustid)
+
+    # Then: the combined score remains bounded and identifies the linked recording.
+    assert result.recording_score.candidate_mbid == 'recording-id'
+    assert result.recording_score.score == pytest.approx(0.8567741935483871)
+    assert result.recording_score.score <= 1.0
 
 
 def test_matching_when_musicbrainz_text_candidate_has_recording_context_selects_recording_without_acoustid() -> None:

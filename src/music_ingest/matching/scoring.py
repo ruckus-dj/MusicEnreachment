@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, cast
 
-from rapidfuzz.fuzz import ratio
+from rapidfuzz.distance import Levenshtein
 
 from music_ingest.matching.providers import (
     AcoustIdMatch,
@@ -45,6 +45,8 @@ class ReviewReason(StrEnum):
 
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.70
+MUSICBRAINZ_SCORE_WEIGHT: Final = 0.20
+ACOUSTID_SCORE_WEIGHT: Final = 0.40
 _TEXT_MATCH_THRESHOLD: Final = 0.85
 _CATALOG_TOKEN_PATTERN: Final = re.compile(r'(?i)(?:[a-z]{1,8}[- ]?)?\d(?:[\d-]{3,})')
 
@@ -211,7 +213,18 @@ def _recording_score(
     match acoustid:
         case AcoustIdMatch(evidence=evidence):
             exact_score = 1.0 if request.explicit_ids.recording_mbid == evidence.recording_mbid else evidence.score
-            return CandidateScore(evidence.recording_mbid, exact_score)
+            if candidate is None or evidence.recording_mbid not in candidate.recording_mbids:
+                return CandidateScore(evidence.recording_mbid, exact_score)
+            local_score = _score_recording_candidate(request, candidate)
+            provider_scores = (
+                ((exact_score, ACOUSTID_SCORE_WEIGHT),)
+                if candidate.musicbrainz_score is None
+                else (
+                    (candidate.musicbrainz_score / 100.0, MUSICBRAINZ_SCORE_WEIGHT),
+                    (exact_score, ACOUSTID_SCORE_WEIGHT),
+                )
+            )
+            return _with_provider_scores(local_score, provider_scores)
         case _:
             pass
     if candidate is None:
@@ -237,6 +250,16 @@ def score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandid
     """Score recording identity using recording artist, title, and duration evidence."""
     if not candidate.recording_mbids:
         return CandidateScore(None, 0.0)
+    local_score = _score_recording_candidate(request, candidate)
+    return _with_provider_scores(
+        local_score,
+        ()
+        if candidate.musicbrainz_score is None
+        else ((candidate.musicbrainz_score / 100.0, MUSICBRAINZ_SCORE_WEIGHT),),
+    )
+
+
+def _score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
     title_component = 0.4 * _text_similarity(request.recording_title, candidate.recording_title or '')
     artist_component = 0.4 * _text_similarity(request.artist_name, _recording_artist_name(candidate))
     duration_component = _duration_score(request.duration_seconds, candidate.duration_seconds)
@@ -305,7 +328,6 @@ def _unique_confident_match(
         or request.explicit_ids.recording_mbid
         or request.explicit_ids.track_mbid
         or not request.artist_name.strip()
-        or not request.release_title.strip()
         or _has_unsafe_text(request)
     ):
         return None
@@ -415,13 +437,19 @@ def score_release_candidate(request: MatchingRequest, candidate: ReleaseCandidat
             request.lidarr.artist_name, request.lidarr.release_title, request.lidarr.duration_seconds, candidate
         )
         selected = source_score if source_score.total >= lidarr_score.total else lidarr_score
-    return CandidateScore(
+    scored = CandidateScore(
         candidate.release_mbid,
         selected.total,
         selected.artist_component,
         selected.release_component,
         selected.duration_component,
         selected.release_component,
+    )
+    return _with_provider_scores(
+        scored,
+        ()
+        if candidate.musicbrainz_score is None
+        else ((candidate.musicbrainz_score / 100.0, MUSICBRAINZ_SCORE_WEIGHT),),
     )
 
 
@@ -483,10 +511,11 @@ class _ScoreComponents:
 def _score_components(
     artist_name: str, release_title: str, duration_seconds: int | None, candidate: ReleaseCandidate
 ) -> _ScoreComponents:
+    scale = 1.0 / 0.6 if not release_title.strip() else 1.0
     return _ScoreComponents(
-        artist_component=0.4 * _text_similarity(artist_name, _release_artist_name(candidate)),
-        release_component=0.4 * _text_similarity(release_title, release_display_title(candidate)),
-        duration_component=_duration_score(duration_seconds, candidate.duration_seconds),
+        artist_component=0.4 * _text_similarity(artist_name, _release_artist_name(candidate)) * scale,
+        release_component=0.4 * _text_similarity(release_title, release_display_title(candidate)) * scale,
+        duration_component=_duration_score(duration_seconds, candidate.duration_seconds) * scale,
     )
 
 
@@ -501,7 +530,22 @@ def _album_artist_name(request: MatchingRequest) -> str:
 def _text_similarity(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
-    return ratio(_normalized(left), _normalized(right)) / 100.0
+    return Levenshtein.normalized_similarity(_normalized(left), _normalized(right))
+
+
+def _with_provider_scores(
+    local_score: CandidateScore, provider_scores: tuple[tuple[float, float], ...]
+) -> CandidateScore:
+    provider_weight = sum(weight for _, weight in provider_scores)
+    return CandidateScore(
+        local_score.candidate_mbid,
+        local_score.score * (1.0 - provider_weight) + sum(score * weight for score, weight in provider_scores),
+        local_score.artist_component * (1.0 - provider_weight),
+        local_score.release_component * (1.0 - provider_weight),
+        local_score.duration_component * (1.0 - provider_weight),
+        local_score.title_component * (1.0 - provider_weight),
+        local_score.track_component * (1.0 - provider_weight),
+    )
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:
@@ -531,7 +575,11 @@ def _review_reason(
                 return ReviewReason.MANUAL_MBID_UNVERIFIED
             if request.lidarr is not None and _lidarr_conflicts(request.lidarr, candidate):
                 return ReviewReason.CONFLICTING_CONTEXT
-            if not _has_manual_mbid(request.explicit_ids) and release_score.release_component < 0.4:
+            if (
+                not _has_manual_mbid(request.explicit_ids)
+                and request.release_title.strip()
+                and release_score.release_component < 0.4
+            ):
                 return ReviewReason.INSUFFICIENT_RELEASE_SCORE
             if release_score.score < confidence_threshold:
                 return ReviewReason.INSUFFICIENT_RELEASE_SCORE
