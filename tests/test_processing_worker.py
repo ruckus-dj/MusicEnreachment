@@ -896,8 +896,10 @@ def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp
         # When: candidate selection processes the source without an AcousticID match.
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
         session.commit()
+        assert ProcessingWorker(session, _config(tmp_path)).run_once()
+        session.commit()
 
-        # Then: the source is reassociated into the existing recording aggregate.
+        # Then: the folder selection reassociates the source into the existing recording aggregate.
         refreshed = session.get(SourceRecord, source.id)
         assert refreshed is not None
         assert refreshed.library_record_id == target.id
@@ -977,6 +979,102 @@ def test_candidate_selection_queries_folder_membership_in_sql(tmp_path: Path) ->
 
     # Then: candidate selection constrains members to the source folder in SQL.
     assert any('source_records.source_path like' in statement for statement in statements)
+
+
+def test_candidate_selection_queues_folder_selection_for_single_file_folder(tmp_path: Path) -> None:
+    # Given: one source file with a completed MusicBrainz candidate run.
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "single-file-folder-selection.db"}')
+    Base.metadata.create_all(engine)
+    source_id = 'single-folder-source'
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='single-folder-root',
+            display_name='single-folder-root',
+            canonical_path='/source',
+            created_at=now,
+            updated_at=now,
+        )
+        record = LibraryRecord(
+            id='single-folder-record',
+            source_state='present',
+            processing_state='analyzing',
+            match_state='unknown',
+            publication_state='absent',
+            metadata_state='original',
+            created_at=now,
+            updated_at=now,
+        )
+        run_record = ProviderCandidateRunRecord(
+            source_id=source_id,
+            provider_name='musicbrainz',
+            created_at=now,
+            candidates=[
+                CandidateRecord(
+                    source_id=source_id,
+                    candidate_key='release-one',
+                    evidence=json.dumps(
+                        {
+                            'provider': 'musicbrainz',
+                            'entity': 'release',
+                            'score': 1.0,
+                            'compatible_ids': ['recording-one'],
+                            'tags': {'MUSICBRAINZ_RECORDINGID': 'recording-one'},
+                        }
+                    ),
+                ),
+                CandidateRecord(
+                    source_id=source_id,
+                    candidate_key='release-two',
+                    evidence=json.dumps(
+                        {
+                            'provider': 'musicbrainz',
+                            'entity': 'release',
+                            'score': 1.0,
+                            'compatible_ids': ['recording-one'],
+                            'tags': {'MUSICBRAINZ_RECORDINGID': 'recording-one'},
+                        }
+                    ),
+                ),
+            ],
+        )
+        source = SourceRecord(
+            id=source_id,
+            source_path='/source/single-folder/track.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=1,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+            candidate_runs=[run_record],
+        )
+        session.add_all(
+            (
+                source,
+                JobRecord(
+                    id='single-folder-candidate-selection',
+                    source_id=source_id,
+                    kind='candidate_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        # When: candidate selection completes for the single-file folder.
+        assert ProcessingWorker(session, _config(tmp_path)).run_once()
+        session.commit()
+        folder_job = session.scalar(select(JobRecord).where(JobRecord.kind == 'folder_release_selection'))
+
+    # Then: the same folder-selection job is queued as for a multi-file folder.
+    assert folder_job is not None
+    assert folder_job.folder_path == '/source/single-folder'
 
 
 def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:
@@ -1645,6 +1743,7 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
         with Session(engine) as check:
             source = check.get(SourceRecord, source_id)
             job = check.query(JobRecord).filter_by(kind='candidate_selection').one()
+            folder_job = check.query(JobRecord).filter_by(kind='folder_release_selection').one()
             assert claimed == ['candidate_selection']
             assert job.state == 'completed', (
                 job.state,
@@ -1652,8 +1751,9 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
                 job.next_attempt_at,
                 [(attempt.state, attempt.finished_at) for attempt in job.attempts],
             )
+            assert folder_job.state == 'queued'
             assert source is not None and source.library_record is not None
-            assert source.library_record.processing_state == 'needs_review'
+            assert source.library_record.processing_state == 'analyzing'
             assert source.library_record.musicbrainz_recording_id is None
             assert source.library_record.musicbrainz_release_id is None
 

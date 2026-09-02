@@ -1393,106 +1393,11 @@ class ProcessingWorker:
             record = new_library_record(self._session, now)
             source.library_record = record
             self._session.flush()
-        else:
-            record = self._session.scalar(
-                select(LibraryRecord).where(LibraryRecord.id == source.library_record_id).options(raiseload('*'))
-            )
-        if record is None:
-            raise ProcessingInfrastructureError('candidate selection source has no library record')
-        stored_release = _single_scored_candidate(source, 'musicbrainz', self._confidence_threshold())
-        release_recording_mbid = _stored_release_recording_mbid(stored_release)
-        stored_recording = (
-            _single_scored_recording_candidate(source, self._confidence_threshold(), release_recording_mbid)
-            if stored_release is not None and release_recording_mbid is not None
-            else None
-        )
-        pair_is_qualified = (
-            stored_release is not None
-            and release_recording_mbid is not None
-            and stored_recording is not None
-            and stored_recording[0] == release_recording_mbid
-        )
-        if not pair_is_qualified:
-            record.processing_state = 'needs_review'
-            record.match_state = 'needs_review'
-            record_event(
-                self._session,
-                record.id,
-                'analysis_ready_for_review',
-                'needs_review',
-                'recording and release candidates did not form one confidence-qualified pair',
-                now,
-                source.id,
-            )
-            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
-            return
-        folder = _folder_selection_root(source.source_path)
-        folder_members = self._folder_members(folder)
-        if len(folder_members) >= 2:
-            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
-            return
-        if stored_release is None or stored_recording is None:
-            self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
-            return
-        recording_mbid = stored_recording[0]
-        recording_evidence = stored_recording[1]
-        associated = RecordingAssociationService(self._session).associate_automatic(
-            AutomaticAssociationRequest(
-                source.id,
-                recording_mbid,
-                recording_evidence.score or 0.0,
-                self._confidence_threshold(),
-                json.dumps({'recording_mbid': recording_mbid, 'release_mbid': stored_release[0]}, sort_keys=True),
-                now,
-                release_mbid=stored_release[0],
-            )
-        )
-        if associated is None:
-            return
-        record = library_record_detail(self._session, associated.library_record_id)
-        analyzed_tags = _stored_match_tags(stored_recording, stored_release)
-        record_event(
-            self._session,
-            record.id,
-            'stored_candidates_auto_selected',
-            record.match_state,
-            'stored qualifying provider candidates selected after provider collection completed',
-            now,
-            source.id,
-        )
-        if analyzed_tags:
-            source_tags = {
-                item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
-            }
-            _ = append_metadata_revision(
-                self._session, record.id, source.id, 'analyzed', analyzed_tags, 'provider_selection', now
-            )
-            final_revision = append_metadata_revision(
-                self._session,
-                record.id,
-                source.id,
-                'final',
-                {**source_tags, **analyzed_tags},
-                'provider_selection',
-                now,
-            )
-            _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
-            record_event(
-                self._session,
-                record.id,
-                'analysis_ready_for_publish',
-                'publishing',
-                'stored provider metadata is ready for final publication',
-                now,
-                source.id,
-            )
         self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
 
     def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
         folder = _folder_selection_root(source.source_path)
         members = self._folder_members(folder)
-        if len(members) < 2:
-            return
         member_ids = tuple(item.id for item in members)
         active_collection = self._session.scalar(
             select(JobRecord)
@@ -1511,10 +1416,6 @@ class ProcessingWorker:
             .where(JobRecord.id != current_job_id)
         )
         if active_collection is not None:
-            return
-        if any(
-            not any(run.provider_name == 'musicbrainz' for run in reversed(item.candidate_runs)) for item in members
-        ):
             return
         _ = JobRepository(self._session).enqueue_folder_release_selection(str(folder), now)
 
