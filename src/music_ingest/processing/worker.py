@@ -252,7 +252,9 @@ def _candidate_records(
                 'release': candidate.release_title,
                 'disambiguation': candidate.disambiguation,
                 'score': release_score_value,
-                'musicbrainz_score': candidate.musicbrainz_score,
+                'musicbrainz_score': None
+                if candidate.musicbrainz_score is None
+                else candidate.musicbrainz_score / 100.0,
                 'compatible_ids': candidate.recording_mbids,
                 'score_components': (
                     None
@@ -284,7 +286,9 @@ def _candidate_records(
                     'title': candidate.recording_title or '',
                     'album': candidate.release_title,
                     'score': None if recording_score is None else recording_score.score,
-                    'musicbrainz_score': candidate.musicbrainz_score,
+                    'musicbrainz_score': None
+                    if candidate.musicbrainz_score is None
+                    else candidate.musicbrainz_score / 100.0,
                     'score_components': (
                         None
                         if recording_score is None

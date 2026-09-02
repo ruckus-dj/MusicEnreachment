@@ -303,6 +303,25 @@ def test_musicbrainz_release_without_recording_link_is_not_persisted() -> None:
     assert records == ()
 
 
+def test_candidate_records_persist_musicbrainz_score_in_unit_interval() -> None:
+    # Given: a MusicBrainz candidate keeps its provider score internally on the 0..100 scale.
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Fixture Album',
+        'Fixture Artist',
+        215,
+        ('recording-id',),
+        musicbrainz_score=84,
+    )
+
+    # When: worker evidence is serialized for persistence and API consumers.
+    records = processing._candidate_records('source-id', candidate, None, None)
+
+    # Then: both release and recording evidence expose the normalized 0..1 provider score.
+    assert len(records) == 2
+    assert all(json.loads(record.evidence)['musicbrainz_score'] == 0.84 for record in records)
+
+
 def _tagless_flac(path: Path) -> Path:
     source = _flac(path)
     _ = write_normalized_tags(source, ())
