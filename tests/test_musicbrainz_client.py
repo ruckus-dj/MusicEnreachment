@@ -78,6 +78,33 @@ def test_search_when_musicbrainz_returns_scores_preserves_them_on_candidates() -
     assert result.candidate.musicbrainz_score == 100
 
 
+def test_search_when_provider_returns_unit_interval_score_normalizes_to_musicbrainz_scale() -> None:
+    # Given: a compatible MusicBrainz mirror returns its ranking score as 0..1.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"recordings":[{"id":"recording-id","score":0.84,"title":"Fixture Track"}]}',
+                )
+            if '/recording/' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}',
+                )
+            return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
+
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/test (operator@example.test)')
+
+    # When: the adapter resolves the mirror's search result into a release candidate.
+    result = provider.lookup(MusicBrainzLookupRequest('artist:Fixture', FixtureCase.SUCCESS), NOW)
+
+    # Then: downstream scoring receives the same canonical 0..100 provider unit as the official API.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.musicbrainz_score == 84
+
+
 def test_recording_lookup_when_rate_limited_preserves_rate_limited_outcome() -> None:
     # Given: MusicBrainz rejects a known recording lookup before any release can be resolved.
     class FixtureTransport:

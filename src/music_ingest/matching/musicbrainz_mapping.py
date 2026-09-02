@@ -85,7 +85,13 @@ def candidate_for_release(
         if any(credit.artist is None for credit in release.artist_credit)
         else tuple(credit.artist.id for credit in release.artist_credit if credit.artist is not None),
         catalog_numbers=catalog_numbers(release),
-        musicbrainz_score=musicbrainz_score,
+        musicbrainz_score=(
+            None
+            if musicbrainz_score is None
+            else musicbrainz_score * 100
+            if 0 <= musicbrainz_score <= 1
+            else musicbrainz_score
+        ),
     )
 
 
