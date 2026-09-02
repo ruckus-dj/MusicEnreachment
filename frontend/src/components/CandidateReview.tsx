@@ -3,6 +3,13 @@ import { api } from "../api/client";
 import { parseRoute } from "../routing";
 import type { Candidate } from "../types";
 
+function compositeScore(candidate: Candidate): number | null {
+  return candidate.evidence.score_components === null ||
+    candidate.evidence.score_components === undefined
+    ? null
+    : candidate.evidence.score;
+}
+
 export function CandidateReview({
   entity,
   candidates,
@@ -26,7 +33,14 @@ export function CandidateReview({
     ...new Map(
       candidates.map((candidate) => [`${entity}-${candidate.candidate_key}`, candidate]),
     ).values(),
-  ].sort((left, right) => (right.evidence.score ?? 0) - (left.evidence.score ?? 0));
+  ].sort((left, right) => {
+    const leftScore = compositeScore(left);
+    const rightScore = compositeScore(right);
+    return (
+      Number(rightScore === null) - Number(leftScore === null) ||
+      (rightScore ?? -1) - (leftScore ?? -1)
+    );
+  });
   const route = parseRoute(window.location.pathname);
   const [decoded, setDecoded] = useState<
     Record<string, { readonly artist: string; readonly title: string; readonly album: string }>
@@ -148,12 +162,9 @@ export function CandidateReview({
                 const hasMetadata = Object.keys(candidate.evidence.tags).length > 0;
                 const candidateEntity = candidate.evidence.entity ?? entity;
                 const candidateIsAcoustId = candidate.evidence.provider === "acoustid";
-                const acoustidScore =
-                  candidate.evidence.acoustid_score ??
-                  (candidateIsAcoustId ? candidate.evidence.score : null);
-                const musicbrainzScore =
-                  candidate.evidence.musicbrainz_score ??
-                  (!candidateIsAcoustId ? candidate.evidence.score : null);
+                const acoustidScore = candidate.evidence.acoustid_score;
+                const musicbrainzScore = candidate.evidence.musicbrainz_score;
+                const score = compositeScore(candidate);
                 const compatible =
                   compatibleWith === null ||
                   (candidate.evidence.compatible_ids?.length ?? 0) === 0 ||
@@ -238,10 +249,8 @@ export function CandidateReview({
                       )}
                     </div>
                     <div className="candidate-score">
-                      {candidate.evidence.score === null
-                        ? "—"
-                        : `${Math.round(candidate.evidence.score * 100)}%`}
-                      <small>приоритетная оценка</small>
+                      {score === null ? "—" : `${Math.round(score * 100)}%`}
+                      <small>Наш скоринг</small>
                     </div>
                     <button
                       type="button"
@@ -254,8 +263,8 @@ export function CandidateReview({
                       }
                       aria-label={
                         candidateEntity === "recording"
-                          ? `Выбрать запись ${candidateMbid}, оценка ${candidate.evidence.score === null ? "неизвестна" : `${Math.round(candidate.evidence.score * 100)}%`}`
-                          : `Выбрать релиз ${candidateMbid}, оценка ${candidate.evidence.score === null ? "неизвестна" : `${Math.round(candidate.evidence.score * 100)}%`}`
+                          ? `Выбрать запись ${candidateMbid}, наш скоринг ${score === null ? "неизвестен" : `${Math.round(score * 100)}%`}`
+                          : `Выбрать релиз ${candidateMbid}, наш скоринг ${score === null ? "неизвестен" : `${Math.round(score * 100)}%`}`
                       }
                     >
                       {candidateEntity === "recording"

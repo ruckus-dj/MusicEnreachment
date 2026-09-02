@@ -361,6 +361,7 @@ describe("TrackDetail effective source", () => {
 
     expect(screen.getByText("AcousticID: 99%")).toBeTruthy();
     expect(screen.getByText("MusicBrainz: 98%")).toBeTruthy();
+    expect(screen.getByText("Наш скоринг")).toBeTruthy();
     expect(screen.queryByText("Источник: AcousticID")).toBeNull();
     expect(screen.getAllByRole("article")).toHaveLength(1);
   });
