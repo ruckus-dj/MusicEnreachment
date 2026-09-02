@@ -386,13 +386,19 @@ def _single_scored_recording_candidate(
             current = candidates_by_recording.get(recording_mbid)
             if current is None or current[0] < evidence.score:
                 candidates_by_recording[recording_mbid] = (evidence.score, evidence)
+    composite_candidates = {
+        recording_mbid: candidate
+        for recording_mbid, candidate in candidates_by_recording.items()
+        if candidate[1].score_components is not None
+    }
+    ranked_candidates = composite_candidates or candidates_by_recording
     if preferred_recording_mbid is not None:
-        preferred = candidates_by_recording.get(preferred_recording_mbid)
+        preferred = ranked_candidates.get(preferred_recording_mbid)
         if preferred is not None and preferred[0] >= confidence_threshold:
             return preferred_recording_mbid, preferred[1]
     qualified = tuple(
         (recording_mbid, candidate[1])
-        for recording_mbid, candidate in candidates_by_recording.items()
+        for recording_mbid, candidate in ranked_candidates.items()
         if candidate[0] >= confidence_threshold
     )
     return qualified[0] if len(qualified) == 1 else None
