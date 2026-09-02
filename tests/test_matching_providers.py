@@ -717,6 +717,11 @@ def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
             calls.append(url)
+            if '/ws/2/recording/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"recordings":[{"id":"text-recording-id","score":100}]}',
+                )
             if '/release/release-id?' in url:
                 return MusicBrainzHttpResponse(
                     200,
@@ -750,8 +755,13 @@ def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_
     # Then: MusicBrainz searches text first, then expands the AcoustID recording ID.
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
     assert '/ws/2/recording/?' in calls[0]
-    assert '/recording/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a?' in calls[1]
+    assert any('/recording/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a?' in call for call in calls)
+    assert any('/recording/text-recording-id?' in call for call in calls)
     assert result.musicbrainz.candidate.artist_name == 'Fixture Artist'
+    assert set(result.musicbrainz.candidate.recording_mbids) == {
+        'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+        'text-recording-id',
+    }
 
 
 def test_provider_evidence_recording_only_lookup_skips_text_search(tmp_path: Path) -> None:
@@ -1077,12 +1087,20 @@ def test_musicbrainz_search_merges_acoustid_recordings_before_detail_lookup() ->
         NOW,
     )
 
-    assert isinstance(result, MusicBrainzMatch)
+    assert isinstance(result, Ambiguous)
     assert '/recording/?' in calls[0]
     recording_calls = [url for url in calls if '/recording/' in url and '/recording/?' not in url]
-    assert {url.split('/recording/', 1)[1].split('?', 1)[0] for url in recording_calls} == {'recording-c'}
+    assert {url.split('/recording/', 1)[1].split('?', 1)[0] for url in recording_calls} == {
+        'recording-a',
+        'recording-b',
+        'recording-c',
+    }
     release_calls = [url for url in calls if '/release/' in url]
-    assert sorted(url.split('/release/', 1)[1].split('?', 1)[0] for url in release_calls) == ['release-c']
+    assert sorted(url.split('/release/', 1)[1].split('?', 1)[0] for url in release_calls) == [
+        'release-b',
+        'release-c',
+        'shared-release',
+    ]
 
 
 def test_musicbrainz_when_unique_single_track_release_is_selected_preserves_recording_mbid() -> None:

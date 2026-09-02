@@ -87,8 +87,26 @@ class MusicBrainzProviderAdapter:
         if search.status_code != 200:
             return outcome or Malformed(provenance)
         if request.recording_mbids:
+            recording_mbids = tuple(
+                dict.fromkeys(
+                    (
+                        *request.recording_mbids,
+                        *(item.id for item in (search.payload.recordings if search.payload is not None else ())),
+                    )
+                )
+            )
+            recording_scores = (
+                ()
+                if search.payload is None
+                else tuple((item.id, item.score) for item in search.payload.recordings if item.score is not None)
+            )
             return await self._resolve_recordings(
-                request.recording_mbids, request, captured_at, f'query:{request.query}', provenance
+                recording_mbids,
+                request,
+                captured_at,
+                f'query:{request.query}',
+                provenance,
+                recording_scores,
             )
         if outcome is not None:
             legacy = self.client.parse_legacy_releases(search)
