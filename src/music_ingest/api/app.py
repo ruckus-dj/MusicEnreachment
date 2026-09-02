@@ -231,13 +231,21 @@ def _merge_candidate_evidence(
     musicbrainz_score = existing.musicbrainz_score
     if existing.provider == 'acoustid' and acoustid_score is None:
         acoustid_score = existing.score
-    if existing.provider == 'musicbrainz' and musicbrainz_score is None:
+    if existing.provider == 'musicbrainz' and existing.score_components is None and musicbrainz_score is None:
         musicbrainz_score = existing.score
     if incoming.provider == 'acoustid' and incoming.score is not None:
         acoustid_score = incoming.score
-    if incoming.provider == 'musicbrainz' and incoming.score is not None:
+    if incoming.provider == 'musicbrainz' and incoming.score_components is None and incoming.score is not None:
         musicbrainz_score = incoming.score
-    provider = 'musicbrainz' if musicbrainz_score is not None else 'acoustid'
+    score_components = incoming.score_components or existing.score_components
+    composite_score = (
+        incoming.score
+        if incoming.score_components is not None
+        else existing.score
+        if existing.score_components is not None
+        else None
+    )
+    provider = 'musicbrainz' if musicbrainz_score is not None or score_components is not None else 'acoustid'
     compatible_ids = tuple(dict.fromkeys((*existing.compatible_ids, *incoming.compatible_ids)))
     tags = {**existing.tags, **incoming.tags}
     return CandidateEvidencePayload(
@@ -249,10 +257,16 @@ def _merge_candidate_evidence(
         album=incoming.album or existing.album,
         recording_mbid=incoming.recording_mbid or existing.recording_mbid,
         compatible_ids=compatible_ids,
-        score=acoustid_score if acoustid_score is not None else musicbrainz_score,
+        score=(
+            composite_score
+            if composite_score is not None
+            else acoustid_score
+            if acoustid_score is not None
+            else musicbrainz_score
+        ),
         acoustid_score=acoustid_score,
         musicbrainz_score=musicbrainz_score,
-        score_components=incoming.score_components or existing.score_components,
+        score_components=score_components,
         tags=tags,
         releases=tuple((*existing.releases, *[item for item in incoming.releases if item not in existing.releases])),
     )
@@ -270,7 +284,16 @@ def _display_candidates(source: SourceRecordView) -> tuple[tuple[str, CandidateE
             candidate.candidate_key,
             evidence if current is None else _merge_candidate_evidence(current[1], evidence),
         )
-    return tuple(merged.values())
+    return tuple(
+        sorted(
+            merged.values(),
+            key=lambda item: (
+                item[1].score_components is None,
+                -(item[1].score if item[1].score_components is not None and item[1].score is not None else 0.0),
+                item[0],
+            ),
+        )
+    )
 
 
 def create_app(

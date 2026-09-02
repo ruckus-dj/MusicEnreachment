@@ -14,6 +14,7 @@ from music_ingest.api.app import (
     _merge_candidate_evidence,
     create_app,
 )
+from music_ingest.dto.api import CandidateScoreComponents
 from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
     Base,
@@ -50,16 +51,17 @@ def test_candidate_evidence_merges_provider_scores_for_one_recording_mbid() -> N
         artist='Fixture Artist',
         title='Fixture Track',
         release='Fixture Album',
-        score=0.88,
+        score=0.61,
+        score_components=CandidateScoreComponents(artist=0.4, release=0.2, duration=0.01),
         tags={'TITLE': 'Fixture Track'},
     )
 
     merged = _merge_candidate_evidence(acoustid, musicbrainz)
 
     assert merged.provider == 'musicbrainz'
-    assert merged.score == 0.92
+    assert merged.score == 0.61
     assert merged.acoustid_score == 0.92
-    assert merged.musicbrainz_score == 0.88
+    assert merged.musicbrainz_score is None
     assert merged.title == 'Fixture Track'
 
 
