@@ -102,10 +102,19 @@ def without_pseudo_releases(releases: tuple[Release, ...]) -> tuple[Release, ...
 def merge_recording_candidate(
     existing: ReleaseCandidate, candidate: ReleaseCandidate, request: MusicBrainzLookupRequest
 ) -> ReleaseCandidate:
-    if request.recording_title is not None and recording_match_score(candidate, request) > recording_match_score(
-        existing, request
-    ):
-        return candidate
+    if request.recording_title is not None:
+        candidate_is_better = recording_match_score(candidate, request) > recording_match_score(existing, request)
+        selected = candidate if candidate_is_better else existing
+        projections = existing.recording_candidates or (existing,)
+        return replace(
+            selected,
+            recording_mbids=(
+                selected.recording_mbids
+                if candidate_is_better
+                else tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids)))
+            ),
+            recording_candidates=(*projections, candidate),
+        )
     return replace(
         existing, recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids)))
     )

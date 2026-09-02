@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from music_ingest.matching.musicbrainz_mapping import merge_recording_candidate
 from music_ingest.matching.providers import (
     AcoustIdMatch,
     Ambiguous,
@@ -115,6 +116,45 @@ def test_folder_release_selection_when_one_source_has_no_qualified_release_retur
 
     # Then: no release is selected for only part of the folder.
     assert selected is None
+
+
+def test_merge_recording_candidate_when_recording_titles_differ_keeps_one_consistent_recording() -> None:
+    # Given: two projections of one release for different recordings.
+    request = MusicBrainzLookupRequest(
+        query='artist:Noize MC recording:Любит',
+        fixture_case=FixtureCase.SUCCESS,
+        recording_title='Эдем 14/88',
+        duration_seconds=240,
+        track_number=23,
+    )
+    existing = ReleaseCandidate(
+        'release-id',
+        'Новый альбом',
+        'Noize MC',
+        216,
+        ('bass-recording-id',),
+        recording_title='Эдем 14/88',
+        track_number=23,
+    )
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Новый альбом',
+        'Noize MC',
+        421,
+        ('love-recording-id',),
+        recording_title='Бассейн',
+        track_number=9,
+    )
+
+    # When: projections are merged for the same release.
+    merged = merge_recording_candidate(existing, candidate, request)
+
+    # Then: the selected projection does not advertise another recording's MBID.
+    assert merged.recording_mbids == ('bass-recording-id', 'love-recording-id')
+    assert [(item.recording_mbids, item.recording_title) for item in merged.recording_candidates] == [
+        (('bass-recording-id',), 'Эдем 14/88'),
+        (('love-recording-id',), 'Бассейн'),
+    ]
 
 
 def test_matching_when_fresh_musicbrainz_maps_explicit_recording_mbid_selects_its_release() -> None:

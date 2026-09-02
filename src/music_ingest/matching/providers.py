@@ -245,6 +245,7 @@ class ReleaseCandidate:
     catalog_numbers: tuple[str, ...] = ()
     disambiguation: str | None = None
     musicbrainz_score: float | None = None
+    recording_candidates: tuple[ReleaseCandidate, ...] = ()
 
 
 def release_display_title(candidate: ReleaseCandidate) -> str:
