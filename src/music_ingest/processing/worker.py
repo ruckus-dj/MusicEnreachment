@@ -272,7 +272,7 @@ def _candidate_records(
             sort_keys=True,
         ),
     )
-    recording_score = None if request is None else score_recording_candidate(request, candidate)
+    recording_candidates = candidate.recording_candidates or (candidate,)
     recording_records = tuple(
         CandidateRecord(
             source_id=source_id,
@@ -281,32 +281,33 @@ def _candidate_records(
                 {
                     'provider': 'musicbrainz',
                     'entity': 'recording',
-                    'artist': '; '.join(candidate.recording_artist_names) or candidate.artist_name,
-                    'release': candidate.release_title,
-                    'title': candidate.recording_title or '',
-                    'album': candidate.release_title,
-                    'score': None if recording_score is None else recording_score.score,
+                    'artist': '; '.join(recording_candidate.recording_artist_names) or recording_candidate.artist_name,
+                    'release': recording_candidate.release_title,
+                    'title': recording_candidate.recording_title or '',
+                    'album': recording_candidate.release_title,
+                    'score': None if request is None else score_recording_candidate(request, recording_candidate).score,
                     'musicbrainz_score': None
-                    if candidate.musicbrainz_score is None
-                    else candidate.musicbrainz_score / 100.0,
+                    if recording_candidate.musicbrainz_score is None
+                    else recording_candidate.musicbrainz_score / 100.0,
                     'score_components': (
                         None
-                        if recording_score is None
+                        if request is None
                         else {
-                            'artist': recording_score.artist_component,
-                            'title': recording_score.title_component,
-                            'duration': recording_score.duration_component,
-                            'track': recording_score.track_component,
+                            'artist': score_recording_candidate(request, recording_candidate).artist_component,
+                            'title': score_recording_candidate(request, recording_candidate).title_component,
+                            'duration': score_recording_candidate(request, recording_candidate).duration_component,
+                            'track': score_recording_candidate(request, recording_candidate).track_component,
                         }
                     ),
                     'recording_mbid': recording_mbid,
-                    'compatible_ids': (candidate.release_mbid,),
-                    'tags': _candidate_tags(candidate),
+                    'compatible_ids': (recording_candidate.release_mbid,),
+                    'tags': _candidate_tags(recording_candidate),
                 },
                 sort_keys=True,
             ),
         )
-        for recording_mbid in candidate.recording_mbids
+        for recording_candidate in recording_candidates
+        for recording_mbid in recording_candidate.recording_mbids
     )
     return (*((release_record,) if candidate.recording_mbids else ()), *recording_records)
 
