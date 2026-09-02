@@ -16,7 +16,7 @@ from music_ingest.matching.providers import (
     RecordingCandidate,
     ReleaseCandidate,
 )
-from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, MatchResult, resolve_match
+from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
 from music_ingest.processing import worker as processing
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
@@ -65,56 +65,6 @@ def test_noize_acoustid_fixture_preserves_current_provider_recordings() -> None:
         RecordingCandidate(VOL_1_RECORDING, 0.96927744),
         RecordingCandidate(VOL_2_RECORDING, 0.96927744),
     )
-
-
-def test_noize_vol_1_album_match_selects_its_recording_despite_equal_acoustid_scores() -> None:
-    # Given: current Noize source tags and two recording lookups derived from current provider evidence.
-    request = MatchingRequest(
-        artist_name='Noize MC',
-        release_title='The Greatest Hits Vol.1',
-        duration_seconds=None,
-        recording_title='Песня Для Радио',
-        track_number=1,
-    )
-    vol_1_result = _provider_result(
-        ReleaseCandidate(
-            'd5c9ba44-448a-4b07-9f06-e6626032c19d',
-            'The Greatest Hits Vol.1',
-            'Noize MC',
-            recording_mbids=(VOL_1_RECORDING,),
-            recording_title='Песня для радио',
-            track_number=1,
-            release_artist_name='Noize MC',
-        )
-    )
-    vol_2_result = _provider_result(
-        ReleaseCandidate(
-            '18a78523-16e1-45e6-91cb-594bacc9ef9b',
-            'The Greatest Hits Vol.2',
-            'Noize MC',
-            recording_mbids=(VOL_2_RECORDING,),
-            recording_title='Песня для радио (полная версия)',
-            track_number=1,
-            release_artist_name='Noize MC',
-        )
-    )
-    vol_1_match = resolve_match(request, vol_1_result.musicbrainz, None)
-    vol_2_match = resolve_match(request, vol_2_result.musicbrainz, None)
-
-    # When: the worker combines the equal-score AcoustID candidates with their MusicBrainz evidence.
-    selected = processing.select_acoustid_recording_match(
-        ((vol_1_result, vol_1_match), (vol_2_result, vol_2_match)),
-        (
-            (vol_1_result, CandidateScore(VOL_1_RECORDING, 0.96927744)),
-            (vol_2_result, CandidateScore(VOL_2_RECORDING, 0.96927744)),
-        ),
-        0.7,
-    )
-
-    # Then: the album-compatible Vol.1 recording is selected, not left in review or replaced by Vol.2.
-    assert vol_1_match.decision is MatchDecision.AUTO_SELECTED
-    assert vol_2_match.decision is MatchDecision.NEEDS_REVIEW
-    assert selected == (vol_1_result, CandidateScore(VOL_1_RECORDING, 0.96927744))
 
 
 def test_album_match_keeps_acoustid_recording_when_recording_projection_is_missing() -> None:

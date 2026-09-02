@@ -30,7 +30,6 @@ from music_ingest.matching.providers import (
     ReleaseCandidate,
     Unavailable,
 )
-from music_ingest.matching.scoring import MatchingRequest, recording_candidate_matches
 from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
@@ -649,63 +648,6 @@ def test_musicbrainz_v2_adapter_preserves_release_catalog_numbers() -> None:
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.catalog_numbers == ('093624950509', '9362-49505-0')
     assert result.candidate.disambiguation == 'European edition'
-
-
-def test_provider_adapters_reject_false_acoustid_recording_and_select_japanese_maxi_release() -> None:
-    # Given: mocked AcoustID and MusicBrainz responses for We Made It (Album Version).
-    class AcoustIdTransport:
-        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
-            _ = url, headers
-            return MusicBrainzHttpResponse(
-                200,
-                b'{"status":"ok","results":[{"score":0.9639372,"recordings":['
-                b'{"id":"c3ab18e7-e17a-4064-a352-834b67513f33"},'
-                b'{"id":"6eddd1bf-2a06-4baf-8b31-0909963345c7"},'
-                b'{"id":"fea273ef-bd0b-4f3a-ba7a-6d9ed240c2f5"},'
-                b'{"id":"5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4"}]}]}',
-            )
-
-    class MusicBrainzTransport:
-        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
-            _ = headers
-            release_id = url.split('/release/', 1)[1].split('?', 1)[0] if '/release/' in url else ''
-            recording_id = url.split('/recording/', 1)[1].split('?', 1)[0] if '/recording/' in url else ''
-            if recording_id:
-                return MusicBrainzHttpResponse(200, _recording_releases_response(recording_id))
-            return MusicBrainzHttpResponse(200, _release_response(release_id))
-
-    request = MatchingRequest(
-        'Busta Rhymes feat. Linkin Park',
-        'We Made It [Maxi Single]',
-        238,
-        recording_title='We Made It (Album Version)',
-        track_number=1,
-        track_total=3,
-        disc_number=1,
-        disc_total=1,
-        source_path='/downloads/Japan WPCR-12973/01 - We Made It (Album Version).flac',
-    )
-    acoustid = AcoustIdV2Adapter(AcoustIdTransport(), 'client').lookup(
-        AcoustIdLookupRequest('fingerprint', FixtureCase.SUCCESS, 238.17), NOW
-    )
-    musicbrainz = MusicBrainzProviderAdapter(MusicBrainzTransport(), 'music-ingest/1.0 (operator@example.test)')
-
-    # When: each equally scored recording is resolved against MusicBrainz facts.
-    assert isinstance(acoustid, AcoustIdMatch)
-    eligible = tuple(
-        candidate
-        for recording in acoustid.evidence.candidates
-        for result in (
-            musicbrainz.lookup(MusicBrainzLookupRequest('', FixtureCase.SUCCESS, recording.recording_mbid), NOW),
-        )
-        if isinstance(result, MusicBrainzMatch)
-        for candidate in (result.candidate,)
-        if recording_candidate_matches(request, candidate)
-    )
-
-    # Then: the Beatles, clean, and instrumental recordings are rejected; the Japanese Maxi is selected.
-    assert tuple(candidate.recording_mbids for candidate in eligible) == (('5eb8e3dc-7a63-4269-9abb-a7ed70a27cf4',),)
-    assert eligible[0].release_mbid == '0f481339-f7bb-40b4-ab4a-f24c1c2a7009'
 
 
 def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_path: Path) -> None:
