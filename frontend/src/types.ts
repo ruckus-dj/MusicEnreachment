@@ -13,8 +13,9 @@ export type Candidate = {
   readonly candidate_key: string;
   readonly evidence: {
     readonly provider: ProviderName;
-    readonly entity?: "recording" | "release";
+    readonly entity?: "recording" | "recording_release";
     readonly recording_mbid?: string;
+    readonly release_mbid?: string;
     readonly compatible_ids?: readonly string[];
     readonly artist: string;
     readonly release: string;
@@ -22,6 +23,7 @@ export type Candidate = {
     readonly title?: string;
     readonly album?: string;
     readonly score: number | null;
+    readonly duration_seconds?: number | null;
     readonly acoustid_score?: number | null;
     readonly musicbrainz_score?: number | null;
     readonly score_components?: {
@@ -30,6 +32,26 @@ export type Candidate = {
       readonly duration: number;
       readonly title: number;
       readonly track: number;
+      readonly track_number?: number | null;
+      readonly track_total?: number | null;
+      readonly disc_number?: number | null;
+      readonly disc_total?: number | null;
+      readonly musicbrainz?: number | null;
+      readonly acoustid?: number | null;
+      readonly artist_match?: number | null;
+      readonly release_match?: number | null;
+      readonly duration_match?: number | null;
+      readonly title_match?: number | null;
+      readonly track_number_match?: number | null;
+      readonly track_total_match?: number | null;
+      readonly disc_number_match?: number | null;
+      readonly disc_total_match?: number | null;
+      readonly musicbrainz_match?: number | null;
+      readonly acoustid_match?: number | null;
+      readonly recording_artist?: number | null;
+      readonly release_artist?: number | null;
+      readonly recording_artist_match?: number | null;
+      readonly release_artist_match?: number | null;
     } | null;
     readonly tags: Tags;
   };
@@ -43,6 +65,7 @@ export type Source = {
   readonly disappeared_at?: string | null;
   readonly origin?: string;
   readonly size_bytes?: number;
+  readonly duration_seconds?: number | null;
   readonly tag_observations?: readonly {
     readonly name: string;
     readonly value: string;

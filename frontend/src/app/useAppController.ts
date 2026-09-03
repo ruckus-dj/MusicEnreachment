@@ -400,7 +400,7 @@ export function useAppController(): AppControllerModel {
     const separator = selection.indexOf(":");
     const parts = selection.split(":");
     const selectedProvider: ProviderName = parts[0] === "acoustid" ? "acoustid" : "musicbrainz";
-    const selectedEntity = parts[1] === "recording" ? "recording" : "release";
+    const selectedEntity = parts[1] === "recording" ? "recording" : "recording_release";
     const selectedKey = separator > 0 ? parts.slice(2).join(":") : selection;
     if (!recordId || !sourceId) return;
     setReprocessing(true);

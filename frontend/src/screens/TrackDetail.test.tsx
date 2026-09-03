@@ -21,7 +21,11 @@ const detail: Detail = {
       sha256: "a".repeat(64),
       state: "present",
       format: "flac",
-      tag_observations: [{ name: "TITLE", value: "Track", format: "FLAC" }],
+      tag_observations: [
+        { name: "TITLE", value: "Track", format: "FLAC" },
+        { name: "ARTIST", value: "Source Artist", format: "FLAC" },
+        { name: "ALBUM", value: "Source Album", format: "FLAC" },
+      ],
     },
     {
       source_id: "source-b",
@@ -110,7 +114,7 @@ describe("TrackDetail effective source", () => {
                   title: "Fixture Track",
                   album: "Fixture Release",
                   score: 0.99,
-                  tags: {},
+                  tags: { TRACKNUMBER: "3", TRACKTOTAL: "18" },
                 },
               },
             ],
@@ -120,12 +124,12 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    expect(screen.getByRole("button", { name: /Recording MBID.*Выбрано/ }).textContent).toContain(
-      "Выбрано",
-    );
+    expect(
+      screen.getByRole("button", { name: /Recording \+ Release.*Выбрано/ }).textContent,
+    ).toContain("Выбрано");
   });
 
-  it("keeps recording and release sections linked through selected candidates", () => {
+  it("shows one unified row per MusicBrainz candidate", () => {
     renderDetail({
       detail: {
         ...detail,
@@ -135,57 +139,49 @@ describe("TrackDetail effective source", () => {
             ...detail.sources[0],
             candidates: [
               {
-                candidate_key: "recording-a",
+                candidate_key: "release-a:recording-a",
                 evidence: {
                   provider: "musicbrainz",
-                  entity: "recording",
+                  entity: "recording_release",
                   recording_mbid: "recording-a",
-                  compatible_ids: ["release-a"],
+                  release_mbid: "release-a",
                   artist: "Fixture Artist",
                   release: "Fixture Album",
                   title: "Fixture Track",
                   album: "Fixture Album",
                   score: 0.9,
-                  tags: {},
+                  duration_seconds: 245,
+                  score_components: {
+                    artist: 0.8,
+                    release: 0.7,
+                    duration: 0.9,
+                    title: 0.95,
+                    track: 1,
+                    title_match: 0.95,
+                    track_number_match: 1,
+                  },
+                  tags: {
+                    TITLE: "Candidate Track",
+                    ARTIST: "Candidate Artist",
+                    ALBUM: "Candidate Album",
+                    TRACKNUMBER: "3",
+                    TRACKTOTAL: "18",
+                  },
                 },
               },
               {
-                candidate_key: "recording-b",
+                candidate_key: "release-b:recording-b",
                 evidence: {
                   provider: "musicbrainz",
-                  entity: "recording",
+                  entity: "recording_release",
                   recording_mbid: "recording-b",
-                  compatible_ids: ["release-b"],
+                  release_mbid: "release-b",
                   artist: "Fixture Artist",
                   release: "Other Album",
                   title: "Other Track",
                   album: "Other Album",
                   score: 0.4,
                   tags: {},
-                },
-              },
-              {
-                candidate_key: "release-a",
-                evidence: {
-                  provider: "musicbrainz",
-                  entity: "release",
-                  compatible_ids: ["recording-a"],
-                  artist: "Fixture Artist",
-                  release: "Fixture Album",
-                  score: 0.9,
-                  tags: { MUSICBRAINZ_ALBUMID: "release-a" },
-                },
-              },
-              {
-                candidate_key: "release-b",
-                evidence: {
-                  provider: "musicbrainz",
-                  entity: "release",
-                  compatible_ids: ["recording-b"],
-                  artist: "Fixture Artist",
-                  release: "Other Album",
-                  score: 0.4,
-                  tags: { MUSICBRAINZ_ALBUMID: "release-b" },
                 },
               },
             ],
@@ -195,18 +191,30 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Recording MBID/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Recording \+ Release/ }));
 
+    const comparisonHas = (label: string, value: string) =>
+      screen.getAllByText(label).some((item) => item.parentElement?.textContent?.includes(value));
     expect(screen.getByRole("article", { name: /Fixture Track/ }).className).toContain(
       "candidate-card-selected",
     );
-    expect(screen.getByRole("article", { name: /Fixture Album/ }).className).toContain(
-      "candidate-card-related",
+    expect(screen.getByText("Позиция: 3/18")).toBeTruthy();
+    expect(screen.getByText("95.00% (95.00%)")).toBeTruthy();
+    expect(screen.getByRole("article", { name: /Fixture Track/ }).textContent).not.toContain(
+      "Название TITLE",
     );
-    expect(screen.queryByText("AcousticID recording")).toBeNull();
+    expect(comparisonHas("Источник:", "Track")).toBe(true);
+    expect(comparisonHas("Кандидат:", "Candidate Track")).toBe(true);
+    expect(comparisonHas("Источник:", "Source Artist")).toBe(true);
+    expect(comparisonHas("Кандидат:", "Candidate Artist")).toBe(true);
+    expect(comparisonHas("Источник:", "Source Album")).toBe(true);
+    expect(comparisonHas("Кандидат:", "Candidate Album")).toBe(true);
+    expect(screen.getAllByText("Релиз")).not.toHaveLength(0);
+    expect(screen.getAllByText("Запись")).not.toHaveLength(0);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
   });
 
-  it("highlights a compatible recording when the release is selected", () => {
+  it("marks the unified candidate selected when its release is selected", () => {
     renderDetail({
       detail: {
         ...detail,
@@ -216,25 +224,12 @@ describe("TrackDetail effective source", () => {
             ...detail.sources[0],
             candidates: [
               {
-                candidate_key: "recording-a",
+                candidate_key: "release-a:recording-a",
                 evidence: {
                   provider: "musicbrainz",
-                  entity: "recording",
+                  entity: "recording_release",
                   recording_mbid: "recording-a",
-                  artist: "Fixture Artist",
-                  release: "Fixture Album",
-                  title: "Fixture Track",
-                  album: "Fixture Album",
-                  score: 0.9,
-                  tags: {},
-                },
-              },
-              {
-                candidate_key: "release-a",
-                evidence: {
-                  provider: "musicbrainz",
-                  entity: "release",
-                  compatible_ids: ["recording-a"],
+                  release_mbid: "release-a",
                   artist: "Fixture Artist",
                   release: "Fixture Album",
                   score: 0.9,
@@ -248,8 +243,9 @@ describe("TrackDetail effective source", () => {
       },
     });
 
-    expect(screen.getByRole("article", { name: /Fixture Track/ }).className).toContain(
-      "candidate-card-related",
+    fireEvent.click(screen.getByRole("button", { name: /Recording \+ Release/ }));
+    expect(screen.getByRole("article", { name: /Fixture Album/ }).className).toContain(
+      "candidate-card-selected",
     );
   });
 
@@ -284,12 +280,14 @@ describe("TrackDetail effective source", () => {
 
     expect(
       screen
-        .getByRole("link", { name: "Релиз: f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a" })
+        .getByRole("link", { name: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a" })
         .getAttribute("href"),
     ).toBe("https://musicbrainz.internal/release/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a");
     expect(
-      screen.getByRole("link", { name: "Запись: recording-result" }).getAttribute("href"),
-    ).toBe("https://musicbrainz.internal/recording/recording-result");
+      screen
+        .getAllByRole("link", { name: "recording-result" })
+        .map((link) => link.getAttribute("href")),
+    ).toContain("https://musicbrainz.internal/recording/recording-result");
   });
 
   it("opens AcousticID recording candidates on the configured host", () => {
@@ -323,7 +321,7 @@ describe("TrackDetail effective source", () => {
 
     expect(
       screen
-        .getByRole("link", { name: "Запись: 47d13484-9eed-4460-babd-bca3a19fcd77" })
+        .getByRole("link", { name: "47d13484-9eed-4460-babd-bca3a19fcd77" })
         .getAttribute("href"),
     ).toBe("https://musicbrainz.internal/recording/47d13484-9eed-4460-babd-bca3a19fcd77");
   });
@@ -337,11 +335,12 @@ describe("TrackDetail effective source", () => {
             ...detail.sources[0],
             candidates: [
               {
-                candidate_key: "shared-recording",
+                candidate_key: "shared-release:shared-recording",
                 evidence: {
                   provider: "musicbrainz",
-                  entity: "recording",
+                  entity: "recording_release",
                   recording_mbid: "shared-recording",
+                  release_mbid: "shared-release",
                   artist: "Fixture Artist",
                   release: "Fixture Release",
                   title: "Fixture Track",

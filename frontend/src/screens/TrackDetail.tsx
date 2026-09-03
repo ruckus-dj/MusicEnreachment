@@ -84,25 +84,53 @@ export function TrackDetail({
   const selectedMusicBrainz = detail.musicbrainz_release_id ?? null;
   const releaseCandidates = candidates.filter(
     (candidate) =>
-      (candidate.evidence.entity ??
-        (candidate.evidence.provider === "acoustid" ? "recording" : "release")) === "release",
+      candidate.evidence.provider === "musicbrainz" &&
+      (candidate.evidence.entity === "recording_release" ||
+        candidate.evidence.entity === undefined),
   );
   const recordingCandidates = candidates
     .filter(
       (candidate) =>
-        (candidate.evidence.entity ??
-          (candidate.evidence.provider === "acoustid" ? "recording" : "release")) === "recording",
+        (candidate.evidence.entity === "recording" || candidate.evidence.entity === undefined) &&
+        candidate.evidence.provider === "acoustid",
     )
     .map((candidate) => {
       if ((candidate.evidence.compatible_ids?.length ?? 0) > 0) return candidate;
       const compatibleReleaseIds = releaseCandidates
-        .filter((release) => release.evidence.compatible_ids?.includes(candidate.candidate_key))
-        .map((release) => release.candidate_key);
+        .filter(
+          (release) =>
+            release.evidence.recording_mbid === candidate.evidence.recording_mbid ||
+            release.evidence.compatible_ids?.includes(candidate.evidence.recording_mbid ?? ""),
+        )
+        .map((release) => release.evidence.release_mbid ?? release.candidate_key);
       return {
         ...candidate,
         evidence: { ...candidate.evidence, compatible_ids: compatibleReleaseIds },
       };
     });
+  const acousticCandidatesByRecording = new Map(
+    recordingCandidates
+      .filter((candidate) => candidate.evidence.provider === "acoustid")
+      .map((candidate) => [candidate.evidence.recording_mbid, candidate]),
+  );
+  const unifiedCandidates = releaseCandidates.map((candidate) => {
+    const acoustic = acousticCandidatesByRecording.get(candidate.evidence.recording_mbid);
+    if (!acoustic) return candidate;
+    return {
+      ...candidate,
+      evidence: {
+        ...candidate.evidence,
+        acoustid_score: acoustic.evidence.score,
+      },
+    };
+  });
+  const unifiedRecordingIds = new Set(
+    unifiedCandidates.map((candidate) => candidate.evidence.recording_mbid),
+  );
+  const unmatchedAcousticCandidates = recordingCandidates.filter(
+    (candidate) => !unifiedRecordingIds.has(candidate.evidence.recording_mbid),
+  );
+  const selectedCandidateKey = selectedMusicBrainz ?? selectedAcoustId;
   const visibleTagFields = [
     ...new Set([
       ...TAG_FIELDS,
@@ -117,8 +145,8 @@ export function TrackDetail({
   const selectableSources = detail.sources.filter((item) => item.state !== "disappeared");
   const effectiveSource = detail.sources.find((item) => item.source_id === effectiveSourceId);
   const hasProviderEvidence =
-    recordingCandidates.length > 0 ||
-    releaseCandidates.length > 0 ||
+    unifiedCandidates.length > 0 ||
+    unmatchedAcousticCandidates.length > 0 ||
     selectedAcoustId ||
     selectedMusicBrainz;
   const retryAcoustId = onRetryAcoustId ?? (() => undefined);
@@ -346,28 +374,18 @@ export function TrackDetail({
             </small>
           </div>
           {hasProviderEvidence && (
-            <>
-              <CandidateReview
-                entity="recording"
-                candidates={recordingCandidates}
-                selectedKey={selectedAcoustId}
-                compatibleWith={selectedMusicBrainz}
-                reason={`Сравните исполнителя и название записи «${trackTitle}» с исходными тегами.`}
-                disabled={reprocessing}
-                musicbrainzHost={musicbrainzHost ?? null}
-                onSelect={onSelectCandidate}
-              />
-              <CandidateReview
-                entity="release"
-                candidates={releaseCandidates}
-                selectedKey={selectedMusicBrainz}
-                compatibleWith={selectedAcoustId}
-                reason={`Выберите релиз MusicBrainz для трека «${trackTitle}» из альбома «${trackAlbum}».`}
-                disabled={reprocessing}
-                musicbrainzHost={musicbrainzHost ?? null}
-                onSelect={onSelectCandidate}
-              />
-            </>
+            <CandidateReview
+              entity="recording_release"
+              candidates={[...unmatchedAcousticCandidates, ...unifiedCandidates]}
+              sourceTags={originalTags}
+              sourceDurationSeconds={source.duration_seconds ?? fingerprintDuration ?? null}
+              selectedKey={selectedCandidateKey}
+              compatibleWith={selectedMusicBrainz}
+              reason={`Сравните одну строку кандидата: запись «${trackTitle}», альбом «${trackAlbum}», позицию и факторы скоринга.`}
+              disabled={reprocessing}
+              musicbrainzHost={musicbrainzHost ?? null}
+              onSelect={onSelectCandidate}
+            />
           )}
           <details className="release-override">
             <summary>Выбрать release MBID вручную</summary>
