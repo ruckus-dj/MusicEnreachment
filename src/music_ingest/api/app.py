@@ -201,8 +201,8 @@ def _needs_analysis_retry(source: SourceRecordView) -> bool:
 
 
 def _candidate_is_displayable(evidence: CandidateEvidencePayload) -> bool:
-    if evidence.provider == 'musicbrainz' and evidence.entity == 'release' and not evidence.compatible_ids:
-        return False
+    if evidence.provider == 'musicbrainz' and evidence.entity == 'recording_release':
+        return evidence.release_mbid is not None and evidence.recording_mbid is not None
     if evidence.provider != 'musicbrainz':
         return True
     return bool(
@@ -255,6 +255,7 @@ def _merge_candidate_evidence(
         release=incoming.release or existing.release,
         title=incoming.title or existing.title,
         album=incoming.album or existing.album,
+        release_mbid=incoming.release_mbid or existing.release_mbid,
         recording_mbid=incoming.recording_mbid or existing.recording_mbid,
         compatible_ids=compatible_ids,
         score=(
@@ -1313,23 +1314,18 @@ def create_app(
                 candidate_tags = evidence.tags
                 if not candidate_tags:
                     raise HTTPException(status_code=409, detail='provider candidate has no metadata')
-                candidate_recording_mbid = (
-                    evidence.tags.get('MUSICBRAINZ_RECORDINGID')
-                    or evidence.tags.get('MUSICBRAINZ_TRACKID')
-                    or evidence.recording_mbid
+                candidate_recording_mbid = evidence.recording_mbid
+                candidate_release_mbid = evidence.release_mbid
+                if candidate_release_mbid is None:
+                    raise HTTPException(status_code=409, detail='provider candidate has no release identity')
+                if candidate_recording_mbid is None:
+                    raise HTTPException(status_code=409, detail='provider candidate has no recording identity')
+                target_record = session.scalar(
+                    select(LibraryRecord)
+                    .where(LibraryRecord.musicbrainz_recording_id == candidate_recording_mbid)
+                    .where(LibraryRecord.musicbrainz_release_id == candidate_release_mbid)
                 )
-                if candidate_recording_mbid is None and len(evidence.compatible_ids) == 1:
-                    candidate_recording_mbid = evidence.compatible_ids[0]
-                target_record = (
-                    session.scalar(
-                        select(LibraryRecord)
-                        .where(LibraryRecord.musicbrainz_recording_id == candidate_recording_mbid)
-                        .where(LibraryRecord.musicbrainz_release_id == candidate.candidate_key)
-                    )
-                    if candidate_recording_mbid is not None
-                    else None
-                )
-                if candidate_recording_mbid is not None and target_record is not None and target_record.id != record.id:
+                if target_record is not None and target_record.id != record.id:
                     association = RecordingAssociationService(session).associate_verified_manual(
                         ManualAssociationRequest(source.id, candidate_recording_mbid, now)
                     )
@@ -1342,16 +1338,8 @@ def create_app(
                 )
                 final = append_metadata_revision(session, record.id, source.id, 'final', final_tags, 'review', now)
                 record.match_state = 'matched'
-                record.musicbrainz_release_id = candidate.candidate_key
-                compatible_ids = evidence.compatible_ids or (
-                    (evidence.recording_mbid,) if evidence.recording_mbid is not None else ()
-                )
-                if (
-                    record.musicbrainz_recording_id is not None
-                    and compatible_ids
-                    and record.musicbrainz_recording_id not in compatible_ids
-                ):
-                    record.musicbrainz_recording_id = None
+                record.musicbrainz_release_id = candidate_release_mbid
+                record.musicbrainz_recording_id = candidate_recording_mbid
                 session.add(
                     ReviewDecisionRecord(
                         source_id=source.id,

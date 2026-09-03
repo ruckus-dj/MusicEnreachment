@@ -171,12 +171,13 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         first_record.musicbrainz_recording_id = recording_mbid
         second_source.candidates.append(
             CandidateRecord(
-                candidate_key=release_mbid,
+                candidate_key=f'{release_mbid}:{recording_mbid}',
                 evidence=json.dumps(
                     {
                         'provider': 'musicbrainz',
-                        'entity': 'release',
-                        'compatible_ids': [recording_mbid],
+                        'entity': 'recording_release',
+                        'release_mbid': release_mbid,
+                        'recording_mbid': recording_mbid,
                         'tags': {
                             'ALBUM': 'Selected Album',
                             'MUSICBRAINZ_ALBUMID': release_mbid,
@@ -195,7 +196,11 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
     # When: the operator selects the compatible release candidate in the UI.
     response = TestClient(create_app(lambda: Session(engine))).post(
         f'/api/library/records/{second_record_id}/sources/{second_source_id}/candidates/select',
-        json={'candidate_key': release_mbid, 'provider': 'musicbrainz', 'entity': 'release'},
+        json={
+            'candidate_key': f'{release_mbid}:{recording_mbid}',
+            'provider': 'musicbrainz',
+            'entity': 'recording_release',
+        },
     )
 
     # Then: the source gets the selected recording-release identity without merging a different pair.

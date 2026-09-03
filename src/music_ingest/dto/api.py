@@ -193,7 +193,7 @@ class CandidateSelection(BaseModel):
 
     candidate_key: str = Field(min_length=1, max_length=255)
     provider: Literal['acoustid', 'musicbrainz'] = 'musicbrainz'
-    entity: Literal['recording', 'release'] = 'release'
+    entity: Literal['recording', 'recording_release'] = 'recording_release'
 
 
 class ManualSourceSelection(BaseModel):
@@ -228,21 +228,43 @@ class CandidateScoreComponents(BaseModel):
     duration: float = 0.0
     title: float = 0.0
     track: float = 0.0
+    track_number: float | None = None
+    track_total: float | None = None
+    disc_number: float | None = None
+    disc_total: float | None = None
+    musicbrainz: float | None = None
+    acoustid: float | None = None
+    artist_match: float | None = None
+    release_match: float | None = None
+    duration_match: float | None = None
+    title_match: float | None = None
+    track_number_match: float | None = None
+    track_total_match: float | None = None
+    disc_number_match: float | None = None
+    disc_total_match: float | None = None
+    musicbrainz_match: float | None = None
+    acoustid_match: float | None = None
+    recording_artist: float | None = None
+    release_artist: float | None = None
+    recording_artist_match: float | None = None
+    release_artist_match: float | None = None
 
 
 class CandidateEvidencePayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     provider: str = 'musicbrainz'
-    entity: Literal['recording', 'release'] = 'release'
+    entity: Literal['recording', 'recording_release'] = 'recording_release'
     artist: str = ''
     release: str = ''
     title: str = ''
     album: str = ''
     disambiguation: str | None = None
     recording_mbid: str | None = None
+    release_mbid: str | None = None
     compatible_ids: tuple[str, ...] = ()
     score: float | None = None
+    duration_seconds: int | None = None
     acoustid_score: float | None = None
     musicbrainz_score: float | None = None
     score_components: CandidateScoreComponents | None = None

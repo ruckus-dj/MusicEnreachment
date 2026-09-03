@@ -51,6 +51,7 @@ def test_candidate_evidence_merges_provider_scores_for_one_recording_mbid() -> N
         artist='Fixture Artist',
         title='Fixture Track',
         release='Fixture Album',
+        release_mbid='release-id',
         score=0.61,
         score_components=CandidateScoreComponents(artist=0.4, release=0.2, duration=0.01),
         tags={'TITLE': 'Fixture Track'},
@@ -63,6 +64,7 @@ def test_candidate_evidence_merges_provider_scores_for_one_recording_mbid() -> N
     assert merged.acoustid_score == 0.92
     assert merged.musicbrainz_score is None
     assert merged.title == 'Fixture Track'
+    assert merged.release_mbid == 'release-id'
 
 
 def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path: Path) -> None:
@@ -304,10 +306,12 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
             tag_observations=[SourceTagRecord(format_name='flac', tag_name='TITLE', value='Old title')],
             candidates=[
                 CandidateRecord(
-                    candidate_key='release-id',
-                    evidence='{"artist":"Artist","release":"Album","score":0.8,"tags":'
-                    '{"ALBUM":"Album","ARTIST":"Artist","TITLE":"New title",'
-                    '"TRACKNUMBER":"2","TRACKTOTAL":"10","DATE":"2020"}}',
+                    candidate_key='release-id:recording-id',
+                    evidence='{"provider":"musicbrainz","entity":"recording_release","artist":"Artist",'
+                    '"release":"Album","score":0.8,"release_mbid":"release-id",'
+                    '"recording_mbid":"recording-id","tags":{"ALBUM":"Album","ARTIST":"Artist",'
+                    '"TITLE":"New title","TRACKNUMBER":"2","TRACKTOTAL":"10","DATE":"2020",'
+                    '"MUSICBRAINZ_ALBUMID":"release-id","MUSICBRAINZ_RECORDINGID":"recording-id"}}',
                 )
             ],
         )
@@ -319,7 +323,7 @@ def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_
     # When: the reviewer confirms the selected candidate.
     response = client.post(
         '/api/library/records/record-candidate/sources/source-candidate/candidates/select',
-        json={'candidate_key': 'release-id'},
+        json={'candidate_key': 'release-id:recording-id', 'entity': 'recording_release'},
     )
 
     # Then: the selected provider tags become Final and a publication job is queued.

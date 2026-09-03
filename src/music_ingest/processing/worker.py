@@ -77,8 +77,7 @@ from music_ingest.matching.scoring import (
     MatchDecision,
     MatchingRequest,
     MatchResult,
-    score_recording_candidate,
-    score_release_candidate,
+    score_recording_release_candidate,
     select_folder_release,
 )
 from music_ingest.models import (
@@ -236,72 +235,62 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
 def _candidate_records(
     source_id: str,
     candidate: ReleaseCandidate,
-    release_score: CandidateScore | None,
+    _release_score: CandidateScore | None,
     request: MatchingRequest | None,
     source: SourceRecord | None = None,
 ) -> tuple[CandidateRecord, ...]:
-    effective_release_score = score_release_candidate(request, candidate) if request is not None else release_score
-    release_score_value = None if effective_release_score is None else effective_release_score.score
-    release_record = CandidateRecord(
-        source_id=source_id,
-        candidate_key=candidate.release_mbid,
-        evidence=json.dumps(
-            {
-                'provider': 'musicbrainz',
-                'entity': 'release',
-                'artist': candidate.artist_name,
-                'release': candidate.release_title,
-                'disambiguation': candidate.disambiguation,
-                'score': release_score_value,
-                'musicbrainz_score': None
-                if candidate.musicbrainz_score is None
-                else candidate.musicbrainz_score / 100.0,
-                'compatible_ids': candidate.recording_mbids,
-                'score_components': (
-                    None
-                    if effective_release_score is None
-                    else {
-                        'artist': effective_release_score.artist_component,
-                        'release': effective_release_score.release_component,
-                        'duration': effective_release_score.duration_component,
-                        'title': effective_release_score.title_component,
-                        'track': effective_release_score.track_component,
-                    }
-                ),
-                'tags': _candidate_tags(candidate),
-            },
-            sort_keys=True,
-        ),
-    )
     recording_candidates = candidate.recording_candidates or (candidate,)
-    recording_records = tuple(
+    return tuple(
         CandidateRecord(
             source_id=source_id,
-            candidate_key=recording_mbid,
+            candidate_key=f'{recording_candidate.release_mbid}:{recording_mbid}',
             evidence=json.dumps(
                 {
                     'provider': 'musicbrainz',
-                    'entity': 'recording',
+                    'entity': 'recording_release',
                     'artist': '; '.join(recording_candidate.recording_artist_names) or recording_candidate.artist_name,
                     'release': recording_candidate.release_title,
                     'title': recording_candidate.recording_title or '',
                     'album': recording_candidate.release_title,
-                    'score': None if recording_score is None else recording_score.score,
+                    'score': None if unified_score is None else unified_score.score,
+                    'duration_seconds': recording_candidate.duration_seconds,
                     'musicbrainz_score': None
                     if recording_candidate.musicbrainz_score is None
                     else recording_candidate.musicbrainz_score / 100.0,
                     'score_components': (
                         None
-                        if recording_score is None
+                        if unified_score is None
                         else {
-                            'artist': recording_score.artist_component,
-                            'title': recording_score.title_component,
-                            'duration': recording_score.duration_component,
-                            'track': recording_score.track_component,
+                            'artist': unified_score.artist_component,
+                            'release': unified_score.release_component,
+                            'title': unified_score.title_component,
+                            'duration': unified_score.duration_component,
+                            'track': unified_score.track_component,
+                            'track_number': unified_score.track_number_component,
+                            'track_total': unified_score.track_total_component,
+                            'disc_number': unified_score.disc_number_component,
+                            'disc_total': unified_score.disc_total_component,
+                            'musicbrainz': unified_score.musicbrainz_component,
+                            'acoustid': unified_score.acoustid_component,
+                            'artist_match': unified_score.artist_match,
+                            'release_match': unified_score.release_match,
+                            'duration_match': unified_score.duration_match,
+                            'title_match': unified_score.title_match,
+                            'track_number_match': unified_score.track_number_match,
+                            'track_total_match': unified_score.track_total_match,
+                            'disc_number_match': unified_score.disc_number_match,
+                            'disc_total_match': unified_score.disc_total_match,
+                            'musicbrainz_match': unified_score.musicbrainz_match,
+                            'acoustid_match': unified_score.acoustid_match,
+                            'recording_artist': unified_score.recording_artist_component,
+                            'release_artist': unified_score.release_artist_component,
+                            'recording_artist_match': unified_score.recording_artist_match,
+                            'release_artist_match': unified_score.release_artist_match,
                         }
                     ),
+                    'release_mbid': recording_candidate.release_mbid,
                     'recording_mbid': recording_mbid,
-                    'compatible_ids': (recording_candidate.release_mbid,),
+                    'compatible_ids': (),
                     'tags': _candidate_tags(recording_candidate),
                 },
                 sort_keys=True,
@@ -309,8 +298,8 @@ def _candidate_records(
         )
         for recording_candidate in recording_candidates
         for recording_mbid in recording_candidate.recording_mbids
-        for recording_score in (
-            score_recording_candidate(
+        for unified_score in (
+            score_recording_release_candidate(
                 request,
                 recording_candidate,
                 None if source is None else _acoustid_recording_score(source, recording_mbid),
@@ -319,7 +308,6 @@ def _candidate_records(
             else None,
         )
     )
-    return (*((release_record,) if candidate.recording_mbids else ()), *recording_records)
 
 
 def _latest_candidate_run(source: SourceRecord, provider: str) -> ProviderCandidateRunRecord | None:
@@ -360,7 +348,7 @@ def _single_scored_candidate(
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
         if (
             evidence.provider == provider
-            and not (provider == 'musicbrainz' and evidence.entity != 'release')
+            and not (provider == 'musicbrainz' and evidence.entity != 'recording_release')
             and candidate.candidate_key not in candidates_by_key
         ):
             candidates_by_key[candidate.candidate_key] = evidence
@@ -385,7 +373,11 @@ def _single_scored_recording_candidate(
         candidates = source.candidates if latest_run is None else latest_run.candidates
         for candidate in reversed(candidates):
             evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
-            if evidence.provider != provider or evidence.entity != 'recording' or evidence.score is None:
+            if (
+                evidence.provider != provider
+                or evidence.entity not in {'recording', 'recording_release'}
+                or evidence.score is None
+            ):
                 continue
             recording_mbid = (
                 evidence.recording_mbid
@@ -428,10 +420,12 @@ def _stored_match_tags(
     if release is None:
         return {}
     if recording is None:
-        release_mbid, release_evidence = release
+        release_key, release_evidence = release
+        release_mbid = release_evidence.release_mbid or release_key.split(':', 1)[0]
         return {**release_evidence.tags, 'MUSICBRAINZ_ALBUMID': release_mbid}
     recording_mbid, _ = recording
-    release_mbid, release_evidence = release
+    release_key, release_evidence = release
+    release_mbid = release_evidence.release_mbid or release_key.split(':', 1)[0]
     release_recording_mbid = release_evidence.tags.get('MUSICBRAINZ_RECORDINGID') or release_evidence.tags.get(
         'MUSICBRAINZ_TRACKID'
     )
@@ -612,21 +606,26 @@ def _stored_release_scores(source: SourceRecord) -> tuple[CandidateScore, ...]:
     scores: dict[str, float] = {}
     for candidate in reversed(candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
-        if evidence.provider == 'musicbrainz' and evidence.entity == 'release' and evidence.score is not None:
-            _ = scores.setdefault(candidate.candidate_key, evidence.score)
+        if evidence.provider == 'musicbrainz' and evidence.entity == 'recording_release' and evidence.score is not None:
+            release_mbid = evidence.release_mbid
+            if release_mbid is not None:
+                scores[release_mbid] = max(scores.get(release_mbid, 0.0), evidence.score)
     return tuple(CandidateScore(candidate_key, score) for candidate_key, score in scores.items())
 
 
 def _stored_release_candidate(source: SourceRecord, release_mbid: str) -> tuple[str, CandidateEvidencePayload] | None:
     latest_run = _latest_candidate_run(source, 'musicbrainz')
     candidates = source.candidates if latest_run is None else latest_run.candidates
-    for candidate in reversed(candidates):
-        if candidate.candidate_key != release_mbid:
-            continue
+    matching: list[tuple[str, CandidateEvidencePayload]] = []
+    for candidate in candidates:
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
-        if evidence.provider == 'musicbrainz' and evidence.entity == 'release':
-            return candidate.candidate_key, evidence
-    return None
+        if (
+            evidence.provider == 'musicbrainz'
+            and evidence.entity == 'recording_release'
+            and evidence.release_mbid == release_mbid
+        ):
+            matching.append((candidate.candidate_key, evidence))
+    return max(matching, key=lambda item: (item[1].score or -1.0, item[0])) if matching else None
 
 
 def _tag_number(value: str | None) -> int | None:
@@ -1487,8 +1486,8 @@ class ProcessingWorker:
         for source in members:
             if source.library_record_id is None:
                 continue
-            release = _stored_release_candidate(source, selected_release)
-            if release is None:
+            match = _stored_release_candidate(source, selected_release)
+            if match is None:
                 record = library_record_detail(self._session, source.library_record_id)
                 record.processing_state = 'needs_review'
                 record.match_state = 'needs_review'
@@ -1502,33 +1501,16 @@ class ProcessingWorker:
                     source.id,
                 )
                 continue
-            release_recording_mbid = _stored_release_recording_mbid(release)
-            recording = (
-                _single_scored_recording_candidate(source, self._confidence_threshold(), release_recording_mbid)
-                if release_recording_mbid is not None
-                else None
-            )
-            if recording is None or recording[0] != release_recording_mbid:
-                record = library_record_detail(self._session, source.library_record_id)
-                record.processing_state = 'needs_review'
-                record.match_state = 'needs_review'
-                record_event(
-                    self._session,
-                    source.library_record_id,
-                    'folder_recording_selection_review',
-                    'needs_review',
-                    'selected folder release has no confidence-qualified recording candidate',
-                    now,
-                    source.id,
-                )
+            recording_mbid, match_evidence = match[1].recording_mbid, match[1]
+            if recording_mbid is None:
                 continue
             associated = RecordingAssociationService(self._session).associate_automatic(
                 AutomaticAssociationRequest(
                     source.id,
-                    recording[0],
-                    recording[1].score or 0.0,
+                    recording_mbid,
+                    match_evidence.score or 0.0,
                     self._confidence_threshold(),
-                    json.dumps({'recording_mbid': recording[0], 'release_mbid': selected_release}, sort_keys=True),
+                    json.dumps({'recording_mbid': recording_mbid, 'release_mbid': selected_release}, sort_keys=True),
                     now,
                     release_mbid=selected_release,
                 )
@@ -1536,7 +1518,7 @@ class ProcessingWorker:
             if associated is None:
                 continue
             record = library_record_detail(self._session, associated.library_record_id)
-            analyzed_tags = _stored_match_tags(recording, release)
+            analyzed_tags = _stored_match_tags(None, match)
             source_tags = {
                 item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
             }
@@ -1626,32 +1608,16 @@ class ProcessingWorker:
                     created_at=now,
                 )
                 source.candidate_runs.append(run)
-                candidate_scores: dict[str | None, CandidateScore] = {}
-                if provider_name == 'musicbrainz' and request is not None:
-                    match result:
-                        case MusicBrainzMatch(candidate=candidate):
-                            score = score_release_candidate(request, candidate)
-                            candidate_scores[score.candidate_mbid] = score
-                        case Ambiguous(candidates=candidates):
-                            for candidate in candidates:
-                                score = score_release_candidate(request, candidate)
-                                candidate_scores[score.candidate_mbid] = score
-                        case _:
-                            pass
                 match result:
                     case MusicBrainzMatch(candidate=candidate):
-                        candidate_records = _candidate_records(
-                            source.id, candidate, candidate_scores.get(candidate.release_mbid), request, source
-                        )
+                        candidate_records = _candidate_records(source.id, candidate, None, request, source)
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)
                     case Ambiguous(candidates=candidates):
                         candidate_records = tuple(
                             record
                             for candidate in candidates
-                            for record in _candidate_records(
-                                source.id, candidate, candidate_scores.get(candidate.release_mbid), request, source
-                            )
+                            for record in _candidate_records(source.id, candidate, None, request, source)
                         )
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)

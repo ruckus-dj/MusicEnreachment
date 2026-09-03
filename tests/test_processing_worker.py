@@ -139,17 +139,13 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
         request,
     )
 
-    assert [record.candidate_key for record in records] == ['release-id', 'recording-id']
-    release = CandidateEvidencePayload.model_validate_json(records[0].evidence)
-    recording = CandidateEvidencePayload.model_validate_json(records[1].evidence)
-    assert release.entity == 'release'
-    assert release.recording_mbid is None
-    assert release.compatible_ids == ('recording-id',)
-    assert recording.entity == 'recording'
-    assert recording.compatible_ids == ('release-id',)
-    assert recording.score is not None
-    assert release.score == 1.0
-    assert recording.score == 1.0
+    assert [record.candidate_key for record in records] == ['release-id:recording-id']
+    match = CandidateEvidencePayload.model_validate_json(records[0].evidence)
+    assert match.entity == 'recording_release'
+    assert match.release_mbid == 'release-id'
+    assert match.recording_mbid == 'recording-id'
+    assert match.compatible_ids == ()
+    assert match.score == 1.0
 
 
 def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lacks_entry() -> None:
@@ -161,9 +157,9 @@ def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lack
     records = processing._candidate_records('source-id', candidate, None, request)
 
     # Then: the release receives the same component score as every other candidate.
-    release = CandidateEvidencePayload.model_validate_json(records[0].evidence)
-    assert release.score is not None
-    assert release.score > 0.0
+    match = CandidateEvidencePayload.model_validate_json(records[0].evidence)
+    assert match.score is not None
+    assert match.score > 0.0
 
 
 def test_musicbrainz_releases_keep_every_acoustid_recording_association() -> None:
@@ -247,7 +243,14 @@ def test_single_scored_musicbrainz_candidate_ignores_related_recording_evidence(
             CandidateRecord(
                 candidate_key='release-id',
                 evidence=json.dumps(
-                    {'provider': 'musicbrainz', 'entity': 'release', 'score': 0.97, 'tags': {}},
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording_release',
+                        'score': 0.97,
+                        'release_mbid': 'release-id',
+                        'recording_mbid': 'recording-id',
+                        'tags': {},
+                    },
                 ),
             ),
             CandidateRecord(
@@ -272,11 +275,29 @@ def test_single_scored_candidate_selects_strict_best_release_above_threshold() -
         candidates=(
             CandidateRecord(
                 candidate_key='baby-punk-release',
-                evidence=json.dumps({'provider': 'musicbrainz', 'entity': 'release', 'score': 1.0, 'tags': {}}),
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording_release',
+                        'score': 1.0,
+                        'release_mbid': 'baby-punk-release',
+                        'recording_mbid': 'recording-id',
+                        'tags': {},
+                    }
+                ),
             ),
             CandidateRecord(
                 candidate_key='standard-release',
-                evidence=json.dumps({'provider': 'musicbrainz', 'entity': 'release', 'score': 0.87, 'tags': {}}),
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording_release',
+                        'score': 0.87,
+                        'release_mbid': 'standard-release',
+                        'recording_mbid': 'recording-id',
+                        'tags': {},
+                    }
+                ),
             ),
         ),
     )
@@ -318,8 +339,8 @@ def test_candidate_records_persist_musicbrainz_score_in_unit_interval() -> None:
     records = processing._candidate_records('source-id', candidate, None, None)
 
     # Then: both release and recording evidence expose the normalized 0..1 provider score.
-    assert len(records) == 2
-    assert all(json.loads(record.evidence)['musicbrainz_score'] == 0.84 for record in records)
+    assert len(records) == 1
+    assert json.loads(records[0].evidence)['musicbrainz_score'] == 0.84
 
 
 def _tagless_flac(path: Path) -> Path:
@@ -709,7 +730,7 @@ def test_single_scored_recording_candidate_uses_musicbrainz_when_acoustid_is_mis
                 evidence=json.dumps(
                     {
                         'provider': 'musicbrainz',
-                        'entity': 'release',
+                        'entity': 'recording_release',
                         'score': 1.0,
                         'recording_mbid': 'recording-id',
                         'tags': {
@@ -763,7 +784,7 @@ def test_single_scored_recording_candidate_prefers_release_compatible_recording(
                 evidence=json.dumps(
                     {
                         'provider': 'musicbrainz',
-                        'entity': 'release',
+                        'entity': 'recording_release',
                         'score': 1.0,
                         'recording_mbid': 'preferred-recording',
                         'tags': {'MUSICBRAINZ_RECORDINGID': 'preferred-recording'},
@@ -904,11 +925,12 @@ def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp
             ],
             candidates=[
                 CandidateRecord(
-                    candidate_key='release-id',
+                    candidate_key='release-id:recording-id',
                     evidence=json.dumps(
                         {
                             'provider': 'musicbrainz',
-                            'entity': 'release',
+                            'entity': 'recording_release',
+                            'release_mbid': 'release-id',
                             'score': 1.0,
                             'recording_mbid': 'recording-id',
                             'tags': {
@@ -1079,11 +1101,12 @@ def test_candidate_selection_queues_folder_selection_for_single_file_folder(tmp_
             candidates=[
                 CandidateRecord(
                     source_id=source_id,
-                    candidate_key='release-one',
+                    candidate_key='release-one:recording-one',
                     evidence=json.dumps(
                         {
                             'provider': 'musicbrainz',
-                            'entity': 'release',
+                            'entity': 'recording_release',
+                            'release_mbid': 'release-one',
                             'score': 1.0,
                             'compatible_ids': ['recording-one'],
                             'tags': {'MUSICBRAINZ_RECORDINGID': 'recording-one'},
@@ -1092,11 +1115,12 @@ def test_candidate_selection_queues_folder_selection_for_single_file_folder(tmp_
                 ),
                 CandidateRecord(
                     source_id=source_id,
-                    candidate_key='release-two',
+                    candidate_key='release-two:recording-one',
                     evidence=json.dumps(
                         {
                             'provider': 'musicbrainz',
-                            'entity': 'release',
+                            'entity': 'recording_release',
+                            'release_mbid': 'release-two',
                             'score': 1.0,
                             'compatible_ids': ['recording-one'],
                             'tags': {'MUSICBRAINZ_RECORDINGID': 'recording-one'},
@@ -1202,6 +1226,66 @@ def test_stored_match_tags_preserves_musicbrainz_metadata_without_acoustid() -> 
         'MUSICBRAINZ_RECORDINGID': 'recording-id',
         'TITLE': 'Fixture Track',
     }
+
+
+def test_stored_match_tags_uses_release_mbid_for_composite_candidate_key() -> None:
+    # Given: a unified candidate whose persisted key contains both MusicBrainz IDs.
+    release = (
+        'release-id:low-recording-id',
+        CandidateEvidencePayload(
+            provider='musicbrainz',
+            entity='recording_release',
+            release_mbid='release-id',
+            recording_mbid='low-recording-id',
+            score=0.8,
+            tags={'TITLE': 'Fixture Track'},
+        ),
+    )
+
+    # When: folder publication reconstructs tags from the selected unified candidate.
+    tags = processing._stored_match_tags(None, release)
+
+    # Then: the album tag contains only the release MBID, never the composite key.
+    assert tags['MUSICBRAINZ_ALBUMID'] == 'release-id'
+
+
+def test_stored_release_candidate_chooses_highest_scoring_pair() -> None:
+    source = SimpleNamespace(
+        candidate_runs=(),
+        candidates=(
+            CandidateRecord(
+                candidate_key='release-id:high-recording-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording_release',
+                        'release_mbid': 'release-id',
+                        'recording_mbid': 'high-recording-id',
+                        'score': 0.95,
+                        'tags': {},
+                    }
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='release-id:low-recording-id',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording_release',
+                        'release_mbid': 'release-id',
+                        'recording_mbid': 'low-recording-id',
+                        'score': 0.55,
+                        'tags': {},
+                    }
+                ),
+            ),
+        ),
+    )
+
+    selected = processing._stored_release_candidate(cast(SourceRecord, cast(object, source)), 'release-id')
+
+    assert selected is not None
+    assert selected[0] == 'release-id:high-recording-id'
 
 
 def test_stored_release_recording_mbid_comes_from_musicbrainz_tags() -> None:

@@ -403,8 +403,10 @@ def test_library_api_when_confirming_source_persists_effective_decision_from_mea
         source.media_channels = 2
         source.candidates.append(
             CandidateRecord(
-                candidate_key='release-id',
-                evidence='{"provider":"musicbrainz","tags":{"TITLE":"Fixture","MUSICBRAINZ_TRACKID":"track-id"}}',
+                candidate_key='release-id:track-id',
+                evidence='{"provider":"musicbrainz","entity":"recording_release","release_mbid":"release-id",'
+                '"recording_mbid":"track-id","tags":{"TITLE":"Fixture","MUSICBRAINZ_ALBUMID":"release-id",'
+                '"MUSICBRAINZ_RECORDINGID":"track-id"}}',
             )
         )
         session.add_all((root, record, source))
@@ -413,7 +415,7 @@ def test_library_api_when_confirming_source_persists_effective_decision_from_mea
     # When: the production candidate-confirmation API is called.
     response = TestClient(create_app(lambda: Session(engine))).post(
         '/api/library/records/record-api-quality/sources/source-api-quality/candidates/select',
-        json={'candidate_key': 'release-id'},
+        json={'candidate_key': 'release-id:track-id', 'entity': 'recording_release'},
     )
 
     # Then: the shared policy persists the selected measured source.
