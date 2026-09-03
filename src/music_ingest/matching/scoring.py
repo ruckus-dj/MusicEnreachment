@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Final
 
-from rapidfuzz.distance import Levenshtein
+from rapidfuzz import fuzz
+from rapidfuzz.utils import default_process
 from unidecode import unidecode
 
 from music_ingest.matching.providers import ReleaseCandidate, release_display_title
@@ -36,12 +36,23 @@ class ScoreWeight(IntEnum):
 
 class ScoreComponent(StrEnum):
     ARTIST = 'artist'
+    RECORDING_ARTIST = 'recording_artist'
+    RELEASE_ARTIST = 'release_artist'
     RELEASE = 'release'
     DURATION = 'duration'
     TITLE = 'title'
     TRACK = 'track'
     MUSICBRAINZ = 'musicbrainz'
     ACOUSTID = 'acoustid'
+    TRACK_NUMBER = 'track_number'
+    TRACK_TOTAL = 'track_total'
+    DISC_NUMBER = 'disc_number'
+    DISC_TOTAL = 'disc_total'
+
+
+_POSITION_COMPONENTS: Final = frozenset(
+    {ScoreComponent.TRACK_NUMBER, ScoreComponent.TRACK_TOTAL, ScoreComponent.DISC_NUMBER, ScoreComponent.DISC_TOTAL}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +70,31 @@ def _weighted_score(factors: tuple[_ScoreFactor, ...]) -> tuple[float, int]:
 
 
 def _component_score(factors: tuple[_ScoreFactor, ...], component: ScoreComponent, total_weight: int) -> float:
+    components = (
+        _POSITION_COMPONENTS
+        if component is ScoreComponent.TRACK
+        else {ScoreComponent.RECORDING_ARTIST, ScoreComponent.RELEASE_ARTIST}
+        if component is ScoreComponent.ARTIST
+        else {component}
+    )
     return sum(
         factor.value * factor.weight / total_weight
         for factor in factors
-        if factor.available and factor.component is component and total_weight
+        if factor.available and factor.component in components and total_weight
     )
+
+
+def _component_match(factors: tuple[_ScoreFactor, ...], component: ScoreComponent) -> float | None:
+    components = (
+        _POSITION_COMPONENTS
+        if component is ScoreComponent.TRACK
+        else {ScoreComponent.RECORDING_ARTIST, ScoreComponent.RELEASE_ARTIST}
+        if component is ScoreComponent.ARTIST
+        else {component}
+    )
+    matching = tuple(factor for factor in factors if factor.available and factor.component in components)
+    weight = sum(factor.weight for factor in matching)
+    return sum(factor.value * factor.weight for factor in matching) / weight if weight else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +129,26 @@ class CandidateScore:
     title_component: float = 0.0
     track_component: float = 0.0
     weight: int = 0
+    track_number_component: float | None = None
+    track_total_component: float | None = None
+    disc_number_component: float | None = None
+    disc_total_component: float | None = None
+    musicbrainz_component: float | None = None
+    acoustid_component: float | None = None
+    artist_match: float | None = None
+    release_match: float | None = None
+    duration_match: float | None = None
+    title_match: float | None = None
+    track_number_match: float | None = None
+    track_total_match: float | None = None
+    disc_number_match: float | None = None
+    disc_total_match: float | None = None
+    musicbrainz_match: float | None = None
+    acoustid_match: float | None = None
+    recording_artist_component: float | None = None
+    release_artist_component: float | None = None
+    recording_artist_match: float | None = None
+    release_artist_match: float | None = None
 
 
 def select_folder_release(
@@ -141,6 +192,35 @@ def score_recording_candidate(
     return _score_candidate(candidate.recording_mbids[0], _recording_factors(request, candidate, acoustid_score))
 
 
+def score_recording_release_candidate(
+    request: MatchingRequest, candidate: ReleaseCandidate, acoustid_score: float | None = None
+) -> CandidateScore:
+    """Score one recording and its release as a single MusicBrainz candidate."""
+    if not candidate.recording_mbids:
+        return CandidateScore(None, 0.0)
+    if _candidate_matches_explicit_ids(request.explicit_ids, candidate):
+        return CandidateScore(candidate.recording_mbids[0], 1.0)
+    return _score_candidate(
+        candidate.recording_mbids[0],
+        _recording_factors(request, candidate, acoustid_score)
+        + _release_factors(_album_artist_name(request), request.release_title, request.duration_seconds, candidate)
+        + (
+            _position_factor(
+                request.track_number, candidate.track_number, ScoreWeight.TRACK_NUMBER, ScoreComponent.TRACK_NUMBER
+            ),
+            _position_factor(
+                request.disc_number, candidate.disc_number, ScoreWeight.DISC_NUMBER, ScoreComponent.DISC_NUMBER
+            ),
+            _position_factor(
+                request.track_total, candidate.track_total, ScoreWeight.TRACK_TOTAL, ScoreComponent.TRACK_TOTAL
+            ),
+            _position_factor(
+                request.disc_total, candidate.disc_total, ScoreWeight.DISC_TOTAL, ScoreComponent.DISC_TOTAL
+            ),
+        ),
+    )
+
+
 def _recording_factors(
     request: MatchingRequest, candidate: ReleaseCandidate, acoustid_score: float | None = None
 ) -> tuple[_ScoreFactor, ...]:
@@ -154,7 +234,7 @@ def _recording_factors(
             bool(request.recording_title.strip() and candidate_title.strip()),
         ),
         _ScoreFactor(
-            ScoreComponent.ARTIST,
+            ScoreComponent.RECORDING_ARTIST,
             _text_similarity(request.artist_name, recording_artist),
             ScoreWeight.ARTIST_SIMILARITY,
             bool(request.artist_name.strip() and recording_artist.strip()),
@@ -191,6 +271,26 @@ def _score_candidate(candidate_mbid: str | None, factors: tuple[_ScoreFactor, ..
         _component_score(factors, ScoreComponent.TITLE, total_weight),
         _component_score(factors, ScoreComponent.TRACK, total_weight),
         total_weight,
+        _component_score(factors, ScoreComponent.TRACK_NUMBER, total_weight),
+        _component_score(factors, ScoreComponent.TRACK_TOTAL, total_weight),
+        _component_score(factors, ScoreComponent.DISC_NUMBER, total_weight),
+        _component_score(factors, ScoreComponent.DISC_TOTAL, total_weight),
+        _component_score(factors, ScoreComponent.MUSICBRAINZ, total_weight),
+        _component_score(factors, ScoreComponent.ACOUSTID, total_weight),
+        _component_match(factors, ScoreComponent.ARTIST),
+        _component_match(factors, ScoreComponent.RELEASE),
+        _component_match(factors, ScoreComponent.DURATION),
+        _component_match(factors, ScoreComponent.TITLE),
+        _component_match(factors, ScoreComponent.TRACK_NUMBER),
+        _component_match(factors, ScoreComponent.TRACK_TOTAL),
+        _component_match(factors, ScoreComponent.DISC_NUMBER),
+        _component_match(factors, ScoreComponent.DISC_TOTAL),
+        _component_match(factors, ScoreComponent.MUSICBRAINZ),
+        _component_match(factors, ScoreComponent.ACOUSTID),
+        _component_score(factors, ScoreComponent.RECORDING_ARTIST, total_weight),
+        _component_score(factors, ScoreComponent.RELEASE_ARTIST, total_weight),
+        _component_match(factors, ScoreComponent.RECORDING_ARTIST),
+        _component_match(factors, ScoreComponent.RELEASE_ARTIST),
     )
 
 
@@ -205,18 +305,26 @@ def score_release_candidate(request: MatchingRequest, candidate: ReleaseCandidat
         _album_artist_name(request), request.release_title, request.duration_seconds, candidate
     )
     position_factors = (
-        _position_factor(request.track_number, candidate.track_number, ScoreWeight.TRACK_NUMBER),
-        _position_factor(request.disc_number, candidate.disc_number, ScoreWeight.DISC_NUMBER),
-        _position_factor(request.track_total, candidate.track_total, ScoreWeight.TRACK_TOTAL),
-        _position_factor(request.disc_total, candidate.disc_total, ScoreWeight.DISC_TOTAL),
+        _position_factor(
+            request.track_number, candidate.track_number, ScoreWeight.TRACK_NUMBER, ScoreComponent.TRACK_NUMBER
+        ),
+        _position_factor(
+            request.disc_number, candidate.disc_number, ScoreWeight.DISC_NUMBER, ScoreComponent.DISC_NUMBER
+        ),
+        _position_factor(
+            request.track_total, candidate.track_total, ScoreWeight.TRACK_TOTAL, ScoreComponent.TRACK_TOTAL
+        ),
+        _position_factor(request.disc_total, candidate.disc_total, ScoreWeight.DISC_TOTAL, ScoreComponent.DISC_TOTAL),
     )
     return _score_candidate(candidate.release_mbid, source_factors + position_factors)
 
 
-def _position_factor(expected: int | None, actual: int | None, weight: ScoreWeight) -> _ScoreFactor:
+def _position_factor(
+    expected: int | None, actual: int | None, weight: ScoreWeight, component: ScoreComponent
+) -> _ScoreFactor:
     comparable = expected is not None and expected > 0 and actual is not None and actual > 0
     return _ScoreFactor(
-        ScoreComponent.TRACK,
+        component,
         1.0 if comparable and expected == actual else 0.0,
         weight,
         comparable,
@@ -230,7 +338,7 @@ def _release_factors(
     candidate_title = release_display_title(candidate)
     factors = (
         _ScoreFactor(
-            ScoreComponent.ARTIST,
+            ScoreComponent.RELEASE_ARTIST,
             _text_similarity(artist_name, candidate_artist),
             ScoreWeight.ARTIST_SIMILARITY,
             bool(artist_name.strip() and candidate_artist.strip()),
@@ -271,11 +379,24 @@ def _album_artist_name(request: MatchingRequest) -> str:
 def _text_similarity(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
-    original_similarity = Levenshtein.normalized_similarity(_normalized(left), _normalized(right))
-    transliterated_similarity = Levenshtein.normalized_similarity(
-        _normalized(unidecode(left)), _normalized(unidecode(right))
-    )
+    original_similarity = _soft_token_ratio(left, right)
+    transliterated_similarity = _soft_token_ratio(unidecode(left), unidecode(right))
     return max(original_similarity, transliterated_similarity)
+
+
+def _soft_token_ratio(left: str, right: str) -> float:
+    left_tokens = _normalized(left).split()
+    right_tokens = _normalized(right).split()
+    if not left_tokens or not right_tokens:
+        return 0.0
+    normalized_left = ' '.join(left_tokens)
+    normalized_right = ' '.join(right_tokens)
+    token_coverage = min(len(left_tokens), len(right_tokens)) / max(len(left_tokens), len(right_tokens))
+    character_coverage = min(len(normalized_left), len(normalized_right)) / max(
+        len(normalized_left), len(normalized_right)
+    )
+    coverage_penalty = 0.6 + 0.4 * ((token_coverage + character_coverage) / 2)
+    return fuzz.token_set_ratio(normalized_left, normalized_right) / 100.0 * coverage_penalty
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:
@@ -298,5 +419,4 @@ def _candidate_matches_explicit_ids(explicit_ids: ExplicitMusicBrainzIds, candid
 
 
 def _normalized(value: str) -> str:
-    decomposed = unicodedata.normalize('NFKD', value).casefold()
-    return ''.join(character for character in decomposed if character.isalnum())
+    return default_process(value)

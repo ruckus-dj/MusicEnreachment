@@ -151,7 +151,7 @@ def test_matching_when_musicbrainz_search_score_is_present_weights_provider_evid
     score = score_release_candidate(request, candidate)
 
     # Then: the weighted score stays bounded and includes the provider evidence.
-    assert score.score == pytest.approx(0.7777777777777778)
+    assert score.score == pytest.approx(0.9017241379310345)
     assert score.score <= 1.0
 
 
@@ -224,6 +224,12 @@ def test_release_score_penalizes_track_position_mismatch_without_overriding_iden
     # Then: the mismatched track number lowers the score while the other position matches contribute.
     assert score.score == pytest.approx(13 / 15)
     assert score.track_component == pytest.approx(3 / 15)
+    assert score.track_number_component == pytest.approx(0.0)
+    assert score.track_number_match == pytest.approx(0.0)
+    assert score.track_total_component == pytest.approx(1 / 15)
+    assert score.track_total_match == pytest.approx(1.0)
+    assert score.disc_number_component == pytest.approx(1 / 15)
+    assert score.disc_total_component == pytest.approx(1 / 15)
     assert score.weight == 15
 
 
@@ -317,5 +323,45 @@ def test_text_similarity_recognizes_cross_script_transliteration() -> None:
     # When: the recording candidate is scored with both original and transliterated text.
     score = score_recording_candidate(request, candidate)
 
-    # Then: the title receives a non-zero similarity contribution.
-    assert score.title_component > 0.0
+    # Then: transliterated titles receive a non-zero similarity contribution.
+    assert score.title_match is not None
+    assert score.title_match > 0.0
+
+
+def test_recording_score_softens_extra_artist_credit_tokens() -> None:
+    # Given: the candidate artist credit includes additional participants.
+    request = MatchingRequest('Linkin Park', '', None)
+    candidate = ReleaseCandidate(
+        'release-id',
+        '',
+        'Linkin Park; Evidence; Pharoahe Monch; DJ Babu',
+        None,
+        ('recording-id',),
+    )
+
+    # When: the recording candidate is scored.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: the shared artist tokens retain a review-threshold match with a coverage penalty.
+    assert score.recording_artist_match == pytest.approx(0.705, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    ('source_title', 'candidate_title', 'expected_match'),
+    (
+        ('H! Vltg3', 'H! VLTG3 (Single Edit)', pytest.approx(0.776, abs=0.01)),
+        ('[PTS.OF.ATHRTY]', 'Mmm...Cookies: Sweet Hamster Like Jewels from America!', pytest.approx(0.184, abs=0.01)),
+    ),
+)
+def test_recording_score_penalizes_extra_or_unrelated_title_tokens(
+    source_title: str, candidate_title: str, expected_match: float
+) -> None:
+    # Given: a source title and its MusicBrainz candidate title.
+    request = MatchingRequest('Artist', '', None, recording_title=source_title)
+    candidate = ReleaseCandidate('release-id', '', 'Artist', None, ('recording-id',), recording_title=candidate_title)
+
+    # When: the recording candidate is scored.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: extra edition tokens are softly penalized and an unrelated title stays low.
+    assert score.title_match == expected_match
