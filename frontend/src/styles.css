@@ -1386,6 +1386,63 @@ h2 {
     10px "DM Mono",
     monospace;
 }
+.candidate-comparison,
+.candidate-identities {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+}
+.candidate-comparison > div,
+.candidate-identities > div {
+  display: grid;
+  grid-template-columns: 138px minmax(0, 1fr);
+  gap: 4px;
+}
+.candidate-comparison dt,
+.candidate-identities dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.candidate-comparison code {
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.candidate-comparison dd,
+.candidate-identities dd {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.candidate-comparison dd span {
+  display: block;
+}
+.candidate-comparison em {
+  color: var(--accent);
+  font:
+    10px "DM Mono",
+    monospace;
+  font-style: normal;
+  margin-left: 8px;
+}
+.candidate-comparison b {
+  color: var(--ink);
+  font-weight: 700;
+}
+.candidate-identities dd {
+  font-family: "DM Mono", monospace;
+  font-size: 10px;
+}
 .candidate-score {
   color: var(--accent);
   font:
