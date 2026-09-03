@@ -73,7 +73,7 @@ The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL.
 
 Ingest supports FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis, and Opus. Every publication is an MKA/Matroska container with the source audio stream copied without re-encoding. Canonical Matroska tags use the same allowlisted names as FLAC/Vorbis Comments and are written and verified through FFmpeg/FFprobe. Raw AAC and arbitrary scanner-recognized extensions are not publication formats.
 
-Candidate matching prefers an explicit MusicBrainz ID. Otherwise it scores normalized artist and release text, with a duration match contributing when available. Lidarr context can provide the stronger score. Ambiguous, stale, unsafe, unavailable, or below-threshold results remain in review rather than being auto-selected.
+Candidate matching prefers an explicit MusicBrainz ID. Otherwise it scores normalized artist and release text, with duration and release-position matches contributing when available. Ambiguous, stale, unsafe, unavailable, or below-threshold results remain in review rather than being auto-selected.
 
 Published audio uses the `.mka` extension and stable artist, album, and track layout. A replacement is staged and verified before the current publication is superseded. The incoming source pathname is never replaced, and source files are never mutated.
 
