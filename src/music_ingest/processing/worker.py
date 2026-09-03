@@ -238,6 +238,7 @@ def _candidate_records(
     candidate: ReleaseCandidate,
     release_score: CandidateScore | None,
     request: MatchingRequest | None,
+    source: SourceRecord | None = None,
 ) -> tuple[CandidateRecord, ...]:
     effective_release_score = score_release_candidate(request, candidate) if request is not None else release_score
     release_score_value = None if effective_release_score is None else effective_release_score.score
@@ -285,18 +286,18 @@ def _candidate_records(
                     'release': recording_candidate.release_title,
                     'title': recording_candidate.recording_title or '',
                     'album': recording_candidate.release_title,
-                    'score': None if request is None else score_recording_candidate(request, recording_candidate).score,
+                    'score': None if recording_score is None else recording_score.score,
                     'musicbrainz_score': None
                     if recording_candidate.musicbrainz_score is None
                     else recording_candidate.musicbrainz_score / 100.0,
                     'score_components': (
                         None
-                        if request is None
+                        if recording_score is None
                         else {
-                            'artist': score_recording_candidate(request, recording_candidate).artist_component,
-                            'title': score_recording_candidate(request, recording_candidate).title_component,
-                            'duration': score_recording_candidate(request, recording_candidate).duration_component,
-                            'track': score_recording_candidate(request, recording_candidate).track_component,
+                            'artist': recording_score.artist_component,
+                            'title': recording_score.title_component,
+                            'duration': recording_score.duration_component,
+                            'track': recording_score.track_component,
                         }
                     ),
                     'recording_mbid': recording_mbid,
@@ -308,6 +309,15 @@ def _candidate_records(
         )
         for recording_candidate in recording_candidates
         for recording_mbid in recording_candidate.recording_mbids
+        for recording_score in (
+            score_recording_candidate(
+                request,
+                recording_candidate,
+                None if source is None else _acoustid_recording_score(source, recording_mbid),
+            )
+            if request is not None
+            else None,
+        )
     )
     return (*((release_record,) if candidate.recording_mbids else ()), *recording_records)
 
@@ -328,7 +338,7 @@ def _acoustid_recording_mbids(source: SourceRecord) -> tuple[str, ...]:
     return tuple(recording_mbids)
 
 
-def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> float:
+def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> float | None:
     for candidate in reversed(source.candidates):
         evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
         if (
@@ -336,8 +346,8 @@ def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> floa
             and (evidence.tags.get('MUSICBRAINZ_RECORDINGID') or evidence.tags.get('MUSICBRAINZ_TRACKID'))
             == recording_mbid
         ):
-            return evidence.score or 0.0
-    return 0.0
+            return evidence.score
+    return None
 
 
 def _single_scored_candidate(
@@ -1631,7 +1641,7 @@ class ProcessingWorker:
                 match result:
                     case MusicBrainzMatch(candidate=candidate):
                         candidate_records = _candidate_records(
-                            source.id, candidate, candidate_scores.get(candidate.release_mbid), request
+                            source.id, candidate, candidate_scores.get(candidate.release_mbid), request, source
                         )
                         source.candidates.extend(candidate_records)
                         run.candidates.extend(candidate_records)
@@ -1640,7 +1650,7 @@ class ProcessingWorker:
                             record
                             for candidate in candidates
                             for record in _candidate_records(
-                                source.id, candidate, candidate_scores.get(candidate.release_mbid), request
+                                source.id, candidate, candidate_scores.get(candidate.release_mbid), request, source
                             )
                         )
                         source.candidates.extend(candidate_records)
