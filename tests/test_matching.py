@@ -3,11 +3,7 @@ from __future__ import annotations
 import pytest
 
 from music_ingest.matching.musicbrainz_mapping import merge_recording_candidate
-from music_ingest.matching.providers import (
-    FixtureCase,
-    MusicBrainzLookupRequest,
-    ReleaseCandidate,
-)
+from music_ingest.matching.providers import ReleaseCandidate
 from music_ingest.matching.scoring import (
     CandidateScore,
     MatchingRequest,
@@ -77,13 +73,6 @@ def test_folder_release_selection_when_one_source_has_no_qualified_release_retur
 
 def test_merge_recording_candidate_when_recording_titles_differ_keeps_one_consistent_recording() -> None:
     # Given: two projections of one release for different recordings.
-    request = MusicBrainzLookupRequest(
-        query='artist:Noize MC recording:Любит',
-        fixture_case=FixtureCase.SUCCESS,
-        recording_title='Эдем 14/88',
-        duration_seconds=240,
-        track_number=23,
-    )
     existing = ReleaseCandidate(
         'release-id',
         'Новый альбом',
@@ -104,7 +93,7 @@ def test_merge_recording_candidate_when_recording_titles_differ_keeps_one_consis
     )
 
     # When: projections are merged for the same release.
-    merged = merge_recording_candidate(existing, candidate, request)
+    merged = merge_recording_candidate(existing, candidate)
 
     # Then: the selected projection does not advertise another recording's MBID.
     assert merged.recording_mbids == ('bass-recording-id', 'love-recording-id')
@@ -197,9 +186,45 @@ def test_recording_matching_when_album_artist_and_feature_suffix_differ_selects_
     # Then: the feature suffix does not affect the release score components.
     score = score_release_candidate(request, candidate)
     assert score.score == 1.0
-    assert score.artist_component == 0.4
-    assert score.release_component == 0.4
-    assert score.duration_component == 0.2
+    assert score.artist_component == pytest.approx(4 / 15)
+    assert score.release_component == pytest.approx(4 / 15)
+    assert score.duration_component == pytest.approx(2 / 15)
+    assert score.track_component == pytest.approx(5 / 15)
+    assert score.weight == 15
+
+
+def test_release_score_penalizes_track_position_mismatch_without_overriding_identity() -> None:
+    # Given: local identity matches exactly, but the candidate has a different track number.
+    request = MatchingRequest(
+        'Fixture Artist',
+        'Fixture Album',
+        240,
+        recording_title='Fixture Track',
+        track_number=1,
+        track_total=10,
+        disc_number=1,
+        disc_total=1,
+    )
+    candidate = ReleaseCandidate(
+        RELEASE_MBID,
+        'Fixture Album',
+        'Fixture Artist',
+        240,
+        ('recording-id',),
+        recording_title='Fixture Track',
+        track_number=6,
+        track_total=10,
+        disc_number=1,
+        disc_total=1,
+    )
+
+    # When: the release candidate is scored with all comparable position metadata.
+    score = score_release_candidate(request, candidate)
+
+    # Then: the mismatched track number lowers the score while the other position matches contribute.
+    assert score.score == pytest.approx(13 / 15)
+    assert score.track_component == pytest.approx(3 / 15)
+    assert score.weight == 15
 
 
 def test_recording_score_ignores_release_track_position() -> None:

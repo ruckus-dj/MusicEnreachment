@@ -18,7 +18,6 @@ from music_ingest.external.musicbrainz import (
 from music_ingest.matching.musicbrainz_mapping import (
     candidate_for_release,
     merge_recording_candidate,
-    title_key,
     without_pseudo_releases,
 )
 from music_ingest.matching.providers import (
@@ -63,6 +62,8 @@ class MusicBrainzProviderAdapter:
             outcome = self._response_outcome(detail.response, provenance)
             if outcome is not None:
                 return outcome
+            if request.recording_mbid is None:
+                return NoMatch(provenance)
             payload = detail.response.payload
             if payload is None:
                 return Malformed(provenance)
@@ -70,11 +71,8 @@ class MusicBrainzProviderAdapter:
                 provenance,
                 candidate_for_release(
                     payload,
-                    request.artist_name,
                     request.recording_mbid,
-                    request.recording_title,
-                    request.duration_seconds,
-                    request.track_number,
+                    artist_name=request.artist_name,
                 ),
             )
         if request.recording_mbid is not None:
@@ -108,11 +106,6 @@ class MusicBrainzProviderAdapter:
                 provenance,
                 recording_scores,
             )
-        if outcome is not None:
-            legacy = self.client.parse_legacy_releases(search)
-            if legacy.payload is None:
-                return outcome
-            return await self._resolve_legacy_releases(legacy.payload.releases, request, provenance)
         recording_mbids = request.recording_mbids or (
             () if search.payload is None else tuple(item.id for item in search.payload.recordings)
         )
@@ -124,34 +117,6 @@ class MusicBrainzProviderAdapter:
         return await self._resolve_recordings(
             recording_mbids, request, captured_at, f'query:{request.query}', provenance, recording_scores
         )
-
-    async def _resolve_legacy_releases(
-        self, releases: tuple[Release, ...], request: MusicBrainzLookupRequest, provenance: LiveProvenance
-    ) -> MusicBrainzResult:
-        eligible = without_pseudo_releases(releases)
-        if not eligible:
-            return NoMatch(provenance)
-        selected_title = None if request.release_title is None else title_key(request.release_title)
-        detailed_ids = tuple(
-            release.id for release in eligible if selected_title is None or title_key(release.title) == selected_title
-        )
-        details = await self.client.release_details(detailed_ids)
-        enriched: dict[str, Release] = {}
-        for detail in details.values():
-            if detail.response.payload is not None:
-                enriched[detail.release_mbid] = detail.response.payload
-                provenance = self._append_provenance(provenance, detail.response)
-        candidates = tuple(
-            candidate_for_release(
-                enriched.get(release.id) or release,
-                request.artist_name,
-                recording_title=request.recording_title,
-                duration_seconds=request.duration_seconds,
-                track_number=request.track_number,
-            )
-            for release in eligible
-        )
-        return self._candidates_result(candidates, provenance)
 
     async def _resolve_recordings(
         self,
@@ -195,16 +160,13 @@ class MusicBrainzProviderAdapter:
             for recording_mbid in dict.fromkeys(matched_recording_ids):
                 candidate = candidate_for_release(
                     enriched[release_id],
-                    request.artist_name,
-                    recording_mbid,
-                    request.recording_title,
-                    request.duration_seconds,
-                    request.track_number,
-                    search_scores.get(recording_mbid),
+                    artist_name=request.artist_name,
+                    recording_mbid=recording_mbid,
+                    musicbrainz_score=search_scores.get(recording_mbid),
                 )
                 existing = candidates.get(release_id)
                 candidates[release_id] = (
-                    candidate if existing is None else merge_recording_candidate(existing, candidate, request)
+                    candidate if existing is None else merge_recording_candidate(existing, candidate)
                 )
         return self._candidates_result(tuple(candidates.values()), provenance)
 

@@ -1,35 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from unicodedata import normalize
-
-from rapidfuzz.fuzz import ratio
 
 from music_ingest.dto import LabelInfo, Release
-from music_ingest.dto.api import Track
-from music_ingest.matching.providers import MusicBrainzLookupRequest, ReleaseCandidate
+from music_ingest.matching.providers import ReleaseCandidate
 
 
 def candidate_for_release(
     release: Release,
+    recording_mbid: str,
     artist_name: str | None = None,
-    recording_mbid: str | None = None,
-    recording_title: str | None = None,
-    duration_seconds: int | None = None,
-    track_number: int | None = None,
     musicbrainz_score: float | None = None,
 ) -> ReleaseCandidate:
     release_tracks = tuple(track for medium in release.media for track in medium.tracks)
-    if recording_mbid is not None:
-        track = next((track for track in release_tracks if track.recording.id == recording_mbid), None)
-    elif recording_title is not None:
-        track = max(
-            release_tracks,
-            key=lambda item: track_match_score(item, recording_title, duration_seconds, track_number),
-            default=None,
-        )
-    else:
-        track = release_tracks[0] if len(release_tracks) == 1 else None
+    track = next((track for track in release_tracks if track.recording.id == recording_mbid), None)
     release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
     artist = artist_name or release_artist_name
     if not artist and track is not None:
@@ -44,7 +28,7 @@ def candidate_for_release(
         artist,
         disambiguation=release.disambiguation,
         duration_seconds=None if track is None or track.length is None else round(track.length / 1000),
-        recording_mbids=_recording_mbids(recording_mbid, recording_title, track, release_tracks),
+        recording_mbids=(recording_mbid,),
         recording_title=None if track is None else track.recording.title,
         date=release.date,
         original_date=None if release.release_group is None else release.release_group.first_release_date,
@@ -99,24 +83,13 @@ def without_pseudo_releases(releases: tuple[Release, ...]) -> tuple[Release, ...
     return tuple(release for release in releases if (release.status or '').casefold() != 'pseudo-release')
 
 
-def merge_recording_candidate(
-    existing: ReleaseCandidate, candidate: ReleaseCandidate, request: MusicBrainzLookupRequest
-) -> ReleaseCandidate:
-    if request.recording_title is not None:
-        candidate_is_better = recording_match_score(candidate, request) > recording_match_score(existing, request)
-        selected = candidate if candidate_is_better else existing
-        projections = existing.recording_candidates or (existing,)
-        return replace(
-            selected,
-            recording_mbids=(
-                selected.recording_mbids
-                if candidate_is_better
-                else tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids)))
-            ),
-            recording_candidates=(*projections, candidate),
-        )
+def merge_recording_candidate(existing: ReleaseCandidate, candidate: ReleaseCandidate) -> ReleaseCandidate:
+    projections = existing.recording_candidates or (existing,)
+    candidate_projections = candidate.recording_candidates or (candidate,)
     return replace(
-        existing, recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids)))
+        existing,
+        recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
+        recording_candidates=tuple(dict.fromkeys((*projections, *candidate_projections))),
     )
 
 
@@ -130,44 +103,6 @@ def select_genres(
     return ()
 
 
-def title_key(value: str) -> str:
-    return ''.join(character for character in normalize('NFKC', value).casefold() if character.isalnum())
-
-
-def track_match_score(track: Track, title: str, duration_seconds: int | None, track_number: int | None) -> float:
-    title_score = ratio(title_key(title), title_key(track.recording.title)) / 100
-    duration_score = (
-        0.0
-        if duration_seconds is None or track.length is None
-        else max(0.0, 1.0 - abs(duration_seconds - round(track.length / 1000)) / 10)
-    )
-    number_score = 1.0 if track_number is not None and track.position == track_number else 0.0
-    return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
-
-
-def recording_match_score(candidate: ReleaseCandidate, request: MusicBrainzLookupRequest) -> float:
-    title_score = ratio(title_key(request.recording_title or ''), title_key(candidate.recording_title or '')) / 100
-    duration_score = (
-        0.0
-        if request.duration_seconds is None or candidate.duration_seconds is None
-        else max(0.0, 1.0 - abs(request.duration_seconds - candidate.duration_seconds) / 10)
-    )
-    number_score = 1.0 if request.track_number is not None and candidate.track_number == request.track_number else 0.0
-    return 0.6 * title_score + 0.25 * duration_score + 0.15 * number_score
-
-
 def catalog_numbers(release: Release) -> tuple[str, ...]:
     label_info: tuple[LabelInfo, ...] = release.label_info
     return tuple(number for number in (release.barcode, *(item.catalog_number for item in label_info)) if number)
-
-
-def _recording_mbids(
-    recording_mbid: str | None, recording_title: str | None, track: Track | None, release_tracks: tuple[Track, ...]
-) -> tuple[str, ...]:
-    if recording_mbid is not None:
-        return (recording_mbid,)
-    if recording_title is not None and track is not None:
-        return (track.recording.id,)
-    if len(release_tracks) == 1 and track is not None:
-        return (track.recording.id,)
-    return ()

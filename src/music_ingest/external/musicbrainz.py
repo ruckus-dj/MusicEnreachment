@@ -10,7 +10,7 @@ import anyio
 from anyio.to_thread import run_sync
 from pydantic import ValidationError
 
-from music_ingest.dto import GenrePage, RecordingResponse, RecordingSearchResponse, Release, ReleaseResponse
+from music_ingest.dto import GenrePage, RecordingResponse, RecordingSearchResponse, Release
 from music_ingest.matching.providers import MusicBrainzHttpResponse
 
 _RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels+labels'
@@ -73,13 +73,6 @@ class MusicBrainzClient:
     async def search_recording_ids(self, query: str) -> tuple[str, ...]:
         response = await self.search_recordings(query)
         return () if response.payload is None else tuple(recording.id for recording in response.payload.recordings)
-
-    def parse_legacy_releases(
-        self, response: MusicBrainzResponse[RecordingSearchResponse]
-    ) -> MusicBrainzResponse[ReleaseResponse]:
-        return self._parse(
-            MusicBrainzHttpResponse(response.status_code, response.body), ReleaseResponse.model_validate_json
-        )
 
     async def recording_detail(self, recording_mbid: str) -> RecordingDetail:
         response = await self._get(

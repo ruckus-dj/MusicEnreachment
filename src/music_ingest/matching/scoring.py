@@ -27,6 +27,10 @@ class ScoreWeight(IntEnum):
     DURATION_SIMILARITY = 2
     MUSICBRAINZ_SEARCH = 2
     ACOUSTID_FINGERPRINT = 4
+    TRACK_NUMBER = 2
+    DISC_NUMBER = 1
+    TRACK_TOTAL = 1
+    DISC_TOTAL = 1
 
 
 class ScoreComponent(StrEnum):
@@ -69,20 +73,11 @@ class ExplicitMusicBrainzIds:
 
 
 @dataclass(frozen=True, slots=True)
-class LidarrContext:
-    artist_name: str
-    release_title: str
-    duration_seconds: int | None
-
-
-@dataclass(frozen=True, slots=True)
 class MatchingRequest:
     artist_name: str
     release_title: str
     duration_seconds: int | None
     explicit_ids: ExplicitMusicBrainzIds = ExplicitMusicBrainzIds()
-    lidarr: LidarrContext | None = None
-    local_only: bool = False
     recording_title: str = ''
     track_number: int | None = None
     track_total: int | None = None
@@ -206,15 +201,23 @@ def score_release_candidate(request: MatchingRequest, candidate: ReleaseCandidat
     source_factors = _release_factors(
         _album_artist_name(request), request.release_title, request.duration_seconds, candidate
     )
-    source_score, _ = _weighted_score(source_factors)
-    selected_factors = source_factors
-    if request.lidarr is not None:
-        lidarr_factors = _release_factors(
-            request.lidarr.artist_name, request.lidarr.release_title, request.lidarr.duration_seconds, candidate
-        )
-        lidarr_score, _ = _weighted_score(lidarr_factors)
-        selected_factors = source_factors if source_score >= lidarr_score else lidarr_factors
-    return _score_candidate(candidate.release_mbid, selected_factors)
+    position_factors = (
+        _position_factor(request.track_number, candidate.track_number, ScoreWeight.TRACK_NUMBER),
+        _position_factor(request.disc_number, candidate.disc_number, ScoreWeight.DISC_NUMBER),
+        _position_factor(request.track_total, candidate.track_total, ScoreWeight.TRACK_TOTAL),
+        _position_factor(request.disc_total, candidate.disc_total, ScoreWeight.DISC_TOTAL),
+    )
+    return _score_candidate(candidate.release_mbid, source_factors + position_factors)
+
+
+def _position_factor(expected: int | None, actual: int | None, weight: ScoreWeight) -> _ScoreFactor:
+    comparable = expected is not None and expected > 0 and actual is not None and actual > 0
+    return _ScoreFactor(
+        ScoreComponent.TRACK,
+        1.0 if comparable and expected == actual else 0.0,
+        weight,
+        comparable,
+    )
 
 
 def _release_factors(
