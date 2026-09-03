@@ -805,6 +805,54 @@ def test_single_scored_recording_candidate_prefers_release_compatible_recording(
     assert selected[0] == 'preferred-recording'
 
 
+def test_single_scored_recording_candidate_does_not_let_acoustid_mask_composite_evidence() -> None:
+    # Given: AcousticID has a higher raw score, while MusicBrainz has the composite evidence for the same MBID.
+    source = SourceRecord(
+        id='source-id',
+        source_path='/source.flac',
+        device=1,
+        inode=1,
+        size_bytes=1,
+        sha256='a' * 64,
+        duration_seconds=1,
+        origin='manual',
+        intake_state='present',
+        candidates=[
+            CandidateRecord(
+                candidate_key='preferred-recording',
+                evidence=json.dumps(
+                    {
+                        'provider': 'acoustid',
+                        'entity': 'recording',
+                        'recording_mbid': 'preferred-recording',
+                        'score': 0.95,
+                    }
+                ),
+            ),
+            CandidateRecord(
+                candidate_key='preferred-recording',
+                evidence=json.dumps(
+                    {
+                        'provider': 'musicbrainz',
+                        'entity': 'recording',
+                        'recording_mbid': 'preferred-recording',
+                        'score': 0.7,
+                        'score_components': {'artist': 0.4},
+                    }
+                ),
+            ),
+        ],
+    )
+
+    # When: the folder-selection path asks for that release-compatible recording.
+    selected = processing._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
+
+    # Then: the composite MusicBrainz evidence remains eligible despite the higher raw AcousticID score.
+    assert selected is not None
+    assert selected[0] == 'preferred-recording'
+    assert selected[1].provider == 'musicbrainz'
+
+
 def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp_path: Path) -> None:
     # Given: a MusicBrainz-only source and an existing record with its recording MBID.
     now = datetime(2026, 8, 19, tzinfo=UTC)

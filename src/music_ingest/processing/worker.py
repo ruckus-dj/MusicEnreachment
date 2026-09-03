@@ -384,7 +384,14 @@ def _single_scored_recording_candidate(
                 or candidate.candidate_key
             )
             current = candidates_by_recording.get(recording_mbid)
-            if current is None or current[0] < evidence.score:
+            if (
+                current is None
+                or (current[1].score_components is None and evidence.score_components is not None)
+                or (
+                    (current[1].score_components is None) == (evidence.score_components is None)
+                    and current[0] < evidence.score
+                )
+            ):
                 candidates_by_recording[recording_mbid] = (evidence.score, evidence)
     composite_candidates = {
         recording_mbid: candidate
