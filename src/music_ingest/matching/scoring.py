@@ -6,6 +6,7 @@ from enum import IntEnum, StrEnum
 from typing import Final
 
 from rapidfuzz.distance import Levenshtein
+from unidecode import unidecode
 
 from music_ingest.matching.providers import ReleaseCandidate, release_display_title
 
@@ -131,11 +132,13 @@ class MatchResult:
     candidate_scores: tuple[CandidateScore, ...] = ()
 
 
-def score_recording_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
-    """Score recording identity using recording artist, title, and duration evidence."""
+def score_recording_candidate(
+    request: MatchingRequest, candidate: ReleaseCandidate, acoustid_score: float | None = None
+) -> CandidateScore:
+    """Score recording identity using metadata, provider, and optional fingerprint evidence."""
     if not candidate.recording_mbids:
         return CandidateScore(None, 0.0)
-    return _score_candidate(candidate.recording_mbids[0], _recording_factors(request, candidate))
+    return _score_candidate(candidate.recording_mbids[0], _recording_factors(request, candidate, acoustid_score))
 
 
 def _recording_factors(
@@ -192,7 +195,7 @@ def _score_candidate(candidate_mbid: str | None, factors: tuple[_ScoreFactor, ..
 
 
 def _recording_artist_name(candidate: ReleaseCandidate) -> str:
-    return candidate.recording_artist_names[0] if candidate.recording_artist_names else _release_artist_name(candidate)
+    return '; '.join(candidate.recording_artist_names) or _release_artist_name(candidate)
 
 
 def score_release_candidate(request: MatchingRequest, candidate: ReleaseCandidate) -> CandidateScore:
@@ -268,7 +271,11 @@ def _album_artist_name(request: MatchingRequest) -> str:
 def _text_similarity(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
-    return Levenshtein.normalized_similarity(_normalized(left), _normalized(right))
+    original_similarity = Levenshtein.normalized_similarity(_normalized(left), _normalized(right))
+    transliterated_similarity = Levenshtein.normalized_similarity(
+        _normalized(unidecode(left)), _normalized(unidecode(right))
+    )
+    return max(original_similarity, transliterated_similarity)
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:

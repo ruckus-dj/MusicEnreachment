@@ -151,7 +151,7 @@ def test_matching_when_musicbrainz_search_score_is_present_weights_provider_evid
     score = score_release_candidate(request, candidate)
 
     # Then: the weighted score stays bounded and includes the provider evidence.
-    assert score.score == pytest.approx(0.7692307692307693)
+    assert score.score == pytest.approx(0.7777777777777778)
     assert score.score <= 1.0
 
 
@@ -257,3 +257,65 @@ def test_recording_score_ignores_release_track_position() -> None:
     assert score.artist_component == 0.4
     assert score.duration_component == 0.2
     assert score.track_component == 0.0
+
+
+def test_recording_score_includes_available_acoustid_evidence() -> None:
+    # Given: text metadata has a transliteration mismatch, but AcousticID identifies the recording.
+    request = MatchingRequest('кис-кис', 'Пир во время чумы', 27, recording_title='intro')
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Пир во время чумы',
+        'кис-кис',
+        27,
+        ('recording-id',),
+        recording_title='интро',
+        musicbrainz_score=100,
+    )
+
+    # When: the recording candidate is scored with the matched AcousticID result.
+    score = score_recording_candidate(request, candidate, acoustid_score=0.9997)
+
+    # Then: AcousticID contributes its weighted evidence to the normalized composite score.
+    assert score.score == pytest.approx((4 + 4 + 2 + 2 + 4 * 0.9997) / 16)
+    assert score.weight == 16
+
+
+def test_recording_score_compares_all_recording_artists() -> None:
+    # Given: source and recording have the same two artists with different separators and case.
+    request = MatchingRequest('Кис-Кис & Elcofff', 'Мальчик (Hardstyle Remix)', 100, recording_title='Мальчик')
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Мальчик (Hardstyle Remix)',
+        'Кис-Кис',
+        100,
+        ('recording-id',),
+        recording_title='Мальчик',
+        recording_artist_names=('Кис-Кис', 'Elcofff'),
+        musicbrainz_score=100,
+    )
+
+    # When: the recording candidate is scored using its complete artist credit.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: the complete normalized artist credit matches exactly.
+    assert score.artist_component == pytest.approx(4 / 12)
+    assert score.score == pytest.approx(1.0)
+
+
+def test_text_similarity_recognizes_cross_script_transliteration() -> None:
+    # Given: source and candidate use Latin and Cyrillic spellings of the same word.
+    request = MatchingRequest('Artist', 'Album', 100, recording_title='index')
+    candidate = ReleaseCandidate(
+        'release-id',
+        'Album',
+        'Artist',
+        100,
+        ('recording-id',),
+        recording_title='индекс',
+    )
+
+    # When: the recording candidate is scored with both original and transliterated text.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: the title receives a non-zero similarity contribution.
+    assert score.title_component > 0.0
