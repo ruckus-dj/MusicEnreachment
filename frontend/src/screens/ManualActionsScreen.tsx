@@ -30,7 +30,10 @@ function needsReview(track: CatalogTrack): boolean {
 }
 
 function matchesFilter(track: CatalogTrack, filter: ActionFilter): boolean {
-  return filter === "analysis-error" ? hasAnalysisError(track) : needsReview(track);
+  return (
+    track.source.state !== "replaced" &&
+    (filter === "analysis-error" ? hasAnalysisError(track) : needsReview(track))
+  );
 }
 
 function filterLabel(filter: ActionFilter): string {

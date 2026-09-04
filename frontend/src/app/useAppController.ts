@@ -471,10 +471,24 @@ export function useAppController(): AppControllerModel {
   async function reprocessSource(recordId: string, sourceId: string) {
     setReprocessing(true);
     try {
-      const result = await api<{ queued: boolean; kind: string | null }>(
+      const result = await api<{
+        readonly queued: boolean;
+        readonly kind: string | null;
+        readonly replacement_record_id: string | null;
+        readonly replacement_source_id: string | null;
+      }>(
         `/api/library/records/${encodeURIComponent(recordId)}/sources/${encodeURIComponent(sourceId)}/reprocess`,
         { method: "POST" },
       );
+      if (result.replacement_record_id && result.replacement_source_id) {
+        setNotice("Открыта актуальная версия файла с результатами MusicBrainz");
+        navigate({
+          screen: "track",
+          recordId: result.replacement_record_id,
+          sourceId: result.replacement_source_id,
+        });
+        return;
+      }
       setNotice(
         result.queued
           ? "Повторный анализ поставлен в очередь"

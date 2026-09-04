@@ -118,4 +118,37 @@ describe("ManualActionsScreen", () => {
     expect(onRetry).toHaveBeenCalledWith("analysis-error", "source-error");
     expect(onNavigate).not.toHaveBeenCalled();
   });
+
+  it("hides a replaced source even when its former record is blocked", () => {
+    render(
+      <ManualActionsScreen
+        tracks={[
+          {
+            item: {
+              record_id: "replaced-record",
+              source_state: "present",
+              processing_state: "blocked_infrastructure",
+              match_state: "unmatched",
+              publication_state: "absent",
+              metadata_state: "original",
+              sources: [],
+              publications: [],
+            },
+            source: {
+              source_id: "replaced-source",
+              path: "/library/Replaced Track.flac",
+              sha256: "a",
+              state: "replaced",
+              tag_observations: [{ name: "TITLE", value: "Устаревший трек", format: "FLAC" }],
+            },
+          },
+        ]}
+        reprocessing={false}
+        onNavigate={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("/library/Replaced Track.flac")).toBeNull();
+  });
 });
