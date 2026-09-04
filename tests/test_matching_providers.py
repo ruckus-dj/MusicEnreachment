@@ -453,6 +453,34 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
     assert result.candidate.genres == ('Electronic',)
 
 
+def test_musicbrainz_v2_adapter_prefers_release_track_title_over_recording_title() -> None:
+    # Given: a release gives the track a version-specific title distinct from its recording title.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1),
+                )
+            return MusicBrainzHttpResponse(
+                200,
+                b'{"id":"release-id","title":"Fixture Album","media":[{"position":1,"tracks":['
+                b'{"position":1,"title":"Release Version","recording":'
+                b'{"id":"recording-id","title":"Canonical Recording"}}]}]}',
+            )
+
+    # When: the adapter resolves the recording through the release track.
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+        MusicBrainzLookupRequest('artist:Fixture release:Fixture Album', FixtureCase.SUCCESS, 'recording-id'),
+        NOW,
+    )
+
+    # Then: the candidate exposes the title credited by this release.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.recording_title == 'Release Version'
+
+
 def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_duration_and_number_match() -> None:
     # Given: a text search returns the album, whose first track is not the source recording.
     class FixtureTransport:
@@ -1006,6 +1034,47 @@ def test_musicbrainz_search_preserves_recording_metadata_for_all_recording_proje
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.recording_mbids == ('recording-a', 'recording-b')
     assert [item.recording_title for item in result.candidate.recording_candidates] == ['Wrong Song', 'Target Song']
+
+
+def test_musicbrainz_search_excludes_data_track_recordings_without_audio_metadata() -> None:
+    # Given: a release links one audio recording and one video recording only through a data track.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/recording/?' in url:
+                return MusicBrainzHttpResponse(200, b'{"recordings":[]}')
+            if '/release/?recording=audio-recording' in url or '/release/?recording=video-recording' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    _release_browse_response(b'[{"id":"shared-release","title":"Shared Album"}]', 1),
+                )
+            if '/release/shared-release?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"id":"shared-release","title":"Shared Album","media":[{"position":1,"tracks":['
+                    b'{"position":1,"title":"Audio Track","recording":'
+                    b'{"id":"audio-recording","title":"Audio Track"}}],"data-tracks":['
+                    b'{"position":2,"title":"Video Track","recording":'
+                    b'{"id":"video-recording","title":"Video Track","video":true}}]}]}',
+                )
+            raise AssertionError(f'unexpected MusicBrainz URL: {url}')
+
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
+
+    # When: MusicBrainz resolves both recordings against the shared release.
+    result = provider.lookup(
+        MusicBrainzLookupRequest(
+            'artist:Fixture recording:Audio',
+            FixtureCase.SUCCESS,
+            recording_mbids=('audio-recording', 'video-recording'),
+        ),
+        NOW,
+    )
+
+    # Then: only the audio recording is offered for review with complete track metadata.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.recording_mbids == ('audio-recording',)
+    assert result.candidate.recording_title == 'Audio Track'
 
 
 def test_musicbrainz_search_merges_acoustid_recordings_before_detail_lookup() -> None:

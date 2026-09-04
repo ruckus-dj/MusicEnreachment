@@ -11,9 +11,12 @@ def candidate_for_release(
     recording_mbid: str,
     artist_name: str | None = None,
     musicbrainz_score: float | None = None,
-) -> ReleaseCandidate:
+) -> ReleaseCandidate | None:
     release_tracks = tuple(track for medium in release.media for track in medium.tracks)
     track = next((track for track in release_tracks if track.recording.id == recording_mbid), None)
+    data_track_recording_ids = frozenset(track.recording.id for medium in release.media for track in medium.data_tracks)
+    if track is None and recording_mbid in data_track_recording_ids:
+        return None
     release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
     artist = artist_name or release_artist_name
     if not artist and track is not None:
@@ -29,7 +32,7 @@ def candidate_for_release(
         disambiguation=release.disambiguation,
         duration_seconds=None if track is None or track.length is None else round(track.length / 1000),
         recording_mbids=(recording_mbid,),
-        recording_title=None if track is None else track.recording.title,
+        recording_title=None if track is None else track.title or track.recording.title,
         date=release.date,
         original_date=None if release.release_group is None else release.release_group.first_release_date,
         country=release.country,

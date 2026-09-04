@@ -372,6 +372,7 @@ class Medium(BaseModel):
     position: int | None = None
     track_count: int | None = Field(default=None, alias='track-count')
     tracks: tuple[Track, ...] = ()
+    data_tracks: tuple[Track, ...] = Field(default=(), alias='data-tracks')
 
 
 class LabelInfo(BaseModel):

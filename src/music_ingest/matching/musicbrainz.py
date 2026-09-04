@@ -66,14 +66,12 @@ class MusicBrainzProviderAdapter:
             payload = detail.response.payload
             if payload is None:
                 return Malformed(provenance)
-            return MusicBrainzMatch(
-                provenance,
-                candidate_for_release(
-                    payload,
-                    request.recording_mbid,
-                    artist_name=request.artist_name,
-                ),
+            candidate = candidate_for_release(
+                payload,
+                request.recording_mbid,
+                artist_name=request.artist_name,
             )
+            return NoMatch(provenance) if candidate is None else MusicBrainzMatch(provenance, candidate)
         if request.recording_mbid is not None:
             return await self._resolve_recordings(
                 (request.recording_mbid,), request, captured_at, f'recording:{request.recording_mbid}'
@@ -165,6 +163,8 @@ class MusicBrainzProviderAdapter:
                     recording_mbid=recording_mbid,
                     musicbrainz_score=search_scores.get(recording_mbid),
                 )
+                if candidate is None:
+                    continue
                 existing = candidates.get(release_id)
                 candidates[release_id] = (
                     candidate if existing is None else merge_recording_candidate(existing, candidate)
