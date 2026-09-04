@@ -52,7 +52,9 @@ class SourceRecordView(Protocol):
     size_bytes: int
     origin: str
     intake_state: str
+    source_root_id: str
     library_record_id: str | None
+    replaced_by_source_id: str | None
     disappeared_at: datetime | None
     media_codec: str | None
     media_bit_depth: int | None
@@ -101,7 +103,7 @@ class LibraryRecord(Base):
         back_populates='library_record', lazy='selectin', order_by='LibraryEventRecord.created_at'
     )
     effective_source_decision: Mapped[EffectiveSourceDecisionRecord | None] = relationship(
-        back_populates='library_record'
+        back_populates='library_record', cascade='all, delete-orphan'
     )
     publication_attempts: Mapped[list[PublicationAttemptRecord]] = relationship(back_populates='library_record')
 

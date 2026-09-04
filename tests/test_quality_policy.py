@@ -312,6 +312,32 @@ def test_effective_source_service_persists_tuple_baseline_reason_and_version_acr
     assert events == ()
 
 
+def test_effective_source_decision_when_orphan_record_is_deleted_is_deleted_with_its_record(tmp_path: Path) -> None:
+    # Given: a temporary library record with a persisted effective-source decision.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "orphan-decision.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='orphan-record', created_at=now, updated_at=now)
+        source = _source('orphan-source', record)
+        session.add_all((record, source))
+        session.commit()
+        _ = persist_effective_source_decision(
+            session,
+            record.id,
+            (_candidate(source.id, Codec.MP3, bitrate=320_000),),
+            now,
+        )
+        session.commit()
+
+        # When: changed-source recovery removes the temporary record.
+        session.delete(record)
+        session.commit()
+
+        # Then: its primary-key decision row is deleted rather than disassociated.
+        assert session.get(EffectiveSourceDecisionRecord, record.id) is None
+
+
 def test_effective_source_service_policy_migration_persists_review_event_without_replacement(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "quality-migration.db"}')
     Base.metadata.create_all(engine)
@@ -404,9 +430,13 @@ def test_library_api_when_confirming_source_persists_effective_decision_from_mea
         source.candidates.append(
             CandidateRecord(
                 candidate_key='release-id:track-id',
-                evidence='{"provider":"musicbrainz","entity":"recording_release","release_mbid":"release-id",'
-                '"recording_mbid":"track-id","tags":{"TITLE":"Fixture","MUSICBRAINZ_ALBUMID":"release-id",'
-                '"MUSICBRAINZ_RECORDINGID":"track-id"}}',
+                evidence=''.join(
+                    (
+                        '{"provider":"musicbrainz","entity":"recording_release","release_mbid":"release-id",',
+                        '"recording_mbid":"track-id","tags":{"TITLE":"Fixture","MUSICBRAINZ_ALBUMID":"release-id",',
+                        '"MUSICBRAINZ_RECORDINGID":"track-id"}}',
+                    )
+                ),
             )
         )
         session.add_all((root, record, source))
