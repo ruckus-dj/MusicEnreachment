@@ -365,3 +365,42 @@ def test_recording_score_penalizes_extra_or_unrelated_title_tokens(
 
     # Then: extra edition tokens are softly penalized and an unrelated title stays low.
     assert score.title_match == expected_match
+
+
+@pytest.mark.parametrize(
+    ('source_duration', 'candidate_duration', 'expected_score'),
+    (
+        (276, 276, 1.0),
+        (278, 276, 0.783),
+        (281, 276, 0.505),
+        (291, 276, -0.029),
+        (552, 276, -1.0),
+        (1104, 276, -2.0),
+    ),
+)
+def test_duration_score_changes_smoothly_from_close_to_relative_mismatches(
+    source_duration: int, candidate_duration: int, expected_score: float
+) -> None:
+    # Given: source and candidate durations spanning small and multiplicative differences.
+
+    # When: matching scores their duration evidence.
+    score = score_recording_candidate(
+        MatchingRequest('Fixture Artist', '', source_duration),
+        ReleaseCandidate('release-id', '', 'Fixture Artist', candidate_duration, ('recording-id',)),
+    )
+
+    # Then: the score moves continuously from a close-match bonus to a multiplicative penalty.
+    assert score.duration_match == pytest.approx(expected_score, abs=0.001)
+
+
+def test_recording_score_clamps_a_gross_duration_mismatch_to_zero() -> None:
+    # Given: an album-length source and a short track with only the artist in common.
+    request = MatchingRequest('Noize MC', '', 3496)
+    candidate = ReleaseCandidate('release-id', '', 'Noize MC', 276, ('recording-id',))
+
+    # When: matching scores the recording candidate.
+    score = score_recording_candidate(request, candidate)
+
+    # Then: the negative duration factor cannot produce a negative composite score.
+    assert score.duration_match == pytest.approx(-3.663, abs=0.001)
+    assert score.score == 0.0

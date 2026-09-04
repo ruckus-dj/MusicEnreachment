@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
+from math import log2, pow
 from typing import Final
 
 from rapidfuzz import fuzz
@@ -66,7 +67,7 @@ class _ScoreFactor:
 def _weighted_score(factors: tuple[_ScoreFactor, ...]) -> tuple[float, int]:
     total_weight = sum(factor.weight for factor in factors if factor.available)
     score = sum(factor.value * factor.weight for factor in factors if factor.available)
-    return (score / total_weight if total_weight else 0.0), total_weight
+    return (max(0.0, score / total_weight) if total_weight else 0.0), total_weight
 
 
 def _component_score(factors: tuple[_ScoreFactor, ...], component: ScoreComponent, total_weight: int) -> float:
@@ -400,14 +401,12 @@ def _soft_token_ratio(left: str, right: str) -> float:
 
 
 def _duration_score(expected: int | None, actual: int | None) -> float:
-    if expected is None or actual is None:
+    if expected is None or actual is None or expected <= 0 or actual <= 0:
         return 0.0
     difference = abs(expected - actual)
-    if difference <= 2:
-        return 1.0
-    if difference <= 5:
-        return 0.5
-    return 0.0
+    local_similarity = pow(max(0.0, 1.0 - difference / 20.0), 2.2)
+    duration_ratio = max(expected, actual) / min(expected, actual)
+    return local_similarity - log2(duration_ratio)
 
 
 def _candidate_matches_explicit_ids(explicit_ids: ExplicitMusicBrainzIds, candidate: ReleaseCandidate) -> bool:
