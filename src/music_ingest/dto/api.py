@@ -403,6 +403,11 @@ class ReleaseResponse(BaseModel):
     releases: tuple[Release, ...]
 
 
+class ReleaseBrowseResponse(ReleaseResponse):
+    count: int = Field(alias='release-count', ge=0)
+    offset: int = Field(alias='release-offset', ge=0)
+
+
 class RecordingResponse(ReleaseResponse):
     pass
 
