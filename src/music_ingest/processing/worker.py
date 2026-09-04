@@ -719,6 +719,14 @@ class ProcessingWorker:
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+        if claimed.job.source_id is not None:
+            source = self._session.get(SourceRecord, claimed.job.source_id)
+            if source is not None and source.intake_state == 'replaced':
+                claimed.attempt.state = 'succeeded'
+                claimed.attempt.finished_at = now
+                claimed.job.state = 'superseded'
+                claimed.job.next_attempt_at = None
+                return
         if claimed.job.kind == 'reconciliation_scan':
             snapshot = load_reconciliation_snapshot(self._session, now)
             plan = plan_reconciliation(snapshot)
@@ -1929,6 +1937,7 @@ class ProcessingWorker:
         if orphan_record is not None and orphan_record.id != record.id:
             self._session.delete(orphan_record)
         source.intake_state = 'replaced'
+        source.replaced_by_source_id = replacement_source.id
         claimed.attempt.state = 'succeeded'
         claimed.attempt.finished_at = datetime.now(UTC)
         claimed.job.state = 'superseded'

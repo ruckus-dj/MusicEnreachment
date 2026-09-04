@@ -2208,6 +2208,60 @@ def test_worker_when_stale_attempts_exceed_limit_blocks_without_restarting_provi
     assert processed_job_ids == []
 
 
+def test_worker_when_source_was_replaced_supersedes_stale_analysis_job(tmp_path: Path) -> None:
+    # Given: a provider job queued before its source became an immutable replaced version.
+    config = _config(tmp_path)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "replaced-source.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='root',
+            display_name='root',
+            canonical_path=str(tmp_path),
+            enabled=True,
+            scan_state='scanned',
+            created_at=now,
+            updated_at=now,
+        )
+        record = LibraryRecord(id='record', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='replaced-source',
+            source_path=str(tmp_path / 'replaced.flac'),
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='replaced',
+            source_root=root,
+            library_record=record,
+        )
+        job = JobRecord(
+            id='stale-analysis',
+            source_id=source.id,
+            kind='acoustid_analysis',
+            state='queued',
+            created_at=now,
+        )
+        session.add_all((root, record, source, job))
+        session.commit()
+
+    # When: the worker claims the stale provider job.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+        session.commit()
+
+    # Then: it is superseded without processing or touching the immutable source version.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'stale-analysis')
+        source = session.get(SourceRecord, 'replaced-source')
+        assert job is not None and job.state == 'superseded'
+        assert [attempt.state for attempt in job.attempts] == ['succeeded']
+        assert source is not None and source.intake_state == 'replaced'
+
+
 def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -388,6 +388,16 @@ def apply_reconciliation_plan(session: Session, plan: ReconciliationPlan, observ
             .where(SourceRecord.id.in_(old_source_ids))
             .values(intake_state='replaced', disappeared_at=observed_at),
         )
+        _ = session.connection().execute(
+            update(SourceRecord)
+            .where(SourceRecord.id == bindparam('old_source_id'))
+            .execution_options(synchronize_session=False)
+            .values(replaced_by_source_id=bindparam('replacement_source_id')),
+            [
+                {'old_source_id': old_source_id, 'replacement_source_id': replacement_source_id}
+                for old_source_id, replacement_source_id, _ in plan.replacement_pairs
+            ],
+        )
         _ = session.execute(
             update(JobRecord)
             .where(JobRecord.source_id.in_(old_source_ids))
