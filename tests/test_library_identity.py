@@ -856,7 +856,8 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
     failed_path = source_root / 'failed.flac'
     never_sent_path = source_root / 'never.flac'
     successful_path = source_root / 'success.flac'
-    for source_path in (failed_path, never_sent_path, successful_path):
+    replaced_path = source_root / 'replaced.flac'
+    for source_path in (failed_path, never_sent_path, successful_path, replaced_path):
         _ = source_path.write_bytes(b'fixture')
     with Session(engine) as session:
         root = SourceRootRecord(
@@ -908,6 +909,19 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
             source_root=root,
             library_record=record,
         )
+        replaced = SourceRecord(
+            id='source-replaced',
+            source_path=str(replaced_path),
+            device=1,
+            inode=5,
+            size_bytes=6,
+            sha256='f' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='replaced',
+            source_root=root,
+            library_record=record,
+        )
         session.add_all(
             (
                 root,
@@ -915,6 +929,7 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
                 failed,
                 never_sent,
                 successful,
+                replaced,
                 ProviderAttemptRecord(
                     source=failed,
                     provider_name='acoustid',
@@ -950,19 +965,29 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
                     state='completed',
                     created_at=timestamp,
                 ),
+                JobRecord(
+                    id='job-replaced',
+                    source_id='source-replaced',
+                    kind='filesystem_scan',
+                    state='completed',
+                    created_at=timestamp,
+                ),
             )
         )
         session.commit()
 
     client = TestClient(create_app(lambda: Session(engine)))
 
-    # When: the operator retries one failed source and then requests the bulk provider retry.
+    # When: the operator retries one failed source, a replaced source, and then requests the bulk provider retry.
     single = client.post('/api/library/records/record-retry/sources/source-failed/provider-retry')
+    replaced_retry = client.post('/api/library/records/record-retry/sources/source-replaced/provider-retry')
     bulk = client.post('/api/library/providers/retry')
 
-    # Then: the single source is queued once, and bulk queues only the never-sent source.
+    # Then: the replaced source remains terminal, while the active sources retain existing retry behavior.
     assert single.status_code == 200
     assert single.json() == {'source_id': 'source-failed', 'queued': True}
+    assert replaced_retry.status_code == 200
+    assert replaced_retry.json() == {'source_id': 'source-replaced', 'queued': False}
     assert bulk.status_code == 200
     assert bulk.json() == {'queued': 1}
     with Session(engine) as session:
@@ -971,7 +996,8 @@ def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_du
         assert jobs['source-failed'].kind == 'acoustid_analysis'
         assert jobs['source-never'].state == 'queued'
         assert jobs['source-success'].state == 'completed'
-        assert len(jobs) == 3
+        assert jobs['source-replaced'].state == 'completed'
+        assert len(jobs) == 4
 
     with Session(engine) as session:
         source = session.get(SourceRecord, 'source-success')

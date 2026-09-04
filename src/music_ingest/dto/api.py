@@ -287,6 +287,8 @@ class SourceRecoveryResponse(BaseModel):
     source_id: str
     queued: bool
     kind: str | None
+    replacement_record_id: str | None = None
+    replacement_source_id: str | None = None
 
 
 class DestinationConflictCleanupResponse(BaseModel):

@@ -753,9 +753,27 @@ def create_app(
                     raise HTTPException(status_code=409, detail='destination conflict must be replaced first')
                 now = datetime.now(UTC)
                 kind = queue_source_recovery(session, record, source, now)
+                replacement = None
+                if source.intake_state == 'replaced':
+                    replacement = (
+                        session.get(SourceRecord, source.replaced_by_source_id)
+                        if source.replaced_by_source_id is not None
+                        else session.scalar(
+                            select(SourceRecord)
+                            .where(SourceRecord.source_root_id == source.source_root_id)
+                            .where(SourceRecord.source_path == source.source_path)
+                            .where(SourceRecord.intake_state != 'replaced')
+                            .order_by(SourceRecord.id.desc())
+                        )
+                    )
                 session.commit()
                 return SourceRecoveryResponse(
-                    record_id=record.id, source_id=source.id, queued=kind is not None, kind=kind
+                    record_id=record.id,
+                    source_id=source.id,
+                    queued=kind is not None,
+                    kind=kind,
+                    replacement_record_id=replacement.library_record_id if replacement is not None else None,
+                    replacement_source_id=replacement.id if replacement is not None else None,
                 )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record or source not found') from error
@@ -768,8 +786,10 @@ def create_app(
             jobs = JobRepository(session)
             for record in library_records(session):
                 for source in record.sources:
-                    if source.disappeared_at is not None or (
-                        not request.retry_all and not _needs_analysis_retry(source)
+                    if (
+                        source.disappeared_at is not None
+                        or source.intake_state == 'replaced'
+                        or (not request.retry_all and not _needs_analysis_retry(source))
                     ):
                         continue
                     _ = require_owned_source(session, source.id)
@@ -1121,7 +1141,7 @@ def create_app(
                 if source is None:
                     raise LookupError(source_id)
                 _ = require_owned_source(session, source.id)
-                if source.disappeared_at is not None:
+                if source.disappeared_at is not None or source.intake_state == 'replaced':
                     return ProviderRetryResponse(source_id=source.id, queued=False)
                 now = datetime.now(UTC)
                 queued = (
