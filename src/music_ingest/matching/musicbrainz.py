@@ -18,7 +18,6 @@ from music_ingest.external.musicbrainz import (
 from music_ingest.matching.musicbrainz_mapping import (
     candidate_for_release,
     merge_recording_candidate,
-    without_pseudo_releases,
 )
 from music_ingest.matching.providers import (
     Ambiguous,
@@ -143,7 +142,9 @@ class MusicBrainzProviderAdapter:
             if detail.response.payload is None:
                 continue
             provenance = self._provenance(f'recording:{detail.recording_mbid}', detail.response, captured_at)
-            for release in without_pseudo_releases(detail.response.payload.releases):
+            for release in detail.response.payload.releases:
+                if release.status is not None and release.status.casefold() != 'official':
+                    continue
                 _ = releases_by_id.setdefault(release.id, release)
                 recording_ids_by_release.setdefault(release.id, []).append(detail.recording_mbid)
         if not releases_by_id:

@@ -79,10 +79,6 @@ def candidate_for_release(
     )
 
 
-def without_pseudo_releases(releases: tuple[Release, ...]) -> tuple[Release, ...]:
-    return tuple(release for release in releases if (release.status or '').casefold() != 'pseudo-release')
-
-
 def merge_recording_candidate(existing: ReleaseCandidate, candidate: ReleaseCandidate) -> ReleaseCandidate:
     projections = existing.recording_candidates or (existing,)
     candidate_projections = candidate.recording_candidates or (candidate,)

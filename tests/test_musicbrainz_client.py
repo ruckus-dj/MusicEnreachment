@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
+from urllib.parse import parse_qs, urlsplit
 
 import anyio
 
@@ -35,8 +36,10 @@ def test_recording_details_when_ids_repeat_deduplicates_and_fans_out() -> None:
             if len(calls) == 2:
                 started.set()
             await started.wait()
-            recording_id = url.split('/recording/', 1)[1].split('?', 1)[0]
-            return MusicBrainzHttpResponse(200, json.dumps({'releases': [], 'id': recording_id}).encode())
+            recording_id = parse_qs(urlsplit(url).query)['recording'][0]
+            return MusicBrainzHttpResponse(
+                200, json.dumps({'release-count': 0, 'release-offset': 0, 'releases': [], 'id': recording_id}).encode()
+            )
 
     async def request_details() -> tuple[str, ...]:
         client = MusicBrainzClient(FixtureTransport(), 'music-ingest/test (operator@example.test)', concurrency=2)
@@ -51,6 +54,45 @@ def test_recording_details_when_ids_repeat_deduplicates_and_fans_out() -> None:
     assert len(calls) == 2
 
 
+def test_recording_details_when_releases_span_pages_collects_every_page() -> None:
+    # Given: a recording whose eligible releases require two browse pages.
+    calls: list[str] = []
+
+    class FixtureTransport:
+        async def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            calls.append(url)
+            query = parse_qs(urlsplit(url).query)
+            offset = query['offset'][0]
+            body = (
+                b''.join(
+                    (
+                        b'{"release-count":3,"release-offset":0,"releases":[{"id":"release-a","title":"A"},',
+                        b'{"id":"release-b","title":"B"}]}',
+                    )
+                )
+                if offset == '0'
+                else b'{"release-count":3,"release-offset":2,"releases":[{"id":"release-c","title":"C"}]}'
+            )
+            return MusicBrainzHttpResponse(200, body)
+
+    async def request_details() -> tuple[str, ...]:
+        client = MusicBrainzClient(FixtureTransport(), 'music-ingest/test (operator@example.test)')
+        details = await client.recording_details(('recording-id',))
+        payload = details['recording-id'].response.payload
+        assert payload is not None
+        return tuple(release.id for release in payload.releases)
+
+    # When: the client discovers releases for the recording.
+    release_ids = anyio.run(request_details)
+
+    # Then: every release page is collected through the paginated browse endpoint.
+    assert release_ids == ('release-a', 'release-b', 'release-c')
+    assert len(calls) == 2
+    assert all('/ws/2/release/?' in url for url in calls)
+    assert all('recording=recording-id' in url and 'status=' not in url and 'limit=100' in url for url in calls)
+
+
 def test_search_when_musicbrainz_returns_scores_preserves_them_on_candidates() -> None:
     # Given: a text search response with provider ranking and one recording detail.
     class FixtureTransport:
@@ -61,10 +103,10 @@ def test_search_when_musicbrainz_returns_scores_preserves_them_on_candidates() -
                     200,
                     b'{"recordings":[{"id":"recording-id","score":100,"title":"Fixture Track"}]}',
                 )
-            if '/recording/' in url:
+            if '/release/?' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}',
+                    b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}',
                 )
             return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
 
@@ -88,10 +130,10 @@ def test_search_when_provider_returns_unit_interval_score_normalizes_to_musicbra
                     200,
                     b'{"recordings":[{"id":"recording-id","score":0.84,"title":"Fixture Track"}]}',
                 )
-            if '/recording/' in url:
+            if '/release/?' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}',
+                    b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}',
                 )
             return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
 

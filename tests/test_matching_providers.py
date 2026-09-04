@@ -71,8 +71,16 @@ _RECORDING_RELEASES = {
 def _recording_releases_response(recording_id: str) -> bytes:
     release_id, release_title, artist, _, _, _, _ = _RECORDING_RELEASES[recording_id]
     return json.dumps(
-        {'releases': [{'id': release_id, 'title': release_title, 'artist-credit': [{'name': artist}]}]}
+        {
+            'release-count': 1,
+            'release-offset': 0,
+            'releases': [{'id': release_id, 'title': release_title, 'artist-credit': [{'name': artist}]}],
+        }
     ).encode()
+
+
+def _release_browse_response(releases: bytes, count: int) -> bytes:
+    return b''.join((b'{"release-count":', str(count).encode(), b',"release-offset":0,"releases":', releases, b'}'))
 
 
 def _release_response(release_id: str) -> bytes:
@@ -332,7 +340,9 @@ def test_musicbrainz_v2_adapter_when_recording_id_is_known_looks_up_linked_relea
                     b'"tracks":[{"position":1,"title":"Fixture Track","recording":{"id":"recording-id",'
                     b'"title":"Fixture Track"}}]}]}',
                 )
-            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            )
 
     adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
 
@@ -347,23 +357,26 @@ def test_musicbrainz_v2_adapter_when_recording_id_is_known_looks_up_linked_relea
         NOW,
     )
 
-    # Then: it returns the linked release and uses the recording lookup endpoint.
+    # Then: it returns the linked release through the release browse endpoint.
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.release_mbid == 'release-id'
-    assert '/recording/recording-id?' in calls[0]
-    assert 'inc=releases' in calls[0]
+    assert '/release/?' in calls[0]
+    assert 'recording=recording-id' in calls[0]
+    assert 'status=' not in calls[0]
 
 
-def test_musicbrainz_v2_adapter_excludes_pseudo_releases_from_recording_results() -> None:
+def test_musicbrainz_v2_adapter_uses_release_browse_results() -> None:
     class FixtureTransport:
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
-            _ = url, headers
-            return MusicBrainzHttpResponse(
-                200,
-                b'{"releases":['
-                b'{"id":"pseudo-id","title":"Translated Album","status":"Pseudo-Release"},'
-                b'{"id":"official-id","title":"Official Album","status":"Official"}]}',
-            )
+            _ = headers
+            if '/release/?' in url:
+                assert 'status=' not in url
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"release-count":1,"release-offset":0,"releases":['
+                    b'{"id":"official-id","title":"Official Album","status":"Official"}]}',
+                )
+            return MusicBrainzHttpResponse(200, b'{"id":"official-id","title":"Official Album"}')
 
     result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
         MusicBrainzLookupRequest('', FixtureCase.SUCCESS, 'recording-id'),
@@ -374,6 +387,31 @@ def test_musicbrainz_v2_adapter_excludes_pseudo_releases_from_recording_results(
     assert result.candidate.release_mbid == 'official-id'
 
 
+def test_musicbrainz_v2_adapter_accepts_unknown_release_status_and_excludes_bootleg() -> None:
+    # Given: a recording has an unclassified release and a bootleg release.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/release/?' in url:
+                assert 'status=' not in url
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"release-count":2,"release-offset":0,"releases":['
+                    b'{"id":"unknown-id","title":"Lenin Has Risen","status":null},'
+                    b'{"id":"bootleg-id","title":"Bootleg","status":"Bootleg"}]}',
+                )
+            return MusicBrainzHttpResponse(200, b'{"id":"unknown-id","title":"Lenin Has Risen"}')
+
+    # When: the adapter resolves the explicit recording identity.
+    result = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)').lookup(
+        MusicBrainzLookupRequest('', FixtureCase.SUCCESS, 'recording-id'), NOW
+    )
+
+    # Then: the null-status release supplies the candidate while bootleg remains excluded.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.release_mbid == 'unknown-id'
+
+
 def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata() -> None:
     # Given: MusicBrainz returns the linked release first and its full media on the release endpoint.
     calls: list[str] = []
@@ -382,8 +420,8 @@ def test_musicbrainz_v2_adapter_enriches_recording_release_with_track_metadata()
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
             calls.append(url)
-            if '/recording/' in url:
-                body = b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            if '/release/?' in url:
+                body = _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1)
             else:
                 body = (
                     b'{"id":"release-id","title":"Fixture Album","date":"2020-01-02",'
@@ -422,8 +460,10 @@ def test_musicbrainz_v2_adapter_when_search_has_many_tracks_selects_title_durati
             _ = headers
             if '/recording/?' in url:
                 return MusicBrainzHttpResponse(200, b'{"recordings":[{"id":"right-id"}]}')
-            if '/recording/' in url and '/recording/?' not in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(
+                    200, _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1)
+                )
             return MusicBrainzHttpResponse(
                 200,
                 b'{"id":"release-id","title":"Fixture Album","media":[{"track-count":2,"tracks":['
@@ -472,8 +512,10 @@ def test_musicbrainz_v2_adapter_recording_search_expands_all_results_before_rank
                     b'{"id":"wrong-title","title":"Other Song","artist-credit":[{"name":"Fixture Artist"}]},'
                     b'{"id":"wrong-artist","title":"Target Song","artist-credit":[{"name":"Other Artist"}]}]}',
                 )
-            if '/recording/' in url and '/recording/?' not in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(
+                    200, _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1)
+                )
             return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Fixture Album"}')
 
     adapter = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
@@ -492,8 +534,8 @@ def test_musicbrainz_v2_adapter_recording_search_expands_all_results_before_rank
     # Then: every returned recording is expanded into release candidates for later ranking.
     assert isinstance(result, MusicBrainzMatch)
     assert result.candidate.recording_mbids == ('right-id', 'wrong-title', 'wrong-artist')
-    assert any('/recording/wrong-title?' in url for url in calls)
-    assert any('/recording/wrong-artist?' in url for url in calls)
+    assert any('/release/?recording=wrong-title' in url for url in calls)
+    assert any('/release/?recording=wrong-artist' in url for url in calls)
 
 
 def test_musicbrainz_v2_adapter_recording_search_expands_independent_recordings_concurrently() -> None:
@@ -508,12 +550,14 @@ def test_musicbrainz_v2_adapter_recording_search_expands_independent_recordings_
                     200,
                     b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
                 )
-            if '/recording/' in url:
+            if '/release/?' in url:
                 started.wait(timeout=1)
-                recording_id = url.split('/recording/', 1)[1].split('?', 1)[0]
+                recording_id = url.split('recording=', 1)[1].split('&', 1)[0]
                 return MusicBrainzHttpResponse(
                     200,
-                    f'{{"releases":[{{"id":"release-{recording_id}","title":"Fixture Album"}}]}}'.encode(),
+                    _release_browse_response(
+                        f'[{{"id":"release-{recording_id}","title":"Fixture Album"}}]'.encode(), 1
+                    ),
                 )
             release_id = url.split('/release/', 1)[1].split('?', 1)[0]
             return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Fixture Album"}}'.encode())
@@ -536,8 +580,10 @@ def test_musicbrainz_v2_adapter_preserves_release_artist_separately_from_track_a
     class FixtureTransport:
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
-            if '/recording/' in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(
+                    200, _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1)
+                )
             return MusicBrainzHttpResponse(
                 200,
                 b'{"id":"release-id","title":"Fixture Album",'
@@ -571,8 +617,8 @@ def test_musicbrainz_v2_adapter_reads_genres_from_nested_artist_credit_artist() 
     class FixtureTransport:
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
-            if '/recording/' in url:
-                body = b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            if '/release/?' in url:
+                body = _release_browse_response(b'[{"id":"release-id","title":"Fixture Album"}]', 1)
             else:
                 body = (
                     b'{"id":"release-id","title":"Fixture Album",'
@@ -651,7 +697,9 @@ def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_
                     b'"tracks":[{"position":1,"title":"Fixture Track","recording":{"id":"recording-id",'
                     b'"title":"Fixture Track"}}]}]}',
                 )
-            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            )
 
     service = ProviderEvidenceService(
         session,
@@ -677,8 +725,8 @@ def test_provider_evidence_when_acoustid_is_confident_uses_recording_lookup(tmp_
     # Then: MusicBrainz searches text first, then expands the AcoustID recording ID.
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
     assert '/ws/2/recording/?' in calls[0]
-    assert any('/recording/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a?' in call for call in calls)
-    assert any('/recording/text-recording-id?' in call for call in calls)
+    assert any('/release/?recording=f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a' in call for call in calls)
+    assert any('/release/?recording=text-recording-id' in call for call in calls)
     assert result.musicbrainz.candidate.artist_name == 'Fixture Artist'
     assert set(result.musicbrainz.candidate.recording_mbids) == {
         'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
@@ -694,7 +742,9 @@ def test_provider_evidence_recording_only_lookup_skips_text_search(tmp_path: Pat
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
             calls.append(url)
-            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            )
 
     service = ProviderEvidenceService(
         session,
@@ -716,9 +766,9 @@ def test_provider_evidence_recording_only_lookup_skips_text_search(tmp_path: Pat
     )
 
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
-    assert calls[0] == 'https://musicbrainz.org/ws/2/recording/recording-id?inc=releases&fmt=json'
+    assert calls[0] == 'https://musicbrainz.org/ws/2/release/?recording=recording-id&fmt=json&limit=100&offset=0'
     assert len(calls) == 2
-    assert all('/recording/?' not in url for url in calls)
+    assert all('/ws/2/recording/?' not in url for url in calls)
 
 
 def test_provider_evidence_preserves_ambiguous_recording_candidates_after_persistence(tmp_path: Path) -> None:
@@ -728,11 +778,14 @@ def test_provider_evidence_preserves_ambiguous_recording_candidates_after_persis
     class FixtureTransport:
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
-            if '/recording/' in url:
+            if '/release/?' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"release-a","title":"Fixture Album","status":"Official"},'
-                    b'{"id":"release-b","title":"Fixture Album","status":"Official"}]}',
+                    _release_browse_response(
+                        b'[{"id":"release-a","title":"Fixture Album","status":"Official"},'
+                        b'{"id":"release-b","title":"Fixture Album","status":"Official"}]',
+                        2,
+                    ),
                 )
             release_id = 'release-b' if '/release/release-b?' in url else 'release-a'
             return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Fixture Album","media":[]}}'.encode())
@@ -822,10 +875,14 @@ def test_musicbrainz_searches_recordings_then_expands_each_recording_to_releases
                     200,
                     b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
                 )
-            if '/recording/recording-a?' in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-a","title":"Album A"}]}')
-            if '/recording/recording-b?' in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-b","title":"Album B"}]}')
+            if '/release/?recording=recording-a' in url:
+                return MusicBrainzHttpResponse(
+                    200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-a","title":"Album A"}]}'
+                )
+            if '/release/?recording=recording-b' in url:
+                return MusicBrainzHttpResponse(
+                    200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-b","title":"Album B"}]}'
+                )
             if '/release/release-a?' in url:
                 return MusicBrainzHttpResponse(200, b'{"id":"release-a","title":"Album A"}')
             if '/release/release-b?' in url:
@@ -850,8 +907,8 @@ def test_musicbrainz_search_with_recordings_without_releases_returns_no_match() 
             _ = headers
             if '/recording/?' in url:
                 return MusicBrainzHttpResponse(200, b'{"recordings":[{"id":"recording-a"}]}')
-            if '/recording/recording-a?' in url:
-                return MusicBrainzHttpResponse(200, b'{"releases":[]}')
+            if '/release/?recording=recording-a' in url:
+                return MusicBrainzHttpResponse(200, b'{"release-count":0,"release-offset":0,"releases":[]}')
             raise AssertionError(f'unexpected MusicBrainz URL: {url}')
 
     provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/1.0 (operator@example.test)')
@@ -876,18 +933,18 @@ def test_musicbrainz_search_deduplicates_release_enrichment_across_recordings() 
                     200,
                     b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
                 )
-            if '/recording/recording-a?' in url:
+            if '/release/?recording=recording-a' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"shared-release","title":"Shared Album"},'
+                    b'{"release-count":2,"release-offset":0,"releases":[{"id":"shared-release","title":"Shared Album"},'
                     b'{"id":"release-a","title":"Album A"}]}',
                 )
-            if '/recording/recording-b?' in url:
+            if '/release/?recording=recording-b' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"shared-release","title":"Shared Album"}]}',
+                    _release_browse_response(b'[{"id":"shared-release","title":"Shared Album"}]', 1),
                 )
-            if '/release/' in url:
+            if '/release/' in url and '/release/?' not in url:
                 release_id = url.split('/release/', 1)[1].split('?', 1)[0]
                 release_calls.append(release_id)
                 return MusicBrainzHttpResponse(200, f'{{"id":"{release_id}","title":"Shared Album"}}'.encode())
@@ -918,10 +975,10 @@ def test_musicbrainz_search_preserves_recording_metadata_for_all_recording_proje
                     200,
                     b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
                 )
-            if '/recording/recording-a?' in url or '/recording/recording-b?' in url:
+            if '/release/?recording=recording-a' in url or '/release/?recording=recording-b' in url:
                 return MusicBrainzHttpResponse(
                     200,
-                    b'{"releases":[{"id":"shared-release","title":"Shared Album"}]}',
+                    _release_browse_response(b'[{"id":"shared-release","title":"Shared Album"}]', 1),
                 )
             if '/release/shared-release?' in url:
                 return MusicBrainzHttpResponse(
@@ -963,14 +1020,15 @@ def test_musicbrainz_search_merges_acoustid_recordings_before_detail_lookup() ->
                     200,
                     b'{"recordings":[{"id":"recording-a"},{"id":"recording-b"}]}',
                 )
-            if '/recording/recording-a?' in url:
-                body = b'{"releases":[{"id":"shared-release","title":"Shared Album"}]}'
-            elif '/recording/recording-b?' in url:
-                body = b'{"releases":[{"id":"shared-release","title":"Shared Album"},'
-                body += b'{"id":"release-b","title":"Album B"}]}'
-            elif '/recording/recording-c?' in url:
-                body = b'{"releases":[{"id":"release-c","title":"Album C"}]}'
-            elif '/release/' in url:
+            if '/release/?recording=recording-a' in url:
+                body = _release_browse_response(b'[{"id":"shared-release","title":"Shared Album"}]', 1)
+            elif '/release/?recording=recording-b' in url:
+                body = _release_browse_response(
+                    b'[{"id":"shared-release","title":"Shared Album"},{"id":"release-b","title":"Album B"}]', 2
+                )
+            elif '/release/?recording=recording-c' in url:
+                body = b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-c","title":"Album C"}]}'
+            elif '/release/' in url and '/release/?' not in url:
                 release_id = url.split('/release/', 1)[1].split('?', 1)[0]
                 body = f'{{"id":"{release_id}","title":"{release_id}"}}'.encode()
             else:
@@ -990,13 +1048,13 @@ def test_musicbrainz_search_merges_acoustid_recordings_before_detail_lookup() ->
 
     assert isinstance(result, Ambiguous)
     assert '/recording/?' in calls[0]
-    recording_calls = [url for url in calls if '/recording/' in url and '/recording/?' not in url]
-    assert {url.split('/recording/', 1)[1].split('?', 1)[0] for url in recording_calls} == {
+    recording_calls = [url for url in calls if '/release/?recording=' in url]
+    assert {url.split('recording=', 1)[1].split('&', 1)[0] for url in recording_calls} == {
         'recording-a',
         'recording-b',
         'recording-c',
     }
-    release_calls = [url for url in calls if '/release/' in url]
+    release_calls = [url for url in calls if '/release/' in url and '/release/?' not in url]
     assert sorted(url.split('/release/', 1)[1].split('?', 1)[0] for url in release_calls) == [
         'release-b',
         'release-c',
@@ -1013,7 +1071,9 @@ def test_provider_evidence_when_acoustid_confidence_is_low_uses_text_search_fall
         def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
             _ = headers
             calls.append(url)
-            return MusicBrainzHttpResponse(200, b'{"releases":[{"id":"release-id","title":"Fixture Album"}]}')
+            return MusicBrainzHttpResponse(
+                200, b'{"release-count":1,"release-offset":0,"releases":[{"id":"release-id","title":"Fixture Album"}]}'
+            )
 
     service = ProviderEvidenceService(
         session,
@@ -1038,7 +1098,7 @@ def test_provider_evidence_when_acoustid_confidence_is_low_uses_text_search_fall
 
     # Then: the fallback uses the text release search.
     assert '/ws/2/recording/?' in calls[0]
-    assert '/recording/f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a?' in calls[1]
+    assert '/release/?recording=f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a' in calls[1]
 
 
 def test_provider_evidence_uses_every_persisted_acoustid_recording_mbid(tmp_path: Path) -> None:
@@ -1054,7 +1114,7 @@ def test_provider_evidence_uses_every_persisted_acoustid_recording_mbid(tmp_path
             if '/recording/?' in url:
                 return MusicBrainzHttpResponse(200, b'{"recordings": []}')
             for recording_mbid in recording_mbids:
-                if f'/recording/{recording_mbid}?' in url:
+                if f'/release/?recording={recording_mbid}' in url:
                     return MusicBrainzHttpResponse(200, _recording_releases_response(recording_mbid))
             for release_mbid, *_ in (_RECORDING_RELEASES[recording_mbid] for recording_mbid in recording_mbids):
                 if f'/release/{release_mbid}?' in url:
@@ -1087,7 +1147,9 @@ def test_provider_evidence_uses_every_persisted_acoustid_recording_mbid(tmp_path
     assert {candidate.release_mbid for candidate in result.musicbrainz.candidates} == {
         _RECORDING_RELEASES[recording_mbid][0] for recording_mbid in recording_mbids
     }
-    assert all(any(f'/recording/{recording_mbid}?' in url for url in calls) for recording_mbid in recording_mbids)
+    assert all(
+        any(f'/release/?recording={recording_mbid}' in url for url in calls) for recording_mbid in recording_mbids
+    )
 
 
 def test_musicbrainz_v2_adapter_when_used_by_provider_service_is_compatible_and_cached(tmp_path: Path) -> None:

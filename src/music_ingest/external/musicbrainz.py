@@ -10,7 +10,7 @@ import anyio
 from anyio.to_thread import run_sync
 from pydantic import ValidationError
 
-from music_ingest.dto import GenrePage, RecordingResponse, RecordingSearchResponse, Release
+from music_ingest.dto import GenrePage, RecordingResponse, RecordingSearchResponse, Release, ReleaseBrowseResponse
 from music_ingest.matching.providers import MusicBrainzHttpResponse
 
 _RELEASE_INCLUDES = 'artist-credits+media+recordings+release-groups+genres+isrcs+artist-rels+labels'
@@ -75,10 +75,34 @@ class MusicBrainzClient:
         return () if response.payload is None else tuple(recording.id for recording in response.payload.recordings)
 
     async def recording_detail(self, recording_mbid: str) -> RecordingDetail:
-        response = await self._get(
-            f'/ws/2/recording/{quote(recording_mbid, safe="")}', {'inc': 'releases', 'fmt': 'json'}
-        )
-        return RecordingDetail(recording_mbid, self._parse(response, RecordingResponse.model_validate_json))
+        offset = 0
+        releases: list[Release] = []
+        bodies: list[bytes] = []
+        while True:
+            response = await self._get(
+                '/ws/2/release/',
+                {'recording': recording_mbid, 'fmt': 'json', 'limit': 100, 'offset': offset},
+            )
+            bodies.append(response.body)
+            page_response = self._parse(response, ReleaseBrowseResponse.model_validate_json)
+            page = page_response.payload
+            if page is None:
+                return RecordingDetail(
+                    recording_mbid, MusicBrainzResponse(response.status_code, b'\n'.join(bodies), None)
+                )
+            releases.extend(page.releases)
+            if len(releases) >= page.count:
+                return RecordingDetail(
+                    recording_mbid,
+                    MusicBrainzResponse(
+                        response.status_code, b'\n'.join(bodies), RecordingResponse(releases=tuple(releases))
+                    ),
+                )
+            if not page.releases:
+                return RecordingDetail(
+                    recording_mbid, MusicBrainzResponse(response.status_code, b'\n'.join(bodies), None)
+                )
+            offset += len(page.releases)
 
     async def recording_details(self, recording_mbids: tuple[str, ...]) -> dict[str, RecordingDetail]:
         unique_ids = tuple(dict.fromkeys(recording_mbids))
