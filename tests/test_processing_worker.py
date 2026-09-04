@@ -112,6 +112,53 @@ def test_folder_selection_uses_each_source_file_parent_directory() -> None:
     assert track_folder != album_folder
 
 
+def test_folder_selection_is_queued_when_only_candidate_selection_jobs_remain(tmp_path: Path) -> None:
+    # Given: two sources have completed provider analysis and are awaiting their coordination jobs.
+    config = _config(tmp_path)
+    album_directory = tmp_path / 'album'
+    album_directory.mkdir()
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "folder-selection.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        first = _source(session, _flac(album_directory / '01.flac'))
+        second = _source(session, _flac(album_directory / '02.flac'))
+        first.library_record = LibraryRecord(id='record-first', created_at=now, updated_at=now)
+        second.library_record = LibraryRecord(id='record-second', created_at=now, updated_at=now)
+        current_job = JobRecord(
+            id='candidate-selection-first',
+            source_id=first.id,
+            kind='candidate_selection',
+            state='queued',
+            created_at=now,
+        )
+        session.add_all(
+            (
+                current_job,
+                JobRecord(
+                    id='candidate-selection-second',
+                    source_id=second.id,
+                    kind='candidate_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+
+        # When: the worker processes one coordination job after provider analysis is complete.
+        assert ProcessingWorker(session, config).run_once()
+
+        # Then: a single folder-wide release-selection job is ready to resolve the album.
+        queued = session.scalar(
+            select(JobRecord)
+            .where(JobRecord.kind == 'folder_release_selection')
+            .where(JobRecord.folder_path == str(album_directory))
+        )
+        assert queued is not None
+        assert queued.state == 'queued'
+
+
 def test_musicbrainz_candidate_persistence_separates_release_and_recording_evidence() -> None:
     candidate = ReleaseCandidate(
         'release-id',

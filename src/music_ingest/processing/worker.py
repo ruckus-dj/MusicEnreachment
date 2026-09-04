@@ -1443,7 +1443,6 @@ class ProcessingWorker:
                         'filesystem_scan',
                         'acoustid_analysis',
                         'musicbrainz_analysis',
-                        'candidate_selection',
                     ]
                 )
             )
