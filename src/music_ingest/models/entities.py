@@ -36,6 +36,7 @@ class SourceRecord(Base):
     intake_state: Mapped[str] = mapped_column(Text, nullable=False)
     source_root_id: Mapped[str] = mapped_column(ForeignKey('source_roots.id'), nullable=False, server_default='legacy')
     library_record_id: Mapped[str | None] = mapped_column(ForeignKey('library_records.id'))
+    replaced_by_source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
     disappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     media_codec: Mapped[str | None] = mapped_column(Text)
     media_bit_depth: Mapped[int | None] = mapped_column(Integer)
