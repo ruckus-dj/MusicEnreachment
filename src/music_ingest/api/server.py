@@ -28,13 +28,16 @@ from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.metadata import allocate_unsorted_filename_with_factory
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor, run_processing_worker
+from music_ingest.processing.scheduler import run_reconciliation_scheduler
 from music_ingest.settings import build_runtime_settings
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
 _CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_CONNECT_TIMEOUT_SECONDS'
+_RECONCILIATION_INTERVAL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS'
 _SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_SOURCE_ROOTS_PARENT'
 _STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_STORAGE_BROWSE_ROOTS'
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
+_DEFAULT_RECONCILIATION_INTERVAL_SECONDS = 3600
 _ALEMBIC_INI = Path(__file__).resolve().parents[3] / 'alembic.ini'
 
 
@@ -47,6 +50,7 @@ class RuntimeConfigurationError(RuntimeError):
 class RuntimeConfig:
     database_url: str
     connect_timeout_seconds: int
+    reconciliation_interval_seconds: int = _DEFAULT_RECONCILIATION_INTERVAL_SECONDS
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> Self:
@@ -68,9 +72,23 @@ class RuntimeConfig:
             ) from error
         if connect_timeout_seconds < 1:
             raise RuntimeConfigurationError(f'{_CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE} must be a positive integer')
+        raw_reconciliation_interval = environment.get(
+            _RECONCILIATION_INTERVAL_ENVIRONMENT_VARIABLE, str(_DEFAULT_RECONCILIATION_INTERVAL_SECONDS)
+        )
+        try:
+            reconciliation_interval_seconds = int(raw_reconciliation_interval)
+        except ValueError as error:
+            raise RuntimeConfigurationError(
+                f'{_RECONCILIATION_INTERVAL_ENVIRONMENT_VARIABLE} must be a positive integer'
+            ) from error
+        if reconciliation_interval_seconds < 1:
+            raise RuntimeConfigurationError(
+                f'{_RECONCILIATION_INTERVAL_ENVIRONMENT_VARIABLE} must be a positive integer'
+            )
         return cls(
             database_url=database_url,
             connect_timeout_seconds=connect_timeout_seconds,
+            reconciliation_interval_seconds=reconciliation_interval_seconds,
         )
 
 
@@ -125,6 +143,9 @@ def create_runtime_app() -> FastAPI:
             session.commit()
         async with anyio.create_task_group() as task_group:
             _ = task_group.start_soon(run_processing_worker, session_factory, processing_config, 1.0, worker_monitor)
+            _ = task_group.start_soon(
+                run_reconciliation_scheduler, session_factory, runtime_config.reconciliation_interval_seconds
+            )
             try:
                 yield
             finally:

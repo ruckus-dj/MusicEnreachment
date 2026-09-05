@@ -66,6 +66,7 @@ PYTHONPATH=src uv run python -m cProfile -o media-stage.prof -m music_ingest med
 ```
 
 The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT`, then add each source root through Settings; configure final media and transient staging roots with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
+Enabled source roots are automatically reconciled once per hour by default; set `MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS` to change the interval.
 
 `MUSIC_INGEST_SOURCE_ROOTS_PARENT` must be an existing, non-symlink directory. Each configured source root must be an existing, non-symlink immediate child of that mounted parent. Source roots are read-only inputs. The final media root is writable, while the staging root is disposable.
 

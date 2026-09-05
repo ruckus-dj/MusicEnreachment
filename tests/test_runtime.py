@@ -194,6 +194,20 @@ def test_runtime_configuration_when_api_token_is_missing_starts_without_applicat
     )
 
 
+def test_runtime_configuration_when_rescan_interval_is_configured_uses_seconds() -> None:
+    # Given: a valid database configuration and an explicit hourly-rescan interval.
+    environment = {
+        'MUSIC_INGEST_DATABASE_URL': 'postgresql+psycopg://music_ingest@database/music_ingest',
+        'MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS': '120',
+    }
+
+    # When: the service parses its startup configuration.
+    runtime_config = RuntimeConfig.from_environment(environment)
+
+    # Then: the configured interval is retained as a runtime value.
+    assert runtime_config.reconciliation_interval_seconds == 120
+
+
 def test_runtime_app_when_e2e_seed_flag_is_explicitly_enabled_sets_seed_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -348,6 +362,36 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
 
     # Then: the DB-backed worker runs alongside the web runtime.
     assert len(started) == 1
+
+
+def test_runtime_app_when_started_runs_the_reconciliation_scheduler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a runtime with isolated long-lived worker and scheduler boundaries.
+    runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10, 120)
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "runtime.db"}')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
+    monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+    source_parent = tmp_path / 'sources'
+    (source_parent / 'legacy').mkdir(parents=True)
+    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
+    monkeypatch.setattr(server, 'run_processing_worker', _record_worker_start)
+    started: list[int] = []
+
+    async def record_scheduler_start(_session_factory: Callable[[], Session], interval_seconds: int) -> None:
+        started.append(interval_seconds)
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(server, 'run_reconciliation_scheduler', record_scheduler_start)
+
+    # When: the ASGI lifespan starts.
+    with TestClient(server.create_runtime_app()):
+        pass
+
+    # Then: the scheduler starts with the configured interval and is shut down with the app.
+    assert started == [120]
 
 
 def test_processing_runtime_when_started_supervises_all_configurable_worker_slots(
