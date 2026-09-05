@@ -1,5 +1,5 @@
 import type { CatalogAlbum, CatalogTrack } from "../app/useAppController";
-import { titleFor, trackNumberLabelFor } from "../domain/metadata";
+import { titleFor, trackNumberLabelFor, UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -14,7 +14,9 @@ type LibraryCatalogProps = {
   onNavigate: (route: {
     screen: Screen;
     artist?: string;
+    artistMissing?: boolean;
     album?: string;
+    albumMissing?: boolean;
     recordId?: string;
     sourceId?: string;
   }) => void;
@@ -45,7 +47,13 @@ export function LibraryCatalog({
               type="button"
               className="entity-card"
               key={name}
-              onClick={() => onNavigate({ screen: "albums", artist: name })}
+              onClick={() =>
+                onNavigate({
+                  screen: "albums",
+                  artist: name,
+                  artistMissing: name === UNKNOWN_ARTIST_LABEL,
+                })
+              }
             >
               <span className="entity-art">{name.slice(0, 1)}</span>
               <span>
@@ -71,7 +79,15 @@ export function LibraryCatalog({
                 type="button"
                 className="entity-card album-card"
                 key={albumEntry.key}
-                onClick={() => onNavigate({ screen: "tracks", artist, album: albumEntry.key })}
+                onClick={() =>
+                  onNavigate({
+                    screen: "tracks",
+                    artist,
+                    album: albumEntry.key,
+                    artistMissing: artist === UNKNOWN_ARTIST_LABEL,
+                    albumMissing: albumEntry.key === "album:",
+                  })
+                }
               >
                 {albumEntry.artworkUrl ? (
                   <img
@@ -129,7 +145,9 @@ export function LibraryCatalog({
               <b>{trackNumberLabelFor(item, source.source_id)}</b>
               <span>
                 <strong>{titleFor(item, source.source_id)}</strong>
-                <small>{source.path}</small>
+                <small className="source-path" title={source.path}>
+                  {source.path}
+                </small>
               </span>
               <span className="track-meta">
                 {source.state === "disappeared"

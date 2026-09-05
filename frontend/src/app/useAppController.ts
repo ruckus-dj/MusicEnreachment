@@ -28,6 +28,8 @@ import {
   tagsFor,
   titleFor,
   trackNumberFor,
+  UNKNOWN_ALBUM_LABEL,
+  UNKNOWN_ARTIST_LABEL,
 } from "../domain/metadata";
 import { parseRoute, routePath } from "../routing";
 import type {
@@ -177,8 +179,12 @@ export function useAppController(): AppControllerModel {
     parseRoute(window.location.pathname, window.location.search),
   );
   const [screen, setScreen] = useState<Screen>(initialRoute.screen);
-  const [artist, setArtist] = useState(initialRoute.artist ?? "");
+  const [artist, setArtist] = useState(
+    initialRoute.artistMissing ? UNKNOWN_ARTIST_LABEL : (initialRoute.artist ?? ""),
+  );
+  const [artistMissing, setArtistMissing] = useState(initialRoute.artistMissing ?? false);
   const [album, setAlbum] = useState(initialRoute.album ?? "");
+  const [albumMissing, setAlbumMissing] = useState(initialRoute.albumMissing ?? false);
   const [recordId, setRecordId] = useState(initialRoute.recordId ?? "");
   const [sourceId, setSourceId] = useState(initialRoute.sourceId ?? "");
   const [layer, setLayer] = useState<Layer>("final");
@@ -266,9 +272,11 @@ export function useAppController(): AppControllerModel {
         screen === "albums" || screen === "tracks" ? listLibraryArtists(published) : null;
       if (screen === "artists") {
         const payload = await listLibraryArtists(published);
-        setCatalogArtists(payload.items.map((item) => item.name));
+        setCatalogArtists(payload.items.map((item) => item.name ?? UNKNOWN_ARTIST_LABEL));
         setCatalogArtistTrackCounts(
-          Object.fromEntries(payload.items.map((item) => [item.name, item.track_count])),
+          Object.fromEntries(
+            payload.items.map((item) => [item.name ?? UNKNOWN_ARTIST_LABEL, item.track_count]),
+          ),
         );
         setCatalogTrackCount(payload.total_track_count);
         setCatalogAlbums([]);
@@ -277,14 +285,14 @@ export function useAppController(): AppControllerModel {
       }
       if (screen === "albums") {
         const [payload, countPayload] = await Promise.all([
-          listLibraryAlbums(artist, published),
+          listLibraryAlbums(artistMissing ? null : artist, published, artistMissing),
           catalogCountPromise,
         ]);
         if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
         setCatalogAlbums(
           payload.items.map((item) => ({
-            key: item.album_id ?? `album:${item.album_name}`,
-            title: item.album_name,
+            key: item.album_id ?? `album:${item.album_name ?? ""}`,
+            title: item.album_name ?? UNKNOWN_ALBUM_LABEL,
             trackCount: item.track_count,
             artworkUrl: item.artwork_url ?? null,
           })),
@@ -316,19 +324,30 @@ export function useAppController(): AppControllerModel {
         ? album.slice("album:".length)
         : undefined;
       const [payload, countPayload] = await Promise.all([
-        listLibraryTracks(artist, selectedAlbumId, selectedAlbumName, published),
+        listLibraryTracks(
+          artistMissing ? null : artist,
+          selectedAlbumId,
+          selectedAlbumName,
+          published,
+          artistMissing,
+          albumMissing,
+        ),
         catalogCountPromise,
       ]);
       if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
       const nextItems = payload.items.map((track) => {
         const source: Source = {
           source_id: track.source_id,
-          path: track.record_id,
+          path: track.source_path,
           sha256: "",
           state: "present",
           tag_observations: [
-            { name: "ARTIST", value: track.artist_name, format: "catalog" },
-            { name: "ALBUM", value: track.album_name, format: "catalog" },
+            ...(track.artist_name
+              ? [{ name: "ARTIST", value: track.artist_name, format: "catalog" }]
+              : []),
+            ...(track.album_name
+              ? [{ name: "ALBUM", value: track.album_name, format: "catalog" }]
+              : []),
             { name: "TITLE", value: track.title, format: "catalog" },
             ...(track.track_number
               ? [{ name: "TRACKNUMBER", value: track.track_number, format: "catalog" }]
@@ -384,8 +403,10 @@ export function useAppController(): AppControllerModel {
   }
   function applyRoute(route: Route): void {
     setScreen(route.screen);
-    setArtist(route.artist ?? "");
+    setArtist(route.artistMissing ? UNKNOWN_ARTIST_LABEL : (route.artist ?? ""));
+    setArtistMissing(route.artistMissing ?? false);
     setAlbum(route.album ?? "");
+    setAlbumMissing(route.albumMissing ?? false);
     setRecordId(route.recordId ?? "");
     setSourceId(route.sourceId ?? "");
     setPublicationFilterState(route.publicationFilter ?? "all");
@@ -409,6 +430,7 @@ export function useAppController(): AppControllerModel {
       routePath({
         screen,
         artist: artist || undefined,
+        artistMissing,
         album: album || undefined,
         recordId: recordId || undefined,
         sourceId: sourceId || undefined,
@@ -1015,13 +1037,15 @@ export function useAppController(): AppControllerModel {
   const legacyAlbumTrack = legacyRecordId
     ? tracks.find(({ item }) => item.record_id === legacyRecordId)
     : undefined;
-  const selectedAlbumKey = legacyAlbumTrack
-    ? albumKeyFor(legacyAlbumTrack.item, legacyAlbumTrack.source.source_id)
-    : album.startsWith("id:")
-      ? album.slice("id:".length)
-      : album.startsWith("album:")
-        ? album
-        : album;
+  const selectedAlbumKey = albumMissing
+    ? `album:${UNKNOWN_ALBUM_LABEL}`
+    : legacyAlbumTrack
+      ? albumKeyFor(legacyAlbumTrack.item, legacyAlbumTrack.source.source_id)
+      : album.startsWith("id:")
+        ? album.slice("id:".length)
+        : album.startsWith("album:")
+          ? album
+          : album;
   const albumTracks = tracks
     .filter(
       ({ item, source }) =>
@@ -1051,8 +1075,9 @@ export function useAppController(): AppControllerModel {
   const currentTags =
     detail && sourceId ? (layer === "final" ? draft : tagsFor(detail, sourceId, layer)) : {};
   function back() {
-    if (screen === "track") navigate({ screen: "tracks", artist, album });
-    else if (screen === "tracks") navigate({ screen: "albums", artist, album });
+    if (screen === "track")
+      navigate({ screen: "tracks", artist, artistMissing, album, albumMissing });
+    else if (screen === "tracks") navigate({ screen: "albums", artist, artistMissing, album });
     else if (screen === "albums") navigate({ screen: "artists" });
   }
   return {
