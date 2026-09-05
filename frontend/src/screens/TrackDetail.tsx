@@ -453,7 +453,10 @@ export function TrackDetail({
             <span className="entity-art disc">◉</span>
             <div>
               <p className="eyebrow">Исходный файл</p>
-              <strong>{source.path.split("/").at(-1)}</strong>
+              <strong>{source.path.split("/").at(-1) ?? "Без названия"}</strong>
+              <small className="source-path" title={source.path} data-testid="source-path">
+                {source.path}
+              </small>
               <small>
                 {source.format?.toUpperCase() ?? "AUDIO"} ·{" "}
                 {source.size_bytes

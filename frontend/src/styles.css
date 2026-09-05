@@ -777,6 +777,12 @@ h2 {
     10px "DM Mono",
     monospace;
 }
+.track-line .source-path {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
 .track-meta {
   white-space: nowrap;
 }
@@ -820,6 +826,10 @@ h2 {
   font:
     10px "DM Mono",
     monospace;
+}
+.file-card .source-path {
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 .evidence-card,
 .history-card {

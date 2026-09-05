@@ -70,6 +70,22 @@ function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}
 }
 
 describe("TrackDetail effective source", () => {
+  it("shows the complete source path instead of the technical record id", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        sources: [{ ...detail.sources[0], path: "/data/music/NoizeMC/Albums/ABCD/file.flac" }],
+      },
+      draft: {},
+    });
+
+    expect(screen.getByTestId("source-path").textContent).toBe(
+      "/data/music/NoizeMC/Albums/ABCD/file.flac",
+    );
+    expect(screen.getAllByText("file.flac").length).toBeGreaterThan(0);
+    expect(screen.queryByText("record-1")).toBeNull();
+  });
+
   it("shows the fingerprint duration in minutes and seconds", () => {
     renderDetail({
       detail: {
