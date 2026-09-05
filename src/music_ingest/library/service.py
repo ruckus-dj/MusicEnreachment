@@ -20,7 +20,6 @@ from music_ingest.models.library import (
     LibraryRecord,
     LibraryRecordConsolidationRecord,
     ReleaseArtworkRecord,
-    SourceRecordView,
 )
 from music_ingest.quality_policy import (
     DecisionReason,
@@ -481,32 +480,6 @@ def library_manual_action_counts(session: Session) -> tuple[int, int]:
     analysis_errors = session.scalar(base_query.where(_manual_action_predicate('analysis-error'))) or 0
     needs_review = session.scalar(base_query.where(_manual_action_predicate('needs-review'))) or 0
     return analysis_errors, needs_review
-
-
-def _catalog_sources(
-    session: Session, published: bool | None
-) -> list[tuple[LibraryRecord, SourceRecordView, dict[str, str]]]:
-    records = library_records(session)
-    result: list[tuple[LibraryRecord, SourceRecordView, dict[str, str]]] = []
-    for record in records:
-        if published is not None and (record.publication_state == 'current') != published:
-            continue
-        for source in record.sources:
-            tags: dict[str, str] | None = None
-            for layer in ('final', 'original'):
-                revision = next(
-                    (
-                        item
-                        for item in reversed(record.metadata_revisions)
-                        if item.source_id == source.id and item.layer == layer
-                    ),
-                    None,
-                )
-                if revision is not None:
-                    tags = json.loads(revision.tags_json)
-                    break
-            result.append((record, source, tags or {tag.tag_name: tag.value for tag in source.tag_observations}))
-    return result
 
 
 def _catalog_artists(tags: dict[str, str]) -> tuple[str, ...]:
