@@ -211,7 +211,9 @@ export type ManualActionFilter = "analysis-error" | "needs-review";
 export type Route = {
   readonly screen: Screen;
   readonly artist?: string;
+  readonly artistMissing?: boolean;
   readonly album?: string;
+  readonly albumMissing?: boolean;
   readonly recordId?: string;
   readonly sourceId?: string;
   readonly publicationFilter?: "all" | "published" | "unpublished";

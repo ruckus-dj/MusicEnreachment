@@ -14,18 +14,19 @@ import type {
   WorkerQueue,
 } from "../types";
 
-export type LibraryArtist = { readonly name: string; readonly track_count: number };
+export type LibraryArtist = { readonly name: string | null; readonly track_count: number };
 export type LibraryAlbum = {
   readonly album_id: string | null;
-  readonly album_name: string;
+  readonly album_name: string | null;
   readonly track_count: number;
   readonly artwork_url?: string | null;
 };
 export type LibraryTrack = {
   readonly record_id: string;
   readonly source_id: string;
-  readonly artist_name: string;
-  readonly album_name: string;
+  readonly source_path: string;
+  readonly artist_name: string | null;
+  readonly album_name: string | null;
   readonly album_id: string | null;
   readonly title: string;
   readonly track_number: string | null;
@@ -114,23 +115,29 @@ export function listLibraryArtists(
 }
 
 export function listLibraryAlbums(
-  artistName: string,
+  artistName: string | null,
   published?: boolean,
+  artistMissing = false,
 ): Promise<{ items: LibraryAlbum[] }> {
   const params = new URLSearchParams();
-  params.set("artist", artistName);
+  if (artistName !== null) params.set("artist", artistName);
+  if (artistMissing) params.set("artist_missing", "true");
   if (published !== undefined) params.set("published", String(published));
   return api<{ items: LibraryAlbum[] }>(`/api/library/albums?${params.toString()}`);
 }
 
 export function listLibraryTracks(
-  artistName: string,
+  artistName: string | null,
   albumId?: string,
   albumName?: string,
   published?: boolean,
+  artistMissing = false,
+  albumMissing = false,
 ): Promise<{ items: LibraryTrack[] }> {
   const params = new URLSearchParams();
-  params.set("artist", artistName);
+  if (artistName !== null) params.set("artist", artistName);
+  if (artistMissing) params.set("artist_missing", "true");
+  if (albumMissing) params.set("album_missing", "true");
   if (albumId) params.set("album_id", albumId);
   if (albumName) params.set("album_name", albumName);
   if (published !== undefined) params.set("published", String(published));

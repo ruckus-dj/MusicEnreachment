@@ -18,6 +18,9 @@ export const TAG_FIELDS = [
   "ISRC",
 ] as const;
 
+export const UNKNOWN_ARTIST_LABEL = "Неизвестный исполнитель";
+export const UNKNOWN_ALBUM_LABEL = "Без альбома";
+
 const catalogCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -56,7 +59,7 @@ export function titleFor(item: Summary, sourceId: string): string {
       .find((source) => source.source_id === sourceId)
       ?.path.split("/")
       .at(-1) ||
-    item.record_id
+    "Без названия"
   );
 }
 
@@ -64,7 +67,7 @@ export function artistFor(item: Summary, sourceId: string): string {
   return (
     tagsFor(item, sourceId, "final").ARTIST ||
     tagsFor(item, sourceId, "original").ARTIST ||
-    "Неизвестный исполнитель"
+    UNKNOWN_ARTIST_LABEL
   );
 }
 
@@ -88,7 +91,7 @@ export function albumFor(item: Summary, sourceId: string): string {
   return (
     tagsFor(item, sourceId, "final").ALBUM ||
     tagsFor(item, sourceId, "original").ALBUM ||
-    "Без альбома"
+    UNKNOWN_ALBUM_LABEL
   );
 }
 
