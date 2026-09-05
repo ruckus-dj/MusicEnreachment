@@ -207,12 +207,15 @@ export type Screen =
   | "workers"
   | "settings";
 export type Layer = "original" | "analyzed" | "final";
+export type ManualActionFilter = "analysis-error" | "needs-review";
 export type Route = {
   readonly screen: Screen;
   readonly artist?: string;
   readonly album?: string;
   readonly recordId?: string;
   readonly sourceId?: string;
+  readonly publicationFilter?: "all" | "published" | "unpublished";
+  readonly manualActionFilter?: ManualActionFilter;
 };
 export type WorkflowStatus = {
   readonly tone: "ready" | "pending" | "error";
