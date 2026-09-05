@@ -6,6 +6,11 @@ import {
   createSourceRoot,
   getStorageConfig,
   getWorkerQueue,
+  listLibraryAlbums,
+  listLibraryArtists,
+  listLibraryRecords,
+  listLibraryTracks,
+  listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
   moveStorageOutput,
@@ -30,6 +35,7 @@ import type {
   EffectiveSourceSelection,
   GenreCatalog,
   Layer,
+  ManualActionFilter,
   ProviderName,
   RecordingCorrection,
   RecordingCorrectionResult,
@@ -58,6 +64,8 @@ export type PublicationFilter = "all" | "published" | "unpublished";
 export type CatalogAlbum = {
   readonly key: string;
   readonly title: string;
+  readonly trackCount: number;
+  readonly artworkUrl: string | null;
 };
 
 function catalogSource(item: Summary): Source | undefined {
@@ -83,6 +91,8 @@ export type AppControllerModel = {
   draft: Tags;
   query: string;
   publicationFilter: PublicationFilter;
+  manualActionFilter: ManualActionFilter;
+  manualActionCounts: Readonly<Record<ManualActionFilter, number>>;
   notice: string;
   loading: boolean;
   scanning: boolean;
@@ -118,6 +128,8 @@ export type AppControllerModel = {
   watchedLibraryUntil: number;
   tracks: CatalogTrack[];
   artists: string[];
+  catalogArtistTrackCounts: Readonly<Record<string, number>>;
+  catalogTrackCount: number;
   albums: CatalogAlbum[];
   albumTracks: CatalogTrack[];
   currentTrack: CatalogTrack | undefined;
@@ -144,6 +156,7 @@ export type AppControllerModel = {
   loadWorkerQueue: () => Promise<void>;
   setQuery: (value: string) => void;
   setPublicationFilter: (value: PublicationFilter) => void;
+  setManualActionFilter: (value: ManualActionFilter) => void;
   setNotice: (value: string) => void;
   setLayer: (value: Layer) => void;
   setDraft: (value: Tags) => void;
@@ -153,8 +166,16 @@ export type AppControllerModel = {
 
 export function useAppController(): AppControllerModel {
   const [items, setItems] = useState<Summary[]>([]);
+  const [catalogArtists, setCatalogArtists] = useState<string[]>([]);
+  const [catalogArtistTrackCounts, setCatalogArtistTrackCounts] = useState<Record<string, number>>(
+    {},
+  );
+  const [catalogTrackCount, setCatalogTrackCount] = useState(0);
+  const [catalogAlbums, setCatalogAlbums] = useState<CatalogAlbum[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [initialRoute] = useState(() => parseRoute(window.location.pathname));
+  const [initialRoute] = useState(() =>
+    parseRoute(window.location.pathname, window.location.search),
+  );
   const [screen, setScreen] = useState<Screen>(initialRoute.screen);
   const [artist, setArtist] = useState(initialRoute.artist ?? "");
   const [album, setAlbum] = useState(initialRoute.album ?? "");
@@ -163,7 +184,16 @@ export function useAppController(): AppControllerModel {
   const [layer, setLayer] = useState<Layer>("final");
   const [draft, setDraft] = useState<Tags>({});
   const [query, setQuery] = useState("");
-  const [publicationFilter, setPublicationFilter] = useState<PublicationFilter>("all");
+  const [publicationFilter, setPublicationFilterState] = useState<PublicationFilter>(
+    initialRoute.publicationFilter ?? "all",
+  );
+  const [manualActionFilter, setManualActionFilterState] = useState<ManualActionFilter>(
+    initialRoute.manualActionFilter ?? "analysis-error",
+  );
+  const [manualActionCounts, setManualActionCounts] = useState<Record<ManualActionFilter, number>>({
+    "analysis-error": 0,
+    "needs-review": 0,
+  });
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -215,27 +245,109 @@ export function useAppController(): AppControllerModel {
   async function loadLibrary(showLoader = true) {
     if (showLoader) setLoading(true);
     try {
-      const payload = await api<{ items?: Summary[] }>("/api/library/records");
-      const nextItems = payload.items ?? [];
-      setItems(nextItems);
-      if (screen === "track" && recordId && sourceId) {
-        const currentItem = nextItems.find((item) => item.record_id === recordId);
-        const currentSource = currentItem?.sources.some((source) => source.source_id === sourceId);
-        if (!currentSource) {
-          const reassignedItem = nextItems.find((item) =>
-            item.sources.some((source) => source.source_id === sourceId),
-          );
-          if (reassignedItem !== undefined && reassignedItem.record_id !== recordId) {
-            navigate({
-              screen: "track",
-              recordId: reassignedItem.record_id,
-              sourceId,
-              artist: artist || albumArtistsFor(reassignedItem, sourceId)[0] || "",
-              album: album || albumFor(reassignedItem, sourceId),
-            });
+      if (screen === "track" && recordId) {
+        const loaded = await api<Detail>(`/api/library/records/${encodeURIComponent(recordId)}`);
+        const source = sourceId
+          ? (loaded.sources.find((entry) => entry.source_id === sourceId) ?? catalogSource(loaded))
+          : catalogSource(loaded);
+        setItems([loaded]);
+        setDetail(loaded);
+        if (source) {
+          if (!sourceId) {
+            setSourceId(source.source_id);
+            setEffectiveSourceId(source.source_id);
           }
+          setDraft({ ...tagsFor(loaded, source.source_id, "final") });
         }
+        return;
       }
+      const published = publicationFilter === "all" ? undefined : publicationFilter === "published";
+      const catalogCountPromise =
+        screen === "albums" || screen === "tracks" ? listLibraryArtists(published) : null;
+      if (screen === "artists") {
+        const payload = await listLibraryArtists(published);
+        setCatalogArtists(payload.items.map((item) => item.name));
+        setCatalogArtistTrackCounts(
+          Object.fromEntries(payload.items.map((item) => [item.name, item.track_count])),
+        );
+        setCatalogTrackCount(payload.total_track_count);
+        setCatalogAlbums([]);
+        setItems([]);
+        return;
+      }
+      if (screen === "albums") {
+        const [payload, countPayload] = await Promise.all([
+          listLibraryAlbums(artist, published),
+          catalogCountPromise,
+        ]);
+        if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
+        setCatalogAlbums(
+          payload.items.map((item) => ({
+            key: item.album_id ?? `album:${item.album_name}`,
+            title: item.album_name,
+            trackCount: item.track_count,
+            artworkUrl: item.artwork_url ?? null,
+          })),
+        );
+        setItems([]);
+        return;
+      }
+      if (screen === "manual-actions") {
+        const payload = await listManualActions(manualActionFilter);
+        setItems(payload.items);
+        setManualActionCounts({
+          "analysis-error": payload.counts.analysis_error,
+          "needs-review": payload.counts.needs_review,
+        });
+        return;
+      }
+      if (screen !== "tracks") {
+        const payload = await listLibraryRecords();
+        setItems(payload.items);
+        return;
+      }
+      const selectedAlbumId =
+        album && !album.startsWith("album:") && !album.startsWith("record:")
+          ? album.startsWith("id:")
+            ? album.slice("id:".length)
+            : album
+          : undefined;
+      const selectedAlbumName = album.startsWith("album:")
+        ? album.slice("album:".length)
+        : undefined;
+      const [payload, countPayload] = await Promise.all([
+        listLibraryTracks(artist, selectedAlbumId, selectedAlbumName, published),
+        catalogCountPromise,
+      ]);
+      if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
+      const nextItems = payload.items.map((track) => {
+        const source: Source = {
+          source_id: track.source_id,
+          path: track.record_id,
+          sha256: "",
+          state: "present",
+          tag_observations: [
+            { name: "ARTIST", value: track.artist_name, format: "catalog" },
+            { name: "ALBUM", value: track.album_name, format: "catalog" },
+            { name: "TITLE", value: track.title, format: "catalog" },
+            ...(track.track_number
+              ? [{ name: "TRACKNUMBER", value: track.track_number, format: "catalog" }]
+              : []),
+          ],
+        };
+        return {
+          record_id: track.record_id,
+          musicbrainz_release_id: track.album_id,
+          source_state: source.state,
+          processing_state: "ready",
+          match_state: "matched",
+          publication_state: track.publication_state,
+          metadata_state: "ready",
+          sources: [source],
+          publications: [],
+        } satisfies Summary;
+      });
+      setItems(nextItems);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось загрузить медиатеку");
     } finally {
@@ -276,6 +388,8 @@ export function useAppController(): AppControllerModel {
     setAlbum(route.album ?? "");
     setRecordId(route.recordId ?? "");
     setSourceId(route.sourceId ?? "");
+    setPublicationFilterState(route.publicationFilter ?? "all");
+    setManualActionFilterState(route.manualActionFilter ?? "analysis-error");
     setEffectiveSourceId(route.sourceId ?? null);
     setEffectiveSourceError("");
     setEffectiveSourceSuccess("");
@@ -283,8 +397,27 @@ export function useAppController(): AppControllerModel {
     setLayer("final");
   }
   function navigate(route: Route): void {
-    window.history.pushState({}, "", routePath(route));
-    applyRoute(route);
+    const nextRoute = { ...route, publicationFilter: route.publicationFilter ?? publicationFilter };
+    window.history.pushState({}, "", routePath(nextRoute));
+    applyRoute(nextRoute);
+  }
+  function setPublicationFilter(value: PublicationFilter): void {
+    setPublicationFilterState(value);
+    window.history.replaceState(
+      {},
+      "",
+      routePath({
+        screen,
+        artist: artist || undefined,
+        album: album || undefined,
+        recordId: recordId || undefined,
+        sourceId: sourceId || undefined,
+        publicationFilter: value,
+      }),
+    );
+  }
+  function setManualActionFilter(value: ManualActionFilter): void {
+    navigate({ screen: "manual-actions", manualActionFilter: value });
   }
   async function loadTrack(item: Summary, source: Source): Promise<void> {
     try {
@@ -676,7 +809,7 @@ export function useAppController(): AppControllerModel {
   }
   useEffect(() => {
     void loadLibrary();
-  }, []);
+  }, [album, artist, manualActionFilter, publicationFilter, recordId, screen]);
   useEffect(() => {
     let busy = false;
     const poll = async () => {
@@ -788,15 +921,26 @@ export function useAppController(): AppControllerModel {
     return () => window.clearInterval(timer);
   }, [screen]);
   useEffect(() => {
-    const onPopState = () => applyRoute(parseRoute(window.location.pathname));
+    const onPopState = () =>
+      applyRoute(parseRoute(window.location.pathname, window.location.search));
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   useEffect(() => {
-    if (screen !== "track" || !recordId || !sourceId || !items.length || detail) return;
+    if (screen !== "track" || !recordId || !items.length || detail) return;
     const item = items.find((entry) => entry.record_id === recordId);
-    const source = item?.sources.find((entry) => entry.source_id === sourceId);
-    if (item && source) void loadTrack(item, source);
+    const source = item
+      ? sourceId
+        ? (item.sources.find((entry) => entry.source_id === sourceId) ?? catalogSource(item))
+        : catalogSource(item)
+      : undefined;
+    if (item && source) {
+      if (sourceId !== source.source_id) {
+        setSourceId(source.source_id);
+        setEffectiveSourceId(source.source_id);
+      }
+      void loadTrack(item, source);
+    }
     if (!item) {
       const reassignedItem = items.find((entry) =>
         entry.sources.some((entrySource) => entrySource.source_id === sourceId),
@@ -827,35 +971,57 @@ export function useAppController(): AppControllerModel {
               : item.publication_state !== "current",
         )
         .filter(({ item, source }) =>
-          `${albumArtistsFor(item, source.source_id).join(" ")} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
+          `${albumArtistsFor(item, source.source_id).join(" ")} ${albumFor(item, source.source_id)} ${titleFor(item, source.source_id)}`.includes(
+            query,
+          ),
         ),
     [items, publicationFilter, query],
   );
-  const artists = [
-    ...new Set(tracks.flatMap(({ item, source }) => albumArtistsFor(item, source.source_id))),
-  ].sort(compareNames);
-  const albums = tracks
-    .filter(({ item, source }) => albumArtistsFor(item, source.source_id).includes(artist))
-    .reduce<CatalogAlbum[]>((groups, { item, source }) => {
-      const key = albumKeyFor(item, source.source_id);
-      if (groups.some((group) => group.key === key)) return groups;
-      groups.push({
-        key,
-        title: albumFor(item, source.source_id),
-      });
-      return groups;
-    }, [])
-    .sort(
-      (left, right) => compareNames(left.title, right.title) || left.key.localeCompare(right.key),
-    );
-  const legacyAlbumTrack = album.startsWith("record:")
-    ? tracks.find(({ item }) => item.record_id === album.slice("record:".length))
+  const artists =
+    screen === "artists"
+      ? catalogArtists.filter((name) => name.includes(query))
+      : [
+          ...new Set(tracks.flatMap(({ item, source }) => albumArtistsFor(item, source.source_id))),
+        ].sort(compareNames);
+  const albums =
+    screen === "albums"
+      ? catalogAlbums.filter((entry) => entry.title.includes(query))
+      : tracks
+          .filter(({ item, source }) => albumArtistsFor(item, source.source_id).includes(artist))
+          .reduce<CatalogAlbum[]>((groups, { item, source }) => {
+            const key = albumKeyFor(item, source.source_id);
+            if (groups.some((group) => group.key === key)) return groups;
+            groups.push({
+              key,
+              title: albumFor(item, source.source_id),
+              trackCount: tracks.filter(
+                ({ item: candidateItem, source: candidateSource }) =>
+                  albumArtistsFor(candidateItem, candidateSource.source_id).includes(artist) &&
+                  albumKeyFor(candidateItem, candidateSource.source_id) === key,
+              ).length,
+              artworkUrl: null,
+            });
+            return groups;
+          }, [])
+          .sort(
+            (left, right) =>
+              compareNames(left.title, right.title) || left.key.localeCompare(right.key),
+          );
+  const legacyRecordId = album.startsWith("record:")
+    ? album.slice("record:".length)
+    : album.startsWith("id:record:")
+      ? album.slice("id:record:".length)
+      : "";
+  const legacyAlbumTrack = legacyRecordId
+    ? tracks.find(({ item }) => item.record_id === legacyRecordId)
     : undefined;
   const selectedAlbumKey = legacyAlbumTrack
     ? albumKeyFor(legacyAlbumTrack.item, legacyAlbumTrack.source.source_id)
-    : album;
+    : album.startsWith("id:")
+      ? album.slice("id:".length)
+      : album.startsWith("album:")
+        ? album
+        : album;
   const albumTracks = tracks
     .filter(
       ({ item, source }) =>
@@ -901,6 +1067,8 @@ export function useAppController(): AppControllerModel {
     draft,
     query,
     publicationFilter,
+    manualActionFilter,
+    manualActionCounts,
     notice,
     loading,
     scanning,
@@ -936,6 +1104,8 @@ export function useAppController(): AppControllerModel {
     watchedLibraryUntil,
     tracks,
     artists,
+    catalogArtistTrackCounts,
+    catalogTrackCount,
     albums,
     albumTracks,
     currentTrack,
@@ -962,6 +1132,7 @@ export function useAppController(): AppControllerModel {
     loadWorkerQueue,
     setQuery,
     setPublicationFilter,
+    setManualActionFilter,
     setNotice,
     setLayer,
     setDraft,

@@ -31,6 +31,8 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
     sourceId,
     currentTrack,
     artists,
+    catalogArtistTrackCounts,
+    catalogTrackCount,
     albums,
     albumTracks,
     notice,
@@ -79,7 +81,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 8h10M7 12h10M7 16h6",
             )}
             <span>Медиатека</span>
-            <b>{tracks.length}</b>
+            <b>{catalogTrackCount}</b>
           </button>
           <button
             type="button"
@@ -353,8 +355,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           ) : screen === "manual-actions" ? (
             <ManualActionsScreen
               tracks={tracks}
+              filter={controller.manualActionFilter}
+              counts={controller.manualActionCounts}
               reprocessing={controller.reprocessing}
               onNavigate={controller.navigate}
+              onFilterChange={controller.setManualActionFilter}
               onRetry={(recordId, sourceId) => void controller.reprocessSource(recordId, sourceId)}
             />
           ) : screen === "workers" ? (
@@ -392,8 +397,8 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               artist={artist}
               album={album}
               artists={artists}
+              artistTrackCounts={catalogArtistTrackCounts}
               albums={albums}
-              tracks={tracks}
               albumTracks={albumTracks}
               loading={loading}
               onNavigate={controller.navigate}

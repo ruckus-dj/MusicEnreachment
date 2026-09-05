@@ -131,7 +131,6 @@ describe("useAppController effective source", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
-    expect(fetchMock).toHaveBeenCalledWith("/api/library/records", expect.anything());
   });
 });
 
@@ -207,13 +206,13 @@ describe("useAppController recording correction", () => {
 
     await waitFor(() => expect(screen.getByTestId("notice").textContent).toContain("исправлена"));
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
-    expect(fetchMock).toHaveBeenCalledWith("/api/library/records", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
   });
 });
 
 describe("useAppController catalog", () => {
   it("lists each semicolon-separated album artist with the same album and tracks", async () => {
-    const sharedAlbum = {
+    const _sharedAlbum = {
       record_id: "record-collaboration",
       source_state: "present",
       processing_state: "complete",
@@ -236,7 +235,37 @@ describe("useAppController catalog", () => {
       ],
       publications: [],
     };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [sharedAlbum] }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/library/albums")) {
+        return Response.json({
+          items: [
+            {
+              album_id: "release-collision-course",
+              album_name: "Collision Course",
+              track_count: 1,
+            },
+          ],
+        });
+      }
+      if (url.startsWith("/api/library/tracks")) {
+        return Response.json({
+          items: [
+            {
+              record_id: "record-collaboration",
+              source_id: "source-collaboration",
+              artist_name: url.includes("Linkin+Park") ? "Linkin Park" : "Busta Rhymes",
+              album_name: "Collision Course",
+              album_id: "release-collision-course",
+              title: "Track",
+              track_number: "1",
+              publication_state: "current",
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [{ name: "Busta Rhymes" }, { name: "Linkin Park" }] });
+    });
 
     window.history.replaceState({}, "", "/library/artists");
     render(<CatalogProbe />);
@@ -305,9 +334,29 @@ describe("useAppController catalog", () => {
         },
       ],
     };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ items: [firstTrack, secondTrack] }),
-    );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/library/albums")) {
+        return Response.json({
+          items: [{ album_id: null, album_name: "Collision Course", track_count: 2 }],
+        });
+      }
+      if (url.startsWith("/api/library/tracks")) {
+        return Response.json({
+          items: [firstTrack, secondTrack].map((track) => ({
+            record_id: track.record_id,
+            source_id: track.sources[0].source_id,
+            artist_name: "Busta Rhymes",
+            album_name: "Collision Course",
+            album_id: null,
+            title: "Track",
+            track_number: null,
+            publication_state: "current",
+          })),
+        });
+      }
+      return Response.json({ items: [{ name: "Busta Rhymes" }] });
+    });
 
     window.history.replaceState({}, "", "/library/artists");
     render(<CatalogProbe albumRoute="record:record-without-release-a" />);
@@ -321,5 +370,26 @@ describe("useAppController catalog", () => {
       screen.getByRole("button", { name: "album" }).click();
     });
     await waitFor(() => expect(screen.getByTestId("album-tracks").textContent).toBe("2"));
+  });
+
+  it("removes the route id marker before requesting album tracks", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ items: [] }));
+    window.history.replaceState(
+      {},
+      "",
+      "/library/tracks?artist_name=Busta%20Rhymes&album_id=0f481339-f7bb-40b4-ab4a-f24c1c2a7009",
+    );
+
+    render(<CatalogProbe />);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([request]) =>
+          String(request).includes("album_id=0f481339-f7bb-40b4-ab4a-f24c1c2a7009"),
+        ),
+      ).toBe(true),
+    );
   });
 });
