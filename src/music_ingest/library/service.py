@@ -33,14 +33,14 @@ from music_ingest.quality_policy import (
 
 @dataclass(frozen=True, slots=True)
 class CatalogArtist:
-    name: str
+    name: str | None
     track_count: int
 
 
 @dataclass(frozen=True, slots=True)
 class CatalogAlbum:
     album_id: str | None
-    album_name: str
+    album_name: str | None
     track_count: int
     artwork_url: str | None
 
@@ -49,10 +49,11 @@ class CatalogAlbum:
 class CatalogTrack:
     record_id: str
     source_id: str
+    source_path: str
     release_id: str | None
     publication_state: str
-    artist_name: str
-    album_name: str
+    artist_name: str | None
+    album_name: str | None
     title: str
     track_number: str | None
 
@@ -61,6 +62,7 @@ class CatalogTrack:
 class CatalogSourceTags:
     record_id: str
     source_id: str
+    source_path: str
     release_id: str | None
     publication_state: str
     tags: dict[str, str]
@@ -482,9 +484,10 @@ def library_manual_action_counts(session: Session) -> tuple[int, int]:
     return analysis_errors, needs_review
 
 
-def _catalog_artists(tags: dict[str, str]) -> tuple[str, ...]:
+def _catalog_artists(tags: dict[str, str]) -> tuple[str | None, ...]:
     value = tags.get('ALBUMARTIST') or tags.get('ARTIST') or ''
-    return tuple(dict.fromkeys(name.strip() for name in value.split(';') if name.strip()))
+    artists = tuple(dict.fromkeys(name.strip() for name in value.split(';') if name.strip()))
+    return artists or (None,)
 
 
 def _catalog_source_tags(session: Session, published: bool | None) -> list[CatalogSourceTags]:
@@ -528,12 +531,13 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         select(
             SourceRecord.library_record_id,
             SourceRecord.id,
+            SourceRecord.source_path,
             LibraryRecord.musicbrainz_release_id,
             LibraryRecord.publication_state,
             SourceTagRecord.tag_name,
             SourceTagRecord.value,
         )
-        .join(SourceTagRecord, SourceTagRecord.source_id == SourceRecord.id)
+        .outerjoin(SourceTagRecord, SourceTagRecord.source_id == SourceRecord.id)
         .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
         .where(
             SourceRecord.intake_state == 'present',
@@ -544,18 +548,21 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         raw_query = raw_query.where(
             LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
         )
-    raw_by_source: dict[tuple[str, str], tuple[str, str | None, str, dict[str, str]]] = {}
-    for record_id, source_id, release_id, publication_state, tag_name, value in session.execute(raw_query):
-        raw_by_source.setdefault((record_id, source_id), (record_id, release_id, publication_state, {}))[3][
-            tag_name
-        ] = value
+    raw_by_source: dict[tuple[str, str], tuple[str, str, str, str | None, str, dict[str, str]]] = {}
+    for record_id, source_id, source_path, release_id, publication_state, tag_name, value in session.execute(raw_query):
+        tags = raw_by_source.setdefault(
+            (record_id, source_id), (record_id, source_id, source_path, release_id, publication_state, {})
+        )[5]
+        if tag_name is not None and value is not None:
+            tags[tag_name] = value
     result: list[CatalogSourceTags] = []
-    for key, (record_id, release_id, publication_state, tags) in raw_by_source.items():
+    for key, (record_id, source_id, source_path, release_id, publication_state, tags) in raw_by_source.items():
         revision = tags_by_source.get(key)
         result.append(
             CatalogSourceTags(
                 record_id,
-                key[1],
+                source_id,
+                source_path,
                 release_id,
                 revision[3] if revision else publication_state,
                 revision[1] if revision else tags,
@@ -566,11 +573,14 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
 
 def library_artist_names(session: Session, published: bool | None = None) -> list[CatalogArtist]:
     """Load distinct Final/Original album artists and their present source counts."""
-    counts: dict[str, set[str]] = {}
+    counts: dict[str | None, set[str]] = {}
     for source in _catalog_source_tags(session, published):
         for artist in _catalog_artists(source.tags):
             counts.setdefault(artist, set()).add(source.record_id)
-    return [CatalogArtist(name, len(record_ids)) for name, record_ids in sorted(counts.items())]
+    return [
+        CatalogArtist(name, len(record_ids))
+        for name, record_ids in sorted(counts.items(), key=lambda item: (item[0] is not None, item[0] or ''))
+    ]
 
 
 def library_active_record_count(session: Session, published: bool | None = None) -> int:
@@ -600,16 +610,16 @@ def library_active_record_count(session: Session, published: bool | None = None)
 
 def library_artist_albums(
     session: Session,
-    artist_name: str,
+    artist_name: str | None,
     *,
     published: bool | None = None,
 ) -> list[CatalogAlbum]:
     """Load distinct Final/Original albums for one exact artist name."""
-    groups: dict[tuple[str | None, str], set[str]] = {}
+    groups: dict[tuple[str | None, str | None], set[str]] = {}
     for source in _catalog_source_tags(session, published):
-        if artist_name not in _catalog_artists(source.tags) or not source.tags.get('ALBUM'):
+        if artist_name not in _catalog_artists(source.tags):
             continue
-        groups.setdefault((source.release_id, source.tags['ALBUM']), set()).add(source.record_id)
+        groups.setdefault((source.release_id, source.tags.get('ALBUM')), set()).add(source.record_id)
     release_ids = {album_id for album_id, _ in groups if album_id is not None}
     artwork_urls = {
         release_mbid: f'/api/library/release-artwork/{release_mbid}'
@@ -629,17 +639,18 @@ def library_artist_albums(
             artwork_urls.get(album_id) if album_id is not None else None,
         )
         for (album_id, album_name), record_ids in sorted(
-            groups.items(), key=lambda item: (item[0][1], item[0][0] or '')
+            groups.items(), key=lambda item: (item[0][1] is not None, item[0][1] or '', item[0][0] or '')
         )
     ]
 
 
 def library_album_tracks(
     session: Session,
-    artist_name: str,
+    artist_name: str | None,
     *,
     album_id: str | None = None,
     album_name: str | None = None,
+    album_missing: bool = False,
     published: bool | None = None,
 ) -> list[CatalogTrack]:
     """Load minimal Final/Original track data for one exact artist and album."""
@@ -650,16 +661,19 @@ def library_album_tracks(
             continue
         if album_id is not None and source.release_id != album_id:
             continue
+        if album_missing and (source.release_id is not None or album_value):
+            continue
         if album_name is not None and (source.release_id is not None or album_value != album_name):
             continue
         tracks.append(
             CatalogTrack(
                 record_id=source.record_id,
                 source_id=source.source_id,
+                source_path=source.source_path,
                 release_id=source.release_id,
                 publication_state=source.publication_state,
                 artist_name=artist_name,
-                album_name=album_value,
+                album_name=album_value or None,
                 title=source.tags.get('TITLE', ''),
                 track_number=source.tags.get('TRACKNUMBER'),
             )

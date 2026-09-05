@@ -922,7 +922,11 @@ def create_app(
                         track_count=album.track_count,
                         artwork_url=album.artwork_url,
                     )
-                    for album in library_artist_albums(session, query.artist, published=query.published)
+                    for album in library_artist_albums(
+                        session,
+                        None if query.artist_missing else query.artist,
+                        published=query.published,
+                    )
                 )
             )
 
@@ -936,6 +940,7 @@ def create_app(
                     LibraryTrackResponse(
                         record_id=track.record_id,
                         source_id=track.source_id,
+                        source_path=track.source_path,
                         artist_name=track.artist_name,
                         album_name=track.album_name,
                         album_id=query.album_id,
@@ -945,9 +950,10 @@ def create_app(
                     )
                     for track in library_album_tracks(
                         session,
-                        query.artist,
+                        None if query.artist_missing else query.artist,
                         album_id=query.album_id,
                         album_name=query.album_name,
+                        album_missing=query.album_missing,
                         published=query.published,
                     )
                 )

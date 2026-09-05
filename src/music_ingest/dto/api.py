@@ -162,24 +162,32 @@ class LibraryPublicationQuery(BaseModel):
 
 
 class LibraryCatalogQuery(LibraryPublicationQuery):
-    artist: str = Field(min_length=1, max_length=1024)
+    artist: str | None = Field(default=None, min_length=1, max_length=1024)
+    artist_missing: bool = False
+
+    @model_validator(mode='after')
+    def require_artist_selector(self) -> LibraryCatalogQuery:
+        if (self.artist is None) != self.artist_missing:
+            raise ValueError('exactly one of artist or artist_missing=true is required')
+        return self
 
 
 class LibraryTrackQuery(LibraryCatalogQuery):
     album_id: str | None = Field(default=None, min_length=1, max_length=255)
     album_name: str | None = Field(default=None, min_length=1, max_length=1024)
+    album_missing: bool = False
 
     @model_validator(mode='after')
     def require_one_album_selector(self) -> LibraryTrackQuery:
-        if (self.album_id is None) == (self.album_name is None):
-            raise ValueError('exactly one of album_id or album_name is required')
+        if sum(value is not None for value in (self.album_id, self.album_name)) + self.album_missing != 1:
+            raise ValueError('exactly one of album_id, album_name, or album_missing=true is required')
         return self
 
 
 class LibraryArtistResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    name: str
+    name: str | None
     track_count: int = Field(ge=0)
 
 
@@ -194,7 +202,7 @@ class LibraryAlbumResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     album_id: str | None
-    album_name: str
+    album_name: str | None
     track_count: int = Field(ge=0)
     artwork_url: str | None = None
 
@@ -210,8 +218,9 @@ class LibraryTrackResponse(BaseModel):
 
     record_id: str
     source_id: str
-    artist_name: str
-    album_name: str
+    source_path: str
+    artist_name: str | None
+    album_name: str | None
     album_id: str | None
     title: str
     track_number: str | None

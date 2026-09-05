@@ -362,7 +362,10 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
 
     invalid_tracks = client.get('/api/library/tracks?artist=Artist%2FSide')
     assert invalid_tracks.status_code == 422
-    assert 'exactly one of album_id or album_name is required' in invalid_tracks.json()['detail'][0]['msg']
+    assert (
+        'exactly one of album_id, album_name, or album_missing=true is required'
+        in invalid_tracks.json()['detail'][0]['msg']
+    )
 
     openapi = client.get('/openapi.json').json()
     assert openapi['paths']['/api/library/albums']['get']['responses']['200']['content']['application/json']
@@ -982,6 +985,60 @@ def test_library_catalog_counts_only_present_sources(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()['items'] == [{'name': 'Noize MC', 'track_count': 1}]
+
+
+def test_library_artists_groups_records_without_artist_tags_as_unknown(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unknown-artist.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-unknown', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-unknown',
+            source_path='/incoming/unknown.flac',
+            device=1,
+            inode=1,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        session.add_all((record, source))
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).get('/api/library/artists')
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'items': [{'name': None, 'track_count': 1}],
+        'total_track_count': 1,
+    }
+
+    albums_response = TestClient(create_app(lambda: Session(engine))).get('/api/library/albums?artist_missing=true')
+
+    assert albums_response.status_code == 200
+    assert albums_response.json()['items'] == [
+        {'album_id': None, 'album_name': None, 'track_count': 1, 'artwork_url': None}
+    ]
+
+    tracks_response = TestClient(create_app(lambda: Session(engine))).get(
+        '/api/library/tracks?artist_missing=true&album_missing=true'
+    )
+
+    assert tracks_response.status_code == 200
+    assert tracks_response.json()['items'][0] == {
+        'record_id': 'record-unknown',
+        'source_id': 'source-unknown',
+        'source_path': '/incoming/unknown.flac',
+        'artist_name': None,
+        'album_name': None,
+        'album_id': None,
+        'title': '',
+        'track_number': None,
+        'publication_state': 'absent',
+    }
 
 
 def test_manual_actions_api_filters_records_and_returns_category_counts(tmp_path: Path) -> None:
