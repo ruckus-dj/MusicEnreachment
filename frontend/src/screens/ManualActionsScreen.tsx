@@ -1,15 +1,16 @@
-import { useState } from "react";
 import type { CatalogTrack } from "../app/useAppController";
 import { albumFor, artistFor, titleFor } from "../domain/metadata";
-import type { Route } from "../types";
+import type { ManualActionFilter, Route } from "../types";
 
 const ACTION_FILTERS = ["analysis-error", "needs-review"] as const;
-type ActionFilter = (typeof ACTION_FILTERS)[number];
 
 type ManualActionsScreenProps = {
   readonly tracks: readonly CatalogTrack[];
+  readonly filter: ManualActionFilter;
+  readonly counts: Readonly<Record<ManualActionFilter, number>>;
   readonly reprocessing: boolean;
   readonly onNavigate: (route: Route) => void;
+  readonly onFilterChange: (value: ManualActionFilter) => void;
   readonly onRetry: (recordId: string, sourceId: string) => void;
 };
 
@@ -29,35 +30,31 @@ function needsReview(track: CatalogTrack): boolean {
   );
 }
 
-function matchesFilter(track: CatalogTrack, filter: ActionFilter): boolean {
+function matchesFilter(track: CatalogTrack, filter: ManualActionFilter): boolean {
   return (
     track.source.state !== "replaced" &&
     (filter === "analysis-error" ? hasAnalysisError(track) : needsReview(track))
   );
 }
 
-function filterLabel(filter: ActionFilter): string {
+function filterLabel(filter: ManualActionFilter): string {
   return filter === "analysis-error" ? "Ошибки анализа" : "Нужна проверка";
 }
 
-function trackStatus(filter: ActionFilter): string {
+function trackStatus(filter: ManualActionFilter): string {
   return filter === "analysis-error" ? "Анализ не завершён" : "Проверка оператора";
 }
 
 export function ManualActionsScreen({
   tracks,
+  filter,
+  counts,
   reprocessing,
   onNavigate,
+  onFilterChange,
   onRetry,
 }: ManualActionsScreenProps) {
-  const [filter, setFilter] = useState<ActionFilter>("analysis-error");
   const visibleTracks = tracks.filter((track) => matchesFilter(track, filter));
-  const counts = new Map(
-    ACTION_FILTERS.map((item) => [
-      item,
-      tracks.filter((track) => matchesFilter(track, item)).length,
-    ]),
-  );
 
   return (
     <section className="manual-actions-screen" aria-labelledby="manual-actions-heading">
@@ -76,9 +73,9 @@ export function ManualActionsScreen({
             key={item}
             className={filter === item ? "secondary active" : "secondary"}
             aria-pressed={filter === item}
-            onClick={() => setFilter(item)}
+            onClick={() => onFilterChange(item)}
           >
-            {filterLabel(item)} {counts.get(item) ?? 0}
+            {filterLabel(item)} {counts[item]}
           </button>
         ))}
       </fieldset>

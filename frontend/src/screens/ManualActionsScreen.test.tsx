@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ManualActionsScreen } from "./ManualActionsScreen";
+
+afterEach(cleanup);
 
 describe("ManualActionsScreen", () => {
   it("shows only the selected manual-action category", () => {
     const onNavigate = vi.fn();
+    const onFilterChange = vi.fn();
 
     render(
       <ManualActionsScreen
@@ -65,8 +68,11 @@ describe("ManualActionsScreen", () => {
             },
           },
         ]}
+        filter="analysis-error"
+        counts={{ "analysis-error": 1, "needs-review": 1 }}
         reprocessing={false}
         onNavigate={onNavigate}
+        onFilterChange={onFilterChange}
         onRetry={vi.fn()}
       />,
     );
@@ -76,8 +82,7 @@ describe("ManualActionsScreen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Нужна проверка 1" }));
 
-    expect(screen.queryByText("Ошибка анализа")).toBeNull();
-    expect(screen.getByText("Нужна проверка")).toBeTruthy();
+    expect(onFilterChange).toHaveBeenCalledWith("needs-review");
   });
 
   it("retries an analysis error without opening its inspector", () => {
@@ -107,8 +112,11 @@ describe("ManualActionsScreen", () => {
             },
           },
         ]}
+        filter="analysis-error"
+        counts={{ "analysis-error": 1, "needs-review": 0 }}
         reprocessing={false}
         onNavigate={onNavigate}
+        onFilterChange={vi.fn()}
         onRetry={onRetry}
       />,
     );
@@ -143,8 +151,11 @@ describe("ManualActionsScreen", () => {
             },
           },
         ]}
+        filter="analysis-error"
+        counts={{ "analysis-error": 0, "needs-review": 0 }}
         reprocessing={false}
         onNavigate={vi.fn()}
+        onFilterChange={vi.fn()}
         onRetry={vi.fn()}
       />,
     );

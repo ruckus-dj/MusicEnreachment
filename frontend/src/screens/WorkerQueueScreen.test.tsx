@@ -63,7 +63,7 @@ describe("WorkerQueueScreen", () => {
     );
 
     const link = screen.getByRole("link", { name: "Открыть инспектор трека: Очередной трек" });
-    expect(link.getAttribute("href")).toBe("/library/record/record-1/source/source-1");
+    expect(link.getAttribute("href")).toBe("/library/track/record-1?source_id=source-1");
     expect(screen.getByText("Исполнитель · Альбом")).toBeTruthy();
     expect(screen.getByText("Обрабатывает: Проверка источника")).toBeTruthy();
     expect(screen.queryByText("Отключён")).toBeNull();
