@@ -141,7 +141,7 @@ class MusicBrainzProviderAdapter:
                 continue
             provenance = self._provenance(f'recording:{detail.recording_mbid}', detail.response, captured_at)
             for release in detail.response.payload.releases:
-                if release.status is not None and release.status.casefold() != 'official':
+                if release.status is not None and release.status.casefold() not in {'official', 'promotion'}:
                     continue
                 _ = releases_by_id.setdefault(release.id, release)
                 recording_ids_by_release.setdefault(release.id, []).append(detail.recording_mbid)

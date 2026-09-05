@@ -120,6 +120,29 @@ def test_search_when_musicbrainz_returns_scores_preserves_them_on_candidates() -
     assert result.candidate.musicbrainz_score == 100
 
 
+def test_recording_lookup_when_release_is_promotion_keeps_candidate() -> None:
+    # Given: the recording is present only on a promotional MusicBrainz release.
+    class FixtureTransport:
+        def get(self, url: str, *, headers: dict[str, str]) -> MusicBrainzHttpResponse:
+            _ = headers
+            if '/release/?' in url:
+                return MusicBrainzHttpResponse(
+                    200,
+                    b'{"release-count":1,"release-offset":0,"releases":'
+                    + b'[{"id":"release-id","title":"Promo Single","status":"Promotion"}]}',
+                )
+            return MusicBrainzHttpResponse(200, b'{"id":"release-id","title":"Promo Single"}')
+
+    provider = MusicBrainzProviderAdapter(FixtureTransport(), 'music-ingest/test (operator@example.test)')
+
+    # When: the provider resolves the known recording into release candidates.
+    result = provider.lookup(MusicBrainzLookupRequest('', FixtureCase.SUCCESS, recording_mbid='recording-id'), NOW)
+
+    # Then: the promotional release remains available for matching and review.
+    assert isinstance(result, MusicBrainzMatch)
+    assert result.candidate.release_mbid == 'release-id'
+
+
 def test_search_when_provider_returns_unit_interval_score_normalizes_to_musicbrainz_scale() -> None:
     # Given: a compatible MusicBrainz mirror returns its ranking score as 0..1.
     class FixtureTransport:
