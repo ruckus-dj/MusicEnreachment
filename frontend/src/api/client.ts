@@ -10,8 +10,27 @@ import type {
   StorageBrowser,
   StorageConfig,
   StorageOutputPreview,
+  Summary,
   WorkerQueue,
 } from "../types";
+
+export type LibraryArtist = { readonly name: string; readonly track_count: number };
+export type LibraryAlbum = {
+  readonly album_id: string | null;
+  readonly album_name: string;
+  readonly track_count: number;
+  readonly artwork_url?: string | null;
+};
+export type LibraryTrack = {
+  readonly record_id: string;
+  readonly source_id: string;
+  readonly artist_name: string;
+  readonly album_name: string;
+  readonly album_id: string | null;
+  readonly title: string;
+  readonly track_number: string | null;
+  readonly publication_state: string;
+};
 
 export class ApiError extends Error {
   readonly status: number;
@@ -66,6 +85,56 @@ export async function removeSourceRoot(rootId: string): Promise<void> {
 export function browseStorage(path?: string): Promise<StorageBrowser> {
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
   return api<StorageBrowser>(`/api/settings/storage/browser${query}`);
+}
+
+export function listLibraryRecords(): Promise<{ items: Summary[] }> {
+  return api<{ items: Summary[] }>("/api/library/records");
+}
+
+export type ManualActionCounts = {
+  readonly analysis_error: number;
+  readonly needs_review: number;
+};
+
+export function listManualActions(
+  action: "analysis-error" | "needs-review",
+): Promise<{ items: Summary[]; counts: ManualActionCounts }> {
+  return api<{ items: Summary[]; counts: ManualActionCounts }>(
+    `/api/library/manual-actions?action=${encodeURIComponent(action)}`,
+  );
+}
+
+export function listLibraryArtists(
+  published?: boolean,
+): Promise<{ items: LibraryArtist[]; total_track_count: number }> {
+  const suffix = published === undefined ? "" : `?published=${String(published)}`;
+  return api<{ items: LibraryArtist[]; total_track_count: number }>(
+    `/api/library/artists${suffix}`,
+  );
+}
+
+export function listLibraryAlbums(
+  artistName: string,
+  published?: boolean,
+): Promise<{ items: LibraryAlbum[] }> {
+  const params = new URLSearchParams();
+  params.set("artist", artistName);
+  if (published !== undefined) params.set("published", String(published));
+  return api<{ items: LibraryAlbum[] }>(`/api/library/albums?${params.toString()}`);
+}
+
+export function listLibraryTracks(
+  artistName: string,
+  albumId?: string,
+  albumName?: string,
+  published?: boolean,
+): Promise<{ items: LibraryTrack[] }> {
+  const params = new URLSearchParams();
+  params.set("artist", artistName);
+  if (albumId) params.set("album_id", albumId);
+  if (albumName) params.set("album_name", albumName);
+  if (published !== undefined) params.set("published", String(published));
+  return api<{ items: LibraryTrack[] }>(`/api/library/tracks?${params.toString()}`);
 }
 
 export function getStorageConfig(): Promise<StorageConfig> {

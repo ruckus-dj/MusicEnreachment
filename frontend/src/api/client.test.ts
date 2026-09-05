@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SourceRoot } from "../types";
 import {
   createSourceRoot,
+  listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
   removeSourceRoot,
@@ -73,6 +74,25 @@ describe("source-root API client", () => {
         method: "POST",
         body: JSON.stringify({ source_id: "source-b" }),
       }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("requests only the selected manual-action category", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        items: [],
+        counts: { analysis_error: 4, needs_review: 2 },
+      }),
+    );
+
+    await expect(listManualActions("needs-review")).resolves.toEqual({
+      items: [],
+      counts: { analysis_error: 4, needs_review: 2 },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/library/manual-actions?action=needs-review",
+      expect.objectContaining({ headers: { "content-type": "application/json" } }),
     );
     fetchMock.mockRestore();
   });
