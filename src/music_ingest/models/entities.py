@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import final
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, LargeBinary, Text, select
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -23,6 +23,7 @@ from music_ingest.models.workflow import (
 @final
 class SourceRecord(Base):
     __tablename__ = 'source_records'
+    __table_args__ = (Index('ix_source_records_library_record_id', 'library_record_id'),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -127,6 +128,7 @@ class SourceAssociationOverrideRecord(Base):
 @final
 class SourceTagRecord(Base):
     __tablename__ = 'source_tag_observations'
+    __table_args__ = (Index('ix_source_tag_observations_tag_value_source', 'tag_name', 'value', 'source_id'),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)

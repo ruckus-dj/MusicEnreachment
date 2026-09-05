@@ -74,8 +74,9 @@ class LibraryRecord(Base):
     """Stable identity for one composition across source and publication changes."""
 
     __tablename__ = 'library_records'
-    __table_args__: tuple[UniqueConstraint, ...] = (
+    __table_args__: tuple[UniqueConstraint | Index, ...] = (
         UniqueConstraint('musicbrainz_recording_id', 'musicbrainz_release_id'),
+        Index('ix_library_records_release_publication', 'musicbrainz_release_id', 'publication_state'),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
