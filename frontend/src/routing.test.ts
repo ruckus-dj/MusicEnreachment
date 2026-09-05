@@ -50,6 +50,27 @@ describe("parseRoute", () => {
     );
   });
 
+  it("round-trips the missing-artist selector without a display label", () => {
+    expect(parseRoute("/library/albums", "?artist_missing=true")).toEqual({
+      screen: "albums",
+      artist: "",
+      artistMissing: true,
+      publicationFilter: "all",
+    });
+    expect(
+      routePath({ screen: "albums", artist: "Неизвестный исполнитель", artistMissing: true }),
+    ).toBe("/library/albums?artist_missing=true");
+    expect(
+      routePath({
+        screen: "tracks",
+        artist: "Неизвестный исполнитель",
+        artistMissing: true,
+        album: "album:",
+        albumMissing: true,
+      }),
+    ).toBe("/library/tracks?artist_missing=true&album_missing=true");
+  });
+
   it("persists the manual-action tab in the URL", () => {
     expect(parseRoute("/manual-actions", "?action=needs-review")).toEqual({
       screen: "manual-actions",

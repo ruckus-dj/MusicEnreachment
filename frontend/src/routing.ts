@@ -28,6 +28,9 @@ export function parseRoute(pathname: string, search = ""): Route {
   const parts = pathname.split("/").filter(Boolean);
   const params = new URLSearchParams(search);
   const filter = publicationFilter(search);
+  const artistMissing = params.get("artist_missing") === "true";
+  const artistName = artistMissing ? "" : (params.get("artist_name") ?? "");
+  const albumMissing = params.get("album_missing") === "true";
   const sourceId = decodeRouteIdentifier(params.get("source_id") ?? undefined);
   if (parts[0] === "settings") return { screen: "settings" };
   if (parts[0] === "manual-actions") {
@@ -36,11 +39,19 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (parts[0] === "workers") return { screen: "workers" };
   if (parts[0] !== "library") return { screen: "artists", publicationFilter: filter };
   if (parts[1] === "albums")
-    return { screen: "albums", artist: params.get("artist_name") ?? "", publicationFilter: filter };
+    return {
+      screen: "albums",
+      artist: artistName,
+      ...(artistMissing ? { artistMissing: true } : {}),
+      ...(albumMissing ? { albumMissing: true } : {}),
+      publicationFilter: filter,
+    };
   if (parts[1] === "tracks")
     return {
       screen: "tracks",
-      artist: params.get("artist_name") ?? "",
+      artist: artistName,
+      ...(artistMissing ? { artistMissing: true } : {}),
+      ...(albumMissing ? { albumMissing: true } : {}),
       album: params.has("album_id")
         ? `id:${decodeRouteIdentifier(params.get("album_id") ?? undefined)}`
         : `album:${decodeRouteIdentifier(params.get("album_name") ?? undefined)}`,
@@ -103,18 +114,30 @@ export function routePath(route: Route): string {
       route.publicationFilter,
     );
   }
-  if (route.screen === "tracks" && route.artist && route.album) {
-    const albumQuery = route.album.startsWith("album:")
-      ? `album_name=${encodeURIComponent(route.album.slice("album:".length))}`
-      : `album_id=${encodeURIComponent(route.album.replace(/^id:/, ""))}`;
+  if (
+    route.screen === "tracks" &&
+    (route.artist || route.artistMissing) &&
+    (route.album || route.albumMissing)
+  ) {
+    const album = route.album ?? "";
+    const albumQuery = route.albumMissing
+      ? "album_missing=true"
+      : album.startsWith("album:")
+        ? `album_name=${encodeURIComponent(album.slice("album:".length))}`
+        : `album_id=${encodeURIComponent(album.replace(/^id:/, ""))}`;
+    const artistQuery = route.artistMissing
+      ? "artist_missing=true"
+      : `artist_name=${encodeURIComponent(route.artist ?? "")}`;
     return withPublicationFilter(
-      `/library/tracks?artist_name=${encodeURIComponent(route.artist)}&${albumQuery}`,
+      `/library/tracks?${artistQuery}&${albumQuery}`,
       route.publicationFilter,
     );
   }
-  if (route.screen === "albums" && route.artist)
+  if (route.screen === "albums" && (route.artist || route.artistMissing))
     return withPublicationFilter(
-      `/library/albums?artist_name=${encodeURIComponent(route.artist)}`,
+      route.artistMissing
+        ? "/library/albums?artist_missing=true"
+        : `/library/albums?artist_name=${encodeURIComponent(route.artist ?? "")}`,
       route.publicationFilter,
     );
   return withPublicationFilter("/library", route.publicationFilter);
