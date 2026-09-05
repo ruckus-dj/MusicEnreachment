@@ -98,7 +98,7 @@ export function releaseMbidFor(item: Summary): string | null {
 }
 
 export function albumKeyFor(item: Summary, sourceId: string): string {
-  return releaseMbidFor(item) ?? `album:${albumFor(item, sourceId).trim().toLowerCase()}`;
+  return releaseMbidFor(item) ?? `album:${albumFor(item, sourceId).trim()}`;
 }
 
 export function trackNumberFor(item: Summary, sourceId: string): number | null {

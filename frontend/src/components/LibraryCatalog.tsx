@@ -1,5 +1,5 @@
 import type { CatalogAlbum, CatalogTrack } from "../app/useAppController";
-import { albumArtistsFor, albumKeyFor, titleFor, trackNumberLabelFor } from "../domain/metadata";
+import { titleFor, trackNumberLabelFor } from "../domain/metadata";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -7,8 +7,8 @@ type LibraryCatalogProps = {
   artist: string;
   album: string;
   artists: string[];
+  artistTrackCounts: Readonly<Record<string, number>>;
   albums: CatalogAlbum[];
-  tracks: CatalogTrack[];
   albumTracks: CatalogTrack[];
   loading: boolean;
   onNavigate: (route: {
@@ -26,8 +26,8 @@ export function LibraryCatalog({
   artist,
   album,
   artists,
+  artistTrackCounts,
   albums,
-  tracks,
   albumTracks,
   loading,
   onNavigate,
@@ -50,14 +50,7 @@ export function LibraryCatalog({
               <span className="entity-art">{name.slice(0, 1)}</span>
               <span>
                 <strong>{name}</strong>
-                <small>
-                  {
-                    tracks.filter(({ item, source }) =>
-                      albumArtistsFor(item, source.source_id).includes(name),
-                    ).length
-                  }{" "}
-                  треков
-                </small>
+                <small>{artistTrackCounts[name] ?? 0} треков</small>
               </span>
               <b>→</b>
             </button>
@@ -73,11 +66,6 @@ export function LibraryCatalog({
           <div className="empty-state">По выбранному фильтру альбомов нет.</div>
         ) : (
           albums.map((albumEntry) => {
-            const albumTrack = tracks.find(
-              ({ item, source }) =>
-                albumArtistsFor(item, source.source_id).includes(artist) &&
-                albumKeyFor(item, source.source_id) === albumEntry.key,
-            );
             return (
               <button
                 type="button"
@@ -85,10 +73,10 @@ export function LibraryCatalog({
                 key={albumEntry.key}
                 onClick={() => onNavigate({ screen: "tracks", artist, album: albumEntry.key })}
               >
-                {albumTrack?.item.artwork?.url ? (
+                {albumEntry.artworkUrl ? (
                   <img
                     className="entity-art album-cover"
-                    src={albumTrack.item.artwork.url}
+                    src={albumEntry.artworkUrl}
                     alt=""
                     width={56}
                     height={56}
@@ -98,16 +86,7 @@ export function LibraryCatalog({
                 )}
                 <span>
                   <strong>{albumEntry.title}</strong>
-                  <small>
-                    {
-                      tracks.filter(
-                        ({ item, source }) =>
-                          albumArtistsFor(item, source.source_id).includes(artist) &&
-                          albumKeyFor(item, source.source_id) === albumEntry.key,
-                      ).length
-                    }{" "}
-                    треков
-                  </small>
+                  <small>{albumEntry.trackCount} треков</small>
                 </span>
                 <b>→</b>
               </button>

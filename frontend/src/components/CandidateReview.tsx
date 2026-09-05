@@ -72,7 +72,7 @@ export function CandidateReview({
       (rightScore ?? -1) - (leftScore ?? -1)
     );
   });
-  const route = parseRoute(window.location.pathname);
+  const route = parseRoute(window.location.pathname, window.location.search);
   const [decoded, setDecoded] = useState<
     Record<string, { readonly artist: string; readonly title: string; readonly album: string }>
   >({});
