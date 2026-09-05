@@ -271,6 +271,103 @@ def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> N
     assert identity.json()['musicbrainz_recording_id'] == '11111111-1111-4111-8111-111111111111'
 
 
+def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "library-filter.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        matched_release = LibraryRecord(
+            id='record-release',
+            musicbrainz_release_id='release-shared',
+            publication_state='current',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        matched_name_only = LibraryRecord(id='record-name-only', created_at=timestamp, updated_at=timestamp)
+        other_album = LibraryRecord(id='record-other', created_at=timestamp, updated_at=timestamp)
+        session.add_all(
+            (
+                matched_release,
+                matched_name_only,
+                other_album,
+                SourceRecord(
+                    id='source-release',
+                    source_path='/release.flac',
+                    device=1,
+                    inode=1,
+                    size_bytes=1,
+                    sha256='a' * 64,
+                    duration_seconds=180,
+                    origin='manual',
+                    intake_state='present',
+                    library_record=matched_release,
+                    tag_observations=[
+                        SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Artist/Side'),
+                        SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Shared'),
+                    ],
+                ),
+                SourceRecord(
+                    id='source-name-only',
+                    source_path='/name-only.flac',
+                    device=1,
+                    inode=2,
+                    size_bytes=1,
+                    sha256='b' * 64,
+                    duration_seconds=180,
+                    origin='manual',
+                    intake_state='present',
+                    library_record=matched_name_only,
+                    tag_observations=[
+                        SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Artist/Side'),
+                        SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Shared'),
+                    ],
+                ),
+                SourceRecord(
+                    id='source-other',
+                    source_path='/other.flac',
+                    device=1,
+                    inode=3,
+                    size_bytes=1,
+                    sha256='c' * 64,
+                    duration_seconds=180,
+                    origin='manual',
+                    intake_state='present',
+                    library_record=other_album,
+                    tag_observations=[
+                        SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Other Artist'),
+                        SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Shared'),
+                    ],
+                ),
+            )
+        )
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    artists = client.get('/api/library/artists')
+    albums = client.get('/api/library/albums?artist=Artist%2FSide')
+    release = client.get('/api/library/tracks?artist=Artist%2FSide&album_id=release-shared')
+    name_only = client.get('/api/library/tracks?artist=Artist%2FSide&album_name=Shared')
+
+    assert artists.json()['items'] == [
+        {'name': 'Artist/Side', 'track_count': 2},
+        {'name': 'Other Artist', 'track_count': 1},
+    ]
+    assert albums.json()['items'] == [
+        {'album_id': None, 'album_name': 'Shared', 'track_count': 1, 'artwork_url': None},
+        {'album_id': 'release-shared', 'album_name': 'Shared', 'track_count': 1, 'artwork_url': None},
+    ]
+    assert [item['record_id'] for item in release.json()['items']] == ['record-release']
+    assert [item['record_id'] for item in name_only.json()['items']] == ['record-name-only']
+
+    invalid_tracks = client.get('/api/library/tracks?artist=Artist%2FSide')
+    assert invalid_tracks.status_code == 422
+    assert 'exactly one of album_id or album_name is required' in invalid_tracks.json()['detail'][0]['msg']
+
+    openapi = client.get('/openapi.json').json()
+    assert openapi['paths']['/api/library/albums']['get']['responses']['200']['content']['application/json']
+
+
 def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_path: Path) -> None:
     # Given: a source with a stored MusicBrainz candidate and original tags.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "candidate-review.db"}')
@@ -844,6 +941,136 @@ def test_library_catalog_keeps_empty_record_after_source_reassignment(tmp_path: 
     assert response.status_code == 200
     assert response.json()['items'][0]['record_id'] == 'empty-record'
     assert response.json()['items'][0]['sources'] == []
+
+
+def test_library_catalog_counts_only_present_sources(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "catalog-source-count.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        source_record = LibraryRecord(id='record-with-source', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-present',
+            source_path='/incoming/noize.flac',
+            device=1,
+            inode=1,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=source_record,
+        )
+        source.tag_observations = [
+            SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Noize MC'),
+            SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Present Album'),
+        ]
+        orphan_record = LibraryRecord(id='record-without-source', created_at=timestamp, updated_at=timestamp)
+        orphan_revision = LibraryMetadataRevisionRecord(
+            library_record=orphan_record,
+            source_id='source-missing',
+            layer='original',
+            revision=1,
+            tags_json='{"ALBUMARTIST":"Noize MC","ALBUM":"Orphan Album"}',
+            actor='test',
+            created_at=timestamp,
+        )
+        session.add_all((source_record, source, orphan_record, orphan_revision))
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).get('/api/library/artists')
+
+    assert response.status_code == 200
+    assert response.json()['items'] == [{'name': 'Noize MC', 'track_count': 1}]
+
+
+def test_manual_actions_api_filters_records_and_returns_category_counts(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-actions-api.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(tmp_path),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        analysis_error = LibraryRecord(
+            id='record-analysis-error',
+            processing_state='blocked_infrastructure',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        needs_review = LibraryRecord(
+            id='record-needs-review',
+            processing_state='needs_review',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        complete = LibraryRecord(
+            id='record-complete', processing_state='complete', created_at=timestamp, updated_at=timestamp
+        )
+        session.add_all(
+            (
+                root,
+                analysis_error,
+                needs_review,
+                complete,
+                SourceRecord(
+                    id='source-analysis-error',
+                    source_path='/incoming/error.flac',
+                    device=1,
+                    inode=1,
+                    size_bytes=1,
+                    sha256='a' * 64,
+                    duration_seconds=1,
+                    origin='manual',
+                    intake_state='present',
+                    source_root=root,
+                    library_record=analysis_error,
+                ),
+                SourceRecord(
+                    id='source-needs-review',
+                    source_path='/incoming/review.flac',
+                    device=1,
+                    inode=2,
+                    size_bytes=1,
+                    sha256='b' * 64,
+                    duration_seconds=1,
+                    origin='manual',
+                    intake_state='present',
+                    source_root=root,
+                    library_record=needs_review,
+                ),
+                SourceRecord(
+                    id='source-complete',
+                    source_path='/incoming/complete.flac',
+                    device=1,
+                    inode=3,
+                    size_bytes=1,
+                    sha256='c' * 64,
+                    duration_seconds=1,
+                    origin='manual',
+                    intake_state='present',
+                    source_root=root,
+                    library_record=complete,
+                ),
+            )
+        )
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+    analysis_response = client.get('/api/library/manual-actions?action=analysis-error')
+    review_response = client.get('/api/library/manual-actions?action=needs-review')
+
+    assert analysis_response.status_code == 200
+    assert [item['record_id'] for item in analysis_response.json()['items']] == ['record-analysis-error']
+    assert analysis_response.json()['counts'] == {'analysis_error': 1, 'needs_review': 1}
+    assert review_response.status_code == 200
+    assert [item['record_id'] for item in review_response.json()['items']] == ['record-needs-review']
 
 
 def test_analysis_retry_api_requeues_failed_and_missing_provider_work_without_duplicate_jobs(tmp_path: Path) -> None:

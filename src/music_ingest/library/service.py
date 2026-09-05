@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
-from music_ingest.models import SourceRecord
+from music_ingest.models import SourceRecord, SourceTagRecord
 from music_ingest.models.library import (
     EffectiveSourceDecisionRecord,
     LibraryEventRecord,
@@ -17,6 +19,8 @@ from music_ingest.models.library import (
     LibraryPublicationRecord,
     LibraryRecord,
     LibraryRecordConsolidationRecord,
+    ReleaseArtworkRecord,
+    SourceRecordView,
 )
 from music_ingest.quality_policy import (
     DecisionReason,
@@ -26,6 +30,41 @@ from music_ingest.quality_policy import (
     QualityTuple,
     evaluate,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogArtist:
+    name: str
+    track_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogAlbum:
+    album_id: str | None
+    album_name: str
+    track_count: int
+    artwork_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogTrack:
+    record_id: str
+    source_id: str
+    release_id: str | None
+    publication_state: str
+    artist_name: str
+    album_name: str
+    title: str
+    track_number: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSourceTags:
+    record_id: str
+    source_id: str
+    release_id: str | None
+    publication_state: str
+    tags: dict[str, str]
 
 
 def new_library_record(session: Session, now: datetime | None = None) -> LibraryRecord:
@@ -384,6 +423,272 @@ def library_records(session: Session) -> list[LibraryRecord]:
             .options(
                 selectinload(LibraryRecord.sources),
                 selectinload(LibraryRecord.publications),
+                selectinload(LibraryRecord.metadata_revisions),
             )
         ).all()
     )
+
+
+def _manual_action_predicate(action: Literal['analysis-error', 'needs-review']) -> ColumnElement[bool]:
+    non_replaced_source = exists(
+        select(SourceRecord.id).where(
+            SourceRecord.library_record_id == LibraryRecord.id,
+            SourceRecord.intake_state != 'replaced',
+        )
+    )
+    if action == 'analysis-error':
+        return non_replaced_source & or_(
+            LibraryRecord.processing_state.in_(['retrying', 'blocked_infrastructure', 'quarantined']),
+            LibraryRecord.publication_state == 'failed',
+            exists(
+                select(SourceRecord.id).where(
+                    SourceRecord.library_record_id == LibraryRecord.id,
+                    SourceRecord.intake_state == 'invalid_audio',
+                )
+            ),
+        )
+    return non_replaced_source & or_(
+        LibraryRecord.processing_state == 'needs_review',
+        LibraryRecord.match_state == 'needs_review',
+    )
+
+
+def library_manual_action_records(
+    session: Session, action: Literal['analysis-error', 'needs-review']
+) -> list[LibraryRecord]:
+    """Load only active library records matching one manual-action category."""
+    return list(
+        session.scalars(
+            select(LibraryRecord)
+            .where(
+                ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+                _manual_action_predicate(action),
+            )
+            .options(
+                selectinload(LibraryRecord.sources),
+                selectinload(LibraryRecord.publications),
+                selectinload(LibraryRecord.metadata_revisions),
+            )
+        ).all()
+    )
+
+
+def library_manual_action_counts(session: Session) -> tuple[int, int]:
+    """Count active records in both manual-action categories without loading their rows."""
+    base_query = select(func.count(func.distinct(LibraryRecord.id))).where(
+        ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id))
+    )
+    analysis_errors = session.scalar(base_query.where(_manual_action_predicate('analysis-error'))) or 0
+    needs_review = session.scalar(base_query.where(_manual_action_predicate('needs-review'))) or 0
+    return analysis_errors, needs_review
+
+
+def _catalog_sources(
+    session: Session, published: bool | None
+) -> list[tuple[LibraryRecord, SourceRecordView, dict[str, str]]]:
+    records = library_records(session)
+    result: list[tuple[LibraryRecord, SourceRecordView, dict[str, str]]] = []
+    for record in records:
+        if published is not None and (record.publication_state == 'current') != published:
+            continue
+        for source in record.sources:
+            tags: dict[str, str] | None = None
+            for layer in ('final', 'original'):
+                revision = next(
+                    (
+                        item
+                        for item in reversed(record.metadata_revisions)
+                        if item.source_id == source.id and item.layer == layer
+                    ),
+                    None,
+                )
+                if revision is not None:
+                    tags = json.loads(revision.tags_json)
+                    break
+            result.append((record, source, tags or {tag.tag_name: tag.value for tag in source.tag_observations}))
+    return result
+
+
+def _catalog_artists(tags: dict[str, str]) -> tuple[str, ...]:
+    value = tags.get('ALBUMARTIST') or tags.get('ARTIST') or ''
+    return tuple(dict.fromkeys(name.strip() for name in value.split(';') if name.strip()))
+
+
+def _catalog_source_tags(session: Session, published: bool | None) -> list[CatalogSourceTags]:
+    """Load tags for present source files without hydrating library relationships."""
+    revision_query = (
+        select(
+            LibraryRecord.id,
+            LibraryRecord.musicbrainz_release_id,
+            LibraryRecord.publication_state,
+            LibraryMetadataRevisionRecord.source_id,
+            LibraryMetadataRevisionRecord.layer,
+            LibraryMetadataRevisionRecord.tags_json,
+        )
+        .join(
+            LibraryMetadataRevisionRecord,
+            LibraryMetadataRevisionRecord.library_record_id == LibraryRecord.id,
+        )
+        .join(
+            SourceRecord,
+            (SourceRecord.id == LibraryMetadataRevisionRecord.source_id)
+            & (SourceRecord.library_record_id == LibraryRecord.id),
+        )
+    )
+    revision_query = revision_query.where(
+        LibraryMetadataRevisionRecord.layer.in_(['final', 'original']),
+        SourceRecord.intake_state == 'present',
+        ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+    )
+    if published is not None:
+        revision_query = revision_query.where(
+            LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
+        )
+    tags_by_source: dict[tuple[str, str], tuple[str, dict[str, str], str | None, str]] = {}
+    for record_id, release_id, publication_state, source_id, layer, tags_json in session.execute(revision_query):
+        key = (record_id, source_id)
+        current = tags_by_source.get(key)
+        if current is None or (current[0] == 'original' and layer == 'final'):
+            tags_by_source[key] = (layer, json.loads(tags_json), release_id, publication_state)
+
+    raw_query = (
+        select(
+            SourceRecord.library_record_id,
+            SourceRecord.id,
+            LibraryRecord.musicbrainz_release_id,
+            LibraryRecord.publication_state,
+            SourceTagRecord.tag_name,
+            SourceTagRecord.value,
+        )
+        .join(SourceTagRecord, SourceTagRecord.source_id == SourceRecord.id)
+        .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
+        .where(
+            SourceRecord.intake_state == 'present',
+            ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+        )
+    )
+    if published is not None:
+        raw_query = raw_query.where(
+            LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
+        )
+    raw_by_source: dict[tuple[str, str], tuple[str, str | None, str, dict[str, str]]] = {}
+    for record_id, source_id, release_id, publication_state, tag_name, value in session.execute(raw_query):
+        raw_by_source.setdefault((record_id, source_id), (record_id, release_id, publication_state, {}))[3][
+            tag_name
+        ] = value
+    result: list[CatalogSourceTags] = []
+    for key, (record_id, release_id, publication_state, tags) in raw_by_source.items():
+        revision = tags_by_source.get(key)
+        result.append(
+            CatalogSourceTags(
+                record_id,
+                key[1],
+                release_id,
+                revision[3] if revision else publication_state,
+                revision[1] if revision else tags,
+            )
+        )
+    return result
+
+
+def library_artist_names(session: Session, published: bool | None = None) -> list[CatalogArtist]:
+    """Load distinct Final/Original album artists and their present source counts."""
+    counts: dict[str, set[str]] = {}
+    for source in _catalog_source_tags(session, published):
+        for artist in _catalog_artists(source.tags):
+            counts.setdefault(artist, set()).add(source.record_id)
+    return [CatalogArtist(name, len(record_ids)) for name, record_ids in sorted(counts.items())]
+
+
+def library_active_record_count(session: Session, published: bool | None = None) -> int:
+    """Count active library records represented by a source or current publication."""
+    query = (
+        select(func.count(func.distinct(LibraryRecord.id)))
+        .outerjoin(
+            SourceRecord,
+            (SourceRecord.library_record_id == LibraryRecord.id) & (SourceRecord.intake_state == 'present'),
+        )
+        .outerjoin(
+            LibraryPublicationRecord,
+            (LibraryPublicationRecord.library_record_id == LibraryRecord.id)
+            & (LibraryPublicationRecord.state == 'current'),
+        )
+        .where(
+            or_(SourceRecord.id.is_not(None), LibraryPublicationRecord.id.is_not(None)),
+            ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+        )
+    )
+    if published is not None:
+        query = query.where(
+            LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
+        )
+    return int(session.scalar(query) or 0)
+
+
+def library_artist_albums(
+    session: Session,
+    artist_name: str,
+    *,
+    published: bool | None = None,
+) -> list[CatalogAlbum]:
+    """Load distinct Final/Original albums for one exact artist name."""
+    groups: dict[tuple[str | None, str], set[str]] = {}
+    for source in _catalog_source_tags(session, published):
+        if artist_name not in _catalog_artists(source.tags) or not source.tags.get('ALBUM'):
+            continue
+        groups.setdefault((source.release_id, source.tags['ALBUM']), set()).add(source.record_id)
+    release_ids = {album_id for album_id, _ in groups if album_id is not None}
+    artwork_urls = {
+        release_mbid: f'/api/library/release-artwork/{release_mbid}'
+        for release_mbid in session.scalars(
+            select(ReleaseArtworkRecord.release_mbid).where(
+                ReleaseArtworkRecord.release_mbid.in_(release_ids),
+                ReleaseArtworkRecord.state == 'ready',
+                ReleaseArtworkRecord.path.is_not(None),
+            )
+        )
+    }
+    return [
+        CatalogAlbum(
+            album_id,
+            album_name,
+            len(record_ids),
+            artwork_urls.get(album_id) if album_id is not None else None,
+        )
+        for (album_id, album_name), record_ids in sorted(
+            groups.items(), key=lambda item: (item[0][1], item[0][0] or '')
+        )
+    ]
+
+
+def library_album_tracks(
+    session: Session,
+    artist_name: str,
+    *,
+    album_id: str | None = None,
+    album_name: str | None = None,
+    published: bool | None = None,
+) -> list[CatalogTrack]:
+    """Load minimal Final/Original track data for one exact artist and album."""
+    tracks: list[CatalogTrack] = []
+    for source in _catalog_source_tags(session, published):
+        album_value = source.tags.get('ALBUM', '')
+        if artist_name not in _catalog_artists(source.tags):
+            continue
+        if album_id is not None and source.release_id != album_id:
+            continue
+        if album_name is not None and (source.release_id is not None or album_value != album_name):
+            continue
+        tracks.append(
+            CatalogTrack(
+                record_id=source.record_id,
+                source_id=source.source_id,
+                release_id=source.release_id,
+                publication_state=source.publication_state,
+                artist_name=artist_name,
+                album_name=album_value,
+                title=source.tags.get('TITLE', ''),
+                track_number=source.tags.get('TRACKNUMBER'),
+            )
+        )
+    return tracks

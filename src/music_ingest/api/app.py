@@ -5,9 +5,9 @@ import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Annotated, Protocol, cast
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, select
@@ -27,7 +27,21 @@ from music_ingest.dto import (
     FullReprocessResponse,
     GenreCatalogItemResponse,
     GenreCatalogResponse,
+    LibraryAlbumListResponse,
+    LibraryAlbumResponse,
+    LibraryArtistListResponse,
+    LibraryArtistResponse,
+    LibraryCatalogQuery,
     LibraryIdentityUpdate,
+    LibraryPublicationQuery,
+    LibraryRecordListResponse,
+    LibraryRecordSummaryResponse,
+    LibraryTrackListResponse,
+    LibraryTrackQuery,
+    LibraryTrackResponse,
+    ManualActionCountsResponse,
+    ManualActionFilter,
+    ManualActionListResponse,
     ManualSourceSelection,
     MatchingSettings,
     MetadataUpdate,
@@ -58,6 +72,12 @@ from music_ingest.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.library.service import (
     append_metadata_revision,
     attach_source,
+    library_active_record_count,
+    library_album_tracks,
+    library_artist_albums,
+    library_artist_names,
+    library_manual_action_counts,
+    library_manual_action_records,
     library_record_detail,
     library_records,
     record_event,
@@ -191,6 +211,70 @@ def _catalog_sort_key(record: LibraryRecord) -> tuple[str, str, int, str, str, s
         tags.get('TITLE', '').strip().casefold(),
         record.id,
         source.id,
+    )
+
+
+def _catalog_record_response(session: Session, record: LibraryRecord) -> LibraryRecordSummaryResponse:
+    return LibraryRecordSummaryResponse.model_validate(
+        {
+            'record_id': record.id,
+            'musicbrainz_recording_id': record.musicbrainz_recording_id,
+            'musicbrainz_release_id': record.musicbrainz_release_id,
+            'musicbrainz_artist_id': record.musicbrainz_artist_id,
+            'artwork': (
+                {
+                    'url': f'/api/library/release-artwork/{record.musicbrainz_release_id}',
+                    'state': artwork.state,
+                }
+                if record.musicbrainz_release_id is not None
+                and (artwork := session.get(ReleaseArtworkRecord, record.musicbrainz_release_id)) is not None
+                and artwork.state == 'ready'
+                and artwork.path is not None
+                and Path(artwork.path).is_file()
+                else None
+            ),
+            'source_state': record.source_state,
+            'processing_state': record.processing_state,
+            'match_state': record.match_state,
+            'publication_state': record.publication_state,
+            'metadata_state': record.metadata_state,
+            'metadata_revisions': [
+                {
+                    'source_id': revision.source_id,
+                    'layer': revision.layer,
+                    'revision': revision.revision,
+                    'tags': json.loads(revision.tags_json),
+                }
+                for revision in record.metadata_revisions
+            ],
+            'sources': [
+                {
+                    'source_id': source.id,
+                    'path': source.source_path,
+                    'format': source.source_path.rsplit('.', maxsplit=1)[-1],
+                    'sha256': source.sha256,
+                    'state': source.intake_state,
+                    'tag_observations': [
+                        {'name': tag.tag_name, 'value': tag.value, 'format': tag.format_name}
+                        for tag in source.tag_observations
+                    ],
+                    'disappeared_at': source.disappeared_at.isoformat() if source.disappeared_at is not None else None,
+                }
+                for source in record.sources
+            ],
+            'publications': [
+                {
+                    'publication_id': publication.id,
+                    'source_id': publication.source_id,
+                    'path': publication.path,
+                    'format': publication.format_name,
+                    'sha256': publication.content_sha256,
+                    'state': publication.state,
+                    'created_at': publication.created_at.isoformat(),
+                }
+                for publication in record.publications
+            ],
+        }
     )
 
 
@@ -812,78 +896,84 @@ def create_app(
             session.commit()
         return ProviderRetryResult(queued=queued)
 
-    @app.get('/api/library/records')
-    def library_catalog() -> JSONResponse:
+    @app.get('/api/library/artists', response_model=LibraryArtistListResponse)
+    def library_artists(
+        query: Annotated[LibraryPublicationQuery, Query()],
+    ) -> LibraryArtistListResponse:
+        with session_factory() as session:
+            return LibraryArtistListResponse(
+                items=tuple(
+                    LibraryArtistResponse(name=artist.name, track_count=artist.track_count)
+                    for artist in library_artist_names(session, query.published)
+                ),
+                total_track_count=library_active_record_count(session, query.published),
+            )
+
+    @app.get('/api/library/albums', response_model=LibraryAlbumListResponse)
+    def library_albums(
+        query: Annotated[LibraryCatalogQuery, Query()],
+    ) -> LibraryAlbumListResponse:
+        with session_factory() as session:
+            return LibraryAlbumListResponse(
+                items=tuple(
+                    LibraryAlbumResponse(
+                        album_id=album.album_id,
+                        album_name=album.album_name,
+                        track_count=album.track_count,
+                        artwork_url=album.artwork_url,
+                    )
+                    for album in library_artist_albums(session, query.artist, published=query.published)
+                )
+            )
+
+    @app.get('/api/library/tracks', response_model=LibraryTrackListResponse)
+    def library_tracks(
+        query: Annotated[LibraryTrackQuery, Query()],
+    ) -> LibraryTrackListResponse:
+        with session_factory() as session:
+            return LibraryTrackListResponse(
+                items=tuple(
+                    LibraryTrackResponse(
+                        record_id=track.record_id,
+                        source_id=track.source_id,
+                        artist_name=track.artist_name,
+                        album_name=track.album_name,
+                        album_id=query.album_id,
+                        title=track.title,
+                        track_number=track.track_number,
+                        publication_state=track.publication_state,
+                    )
+                    for track in library_album_tracks(
+                        session,
+                        query.artist,
+                        album_id=query.album_id,
+                        album_name=query.album_name,
+                        published=query.published,
+                    )
+                )
+            )
+
+    @app.get('/api/library/records', response_model=LibraryRecordListResponse)
+    def library_catalog() -> LibraryRecordListResponse:
         with session_factory() as session:
             records = sorted(library_records(session), key=_catalog_sort_key)
-            return JSONResponse(
-                content={
-                    'items': [
-                        {
-                            'record_id': record.id,
-                            'musicbrainz_recording_id': record.musicbrainz_recording_id,
-                            'musicbrainz_release_id': record.musicbrainz_release_id,
-                            'musicbrainz_artist_id': record.musicbrainz_artist_id,
-                            'artwork': (
-                                {
-                                    'url': f'/api/library/release-artwork/{record.musicbrainz_release_id}',
-                                    'state': artwork.state,
-                                }
-                                if record.musicbrainz_release_id is not None
-                                and (artwork := session.get(ReleaseArtworkRecord, record.musicbrainz_release_id))
-                                is not None
-                                and artwork.state == 'ready'
-                                and artwork.path is not None
-                                and Path(artwork.path).is_file()
-                                else None
-                            ),
-                            'source_state': record.source_state,
-                            'processing_state': record.processing_state,
-                            'match_state': record.match_state,
-                            'publication_state': record.publication_state,
-                            'metadata_state': record.metadata_state,
-                            'metadata_revisions': [
-                                {
-                                    'source_id': revision.source_id,
-                                    'layer': revision.layer,
-                                    'revision': revision.revision,
-                                    'tags': json.loads(revision.tags_json),
-                                }
-                                for revision in record.metadata_revisions
-                            ],
-                            'sources': [
-                                {
-                                    'source_id': source.id,
-                                    'path': source.source_path,
-                                    'format': source.source_path.rsplit('.', maxsplit=1)[-1],
-                                    'sha256': source.sha256,
-                                    'state': source.intake_state,
-                                    'tag_observations': [
-                                        {'name': tag.tag_name, 'value': tag.value, 'format': tag.format_name}
-                                        for tag in source.tag_observations
-                                    ],
-                                    'disappeared_at': source.disappeared_at.isoformat()
-                                    if source.disappeared_at is not None
-                                    else None,
-                                }
-                                for source in record.sources
-                            ],
-                            'publications': [
-                                {
-                                    'publication_id': publication.id,
-                                    'source_id': publication.source_id,
-                                    'path': publication.path,
-                                    'format': publication.format_name,
-                                    'sha256': publication.content_sha256,
-                                    'state': publication.state,
-                                    'created_at': publication.created_at.isoformat(),
-                                }
-                                for publication in record.publications
-                            ],
-                        }
-                        for record in records
-                    ]
-                }
+            return LibraryRecordListResponse(
+                items=tuple(_catalog_record_response(session, record) for record in records)
+            )
+
+    @app.get('/api/library/manual-actions', response_model=ManualActionListResponse)
+    def manual_actions(
+        action: Annotated[ManualActionFilter, Query()] = 'analysis-error',
+    ) -> ManualActionListResponse:
+        with session_factory() as session:
+            analysis_error_count, needs_review_count = library_manual_action_counts(session)
+            records = sorted(library_manual_action_records(session, action), key=_catalog_sort_key)
+            return ManualActionListResponse(
+                items=tuple(_catalog_record_response(session, record) for record in records),
+                counts=ManualActionCountsResponse(
+                    analysis_error=analysis_error_count,
+                    needs_review=needs_review_count,
+                ),
             )
 
     @app.get('/api/library/release-artwork/{release_mbid}')
