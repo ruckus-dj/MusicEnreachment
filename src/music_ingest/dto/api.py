@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MatchingSettings(BaseModel):
@@ -153,6 +153,128 @@ class LibraryIdentityUpdate(BaseModel):
     musicbrainz_recording_id: str = Field(
         pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
     )
+
+
+class LibraryPublicationQuery(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    published: bool | None = None
+
+
+class LibraryCatalogQuery(LibraryPublicationQuery):
+    artist: str = Field(min_length=1, max_length=1024)
+
+
+class LibraryTrackQuery(LibraryCatalogQuery):
+    album_id: str | None = Field(default=None, min_length=1, max_length=255)
+    album_name: str | None = Field(default=None, min_length=1, max_length=1024)
+
+    @model_validator(mode='after')
+    def require_one_album_selector(self) -> LibraryTrackQuery:
+        if (self.album_id is None) == (self.album_name is None):
+            raise ValueError('exactly one of album_id or album_name is required')
+        return self
+
+
+class LibraryArtistResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    track_count: int = Field(ge=0)
+
+
+class LibraryArtistListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[LibraryArtistResponse, ...]
+    total_track_count: int = Field(ge=0)
+
+
+class LibraryAlbumResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    album_id: str | None
+    album_name: str
+    track_count: int = Field(ge=0)
+    artwork_url: str | None = None
+
+
+class LibraryAlbumListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[LibraryAlbumResponse, ...]
+
+
+class LibraryTrackResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    record_id: str
+    source_id: str
+    artist_name: str
+    album_name: str
+    album_id: str | None
+    title: str
+    track_number: str | None
+    publication_state: str
+
+
+class LibraryTrackListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[LibraryTrackResponse, ...]
+
+
+class LibraryRecordSourceResponse(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    source_id: str
+    path: str
+    format: str
+    sha256: str
+    state: str
+    tag_observations: tuple[dict[str, str], ...] = ()
+    disappeared_at: str | None = None
+
+
+class LibraryRecordSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra='ignore', frozen=True)
+
+    record_id: str
+    musicbrainz_recording_id: str | None = None
+    musicbrainz_release_id: str | None = None
+    musicbrainz_artist_id: str | None = None
+    artwork: dict[str, str] | None = None
+    source_state: str
+    processing_state: str
+    match_state: str
+    publication_state: str
+    metadata_state: str
+    metadata_revisions: tuple[dict[str, object], ...] = ()
+    sources: tuple[LibraryRecordSourceResponse, ...]
+    publications: tuple[dict[str, object], ...] = ()
+
+
+class LibraryRecordListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[LibraryRecordSummaryResponse, ...]
+
+
+ManualActionFilter = Literal['analysis-error', 'needs-review']
+
+
+class ManualActionCountsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    analysis_error: int
+    needs_review: int
+
+
+class ManualActionListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[LibraryRecordSummaryResponse, ...]
+    counts: ManualActionCountsResponse
 
 
 class MetadataUpdate(BaseModel):
