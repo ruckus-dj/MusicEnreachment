@@ -70,7 +70,7 @@ export type CatalogAlbum = {
   readonly artworkUrl: string | null;
 };
 
-function catalogSource(item: Summary): Source | undefined {
+export function catalogSource(item: Summary): Source | undefined {
   const currentPublication = item.publications.find(
     (publication) => publication.state === "current",
   );
