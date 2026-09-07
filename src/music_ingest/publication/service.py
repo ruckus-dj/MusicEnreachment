@@ -156,6 +156,11 @@ def _merge_release(source: Path, destination: Path, request: PublicationRequest)
         raise PublicationError('a publication must contain exactly one audio track')
     staged_audio = audio_paths[0]
     target_name = request.destination_audio_name or staged_audio.name
+    # Deliberate: match by stem only, not by full name (extension included). A prior publication of
+    # this track under a different container extension (e.g. a stale ".opus" before a codec change
+    # produced ".mka") is intentionally removed here too, so a merge never leaves two audio files for
+    # the same track behind. _validate_release below still enforces the allowed extension policy on
+    # what gets copied in.
     for existing in destination.iterdir() if destination.exists() else ():
         if (
             existing.is_file()

@@ -1053,6 +1053,10 @@ class ProcessingWorker:
             provider_job = 'acoustid_analysis' if configured_acoustid is not None else 'musicbrainz_analysis'
             _ = JobRepository(self._session).enqueue(source.id, provider_job, now)
         if not written_tags:
+            # Deliberate: initial publication is not gated on having any tags at all. The audio is
+            # already published above so it is reviewable immediately; this event only flags that
+            # metadata still needs to be supplied, matching the "keep unresolved matches reviewable
+            # rather than blocking" policy rather than a stricter "no publication without tags" rule.
             record_event(
                 self._session,
                 record.id,
