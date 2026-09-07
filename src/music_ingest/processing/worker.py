@@ -702,19 +702,34 @@ class ProcessingWorker:
         ):
             self._retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
             return True
+        # Exception -> action table. Every processing failure lands in exactly one of these three
+        # buckets:
+        #   - retry: transient/infrastructure failures, or errors whose cause is not yet diagnosed.
+        #     The job is retried up to its attempt limit.
+        #   - invalid_audio: the source audio itself is corrupt (decoder evidence is captured first).
+        #   - quarantine: the source's audio decodes but fails validation or lacks usable metadata
+        #     (decoder evidence is captured first when available).
         try:
             with self._session.begin_nested():
                 self._process(claimed, now)
-        except MetadataWriteError as error:
-            self._retry_claim(claimed, str(error), now, error)
-        except ProcessingInfrastructureError as error:
+        except (
+            MetadataWriteError,
+            ProcessingInfrastructureError,
+            PipelineOutputFailure,
+            MediaPipelineInfrastructureError,
+            RemuxFailure,
+            OSError,
+            PublicationError,
+            FlacSanitizationFailure,
+            CalledProcessError,
+            TimeoutExpired,
+            ValueError,
+        ) as error:
             self._retry_claim(claimed, str(error), now, error)
         except SourceAudioCorruptionError as error:
             source = self._source(claimed)
             self._record_decoder_evidence(source, error.source_evidence, now)
             self._invalid_audio(claimed, source, str(error), now, error)
-        except (PipelineOutputFailure, MediaPipelineInfrastructureError, RemuxFailure) as error:
-            self._retry_claim(claimed, str(error), now, error)
         except DecoderValidationError as error:
             source = self._source(claimed)
             if error.evidence is not None:
@@ -723,16 +738,6 @@ class ProcessingWorker:
         except SourceMetadataError as error:
             source = self._source(claimed)
             self._quarantine(claimed, source, str(error), now, error)
-        except (
-            OSError,
-            PublicationError,
-            FlacSanitizationFailure,
-            CalledProcessError,
-            TimeoutExpired,
-        ) as error:
-            self._retry_claim(claimed, str(error), now, error)
-        except ValueError as error:
-            self._retry_claim(claimed, str(error), now, error)
         except Exception as error:  # noqa: BLE001
             self._retry_claim(claimed, f'unexpected processing error: {error}', now, error)
         finally:
