@@ -941,6 +941,10 @@ class ProcessingWorker:
         )
         unsorted_destination = relative_directory == 'Unsorted' and current_publication is None
         if unsorted_destination:
+            # Two-stage naming: the durable Unsorted filename is only allocated below, after
+            # process_media() has produced output, because allocation must not reserve a name for
+            # audio that could still fail to stage. Use a job-scoped hidden name as the pipeline's
+            # working output name in the meantime; it is never exposed to callers.
             output_name = f'.{claimed.job.id}.mka'
         pipeline_result = process_media(
             MediaPipelineRequest(
@@ -961,6 +965,8 @@ class ProcessingWorker:
         written_tags = pipeline_result.written_tags
         self._session.flush()
         if unsorted_destination:
+            # Staging succeeded; now allocate the real, durable Unsorted filename to replace the
+            # hidden working name chosen above.
             output_name = self._allocate_unsorted_filename('.mka')
         target_audio = destination_release / output_name
         path_owner = self._session.scalar(
