@@ -232,6 +232,71 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     return tags
 
 
+def _score_components_evidence(unified_score: CandidateScore) -> dict[str, float | bool | None]:
+    return {
+        'artist': unified_score.artist_component,
+        'release': unified_score.release_component,
+        'title': unified_score.title_component,
+        'duration': unified_score.duration_component,
+        'track': unified_score.track_component,
+        'track_number': unified_score.track_number_component,
+        'track_total': unified_score.track_total_component,
+        'disc_number': unified_score.disc_number_component,
+        'disc_total': unified_score.disc_total_component,
+        'musicbrainz': unified_score.musicbrainz_component,
+        'acoustid': unified_score.acoustid_component,
+        'artist_match': unified_score.artist_match,
+        'release_match': unified_score.release_match,
+        'duration_match': unified_score.duration_match,
+        'title_match': unified_score.title_match,
+        'track_number_match': unified_score.track_number_match,
+        'track_total_match': unified_score.track_total_match,
+        'disc_number_match': unified_score.disc_number_match,
+        'disc_total_match': unified_score.disc_total_match,
+        'musicbrainz_match': unified_score.musicbrainz_match,
+        'acoustid_match': unified_score.acoustid_match,
+        'recording_artist': unified_score.recording_artist_component,
+        'release_artist': unified_score.release_artist_component,
+        'recording_artist_match': unified_score.recording_artist_match,
+        'release_artist_match': unified_score.release_artist_match,
+    }
+
+
+def _candidate_evidence(
+    recording_candidate: ReleaseCandidate,
+    recording_mbid: str,
+    request: MatchingRequest | None,
+    source: SourceRecord | None,
+) -> dict[str, object]:
+    unified_score = (
+        score_recording_release_candidate(
+            request,
+            recording_candidate,
+            None if source is None else _acoustid_recording_score(source, recording_mbid),
+        )
+        if request is not None
+        else None
+    )
+    return {
+        'provider': 'musicbrainz',
+        'entity': 'recording_release',
+        'artist': '; '.join(recording_candidate.recording_artist_names) or recording_candidate.artist_name,
+        'release': recording_candidate.release_title,
+        'title': recording_candidate.recording_title or '',
+        'album': recording_candidate.release_title,
+        'score': None if unified_score is None else unified_score.score,
+        'duration_seconds': recording_candidate.duration_seconds,
+        'musicbrainz_score': None
+        if recording_candidate.musicbrainz_score is None
+        else recording_candidate.musicbrainz_score / 100.0,
+        'score_components': None if unified_score is None else _score_components_evidence(unified_score),
+        'release_mbid': recording_candidate.release_mbid,
+        'recording_mbid': recording_mbid,
+        'compatible_ids': (),
+        'tags': _candidate_tags(recording_candidate),
+    }
+
+
 def _candidate_records(
     source_id: str,
     candidate: ReleaseCandidate,
@@ -240,74 +305,18 @@ def _candidate_records(
     source: SourceRecord | None = None,
 ) -> tuple[CandidateRecord, ...]:
     recording_candidates = candidate.recording_candidates or (candidate,)
-    return tuple(
-        CandidateRecord(
-            source_id=source_id,
-            candidate_key=f'{recording_candidate.release_mbid}:{recording_mbid}',
-            evidence=json.dumps(
-                {
-                    'provider': 'musicbrainz',
-                    'entity': 'recording_release',
-                    'artist': '; '.join(recording_candidate.recording_artist_names) or recording_candidate.artist_name,
-                    'release': recording_candidate.release_title,
-                    'title': recording_candidate.recording_title or '',
-                    'album': recording_candidate.release_title,
-                    'score': None if unified_score is None else unified_score.score,
-                    'duration_seconds': recording_candidate.duration_seconds,
-                    'musicbrainz_score': None
-                    if recording_candidate.musicbrainz_score is None
-                    else recording_candidate.musicbrainz_score / 100.0,
-                    'score_components': (
-                        None
-                        if unified_score is None
-                        else {
-                            'artist': unified_score.artist_component,
-                            'release': unified_score.release_component,
-                            'title': unified_score.title_component,
-                            'duration': unified_score.duration_component,
-                            'track': unified_score.track_component,
-                            'track_number': unified_score.track_number_component,
-                            'track_total': unified_score.track_total_component,
-                            'disc_number': unified_score.disc_number_component,
-                            'disc_total': unified_score.disc_total_component,
-                            'musicbrainz': unified_score.musicbrainz_component,
-                            'acoustid': unified_score.acoustid_component,
-                            'artist_match': unified_score.artist_match,
-                            'release_match': unified_score.release_match,
-                            'duration_match': unified_score.duration_match,
-                            'title_match': unified_score.title_match,
-                            'track_number_match': unified_score.track_number_match,
-                            'track_total_match': unified_score.track_total_match,
-                            'disc_number_match': unified_score.disc_number_match,
-                            'disc_total_match': unified_score.disc_total_match,
-                            'musicbrainz_match': unified_score.musicbrainz_match,
-                            'acoustid_match': unified_score.acoustid_match,
-                            'recording_artist': unified_score.recording_artist_component,
-                            'release_artist': unified_score.release_artist_component,
-                            'recording_artist_match': unified_score.recording_artist_match,
-                            'release_artist_match': unified_score.release_artist_match,
-                        }
-                    ),
-                    'release_mbid': recording_candidate.release_mbid,
-                    'recording_mbid': recording_mbid,
-                    'compatible_ids': (),
-                    'tags': _candidate_tags(recording_candidate),
-                },
-                sort_keys=True,
-            ),
-        )
-        for recording_candidate in recording_candidates
-        for recording_mbid in recording_candidate.recording_mbids
-        for unified_score in (
-            score_recording_release_candidate(
-                request,
-                recording_candidate,
-                None if source is None else _acoustid_recording_score(source, recording_mbid),
+    records: list[CandidateRecord] = []
+    for recording_candidate in recording_candidates:
+        for recording_mbid in recording_candidate.recording_mbids:
+            evidence = _candidate_evidence(recording_candidate, recording_mbid, request, source)
+            records.append(
+                CandidateRecord(
+                    source_id=source_id,
+                    candidate_key=f'{recording_candidate.release_mbid}:{recording_mbid}',
+                    evidence=json.dumps(evidence, sort_keys=True),
+                )
             )
-            if request is not None
-            else None,
-        )
-    )
+    return tuple(records)
 
 
 def _latest_candidate_run(source: SourceRecord, provider: str) -> ProviderCandidateRunRecord | None:
