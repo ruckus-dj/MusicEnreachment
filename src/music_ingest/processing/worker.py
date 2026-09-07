@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -338,6 +338,20 @@ def _acoustid_recording_score(source: SourceRecord, recording_mbid: str) -> floa
     return None
 
 
+def _unique_top_scored[T](items: Sequence[T], score: Callable[[T], float]) -> T | None:
+    """Return the single item with the highest score, or None if no items or the top score ties."""
+    if not items:
+        return None
+    best_score = max(score(item) for item in items)
+    leaders = tuple(item for item in items if score(item) == best_score)
+    return leaders[0] if len(leaders) == 1 else None
+
+
+def _single_qualified[T](items: Sequence[T]) -> T | None:
+    """Return the one item that qualified, or None if zero or more than one did."""
+    return items[0] if len(items) == 1 else None
+
+
 def _single_scored_candidate(
     source: SourceRecord, provider: str, confidence_threshold: float
 ) -> tuple[str, CandidateEvidencePayload] | None:
@@ -357,11 +371,11 @@ def _single_scored_candidate(
         for candidate_key, evidence in candidates_by_key.items()
         if evidence.score is not None and evidence.score >= confidence_threshold
     )
-    if not qualified:
-        return None
-    best_score = max(evidence.score or 0.0 for _, evidence in qualified)
-    leaders = tuple(candidate for candidate in qualified if (candidate[1].score or 0.0) == best_score)
-    return leaders[0] if len(leaders) == 1 else None
+
+    def _candidate_score(candidate: tuple[str, CandidateEvidencePayload]) -> float:
+        return candidate[1].score or 0.0
+
+    return _unique_top_scored(qualified, _candidate_score)
 
 
 def _single_scored_recording_candidate(
@@ -410,7 +424,7 @@ def _single_scored_recording_candidate(
         for recording_mbid, candidate in ranked_candidates.items()
         if candidate[0] >= confidence_threshold
     )
-    return qualified[0] if len(qualified) == 1 else None
+    return _single_qualified(qualified)
 
 
 def _stored_match_tags(
@@ -499,11 +513,11 @@ def _unique_acoustid_album_match(
         for candidate_match in candidate_matches
         if candidate_match[1].decision is MatchDecision.AUTO_SELECTED
     )
-    if not automatic_matches:
-        return None
-    best_score = max(match[1].release_score.score for match in automatic_matches)
-    best_matches = tuple(match for match in automatic_matches if match[1].release_score.score == best_score)
-    return best_matches[0] if len(best_matches) == 1 else None
+
+    def _match_score(match: tuple[ProviderEvidenceResult, MatchResult]) -> float:
+        return match[1].release_score.score
+
+    return _unique_top_scored(automatic_matches, _match_score)
 
 
 def _unique_acoustid_recording_match(
@@ -513,7 +527,7 @@ def _unique_acoustid_recording_match(
     qualified_matches = tuple(
         candidate_match for candidate_match in candidate_matches if candidate_match[1].score >= confidence_threshold
     )
-    return qualified_matches[0] if len(qualified_matches) == 1 else None
+    return _single_qualified(qualified_matches)
 
 
 def select_acoustid_recording_match(
