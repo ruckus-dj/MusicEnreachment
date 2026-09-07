@@ -64,38 +64,40 @@ class _ScoreFactor:
     available: bool
 
 
+def _components_for(component: ScoreComponent) -> frozenset[ScoreComponent]:
+    """The factor components that roll up into a given reported component."""
+    if component is ScoreComponent.TRACK:
+        return _POSITION_COMPONENTS
+    if component is ScoreComponent.ARTIST:
+        return frozenset({ScoreComponent.RECORDING_ARTIST, ScoreComponent.RELEASE_ARTIST})
+    return frozenset({component})
+
+
+def _weighted_average(factors: tuple[_ScoreFactor, ...]) -> float | None:
+    """The weight-averaged value of the given factors, or None if they carry no weight."""
+    weight = sum(factor.weight for factor in factors)
+    return sum(factor.value * factor.weight for factor in factors) / weight if weight else None
+
+
 def _weighted_score(factors: tuple[_ScoreFactor, ...]) -> tuple[float, int]:
-    total_weight = sum(factor.weight for factor in factors if factor.available)
-    score = sum(factor.value * factor.weight for factor in factors if factor.available)
-    return (max(0.0, score / total_weight) if total_weight else 0.0), total_weight
+    available = tuple(factor for factor in factors if factor.available)
+    total_weight = sum(factor.weight for factor in available)
+    average = _weighted_average(available)
+    return (max(0.0, average) if average is not None else 0.0), total_weight
 
 
 def _component_score(factors: tuple[_ScoreFactor, ...], component: ScoreComponent, total_weight: int) -> float:
-    components = (
-        _POSITION_COMPONENTS
-        if component is ScoreComponent.TRACK
-        else {ScoreComponent.RECORDING_ARTIST, ScoreComponent.RELEASE_ARTIST}
-        if component is ScoreComponent.ARTIST
-        else {component}
-    )
-    return sum(
-        factor.value * factor.weight / total_weight
-        for factor in factors
-        if factor.available and factor.component in components and total_weight
-    )
+    if not total_weight:
+        return 0.0
+    components = _components_for(component)
+    matching = tuple(factor for factor in factors if factor.available and factor.component in components)
+    return sum(factor.value * factor.weight for factor in matching) / total_weight
 
 
 def _component_match(factors: tuple[_ScoreFactor, ...], component: ScoreComponent) -> float | None:
-    components = (
-        _POSITION_COMPONENTS
-        if component is ScoreComponent.TRACK
-        else {ScoreComponent.RECORDING_ARTIST, ScoreComponent.RELEASE_ARTIST}
-        if component is ScoreComponent.ARTIST
-        else {component}
-    )
+    components = _components_for(component)
     matching = tuple(factor for factor in factors if factor.available and factor.component in components)
-    weight = sum(factor.weight for factor in matching)
-    return sum(factor.value * factor.weight for factor in matching) / weight if weight else None
+    return _weighted_average(matching)
 
 
 @dataclass(frozen=True, slots=True)
