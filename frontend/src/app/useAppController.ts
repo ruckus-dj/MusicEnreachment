@@ -833,12 +833,28 @@ export function useAppController(): AppControllerModel {
     void loadLibrary();
   }, [album, artist, manualActionFilter, publicationFilter, recordId, screen]);
   useEffect(() => {
+    const MIN_POLL_DELAY_MS = 1_000;
+    const MAX_POLL_DELAY_MS = 15_000;
     let busy = false;
+    let cancelled = false;
+    let delay = MIN_POLL_DELAY_MS;
+    let timer = 0;
+    const scheduleNext = () => {
+      if (!cancelled) timer = window.setTimeout(() => void poll(), delay);
+    };
     const poll = async () => {
-      if (busy || document.visibilityState === "hidden") return;
+      if (busy || document.visibilityState === "hidden") {
+        scheduleNext();
+        return;
+      }
       busy = true;
+      let hadActiveWork = false;
       try {
         const libraryWatchActive = watchedLibraryUntilRef.current > 0;
+        hadActiveWork =
+          scanJobId !== null ||
+          libraryWatchActive ||
+          Object.keys(watchedRecordsRef.current).length > 0;
         if (scanJobId !== null) {
           const job = await api<ScanJob>(
             `/api/reconciliation/scan/${encodeURIComponent(scanJobId)}`,
@@ -904,9 +920,14 @@ export function useAppController(): AppControllerModel {
       } finally {
         busy = false;
       }
+      delay = hadActiveWork ? MIN_POLL_DELAY_MS : Math.min(MAX_POLL_DELAY_MS, delay * 1.5);
+      scheduleNext();
     };
-    const timer = window.setInterval(() => void poll(), 1000);
-    return () => window.clearInterval(timer);
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [scanJobId]);
   useEffect(() => {
     if ((screen === "settings" || screen === "track") && !settingsDraft && !settingsLoading)
