@@ -8,7 +8,7 @@ from threading import Barrier, Event
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
@@ -176,6 +176,79 @@ def test_selection_refresh_when_two_workers_race_preserves_lock_and_event_order(
             assert [(event.kind, event.state) for event in events] == [
                 ('selection_refresh_no_eligible_source', 'complete')
             ]
+        engine.dispose()
+
+
+@pytest.mark.live
+def test_process_analysis_source_lock_when_two_transactions_target_one_source_blocks_second_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: two independent PostgreSQL transactions racing to lock the same source record the way
+    # _process_analysis does before reading and mutating its candidates.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(
+                SourceRootRecord(
+                    id='root-race',
+                    display_name='Incoming',
+                    canonical_path='/incoming',
+                    enabled=True,
+                    scan_state='scanned',
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                SourceRecord(
+                    id='source-race',
+                    source_path='/incoming/song.flac',
+                    device=1,
+                    inode=2,
+                    size_bytes=3,
+                    sha256='a' * 64,
+                    origin='manual',
+                    intake_state='present',
+                    source_root_id='root-race',
+                )
+            )
+            session.commit()
+        holder_acquired = Event()
+        release_holder = Event()
+        contender_acquired = Event()
+
+        def hold_source_lock() -> None:
+            with Session(engine) as session:
+                _ = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
+                holder_acquired.set()
+                assert release_holder.wait(timeout=5)
+                session.commit()
+
+        def acquire_contended_lock() -> None:
+            assert holder_acquired.wait(timeout=5)
+            with Session(engine) as session:
+                _ = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
+                contender_acquired.set()
+                session.rollback()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            holder = executor.submit(hold_source_lock)
+            assert holder_acquired.wait(timeout=5)
+            contender = executor.submit(acquire_contended_lock)
+
+            # When: the second transaction requests the same source record before the first commits.
+            assert not contender_acquired.wait(timeout=0.1)
+            release_holder.set()
+            holder.result(timeout=5)
+
+            # Then: it acquires the row lock only after the first transaction releases it, so
+            # concurrent job kinds targeting the same source can no longer interleave unguarded.
+            contender.result(timeout=5)
+            assert contender_acquired.is_set()
         engine.dispose()
 
 

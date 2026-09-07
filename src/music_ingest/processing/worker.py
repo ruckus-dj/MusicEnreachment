@@ -1059,6 +1059,7 @@ class ProcessingWorker:
 
     def _process_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._source(claimed)
+        _ = self._session.scalar(select(SourceRecord).where(SourceRecord.id == source.id).with_for_update())
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
