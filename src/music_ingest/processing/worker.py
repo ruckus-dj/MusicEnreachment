@@ -755,33 +755,30 @@ class ProcessingWorker:
                 claimed.job.state = 'superseded'
                 claimed.job.next_attempt_at = None
                 return
+        handlers: dict[str, Callable[[ClaimedJob, datetime], None]] = {
+            'selection_refresh': self._process_selection_refresh,
+            'candidate_selection': self._process_candidate_selection,
+            'acoustid_analysis': self._process_analysis,
+            'musicbrainz_analysis': self._process_analysis,
+            'folder_release_selection': self._process_folder_release_selection,
+            'final_publish': self._process_final_publish,
+            'artwork_enrichment': self._process_artwork_enrichment,
+        }
         if claimed.job.kind == 'reconciliation_scan':
-            snapshot = load_reconciliation_snapshot(self._session, now)
-            plan = plan_reconciliation(snapshot)
-            claimed.job.result_json = apply_reconciliation_plan(self._session, plan, now).model_dump_json()
+            self._process_reconciliation_scan(claimed, now)
             return
-        if claimed.job.kind == 'selection_refresh':
-            self._process_selection_refresh(claimed, now)
-            return
-        if claimed.job.kind == 'candidate_selection':
-            self._process_candidate_selection(claimed, now)
-            return
-        if claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}:
-            self._process_analysis(claimed, now)
-            return
-        if claimed.job.kind == 'folder_release_selection':
-            self._process_folder_release_selection(claimed, now)
-            return
-        if claimed.job.kind == 'final_publish':
-            self._process_final_publish(claimed, now)
-            return
-        if claimed.job.kind == 'artwork_enrichment':
-            self._process_artwork_enrichment(claimed, now)
+        if handler := handlers.get(claimed.job.kind):
+            handler(claimed, now)
             return
         if claimed.job.kind in _INITIAL_JOB_KINDS:
             self._process_initial(claimed, now)
             return
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')
+
+    def _process_reconciliation_scan(self, claimed: ClaimedJob, now: datetime) -> None:
+        snapshot = load_reconciliation_snapshot(self._session, now)
+        plan = plan_reconciliation(snapshot)
+        claimed.job.result_json = apply_reconciliation_plan(self._session, plan, now).model_dump_json()
 
     def _process_selection_refresh(self, claimed: ClaimedJob, now: datetime) -> None:
         record_id = claimed.job.library_record_id
