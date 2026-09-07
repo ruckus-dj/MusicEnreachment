@@ -436,6 +436,66 @@ def _config(tmp_path: Path) -> ProcessingConfig:
     )
 
 
+def test_locked_source_refreshes_an_already_loaded_source_record(tmp_path: Path) -> None:
+    # Given: this worker session loaded a source before another transaction updated it.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "locked-source.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as seed_session:
+        seed_session.add(
+            SourceRootRecord(
+                id='root',
+                display_name='Incoming',
+                canonical_path=str(tmp_path),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        seed_session.add(
+            SourceRecord(
+                id='source',
+                source_path='/incoming/stale.flac',
+                device=1,
+                inode=2,
+                size_bytes=3,
+                sha256='a' * 64,
+                origin='manual',
+                intake_state='present',
+                source_root_id='root',
+            )
+        )
+        seed_session.commit()
+
+    with Session(engine) as worker_session:
+        stale_source = worker_session.get(SourceRecord, 'source')
+        assert stale_source is not None and stale_source.source_path == '/incoming/stale.flac'
+        with Session(engine) as concurrent_session:
+            concurrent_source = concurrent_session.get(SourceRecord, 'source')
+            assert concurrent_source is not None
+            concurrent_source.source_path = '/incoming/fresh.flac'
+            concurrent_session.commit()
+
+        claimed = ClaimedJob(
+            JobRecord(
+                id='analysis-job',
+                source_id='source',
+                kind='musicbrainz_analysis',
+                state='running',
+                created_at=now,
+            ),
+            JobAttemptRecord(job_id='analysis-job', attempt_number=1, state='running'),
+        )
+
+        # When: analysis loads its source under the row lock.
+        locked_source = ProcessingWorker(worker_session, _config(tmp_path))._locked_source(claimed)
+
+        # Then: it receives the post-lock database state, not the identity-map snapshot from before it.
+        assert locked_source is stale_source
+        assert locked_source.source_path == '/incoming/fresh.flac'
+
+
 def test_initial_job_without_identity_defers_before_media_staging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

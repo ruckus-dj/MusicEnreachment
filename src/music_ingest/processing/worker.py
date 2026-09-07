@@ -1096,8 +1096,7 @@ class ProcessingWorker:
             )
 
     def _process_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._source(claimed)
-        _ = self._session.scalar(select(SourceRecord).where(SourceRecord.id == source.id).with_for_update())
+        source = self._locked_source(claimed)
         source_path = self._owned_source_path(claimed, source, now)
         if source_path is None:
             return
@@ -1704,6 +1703,19 @@ class ProcessingWorker:
         if claimed.job.source_id is None:
             raise ValueError('processing job has no source')
         source = self._session.get(SourceRecord, claimed.job.source_id)
+        if source is None:
+            raise ValueError('processing job source is missing')
+        return source
+
+    def _locked_source(self, claimed: ClaimedJob) -> SourceRecord:
+        if claimed.job.source_id is None:
+            raise ValueError('processing job has no source')
+        source = self._session.scalar(
+            select(SourceRecord)
+            .where(SourceRecord.id == claimed.job.source_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if source is None:
             raise ValueError('processing job source is missing')
         return source
