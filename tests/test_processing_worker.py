@@ -28,7 +28,7 @@ from music_ingest.matching.providers import (
     MusicBrainzMatch,
     ReleaseCandidate,
 )
-from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
+from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, MatchResult
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -172,7 +172,7 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
         release_artist_name='Fixture Artist',
         recording_artist_names=('Fixture Artist',),
     )
-    request = processing.MatchingRequest(
+    request = MatchingRequest(
         'Fixture Artist',
         'Fixture Album',
         215,
@@ -199,7 +199,7 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
 def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lacks_entry() -> None:
     # Given: a MusicBrainz candidate has a request but no precomputed result-map entry.
     candidate = ReleaseCandidate('release-id', 'Fixture Album', 'Fixture Artist', 215, ('recording-id',))
-    request = processing.MatchingRequest('Fixture Artist', 'Fixture Album', 215)
+    request = MatchingRequest('Fixture Artist', 'Fixture Album', 215)
 
     # When: candidate evidence is persisted without an incoming release score.
     records = processing._candidate_records('source-id', candidate, None, request)
@@ -629,7 +629,7 @@ def test_musicbrainz_lookup_when_acoustid_supplies_recording_mbid_works_without_
 
     # When: the MusicBrainz stage uses the AcousticID recording MBID.
     with Session(engine) as session:
-        result = ProcessingWorker(session, config)._lookup_providers(
+        result = ProcessingWorker(session, config)._analysis.lookup_providers(
             (),
             fingerprint,
             datetime.now(UTC),
@@ -664,7 +664,7 @@ def test_musicbrainz_lookup_uses_artist_and_title_without_album(tmp_path: Path) 
 
     # When: the worker builds a provider lookup from the available source tags.
     with Session(engine) as session:
-        result = ProcessingWorker(session, config)._lookup_providers(
+        result = ProcessingWorker(session, config)._analysis.lookup_providers(
             (('ARTIST', 'Noize MC'), ('TITLE', 'Страна дождей')),
             fingerprint,
             datetime.now(UTC),
