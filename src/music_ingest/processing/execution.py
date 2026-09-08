@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from music_ingest.models.jobs import ClaimedJob
 
 if TYPE_CHECKING:
-    from music_ingest.processing.worker import ProcessingConfig
+    from music_ingest.processing.config import ProcessingConfig
 
 
 @dataclass(frozen=True, slots=True)
