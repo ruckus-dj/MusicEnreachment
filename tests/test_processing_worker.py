@@ -50,6 +50,7 @@ from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteR
 from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.processing.remux import RemuxRequest
+from music_ingest.processing.support import evidence as source_evidence
 from music_ingest.processing.worker import _latest_candidate_run, _release_candidates_for_recording
 from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
@@ -489,7 +490,7 @@ def test_locked_source_refreshes_an_already_loaded_source_record(tmp_path: Path)
         )
 
         # When: analysis loads its source under the row lock.
-        locked_source = ProcessingWorker(worker_session, _config(tmp_path))._locked_source(claimed)
+        locked_source = ProcessingWorker(worker_session, _config(tmp_path))._sources.locked_source(claimed)
 
         # Then: it receives the post-lock database state, not the identity-map snapshot from before it.
         assert locked_source is stale_source
@@ -563,7 +564,7 @@ def test_initial_job_accepts_wav_through_unified_audio_intake(tmp_path: Path, mo
     )
     assert completed.returncode == 0, completed.stderr
     fingerprint = FingerprintResult(FingerprintState.SUCCESS, 'wav-fingerprint', 0.1, 'test', 'a' * 64, None, None)
-    monkeypatch.setattr(processing, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
+    monkeypatch.setattr(source_evidence, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "wav-intake.db"}')
     Base.metadata.create_all(engine)
     now = datetime.now(UTC)

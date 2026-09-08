@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Final, final
@@ -14,28 +12,19 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
-from sqlalchemy.orm import Session, raiseload, selectinload
+from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
-from music_ingest.dto import ALLOWED_TAG_KEYS, RuntimeSettings
-from music_ingest.enrichment.artwork import (
-    ArtworkProvider,
-)
+from music_ingest.dto import ALLOWED_TAG_KEYS
 from music_ingest.enrichment.fingerprints import (
-    FingerprintRequest,
     FingerprintResult,
-    FingerprintState,
-    fingerprint_source,
     persist_fingerprint,
 )
-from music_ingest.external.acoustid import AcoustIdV2Adapter
-from music_ingest.inspectors._tool import ToolEvidence
 from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
 from music_ingest.inspectors.media_capabilities import inspect_media_capability
-from music_ingest.intake.service import IntakeRequest, Origin, SourceId, intake_source
+from music_ingest.intake.service import SourceId
 from music_ingest.library.service import (
     append_metadata_revision,
-    attach_source,
     ensure_source_record,
     library_record_detail,
     new_library_record,
@@ -44,10 +33,8 @@ from music_ingest.library.service import (
     reevaluate_effective_source_decision,
 )
 from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceResult, ProviderEvidenceService
-from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
 from music_ingest.matching.providers import (
     AcoustIdMatch,
-    AcoustIdProvider,
     AcoustIdResult,
     Ambiguous,
     Disabled,
@@ -56,7 +43,6 @@ from music_ingest.matching.providers import (
     LiveProvenance,
     Malformed,
     MusicBrainzMatch,
-    MusicBrainzProvider,
     MusicBrainzResult,
     NoMatch,
     RateLimited,
@@ -70,7 +56,6 @@ from music_ingest.matching.scoring import (
     select_folder_release,
 )
 from music_ingest.models import (
-    ArtworkRecord,
     CandidateRecord,
     EffectiveSourceDecisionRecord,
     JobRecord,
@@ -79,14 +64,10 @@ from music_ingest.models import (
     LibraryRecord,
     ProviderAttemptRecord,
     ProviderCandidateRunRecord,
-    RuntimeSettingRecord,
     SourceRecord,
-    SourceTagRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.entities import DecoderEvidenceRecord
 from music_ingest.models.jobs import ClaimedJob, JobRepository
-from music_ingest.models.repositories import DecoderEvidenceRepository, FingerprintRepository
 from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
@@ -205,13 +186,17 @@ from music_ingest.processing.media_stage import (
 )
 from music_ingest.processing.metadata import (
     SourceMetadataError,
-    allocate_unsorted_filename,
     fallback_metadata,
     file_hash,
     publication_layout,
     read_tags,
 )
 from music_ingest.processing.remux import RemuxFailure
+from music_ingest.processing.support.evidence import SourceEvidence
+from music_ingest.processing.support.outcomes import AttemptFinalizer
+from music_ingest.processing.support.settings import RuntimeProcessingSettings
+from music_ingest.processing.support.sources import SourceAccess
+from music_ingest.processing.support.staging import StagingWorkspace
 from music_ingest.publication import (
     PublicationAttemptRequest,
     acquire_publication_destination_lock,
@@ -229,8 +214,7 @@ from music_ingest.publication.service import (
     replace_published_audio,
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
-from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
-from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
+from music_ingest.settings import build_runtime_settings
 
 LOGGER = logging.getLogger(__name__)
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
@@ -245,11 +229,20 @@ class ProcessingWorker:
         self._session: Session = session
         self._config: ProcessingConfig = config
         self._lease_age: timedelta = lease_age or timedelta(minutes=5)
+        self._bind_services()
+
+    def _bind_services(self) -> None:
+        self._settings = RuntimeProcessingSettings(self._session, self._config)
+        self._outcomes = AttemptFinalizer(self._session, self._config, self._settings)
+        self._sources = SourceAccess(self._session, self._outcomes)
+        self._evidence = SourceEvidence(self._session, self._config, self._settings)
+        self._staging = StagingWorkspace(self._session, self._config)
 
     def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
             self._config = replace(self._config, media_root=Path(storage.output_root))
+        self._bind_services()
         now = datetime.now(UTC)
         reconcile_attempts(self._session, now)
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
@@ -260,9 +253,9 @@ class ProcessingWorker:
         if (
             claimed.reclaimed_stale
             and claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}
-            and claimed.attempt.attempt_number > self._max_attempts()
+            and claimed.attempt.attempt_number > self._settings.max_attempts()
         ):
-            self._retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
+            self._outcomes.retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
             return True
         # Exception -> action table. Every processing failure lands in exactly one of these three
         # buckets:
@@ -287,23 +280,23 @@ class ProcessingWorker:
             TimeoutExpired,
             ValueError,
         ) as error:
-            self._retry_claim(claimed, str(error), now, error)
+            self._outcomes.retry_claim(claimed, str(error), now, error)
         except SourceAudioCorruptionError as error:
-            source = self._source(claimed)
-            self._record_decoder_evidence(source, error.source_evidence, now)
-            self._invalid_audio(claimed, source, str(error), now, error)
+            source = self._sources.source(claimed)
+            self._evidence.record_decoder_evidence(source, error.source_evidence, now)
+            self._outcomes.invalid_audio(claimed, source, str(error), now, error)
         except DecoderValidationError as error:
-            source = self._source(claimed)
+            source = self._sources.source(claimed)
             if error.evidence is not None:
-                self._record_decoder_evidence(source, error.evidence, now)
-            self._quarantine(claimed, source, str(error), now, error)
+                self._evidence.record_decoder_evidence(source, error.evidence, now)
+            self._outcomes.quarantine(claimed, source, str(error), now, error)
         except SourceMetadataError as error:
-            source = self._source(claimed)
-            self._quarantine(claimed, source, str(error), now, error)
+            source = self._sources.source(claimed)
+            self._outcomes.quarantine(claimed, source, str(error), now, error)
         except Exception as error:  # noqa: BLE001
-            self._retry_claim(claimed, f'unexpected processing error: {error}', now, error)
+            self._outcomes.retry_claim(claimed, f'unexpected processing error: {error}', now, error)
         finally:
-            self._discard_staging(claimed.job.id)
+            self._staging.discard_staging(claimed.job.id)
             if claimed.attempt.state == 'running':
                 JobRepository(self._session).succeed(claimed, datetime.now(UTC))
         return True
@@ -438,18 +431,18 @@ class ProcessingWorker:
         )
 
     def _process_initial(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._source(claimed)
-        source_path = self._owned_source_path(claimed, source, now)
+        source = self._sources.source(claimed)
+        source_path = self._sources.owned_source_path(claimed, source, now)
         if source_path is None:
             return
-        if self._changed(source, source_path):
-            self._requeue_changed_source(claimed, source, source_path, now)
+        if self._sources.changed(source, source_path):
+            self._outcomes.requeue_changed_source(claimed, source, source_path, now)
             return
-        inspection = inspect_media_capability(source_path, timeout_seconds=self._timeout_seconds())
+        inspection = inspect_media_capability(source_path, timeout_seconds=self._settings.timeout_seconds())
         capability = inspection.capability
         if capability is None:
             detail = inspection.ffprobe.stderr.strip() or inspection.ffprobe.stdout.strip() or 'no ffprobe output'
-            self._quarantine(
+            self._outcomes.quarantine(
                 claimed,
                 source,
                 (
@@ -462,28 +455,28 @@ class ProcessingWorker:
         decoder_evidence = validate_decoder(
             source_path,
             ffmpeg_command=self._config.ffmpeg_command,
-            timeout_seconds=self._timeout_seconds(),
+            timeout_seconds=self._settings.timeout_seconds(),
         )
         if decoder_evidence is not None:
-            self._record_decoder_evidence(source, decoder_evidence, now)
+            self._evidence.record_decoder_evidence(source, decoder_evidence, now)
         source.media_codec = capability.codec.upper()
         technical = inspection.technical
         source.media_bit_depth = None if technical is None else technical.bit_depth
         source.media_sample_rate = None if technical is None else technical.sample_rate
         source.media_channels = None if technical is None else technical.channels
         source.media_bitrate = None if technical is None else technical.bitrate
-        cached_fingerprint = self._cached_fingerprint(source)
+        cached_fingerprint = self._evidence.cached_fingerprint(source)
         plan = plan_media_stage(source_path)
         tags = plan.source_tags
-        self._capture_observations(source, source_path, tags)
+        self._evidence.capture_observations(source, source_path, tags)
         original_tags = dict(tags)
         metadata = plan.metadata
         record = ensure_source_record(self._session, source, now)
         _ = append_metadata_revision(self._session, record.id, source.id, 'original', original_tags, 'source', now)
-        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+        configured_musicbrainz, configured_acoustid, _ = self._settings.configured_providers()
         providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
         if not _has_explicit_musicbrainz_identity(original_tags):
-            if self._analyze_source(source, source_path) is None:
+            if self._evidence.analyze_source(source, source_path) is None:
                 return
             source.intake_state = 'present'
             _ = reevaluate_effective_source_decision(self._session, record.id, now)
@@ -512,7 +505,7 @@ class ProcessingWorker:
                     source.id,
                 )
             return
-        staged_release = self._staging_directory(claimed.job.id)
+        staged_release = self._staging.staging_directory(claimed.job.id)
         relative_directory, output_name = plan.relative_directory, plan.output_name
         current_publication = next((item for item in record.publications if item.state == 'current'), None)
         destination_release = (
@@ -535,7 +528,7 @@ class ProcessingWorker:
                 output_name,
                 self._config.ffmpeg_command,
                 self._config.fpcalc_command,
-                self._timeout_seconds(),
+                self._settings.timeout_seconds(),
                 build_runtime_settings(self._session, include_genres=True) if metadata is not None else None,
                 cached_fingerprint is None,
             )
@@ -548,7 +541,7 @@ class ProcessingWorker:
         if unsorted_destination:
             # Staging succeeded; now allocate the real, durable Unsorted filename to replace the
             # hidden working name chosen above.
-            output_name = self._allocate_unsorted_filename('.mka')
+            output_name = self._staging.allocate_unsorted_filename('.mka')
         target_audio = destination_release / output_name
         path_owner = self._session.scalar(
             select(LibraryPublicationRecord)
@@ -649,14 +642,14 @@ class ProcessingWorker:
             )
 
     def _process_analysis(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._locked_source(claimed)
-        source_path = self._owned_source_path(claimed, source, now)
+        source = self._sources.locked_source(claimed)
+        source_path = self._sources.owned_source_path(claimed, source, now)
         if source_path is None:
             return
-        if self._changed(source, source_path):
-            self._requeue_changed_source(claimed, source, source_path, now)
+        if self._sources.changed(source, source_path):
+            self._outcomes.requeue_changed_source(claimed, source, source_path, now)
             return
-        fingerprint = self._analyze_source(source, source_path)
+        fingerprint = self._evidence.analyze_source(source, source_path)
         if fingerprint is None:
             return
         tags = read_tags(source_path)
@@ -698,7 +691,7 @@ class ProcessingWorker:
                     pass
             if acoustic_result is not None:
                 _ = self._capture_provider_attempt(source, 'acoustid', acoustic_result, None, now)
-            configured_musicbrainz, _, _ = self._configured_providers()
+            configured_musicbrainz, _, _ = self._settings.configured_providers()
             if configured_musicbrainz is not None:
                 _ = JobRepository(self._session).enqueue(source.id, 'musicbrainz_analysis', now)
                 record_event(
@@ -734,7 +727,7 @@ class ProcessingWorker:
         self._enqueue_candidate_selection_if_ready(source, claimed.job.id, now)
 
     def _process_final_publish(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._source(claimed)
+        source = self._sources.source(claimed)
         record = ensure_source_record(self._session, source, now)
         decision = reevaluate_effective_source_decision(self._session, record.id, now)
         if decision.source_id is not None and decision.source_id != source.id:
@@ -760,14 +753,14 @@ class ProcessingWorker:
         if revision is None:
             raise ValueError('final metadata revision is missing')
         final_tags = _TAGS_ADAPTER.validate_json(revision.tags_json)
-        source_path = self._owned_source_path(claimed, source, now)
+        source_path = self._sources.owned_source_path(claimed, source, now)
         if source_path is None:
             return
         relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
         publication = next((item for item in record.publications if item.state == 'current'), None)
         unsorted_destination = relative_directory == 'Unsorted' and publication is None
         if unsorted_destination:
-            output_name = self._allocate_unsorted_filename('.mka')
+            output_name = self._staging.allocate_unsorted_filename('.mka')
         target_audio = self._config.media_root / relative_directory / output_name
         if publication is not None and (
             publication.source_id == source.id
@@ -820,7 +813,7 @@ class ProcessingWorker:
         staged_release = Path(attempt.staging_directory)
         staged_release.parent.mkdir(parents=True, exist_ok=True)
         staged_release.mkdir()
-        capability = inspect_source_capability(source_path, timeout_seconds=self._timeout_seconds())
+        capability = inspect_source_capability(source_path, timeout_seconds=self._settings.timeout_seconds())
         if capability is None:
             raise ProcessingInfrastructureError('source has no declared media capability')
         metadata = fallback_metadata(tuple(final_tags.items()), CanonicalSource.REVIEWED_MANUAL)
@@ -835,7 +828,7 @@ class ProcessingWorker:
                 output_name,
                 self._config.ffmpeg_command,
                 self._config.fpcalc_command,
-                self._timeout_seconds(),
+                self._settings.timeout_seconds(),
                 build_runtime_settings(self._session, include_genres=True) if metadata is not None else None,
                 False,
             )
@@ -849,13 +842,9 @@ class ProcessingWorker:
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self._session, record.id, now)
         release_mbid = final_tags.get('MUSICBRAINZ_ALBUMID', '').strip()
-        if release_mbid and self._artwork_enabled():
+        if release_mbid and self._settings.artwork_enabled():
             _ = JobRepository(self._session).enqueue_release_artwork(release_mbid, now)
         record_event(self._session, record.id, 'final_published', 'complete', None, now, source.id)
-
-    def _artwork_enabled(self) -> bool:
-        value = get_setting_value(self._session, SettingKey.ARTWORK_ENABLED)
-        return value is None or value.casefold() == 'true'
 
     def _lookup_providers(
         self,
@@ -879,7 +868,7 @@ class ProcessingWorker:
             )
             if value
         )
-        configured_musicbrainz, configured_acoustid, _ = self._configured_providers()
+        configured_musicbrainz, configured_acoustid, _ = self._settings.configured_providers()
         musicbrainz = configured_musicbrainz if run_musicbrainz and (query or recording_mbid or release_mbid) else None
         acoustid = (
             configured_acoustid
@@ -899,7 +888,7 @@ class ProcessingWorker:
                 release_title=values.get('ALBUM'),
                 recording_title=values.get('TITLE'),
                 track_number=_tag_number(values.get('TRACKNUMBER')),
-                acoustid_confidence_threshold=self._confidence_threshold(),
+                acoustid_confidence_threshold=self._settings.confidence_threshold(),
                 artist_name=values.get('ARTIST'),
                 recording_mbid=recording_mbid,
                 release_mbid=release_mbid,
@@ -920,7 +909,7 @@ class ProcessingWorker:
         )
         if active_collection is not None:
             return
-        musicbrainz, acoustid, _ = self._configured_providers()
+        musicbrainz, acoustid, _ = self._settings.configured_providers()
         required_providers = tuple(
             provider_name
             for provider_name, provider in (('musicbrainz', musicbrainz), ('acoustid', acoustid))
@@ -934,7 +923,7 @@ class ProcessingWorker:
         _ = JobRepository(self._session).enqueue(source.id, 'candidate_selection', now)
 
     def _process_candidate_selection(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._candidate_selection_source(claimed)
+        source = self._sources.candidate_selection_source(claimed)
         if source.library_record_id is None:
             record = new_library_record(self._session, now)
             source.library_record = record
@@ -943,7 +932,7 @@ class ProcessingWorker:
 
     def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
         folder = _folder_selection_root(source.source_path)
-        members = self._folder_members(folder)
+        members = self._sources.folder_members(folder)
         member_ids = tuple(item.id for item in members)
         active_collection = self._session.scalar(
             select(JobRecord)
@@ -969,7 +958,7 @@ class ProcessingWorker:
         if folder_path is None:
             raise ProcessingInfrastructureError('folder release selection requires a folder target')
         folder = Path(folder_path)
-        members = self._folder_members(folder)
+        members = self._sources.folder_members(folder)
         if not members:
             return
         member_ids = tuple(item.id for item in members)
@@ -984,7 +973,7 @@ class ProcessingWorker:
         ):
             return
         groups = tuple(_stored_release_scores(item) for item in members)
-        selected_release = select_folder_release(groups, self._confidence_threshold())
+        selected_release = select_folder_release(groups, self._settings.confidence_threshold())
         if selected_release is None:
             for source in members:
                 if source.library_record_id is not None:
@@ -1027,7 +1016,7 @@ class ProcessingWorker:
                     source.id,
                     recording_mbid,
                     match_evidence.score or 0.0,
-                    self._confidence_threshold(),
+                    self._settings.confidence_threshold(),
                     json.dumps({'recording_mbid': recording_mbid, 'release_mbid': selected_release}, sort_keys=True),
                     now,
                     release_mbid=selected_release,
@@ -1062,25 +1051,6 @@ class ProcessingWorker:
                 now,
                 source.id,
             )
-
-    def _confidence_threshold(self) -> float:
-        if self._config.live_transport is not None:
-            value = get_setting_value(self._session, SettingKey.CONFIDENCE_THRESHOLD)
-            if value is None:
-                return self._config.confidence_threshold
-            try:
-                parsed = float(value)
-            except ValueError:
-                return self._config.confidence_threshold
-            return parsed if 0.0 <= parsed <= 1.0 else self._config.confidence_threshold
-        setting = self._session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
-        if setting is None:
-            return self._config.confidence_threshold
-        try:
-            value = float(setting.value)
-        except ValueError:
-            return self._config.confidence_threshold
-        return value if 0.0 <= value <= 1.0 else self._config.confidence_threshold
 
     def _capture_provider_attempt(
         self,
@@ -1171,331 +1141,3 @@ class ProcessingWorker:
                     case NoMatch() | Disabled() | Malformed() | RateLimited() | Timeout() | Unavailable():
                         return None
         return None
-
-    def _source(self, claimed: ClaimedJob) -> SourceRecord:
-        if claimed.job.source_id is None:
-            raise ValueError('processing job has no source')
-        source = self._session.get(SourceRecord, claimed.job.source_id)
-        if source is None:
-            raise ValueError('processing job source is missing')
-        return source
-
-    def _locked_source(self, claimed: ClaimedJob) -> SourceRecord:
-        if claimed.job.source_id is None:
-            raise ValueError('processing job has no source')
-        source = self._session.scalar(
-            select(SourceRecord)
-            .where(SourceRecord.id == claimed.job.source_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if source is None:
-            raise ValueError('processing job source is missing')
-        return source
-
-    def _candidate_selection_source(self, claimed: ClaimedJob) -> SourceRecord:
-        if claimed.job.source_id is None:
-            raise ValueError('processing job has no source')
-        source = self._session.scalar(
-            select(SourceRecord)
-            .where(SourceRecord.id == claimed.job.source_id)
-            .options(
-                raiseload('*'),
-                selectinload(SourceRecord.candidates),
-                selectinload(SourceRecord.candidate_runs).selectinload(ProviderCandidateRunRecord.candidates),
-                selectinload(SourceRecord.tag_observations),
-            )
-        )
-        if source is None:
-            raise ValueError('processing job source is missing')
-        return source
-
-    def _folder_members(self, folder: Path) -> tuple[SourceRecord, ...]:
-        members = self._session.scalars(
-            select(SourceRecord)
-            .where(SourceRecord.source_path.startswith(f'{folder}/', autoescape=True))
-            .where(SourceRecord.library_record_id.is_not(None))
-            .where(SourceRecord.disappeared_at.is_(None))
-            .where(SourceRecord.intake_state != 'replaced')
-            .options(
-                raiseload('*'),
-                selectinload(SourceRecord.candidates),
-                selectinload(SourceRecord.candidate_runs).selectinload(ProviderCandidateRunRecord.candidates),
-                selectinload(SourceRecord.tag_observations),
-            )
-        ).all()
-        return tuple(item for item in members if _folder_selection_root(item.source_path) == folder)
-
-    def _owned_source_path(self, claimed: ClaimedJob, source: SourceRecord, now: datetime) -> Path | None:
-        try:
-            return resolve_owned_source(source)
-        except SourceBoundaryError as error:
-            self._quarantine(claimed, source, f'root boundary: {error}', now)
-            return None
-
-    def _changed(self, source: SourceRecord, path: Path) -> bool:
-        if source.mtime_ns == 0:
-            return False
-        stat = path.stat()
-        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) != (
-            source.device,
-            source.inode,
-            source.size_bytes,
-            source.mtime_ns,
-        )
-
-    def _cached_fingerprint(self, source: SourceRecord) -> FingerprintResult | None:
-        fingerprint = FingerprintRepository(self._session).successful_evidence(source.id)
-        if fingerprint is None:
-            return None
-        return FingerprintResult(
-            FingerprintState(fingerprint.state),
-            fingerprint.fingerprint,
-            fingerprint.duration_seconds,
-            fingerprint.tool_version,
-            fingerprint.output_sha256,
-            None,
-            None,
-        )
-
-    def _analyze_source(self, source: SourceRecord, source_path: Path) -> FingerprintResult | None:
-        cached_fingerprint = self._cached_fingerprint(source)
-        if cached_fingerprint is not None:
-            return cached_fingerprint
-        return fingerprint_source(
-            self._session,
-            FingerprintRequest(SourceId(source.id), source_path, None),
-            fpcalc_command=self._config.fpcalc_command,
-            timeout_seconds=self._timeout_seconds(),
-        )
-
-    def _record_decoder_evidence(self, source: SourceRecord, evidence: ToolEvidence, now: datetime) -> None:
-        _ = DecoderEvidenceRepository(self._session).add_evidence(
-            DecoderEvidenceRecord(
-                source_id=source.id,
-                decoder_command=self._config.ffmpeg_command,
-                tool_state=evidence.state.value,
-                return_code=evidence.return_code,
-                output_sha256=sha256(evidence.stdout.encode()).hexdigest(),
-                checked_at=now,
-            )
-        )
-
-    def _capture_observations(self, source: SourceRecord, path: Path, tags: tuple[tuple[str, str], ...]) -> None:
-        if source.tag_observations:
-            return
-        source.tag_observations.extend(
-            SourceTagRecord(format_name='vorbis', tag_name=name, value=value) for name, value in tags
-        )
-        for artwork in (path.parent / 'cover.jpg', path.parent / 'cover.webp'):
-            if artwork.is_file():
-                source.artwork_observations.append(ArtworkRecord(sha256=file_hash(artwork)))
-
-    def _staging_directory(self, job_id: str) -> Path:
-        directory = self._config.staging_root / job_id
-        self._config.staging_root.mkdir(parents=True, exist_ok=True)
-        if directory.exists():
-            shutil.rmtree(directory)
-        directory.mkdir()
-        return directory
-
-    def _discard_staging(self, job_id: str) -> None:
-        directory = self._config.staging_root / job_id
-        if directory.is_dir():
-            shutil.rmtree(directory)
-
-    def _configured_providers(
-        self,
-    ) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
-        if self._config.live_transport is None:
-            return self._config.musicbrainz_provider, self._config.acoustid_provider, self._config.artwork_provider
-        settings = get_setting_values(
-            self._session,
-            (
-                SettingKey.MUSICBRAINZ_ENABLED,
-                SettingKey.MUSICBRAINZ_USER_AGENT,
-                SettingKey.MUSICBRAINZ_HOST,
-                SettingKey.ACOUSTID_ENABLED,
-                SettingKey.ACOUSTID_CLIENT_KEY,
-                SettingKey.ARTWORK_ENABLED,
-            ),
-        )
-        defaults = RuntimeSettings()
-        musicbrainz = (
-            MusicBrainzProviderAdapter(
-                self._config.live_transport,
-                settings.get(SettingKey.MUSICBRAINZ_USER_AGENT, defaults.musicbrainz_user_agent),
-                settings.get(SettingKey.MUSICBRAINZ_HOST, defaults.musicbrainz_host),
-            )
-            if settings.get(SettingKey.MUSICBRAINZ_ENABLED, str(defaults.musicbrainz_enabled).lower()) == 'true'
-            else None
-        )
-        acoustid = (
-            AcoustIdV2Adapter(self._config.live_transport, client_key)
-            if settings.get(SettingKey.ACOUSTID_ENABLED, str(defaults.acoustid_enabled).lower()) == 'true'
-            and (client_key := settings.get(SettingKey.ACOUSTID_CLIENT_KEY, ''))
-            else None
-        )
-        artwork = (
-            musicbrainz
-            if settings.get(SettingKey.ARTWORK_ENABLED, str(defaults.artwork_enabled).lower()) == 'true'
-            else None
-        )
-        return musicbrainz, acoustid, artwork
-
-    def _timeout_seconds(self) -> float:
-        if self._config.live_transport is not None:
-            value = get_setting_value(self._session, SettingKey.TIMEOUT_SECONDS)
-            if value is not None:
-                try:
-                    return float(value)
-                except ValueError:
-                    pass
-        return self._config.timeout_seconds
-
-    def _allocate_unsorted_filename(self, suffix: str) -> str:
-        allocator = self._config.unsorted_filename_allocator
-        if allocator is not None:
-            return allocator(suffix)
-        return allocate_unsorted_filename(self._session, suffix)
-
-    def _max_attempts(self) -> int:
-        if self._config.live_transport is not None:
-            value = get_setting_value(self._session, SettingKey.MAX_ATTEMPTS)
-            if value is not None:
-                try:
-                    return int(value)
-                except ValueError:
-                    pass
-        return self._config.max_attempts
-
-    def _retry_claim(
-        self,
-        claimed: ClaimedJob,
-        reason: str,
-        now: datetime,
-        error: BaseException | None = None,
-    ) -> None:
-        reason = self._history_reason(claimed, reason, error)
-        LOGGER.warning(
-            'processing job retry',
-            extra={'job_id': claimed.job.id, 'attempt': claimed.attempt.attempt_number},
-            exc_info=error,
-        )
-        repository = JobRepository(self._session)
-        repository.retry(
-            claimed,
-            datetime.now(UTC),
-            timedelta(
-                seconds=float(
-                    get_setting_value(self._session, SettingKey.RETRY_DELAY_SECONDS)
-                    or self._config.retry_delay.total_seconds()
-                )
-            )
-            if self._config.live_transport is not None
-            else self._config.retry_delay,
-            self._max_attempts(),
-            reason,
-        )
-        if claimed.job.library_record_id is not None:
-            if self._session.get(LibraryRecord, claimed.job.library_record_id) is None:
-                return
-            record_event(
-                self._session,
-                claimed.job.library_record_id,
-                'selection_refresh_retry',
-                'retrying',
-                reason,
-                now,
-            )
-            return
-        source = self._session.get(SourceRecord, claimed.job.source_id)
-        if source is None:
-            return
-        record = ensure_source_record(self._session, source, now)
-        blocked = claimed.job.state == 'blocked_infrastructure'
-        record_event(
-            self._session,
-            record.id,
-            'processing_blocked' if blocked else 'processing_retry',
-            'blocked_infrastructure' if blocked else 'retrying',
-            reason,
-            now,
-            source.id,
-        )
-
-    def _history_reason(self, claimed: ClaimedJob, reason: str, error: BaseException | None = None) -> str:
-        error_name = type(error).__name__ if error is not None else 'InputValidationError'
-        source_id = claimed.job.source_id or 'record-only'
-        cause = ''
-        if error is not None and error.__cause__ is not None:
-            cause = f' caused_by={type(error.__cause__).__name__}: {error.__cause__}'
-        return (
-            f'job={claimed.job.id} attempt={claimed.attempt.attempt_number} source={source_id}; '
-            f'{error_name}: {reason}{cause}'
-        )
-
-    def _requeue_changed_source(self, claimed: ClaimedJob, source: SourceRecord, path: Path, now: datetime) -> None:
-        record = ensure_source_record(self._session, source, now)
-        origin = Origin.LIDARR if source.origin == Origin.LIDARR.value else Origin.MANUAL
-        replacement = intake_source(
-            self._session,
-            IntakeRequest(
-                source_path=path,
-                source_root_id=source.source_root_id,
-                origin=origin,
-                duration_seconds=source.duration_seconds,
-                tag_observations=(),
-                artwork_observations=(),
-                provider_attempts=(),
-                candidates=(),
-                review_decisions=(),
-            ),
-        )
-        replacement_source = self._session.get(SourceRecord, replacement.source_id)
-        if replacement_source is None:
-            raise ProcessingInfrastructureError('changed source replacement was not persisted')
-        orphan_record = replacement_source.library_record
-        _ = attach_source(self._session, replacement_source.id, record.id, reason='source_replaced', now=now)
-        if orphan_record is not None and orphan_record.id != record.id:
-            self._session.delete(orphan_record)
-        source.intake_state = 'replaced'
-        source.replaced_by_source_id = replacement_source.id
-        claimed.attempt.state = 'succeeded'
-        claimed.attempt.finished_at = datetime.now(UTC)
-        claimed.job.state = 'superseded'
-        claimed.job.next_attempt_at = None
-        _ = JobRepository(self._session).enqueue(replacement.source_id, 'filesystem_scan', now)
-
-    def _quarantine(
-        self,
-        claimed: ClaimedJob,
-        source: SourceRecord,
-        reason: str,
-        now: datetime,
-        error: BaseException | None = None,
-    ) -> None:
-        event_type = 'root_boundary' if reason.startswith('root boundary:') else 'processing_quarantined'
-        reason = self._history_reason(claimed, reason, error)
-        source.intake_state = 'quarantined'
-        claimed.job.failure_reason = reason
-        record = ensure_source_record(self._session, source, now)
-        _ = reevaluate_effective_source_decision(self._session, record.id, now)
-        record_event(self._session, record.id, event_type, 'quarantined', reason, now, source.id)
-        JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
-
-    def _invalid_audio(
-        self,
-        claimed: ClaimedJob,
-        source: SourceRecord,
-        reason: str,
-        now: datetime,
-        error: BaseException | None = None,
-    ) -> None:
-        reason = self._history_reason(claimed, reason, error)
-        source.intake_state = 'invalid_audio'
-        claimed.job.failure_reason = reason
-        record = ensure_source_record(self._session, source, now)
-        _ = reevaluate_effective_source_decision(self._session, record.id, now)
-        record_event(self._session, record.id, 'invalid_audio', 'invalid_audio', reason, now, source.id)
-        JobRepository(self._session).quarantine(claimed, datetime.now(UTC))
