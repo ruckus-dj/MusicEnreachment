@@ -115,8 +115,15 @@ def process_media(request: MediaPipelineRequest) -> MediaPipelineResult:
     if not staging_directory.is_dir():
         raise ValueError('staging directory must be a directory')
     source_path = request.plan.source_path.resolve(strict=True)
-    output_path = staging_directory / Path(request.output_name).with_suffix('.mka')
+    output_name = Path(request.output_name)
+    if output_name.name != request.output_name or output_name.name in {'', '.', '..'}:
+        raise ValueError('output name must be a single filename')
+    output_path = staging_directory / output_name.with_suffix('.mka')
     remux_path = staging_directory / '.remux.mka'
+    # Validate before clearing disposable outputs: neither a caller-supplied name
+    # nor a source already inside staging may turn cleanup into source deletion.
+    if output_path == remux_path or source_path in {output_path, remux_path}:
+        raise ValueError('source, output and remux paths must be distinct')
     _ = output_path.unlink(missing_ok=True)
     _ = remux_path.unlink(missing_ok=True)
 
