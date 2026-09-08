@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import os
-import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from errno import EXDEV
 from pathlib import Path
 from typing import final, override
 
@@ -14,9 +11,13 @@ from sqlalchemy.orm import Session
 from music_ingest.models import (
     LibraryPublicationRecord,
     PublicationAttemptRecord,
+    ReleaseArtworkRecord,
     SourceRootRecord,
     StorageConfigRecord,
 )
+from music_ingest.publication.attempts import _sha256
+from music_ingest.publication.locks import acquire_storage_lock
+from music_ingest.storage_migration import MigrationJournal, build_migration
 
 
 @final
@@ -79,7 +80,13 @@ class StorageService:
         return StorageBrowser(path, parent, items)
 
     def validate_input(self, raw_path: str) -> Path:
+        acquire_storage_lock(self._session)
         candidate = self._canonical_browse_path(raw_path)
+        config = self.config()
+        if config.state == 'migrating' and config.migration_json is not None:
+            journal = MigrationJournal.model_validate_json(config.migration_json)
+            if self._overlaps(candidate, Path(journal.destination)):
+                raise StorageValidationError('input root must not overlap the pending output root')
         output = self._canonical_directory(Path(self.config().output_root))
         if self._overlaps(candidate, output):
             raise StorageValidationError('input root must not overlap the output root')
@@ -99,38 +106,43 @@ class StorageService:
         )
 
     def move_output(self, raw_path: str) -> StorageConfigRecord:
-        preview = self.preview_output(raw_path)
+        """Persist a relocation request; the processing worker resumes its manifest."""
+        acquire_storage_lock(self._session)
         config = self.config()
-        old = self._canonical_directory(Path(config.output_root))
-        if old == preview.output_root:
+        self._session.refresh(config)
+        destination = self._canonical_browse_path(raw_path)
+        if config.state == 'migrating':
+            journal = MigrationJournal.model_validate_json(config.migration_json or '{}')
+            if destination != Path(journal.destination):
+                raise StorageValidationError('another output migration is already active')
             return config
-        if any(preview.output_root.iterdir()):
+        preview = self.preview_output(raw_path)
+        old = self._canonical_directory(Path(config.output_root))
+        if old == destination:
+            return config
+        if self._overlaps(old, destination):
+            raise StorageValidationError('old and new output roots must not overlap')
+        if any(destination.iterdir()):
             raise StorageValidationError('new output root must be empty')
         active_attempt = self._session.scalar(
-            select(PublicationAttemptRecord).where(PublicationAttemptRecord.state.not_in(['finalized', 'failed']))
+            select(PublicationAttemptRecord).where(PublicationAttemptRecord.cleaned_at.is_(None))
         )
         if active_attempt is not None:
             raise StorageValidationError('output root cannot move while publication recovery is active')
+        managed = {row.path for row in self._session.scalars(select(LibraryPublicationRecord)).all()}
+        managed.update(row.path for row in self._session.scalars(select(ReleaseArtworkRecord)).all() if row.path)
+        try:
+            for publication in self._session.scalars(
+                select(LibraryPublicationRecord).where(LibraryPublicationRecord.state == 'current')
+            ).all():
+                path = Path(publication.path)
+                if path.is_relative_to(old) and _sha256(path) != publication.content_sha256:
+                    raise ValueError(f'current publication hash mismatch: {path}')
+            journal = build_migration(old, preview.output_root, managed)
+        except (OSError, ValueError) as error:
+            raise StorageValidationError(str(error)) from error
+        config.migration_json = journal.model_dump_json()
         config.state = 'migrating'
-        self._session.flush()
-        for child in tuple(old.iterdir()):
-            destination = preview.output_root / child.name
-            if preview.same_filesystem:
-                try:
-                    os.replace(child, destination)
-                except OSError as error:
-                    if error.errno != EXDEV:
-                        raise
-                    self._copy_and_remove(child, destination)
-            else:
-                self._copy_and_remove(child, destination)
-        for publication in self._session.scalars(select(LibraryPublicationRecord)).all():
-            path = Path(publication.path)
-            if path.is_relative_to(old):
-                publication.path = str(preview.output_root / path.relative_to(old))
-        config.output_root = str(preview.output_root)
-        config.state = 'ready'
-        config.generation += 1
         config.updated_at = datetime.now(UTC)
         self._session.flush()
         return config
@@ -161,12 +173,3 @@ class StorageService:
     @staticmethod
     def _overlaps(left: Path, right: Path) -> bool:
         return left == right or left.is_relative_to(right) or right.is_relative_to(left)
-
-    @staticmethod
-    def _copy_and_remove(source: Path, destination: Path) -> None:
-        if source.is_dir():
-            _ = shutil.copytree(source, destination, symlinks=False)
-            _ = shutil.rmtree(source)
-        else:
-            _ = shutil.copy2(source, destination, follow_symlinks=False)
-            source.unlink()

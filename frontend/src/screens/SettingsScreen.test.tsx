@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeSettingsDraft } from "../types";
 import { SettingsScreen } from "./SettingsScreen";
@@ -78,6 +78,59 @@ describe("SettingsScreen source roots", () => {
     fireEvent.click(screen.getByTestId("source-root-remove-root-archive"));
 
     expect(onRemoveRoot).toHaveBeenCalledWith("root-archive");
+  });
+
+  it("announces background storage migration and disables a second move", () => {
+    const onRemoveRoot = vi.fn();
+
+    render(
+      <SettingsScreen
+        draft={draft}
+        loading={false}
+        saving={false}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        genres={null}
+        genreSearch=""
+        onGenreSearch={vi.fn()}
+        genreLoading={false}
+        genreSyncing={false}
+        onSyncGenres={vi.fn()}
+        sourceRoots={[
+          {
+            id: "root-archive",
+            display_name: "Архив",
+            canonical_path: "/data/sources/archive",
+            enabled: true,
+            scan_state: "never_scanned",
+          },
+        ]}
+        sourceRootsLoading={false}
+        sourceRootsError=""
+        sourceRootCreating={false}
+        sourceRootRemoving={false}
+        storageBrowser={{
+          path: "/data/sources/archive",
+          parent_path: "/data/sources",
+          items: [],
+        }}
+        storageConfig={{ output_root: "/media/old", state: "migrating", generation: 1 }}
+        storageOutputPreview={null}
+        storageLoading={false}
+        onCreateSourceRoot={vi.fn()}
+        onRemoveSourceRoot={onRemoveRoot}
+        onBrowseStorage={vi.fn()}
+        onPreviewStorageOutput={vi.fn()}
+        onMoveStorageOutput={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toContain("Перенос выполняется в фоне");
+    expect(
+      within(screen.getByRole("group", { name: "Хранилище контейнера" }))
+        .getByRole("button", { name: "Выбрать папку" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("submits a new root and exposes an accessible API error", () => {

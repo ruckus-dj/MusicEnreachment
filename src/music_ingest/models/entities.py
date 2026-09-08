@@ -275,6 +275,7 @@ class StorageConfigRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     output_root: Mapped[str] = mapped_column(Text, nullable=False)
+    migration_json: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, nullable=False, default='ready')
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

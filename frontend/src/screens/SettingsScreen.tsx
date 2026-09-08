@@ -279,10 +279,21 @@ export function SettingsScreen({
               <strong>Output</strong>
               <small>{storageConfig?.output_root ?? "Загрузка…"}</small>
             </div>
-            <button type="button" className="secondary" onClick={() => setPickerTarget("output")}>
+            <button
+              type="button"
+              className="secondary"
+              disabled={storageConfig?.state === "migrating"}
+              onClick={() => setPickerTarget("output")}
+            >
               Выбрать папку
             </button>
           </div>
+          {storageConfig?.state === "migrating" && (
+            <p role="status">
+              Перенос выполняется в фоне. Публикация приостановлена до завершения. При сбое перенос
+              продолжится автоматически; подробности — на экране воркеров.
+            </p>
+          )}
           {storageOutputPreview && (
             <div className="storage-migration-notice" role="status">
               <strong>
@@ -290,9 +301,8 @@ export function SettingsScreen({
                 {storageOutputPreview.output_root}?
               </strong>
               <p>
-                {storageOutputPreview.same_filesystem
-                  ? "Папки на одной файловой системе: перенос выполнится переименованием и обычно займёт мгновения."
-                  : "Папки на разных файловых системах: файлы будут полностью скопированы, это может занять долго."}
+                Файлы будут скопированы и проверены перед переключением папки. Потребуется место для
+                полной копии. Файлы .nfo сохраняются и в прежней папке.
               </p>
               <button
                 type="button"

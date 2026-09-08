@@ -53,6 +53,7 @@ from music_ingest.publication.service import (
     PublicationError,
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
+from music_ingest.storage_migration import resume_storage_migration
 
 _INITIAL_JOB_KINDS: Final = frozenset(
     {'filesystem_scan', 'lidarr_download', 'lidarr_releaseimport', 'lidarr_rename', 'lidarr_albumdelete'}
@@ -97,10 +98,15 @@ class ProcessingWorker:
 
     def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
         now = datetime.now(UTC)
+        if resume_storage_migration(self._session):
+            return True
         reconcile_attempts(self._session, now)
         acquire_storage_lock(self._session)
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
+            self._session.refresh(storage)
+            if storage.state != 'ready':
+                return False
             self._config = replace(self._config, media_root=Path(storage.output_root))
         self._bind_services()
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)

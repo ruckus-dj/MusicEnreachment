@@ -185,3 +185,96 @@ def test_real_worker_recovers_publication_commit_and_restart_failures(
         assert not Path(attempt.backup_directory).exists()
         assert (target.parent / 'album.nfo').read_bytes() == b'preserve nfo'
         assert source.read_bytes() == original_source
+
+
+def test_storage_request_and_publication_share_lock(
+    integrity_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from music_ingest.storage import StorageService, StorageValidationError
+    from tests.test_storage_migration import finish_migration
+
+    config, source, target = seed_publication(integrity_engine, tmp_path)
+    original = source.read_bytes()
+    destination = tmp_path / 'new'
+    destination.mkdir()
+    claimed, release, requested, finished = Event(), Event(), Event(), Event()
+
+    def publish() -> None:
+        def pause(job_id: str, kind: str) -> None:
+            claimed.set()
+            assert release.wait(10)
+
+        with Session(integrity_engine) as session:
+            assert ProcessingWorker(session, config).run_once(on_claimed=pause)
+            session.commit()
+
+    def move() -> None:
+        requested.set()
+        try:
+            with Session(integrity_engine) as session:
+                try:
+                    StorageService(session, (tmp_path,), config.media_root).move_output(str(destination))
+                    session.commit()
+                except StorageValidationError:
+                    session.rollback()
+        finally:
+            finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        publishing = pool.submit(publish)
+        assert claimed.wait(10)
+        moving = pool.submit(move)
+        assert requested.wait(5)
+        try:
+            assert not finished.wait(0.2), 'migration must wait for the publication transaction'
+        finally:
+            release.set()
+        publishing.result(timeout=15)
+        moving.result(timeout=15)
+    with Session(integrity_engine) as session:
+        StorageService(session, (tmp_path,), config.media_root).move_output(str(destination))
+        session.commit()
+    finish_migration(integrity_engine)
+    with Session(integrity_engine) as session:
+        publication = session.scalars(
+            select(LibraryPublicationRecord).where(LibraryPublicationRecord.state == 'current')
+        ).one()
+        assert Path(publication.path).is_relative_to(destination)
+        assert sha256(Path(publication.path).read_bytes()).hexdigest() == publication.content_sha256
+    assert not target.exists()
+    assert source.read_bytes() == original
+    assert (target.parent / 'album.nfo').read_bytes() == b'preserve nfo'
+
+
+def test_two_workers_resume_storage_manifest_once(integrity_engine: Engine, tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from music_ingest.models import StorageConfigRecord
+    from music_ingest.storage import StorageService
+    from tests.test_storage_migration import seed_storage
+
+    old, new = seed_storage(integrity_engine, tmp_path)
+    with Session(integrity_engine) as session:
+        StorageService(session, (tmp_path,), old).move_output(str(new))
+        session.commit()
+    config = ProcessingConfig(tmp_path / 'incoming', tmp_path / 'processing', old)
+
+    def work() -> None:
+        for _ in range(12):
+            with Session(integrity_engine) as session:
+                ProcessingWorker(session, config).run_once()
+                session.commit()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(work), pool.submit(work)
+        first.result(timeout=15)
+        second.result(timeout=15)
+    with Session(integrity_engine) as session:
+        storage = session.get(StorageConfigRecord, 1)
+        assert storage is not None and storage.state == 'ready' and storage.generation == 2
+        for publication in session.scalars(select(LibraryPublicationRecord)).all():
+            assert sha256(Path(publication.path).read_bytes()).hexdigest() == publication.content_sha256

@@ -939,6 +939,28 @@ export function useAppController(): AppControllerModel {
     if (screen === "settings" && !storageBrowser && !storageLoading) void loadStorage();
   }, [screen, storageBrowser, storageLoading]);
   useEffect(() => {
+    if (screen !== "settings" || storageConfig?.state !== "migrating") return;
+    let active = true;
+    let busy = false;
+    const timer = window.setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const config = await getStorageConfig();
+        if (active) setStorageConfig(config);
+      } catch (error) {
+        if (active)
+          setSourceRootsError(error instanceof Error ? error.message : errorMessages.browseStorage);
+      } finally {
+        busy = false;
+      }
+    }, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [screen, storageConfig?.state]);
+  useEffect(() => {
     if (screen !== "workers") return;
     let busy = false;
     const refresh = async () => {

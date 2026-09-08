@@ -6,6 +6,7 @@ import {
   listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
+  moveStorageOutput,
   removeSourceRoot,
   selectEffectiveSource,
   submitRecordingCorrection,
@@ -148,4 +149,21 @@ describe("source-root API client", () => {
     );
     fetchMock.mockRestore();
   });
+});
+
+it("returns the durable pending storage migration without claiming completion", async () => {
+  const pending = { output_root: "/media/old", state: "migrating", generation: 1 };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(pending));
+  try {
+    expect(await moveStorageOutput("/media/new")).toEqual(pending);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings/storage/output",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ path: "/media/new" }),
+      }),
+    );
+  } finally {
+    fetchMock.mockRestore();
+  }
 });
