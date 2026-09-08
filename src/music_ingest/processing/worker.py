@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
-from typing import Final, final, override
+from typing import Final, final
 from uuid import uuid4
 
 from pydantic import TypeAdapter
@@ -104,7 +104,13 @@ from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
 )
-from music_ingest.processing.execution import ExecutionContext, JobHandler, MethodJobHandler
+from music_ingest.processing.execution import (
+    ExecutionContext,
+    JobHandler,
+    MethodJobHandler,
+    ProcessingInfrastructureError,
+)
+from music_ingest.processing.handlers.artwork import ArtworkHandler
 from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
 from music_ingest.processing.media_stage import (
     MediaPipelineInfrastructureError,
@@ -150,15 +156,6 @@ _TAGS_ADAPTER = TypeAdapter(dict[str, str])
 _INITIAL_JOB_KINDS: Final = frozenset(
     {'filesystem_scan', 'lidarr_download', 'lidarr_releaseimport', 'lidarr_rename', 'lidarr_albumdelete'}
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ProcessingInfrastructureError(Exception):
-    reason: str
-
-    @override
-    def __str__(self) -> str:
-        return self.reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -765,7 +762,7 @@ class ProcessingWorker:
             'musicbrainz_analysis': MethodJobHandler(self._process_analysis),
             'folder_release_selection': MethodJobHandler(self._process_folder_release_selection),
             'final_publish': MethodJobHandler(self._process_final_publish),
-            'artwork_enrichment': MethodJobHandler(self._process_artwork_enrichment),
+            'artwork_enrichment': ArtworkHandler(),
         }
         if handler := handlers.get(claimed.job.kind):
             handler.handle(claimed, context)
