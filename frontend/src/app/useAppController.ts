@@ -31,6 +31,7 @@ import {
   UNKNOWN_ALBUM_LABEL,
   UNKNOWN_ARTIST_LABEL,
 } from "../domain/metadata";
+import { errorMessages } from "../errorMessages";
 import { parseRoute, routePath } from "../routing";
 import type {
   Detail,
@@ -368,7 +369,7 @@ export function useAppController(): AppControllerModel {
       });
       setItems(nextItems);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось загрузить медиатеку");
+      setNotice(error instanceof Error ? error.message : errorMessages.loadLibrary);
     } finally {
       if (showLoader) setLoading(false);
     }
@@ -447,7 +448,7 @@ export function useAppController(): AppControllerModel {
       setDetail(loaded);
       setDraft({ ...tagsFor(loaded, source.source_id, "final") });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось открыть трек");
+      setNotice(error instanceof Error ? error.message : errorMessages.openTrack);
     }
   }
   async function scan() {
@@ -457,7 +458,7 @@ export function useAppController(): AppControllerModel {
       const job = await api<ScanJob>("/api/reconciliation/scan", { method: "POST" });
       setScanJobId(job.job_id);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Восстановление не удалось");
+      setNotice(error instanceof Error ? error.message : errorMessages.recoverLibrary);
       setScanning(false);
     }
   }
@@ -477,9 +478,7 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(recordId, sourceId);
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "Не удалось поставить провайдер в очередь",
-      );
+      setNotice(error instanceof Error ? error.message : errorMessages.queueProvider);
     } finally {
       setReprocessing(false);
     }
@@ -500,7 +499,7 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(recordId, sourceId);
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось загрузить release");
+      setNotice(error instanceof Error ? error.message : errorMessages.loadRelease);
     } finally {
       setReprocessing(false);
     }
@@ -520,32 +519,28 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(recordId, sourceId);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        setRecordingCorrectionError(
-          "Исправление конфликтует с сохранёнными свидетельствами провайдера.",
-        );
-        setRecordingCorrectionReview(
-          "Требуется проверка исправления записи. Сверьте свидетельства и повторите позже.",
-        );
+        setRecordingCorrectionError(errorMessages.correctionConflict);
+        setRecordingCorrectionReview(errorMessages.correctionReview);
         await refreshRecord(recordId, sourceId);
       } else {
         setRecordingCorrectionError(
           error instanceof ApiError
             ? error.status === 422
-              ? "Проверьте MBID записи."
+              ? errorMessages.invalidRecordingMbid
               : error.status === 503
-                ? "MusicBrainz временно недоступен. Повторите исправление позже."
+                ? errorMessages.correctionProviderUnavailable
                 : error.status === 404
-                  ? "Выбранный источник записи больше недоступен. Обновите данные трека."
-                  : "Не удалось отправить исправление записи."
+                  ? errorMessages.correctionSourceUnavailable
+                  : errorMessages.submitCorrection
             : error instanceof Error
               ? error.message
-              : "Не удалось отправить исправление записи.",
+              : errorMessages.submitCorrection,
         );
       }
       setNotice(
         error instanceof ApiError && error.status === 409
-          ? "Исправление не применено: требуется проверка конфликта."
-          : "Исправление записи не применено.",
+          ? errorMessages.correctionConflictNotice
+          : errorMessages.correctionFailedNotice,
       );
     } finally {
       setReprocessing(false);
@@ -581,7 +576,7 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(recordId, sourceId, true);
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось подтвердить кандидата");
+      setNotice(error instanceof Error ? error.message : errorMessages.confirmCandidate);
     } finally {
       setReprocessing(false);
     }
@@ -600,7 +595,7 @@ export function useAppController(): AppControllerModel {
       await refreshRecord(recordId, sourceId);
     } catch (error) {
       setEffectiveSourceError(
-        error instanceof Error ? error.message : "Не удалось выбрать источник публикации",
+        error instanceof Error ? error.message : errorMessages.selectPublicationSource,
       );
     } finally {
       setReprocessing(false);
@@ -616,9 +611,7 @@ export function useAppController(): AppControllerModel {
       await loadLibrary(false);
       if (result.queued > 0) watchLibrary();
     } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "Не удалось поставить провайдеры в очередь",
-      );
+      setNotice(error instanceof Error ? error.message : errorMessages.queueProviders);
     } finally {
       setReprocessing(false);
     }
@@ -652,7 +645,7 @@ export function useAppController(): AppControllerModel {
       await loadLibrary(false);
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось повторить анализ");
+      setNotice(error instanceof Error ? error.message : errorMessages.retryAnalysis);
     } finally {
       setReprocessing(false);
     }
@@ -675,7 +668,7 @@ export function useAppController(): AppControllerModel {
       if (result.queued) watchRecord(detail.record_id, sourceId);
       return true;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось сохранить метаданные");
+      setNotice(error instanceof Error ? error.message : errorMessages.saveMetadata);
       return false;
     } finally {
       setSaving(false);
@@ -687,7 +680,7 @@ export function useAppController(): AppControllerModel {
       const loaded = await api<RuntimeSettings>("/api/settings");
       setSettingsDraft({ ...loaded, acoustid_client_key: "" });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось загрузить настройки");
+      setNotice(error instanceof Error ? error.message : errorMessages.loadSettings);
     } finally {
       setSettingsLoading(false);
     }
@@ -697,7 +690,7 @@ export function useAppController(): AppControllerModel {
     try {
       setGenreCatalog(await api<GenreCatalog>("/api/genres"));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось загрузить жанры");
+      setNotice(error instanceof Error ? error.message : errorMessages.loadGenres);
     } finally {
       setGenreLoading(false);
     }
@@ -709,7 +702,7 @@ export function useAppController(): AppControllerModel {
       setSourceRoots((await listSourceRoots()).items);
       setSourceRootsLoaded(true);
     } catch (error) {
-      setSourceRootsError(error instanceof Error ? error.message : "Не удалось загрузить корни");
+      setSourceRootsError(error instanceof Error ? error.message : errorMessages.loadSourceRoots);
     } finally {
       setSourceRootsLoading(false);
     }
@@ -719,7 +712,9 @@ export function useAppController(): AppControllerModel {
     try {
       setSourceRootCandidates((await listSourceRootCandidates()).items);
     } catch (error) {
-      setSourceRootsError(error instanceof Error ? error.message : "Не удалось загрузить папки");
+      setSourceRootsError(
+        error instanceof Error ? error.message : errorMessages.loadSourceRootCandidates,
+      );
     } finally {
       setSourceRootCandidatesLoading(false);
     }
@@ -731,9 +726,7 @@ export function useAppController(): AppControllerModel {
       setStorageBrowser(browser);
       setStorageConfig(config);
     } catch (error) {
-      setSourceRootsError(
-        error instanceof Error ? error.message : "Не удалось открыть папки контейнера",
-      );
+      setSourceRootsError(error instanceof Error ? error.message : errorMessages.browseStorage);
     } finally {
       setStorageLoading(false);
     }
@@ -744,7 +737,7 @@ export function useAppController(): AppControllerModel {
       setStorageOutputPreview(await previewStorageOutput(path));
     } catch (error) {
       setSourceRootsError(
-        error instanceof Error ? error.message : "Не удалось проверить папку output",
+        error instanceof Error ? error.message : errorMessages.previewStorageOutput,
       );
     } finally {
       setStorageLoading(false);
@@ -757,7 +750,7 @@ export function useAppController(): AppControllerModel {
       setStorageOutputPreview(null);
       await loadStorage(path);
     } catch (error) {
-      setSourceRootsError(error instanceof Error ? error.message : "Не удалось перенести output");
+      setSourceRootsError(error instanceof Error ? error.message : errorMessages.moveStorageOutput);
     } finally {
       setStorageLoading(false);
     }
@@ -768,9 +761,7 @@ export function useAppController(): AppControllerModel {
     try {
       setWorkerQueue(await getWorkerQueue());
     } catch (error) {
-      setWorkerQueueError(
-        error instanceof Error ? error.message : "Не удалось загрузить очередь worker’ов",
-      );
+      setWorkerQueueError(error instanceof Error ? error.message : errorMessages.loadWorkerQueue);
     } finally {
       if (showLoader) setWorkerQueueLoading(false);
     }
@@ -782,7 +773,7 @@ export function useAppController(): AppControllerModel {
       const created = await createSourceRoot(request);
       setSourceRoots((current) => [...current, created]);
     } catch (error) {
-      setSourceRootsError(error instanceof Error ? error.message : "Не удалось добавить корень");
+      setSourceRootsError(error instanceof Error ? error.message : errorMessages.createSourceRoot);
     } finally {
       setSourceRootCreating(false);
     }
@@ -794,7 +785,7 @@ export function useAppController(): AppControllerModel {
       await removeSourceRoot(rootId);
       setSourceRoots((current) => current.filter((item) => item.id !== rootId));
     } catch (error) {
-      setSourceRootsError(error instanceof Error ? error.message : "Не удалось удалить корень");
+      setSourceRootsError(error instanceof Error ? error.message : errorMessages.removeSourceRoot);
     } finally {
       setSourceRootRemoving(false);
     }
@@ -805,7 +796,7 @@ export function useAppController(): AppControllerModel {
       setGenreCatalog(await api<GenreCatalog>("/api/genres/sync", { method: "POST" }));
       setNotice("Каталог жанров MusicBrainz обновлён");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось обновить жанры");
+      setNotice(error instanceof Error ? error.message : errorMessages.refreshGenres);
     } finally {
       setGenreSyncing(false);
     }
@@ -824,7 +815,7 @@ export function useAppController(): AppControllerModel {
       setSettingsDraft({ ...result, acoustid_client_key: "" });
       setNotice("Настройки сохранены");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось сохранить настройки");
+      setNotice(error instanceof Error ? error.message : errorMessages.saveSettings);
     } finally {
       setSettingsSaving(false);
     }
@@ -870,7 +861,7 @@ export function useAppController(): AppControllerModel {
             await loadLibrary();
             if (result.queued_jobs > 0) watchLibrary();
           } else if (job.state !== "queued" && job.state !== "running") {
-            setNotice("Сканирование завершилось с ошибкой. Повторите попытку позже.");
+            setNotice(errorMessages.scanFailed);
             setScanJobId(null);
             setScanning(false);
           } else {
@@ -889,7 +880,7 @@ export function useAppController(): AppControllerModel {
               delete next[key];
               return next;
             });
-            setNotice("Автообновление остановлено по таймауту. Обновите данные вручную.");
+            setNotice(errorMessages.autoRefreshTimeout);
             continue;
           }
           const loaded = await api<Detail>(`/api/library/records/${watch.recordId}`);
@@ -914,8 +905,8 @@ export function useAppController(): AppControllerModel {
       } catch (error) {
         setNotice(
           error instanceof Error
-            ? `Автообновление: ${error.message}`
-            : "Автообновление временно недоступно",
+            ? errorMessages.autoRefreshError(error.message)
+            : errorMessages.autoRefreshUnavailable,
         );
       } finally {
         busy = false;

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SourceRoot } from "../types";
 import {
+  api,
   createSourceRoot,
   listManualActions,
   listSourceRootCandidates,
@@ -9,6 +10,28 @@ import {
   selectEffectiveSource,
   submitRecordingCorrection,
 } from "./client";
+
+describe("API error messages", () => {
+  it.each([
+    ["Ошибка сервера", "Ошибка сервера"],
+    ["", ""],
+    [null, "Не удалось выполнить запрос"],
+    [{ reason: "invalid" }, "Не удалось выполнить запрос"],
+  ])("preserves server detail or fallback for %s", async (detail, message) => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ detail }, { status: 500 }));
+    try {
+      await expect(api("/api/library/records")).rejects.toMatchObject({
+        name: "ApiError",
+        status: 500,
+        message,
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+});
 
 describe("source-root API client", () => {
   it("uses the list, candidate, create, and removal contracts", async () => {

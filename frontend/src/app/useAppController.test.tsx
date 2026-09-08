@@ -2,6 +2,7 @@
 
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import { useAppController } from "./useAppController";
 
 afterEach(() => {
@@ -71,6 +72,69 @@ function CatalogProbe({
     </>
   );
 }
+
+describe("useAppController error messages", () => {
+  it.each([
+    [new Error("Network unavailable"), "Network unavailable"],
+    [new Error(""), ""],
+    [new ApiError(500, "Ответ сервера"), "Ответ сервера"],
+    [null, "Не удалось загрузить медиатеку"],
+    ["failure", "Не удалось загрузить медиатеку"],
+  ])("preserves library error or fallback for %s", async (failure, expected) => {
+    window.history.replaceState({}, "", "/library");
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(failure);
+    render(<ControllerProbe />);
+    await act(async () => {});
+    expect(screen.getByTestId("notice").textContent).toBe(expected);
+  });
+
+  it.each([
+    [409, "Исправление конфликтует с сохранёнными свидетельствами провайдера."],
+    [422, "Проверьте MBID записи."],
+    [503, "MusicBrainz временно недоступен. Повторите исправление позже."],
+    [404, "Выбранный источник записи больше недоступен. Обновите данные трека."],
+    [500, "Не удалось отправить исправление записи."],
+  ])("preserves correction feedback for HTTP %i", async (status, expected) => {
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/musicbrainz/override")) {
+        return Response.json({ detail: "Server detail" }, { status });
+      }
+      if (String(input) === "/api/library/records/record-1") {
+        return Response.json({
+          record_id: "record-1",
+          sources: [
+            {
+              source_id: "source-a",
+              path: "/track.flac",
+              sha256: "a",
+              state: "present",
+              tag_observations: [],
+            },
+          ],
+          publications: [],
+          events: [],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+    render(<ControllerProbe />);
+    await act(async () => {
+      screen.getByRole("button", { name: "correct" }).click();
+    });
+    expect(screen.getByTestId("correction-error").textContent).toBe(expected);
+    expect(screen.getByTestId("correction-review").textContent).toBe(
+      status === 409
+        ? "Требуется проверка исправления записи. Сверьте свидетельства и повторите позже."
+        : "",
+    );
+    expect(screen.getByTestId("notice").textContent).toBe(
+      status === 409
+        ? "Исправление не применено: требуется проверка конфликта."
+        : "Исправление записи не применено.",
+    );
+  });
+});
 
 describe("useAppController effective source", () => {
   it("posts the choice and refreshes the record and library state", async () => {

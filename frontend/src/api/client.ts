@@ -1,3 +1,4 @@
+import { errorMessages } from "../errorMessages";
 import type {
   EffectiveSourceSelection,
   ManualSourceSelection,
@@ -56,7 +57,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
         : null;
     throw new ApiError(
       response.status,
-      typeof detail === "string" ? detail : "Не удалось выполнить запрос",
+      typeof detail === "string" ? detail : errorMessages.requestFailed,
     );
   }
   return payload as T;
