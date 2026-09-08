@@ -73,3 +73,8 @@ and `.nfo` retention. Build the runtime image with
 `docker build -t music-enrichment-test-stand-music-ingest:latest .` first, or set
 `MUSIC_INGEST_INTEGRITY_IMAGE` to a compatible runtime image; repository code and
 migrations are mounted read-only into the test runner.
+
+Initial ingest and reprocessing use the same durable publication journal as final
+metadata publication. Migration `20260909_0022` preserves the intended post-publication
+review/provider state across restart. Cleanup failures remain pending for retry;
+cleanup removes only known attempt files and preserves any `.nfo` sidecars.

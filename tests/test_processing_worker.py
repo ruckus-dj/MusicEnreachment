@@ -2404,12 +2404,12 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
             )
         )
         session.commit()
-        publish = initial.replace_published_audio
+        publish = initial.prepare_publication_copy
 
     def transient_failure(*_args: object, **_kwargs: object) -> None:
         raise PublicationError('temporary publish failure')
 
-    monkeypatch.setattr(initial, 'replace_published_audio', transient_failure)
+    monkeypatch.setattr(initial, 'prepare_publication_copy', transient_failure)
 
     # When: the worker records the transient failure, then polls before the retry deadline.
     with Session(engine) as session:
@@ -2424,7 +2424,7 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         session.commit()
 
     # Then: a due retry reclaims the source and reaches success.
-    monkeypatch.setattr(initial, 'replace_published_audio', publish)
+    monkeypatch.setattr(initial, 'prepare_publication_copy', publish)
     with Session(engine) as session:
         assert ProcessingWorker(session, config).run_once()
         session.commit()

@@ -535,3 +535,53 @@ def _publication_records(
         library_record=record,
     )
     return record, source
+
+
+def test_cleanup_failure_remains_pending_and_preserves_nfo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = create_engine(f'sqlite:///{tmp_path / "cleanup.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    staging, backup, target = tmp_path / 'staging', tmp_path / 'backup', tmp_path / 'media'
+    staging.mkdir()
+    target.mkdir()
+    (staging / 'audio.flac').write_bytes(b'new')
+    (target / 'audio.flac').write_bytes(b'old')
+    with Session(engine) as session:
+        record, source = _publication_records('record', 'source', tmp_path, now)
+        session.add_all((record, source))
+        attempt = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt',
+                record.id,
+                source.id,
+                None,
+                target,
+                'audio.flac',
+                staging,
+                backup,
+                now,
+            ),
+        )
+        mark_staged(session, attempt, now)
+        expose_attempt(session, attempt, now)
+        finalize_attempt(session, attempt, now)
+        session.commit()
+        (backup / 'keep.nfo').write_bytes(b'never delete')
+        unlink = Path.unlink
+
+        def fail_unlink(path: Path, missing_ok: bool = False) -> None:
+            if path.name == 'manifest.json':
+                raise PermissionError('injected cleanup failure')
+            unlink(path, missing_ok=missing_ok)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'unlink', fail_unlink)
+            with pytest.raises(PermissionError, match='injected'):
+                reconcile_attempts(session, now)
+        session.rollback()
+        assert attempt.state == 'finalized' and attempt.cleaned_at is None
+        reconcile_attempts(session, now)
+        assert attempt.cleaned_at is not None
+        assert (backup / 'keep.nfo').read_bytes() == b'never delete'
+        assert (target / 'audio.flac').read_bytes() == b'new'

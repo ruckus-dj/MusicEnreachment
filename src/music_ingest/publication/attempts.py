@@ -33,6 +33,7 @@ class PublicationAttemptRequest:
     staging_directory: Path
     backup_directory: Path
     now: datetime
+    completion_state: str = 'complete'
 
 
 def reserve_attempt(session: Session, request: PublicationAttemptRequest) -> PublicationAttemptRecord:
@@ -47,6 +48,7 @@ def reserve_attempt(session: Session, request: PublicationAttemptRequest) -> Pub
         staging_directory=str(request.staging_directory),
         backup_directory=str(request.backup_directory),
         created_at=request.now,
+        completion_state=request.completion_state,
     )
     session.add(attempt)
     session.add(
@@ -154,7 +156,7 @@ def finalize_attempt(session: Session, attempt: PublicationAttemptRecord, now: d
     )
     session.add(publication)
     record.publication_state = 'current'
-    record.processing_state = 'complete'
+    record.processing_state = attempt.completion_state
     record.updated_at = now
     attempt.state = 'finalized'
     attempt.finalized_at = now
@@ -176,8 +178,22 @@ def finalize_and_cleanup_attempt(
 
 
 def cleanup_attempt(attempt: PublicationAttemptRecord) -> None:
-    shutil.rmtree(attempt.staging_directory, ignore_errors=True)
-    shutil.rmtree(attempt.backup_directory, ignore_errors=True)
+    # Delete only files owned by this attempt. Sidecars (especially .nfo) are never removed.
+    for directory in (Path(attempt.staging_directory), Path(attempt.backup_directory)):
+        if not directory.exists():
+            continue
+        for name in (attempt.target_audio_name, 'manifest.json', attempt.target_audio_name + '.restore'):
+            path = directory / name
+            if path.suffix.lower() != '.nfo':
+                path.unlink(missing_ok=True)
+        _fsync_directory(directory)
+        if not any(directory.iterdir()):
+            directory.rmdir()
+            _fsync_directory(directory.parent)
+    workspace = Path(attempt.staging_directory).parent
+    if workspace.parent.name == '.music-ingest-publications' and workspace.exists() and not any(workspace.iterdir()):
+        workspace.rmdir()
+        _fsync_directory(workspace.parent)
 
 
 def reconcile_attempts(session: Session, now: datetime) -> None:

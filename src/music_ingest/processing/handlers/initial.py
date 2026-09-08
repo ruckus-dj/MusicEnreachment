@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +17,6 @@ from music_ingest.library.service import (
     append_metadata_revision,
     ensure_source_record,
     record_event,
-    record_publication,
     reevaluate_effective_source_decision,
 )
 from music_ingest.models import (
@@ -36,20 +36,16 @@ from music_ingest.processing.media_stage import (
     plan_media_stage,
     process_media,
 )
-from music_ingest.processing.metadata import (
-    file_hash,
-)
 from music_ingest.processing.support.evidence import SourceEvidence
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
 from music_ingest.processing.support.sources import SourceAccess
 from music_ingest.processing.support.staging import StagingWorkspace
 from music_ingest.publication import (
-    acquire_publication_destination_lock,
+    PublicationAttemptRequest,
+    mark_staged,
+    reserve_attempt,
 )
-from music_ingest.publication.service import (
-    PublicationRequest,
-    replace_published_audio,
-)
+from music_ingest.publication.workspace import durable_directory, prepare_publication_copy
 from music_ingest.settings import build_runtime_settings
 
 
@@ -189,7 +185,6 @@ class InitialHandler:
                 source.id,
             )
             return
-        acquire_publication_destination_lock(self.session, target_audio)
         self.session.refresh(source)
         if source.intake_state == 'replaced':
             record_event(
@@ -202,53 +197,47 @@ class InitialHandler:
                 source.id,
             )
             return
-        request = PublicationRequest(
-            staged_release,
-            self.config.staging_root,
-            self.config.media_root,
-            (source_path,),
-            require_canonical_tags=False,
-            destination_release=destination_release,
-            replace_existing=current_publication is not None,
-            destination_audio_name=(
-                output_name
-                if unsorted_destination
-                else Path(current_publication.path).name
-                if current_publication is not None
-                else None
-            ),
-            sources=(source,),
-        )
-        result = replace_published_audio(request, target_audio)
         final_revision = append_metadata_revision(
             self.session, record.id, source.id, 'final', dict(written_tags), 'worker', now
         )
-        audio_path = result.published_audio
-        if audio_path is None:
-            audio_path = (
-                Path(current_publication.path)
-                if current_publication is not None
-                else next(result.published_release.glob('*.mka'))
-            )
-        _ = record_publication(
+        token = uuid4().hex
+        durable_directory(destination_release, self.config.media_root)
+        workspace = destination_release / '.music-ingest-publications' / token
+        attempt = reserve_attempt(
             self.session,
-            record.id,
-            source.id,
-            audio_path,
-            file_hash(audio_path),
-            final_revision.id,
-            now,
+            PublicationAttemptRequest(
+                f'publication-attempt-{token}',
+                record.id,
+                source.id,
+                final_revision.id,
+                destination_release,
+                output_name,
+                workspace / 'staged',
+                workspace / 'backup',
+                now,
+                completion_state='analyzing' if providers_enabled else 'needs_review',
+            ),
         )
+        prepare_publication_copy(
+            pipeline_result.output_path,
+            Path(attempt.staging_directory) / output_name,
+            self.config.media_root,
+            target_audio,
+        )
+        durable_directory(Path(attempt.backup_directory), self.config.media_root)
+        mark_staged(self.session, attempt, now)
+        attempt.state = 'prepared'
+        record.publication_state = 'publishing'
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self.session, record.id, now)
         record_event(
             self.session,
             record.id,
-            'publication_ready_for_analysis' if providers_enabled else 'publication_ready_for_review',
+            'publication_prepared_for_analysis' if providers_enabled else 'publication_prepared_for_review',
             'analyzing' if providers_enabled else 'needs_review',
-            'initial final metadata published; provider analysis queued'
+            'initial final metadata prepared; provider analysis queued'
             if providers_enabled
-            else 'initial final metadata published; no providers configured',
+            else 'initial final metadata prepared; no providers configured',
             now,
             source.id,
         )

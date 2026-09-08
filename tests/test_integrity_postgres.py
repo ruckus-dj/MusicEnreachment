@@ -18,6 +18,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
+    JobRecord,
     LibraryPublicationRecord,
     LibraryRecord,
     PublicationAttemptRecord,
@@ -26,6 +27,7 @@ from music_ingest.models import (
     SourceRootRecord,
 )
 from music_ingest.models.jobs import JobRepository
+from music_ingest.normalize.tags import write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.processing.metadata import publication_layout
 from music_ingest.publication import attempts
@@ -111,6 +113,7 @@ def seed_publication(engine: Engine, root: Path) -> tuple[ProcessingConfig, Path
     return config, source_path, target
 
 
+@pytest.mark.parametrize('job_kind', ['final_publish', 'filesystem_scan'])
 @pytest.mark.parametrize(
     'checkpoint', ['prepared', 'prepared-restart', 'backup-rename', 'after-expose', 'exposed', 'finalized', 'cleanup']
 )
@@ -119,8 +122,29 @@ def test_real_worker_recovers_publication_commit_and_restart_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     checkpoint: str,
+    job_kind: str,
 ) -> None:
     config, source, target = seed_publication(integrity_engine, tmp_path)
+    if job_kind == 'filesystem_scan':
+        write_normalized_tags(
+            source,
+            (
+                ('TITLE', 'Track'),
+                ('ARTIST', 'Artist'),
+                ('ALBUM', 'Album'),
+                ('MUSICBRAINZ_RECORDINGID', 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'),
+                ('MUSICBRAINZ_ALBUMID', '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'),
+            ),
+        )
+        with Session(integrity_engine) as session:
+            job = session.scalars(select(JobRecord)).one()
+            job.kind = job_kind
+            job.metadata_revision_id = None
+            observed = session.get(SourceRecord, 'source')
+            assert observed is not None
+            observed.size_bytes = source.stat().st_size
+            observed.sha256 = sha256(source.read_bytes()).hexdigest()
+            session.commit()
     original_source = source.read_bytes()
     with Session(integrity_engine) as session:
         commit = session.commit
