@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+import music_ingest.publication.attempts as attempt_operations
 from music_ingest.models import (
     Base,
     LibraryPublicationRecord,
@@ -482,7 +483,10 @@ def test_reconcile_after_target_moves_to_backup_restores_old_output(tmp_path: Pa
         assert not staging.exists()
 
 
-def test_reconcile_after_target_exposure_finalizes_valid_output(tmp_path: Path) -> None:
+def test_reconcile_after_target_exposure_finalizes_valid_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Given: a valid target exposed before the database state reached finalization.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "swap-after-target.db"}')
     Base.metadata.create_all(engine)
@@ -508,7 +512,17 @@ def test_reconcile_after_target_exposure_finalizes_valid_output(tmp_path: Path) 
         attempt.state = 'staged'
 
         # When: restart reconciliation sees the exposed manifest and output.
+        synced: list[Path] = []
+        sync_directory = attempt_operations._fsync_directory
+
+        def sync(path: Path) -> None:
+            sync_directory(path)
+            synced.append(path)
+
+        monkeypatch.setattr(attempt_operations, '_fsync_directory', sync)
         reconcile_attempts(session, now)
+        assert target in synced, 'recovered rename must be fsynced before backup cleanup'
+
         session.commit()
 
         # Then: valid output is retained and the attempt is finalized.

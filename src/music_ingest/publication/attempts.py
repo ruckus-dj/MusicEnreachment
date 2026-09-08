@@ -132,6 +132,13 @@ def finalize_attempt(session: Session, attempt: PublicationAttemptRecord, now: d
     parsed = _MANIFEST_ADAPTER.validate_json(manifest)
     if parsed != _manifest_values(attempt) or attempt.output_sha256 != _sha256(target):
         raise ValueError('publication attempt output is invalid')
+    # Recovery may discover a rename that happened before the crashed process fsynced it.
+    _fsync_file(target)
+    _fsync_directory(target.parent)
+    _fsync_directory(manifest_path.parent)
+    backup_directory = Path(attempt.backup_directory)
+    if backup_directory.is_dir():
+        _fsync_directory(backup_directory)
     current = session.scalars(
         select(LibraryPublicationRecord)
         .where(LibraryPublicationRecord.library_record_id == attempt.library_record_id)
