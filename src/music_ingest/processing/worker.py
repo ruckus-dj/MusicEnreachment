@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import replace
@@ -13,8 +12,6 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
-from music_ingest.dto import ALLOWED_TAG_KEYS
 from music_ingest.enrichment.fingerprints import (
     persist_fingerprint,
 )
@@ -24,21 +21,12 @@ from music_ingest.intake.service import SourceId
 from music_ingest.library.service import (
     append_metadata_revision,
     ensure_source_record,
-    library_record_detail,
-    new_library_record,
     record_event,
     record_publication,
     reevaluate_effective_source_decision,
 )
-from music_ingest.matching.scoring import (
-    select_folder_release,
-)
 from music_ingest.models import (
-    EffectiveSourceDecisionRecord,
-    JobRecord,
-    LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
-    LibraryRecord,
     SourceRecord,
     StorageConfigRecord,
 )
@@ -143,13 +131,13 @@ from music_ingest.processing.config import ProcessingConfig as ProcessingConfig
 from music_ingest.processing.execution import (
     ExecutionContext,
     JobHandler,
-    MethodJobHandler,
     ProcessingInfrastructureError,
 )
 from music_ingest.processing.handlers.analysis import AnalysisHandler
 from music_ingest.processing.handlers.artwork import ArtworkHandler
 from music_ingest.processing.handlers.publication import PublicationHandler
 from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
+from music_ingest.processing.handlers.selection import SelectionHandler
 from music_ingest.processing.media_stage import (
     MediaPipelineInfrastructureError,
     MediaPipelineRequest,
@@ -206,6 +194,7 @@ class ProcessingWorker:
         self._publication = PublicationHandler(
             self._session, self._config, self._sources, self._staging, self._settings
         )
+        self._selection = SelectionHandler(self._session, self._sources, self._settings, self._publication)
         self._analysis = AnalysisHandler(self._session, self._sources, self._evidence, self._settings, self._outcomes)
 
     def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
@@ -283,11 +272,11 @@ class ProcessingWorker:
         context = ExecutionContext(self._session, self._config, now)
         handlers: dict[str, JobHandler] = {
             'reconciliation_scan': ReconciliationHandler(),
-            'selection_refresh': MethodJobHandler(self._process_selection_refresh),
-            'candidate_selection': MethodJobHandler(self._process_candidate_selection),
+            'selection_refresh': self._selection,
+            'candidate_selection': self._selection,
             'acoustid_analysis': self._analysis,
             'musicbrainz_analysis': self._analysis,
-            'folder_release_selection': MethodJobHandler(self._process_folder_release_selection),
+            'folder_release_selection': self._selection,
             'final_publish': self._publication,
             'artwork_enrichment': ArtworkHandler(),
         }
@@ -298,109 +287,6 @@ class ProcessingWorker:
             self._process_initial(claimed, now)
             return
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')
-
-    def _process_selection_refresh(self, claimed: ClaimedJob, now: datetime) -> None:
-        record_id = claimed.job.library_record_id
-        if record_id is None:
-            raise ProcessingInfrastructureError('selection refresh requires a library record target')
-        record = self._session.scalar(select(LibraryRecord).where(LibraryRecord.id == record_id).with_for_update())
-        if record is None:
-            raise ProcessingInfrastructureError('selection refresh library record is missing')
-        _ = self._session.scalar(
-            select(EffectiveSourceDecisionRecord)
-            .where(EffectiveSourceDecisionRecord.library_record_id == record.id)
-            .with_for_update()
-        )
-        _ = self._session.scalar(
-            select(LibraryPublicationRecord)
-            .where(LibraryPublicationRecord.library_record_id == record.id)
-            .where(LibraryPublicationRecord.state == 'current')
-            .with_for_update()
-        )
-        decision = reevaluate_effective_source_decision(self._session, record_id, now)
-        if decision.source_id is None:
-            record_event(
-                self._session,
-                record_id,
-                'selection_refresh_no_eligible_source',
-                'complete',
-                'no eligible source; current managed output was retained',
-                now,
-            )
-            return
-        record = library_record_detail(self._session, record_id)
-        revision = next(
-            (
-                item
-                for item in reversed(record.metadata_revisions)
-                if item.source_id == decision.source_id and item.layer == 'final'
-            ),
-            None,
-        )
-        if revision is None:
-            historical_final = self._session.scalar(
-                select(LibraryMetadataRevisionRecord)
-                .where(LibraryMetadataRevisionRecord.source_id == decision.source_id)
-                .where(LibraryMetadataRevisionRecord.layer == 'final')
-                .order_by(LibraryMetadataRevisionRecord.created_at.desc(), LibraryMetadataRevisionRecord.id.desc())
-            )
-            if historical_final is not None:
-                revision = append_metadata_revision(
-                    self._session,
-                    record.id,
-                    decision.source_id,
-                    'final',
-                    _TAGS_ADAPTER.validate_json(historical_final.tags_json),
-                    'reassociation_recovery',
-                    now,
-                )
-        if revision is None:
-            record_event(
-                self._session,
-                record_id,
-                'selection_refresh_no_final_revision',
-                'needs_review',
-                'selected source has no final metadata revision; current managed output was retained',
-                now,
-                decision.source_id,
-            )
-            return
-        publication = next((item for item in record.publications if item.state == 'current'), None)
-        if publication is not None and (
-            publication.source_id == decision.source_id
-            and publication.metadata_revision_id == revision.id
-            and publication.path.casefold().endswith('.mka')
-        ):
-            record_event(
-                self._session,
-                record_id,
-                'selection_refresh_no_change',
-                'complete',
-                'selected source and final metadata revision already match the current publication',
-                now,
-                decision.source_id,
-            )
-            return
-        refresh_publish_job = JobRecord(
-            id=f'selection-refresh-publish-{claimed.job.id}',
-            source_id=decision.source_id,
-            kind='final_publish',
-            metadata_revision_id=revision.id,
-            state='running',
-            created_at=now,
-        )
-        self._publication.handle(
-            ClaimedJob(refresh_publish_job, claimed.attempt), ExecutionContext(self._session, self._config, now)
-        )
-        record_event(
-            self._session,
-            record_id,
-            'selection_refresh_selected',
-            'complete',
-            f'effective source {decision.source_id} selected for refresh',
-            now,
-            decision.source_id,
-        )
 
     def _process_initial(self, claimed: ClaimedJob, now: datetime) -> None:
         source = self._sources.source(claimed)
@@ -609,136 +495,6 @@ class ProcessingWorker:
                 'metadata_required',
                 'analyzing' if providers_enabled else 'needs_review',
                 'audio published without usable metadata',
-                now,
-                source.id,
-            )
-
-    def _process_candidate_selection(self, claimed: ClaimedJob, now: datetime) -> None:
-        source = self._sources.candidate_selection_source(claimed)
-        if source.library_record_id is None:
-            record = new_library_record(self._session, now)
-            source.library_record = record
-            self._session.flush()
-        self._enqueue_folder_selection_if_ready(source, claimed.job.id, now)
-
-    def _enqueue_folder_selection_if_ready(self, source: SourceRecord, current_job_id: str, now: datetime) -> None:
-        folder = _folder_selection_root(source.source_path)
-        members = self._sources.folder_members(folder)
-        member_ids = tuple(item.id for item in members)
-        active_collection = self._session.scalar(
-            select(JobRecord)
-            .where(JobRecord.source_id.in_(member_ids))
-            .where(
-                JobRecord.kind.in_(
-                    [
-                        'filesystem_scan',
-                        'acoustid_analysis',
-                        'musicbrainz_analysis',
-                    ]
-                )
-            )
-            .where(JobRecord.state.in_(['queued', 'running']))
-            .where(JobRecord.id != current_job_id)
-        )
-        if active_collection is not None:
-            return
-        _ = JobRepository(self._session).enqueue_folder_release_selection(str(folder), now)
-
-    def _process_folder_release_selection(self, claimed: ClaimedJob, now: datetime) -> None:
-        folder_path = claimed.job.folder_path
-        if folder_path is None:
-            raise ProcessingInfrastructureError('folder release selection requires a folder target')
-        folder = Path(folder_path)
-        members = self._sources.folder_members(folder)
-        if not members:
-            return
-        member_ids = tuple(item.id for item in members)
-        if (
-            self._session.scalar(
-                select(JobRecord)
-                .where(JobRecord.source_id.in_(member_ids))
-                .where(JobRecord.kind.in_(['filesystem_scan', 'acoustid_analysis', 'musicbrainz_analysis']))
-                .where(JobRecord.state.in_(['queued', 'running']))
-            )
-            is not None
-        ):
-            return
-        groups = tuple(_stored_release_scores(item) for item in members)
-        selected_release = select_folder_release(groups, self._settings.confidence_threshold())
-        if selected_release is None:
-            for source in members:
-                if source.library_record_id is not None:
-                    record = library_record_detail(self._session, source.library_record_id)
-                    record.processing_state = 'needs_review'
-                    record.match_state = 'needs_review'
-                    record_event(
-                        self._session,
-                        source.library_record_id,
-                        'folder_release_selection_review',
-                        'needs_review',
-                        'folder candidates have no unique shared release',
-                        now,
-                        source.id,
-                    )
-            return
-        for source in members:
-            if source.library_record_id is None:
-                continue
-            match = _stored_release_candidate(source, selected_release)
-            if match is None:
-                record = library_record_detail(self._session, source.library_record_id)
-                record.processing_state = 'needs_review'
-                record.match_state = 'needs_review'
-                record_event(
-                    self._session,
-                    source.library_record_id,
-                    'folder_release_selection_review',
-                    'needs_review',
-                    'selected folder release is absent from the source candidate run',
-                    now,
-                    source.id,
-                )
-                continue
-            recording_mbid, match_evidence = match[1].recording_mbid, match[1]
-            if recording_mbid is None:
-                continue
-            associated = RecordingAssociationService(self._session).associate_automatic(
-                AutomaticAssociationRequest(
-                    source.id,
-                    recording_mbid,
-                    match_evidence.score or 0.0,
-                    self._settings.confidence_threshold(),
-                    json.dumps({'recording_mbid': recording_mbid, 'release_mbid': selected_release}, sort_keys=True),
-                    now,
-                    release_mbid=selected_release,
-                )
-            )
-            if associated is None:
-                continue
-            record = library_record_detail(self._session, associated.library_record_id)
-            analyzed_tags = _stored_match_tags(None, match)
-            source_tags = {
-                item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
-            }
-            _ = append_metadata_revision(
-                self._session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
-            )
-            final_revision = append_metadata_revision(
-                self._session,
-                record.id,
-                source.id,
-                'final',
-                {**source_tags, **analyzed_tags},
-                'folder_selection',
-                now,
-            )
-            _ = JobRepository(self._session).enqueue(source.id, 'final_publish', now, final_revision.id)
-            record_event(
-                self._session,
-                record.id,
-                'folder_release_selected',
-                'publishing',
-                f'folder release {selected_release} selected from complete candidate runs',
                 now,
                 source.id,
             )
