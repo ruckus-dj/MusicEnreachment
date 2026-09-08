@@ -104,6 +104,8 @@ from music_ingest.normalize.metadata import (
     CanonicalSource,
     MetadataWriteError,
 )
+from music_ingest.processing.execution import ExecutionContext, JobHandler, MethodJobHandler
+from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
 from music_ingest.processing.media_stage import (
     MediaPipelineInfrastructureError,
     MediaPipelineRequest,
@@ -139,7 +141,6 @@ from music_ingest.publication.service import (
     publish_release,  # noqa: F401 - retained as a test seam for legacy publication failure cases
     replace_published_audio,
 )
-from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
 from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
@@ -755,30 +756,24 @@ class ProcessingWorker:
                 claimed.job.state = 'superseded'
                 claimed.job.next_attempt_at = None
                 return
-        handlers: dict[str, Callable[[ClaimedJob, datetime], None]] = {
-            'selection_refresh': self._process_selection_refresh,
-            'candidate_selection': self._process_candidate_selection,
-            'acoustid_analysis': self._process_analysis,
-            'musicbrainz_analysis': self._process_analysis,
-            'folder_release_selection': self._process_folder_release_selection,
-            'final_publish': self._process_final_publish,
-            'artwork_enrichment': self._process_artwork_enrichment,
+        context = ExecutionContext(self._session, self._config, now)
+        handlers: dict[str, JobHandler] = {
+            'reconciliation_scan': ReconciliationHandler(),
+            'selection_refresh': MethodJobHandler(self._process_selection_refresh),
+            'candidate_selection': MethodJobHandler(self._process_candidate_selection),
+            'acoustid_analysis': MethodJobHandler(self._process_analysis),
+            'musicbrainz_analysis': MethodJobHandler(self._process_analysis),
+            'folder_release_selection': MethodJobHandler(self._process_folder_release_selection),
+            'final_publish': MethodJobHandler(self._process_final_publish),
+            'artwork_enrichment': MethodJobHandler(self._process_artwork_enrichment),
         }
-        if claimed.job.kind == 'reconciliation_scan':
-            self._process_reconciliation_scan(claimed, now)
-            return
         if handler := handlers.get(claimed.job.kind):
-            handler(claimed, now)
+            handler.handle(claimed, context)
             return
         if claimed.job.kind in _INITIAL_JOB_KINDS:
             self._process_initial(claimed, now)
             return
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')
-
-    def _process_reconciliation_scan(self, claimed: ClaimedJob, now: datetime) -> None:
-        snapshot = load_reconciliation_snapshot(self._session, now)
-        plan = plan_reconciliation(snapshot)
-        claimed.job.result_json = apply_reconciliation_plan(self._session, plan, now).model_dump_json()
 
     def _process_selection_refresh(self, claimed: ClaimedJob, now: datetime) -> None:
         record_id = claimed.job.library_record_id
