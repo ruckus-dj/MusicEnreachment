@@ -23,12 +23,13 @@ from music_ingest.api.app import create_app
 from music_ingest.dto import RuntimeSettings
 from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
-from music_ingest.models import RuntimeSettingRecord, UnsortedFilenameCounterRecord
+from music_ingest.models import RuntimeSettingRecord, StorageConfigRecord, UnsortedFilenameCounterRecord
 from music_ingest.models.repositories import ensure_provider_schedules
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing.metadata import allocate_unsorted_filename_with_factory
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor, run_processing_worker
 from music_ingest.processing.scheduler import run_reconciliation_scheduler
+from music_ingest.publication.workspace import validate_publication_storage
 from music_ingest.settings import build_runtime_settings
 
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
@@ -138,6 +139,12 @@ def create_runtime_app() -> FastAPI:
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
         del application
         with session_factory() as session:
+            storage = session.get(StorageConfigRecord, 1)
+            media_root = processing_config.media_root if storage is None else Path(storage.output_root)
+            try:
+                validate_publication_storage(media_root)
+            except ValueError as error:
+                raise RuntimeConfigurationError(str(error)) from error
             ensure_unsorted_filename_counter(session)
             ensure_provider_schedules(session, (provider.value for provider in ProviderName), datetime.now(UTC))
             session.commit()

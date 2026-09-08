@@ -14,8 +14,10 @@ The PostgreSQL-backed API and its in-process worker receive only the incoming
 source tree read-only, the final media tree read/write, and the disposable
 `appdata/music-ingest/` workspace read/write. PostgreSQL stores tags, revisions,
 provider evidence, review decisions, job failures, and publication metadata.
-There are no provenance, quarantine, retention, or rollback files. The staging
-workspace is consumed by atomic publication and is not a second media library.
+Processing scratch lives in `appdata/music-ingest/staging/` and is disposable.
+Durable publication manifests and backups live in `.music-ingest-publications/`
+next to each destination until database finalization and cleanup complete. Keep
+these directories with media backups; never clean them as processing scratch.
 
 ## Start
 

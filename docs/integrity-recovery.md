@@ -50,3 +50,26 @@ no symbolic links. Keep enough destination space for the complete copied tree.
 Validation includes partial second-file copies, ENOSPC, switch and cleanup commit
 failures, fresh-session restart, repeated requests, a real publication racing a move,
 and two PostgreSQL workers resuming the same manifest.
+
+
+## A03 — separate processing and publication filesystems
+
+Processing scratch uses `MUSIC_INGEST_STAGING_ROOT`. After media validation, the
+handler copies output to `<target-parent>/.music-ingest-publications/<attempt>/staged/`,
+verifies its SHA-256, fsyncs the file and directory ancestry, and only then commits
+`prepared`. Backups use the same attempt's `backup/` directory. Both final renames
+therefore stay on the target mount, including targets on nested media mounts.
+Startup probes writable media, file/directory fsync and rename before readiness.
+
+The production SSD/pool split is supported. Test stand processing staging is also
+outside media. Upgraded attempts retain their original paths until recovery, so do
+not delete legacy active staging during rollout. New publication recovery does not
+need processing scratch: the PostgreSQL crash tests delete it before restarting.
+
+The separate-mount test runs the actual worker twice (create and replace the same
+path) inside Linux with independently mounted processing/media tmpfs and migrated
+PostgreSQL. It verifies unequal device IDs, current hashes, history, source immutability
+and `.nfo` retention. Build the runtime image with
+`docker build -t music-enrichment-test-stand-music-ingest:latest .` first, or set
+`MUSIC_INGEST_INTEGRITY_IMAGE` to a compatible runtime image; repository code and
+migrations are mounted read-only into the test runner.

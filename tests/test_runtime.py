@@ -22,6 +22,11 @@ from music_ingest.processing import runtime as processing_runtime
 from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
 
 
+@pytest.fixture(autouse=True)
+def runtime_media_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
+
+
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -493,3 +498,26 @@ def test_migrations_when_runtime_starts_upgrades_to_head(monkeypatch: pytest.Mon
     # Then: an outdated database reaches head using an isolated migration bootstrap.
     assert captured == [(runtime_config.database_url, '7', 'head')]
     assert 'MUSIC_INGEST_SOURCE_ROOTS_PARENT' not in os.environ
+
+
+def test_runtime_refuses_readiness_when_media_does_not_support_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_config = RuntimeConfig('postgresql+psycopg://music_ingest@database/music_ingest', 10)
+    engine = create_engine(f'sqlite:///{tmp_path / "readiness.db"}')
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
+    monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
+
+    def reject_storage(root: Path) -> None:
+        raise ValueError(f'unsupported publication storage at {root}: atomic rename required')
+
+    monkeypatch.setattr(server, 'validate_publication_storage', reject_storage)
+    with (
+        pytest.raises(RuntimeConfigurationError, match='unsupported publication storage'),
+        TestClient(server.create_runtime_app()),
+    ):
+        pytest.fail('readiness must not be reached')
+    engine.dispose()

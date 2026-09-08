@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 from argparse import Namespace
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic.config import Config
@@ -171,6 +173,9 @@ def test_real_worker_recovers_publication_commit_and_restart_failures(
             assert durable is not None
             assert (Path(durable.backup_directory) / target.name).read_bytes() == b'old-output'
 
+    # Processing scratch is disposable even while a publication needs recovery.
+    shutil.rmtree(config.staging_root, ignore_errors=True)
+
     # A new worker/session is the recovery entry point, including an empty queue.
     with Session(integrity_engine) as session:
         ProcessingWorker(session, config).run_once()
@@ -278,3 +283,33 @@ def test_two_workers_resume_storage_manifest_once(integrity_engine: Engine, tmp_
         assert storage is not None and storage.state == 'ready' and storage.generation == 2
         for publication in session.scalars(select(LibraryPublicationRecord)).all():
             assert sha256(Path(publication.path).read_bytes()).hexdigest() == publication.content_sha256
+
+
+def test_publication_on_separate_processing_and_media_mounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from testcontainers.core.container import DockerContainer
+    from testcontainers.core.network import Network
+
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    image = os.environ.get('MUSIC_INGEST_INTEGRITY_IMAGE', 'music-enrichment-test-stand-music-ingest:latest')
+    with Network() as network:
+        credential = uuid4().hex
+        postgres = PostgresContainer('postgres:17', username='integrity', password=credential, dbname='integrity')
+        postgres.with_network(network).with_network_aliases('integrity-db')
+        with postgres:
+            runner = DockerContainer(image).with_network(network)
+            runner.with_volume_mapping(Path(__file__).parents[1], '/work', 'ro')
+            runner.with_kwargs(working_dir='/work')
+            runner.with_env('PYTHONPATH', '/work/src')
+            runner.with_env(
+                'MUSIC_INGEST_DATABASE_URL', f'postgresql+psycopg://integrity:{credential}@integrity-db/integrity'
+            )
+            runner.with_env('MUSIC_INGEST_MEDIA_ROOT', '/media')
+            runner.with_env('MUSIC_INGEST_SOURCE_ROOTS_PARENT', '/sources')
+            runner.with_tmpfs_mount('/processing', 'rw,size=64m')
+            runner.with_tmpfs_mount('/media', 'rw,size=64m')
+            runner.with_tmpfs_mount('/sources', 'rw,size=16m')
+            runner.with_command(['sleep', 'infinity'])
+            with runner:
+                result = runner.exec(['python', '/work/tests/integration/publication_mounts.py'])
+                assert result.exit_code == 0, result.output.decode()
+                assert b'same-target replacement verified' in result.output

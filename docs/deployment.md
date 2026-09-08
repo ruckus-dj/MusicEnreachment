@@ -40,7 +40,10 @@ only existing, non-symlink immediate children of `/data/sources`.
 Mount
 `/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
 mount `/mnt/ssd/appdata/music-ingest` as `/appdata/music-ingest` for disposable
-staging only. Navidrome must mount `/mnt/pool/data/media` read-only at its music
+staging only. Processing staging and media may be separate mounts. Publication
+uses verified copies and backups in `.music-ingest-publications/` beside each target;
+those directories are durable until cleanup after database commit. Startup refuses
+readiness if media cannot support writes, fsync and atomic rename. Navidrome must mount `/mnt/pool/data/media` read-only at its music
 root and set `ND_SCANNER_PURGEMISSING=full` so confirmed missing files are removed
 after full scans. PostgreSQL is the only durable store for tags, versions, provenance,
 review decisions, failure reasons, and publication metadata. The normal workflow
@@ -71,7 +74,14 @@ Anacondaz, Noize MC, and Linkin Park sample reports separately; the event-driven
 runtime publishes valid media automatically and records unresolved states on the stable library record.
 Interrupted runs can be rerun because each report artifact is atomically replaced.
 
-Publication recovery follows the recorded attempt state: `reserved` or `staged` attempts are cleaned up, with an existing backup restored when needed; a valid recoverable staged output advances to `exposed`; an `exposed` attempt is verified by manifest and output hash before finalization; failed verification restores the backup and records a retryable failure. Finalized attempts only need temporary directories removed.
+Publication preparation is committed before any target replacement. Recovery resumes
+`prepared`/`exposed` attempts, verifies manifest and SHA-256, commits finalization and
+only then removes backup and workspace files. Historical `reserved` or `staged` attempts
+are recovered using their recorded paths. Stop old workers before upgrading and keep
+legacy active staging until recovery completes. Output relocation is a resumable
+background copy/verify/switch/cleanup job; `.nfo` and unmanaged originals remain in
+the old root. See [the integrity recovery contract](integrity-recovery.md) for checkpoints,
+upgrade and failure recovery instructions.
 
 ## Validation And Provider Safety
 

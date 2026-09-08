@@ -45,6 +45,7 @@ from music_ingest.publication import (
     mark_staged,
     reserve_attempt,
 )
+from music_ingest.publication.workspace import durable_directory, prepare_publication_copy
 from music_ingest.settings import build_runtime_settings
 
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
@@ -129,6 +130,8 @@ class PublicationHandler:
             return
         destination_release = target_audio.parent
         attempt_token = uuid4().hex
+        durable_directory(destination_release, self.config.media_root)
+        workspace = destination_release / '.music-ingest-publications' / attempt_token
         attempt = reserve_attempt(
             self.session,
             PublicationAttemptRequest(
@@ -138,14 +141,12 @@ class PublicationHandler:
                 revision.id,
                 destination_release,
                 output_name,
-                self.config.staging_root / 'publication-attempts' / attempt_token,
-                self.config.staging_root / 'publication-backups' / attempt_token,
+                workspace / 'staged',
+                workspace / 'backup',
                 now,
             ),
         )
-        staged_release = Path(attempt.staging_directory)
-        staged_release.parent.mkdir(parents=True, exist_ok=True)
-        staged_release.mkdir()
+        staged_release = self.staging.staging_directory(claimed.job.id)
         capability = inspect_source_capability(source_path, timeout_seconds=self.settings.timeout_seconds())
         if capability is None:
             raise ProcessingInfrastructureError('source has no declared media capability')
@@ -166,6 +167,13 @@ class PublicationHandler:
                 False,
             )
         )
+        prepare_publication_copy(
+            staged_release / output_name,
+            Path(attempt.staging_directory) / output_name,
+            self.config.media_root,
+            target_audio,
+        )
+        durable_directory(Path(attempt.backup_directory), self.config.media_root)
         mark_staged(self.session, attempt, now)
         attempt.state = 'prepared'
         record.publication_state = 'publishing'
