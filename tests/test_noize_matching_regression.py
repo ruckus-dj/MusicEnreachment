@@ -17,7 +17,7 @@ from music_ingest.matching.providers import (
     ReleaseCandidate,
 )
 from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
-from music_ingest.processing import worker as processing
+from music_ingest.processing import candidates as processing
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
 FIXTURE = Path(__file__).parent / 'fixtures' / 'acoustid' / 'noize-pesnya-dlya-radio.json'

@@ -48,10 +48,13 @@ from music_ingest.models import (
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteResult
 from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing import ProcessingConfig, ProcessingWorker, candidates
+from music_ingest.processing.candidates import _latest_candidate_run, _release_candidates_for_recording
+from music_ingest.processing.execution import ExecutionContext
+from music_ingest.processing.handlers import initial, publication
+from music_ingest.processing.handlers.initial import InitialHandler
 from music_ingest.processing.remux import RemuxRequest
 from music_ingest.processing.support import evidence as source_evidence
-from music_ingest.processing.worker import _latest_candidate_run, _release_candidates_for_recording
 from music_ingest.publication.service import PublicationError, PublicationResult
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
@@ -104,8 +107,8 @@ def test_folder_selection_uses_each_source_file_parent_directory() -> None:
     album_path = '/library/2015 - _кустик_/album.flac'
 
     # When: the worker determines the folder-selection root for each source.
-    track_folder = processing._folder_selection_root(track_path)
-    album_folder = processing._folder_selection_root(album_path)
+    track_folder = candidates._folder_selection_root(track_path)
+    album_folder = candidates._folder_selection_root(album_path)
 
     # Then: only files with the same immediate parent directory share a group.
     assert track_folder == Path('/library/2015 - _кустик_/tracks')
@@ -180,7 +183,7 @@ def test_musicbrainz_candidate_persistence_separates_release_and_recording_evide
         track_number=2,
     )
 
-    records = processing._candidate_records(
+    records = candidates._candidate_records(
         'source-id',
         candidate,
         CandidateScore('release-id', 0.61, artist_component=0.4, release_component=0.6),
@@ -202,7 +205,7 @@ def test_musicbrainz_candidate_persistence_scores_release_when_match_result_lack
     request = MatchingRequest('Fixture Artist', 'Fixture Album', 215)
 
     # When: candidate evidence is persisted without an incoming release score.
-    records = processing._candidate_records('source-id', candidate, None, request)
+    records = candidates._candidate_records('source-id', candidate, None, request)
 
     # Then: the release receives the same component score as every other candidate.
     match = CandidateEvidencePayload.model_validate_json(records[0].evidence)
@@ -278,7 +281,7 @@ def test_musicbrainz_candidate_tags_preserve_release_disambiguation_in_album() -
     )
 
     # When: canonical tags are built from the release candidate.
-    tags = processing._candidate_tags(candidate)
+    tags = candidates._candidate_tags(candidate)
 
     # Then: the edition remains visible in the persisted album tag.
     assert tags['ALBUM'] == 'юность в стиле панк (baby punk version)'
@@ -310,7 +313,7 @@ def test_single_scored_musicbrainz_candidate_ignores_related_recording_evidence(
         ),
     )
 
-    selected = processing._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
+    selected = candidates._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
 
     assert selected is not None
     assert selected[0] == 'release-id'
@@ -351,7 +354,7 @@ def test_single_scored_candidate_selects_strict_best_release_above_threshold() -
     )
 
     # When: the best qualifying release is selected.
-    selected = processing._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
+    selected = candidates._single_scored_candidate(cast(SourceRecord, cast(object, source)), 'musicbrainz', 0.70)
 
     # Then: the strict score leader is selected instead of leaving both candidates unresolved.
     assert selected is not None
@@ -367,7 +370,7 @@ def test_musicbrainz_release_without_recording_link_is_not_persisted() -> None:
         (),
     )
 
-    records = processing._candidate_records('source-id', candidate, None, None)
+    records = candidates._candidate_records('source-id', candidate, None, None)
 
     assert records == ()
 
@@ -384,7 +387,7 @@ def test_candidate_records_persist_musicbrainz_score_in_unit_interval() -> None:
     )
 
     # When: worker evidence is serialized for persistence and API consumers.
-    records = processing._candidate_records('source-id', candidate, None, None)
+    records = candidates._candidate_records('source-id', candidate, None, None)
 
     # Then: both release and recording evidence expose the normalized 0..1 provider score.
     assert len(records) == 1
@@ -507,14 +510,14 @@ def test_initial_job_without_identity_defers_before_media_staging(
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 17, tzinfo=UTC)
     monkeypatch.setattr(
-        processing, 'inspect_source_capability', lambda path, timeout_seconds: MediaCapability('flac', 'flac')
+        publication, 'inspect_source_capability', lambda path, timeout_seconds: MediaCapability('flac', 'flac')
     )
 
     def fail_if_media_is_staged(request: object) -> None:
         _ = request
         pytest.fail('initial source without identity must not stage media')
 
-    monkeypatch.setattr(processing, 'process_media', fail_if_media_is_staged)
+    monkeypatch.setattr(initial, 'process_media', fail_if_media_is_staged)
     with Session(engine) as session:
         source = _source(session, source_path)
         session.add(
@@ -710,7 +713,7 @@ def test_unique_acoustid_album_match_selects_the_only_matching_recording() -> No
     )
 
     # When: the worker considers all resolved AcousticID recordings.
-    selected = processing._unique_acoustid_album_match(
+    selected = candidates._unique_acoustid_album_match(
         ((wrong_result, wrong_match), (correct_result, correct_match)),
     )
 
@@ -759,7 +762,7 @@ def test_unique_acoustid_album_match_selects_highest_scored_release() -> None:
     )
 
     # When: the worker evaluates both verified release editions.
-    selected = processing._unique_acoustid_album_match(
+    selected = candidates._unique_acoustid_album_match(
         ((standard_result, standard_match), (baby_punk_result, baby_punk_match)),
     )
 
@@ -780,7 +783,7 @@ def test_unique_acoustid_recording_match_selects_verified_recording_without_rele
     recording_score = CandidateScore('vol-1', 0.99)
 
     # When: the worker evaluates the verified AcousticID recording independently from the release decision.
-    selected = processing._unique_acoustid_recording_match(((provider_result, recording_score),), 0.8)
+    selected = candidates._unique_acoustid_recording_match(((provider_result, recording_score),), 0.8)
 
     # Then: it preserves the recording selection despite the unresolved release.
     assert selected == (provider_result, recording_score)
@@ -813,7 +816,7 @@ def test_single_scored_candidate_selects_the_only_current_candidate_despite_othe
     )
 
     # When: stored evidence is evaluated after a provider retry failed.
-    selected = processing._single_scored_candidate(source, 'acoustid', 0.7)
+    selected = candidates._single_scored_candidate(source, 'acoustid', 0.7)
 
     # Then: the qualifying sole candidate remains selectable.
     assert selected is not None
@@ -867,7 +870,7 @@ def test_single_scored_recording_candidate_uses_musicbrainz_when_acoustid_is_mis
     )
 
     # When: the provider-independent recording candidate is selected.
-    selected = processing._single_scored_recording_candidate(source, 0.7)
+    selected = candidates._single_scored_recording_candidate(source, 0.7)
 
     # Then: the MusicBrainz recording identity is eligible for the common association path.
     assert selected is not None
@@ -927,7 +930,7 @@ def test_single_scored_recording_candidate_prefers_release_compatible_recording(
     )
 
     # When: the release-compatible recording is selected.
-    selected = processing._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
+    selected = candidates._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
 
     # Then: release compatibility wins over an unrelated marginally higher recording score.
     assert selected is not None
@@ -974,7 +977,7 @@ def test_single_scored_recording_candidate_does_not_let_acoustid_mask_composite_
     )
 
     # When: the folder-selection path asks for that release-compatible recording.
-    selected = processing._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
+    selected = candidates._single_scored_recording_candidate(source, 0.7, 'preferred-recording')
 
     # Then: the composite MusicBrainz evidence remains eligible despite the higher raw AcousticID score.
     assert selected is not None
@@ -1297,7 +1300,7 @@ def test_stored_match_tags_preserves_verified_musicbrainz_metadata() -> None:
     )
 
     # When: recovery builds metadata from the persisted, cross-verified candidates.
-    tags = processing._stored_match_tags(recording, release)
+    tags = candidates._stored_match_tags(recording, release)
 
     # Then: provider facts remain available for analyzed and final revisions.
     assert tags == {
@@ -1325,7 +1328,7 @@ def test_stored_match_tags_preserves_musicbrainz_metadata_without_acoustid() -> 
     )
 
     # When: recovery reconstructs metadata from the available provider evidence.
-    tags = processing._stored_match_tags(None, release)
+    tags = candidates._stored_match_tags(None, release)
 
     # Then: release metadata is retained even though recording identity remains reviewable.
     assert tags == {
@@ -1351,7 +1354,7 @@ def test_stored_match_tags_uses_release_mbid_for_composite_candidate_key() -> No
     )
 
     # When: folder publication reconstructs tags from the selected unified candidate.
-    tags = processing._stored_match_tags(None, release)
+    tags = candidates._stored_match_tags(None, release)
 
     # Then: the album tag contains only the release MBID, never the composite key.
     assert tags['MUSICBRAINZ_ALBUMID'] == 'release-id'
@@ -1390,7 +1393,7 @@ def test_stored_release_candidate_chooses_highest_scoring_pair() -> None:
         ),
     )
 
-    selected = processing._stored_release_candidate(cast(SourceRecord, cast(object, source)), 'release-id')
+    selected = candidates._stored_release_candidate(cast(SourceRecord, cast(object, source)), 'release-id')
 
     assert selected is not None
     assert selected[0] == 'release-id:high-recording-id'
@@ -1408,7 +1411,7 @@ def test_stored_release_recording_mbid_comes_from_musicbrainz_tags() -> None:
     )
 
     # When: recovery extracts the recording identity from the release evidence.
-    recording_mbid = processing._stored_release_recording_mbid(release)
+    recording_mbid = candidates._stored_release_recording_mbid(release)
 
     # Then: MusicBrainz supplies the LibraryRecord recording identity.
     assert recording_mbid == 'recording-id'
@@ -1505,11 +1508,11 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
             _ = tz
             return next(cls.values)
 
-    def process_initial(worker: ProcessingWorker, claimed: ClaimedJob, now: datetime) -> None:
+    def process_initial(worker: InitialHandler, claimed: ClaimedJob, now: ExecutionContext) -> None:
         _ = worker, claimed, now
 
     monkeypatch.setattr(processing, 'datetime', Clock)
-    monkeypatch.setattr(ProcessingWorker, '_process_initial', process_initial)
+    monkeypatch.setattr(InitialHandler, 'handle', process_initial)
     with Session(engine) as session:
         source = SourceRecord(
             id='source-timing',
@@ -1580,7 +1583,7 @@ def test_musicbrainz_candidate_tags_format_genres_for_metadata_display() -> None
     )
 
     # When: provider candidate metadata is converted to tags.
-    tags = processing._candidate_tags(candidate)
+    tags = candidates._candidate_tags(candidate)
 
     # Then: the published GENRE value uses readable labels.
     assert tags['GENRE'] == 'Alternative Rock; Hip Hop'
@@ -1602,7 +1605,7 @@ def test_musicbrainz_candidate_tags_write_featured_artists_as_multiple_values() 
     )
 
     # When: candidate facts are converted to publication tags.
-    tags = processing._candidate_tags(candidate)
+    tags = candidates._candidate_tags(candidate)
 
     # Then: Navidrome receives two artists rather than a synthetic feat. artist.
     assert tags['ARTIST'] == 'Busta Rhymes; Linkin Park'
@@ -1649,7 +1652,7 @@ def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identit
     )
 
     # When: a full reprocess prepares its MusicBrainz lookup.
-    lookup_ids = processing.musicbrainz_lookup_ids(record, source)
+    lookup_ids = candidates.musicbrainz_lookup_ids(record, source)
 
     # Then: fresh AcousticID evidence replaces stale automatic identity and permits album disambiguation.
     assert lookup_ids == ('fresh-acoustid-recording', None)
@@ -1659,7 +1662,7 @@ def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identit
         ReviewDecisionRecord(source_id=source.id, state='acoustid_confirmed', rationale='selected by reviewer')
     )
     record.musicbrainz_recording_id = 'reviewer-recording'
-    assert processing.musicbrainz_lookup_ids(record, source) == ('reviewer-recording', None)
+    assert candidates.musicbrainz_lookup_ids(record, source) == ('reviewer-recording', None)
 
 
 def test_worker_when_valid_source_has_no_provider_match_stays_unpublished_and_reviewable(tmp_path: Path) -> None:
@@ -1730,8 +1733,8 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
         ),
         ToolEvidence(ToolState.SUCCESS, 0, '', ''),
     )
-    monkeypatch.setattr(processing, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
-    monkeypatch.setattr(processing, 'validate_decoder', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(initial, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
+    monkeypatch.setattr(initial, 'validate_decoder', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(publication_service, 'inspect_media_capability', lambda *_args, **_kwargs: capability)
     monkeypatch.setattr(publication_service, '_validate_tags', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -1789,7 +1792,7 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
         preserve_audio,
     )
     monkeypatch.setattr(
-        processing,
+        publication_service,
         'publish_release',
         lambda request: _publish_stub(request, '.mka'),
     )
@@ -1824,7 +1827,7 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
         assert published_audio.read_bytes() == original_bytes
 
 
-def _publish_stub(request: processing.PublicationRequest, suffix: str) -> PublicationResult:
+def _publish_stub(request: publication_service.PublicationRequest, suffix: str) -> PublicationResult:
     published_release = request.media_root / 'Artist' / 'Release'
     published_release.mkdir(parents=True, exist_ok=True)
     staged_audio = next(request.staged_release.glob(f'*{suffix}'))
@@ -1859,7 +1862,7 @@ def test_worker_when_source_lacks_identity_skips_decoder_and_publication(
         _ = request
         pytest.fail('source without identity must not invoke media staging')
 
-    monkeypatch.setattr(processing, 'process_media', fail_media_stage)
+    monkeypatch.setattr(initial, 'process_media', fail_media_stage)
 
     # When: the worker processes the queued initial job.
     with Session(engine) as session:
@@ -2400,12 +2403,12 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
             )
         )
         session.commit()
-        publish = processing.replace_published_audio
+        publish = initial.replace_published_audio
 
     def transient_failure(*_args: object, **_kwargs: object) -> None:
         raise PublicationError('temporary publish failure')
 
-    monkeypatch.setattr(processing, 'replace_published_audio', transient_failure)
+    monkeypatch.setattr(initial, 'replace_published_audio', transient_failure)
 
     # When: the worker records the transient failure, then polls before the retry deadline.
     with Session(engine) as session:
@@ -2420,7 +2423,7 @@ def test_worker_when_publication_is_transient_waits_before_reclaiming_then_succe
         session.commit()
 
     # Then: a due retry reclaims the source and reaches success.
-    monkeypatch.setattr(processing, 'replace_published_audio', publish)
+    monkeypatch.setattr(initial, 'replace_published_audio', publish)
     with Session(engine) as session:
         assert ProcessingWorker(session, config).run_once()
         session.commit()
