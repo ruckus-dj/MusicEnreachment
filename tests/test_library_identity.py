@@ -8,12 +8,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session
 
-from music_ingest.api.app import (
-    CandidateEvidencePayload,
+from music_ingest.api.app import create_app
+from music_ingest.api.candidate_views import (
     _candidate_is_displayable,
     _merge_candidate_evidence,
-    create_app,
 )
+from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.dto.api import CandidateScoreComponents
 from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
