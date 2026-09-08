@@ -26,6 +26,8 @@ from music_ingest.models import (
 from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.normalize.tags import write_normalized_tags
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing.execution import ExecutionContext
+from music_ingest.processing.handlers.publication import PublicationHandler
 
 
 def _flac(path: Path, title: str) -> Path:
@@ -318,12 +320,12 @@ def test_selection_refresh_dispatches_persisted_effective_source_without_source_
 
     dispatched_source_ids: list[str] = []
 
-    def publish_selected(worker: ProcessingWorker, claimed: ClaimedJob, timestamp: datetime) -> None:
+    def publish_selected(worker: PublicationHandler, claimed: ClaimedJob, timestamp: ExecutionContext) -> None:
         _ = worker, timestamp
         assert claimed.job.source_id is not None
         dispatched_source_ids.append(claimed.job.source_id)
 
-    monkeypatch.setattr(ProcessingWorker, '_process_final_publish', publish_selected)
+    monkeypatch.setattr(PublicationHandler, 'handle', publish_selected)
     # When: the record-target worker claim runs.
     with Session(engine) as session:
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
@@ -369,12 +371,12 @@ def test_selection_refresh_recovers_final_metadata_from_reassociated_source(
 
     dispatched_source_ids: list[str] = []
 
-    def publish_selected(worker: ProcessingWorker, claimed: ClaimedJob, timestamp: datetime) -> None:
+    def publish_selected(worker: PublicationHandler, claimed: ClaimedJob, timestamp: ExecutionContext) -> None:
         _ = worker, timestamp
         assert claimed.job.source_id is not None
         dispatched_source_ids.append(claimed.job.source_id)
 
-    monkeypatch.setattr(ProcessingWorker, '_process_final_publish', publish_selected)
+    monkeypatch.setattr(PublicationHandler, 'handle', publish_selected)
     # When: the real record-target refresh claims the source.
     with Session(engine) as session:
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
@@ -435,7 +437,7 @@ def test_selection_refresh_when_current_publication_matches_revision_records_no_
         JobRepository(session).enqueue_selection_refresh(record.id, now)
         session.commit()
 
-    monkeypatch.setattr(ProcessingWorker, '_process_final_publish', lambda *_args: pytest.fail('unexpected publish'))
+    monkeypatch.setattr(PublicationHandler, 'handle', lambda *_args: pytest.fail('unexpected publish'))
     with Session(engine) as session:
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
         session.commit()
@@ -489,12 +491,12 @@ def test_selection_refresh_when_current_publication_extension_differs_dispatches
 
     dispatched_source_ids: list[str] = []
 
-    def publish_selected(worker: ProcessingWorker, claimed: ClaimedJob, timestamp: datetime) -> None:
+    def publish_selected(worker: PublicationHandler, claimed: ClaimedJob, timestamp: ExecutionContext) -> None:
         _ = worker, timestamp
         assert claimed.job.source_id is not None
         dispatched_source_ids.append(claimed.job.source_id)
 
-    monkeypatch.setattr(ProcessingWorker, '_process_final_publish', publish_selected)
+    monkeypatch.setattr(PublicationHandler, 'handle', publish_selected)
     # When: the record-target worker claim runs.
     with Session(engine) as session:
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
