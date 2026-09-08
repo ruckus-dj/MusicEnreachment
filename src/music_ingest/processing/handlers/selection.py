@@ -38,6 +38,7 @@ from music_ingest.processing.candidates import (
 )
 from music_ingest.processing.execution import (
     ExecutionContext,
+    HandlerOutcome,
     JobHandler,
     ProcessingInfrastructureError,
 )
@@ -54,9 +55,9 @@ class SelectionHandler:
     settings: RuntimeProcessingSettings
     publication: JobHandler
 
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
+    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         if claimed.job.kind == 'selection_refresh':
-            self.selection_refresh(claimed, context)
+            return self.selection_refresh(claimed, context)
         elif claimed.job.kind == 'candidate_selection':
             self.candidate_selection(claimed, context.now)
         elif claimed.job.kind == 'folder_release_selection':
@@ -64,7 +65,7 @@ class SelectionHandler:
         else:
             raise ProcessingInfrastructureError(f'unsupported selection job kind: {claimed.job.kind}')
 
-    def selection_refresh(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
+    def selection_refresh(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         now = context.now
         record_id = claimed.job.library_record_id
         if record_id is None:
@@ -155,7 +156,9 @@ class SelectionHandler:
             state='running',
             created_at=now,
         )
-        self.publication.handle(ClaimedJob(refresh_publish_job, claimed.attempt), context)
+        outcome = self.publication.handle(ClaimedJob(refresh_publish_job, claimed.attempt), context)
+        if outcome is not None:
+            return outcome
         record_event(
             self.session,
             record_id,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -15,14 +14,13 @@ from music_ingest.models.jobs import ClaimedJob
 from music_ingest.processing.candidates import (
     _folder_selection_root,
 )
-from music_ingest.processing.support.outcomes import AttemptFinalizer
+from music_ingest.processing.execution import QuarantineSource
 from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
 
 
 @dataclass(frozen=True, slots=True)
 class SourceAccess:
     session: Session
-    outcomes: AttemptFinalizer
 
     def source(self, claimed: ClaimedJob) -> SourceRecord:
         if claimed.job.source_id is None:
@@ -78,12 +76,11 @@ class SourceAccess:
         ).all()
         return tuple(item for item in members if _folder_selection_root(item.source_path) == folder)
 
-    def owned_source_path(self, claimed: ClaimedJob, source: SourceRecord, now: datetime) -> Path | None:
+    def owned_source_path(self, source: SourceRecord) -> Path | QuarantineSource:
         try:
             return resolve_owned_source(source)
         except SourceBoundaryError as error:
-            self.outcomes.quarantine(claimed, source, f'root boundary: {error}', now)
-            return None
+            return QuarantineSource(source.id, f'root boundary: {error}')
 
     def changed(self, source: SourceRecord, path: Path) -> bool:
         if source.mtime_ns == 0:

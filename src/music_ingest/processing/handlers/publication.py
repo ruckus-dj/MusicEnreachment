@@ -23,7 +23,9 @@ from music_ingest.normalize.metadata import (
 from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.execution import (
     ExecutionContext,
+    HandlerOutcome,
     ProcessingInfrastructureError,
+    QuarantineSource,
 )
 from music_ingest.processing.media_stage import (
     MediaPipelineRequest,
@@ -60,7 +62,7 @@ class PublicationHandler:
     staging: StagingWorkspace
     settings: RuntimeProcessingSettings
 
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
+    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         now = context.now
         source = self.sources.source(claimed)
         record = ensure_source_record(self.session, source, now)
@@ -88,9 +90,9 @@ class PublicationHandler:
         if revision is None:
             raise ValueError('final metadata revision is missing')
         final_tags = _TAGS_ADAPTER.validate_json(revision.tags_json)
-        source_path = self.sources.owned_source_path(claimed, source, now)
-        if source_path is None:
-            return
+        source_path = self.sources.owned_source_path(source)
+        if isinstance(source_path, QuarantineSource):
+            return source_path
         relative_directory, output_name = publication_layout(tuple(final_tags.items()), source_path.name)
         publication = next((item for item in record.publications if item.state == 'current'), None)
         unsorted_destination = relative_directory == 'Unsorted' and publication is None

@@ -52,13 +52,15 @@ from music_ingest.processing.candidates import (
     musicbrainz_lookup_ids,
 )
 from music_ingest.processing.execution import (
+    ChangedSource,
     ExecutionContext,
+    HandlerOutcome,
+    QuarantineSource,
 )
 from music_ingest.processing.metadata import (
     read_tags,
 )
 from music_ingest.processing.support.evidence import SourceEvidence
-from music_ingest.processing.support.outcomes import AttemptFinalizer
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
 from music_ingest.processing.support.sources import SourceAccess
 
@@ -69,17 +71,15 @@ class AnalysisHandler:
     sources: SourceAccess
     evidence: SourceEvidence
     settings: RuntimeProcessingSettings
-    outcomes: AttemptFinalizer
 
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
+    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         now = context.now
         source = self.sources.locked_source(claimed)
-        source_path = self.sources.owned_source_path(claimed, source, now)
-        if source_path is None:
-            return
+        source_path = self.sources.owned_source_path(source)
+        if isinstance(source_path, QuarantineSource):
+            return source_path
         if self.sources.changed(source, source_path):
-            self.outcomes.requeue_changed_source(claimed, source, source_path, now)
-            return
+            return ChangedSource(source.id, source_path)
         fingerprint = self.evidence.analyze_source(source, source_path)
         if fingerprint is None:
             return

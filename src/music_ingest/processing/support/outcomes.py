@@ -21,7 +21,10 @@ from music_ingest.models import (
 from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.execution import (
+    ChangedSource,
+    HandlerOutcome,
     ProcessingInfrastructureError,
+    QuarantineSource,
 )
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
 from music_ingest.settings import SettingKey, get_setting_value
@@ -34,6 +37,18 @@ class AttemptFinalizer:
     session: Session
     config: ProcessingConfig
     settings: RuntimeProcessingSettings
+
+    def apply(self, claimed: ClaimedJob, outcome: HandlerOutcome, now: datetime) -> None:
+        if outcome is None:
+            return
+        source = self.session.get(SourceRecord, outcome.source_id)
+        if source is None:
+            raise ProcessingInfrastructureError('processing outcome source is missing')
+        match outcome:
+            case QuarantineSource(reason=reason):
+                self.quarantine(claimed, source, reason, now)
+            case ChangedSource(path=path):
+                self.requeue_changed_source(claimed, source, path, now)
 
     def retry_claim(
         self,

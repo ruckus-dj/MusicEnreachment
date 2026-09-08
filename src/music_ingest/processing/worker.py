@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -8,7 +7,6 @@ from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Final, final
 
-from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
 from music_ingest.inspectors.decoder import DecoderValidationError
@@ -23,6 +21,7 @@ from music_ingest.normalize.metadata import (
 from music_ingest.processing.config import ProcessingConfig as ProcessingConfig
 from music_ingest.processing.execution import (
     ExecutionContext,
+    HandlerOutcome,
     JobHandler,
     ProcessingInfrastructureError,
 )
@@ -54,8 +53,6 @@ from music_ingest.publication.service import (
 )
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
 
-LOGGER = logging.getLogger(__name__)
-_TAGS_ADAPTER = TypeAdapter(dict[str, str])
 _INITIAL_JOB_KINDS: Final = frozenset(
     {'filesystem_scan', 'lidarr_download', 'lidarr_releaseimport', 'lidarr_rename', 'lidarr_albumdelete'}
 )
@@ -72,17 +69,28 @@ class ProcessingWorker:
     def _bind_services(self) -> None:
         self._settings = RuntimeProcessingSettings(self._session, self._config)
         self._outcomes = AttemptFinalizer(self._session, self._config, self._settings)
-        self._sources = SourceAccess(self._session, self._outcomes)
+        self._sources = SourceAccess(self._session)
         self._evidence = SourceEvidence(self._session, self._config, self._settings)
         self._staging = StagingWorkspace(self._session, self._config)
         self._publication = PublicationHandler(
             self._session, self._config, self._sources, self._staging, self._settings
         )
         self._initial = InitialHandler(
-            self._session, self._config, self._sources, self._evidence, self._settings, self._outcomes, self._staging
+            self._session, self._config, self._sources, self._evidence, self._settings, self._staging
         )
         self._selection = SelectionHandler(self._session, self._sources, self._settings, self._publication)
-        self._analysis = AnalysisHandler(self._session, self._sources, self._evidence, self._settings, self._outcomes)
+        self._analysis = AnalysisHandler(self._session, self._sources, self._evidence, self._settings)
+        self._handlers: dict[str, JobHandler] = {
+            'reconciliation_scan': ReconciliationHandler(),
+            'selection_refresh': self._selection,
+            'candidate_selection': self._selection,
+            'acoustid_analysis': self._analysis,
+            'musicbrainz_analysis': self._analysis,
+            'folder_release_selection': self._selection,
+            'final_publish': self._publication,
+            'artwork_enrichment': ArtworkHandler(),
+            **dict.fromkeys(_INITIAL_JOB_KINDS, self._initial),
+        }
 
     def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
         storage = self._session.get(StorageConfigRecord, 1)
@@ -112,7 +120,8 @@ class ProcessingWorker:
         #     (decoder evidence is captured first when available).
         try:
             with self._session.begin_nested():
-                self._process(claimed, now)
+                outcome = self._process(claimed, now)
+                self._outcomes.apply(claimed, outcome, now)
         except (
             MetadataWriteError,
             ProcessingInfrastructureError,
@@ -147,7 +156,7 @@ class ProcessingWorker:
                 JobRepository(self._session).succeed(claimed, datetime.now(UTC))
         return True
 
-    def _process(self, claimed: ClaimedJob, now: datetime) -> None:
+    def _process(self, claimed: ClaimedJob, now: datetime) -> HandlerOutcome:
         if claimed.job.source_id is not None:
             source = self._session.get(SourceRecord, claimed.job.source_id)
             if source is not None and source.intake_state == 'replaced':
@@ -157,20 +166,6 @@ class ProcessingWorker:
                 claimed.job.next_attempt_at = None
                 return
         context = ExecutionContext(self._session, self._config, now)
-        handlers: dict[str, JobHandler] = {
-            'reconciliation_scan': ReconciliationHandler(),
-            'selection_refresh': self._selection,
-            'candidate_selection': self._selection,
-            'acoustid_analysis': self._analysis,
-            'musicbrainz_analysis': self._analysis,
-            'folder_release_selection': self._selection,
-            'final_publish': self._publication,
-            'artwork_enrichment': ArtworkHandler(),
-        }
-        if handler := handlers.get(claimed.job.kind):
-            handler.handle(claimed, context)
-            return
-        if claimed.job.kind in _INITIAL_JOB_KINDS:
-            self._initial.handle(claimed, context)
-            return
+        if handler := self._handlers.get(claimed.job.kind):
+            return handler.handle(claimed, context)
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')

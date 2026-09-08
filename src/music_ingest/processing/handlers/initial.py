@@ -26,7 +26,10 @@ from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.processing.candidates import _has_explicit_musicbrainz_identity
 from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.execution import (
+    ChangedSource,
     ExecutionContext,
+    HandlerOutcome,
+    QuarantineSource,
 )
 from music_ingest.processing.media_stage import (
     MediaPipelineRequest,
@@ -37,7 +40,6 @@ from music_ingest.processing.metadata import (
     file_hash,
 )
 from music_ingest.processing.support.evidence import SourceEvidence
-from music_ingest.processing.support.outcomes import AttemptFinalizer
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
 from music_ingest.processing.support.sources import SourceAccess
 from music_ingest.processing.support.staging import StagingWorkspace
@@ -58,32 +60,27 @@ class InitialHandler:
     sources: SourceAccess
     evidence: SourceEvidence
     settings: RuntimeProcessingSettings
-    outcomes: AttemptFinalizer
     staging: StagingWorkspace
 
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
+    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         now = context.now
         source = self.sources.source(claimed)
-        source_path = self.sources.owned_source_path(claimed, source, now)
-        if source_path is None:
-            return
+        source_path = self.sources.owned_source_path(source)
+        if isinstance(source_path, QuarantineSource):
+            return source_path
         if self.sources.changed(source, source_path):
-            self.outcomes.requeue_changed_source(claimed, source, source_path, now)
-            return
+            return ChangedSource(source.id, source_path)
         inspection = inspect_media_capability(source_path, timeout_seconds=self.settings.timeout_seconds())
         capability = inspection.capability
         if capability is None:
             detail = inspection.ffprobe.stderr.strip() or inspection.ffprobe.stdout.strip() or 'no ffprobe output'
-            self.outcomes.quarantine(
-                claimed,
-                source,
+            return QuarantineSource(
+                source.id,
                 (
                     f'input audio stream policy rejected source: ffprobe={inspection.ffprobe.state}; '
                     f'audio_streams={inspection.audio_stream_count}; {detail}'
                 ),
-                now,
             )
-            return
         decoder_evidence = validate_decoder(
             source_path,
             ffmpeg_command=self.config.ffmpeg_command,

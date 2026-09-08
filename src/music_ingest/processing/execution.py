@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, override
 
 from sqlalchemy.orm import Session
@@ -31,15 +31,20 @@ class ExecutionContext:
     now: datetime
 
 
-class JobHandler(Protocol):
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None: ...
+@dataclass(frozen=True, slots=True)
+class QuarantineSource:
+    source_id: str
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
-class MethodJobHandler:
-    """Compatibility adapter while legacy handlers are migrated out of the worker."""
+class ChangedSource:
+    source_id: str
+    path: Path
 
-    callback: Callable[[ClaimedJob, datetime], None]
 
-    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> None:
-        self.callback(claimed, context.now)
+type HandlerOutcome = QuarantineSource | ChangedSource | None
+
+
+class JobHandler(Protocol):
+    def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome: ...
