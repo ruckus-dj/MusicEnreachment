@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import os
+from argparse import Namespace
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
+
+import pytest
+from alembic.config import Config
+from sqlalchemy import Engine, create_engine, select
+from sqlalchemy.orm import Session
+from testcontainers.community.postgres import PostgresContainer
+
+from alembic import command
+from music_ingest.library.service import append_metadata_revision
+from music_ingest.models import (
+    LibraryPublicationRecord,
+    LibraryRecord,
+    PublicationAttemptRecord,
+    ReviewDecisionRecord,
+    SourceRecord,
+    SourceRootRecord,
+)
+from music_ingest.models.jobs import JobRepository
+from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing.metadata import publication_layout
+from music_ingest.publication import attempts
+from tests.test_selection_refresh import _flac
+
+pytestmark = pytest.mark.live
+
+
+@pytest.fixture
+def integrity_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Engine]:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    legacy = tmp_path / 'legacy'
+    legacy.mkdir()
+    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(tmp_path))
+    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
+    with PostgresContainer('postgres:17') as postgres:
+        url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        config = Config()
+        config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
+        config.set_main_option('sqlalchemy.url', url)
+        config.cmd_opts = Namespace(x=[f'legacy_incoming_root={legacy}'])
+        command.upgrade(config, 'head')
+        engine = create_engine(url)
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+
+
+def seed_publication(engine: Engine, root: Path) -> tuple[ProcessingConfig, Path, Path]:
+    config = ProcessingConfig(root / 'incoming', root / 'processing', root / 'media')
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'source.flac', 'Track').resolve()
+    tags = {'TITLE': 'Track', 'ARTIST': 'Artist', 'ALBUM': 'Album'}
+    directory, name = publication_layout(tuple(tags.items()), source_path.name)
+    target = config.media_root / directory / name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b'old-output')
+    (target.parent / 'album.nfo').write_bytes(b'preserve nfo')
+    now = datetime.now(UTC)
+    stat = source_path.stat()
+    with Session(engine) as session:
+        record = LibraryRecord(id='record', created_at=now, updated_at=now)
+        source_root = SourceRootRecord(
+            id='root',
+            display_name='Root',
+            canonical_path=str(source_path.parent),
+            enabled=True,
+            scan_state='never_scanned',
+            created_at=now,
+            updated_at=now,
+        )
+        source = SourceRecord(
+            id='source',
+            source_path=str(source_path),
+            device=stat.st_dev,
+            inode=stat.st_ino,
+            size_bytes=stat.st_size,
+            sha256=sha256(source_path.read_bytes()).hexdigest(),
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            source_root=source_root,
+            review_decisions=[ReviewDecisionRecord(state='confirmed', rationale='fixture')],
+        )
+        session.add_all((record, source_root, source))
+        session.flush()
+        revision = append_metadata_revision(session, record.id, source.id, 'final', tags, 'test', now)
+        session.add(
+            LibraryPublicationRecord(
+                id='old',
+                library_record_id=record.id,
+                source_id=source.id,
+                path=str(target),
+                format_name='mka',
+                content_sha256=sha256(b'old-output').hexdigest(),
+                state='current',
+                created_at=now,
+            )
+        )
+        JobRepository(session).enqueue(source.id, 'final_publish', now, revision.id)
+        session.commit()
+    return config, source_path, target
+
+
+@pytest.mark.parametrize(
+    'checkpoint', ['prepared', 'prepared-restart', 'backup-rename', 'after-expose', 'exposed', 'finalized', 'cleanup']
+)
+def test_real_worker_recovers_publication_commit_and_restart_failures(
+    integrity_engine: Engine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint: str,
+) -> None:
+    config, source, target = seed_publication(integrity_engine, tmp_path)
+    original_source = source.read_bytes()
+    with Session(integrity_engine) as session:
+        commit = session.commit
+        expose = attempts.expose_attempt
+        cleanup = attempts.cleanup_attempt
+        replace = os.replace
+
+        def fail_commit() -> None:
+            attempt = session.scalar(select(PublicationAttemptRecord))
+            if attempt is not None and attempt.state == checkpoint:
+                raise OSError('injected commit failure')
+            prepared = attempt is not None and attempt.state == 'prepared'
+            commit()
+            if checkpoint == 'prepared-restart' and prepared:
+                raise OSError('injected restart after prepared commit')
+
+        def fail_replace(src: Path, dst: Path) -> None:
+            replace(src, dst)
+            if src == target:
+                raise OSError('injected restart after backup rename')
+
+        def fail_after_expose(db: Session, attempt: PublicationAttemptRecord, now: datetime) -> None:
+            expose(db, attempt, now)
+            raise OSError('injected after expose')
+
+        def fail_cleanup(attempt: PublicationAttemptRecord) -> None:
+            raise OSError('injected cleanup failure')
+
+        monkeypatch.setattr(session, 'commit', fail_commit)
+        if checkpoint == 'backup-rename':
+            monkeypatch.setattr(attempts.os, 'replace', fail_replace)
+        if checkpoint == 'after-expose':
+            monkeypatch.setattr(attempts, 'expose_attempt', fail_after_expose)
+        if checkpoint == 'cleanup':
+            monkeypatch.setattr(attempts, 'cleanup_attempt', fail_cleanup)
+        with pytest.raises(OSError, match='injected'):
+            ProcessingWorker(session, config).run_once()
+        session.rollback()
+        monkeypatch.setattr(attempts.os, 'replace', replace)
+        monkeypatch.setattr(attempts, 'expose_attempt', expose)
+        monkeypatch.setattr(attempts, 'cleanup_attempt', cleanup)
+        durable = session.scalar(select(PublicationAttemptRecord))
+        if checkpoint == 'prepared':
+            assert durable is None
+            assert target.read_bytes() == b'old-output'
+        elif checkpoint == 'prepared-restart':
+            assert durable is not None and durable.state == 'prepared'
+            assert target.read_bytes() == b'old-output'
+        else:
+            assert durable is not None
+            assert (Path(durable.backup_directory) / target.name).read_bytes() == b'old-output'
+
+    # A new worker/session is the recovery entry point, including an empty queue.
+    with Session(integrity_engine) as session:
+        ProcessingWorker(session, config).run_once()
+        session.commit()
+        current = session.scalars(
+            select(LibraryPublicationRecord).where(LibraryPublicationRecord.state == 'current')
+        ).one()
+        assert current.id != 'old'
+        assert current.content_sha256 == sha256(target.read_bytes()).hexdigest()
+        attempt = session.scalars(select(PublicationAttemptRecord)).one()
+        assert attempt.state == 'finalized' and attempt.cleaned_at is not None
+        assert not Path(attempt.backup_directory).exists()
+        assert (target.parent / 'album.nfo').read_bytes() == b'preserve nfo'
+        assert source.read_bytes() == original_source

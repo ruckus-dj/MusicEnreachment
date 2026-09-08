@@ -101,13 +101,14 @@ def test_worker_finalizes_handler_result_without_losing_transaction_boundaries(
         assert job is not None and job.state == job_state
         assert job.attempts[0].state == attempt_state
         assert bool(session.scalars(select(SourceTagRecord)).all()) is retains_evidence
-        # Only the caller commits the outer transaction, including the claim and finalization.
+        # Worker checkpoints survive a later caller rollback.
         session.rollback()
 
     with Session(engine) as session:
         job = session.get(JobRecord, 'job')
-        assert job is not None and job.state == 'queued' and job.attempts == []
-        assert session.scalars(select(SourceTagRecord)).all() == []
+        assert job is not None and job.state == job_state
+        assert job.attempts[0].state == attempt_state
+        assert bool(session.scalars(select(SourceTagRecord)).all()) is retains_evidence
     assert not (config.staging_root / 'job').exists()
     assert source_path.read_bytes() == b'immutable source'
     engine.dispose()

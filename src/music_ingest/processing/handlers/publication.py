@@ -42,10 +42,6 @@ from music_ingest.processing.support.sources import SourceAccess
 from music_ingest.processing.support.staging import StagingWorkspace
 from music_ingest.publication import (
     PublicationAttemptRequest,
-    acquire_publication_destination_lock,
-    cleanup_attempt,
-    expose_attempt,
-    finalize_attempt,
     mark_staged,
     reserve_attempt,
 )
@@ -171,14 +167,11 @@ class PublicationHandler:
             )
         )
         mark_staged(self.session, attempt, now)
-        if not unsorted_destination:
-            acquire_publication_destination_lock(self.session, target_audio)
-        expose_attempt(self.session, attempt, now)
-        _ = finalize_attempt(self.session, attempt, now)
-        cleanup_attempt(attempt)
+        attempt.state = 'prepared'
+        record.publication_state = 'publishing'
         source.intake_state = 'present'
         _ = reevaluate_effective_source_decision(self.session, record.id, now)
         release_mbid = final_tags.get('MUSICBRAINZ_ALBUMID', '').strip()
         if release_mbid and self.settings.artwork_enabled():
             _ = JobRepository(self.session).enqueue_release_artwork(release_mbid, now)
-        record_event(self.session, record.id, 'final_published', 'complete', None, now, source.id)
+        record_event(self.session, record.id, 'final_publication_prepared', 'publishing', None, now, source.id)

@@ -1501,7 +1501,7 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
     finished_at = started_at + timedelta(seconds=3)
 
     class Clock:
-        values = iter((started_at, finished_at))
+        values = iter((started_at, finished_at, finished_at))
 
         @classmethod
         def now(cls, tz: tzinfo | None) -> datetime:
@@ -1541,8 +1541,9 @@ def test_worker_run_once_records_actual_completion_time(tmp_path: Path, monkeypa
         job = session.get(JobRecord, 'timing-job')
         assert job is not None
         assert job.state == 'completed'
-        assert job.attempts[0].started_at == started_at
-        assert job.attempts[0].finished_at == finished_at
+        assert job.attempts[0].started_at.replace(tzinfo=UTC) == started_at
+        assert job.attempts[0].finished_at is not None
+        assert job.attempts[0].finished_at.replace(tzinfo=UTC) == finished_at
 
 
 def test_worker_run_once_rolls_back_failed_flush_before_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -224,6 +224,7 @@ class PublicationAttemptRecord(Base):
     exposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     library_record: Mapped[LibraryRecord] = relationship(back_populates='publication_attempts')
 

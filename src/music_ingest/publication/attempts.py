@@ -17,6 +17,7 @@ from music_ingest.models.library import (
     LibraryRecord,
     PublicationAttemptRecord,
 )
+from music_ingest.publication.locks import acquire_storage_lock
 
 _MANIFEST_ADAPTER = TypeAdapter(dict[str, int | str | None])
 
@@ -67,6 +68,11 @@ def mark_staged(session: Session, attempt: PublicationAttemptRecord, now: dateti
     output = Path(attempt.staging_directory) / attempt.target_audio_name
     attempt.output_sha256 = _sha256(output)
     attempt.state = 'staged'
+    manifest = _manifest(attempt)
+    manifest_path = Path(attempt.staging_directory) / 'manifest.json'
+    manifest_path.write_text(manifest, encoding='utf-8')
+    _fsync_file(manifest_path)
+    attempt.manifest_sha256 = sha256(manifest.encode()).hexdigest()
     _fsync_file(output)
     _fsync_directory(output.parent)
     _event(session, attempt, 'publication_attempt_staged', 'publishing', now)
@@ -78,7 +84,7 @@ def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: dat
     target = Path(attempt.target_directory) / attempt.target_audio_name
     backup = Path(attempt.backup_directory) / attempt.target_audio_name
     output = staging / attempt.target_audio_name
-    if attempt.state != 'staged' or attempt.output_sha256 != _sha256(output):
+    if attempt.state not in {'staged', 'prepared'} or attempt.output_sha256 != _sha256(output):
         raise ValueError('publication attempt is not a valid staged output')
     manifest = _manifest(attempt)
     manifest_path = staging / 'manifest.json'
@@ -87,10 +93,12 @@ def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: dat
     _fsync_directory(staging)
     target.parent.mkdir(parents=True, exist_ok=True)
     backup.parent.mkdir(parents=True, exist_ok=True)
-    if backup.exists():
-        raise ValueError('publication attempt backup already exists')
+    if backup.exists() and target.exists():
+        raise ValueError('publication attempt backup and target both exist')
     if target.exists():
         _ = os.replace(target, backup)
+        _fsync_directory(backup.parent)
+        _fsync_directory(target.parent)
     try:
         _ = os.replace(output, target)
     except OSError:
@@ -98,6 +106,8 @@ def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: dat
             os.replace(backup, target)
         raise
     _fsync_directory(target.parent)
+    _fsync_directory(backup.parent)
+    _fsync_directory(staging)
     attempt.manifest_sha256 = sha256(manifest.encode()).hexdigest()
     attempt.state = 'exposed'
     attempt.exposed_at = now
@@ -158,7 +168,10 @@ def finalize_and_cleanup_attempt(
 ) -> LibraryPublicationRecord:
     publication = finalize_attempt(session, attempt, now)
     session.commit()
+    acquire_storage_lock(session)
     cleanup_attempt(attempt)
+    attempt.cleaned_at = now
+    session.commit()
     return publication
 
 
@@ -168,38 +181,69 @@ def cleanup_attempt(attempt: PublicationAttemptRecord) -> None:
 
 
 def reconcile_attempts(session: Session, now: datetime) -> None:
-    attempts = session.scalars(
-        select(PublicationAttemptRecord).where(
-            PublicationAttemptRecord.state.in_(('reserved', 'staged', 'exposed', 'finalized'))
-        )
+    """Run only outside a handler savepoint; every filesystem change has a durable intent."""
+    acquire_storage_lock(session)
+    attempt_ids = session.scalars(
+        select(PublicationAttemptRecord.id)
+        .where(PublicationAttemptRecord.cleaned_at.is_(None))
+        .order_by(PublicationAttemptRecord.created_at, PublicationAttemptRecord.id)
+        .limit(100)
     ).all()
-    for attempt in attempts:
-        if attempt.state == 'finalized':
-            cleanup_attempt(attempt)
+    for attempt_id in attempt_ids:
+        acquire_storage_lock(session)
+        attempt = session.get(PublicationAttemptRecord, attempt_id, populate_existing=True)
+        if attempt is None or attempt.cleaned_at is not None:
             continue
+        if attempt.state in {'finalized', 'failed'}:
+            cleanup_attempt(attempt)
+            attempt.cleaned_at = now
+            session.commit()
+            continue
+        if attempt.state == 'prepared':
+            # A previous process may have completed the rename without committing exposed.
+            if _exposed_output_is_recoverable(attempt):
+                attempt.state = 'exposed'
+            else:
+                target = Path(attempt.target_directory) / attempt.target_audio_name
+                owner = session.scalar(
+                    select(LibraryPublicationRecord)
+                    .where(LibraryPublicationRecord.path == str(target.resolve()))
+                    .where(LibraryPublicationRecord.state == 'current')
+                )
+                if owner is not None and owner.library_record_id != attempt.library_record_id:
+                    attempt.state = 'failed'
+                    attempt.failure_reason = 'destination belongs to another library record'
+                    session.commit()
+                    continue
+                expose_attempt(session, attempt, now)
+            session.commit()
+            acquire_storage_lock(session)
         if attempt.state == 'staged' and _exposed_output_is_recoverable(attempt):
             attempt.state = 'exposed'
-            _ = finalize_and_cleanup_attempt(session, attempt, now)
-            continue
         if attempt.state in {'reserved', 'staged'}:
-            if (
-                attempt.state == 'staged'
-                and (Path(attempt.backup_directory) / attempt.target_audio_name).is_file()
-                and not (Path(attempt.target_directory) / attempt.target_audio_name).exists()
-            ):
-                _restore_backup(attempt)
-            cleanup_attempt(attempt)
+            _restore_backup(attempt)
             attempt.state = 'failed'
             attempt.failure_reason = 'worker restart before output exposure'
             _event(session, attempt, 'publication_attempt_recovered_failed', 'retrying', now)
+            session.commit()
+            acquire_storage_lock(session)
+            cleanup_attempt(attempt)
+            attempt.cleaned_at = now
+            session.commit()
             continue
         try:
-            _ = finalize_and_cleanup_attempt(session, attempt, now)
+            finalize_attempt(session, attempt, now)
         except OSError, ValueError:
             _restore_backup(attempt)
             attempt.state = 'failed'
             attempt.failure_reason = 'exposed output failed manifest or hash recovery verification'
             _event(session, attempt, 'publication_attempt_recovered_failed', 'retrying', now)
+        # Do not catch commit errors: leave the durable journal and backup for restart.
+        session.commit()
+        acquire_storage_lock(session)
+        cleanup_attempt(attempt)
+        attempt.cleaned_at = now
+        session.commit()
     session.flush()
 
 
@@ -256,9 +300,10 @@ def _restore_backup(attempt: PublicationAttemptRecord) -> None:
     backup = Path(attempt.backup_directory) / attempt.target_audio_name
     if not backup.exists():
         return
-    if target.exists():
-        target.unlink()
-    _ = os.replace(backup, target)
+    restored = backup.with_name(backup.name + '.restore')
+    shutil.copy2(backup, restored)
+    _fsync_file(restored)
+    _ = os.replace(restored, target)
     _fsync_directory(target.parent)
 
 

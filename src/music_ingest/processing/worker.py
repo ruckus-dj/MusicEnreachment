@@ -48,6 +48,7 @@ from music_ingest.processing.support.staging import StagingWorkspace
 from music_ingest.publication import (
     reconcile_attempts,
 )
+from music_ingest.publication.locks import acquire_storage_lock
 from music_ingest.publication.service import (
     PublicationError,
 )
@@ -60,7 +61,7 @@ _INITIAL_JOB_KINDS: Final = frozenset(
 
 @final
 class ProcessingWorker:
-    """Execute a claimed job inside a savepoint; the caller owns the outer commit."""
+    """Own transaction checkpoints: prepare in a savepoint, commit, then publish durably."""
 
     def __init__(self, session: Session, config: ProcessingConfig, *, lease_age: timedelta | None = None) -> None:
         self._session: Session = session
@@ -95,12 +96,13 @@ class ProcessingWorker:
         }
 
     def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
+        now = datetime.now(UTC)
+        reconcile_attempts(self._session, now)
+        acquire_storage_lock(self._session)
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
             self._config = replace(self._config, media_root=Path(storage.output_root))
         self._bind_services()
-        now = datetime.now(UTC)
-        reconcile_attempts(self._session, now)
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
         if claimed is None:
             return False
@@ -158,6 +160,8 @@ class ProcessingWorker:
             self._staging.discard_staging(claimed.job.id)
             if claimed.attempt.state == 'running':
                 JobRepository(self._session).succeed(claimed, datetime.now(UTC))
+        self._session.commit()
+        reconcile_attempts(self._session, datetime.now(UTC))
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> HandlerOutcome:
