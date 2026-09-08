@@ -28,6 +28,10 @@ class RemuxFailure(Exception):
 
 def remux_stream_copy(request: RemuxRequest) -> ToolEvidence:
     source_path = request.source_path.resolve(strict=True)
+    # The caller owns the staging directory. Never adopt an existing output (or
+    # follow its symlink): failure cleanup must not remove pre-existing files.
+    if request.output_path.is_symlink() or request.output_path.exists():
+        raise FileExistsError(f'remux output already exists: {request.output_path}')
     output_path = request.output_path.resolve()
     muxer = _muxer(output_path.suffix)
     evidence = run_tool(
