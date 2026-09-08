@@ -66,7 +66,7 @@ def finish_migration(engine: Engine) -> None:
     pytest.fail('migration did not finish')
 
 
-@pytest.mark.parametrize('failure', ['second-copy', 'disk-full', 'switch-commit', 'cleanup-commit'])
+@pytest.mark.parametrize('failure', ['second-copy', 'disk-full', 'after-rename', 'switch-commit', 'cleanup-commit'])
 def test_storage_migration_resumes_without_losing_old_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -86,7 +86,21 @@ def test_storage_migration_resumes_without_losing_old_files(
     # Finish first copy, then inject the second-file error or a switch/cleanup commit failure.
     with Session(engine) as session:
         assert resume_storage_migration(session)
-    if failure in {'second-copy', 'disk-full'}:
+    if failure == 'after-rename':
+        import os
+
+        replace = os.replace
+
+        def interrupt_rename(source: Path, destination: Path) -> None:
+            replace(source, destination)
+            raise OSError('injected after rename')
+
+        with monkeypatch.context() as patch:
+            patch.setattr('music_ingest.storage_migration.os.replace', interrupt_rename)
+            with Session(engine) as session, pytest.raises(OSError, match='injected'):
+                resume_storage_migration(session)
+        assert (new / '1.mka').read_bytes() == b'audio-1'
+    elif failure in {'second-copy', 'disk-full'}:
         with monkeypatch.context() as patch:
 
             def fail_copy(source: Path, destination: Path) -> None:

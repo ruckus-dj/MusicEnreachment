@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import (
@@ -30,10 +30,13 @@ from music_ingest.library.service import (
 )
 from music_ingest.models import (
     JobRecord,
+    PublicationAttemptRecord,
     SourceRecord,
+    StorageConfigRecord,
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
+from music_ingest.publication.locks import acquire_storage_lock
 from music_ingest.reconciliation import mark_disappeared_source
 
 _DEFAULT_PROVIDER_RETRY_REQUEST = ProviderRetryRequest()
@@ -50,8 +53,32 @@ def _needs_analysis_retry(source: SourceRecordView) -> bool:
     )
 
 
+def _remove_conflict_path(path: Path) -> None:
+    if path.suffix.lower() == '.nfo':
+        return
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+        return
+    for child in tuple(path.iterdir()):
+        _remove_conflict_path(child)
+    if not any(path.iterdir()):
+        path.rmdir()
+
+
 def create_router(session_factory: SessionFactory, *, media_root: Path | None = None) -> APIRouter:
     router = APIRouter()
+
+    def writable_media_root(session: Session) -> Path | None:
+        acquire_storage_lock(session)
+        config = session.get(StorageConfigRecord, 1, populate_existing=True)
+        if config is not None and config.state != 'ready':
+            raise HTTPException(status_code=409, detail='output migration is active; retry after completion')
+        if (
+            session.scalar(select(PublicationAttemptRecord.id).where(PublicationAttemptRecord.cleaned_at.is_(None)))
+            is not None
+        ):
+            raise HTTPException(status_code=409, detail='publication recovery is active; retry after completion')
+        return media_root if config is None else Path(config.output_root)
 
     @router.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
     def reprocess_all_library() -> FullReprocessResponse:
@@ -193,21 +220,19 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
     def cleanup_destination_conflict(record_id: str, source_id: str) -> DestinationConflictCleanupResponse:
         try:
             with session_factory() as session:
+                output_root = writable_media_root(session)
                 record = library_record_detail(session, record_id)
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
                 _ = require_owned_source(session, source.id)
-                conflict = destination_conflict(session, record, source, media_root)
+                conflict = destination_conflict(session, record, source, output_root)
                 if conflict is None:
                     raise HTTPException(status_code=404, detail='destination conflict not found')
                 if conflict['ownership'] == 'managed':
                     raise HTTPException(status_code=409, detail='managed destination must be replaced by the worker')
                 path = Path(conflict['path'])
-                if path.is_dir():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
+                _remove_conflict_path(path)
                 job = session.scalar(
                     select(JobRecord)
                     .where(
@@ -236,7 +261,7 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     record_id=record.id,
                     source_id=source.id,
                     path=str(path),
-                    removed=True,
+                    removed=not path.exists(),
                     queued=queued,
                 )
         except LookupError as error:
@@ -249,23 +274,21 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
     def replace_destination_conflict(record_id: str, source_id: str) -> DestinationConflictCleanupResponse:
         try:
             with session_factory() as session:
+                output_root = writable_media_root(session)
                 record = library_record_detail(session, record_id)
                 source = next((item for item in record.sources if item.id == source_id), None)
                 if source is None:
                     raise LookupError(source_id)
                 _ = require_owned_source(session, source.id)
-                conflict = destination_conflict(session, record, source, media_root)
+                conflict = destination_conflict(session, record, source, output_root)
                 if conflict is None:
                     raise HTTPException(status_code=404, detail='destination conflict not found')
                 if conflict['ownership'] != 'managed':
                     raise HTTPException(status_code=409, detail='only service-owned destinations can be replaced')
                 path = Path(conflict['path'])
-                if media_root is None or path == media_root.resolve() or media_root.resolve() not in path.parents:
+                if output_root is None or path == output_root.resolve() or output_root.resolve() not in path.parents:
                     raise HTTPException(status_code=409, detail='destination is outside the media root')
-                if path.is_dir():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
+                _remove_conflict_path(path)
                 now = datetime.now(UTC)
                 kind = queue_source_recovery(session, record, source, now)
                 record_event(
@@ -282,7 +305,7 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     record_id=record.id,
                     source_id=source.id,
                     path=str(path),
-                    removed=True,
+                    removed=not path.exists(),
                     queued=kind is not None,
                 )
         except LookupError as error:

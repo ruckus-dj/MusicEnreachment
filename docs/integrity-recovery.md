@@ -78,3 +78,9 @@ Initial ingest and reprocessing use the same durable publication journal as fina
 metadata publication. Migration `20260909_0022` preserves the intended post-publication
 review/provider state across restart. Cleanup failures remain pending for retry;
 cleanup removes only known attempt files and preserves any `.nfo` sidecars.
+
+Manual destination cleanup/replacement APIs also acquire the shared lock, use the
+persisted output root and reject changes during migration or pending publication
+recovery. Their cleanup preserves `.nfo`. Resuming an already copied file fsyncs its
+content and directory ancestry before recording progress, including a process that
+stopped immediately after rename.

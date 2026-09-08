@@ -68,6 +68,7 @@ def _copy_file(journal: MigrationJournal, item: MigrationFile) -> None:
         raise ValueError(f'source changed during storage migration: {source}')
     if destination.exists():
         if _sha256(destination) == item.sha256:
+            _sync_copy(destination, Path(journal.destination))
             return
         raise ValueError(f'destination differs from storage migration manifest: {destination}')
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -79,8 +80,14 @@ def _copy_file(journal: MigrationJournal, item: MigrationFile) -> None:
     if _sha256(temporary) != item.sha256:
         raise ValueError(f'storage migration copy hash mismatch: {source}')
     os.replace(temporary, destination)
+    _sync_copy(destination, Path(journal.destination))
+
+
+def _sync_copy(destination: Path, root: Path) -> None:
+    # Recovery can find a rename performed before the previous process fsynced its directory.
+    _fsync_file(destination)
     parent = destination.parent
-    while parent.is_relative_to(Path(journal.destination)):
+    while parent.is_relative_to(root):
         _fsync_directory(parent)
         parent = parent.parent
 

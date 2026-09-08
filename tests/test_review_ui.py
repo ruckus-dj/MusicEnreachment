@@ -21,6 +21,7 @@ from music_ingest.models import (
     LibraryRecord,
     SourceRecord,
     SourceRootRecord,
+    StorageConfigRecord,
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
@@ -472,7 +473,11 @@ def test_library_recovery_when_source_is_blocked_requeues_without_deleting_histo
         assert sum(job.state == 'queued' for job in jobs) == 1
 
 
-def test_destination_replace_when_service_owned_removes_only_managed_folder(tmp_path: Path) -> None:
+@pytest.mark.parametrize('migration_active', [False, True])
+def test_destination_replace_when_service_owned_removes_only_managed_folder(
+    tmp_path: Path,
+    migration_active: bool,
+) -> None:
     # Given: a service-owned destination collision for an existing source.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "destination.db"}')
     Base.metadata.create_all(engine)
@@ -510,16 +515,33 @@ def test_destination_replace_when_service_owned_removes_only_managed_folder(tmp_
     destination = tmp_path / job_id
     destination.mkdir()
     (destination / 'stale.flac').write_bytes(b'stale')
+    (destination / 'album.nfo').write_bytes(b'preserve')
+    with Session(engine) as session:
+        session.add(
+            StorageConfigRecord(
+                id=1,
+                output_root=str(tmp_path),
+                state='migrating' if migration_active else 'ready',
+                generation=1,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
     client = TestClient(create_app(lambda: Session(engine), media_root=tmp_path))
 
     # When: the operator confirms replacement from the track inspector.
     response = client.post(f'/api/library/records/{record_id}/sources/{intake.source_id}/destination-conflict/replace')
 
-    # Then: only the managed destination is removed and the source is queued.
-    assert response.status_code == 200
-    assert response.json()['removed'] is True
-    assert response.json()['queued'] is True
-    assert not destination.exists()
+    # Relocation excludes destructive API actions; ordinary cleanup preserves NFO.
+    assert (destination / 'album.nfo').read_bytes() == b'preserve'
+    if migration_active:
+        assert response.status_code == 409
+        assert (destination / 'stale.flac').read_bytes() == b'stale'
+    else:
+        assert response.status_code == 200
+        assert response.json()['removed'] is False
+        assert response.json()['queued'] is True
+        assert not (destination / 'stale.flac').exists()
 
 
 def test_job_id_when_source_id_is_sha256_fits_database_column(tmp_path: Path) -> None:
