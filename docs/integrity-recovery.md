@@ -12,7 +12,9 @@ runtime; a new worker session resumes from the durable journal even with an empt
 Filesystem writers and recovery use the same PostgreSQL transaction advisory lock.
 It is reacquired after each commit, and destination ownership is checked again before
 exposure. Recovery scans at most 100 pending journals and marks completed cleanup;
-history remains available. This intentionally serializes worker filesystem operations.
+history remains available. The conservative lock scope is the entire worker iteration (including media/provider
+processing), so jobs currently run serially even when multiple slots are configured.
+Narrowing that scope is a separate concurrency/performance change.
 
 Migration `20260908_0020` adds the prepared state and cleanup timestamp. Stop old
 workers before upgrading: mixing workers with the old transaction contract is unsupported.
