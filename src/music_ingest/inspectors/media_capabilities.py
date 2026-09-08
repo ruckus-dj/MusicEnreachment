@@ -113,7 +113,7 @@ def _parse_capability(
 
 
 def _positive_int(value: object) -> int | None:
-    if isinstance(value, int) and value > 0:
+    if type(value) is int and value > 0:
         return value
     if not isinstance(value, str):
         return None
