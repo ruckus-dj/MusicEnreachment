@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from itertools import permutations
 from pathlib import Path
@@ -206,6 +207,68 @@ def test_quality_policy_v1_when_tuples_tie_uses_ascending_immutable_source_id() 
 
     # Then: only the immutable ID breaks the tie.
     assert decision.source_id == 'source-a'
+
+
+def test_quality_policy_empty_set_can_later_receive_an_initial_selection() -> None:
+    empty = evaluate(())
+    assert empty.source_id is None
+    assert empty.baseline_source_id is None
+    assert empty.quality_tuple is None
+    assert empty.reason is DecisionReason.NO_ELIGIBLE_SOURCE
+    candidate = _candidate('source', Codec.FLAC, bit_depth=16)
+    selected = evaluate((candidate,), previous=ExistingDecision.from_decision(empty))
+    assert selected.source_id == candidate.source_id
+    assert selected.reason is DecisionReason.INITIAL_SELECTION
+
+
+@pytest.mark.parametrize('manual_source_id', ['missing', 'unconfirmed', 'invalid-audio'])
+def test_quality_policy_rejects_ineligible_manual_selection(manual_source_id: str) -> None:
+    candidates = (
+        _candidate('valid', Codec.FLAC, bit_depth=16),
+        _candidate('unconfirmed', Codec.FLAC, bit_depth=24, confirmed=False),
+        _candidate('invalid-audio', Codec.FLAC, bit_depth=24, intake_state='invalid_audio'),
+    )
+    with pytest.raises(ValueError, match='manual source must be eligible'):
+        evaluate(candidates, manual_source_id=manual_source_id)
+
+
+@pytest.mark.parametrize(('depth', 'replaced'), [(16, False), (24, True)])
+def test_quality_policy_automatic_selection_changes_only_for_strictly_better_source(depth: int, replaced: bool) -> None:
+    current = _candidate('source-z', Codec.FLAC, bit_depth=16)
+    newcomer = _candidate('source-a', Codec.FLAC, bit_depth=depth)
+    previous = ExistingDecision.from_decision(evaluate((current,)))
+    decision = evaluate((newcomer, current), previous=previous)
+    assert decision.source_id == (newcomer.source_id if replaced else current.source_id)
+    assert decision.reason is (
+        DecisionReason.STRICTLY_BETTER_REPLACEMENT if replaced else DecisionReason.CURRENT_SELECTION_RETAINED
+    )
+    assert decision.baseline_source_id is None
+
+
+def test_quality_policy_replaces_unavailable_manual_source_but_preserves_baseline_identity() -> None:
+    manual = _candidate('manual', Codec.FLAC, bit_depth=24)
+    replacement = _candidate('replacement', Codec.MP3, bitrate=128_000)
+    previous = ExistingDecision.from_decision(evaluate((manual,), manual_source_id=manual.source_id))
+    decision = evaluate((replace(manual, disappeared=True), replacement), previous=previous)
+    assert decision.source_id == replacement.source_id
+    assert decision.baseline_source_id == manual.source_id
+    assert decision.reason is DecisionReason.INELIGIBLE_SOURCE_REPLACED
+
+
+def test_quality_policy_candidate_key_is_order_independent_and_normalizes_codec_names() -> None:
+    first = _candidate('a', Codec.FLAC, bit_depth=16)
+    second = _candidate('b', Codec.MP3, bitrate=320_000)
+    initial = evaluate((first, second))
+    reordered = evaluate(iter((replace(second, codec='mp3'), replace(first, codec='flac'))))
+    assert reordered == initial
+    assert evaluate((replace(first, sample_rate=96_000), second)).candidate_set_key != initial.candidate_set_key
+    assert evaluate((first, replace(second, disappeared=True))).candidate_set_key != initial.candidate_set_key
+
+
+@pytest.mark.parametrize('value', [True, False, 0, -1, 44_100.0, '44100'])
+def test_quality_policy_rejects_non_positive_or_non_integer_sample_rates(value: object) -> None:
+    candidate = _candidate('source', Codec.FLAC, bit_depth=16, sample_rate=value)
+    assert evaluate((candidate,)).reason is DecisionReason.NO_ELIGIBLE_SOURCE
 
 
 @pytest.mark.parametrize('state', ('disappeared', 'quarantined', 'unsupported', 'failed'))
