@@ -18,7 +18,7 @@ from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.normalize.metadata import (
     MetadataWriteError,
 )
-from music_ingest.processing.config import ProcessingConfig as ProcessingConfig
+from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.execution import (
     ExecutionContext,
     HandlerOutcome,
@@ -60,6 +60,8 @@ _INITIAL_JOB_KINDS: Final = frozenset(
 
 @final
 class ProcessingWorker:
+    """Execute a claimed job inside a savepoint; the caller owns the outer commit."""
+
     def __init__(self, session: Session, config: ProcessingConfig, *, lease_age: timedelta | None = None) -> None:
         self._session: Session = session
         self._config: ProcessingConfig = config

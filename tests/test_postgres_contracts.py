@@ -18,6 +18,7 @@ from music_ingest.association import AutomaticAssociationRequest, RecordingAssoc
 from music_ingest.models import (
     Base,
     CandidateRecord,
+    JobAttemptRecord,
     JobRecord,
     LibraryEventRecord,
     LibraryRecord,
@@ -25,8 +26,9 @@ from music_ingest.models import (
     SourceRecord,
     SourceRootRecord,
 )
-from music_ingest.models.jobs import JobRepository
+from music_ingest.models.jobs import ClaimedJob, JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.processing.support.sources import SourceAccess
 from music_ingest.publication import acquire_publication_destination_lock, try_acquire_publication_destination_lock
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
@@ -183,8 +185,7 @@ def test_selection_refresh_when_two_workers_race_preserves_lock_and_event_order(
 def test_process_analysis_source_lock_when_two_transactions_target_one_source_blocks_second_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: two independent PostgreSQL transactions racing to lock the same source record the way
-    # _process_analysis does before reading and mutating its candidates.
+    # Given: analysis has cached a source while another transaction holds its row lock.
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
     now = datetime(2026, 8, 12, tzinfo=UTC)
     with PostgresContainer('postgres:17') as postgres:
@@ -220,10 +221,13 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
         holder_acquired = Event()
         release_holder = Event()
         contender_acquired = Event()
+        contender_started = Event()
 
         def hold_source_lock() -> None:
             with Session(engine) as session:
-                _ = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
+                source = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
+                assert source is not None
+                source.origin = 'lidarr'
                 holder_acquired.set()
                 assert release_holder.wait(timeout=5)
                 session.commit()
@@ -231,7 +235,12 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
         def acquire_contended_lock() -> None:
             assert holder_acquired.wait(timeout=5)
             with Session(engine) as session:
-                _ = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
+                cached = session.get(SourceRecord, 'source-race')
+                assert cached is not None and cached.origin == 'manual'
+                claimed = ClaimedJob(JobRecord(source_id='source-race'), JobAttemptRecord())
+                contender_started.set()
+                source = SourceAccess(session).locked_source(claimed)
+                assert source is cached and source.origin == 'lidarr'
                 contender_acquired.set()
                 session.rollback()
 
@@ -241,12 +250,12 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
             contender = executor.submit(acquire_contended_lock)
 
             # When: the second transaction requests the same source record before the first commits.
+            assert contender_started.wait(timeout=5)
             assert not contender_acquired.wait(timeout=0.1)
             release_holder.set()
             holder.result(timeout=5)
 
-            # Then: it acquires the row lock only after the first transaction releases it, so
-            # concurrent job kinds targeting the same source can no longer interleave unguarded.
+            # Then: it acquires the lock and refreshes the cached source after the holder commits.
             contender.result(timeout=5)
             assert contender_acquired.is_set()
         engine.dispose()

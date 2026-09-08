@@ -82,6 +82,8 @@ class AttemptFinalizer:
                 now,
             )
             return
+        if claimed.job.source_id is None:
+            return
         source = self.session.get(SourceRecord, claimed.job.source_id)
         if source is None:
             return
