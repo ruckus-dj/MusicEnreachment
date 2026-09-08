@@ -102,6 +102,8 @@ class ProcessingWorker:
         claimed = JobRepository(self._session).claim_next(now, self._lease_age)
         if claimed is None:
             return False
+        # Freeze scalar settings before any handler or callback can change them.
+        _ = self._settings.values
         if on_claimed is not None:
             on_claimed(claimed.job.id, claimed.job.kind)
         if (
@@ -165,7 +167,7 @@ class ProcessingWorker:
                 claimed.job.state = 'superseded'
                 claimed.job.next_attempt_at = None
                 return
-        context = ExecutionContext(self._session, self._config, now)
+        context = ExecutionContext(self._session, self._config, now, self._settings)
         if handler := self._handlers.get(claimed.job.kind):
             return handler.handle(claimed, context)
         raise ProcessingInfrastructureError(f'unsupported processing job kind: {claimed.job.kind}')

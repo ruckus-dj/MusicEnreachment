@@ -9,7 +9,6 @@ from music_ingest.enrichment.artwork import ArtworkWriteError, ManagedArtworkWri
 from music_ingest.models import LibraryPublicationRecord, LibraryRecord, ReleaseArtworkRecord
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.processing.execution import ExecutionContext, ProcessingInfrastructureError
-from music_ingest.settings import SettingKey, get_setting_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +17,7 @@ class ArtworkHandler:
         release_mbid = claimed.job.release_mbid
         if release_mbid is None:
             raise ProcessingInfrastructureError('artwork enrichment requires a release MBID target')
-        if not _artwork_enabled(context):
+        if not context.settings.artwork_enabled():
             return
         artwork = context.session.get(ReleaseArtworkRecord, release_mbid)
         if artwork is not None and artwork.state == 'ready' and artwork.path is not None:
@@ -69,11 +68,6 @@ class ArtworkHandler:
             if output is None:
                 raise
         _save_artwork_state(context, artwork, release_mbid, output)
-
-
-def _artwork_enabled(context: ExecutionContext) -> bool:
-    value = get_setting_value(context.session, SettingKey.ARTWORK_ENABLED)
-    return value is None or value.casefold() == 'true'
 
 
 def _save_artwork_state(

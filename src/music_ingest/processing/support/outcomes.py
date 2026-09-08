@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -27,7 +27,6 @@ from music_ingest.processing.execution import (
     QuarantineSource,
 )
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
-from music_ingest.settings import SettingKey, get_setting_value
 
 LOGGER = logging.getLogger(__name__)
 
@@ -67,14 +66,7 @@ class AttemptFinalizer:
         repository.retry(
             claimed,
             datetime.now(UTC),
-            timedelta(
-                seconds=float(
-                    get_setting_value(self.session, SettingKey.RETRY_DELAY_SECONDS)
-                    or self.config.retry_delay.total_seconds()
-                )
-            )
-            if self.config.live_transport is not None
-            else self.config.retry_delay,
+            self.settings.retry_delay(),
             self.settings.max_attempts(),
             reason,
         )

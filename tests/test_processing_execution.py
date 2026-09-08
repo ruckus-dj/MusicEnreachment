@@ -7,7 +7,15 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.models import Base, JobRecord, SourceRecord, SourceRootRecord, SourceTagRecord
+from music_ingest.models import (
+    Base,
+    JobRecord,
+    RuntimeSettingRecord,
+    SourceRecord,
+    SourceRootRecord,
+    SourceTagRecord,
+    StorageConfigRecord,
+)
 from music_ingest.models.jobs import ClaimedJob
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
 from music_ingest.processing.execution import (
@@ -17,6 +25,8 @@ from music_ingest.processing.execution import (
     QuarantineSource,
 )
 from music_ingest.processing.handlers.initial import InitialHandler
+from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
+from music_ingest.settings import SettingKey
 
 
 @pytest.mark.parametrize(
@@ -100,4 +110,40 @@ def test_worker_finalizes_handler_result_without_losing_transaction_boundaries(
         assert session.scalars(select(SourceTagRecord)).all() == []
     assert not (config.staging_root / 'job').exists()
     assert source_path.read_bytes() == b'immutable source'
+    engine.dispose()
+
+
+def test_worker_reloads_settings_and_output_root_between_attempts_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = ProcessingConfig(tmp_path / 'incoming', tmp_path / 'staging', tmp_path / 'media')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "settings.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    observed: list[tuple[float, Path]] = []
+
+    def handle(handler: ReconciliationHandler, claimed: ClaimedJob, context: ExecutionContext) -> None:
+        _ = handler, claimed
+        observed.append((context.settings.confidence_threshold(), context.config.media_root))
+        threshold = context.session.get(RuntimeSettingRecord, SettingKey.CONFIDENCE_THRESHOLD.value)
+        storage = context.session.get(StorageConfigRecord, 1)
+        assert threshold is not None and storage is not None
+        threshold.value = '0.95'
+        storage.output_root = str(tmp_path / 'moved-media')
+        context.session.flush()
+        assert (context.settings.confidence_threshold(), context.config.media_root) == observed[-1]
+
+    monkeypatch.setattr(ReconciliationHandler, 'handle', handle)
+    with Session(engine) as session:
+        session.add(RuntimeSettingRecord(key=SettingKey.CONFIDENCE_THRESHOLD.value, value='0.75', updated_at=now))
+        session.add(StorageConfigRecord(id=1, output_root=str(config.media_root), updated_at=now))
+        session.commit()
+        worker = ProcessingWorker(session, config)
+        for number in range(2):
+            session.add(JobRecord(id=f'job-{number}', kind='reconciliation_scan', state='queued', created_at=now))
+            session.commit()
+            assert worker.run_once()
+            session.commit()
+
+    assert observed == [(0.75, config.media_root), (0.95, tmp_path / 'moved-media')]
     engine.dispose()

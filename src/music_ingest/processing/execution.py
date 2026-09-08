@@ -11,6 +11,7 @@ from music_ingest.models.jobs import ClaimedJob
 
 if TYPE_CHECKING:
     from music_ingest.processing.config import ProcessingConfig
+    from music_ingest.processing.support.settings import RuntimeProcessingSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,7 @@ class ExecutionContext:
     session: Session
     config: ProcessingConfig
     now: datetime
+    settings: RuntimeProcessingSettings
 
 
 @dataclass(frozen=True, slots=True)

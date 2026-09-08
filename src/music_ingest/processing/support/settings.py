@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
+from functools import cached_property
+from types import MappingProxyType
 
 from sqlalchemy.orm import Session
 
@@ -14,34 +18,31 @@ from music_ingest.matching.providers import (
     AcoustIdProvider,
     MusicBrainzProvider,
 )
-from music_ingest.models import (
-    RuntimeSettingRecord,
-)
 from music_ingest.processing.config import ProcessingConfig
-from music_ingest.settings import SettingKey, get_setting_value, get_setting_values
+from music_ingest.settings import SettingKey, get_setting_values
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RuntimeProcessingSettings:
     session: Session
     config: ProcessingConfig
 
+    @cached_property
+    def values(self) -> Mapping[SettingKey, str]:
+        return MappingProxyType(get_setting_values(self.session, tuple(SettingKey)))
+
     def configured_providers(
+        self,
+    ) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
+        return self._providers
+
+    @cached_property
+    def _providers(
         self,
     ) -> tuple[MusicBrainzProvider | None, AcoustIdProvider | None, ArtworkProvider | None]:
         if self.config.live_transport is None:
             return self.config.musicbrainz_provider, self.config.acoustid_provider, self.config.artwork_provider
-        settings = get_setting_values(
-            self.session,
-            (
-                SettingKey.MUSICBRAINZ_ENABLED,
-                SettingKey.MUSICBRAINZ_USER_AGENT,
-                SettingKey.MUSICBRAINZ_HOST,
-                SettingKey.ACOUSTID_ENABLED,
-                SettingKey.ACOUSTID_CLIENT_KEY,
-                SettingKey.ARTWORK_ENABLED,
-            ),
-        )
+        settings = self.values
         defaults = RuntimeSettings()
         musicbrainz = (
             MusicBrainzProviderAdapter(
@@ -66,27 +67,18 @@ class RuntimeProcessingSettings:
         return musicbrainz, acoustid, artwork
 
     def confidence_threshold(self) -> float:
-        if self.config.live_transport is not None:
-            value = get_setting_value(self.session, SettingKey.CONFIDENCE_THRESHOLD)
-            if value is None:
-                return self.config.confidence_threshold
-            try:
-                parsed = float(value)
-            except ValueError:
-                return self.config.confidence_threshold
-            return parsed if 0.0 <= parsed <= 1.0 else self.config.confidence_threshold
-        setting = self.session.get(RuntimeSettingRecord, 'matching.confidence_threshold')
-        if setting is None:
+        value = self.values.get(SettingKey.CONFIDENCE_THRESHOLD)
+        if value is None:
             return self.config.confidence_threshold
         try:
-            value = float(setting.value)
+            parsed = float(value)
         except ValueError:
             return self.config.confidence_threshold
-        return value if 0.0 <= value <= 1.0 else self.config.confidence_threshold
+        return parsed if 0.0 <= parsed <= 1.0 else self.config.confidence_threshold
 
     def timeout_seconds(self) -> float:
         if self.config.live_transport is not None:
-            value = get_setting_value(self.session, SettingKey.TIMEOUT_SECONDS)
+            value = self.values.get(SettingKey.TIMEOUT_SECONDS)
             if value is not None:
                 try:
                     return float(value)
@@ -96,7 +88,7 @@ class RuntimeProcessingSettings:
 
     def max_attempts(self) -> int:
         if self.config.live_transport is not None:
-            value = get_setting_value(self.session, SettingKey.MAX_ATTEMPTS)
+            value = self.values.get(SettingKey.MAX_ATTEMPTS)
             if value is not None:
                 try:
                     return int(value)
@@ -105,5 +97,12 @@ class RuntimeProcessingSettings:
         return self.config.max_attempts
 
     def artwork_enabled(self) -> bool:
-        value = get_setting_value(self.session, SettingKey.ARTWORK_ENABLED)
+        value = self.values.get(SettingKey.ARTWORK_ENABLED)
         return value is None or value.casefold() == 'true'
+
+    def retry_delay(self) -> timedelta:
+        if self.config.live_transport is None:
+            return self.config.retry_delay
+        return timedelta(
+            seconds=float(self.values.get(SettingKey.RETRY_DELAY_SECONDS) or self.config.retry_delay.total_seconds())
+        )
