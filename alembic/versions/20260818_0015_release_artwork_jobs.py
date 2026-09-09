@@ -38,6 +38,7 @@ def upgrade() -> None:
             + 'CASE WHEN library_record_id IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
             + "kind = 'reconciliation_scan'",
+            postgresql_not_valid=True,
         )
 
 
@@ -49,6 +50,7 @@ def downgrade() -> None:
             'ck_jobs_target_or_reconciliation',
             'jobs',
             "((source_id IS NOT NULL) != (library_record_id IS NOT NULL)) OR kind = 'reconciliation_scan'",
+            postgresql_not_valid=True,
         )
     op.drop_column('jobs', 'release_mbid')
     op.drop_table('release_artwork')

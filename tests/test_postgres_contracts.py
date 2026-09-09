@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
-from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
+from music_ingest.association import ManualAssociationRequest, RecordingAssociationService
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -33,10 +33,10 @@ from music_ingest.publication import acquire_publication_destination_lock, try_a
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260812_0004'
+_HEAD_REVISION = '20260909_0023'
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_publication_destination_lock_when_two_transactions_target_one_release_blocks_second_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -80,7 +80,7 @@ def test_publication_destination_lock_when_two_transactions_target_one_release_b
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_publication_destination_try_lock_when_contended_returns_without_blocking_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,7 +101,7 @@ def test_publication_destination_try_lock_when_contended_returns_without_blockin
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_selection_refresh_when_concurrent_calls_coalesces_at_postgresql_index(monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: two independent transactions racing to queue one record refresh.
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
@@ -134,7 +134,7 @@ def test_selection_refresh_when_concurrent_calls_coalesces_at_postgresql_index(m
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_selection_refresh_when_two_workers_race_preserves_lock_and_event_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,7 +181,7 @@ def test_selection_refresh_when_two_workers_race_preserves_lock_and_event_order(
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_process_analysis_source_lock_when_two_transactions_target_one_source_blocks_second_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,7 +261,7 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_selection_refresh_when_retried_claim_loads_one_record_target(monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: one queued record-target refresh with a failed first attempt ready for retry.
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
@@ -300,7 +300,7 @@ def test_selection_refresh_when_retried_claim_loads_one_record_target(monkeypatc
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_recording_association_when_two_sources_race_converges_on_one_record(monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: two separately attached sources with durable confirmation for one recording MBID.
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
@@ -356,8 +356,8 @@ def test_recording_association_when_two_sources_race_converges_on_one_record(mon
         def associate(source_id: str) -> str:
             with Session(engine) as session:
                 barrier.wait()
-                result = RecordingAssociationService(session).associate_automatic(
-                    AutomaticAssociationRequest(source_id, recording_mbid, 0.98, 0.9, evidence, now)
+                result = RecordingAssociationService(session).associate_verified_manual(
+                    ManualAssociationRequest(source_id, recording_mbid, now)
                 )
                 session.commit()
                 assert result is not None
@@ -385,7 +385,7 @@ def _migration_config(database_url: str, legacy_root: Path) -> Config:
     return config
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -489,10 +489,9 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
         roots = {row['id']: row['scan_state'] for row in root_rows}
         source_roots = {row['id']: row['source_root_id'] for row in source_root_rows}
         indexes = {row['indexname'] for row in index_rows}
-        assert roots['legacy'] == 'never_scanned'
         assert roots['historical-unmanaged'] == 'never_scanned'
         assert source_roots == {
-            'source-in-root': 'legacy',
+            'source-in-root': 'historical-unmanaged',
             'source-out-root': 'historical-unmanaged',
             'source-missing': 'historical-unmanaged',
         }
@@ -546,7 +545,7 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
                         "VALUES ('duplicate-legacy', 'duplicate', :path, true, 'never_scanned', "
                         ':created_at, :created_at)'
                     ),
-                    {'path': str(legacy_root), 'created_at': observed_at},
+                    {'path': 'historical-unmanaged://', 'created_at': observed_at},
                 )
                 session.commit()
             session.rollback()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -76,6 +76,12 @@ class LibraryRecord(Base):
     __tablename__ = 'library_records'
     __table_args__: tuple[UniqueConstraint | Index, ...] = (
         UniqueConstraint('musicbrainz_recording_id', 'musicbrainz_release_id'),
+        Index(
+            'uq_library_records_musicbrainz_recording_without_release',
+            'musicbrainz_recording_id',
+            unique=True,
+            postgresql_where=text('musicbrainz_recording_id IS NOT NULL AND musicbrainz_release_id IS NULL'),
+        ).ddl_if(dialect='postgresql'),
         Index('ix_library_records_release_publication', 'musicbrainz_release_id', 'publication_state'),
     )
 

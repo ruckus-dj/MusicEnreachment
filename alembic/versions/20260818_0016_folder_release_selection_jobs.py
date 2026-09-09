@@ -29,6 +29,7 @@ def upgrade() -> None:
             + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN folder_path IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
             + "kind = 'reconciliation_scan'",
+            postgresql_not_valid=True,
         )
         op.create_index(
             'uq_active_folder_release_selection_job',
@@ -59,5 +60,6 @@ def downgrade() -> None:
             + 'CASE WHEN library_record_id IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
             + "kind = 'reconciliation_scan'",
+            postgresql_not_valid=True,
         )
     op.drop_column('jobs', 'folder_path')

@@ -19,6 +19,7 @@ def upgrade() -> None:
             'ck_jobs_target_or_reconciliation',
             'jobs',
             "((source_id IS NOT NULL) != (library_record_id IS NOT NULL)) OR kind = 'reconciliation_scan'",
+            postgresql_not_valid=True,
         )
     op.create_index(
         'uq_active_reconciliation_scan_job',
@@ -36,6 +37,9 @@ def downgrade() -> None:
     if bind.dialect.name == 'postgresql':
         op.drop_constraint('ck_jobs_target_or_reconciliation', 'jobs', type_='check')
         op.create_check_constraint(
-            'ck_jobs_exactly_one_target', 'jobs', '(source_id IS NOT NULL) != (library_record_id IS NOT NULL)'
+            'ck_jobs_exactly_one_target',
+            'jobs',
+            '(source_id IS NOT NULL) != (library_record_id IS NOT NULL)',
+            postgresql_not_valid=True,
         )
     op.drop_column('jobs', 'result_json')
