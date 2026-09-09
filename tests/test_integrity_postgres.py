@@ -33,7 +33,7 @@ from music_ingest.processing.metadata import publication_layout
 from music_ingest.publication import attempts
 from tests.test_selection_refresh import _flac
 
-pytestmark = pytest.mark.live
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture

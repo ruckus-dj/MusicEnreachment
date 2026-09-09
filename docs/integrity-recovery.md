@@ -25,7 +25,7 @@ Validation: `tests/test_integrity_postgres.py` uses the real worker and migrated
 PostgreSQL, injects failed commits at prepared/exposed/finalized, interrupts after
 prepared commit and both rename boundaries, and fails cleanup. A new session must
 recover matching target/current-publication hashes while retaining source and `.nfo` bytes.
-Run explicitly with `MUSIC_INGEST_ENABLE_LIVE_TESTS=1 uv run pytest -q tests/test_integrity_postgres.py`.
+Run explicitly with `MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1 uv run pytest -q tests/test_integrity_postgres.py`.
 
 ## A02 — resumable output relocation
 
