@@ -31,6 +31,9 @@ export type LibraryTrack = {
   readonly album_id: string | null;
   readonly title: string;
   readonly track_number: string | null;
+  readonly source_state: string;
+  readonly processing_state: string;
+  readonly match_state: string;
   readonly publication_state: string;
 };
 

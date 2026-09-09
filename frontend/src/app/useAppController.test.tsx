@@ -69,6 +69,11 @@ function CatalogProbe({
       <output data-testid="artists">{controller.artists.join("|")}</output>
       <output data-testid="albums">{controller.albums.map(({ title }) => title).join("|")}</output>
       <output data-testid="album-tracks">{controller.albumTracks.length}</output>
+      <output data-testid="album-track-states">
+        {controller.albumTracks
+          .map((track) => `${track.source_state}/${track.processing_state}/${track.match_state}`)
+          .join("|")}
+      </output>
     </>
   );
 }
@@ -323,6 +328,9 @@ describe("useAppController catalog", () => {
               album_id: "release-collision-course",
               title: "Track",
               track_number: "1",
+              source_state: "disappeared",
+              processing_state: "analyzing",
+              match_state: "unmatched",
               publication_state: "current",
             },
           ],
@@ -349,6 +357,9 @@ describe("useAppController catalog", () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId("album-tracks").textContent).toBe("1");
+      expect(screen.getByTestId("album-track-states").textContent).toBe(
+        "disappeared/analyzing/unmatched",
+      );
     });
 
     await act(async () => {
@@ -415,6 +426,9 @@ describe("useAppController catalog", () => {
             album_id: null,
             title: "Track",
             track_number: null,
+            source_state: "present",
+            processing_state: "complete",
+            match_state: "matched",
             publication_state: "current",
           })),
         });

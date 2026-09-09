@@ -6,6 +6,7 @@ import {
   createSourceRoot,
   getStorageConfig,
   getWorkerQueue,
+  type LibraryTrack,
   listLibraryAlbums,
   listLibraryArtists,
   listLibraryRecords,
@@ -61,6 +62,7 @@ import type {
 } from "../types";
 
 export type CatalogTrack = { item: Summary; source: Source };
+export type LibraryCatalogTrack = LibraryTrack;
 
 export type PublicationFilter = "all" | "published" | "unpublished";
 
@@ -134,7 +136,7 @@ export type AppControllerModel = {
   catalogArtistTrackCounts: Readonly<Record<string, number>>;
   catalogTrackCount: number;
   albums: CatalogAlbum[];
-  albumTracks: CatalogTrack[];
+  albumTracks: LibraryCatalogTrack[];
   currentTrack: CatalogTrack | undefined;
   currentTags: Tags;
   navigate: (route: Route) => void;
@@ -175,6 +177,7 @@ export function useAppController(): AppControllerModel {
   );
   const [catalogTrackCount, setCatalogTrackCount] = useState(0);
   const [catalogAlbums, setCatalogAlbums] = useState<CatalogAlbum[]>([]);
+  const [catalogAlbumTracks, setCatalogAlbumTracks] = useState<LibraryCatalogTrack[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [initialRoute] = useState(() =>
     parseRoute(window.location.pathname, window.location.search),
@@ -336,38 +339,8 @@ export function useAppController(): AppControllerModel {
         catalogCountPromise,
       ]);
       if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
-      const nextItems = payload.items.map((track) => {
-        const source: Source = {
-          source_id: track.source_id,
-          path: track.source_path,
-          sha256: "",
-          state: "present",
-          tag_observations: [
-            ...(track.artist_name
-              ? [{ name: "ARTIST", value: track.artist_name, format: "catalog" }]
-              : []),
-            ...(track.album_name
-              ? [{ name: "ALBUM", value: track.album_name, format: "catalog" }]
-              : []),
-            { name: "TITLE", value: track.title, format: "catalog" },
-            ...(track.track_number
-              ? [{ name: "TRACKNUMBER", value: track.track_number, format: "catalog" }]
-              : []),
-          ],
-        };
-        return {
-          record_id: track.record_id,
-          musicbrainz_release_id: track.album_id,
-          source_state: source.state,
-          processing_state: "ready",
-          match_state: "matched",
-          publication_state: track.publication_state,
-          metadata_state: "ready",
-          sources: [source],
-          publications: [],
-        } satisfies Summary;
-      });
-      setItems(nextItems);
+      setCatalogAlbumTracks(payload.items);
+      setItems([]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.loadLibrary);
     } finally {
@@ -1080,7 +1053,7 @@ export function useAppController(): AppControllerModel {
         : album.startsWith("album:")
           ? album
           : album;
-  const albumTracks = tracks
+  const legacyAlbumTracks = tracks
     .filter(
       ({ item, source }) =>
         albumArtistsFor(item, source.source_id).includes(artist) &&
@@ -1101,8 +1074,21 @@ export function useAppController(): AppControllerModel {
         ) || leftItem.record_id.localeCompare(rightItem.record_id)
       );
     });
+  const albumTracks = catalogAlbumTracks
+    .filter((track) =>
+      `${track.artist_name ?? ""} ${track.album_name ?? ""} ${track.title}`.includes(query),
+    )
+    .sort((left, right) => {
+      const leftNumber = Number.parseInt(left.track_number?.split("/", 1)[0]?.trim() ?? "", 10);
+      const rightNumber = Number.parseInt(right.track_number?.split("/", 1)[0]?.trim() ?? "", 10);
+      if (!Number.isNaN(leftNumber) && !Number.isNaN(rightNumber) && leftNumber !== rightNumber)
+        return leftNumber - rightNumber;
+      if (!Number.isNaN(leftNumber) !== !Number.isNaN(rightNumber))
+        return Number.isNaN(leftNumber) ? 1 : -1;
+      return compareNames(left.title, right.title) || left.record_id.localeCompare(right.record_id);
+    });
   const currentTrack =
-    albumTracks.find(
+    legacyAlbumTracks.find(
       ({ item, source }) => item.record_id === recordId && source.source_id === sourceId,
     ) ??
     tracks.find(({ item, source }) => item.record_id === recordId && source.source_id === sourceId);

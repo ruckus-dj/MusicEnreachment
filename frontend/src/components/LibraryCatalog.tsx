@@ -1,5 +1,5 @@
-import type { CatalogAlbum, CatalogTrack } from "../app/useAppController";
-import { titleFor, trackNumberLabelFor, UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
+import type { CatalogAlbum, LibraryCatalogTrack } from "../app/useAppController";
+import { UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -9,7 +9,7 @@ type LibraryCatalogProps = {
   artists: string[];
   artistTrackCounts: Readonly<Record<string, number>>;
   albums: CatalogAlbum[];
-  albumTracks: CatalogTrack[];
+  albumTracks: LibraryCatalogTrack[];
   loading: boolean;
   onNavigate: (route: {
     screen: Screen;
@@ -127,34 +127,34 @@ export function LibraryCatalog({
         {albumTracks.length === 0 ? (
           <div className="empty-state">По выбранному фильтру треков нет.</div>
         ) : (
-          albumTracks.map(({ item, source }) => (
+          albumTracks.map((track) => (
             <button
               type="button"
-              className={`track-line ${source.state === "disappeared" ? "unavailable" : ""}`}
-              key={`${item.record_id}-${source.source_id}`}
+              className={`track-line ${track.source_state === "disappeared" ? "unavailable" : ""}`}
+              key={`${track.record_id}-${track.source_id}`}
               onClick={() =>
                 onNavigate({
                   screen: "track",
-                  recordId: item.record_id,
-                  sourceId: source.source_id,
+                  recordId: track.record_id,
+                  sourceId: track.source_id,
                   artist,
                   album,
                 })
               }
             >
-              <b>{trackNumberLabelFor(item, source.source_id)}</b>
+              <b>{track.track_number ?? "—"}</b>
               <span>
-                <strong>{titleFor(item, source.source_id)}</strong>
-                <small className="source-path" title={source.path}>
-                  {source.path}
+                <strong>{track.title}</strong>
+                <small className="source-path" title={track.source_path}>
+                  {track.source_path}
                 </small>
               </span>
               <span className="track-meta">
-                {source.state === "disappeared"
+                {track.source_state === "disappeared"
                   ? "Исходный файл отсутствует"
-                  : item.processing_state === "analyzing"
+                  : track.processing_state === "analyzing"
                     ? "Анализируется"
-                    : item.match_state === "matched"
+                    : track.match_state === "matched"
                       ? "MusicBrainz подтверждён"
                       : "Нужна проверка"}
               </span>
