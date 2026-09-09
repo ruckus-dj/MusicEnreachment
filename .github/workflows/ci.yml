@@ -35,6 +35,9 @@ jobs:
       - name: Check frontend formatting and lint
         run: npm run check --prefix frontend
 
+      - name: Run frontend unit tests
+        run: npm run test --prefix frontend
+
   checks:
     name: Python checks
     runs-on: ubuntu-latest
@@ -82,9 +85,61 @@ jobs:
       - name: Check types
         run: uv run ty check src
 
+  postgres:
+    name: PostgreSQL contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.1'
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run PostgreSQL contracts
+        run: MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1 uv run pytest -m postgres
+
+  e2e:
+    name: End-to-end smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Install Playwright browser
+        run: npx --prefix frontend playwright install --with-deps chromium
+
+      - name: Start fixture-backed application
+        run: docker compose -f test_stand/compose.yaml up --build --wait music-ingest
+
+      - name: Run operator smoke tests
+        run: MUSIC_INGEST_E2E_BASE_URL=http://127.0.0.1:8787 npm run test:e2e --prefix frontend
+
+      - name: Stop fixture-backed application
+        if: always()
+        run: docker compose -f test_stand/compose.yaml down
+
   image:
     name: Container image
-    needs: checks
+    needs: [frontend, checks, postgres, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read
