@@ -51,6 +51,9 @@ class CatalogTrack:
     source_id: str
     source_path: str
     release_id: str | None
+    source_state: str
+    processing_state: str
+    match_state: str
     publication_state: str
     artist_name: str | None
     album_name: str | None
@@ -64,6 +67,9 @@ class CatalogSourceTags:
     source_id: str
     source_path: str
     release_id: str | None
+    source_state: str
+    processing_state: str
+    match_state: str
     publication_state: str
     tags: dict[str, str]
 
@@ -496,6 +502,8 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         select(
             LibraryRecord.id,
             LibraryRecord.musicbrainz_release_id,
+            LibraryRecord.processing_state,
+            LibraryRecord.match_state,
             LibraryRecord.publication_state,
             LibraryMetadataRevisionRecord.source_id,
             LibraryMetadataRevisionRecord.layer,
@@ -513,26 +521,44 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
     )
     revision_query = revision_query.where(
         LibraryMetadataRevisionRecord.layer.in_(['final', 'original']),
-        SourceRecord.intake_state == 'present',
         ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
     )
     if published is not None:
         revision_query = revision_query.where(
             LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
         )
-    tags_by_source: dict[tuple[str, str], tuple[str, dict[str, str], str | None, str]] = {}
-    for record_id, release_id, publication_state, source_id, layer, tags_json in session.execute(revision_query):
+    tags_by_source: dict[tuple[str, str], tuple[str, dict[str, str], str | None, str, str, str]] = {}
+    for (
+        record_id,
+        release_id,
+        processing_state,
+        match_state,
+        publication_state,
+        source_id,
+        layer,
+        tags_json,
+    ) in session.execute(revision_query):
         key = (record_id, source_id)
         current = tags_by_source.get(key)
         if current is None or (current[0] == 'original' and layer == 'final'):
-            tags_by_source[key] = (layer, json.loads(tags_json), release_id, publication_state)
+            tags_by_source[key] = (
+                layer,
+                json.loads(tags_json),
+                release_id,
+                processing_state,
+                match_state,
+                publication_state,
+            )
 
     raw_query = (
         select(
             SourceRecord.library_record_id,
             SourceRecord.id,
             SourceRecord.source_path,
+            SourceRecord.intake_state,
             LibraryRecord.musicbrainz_release_id,
+            LibraryRecord.processing_state,
+            LibraryRecord.match_state,
             LibraryRecord.publication_state,
             SourceTagRecord.tag_name,
             SourceTagRecord.value,
@@ -540,7 +566,6 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         .outerjoin(SourceTagRecord, SourceTagRecord.source_id == SourceRecord.id)
         .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
         .where(
-            SourceRecord.intake_state == 'present',
             ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
         )
     )
@@ -548,23 +573,61 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         raw_query = raw_query.where(
             LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
         )
-    raw_by_source: dict[tuple[str, str], tuple[str, str, str, str | None, str, dict[str, str]]] = {}
-    for record_id, source_id, source_path, release_id, publication_state, tag_name, value in session.execute(raw_query):
+    raw_by_source: dict[tuple[str, str], tuple[str, str, str, str, str | None, str, str, str, dict[str, str]]] = {}
+    for (
+        record_id,
+        source_id,
+        source_path,
+        source_state,
+        release_id,
+        processing_state,
+        match_state,
+        publication_state,
+        tag_name,
+        value,
+    ) in session.execute(raw_query):
         tags = raw_by_source.setdefault(
-            (record_id, source_id), (record_id, source_id, source_path, release_id, publication_state, {})
-        )[5]
+            (record_id, source_id),
+            (
+                record_id,
+                source_id,
+                source_path,
+                source_state,
+                release_id,
+                processing_state,
+                match_state,
+                publication_state,
+                {},
+            ),
+        )[8]
         if tag_name is not None and value is not None:
             tags[tag_name] = value
     result: list[CatalogSourceTags] = []
-    for key, (record_id, source_id, source_path, release_id, publication_state, tags) in raw_by_source.items():
+    for (
+        key,
+        (
+            record_id,
+            source_id,
+            source_path,
+            source_state,
+            release_id,
+            processing_state,
+            match_state,
+            publication_state,
+            tags,
+        ),
+    ) in raw_by_source.items():
         revision = tags_by_source.get(key)
         result.append(
             CatalogSourceTags(
                 record_id,
                 source_id,
                 source_path,
-                release_id,
-                revision[3] if revision else publication_state,
+                revision[2] if revision else release_id,
+                source_state,
+                revision[3] if revision else processing_state,
+                revision[4] if revision else match_state,
+                revision[5] if revision else publication_state,
                 revision[1] if revision else tags,
             )
         )
@@ -671,6 +734,9 @@ def library_album_tracks(
                 source_id=source.source_id,
                 source_path=source.source_path,
                 release_id=source.release_id,
+                source_state=source.source_state,
+                processing_state=source.processing_state,
+                match_state=source.match_state,
                 publication_state=source.publication_state,
                 artist_name=artist_name,
                 album_name=album_value or None,
