@@ -279,11 +279,19 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
         matched_release = LibraryRecord(
             id='record-release',
             musicbrainz_release_id='release-shared',
+            processing_state='analyzing',
+            match_state='unmatched',
             publication_state='current',
             created_at=timestamp,
             updated_at=timestamp,
         )
-        matched_name_only = LibraryRecord(id='record-name-only', created_at=timestamp, updated_at=timestamp)
+        matched_name_only = LibraryRecord(
+            id='record-name-only',
+            processing_state='needs_review',
+            match_state='needs_review',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
         other_album = LibraryRecord(id='record-other', created_at=timestamp, updated_at=timestamp)
         session.add_all(
             (
@@ -315,7 +323,7 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
                     sha256='b' * 64,
                     duration_seconds=180,
                     origin='manual',
-                    intake_state='present',
+                    intake_state='disappeared',
                     library_record=matched_name_only,
                     tag_observations=[
                         SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Artist/Side'),
@@ -359,6 +367,23 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
     ]
     assert [item['record_id'] for item in release.json()['items']] == ['record-release']
     assert [item['record_id'] for item in name_only.json()['items']] == ['record-name-only']
+    assert release.json()['items'][0] == {
+        'record_id': 'record-release',
+        'source_id': 'source-release',
+        'source_path': '/release.flac',
+        'artist_name': 'Artist/Side',
+        'album_name': 'Shared',
+        'album_id': 'release-shared',
+        'title': '',
+        'track_number': None,
+        'source_state': 'present',
+        'processing_state': 'analyzing',
+        'match_state': 'unmatched',
+        'publication_state': 'current',
+    }
+    assert name_only.json()['items'][0]['source_state'] == 'disappeared'
+    assert name_only.json()['items'][0]['processing_state'] == 'needs_review'
+    assert name_only.json()['items'][0]['match_state'] == 'needs_review'
 
     invalid_tracks = client.get('/api/library/tracks?artist=Artist%2FSide')
     assert invalid_tracks.status_code == 422
@@ -1037,6 +1062,9 @@ def test_library_artists_groups_records_without_artist_tags_as_unknown(tmp_path:
         'album_id': None,
         'title': '',
         'track_number': None,
+        'source_state': 'present',
+        'processing_state': 'queued',
+        'match_state': 'unmatched',
         'publication_state': 'absent',
     }
 

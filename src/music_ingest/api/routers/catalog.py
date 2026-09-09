@@ -94,6 +94,9 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                         album_id=query.album_id,
                         title=track.title,
                         track_number=track.track_number,
+                        source_state=track.source_state,
+                        processing_state=track.processing_state,
+                        match_state=track.match_state,
                         publication_state=track.publication_state,
                     )
                     for track in library_album_tracks(

@@ -224,6 +224,9 @@ class LibraryTrackResponse(BaseModel):
     album_id: str | None
     title: str
     track_number: str | None
+    source_state: str
+    processing_state: str
+    match_state: str
     publication_state: str
 
 

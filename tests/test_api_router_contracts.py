@@ -75,7 +75,7 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
 
     # Baseline captured before app.py was decomposed; router extraction must not alter the public API schema.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '7c66669cc9695d238a5a8c3fb161102ddb14d05cfefd476d6b5c2ec4114ad9ef'
+        'fcfd71f2b602acba5c95f352dfb4303c4b156ee96312047e06aa8231c7140aa8'
     )
 
 
