@@ -107,6 +107,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Build runtime image
+        run: docker build -t music-enrichment-test-stand-music-ingest:latest .
+
       - name: Run PostgreSQL contracts
         run: MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1 uv run pytest -m postgres
 
