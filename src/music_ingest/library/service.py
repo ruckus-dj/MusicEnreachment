@@ -724,8 +724,10 @@ def library_album_tracks(
     published: bool | None = None,
 ) -> list[CatalogTrack]:
     """Load minimal Final/Original track data for one exact artist and album."""
-    tracks: list[CatalogTrack] = []
+    all_sources: dict[str, list[CatalogSourceTags]] = {}
+    matching_sources: dict[str, list[CatalogSourceTags]] = {}
     for source in _catalog_source_tags(session, published):
+        all_sources.setdefault(source.record_id, []).append(source)
         album_value = source.tags.get('ALBUM', '')
         if artist_name not in _catalog_artists(source.tags):
             continue
@@ -735,6 +737,38 @@ def library_album_tracks(
             continue
         if album_name is not None and (source.release_id is not None or album_value != album_name):
             continue
+        matching_sources.setdefault(source.record_id, []).append(source)
+
+    tracks: list[CatalogTrack] = []
+    record_ids = set(matching_sources)
+    effective_source_ids: dict[str, str | None] = {
+        record_id: source_id
+        for record_id, source_id in session.execute(
+            select(EffectiveSourceDecisionRecord.library_record_id, EffectiveSourceDecisionRecord.source_id).where(
+                EffectiveSourceDecisionRecord.library_record_id.in_(record_ids)
+            )
+        )
+    }
+    publication_source_ids: dict[str, str] = {
+        record_id: source_id
+        for record_id, source_id in session.execute(
+            select(LibraryPublicationRecord.library_record_id, LibraryPublicationRecord.source_id).where(
+                LibraryPublicationRecord.library_record_id.in_(record_ids),
+                LibraryPublicationRecord.state == 'current',
+            )
+        )
+    }
+    for record_id in matching_sources:
+        sources = all_sources[record_id]
+        sources_by_id = {source.source_id: source for source in sources}
+        effective_source_id = effective_source_ids.get(record_id)
+        source = sources_by_id.get(effective_source_id) if effective_source_id is not None else None
+        if source is None:
+            publication_source_id = publication_source_ids.get(record_id)
+            source = sources_by_id.get(publication_source_id) if publication_source_id is not None else None
+        if source is None:
+            source = min(sources, key=lambda candidate: candidate.source_id)
+        album_value = source.tags.get('ALBUM', '')
         tracks.append(
             CatalogTrack(
                 record_id=source.record_id,

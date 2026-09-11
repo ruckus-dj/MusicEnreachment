@@ -23,6 +23,7 @@ from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
     Base,
     CandidateRecord,
+    EffectiveSourceDecisionRecord,
     JobRecord,
     LibraryEventRecord,
     LibraryMetadataRevisionRecord,
@@ -484,6 +485,69 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
 
     openapi = client.get('/openapi.json').json()
     assert openapi['paths']['/api/library/albums']['get']['responses']['200']['content']['application/json']
+
+
+def test_library_api_album_tracks_uses_effective_source_once_per_record(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "effective-source-catalog.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-effective-source', created_at=timestamp, updated_at=timestamp)
+        mp3 = SourceRecord(
+            id='source-effective-mp3',
+            source_path='/incoming/song.mp3',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            tag_observations=[
+                SourceTagRecord(format_name='mp3', tag_name='ALBUMARTIST', value='Fixture Artist'),
+                SourceTagRecord(format_name='mp3', tag_name='ALBUM', value='Fixture Album'),
+                SourceTagRecord(format_name='mp3', tag_name='TITLE', value='MP3 title'),
+            ],
+        )
+        flac = SourceRecord(
+            id='source-effective-flac',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=1,
+            sha256='b' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+            tag_observations=[
+                SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Fixture Artist'),
+                SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Fixture Album'),
+                SourceTagRecord(format_name='flac', tag_name='TITLE', value='FLAC title'),
+            ],
+        )
+        decision = EffectiveSourceDecisionRecord(
+            library_record=record,
+            source_id=flac.id,
+            baseline_source_id=mp3.id,
+            policy_version='v1',
+            quality_tuple_json='[]',
+            reason='fixture',
+            updated_at=timestamp,
+        )
+        session.add_all((record, mp3, flac, decision))
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine))).get(
+        '/api/library/tracks?artist=Fixture%20Artist&album_name=Fixture%20Album'
+    )
+
+    assert response.status_code == 200
+    assert [item['source_id'] for item in response.json()['items']] == ['source-effective-flac']
+    assert response.json()['items'][0]['source_path'] == '/incoming/song.flac'
+    assert response.json()['items'][0]['album_name'] == 'Fixture Album'
+    assert response.json()['items'][0]['title'] == 'FLAC title'
 
 
 def test_library_api_confirms_provider_candidate_into_final_publication_job(tmp_path: Path) -> None:
