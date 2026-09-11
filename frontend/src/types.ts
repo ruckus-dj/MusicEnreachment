@@ -130,6 +130,13 @@ export type Event = {
   readonly source_id?: string | null;
   readonly created_at: string;
 };
+export type LyricsStatus =
+  | "none"
+  | "pending"
+  | "synced"
+  | "no_candidate"
+  | "validation_rejected"
+  | "error";
 export type Detail = Summary & {
   readonly states: {
     readonly source: string;
@@ -138,6 +145,8 @@ export type Detail = Summary & {
     readonly publication: string;
     readonly metadata: string;
   };
+  readonly lyrics_status: LyricsStatus;
+  readonly lyrics_synced: boolean;
   readonly events: readonly Event[];
   readonly destination_conflict?: DestinationConflict | null;
 };
@@ -238,6 +247,14 @@ export type RuntimeSettings = {
   readonly acoustid_request_delay_seconds: number;
   readonly acoustid_client_key_configured: boolean;
   readonly artwork_enabled: boolean;
+  readonly lrclib_enabled: boolean;
+  readonly lrclib_host: string;
+  readonly lrclib_user_agent: string;
+  readonly lrclib_timeout_seconds: number;
+  readonly lrclib_max_attempts: number;
+  readonly lrclib_request_delay_seconds: number;
+  readonly lrclib_max_response_bytes: number;
+  readonly lrclib_match_confidence_threshold: number;
 };
 export type GenreCatalogItem = {
   readonly musicbrainz_id: string;
@@ -302,6 +319,21 @@ export type RuntimeSettingsDraft = {
   readonly acoustid_request_delay_seconds: number;
   readonly acoustid_client_key: string;
   readonly artwork_enabled: boolean;
+  readonly lrclib_enabled: boolean;
+  readonly lrclib_host: string;
+  readonly lrclib_user_agent: string;
+  readonly lrclib_timeout_seconds: number;
+  readonly lrclib_max_attempts: number;
+  readonly lrclib_request_delay_seconds: number;
+  readonly lrclib_max_response_bytes: number;
+  readonly lrclib_match_confidence_threshold: number;
+};
+/**
+ * Body of `PUT /api/settings`. The endpoint rejects partial bodies with 422, so the payload is
+ * built field by field from a complete draft; every required field is listed here explicitly.
+ */
+export type RuntimeSettingsPayload = Omit<RuntimeSettingsDraft, "acoustid_client_key"> & {
+  readonly acoustid_client_key: string | null;
 };
 export type WatchedRecord = {
   readonly recordId: string;

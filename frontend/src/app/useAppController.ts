@@ -32,6 +32,7 @@ import {
   UNKNOWN_ALBUM_LABEL,
   UNKNOWN_ARTIST_LABEL,
 } from "../domain/metadata";
+import { runtimeSettingsDraftFrom, runtimeSettingsPayload } from "../domain/settings";
 import { errorMessages } from "../errorMessages";
 import { parseRoute, routePath } from "../routing";
 import type {
@@ -651,7 +652,7 @@ export function useAppController(): AppControllerModel {
     setSettingsLoading(true);
     try {
       const loaded = await api<RuntimeSettings>("/api/settings");
-      setSettingsDraft({ ...loaded, acoustid_client_key: "" });
+      setSettingsDraft(runtimeSettingsDraftFrom(loaded));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.loadSettings);
     } finally {
@@ -780,12 +781,9 @@ export function useAppController(): AppControllerModel {
     try {
       const result = await api<RuntimeSettings>("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({
-          ...settingsDraft,
-          acoustid_client_key: settingsDraft.acoustid_client_key || null,
-        }),
+        body: JSON.stringify(runtimeSettingsPayload(settingsDraft)),
       });
-      setSettingsDraft({ ...result, acoustid_client_key: "" });
+      setSettingsDraft(runtimeSettingsDraftFrom(result));
       setNotice("Настройки сохранены");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.saveSettings);

@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import (
     LibraryEventRecord,
     LibraryPublicationRecord,
@@ -117,7 +118,16 @@ def expose_attempt(session: Session, attempt: PublicationAttemptRecord, now: dat
     session.flush()
 
 
-def finalize_attempt(session: Session, attempt: PublicationAttemptRecord, now: datetime) -> LibraryPublicationRecord:
+def finalize_attempt(
+    session: Session, attempt: PublicationAttemptRecord, now: datetime, *, lrclib_enabled: bool = True
+) -> LibraryPublicationRecord:
+    """Finalize one exposed publication and, when the provider is enabled, queue its lyric fetch.
+
+    ``lrclib_enabled`` mirrors the persisted provider switch of the live process: a disabled provider must not be
+    handed new work, so the record is materialized as "no lyrics were requested" instead of pending, and no job is
+    queued for lyrics that will not be fetched. Queued jobs from before the switch was turned off are settled by the
+    handler itself.
+    """
     if attempt.state == 'finalized':
         publication = session.get(LibraryPublicationRecord, f'publication-{attempt.id}')
         if publication is None:
@@ -165,17 +175,29 @@ def finalize_attempt(session: Session, attempt: PublicationAttemptRecord, now: d
     record.publication_state = 'current'
     record.processing_state = attempt.completion_state
     record.updated_at = now
+    # The new publication supersedes any sidecar written for the previous one: lyric state is materialized as
+    # pending with no bound path, publication, or hash until a fetch validates lyrics against this output. A
+    # disabled provider never fetches, so its records are materialized as "no lyrics were requested" instead.
+    record.lyrics_status = 'pending' if lrclib_enabled else 'none'
+    record.lyrics_path = None
+    record.lyrics_publication_id = None
+    record.lyrics_sha256 = None
+    record.lyrics_updated_at = now
     attempt.state = 'finalized'
     attempt.finalized_at = now
     _event(session, attempt, 'publication_attempt_finalized', 'complete', now)
+    # Same transaction as the current publication: a coalesced fetch never blocks or rolls back publication. A
+    # disabled provider is never handed new work, so no fetch is queued for it at all.
+    if lrclib_enabled:
+        _ = JobRepository(session).enqueue_lrclib_fetch(attempt.library_record_id, now)
     session.flush()
     return publication
 
 
 def finalize_and_cleanup_attempt(
-    session: Session, attempt: PublicationAttemptRecord, now: datetime
+    session: Session, attempt: PublicationAttemptRecord, now: datetime, *, lrclib_enabled: bool = True
 ) -> LibraryPublicationRecord:
-    publication = finalize_attempt(session, attempt, now)
+    publication = finalize_attempt(session, attempt, now, lrclib_enabled=lrclib_enabled)
     session.commit()
     acquire_storage_lock(session)
     cleanup_attempt(attempt)
@@ -203,8 +225,12 @@ def cleanup_attempt(attempt: PublicationAttemptRecord) -> None:
         _fsync_directory(workspace.parent)
 
 
-def reconcile_attempts(session: Session, now: datetime) -> None:
-    """Run only outside a handler savepoint; every filesystem change has a durable intent."""
+def reconcile_attempts(session: Session, now: datetime, *, lrclib_enabled: bool = True) -> None:
+    """Run only outside a handler savepoint; every filesystem change has a durable intent.
+
+    ``lrclib_enabled`` is the live persisted provider switch, so recovery neither queues a fetch nor promises
+    lyrics while the operator has the provider turned off.
+    """
     acquire_storage_lock(session)
     attempt_ids = session.scalars(
         select(PublicationAttemptRecord.id)
@@ -255,7 +281,7 @@ def reconcile_attempts(session: Session, now: datetime) -> None:
             session.commit()
             continue
         try:
-            finalize_attempt(session, attempt, now)
+            finalize_attempt(session, attempt, now, lrclib_enabled=lrclib_enabled)
         except OSError, ValueError:
             _restore_backup(attempt)
             attempt.state = 'failed'

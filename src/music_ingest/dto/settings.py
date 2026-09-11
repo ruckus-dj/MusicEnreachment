@@ -19,5 +19,15 @@ class RuntimeSettings(BaseModel):
     acoustid_request_delay_seconds: float = Field(default=1 / 3, gt=0.0, le=3600.0)
     acoustid_client_key: str | None = Field(default=None, max_length=255)
     artwork_enabled: bool = True
+    lrclib_enabled: bool = True
+    lrclib_host: str = Field(default='https://lrclib.net', pattern=r'^https://[^/?#]+$')
+    lrclib_user_agent: str = Field(
+        default='music-ingest/0.1.0 (music-ingest@example.com)', min_length=1, max_length=255
+    )
+    lrclib_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    lrclib_max_attempts: int = Field(default=3, ge=1, le=10)
+    lrclib_request_delay_seconds: float = Field(default=0.3, ge=0.0, le=3600.0)
+    lrclib_max_response_bytes: int = Field(default=4 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
+    lrclib_match_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     canonical_genres: tuple[str, ...] = ()
     genre_aliases: dict[str, tuple[str, ...]] = {}

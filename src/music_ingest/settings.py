@@ -26,6 +26,14 @@ class SettingKey(StrEnum):
     ACOUSTID_REQUEST_DELAY_SECONDS = 'providers.acoustid.request_delay_seconds'
     ACOUSTID_CLIENT_KEY = 'providers.acoustid.client_key'
     ARTWORK_ENABLED = 'artwork.enabled'
+    LRCLIB_ENABLED = 'providers.lrclib.enabled'
+    LRCLIB_HOST = 'providers.lrclib.host'
+    LRCLIB_USER_AGENT = 'providers.lrclib.user_agent'
+    LRCLIB_TIMEOUT_SECONDS = 'providers.lrclib.timeout_seconds'
+    LRCLIB_MAX_ATTEMPTS = 'providers.lrclib.max_attempts'
+    LRCLIB_REQUEST_DELAY_SECONDS = 'providers.lrclib.request_delay_seconds'
+    LRCLIB_MAX_RESPONSE_BYTES = 'providers.lrclib.max_response_bytes'
+    LRCLIB_MATCH_CONFIDENCE_THRESHOLD = 'providers.lrclib.match_confidence_threshold'
 
 
 def get_setting_value(session: Session, key: SettingKey) -> str | None:
@@ -70,6 +78,22 @@ def build_runtime_settings(session: Session, *, include_genres: bool = False) ->
         ),
         acoustid_client_key=values.get(SettingKey.ACOUSTID_CLIENT_KEY) or defaults.acoustid_client_key,
         artwork_enabled=_parse_bool(values.get(SettingKey.ARTWORK_ENABLED), defaults.artwork_enabled),
+        lrclib_enabled=_parse_bool(values.get(SettingKey.LRCLIB_ENABLED), defaults.lrclib_enabled),
+        lrclib_host=values.get(SettingKey.LRCLIB_HOST) or defaults.lrclib_host,
+        lrclib_user_agent=values.get(SettingKey.LRCLIB_USER_AGENT) or defaults.lrclib_user_agent,
+        lrclib_timeout_seconds=_parse_float(
+            values.get(SettingKey.LRCLIB_TIMEOUT_SECONDS), defaults.lrclib_timeout_seconds
+        ),
+        lrclib_max_attempts=_parse_int(values.get(SettingKey.LRCLIB_MAX_ATTEMPTS), defaults.lrclib_max_attempts),
+        lrclib_request_delay_seconds=_parse_float(
+            values.get(SettingKey.LRCLIB_REQUEST_DELAY_SECONDS), defaults.lrclib_request_delay_seconds
+        ),
+        lrclib_max_response_bytes=_parse_int(
+            values.get(SettingKey.LRCLIB_MAX_RESPONSE_BYTES), defaults.lrclib_max_response_bytes
+        ),
+        lrclib_match_confidence_threshold=_parse_float(
+            values.get(SettingKey.LRCLIB_MATCH_CONFIDENCE_THRESHOLD), defaults.lrclib_match_confidence_threshold
+        ),
         canonical_genres=canonical_genres,
         genre_aliases=genre_aliases,
     )
@@ -90,6 +114,14 @@ def save_runtime_settings(session: Session, settings: RuntimeSettings) -> None:
         SettingKey.ACOUSTID_REQUEST_DELAY_SECONDS: str(settings.acoustid_request_delay_seconds),
         SettingKey.ACOUSTID_CLIENT_KEY: settings.acoustid_client_key or '',
         SettingKey.ARTWORK_ENABLED: str(settings.artwork_enabled).lower(),
+        SettingKey.LRCLIB_ENABLED: str(settings.lrclib_enabled).lower(),
+        SettingKey.LRCLIB_HOST: settings.lrclib_host,
+        SettingKey.LRCLIB_USER_AGENT: settings.lrclib_user_agent,
+        SettingKey.LRCLIB_TIMEOUT_SECONDS: str(settings.lrclib_timeout_seconds),
+        SettingKey.LRCLIB_MAX_ATTEMPTS: str(settings.lrclib_max_attempts),
+        SettingKey.LRCLIB_REQUEST_DELAY_SECONDS: str(settings.lrclib_request_delay_seconds),
+        SettingKey.LRCLIB_MAX_RESPONSE_BYTES: str(settings.lrclib_max_response_bytes),
+        SettingKey.LRCLIB_MATCH_CONFIDENCE_THRESHOLD: str(settings.lrclib_match_confidence_threshold),
     }
     now = datetime.now(UTC)
     for key, value in values.items():

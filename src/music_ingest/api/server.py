@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from alembic import command
 from music_ingest.api.app import create_app
 from music_ingest.dto import RuntimeSettings
+from music_ingest.external.lrclib import LrclibSettings, build_lrclib_provider
 from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
 from music_ingest.matching.providers import DatabaseRequestRateLimiter, ProviderName, build_live_transport
 from music_ingest.models import RuntimeSettingRecord, StorageConfigRecord, UnsortedFilenameCounterRecord
@@ -194,10 +195,12 @@ def _processing_config(
         if interval <= 0
     )
     limiter = DatabaseRequestRateLimiter(session_factory, disabled_providers=disabled_providers)
+    lrclib_provider = build_lrclib_provider(_lrclib_settings(settings))
 
     def on_runtime_settings_updated(updated: RuntimeSettings) -> None:
         limiter.set_provider_disabled('musicbrainz', updated.musicbrainz_request_delay_seconds <= 0)
         limiter.set_provider_disabled('acoustid', updated.acoustid_request_delay_seconds <= 0)
+        lrclib_provider.apply(_lrclib_settings(updated))
 
     def musicbrainz_host() -> str:
         with session_factory() as session:
@@ -214,10 +217,25 @@ def _processing_config(
             staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
             media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
             live_transport=live_transport,
+            lrclib_adapter=lrclib_provider.adapter,
             artwork_provider=MusicBrainzProviderAdapter(
                 live_transport, 'music-ingest/0.1.0 (music-ingest@example.com)'
             ),
             unsorted_filename_allocator=lambda suffix: allocate_unsorted_filename_with_factory(session_factory, suffix),
         ),
         on_runtime_settings_updated,
+    )
+
+
+def _lrclib_settings(settings: RuntimeSettings) -> LrclibSettings:
+    """Project every persisted operational lrclib value onto the snapshot the live provider reads."""
+    return LrclibSettings(
+        enabled=settings.lrclib_enabled,
+        host=settings.lrclib_host,
+        user_agent=settings.lrclib_user_agent,
+        timeout_seconds=settings.lrclib_timeout_seconds,
+        max_attempts=settings.lrclib_max_attempts,
+        request_delay_seconds=settings.lrclib_request_delay_seconds,
+        max_response_bytes=settings.lrclib_max_response_bytes,
+        match_confidence_threshold=settings.lrclib_match_confidence_threshold,
     )

@@ -1,4 +1,5 @@
 import type { CatalogAlbum, LibraryCatalogTrack } from "../app/useAppController";
+import { lyricsDisplay, lyricsListLabel, lyricsSynced } from "../domain/lyrics";
 import { UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
 import type { Screen } from "../types";
 
@@ -127,40 +128,55 @@ export function LibraryCatalog({
         {albumTracks.length === 0 ? (
           <div className="empty-state">По выбранному фильтру треков нет.</div>
         ) : (
-          albumTracks.map((track) => (
-            <button
-              type="button"
-              className={`track-line ${track.source_state === "disappeared" ? "unavailable" : ""}`}
-              key={`${track.record_id}-${track.source_id}`}
-              onClick={() =>
-                onNavigate({
-                  screen: "track",
-                  recordId: track.record_id,
-                  sourceId: track.source_id,
-                  artist,
-                  album,
-                })
-              }
-            >
-              <b>{track.track_number ?? "—"}</b>
-              <span>
-                <strong>{track.title}</strong>
-                <small className="source-path" title={track.source_path}>
-                  {track.source_path}
-                </small>
-              </span>
-              <span className="track-meta">
-                {track.source_state === "disappeared"
-                  ? "Исходный файл отсутствует"
-                  : track.processing_state === "analyzing"
-                    ? "Анализируется"
-                    : track.match_state === "matched"
-                      ? "MusicBrainz подтверждён"
-                      : "Нужна проверка"}
-              </span>
-              <i>→</i>
-            </button>
-          ))
+          albumTracks.map((track) => {
+            const synced = lyricsSynced(track.lyrics_status, track.lyrics_synced);
+            const lyrics = lyricsDisplay(track.lyrics_status);
+            return (
+              <button
+                type="button"
+                className={`track-line ${track.source_state === "disappeared" ? "unavailable" : ""}`}
+                key={`${track.record_id}-${track.source_id}`}
+                onClick={() =>
+                  onNavigate({
+                    screen: "track",
+                    recordId: track.record_id,
+                    sourceId: track.source_id,
+                    artist,
+                    album,
+                  })
+                }
+              >
+                <b>{track.track_number ?? "—"}</b>
+                <span className="track-main">
+                  <span className="track-title-row">
+                    <strong>{track.title}</strong>
+                    <span
+                      className={`lyrics-flag ${synced ? "ready" : lyrics.tone}`}
+                      data-testid="track-lyrics-flag"
+                      data-lyrics-status={track.lyrics_status}
+                      title={`${lyrics.label}. ${lyrics.detail}`}
+                    >
+                      <span aria-hidden="true">{synced ? "♪" : lyrics.glyph}</span>
+                      {` ${lyricsListLabel(synced)}`}
+                    </span>
+                  </span>
+                  <small className="source-path" title={track.source_path}>
+                    {track.source_path}
+                  </small>
+                </span>
+                <span className="track-meta">
+                  {track.source_state === "disappeared"
+                    ? "Исходный файл отсутствует"
+                    : track.processing_state === "analyzing"
+                      ? "Анализируется"
+                      : track.match_state === "matched"
+                        ? "MusicBrainz подтверждён"
+                        : "Нужна проверка"}
+                </span>
+                <i>→</i>
+              </button>
+            );
+          })
         )}
       </div>
     </section>

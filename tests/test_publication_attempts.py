@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
@@ -13,11 +13,14 @@ from sqlalchemy.orm import Session
 import music_ingest.publication.attempts as attempt_operations
 from music_ingest.models import (
     Base,
+    JobRecord,
     LibraryPublicationRecord,
     LibraryRecord,
     PublicationAttemptRecord,
+    ReviewDecisionRecord,
     SourceRecord,
 )
+from music_ingest.models.jobs import JobRepository
 from music_ingest.publication import (
     PublicationAttemptRequest,
     cleanup_attempt,
@@ -599,3 +602,286 @@ def test_cleanup_failure_remains_pending_and_preserves_nfo(tmp_path: Path, monke
         assert attempt.cleaned_at is not None
         assert (backup / 'keep.nfo').read_bytes() == b'never delete'
         assert (target / 'audio.flac').read_bytes() == b'new'
+
+
+def test_finalize_attempt_enqueues_one_lrclib_fetch_and_resets_lyric_state_for_new_publication(
+    tmp_path: Path,
+) -> None:
+    # Given: a record whose current publication already owns validated synced lyrics.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-queue.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    staging = tmp_path / 'staging' / 'attempt-lyric-queue'
+    target = tmp_path / 'media' / 'record-lyric-queue'
+    backup = tmp_path / 'backup' / 'attempt-lyric-queue'
+    staging.mkdir(parents=True)
+    _ = (staging / 'audio.flac').write_bytes(b'new-output')
+    target.mkdir(parents=True)
+    _ = (target / 'audio.flac').write_bytes(b'old-output')
+    with Session(engine) as session:
+        record, source = _publication_records('record-lyric-queue', 'source-lyric-queue', tmp_path, now)
+        record.lyrics_status = 'synced'
+        record.lyrics_path = 'Fixture Artist/Fixture Album/old.lrc'
+        record.lyrics_publication_id = 'publication-old'
+        record.lyrics_sha256 = 'c' * 64
+        record.lyrics_updated_at = now
+        session.add_all((record, source))
+        session.add(
+            LibraryPublicationRecord(
+                id='publication-old',
+                library_record_id=record.id,
+                source_id=source.id,
+                path=str(target / 'audio.flac'),
+                format_name='flac',
+                content_sha256=sha256(b'old-output').hexdigest(),
+                state='current',
+                created_at=now,
+            )
+        )
+        attempt = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt-lyric-queue', record.id, source.id, None, target, 'audio.flac', staging, backup, now
+            ),
+        )
+        mark_staged(session, attempt, now)
+        expose_attempt(session, attempt, now)
+
+        # Then: an exposed output alone never queues lyric work or drops the current lyric state.
+        assert session.query(JobRecord).filter_by(kind='lrclib_fetch').count() == 0
+        unchanged = session.get(LibraryRecord, record.id)
+        assert unchanged is not None and unchanged.lyrics_status == 'synced'
+
+        # When: the exposed replacement becomes the current publication.
+        publication = finalize_attempt(session, attempt, now)
+        session.commit()
+
+        # Then: exactly one fetch is queued for the record and lyric state is pending for the new publication.
+        persisted = session.get(LibraryRecord, record.id)
+        previous = session.get(LibraryPublicationRecord, 'publication-old')
+        assert persisted is not None and previous is not None
+        assert publication.state == 'current'
+        assert previous.state == 'superseded'
+        jobs = session.query(JobRecord).filter_by(kind='lrclib_fetch').all()
+        assert [(job.library_record_id, job.source_id, job.state) for job in jobs] == [
+            ('record-lyric-queue', None, 'queued')
+        ]
+        assert persisted.lyrics_status == 'pending'
+        assert persisted.lyrics_path is None
+        assert persisted.lyrics_publication_id is None
+        assert persisted.lyrics_sha256 is None
+        assert persisted.lyrics_updated_at is not None
+        assert persisted.lyrics_updated_at.replace(tzinfo=UTC) == now
+        assert persisted.updated_at.replace(tzinfo=UTC) == now
+        assert session.query(ReviewDecisionRecord).count() == 0
+
+
+def test_finalize_attempt_coalesces_lrclib_fetch_across_superseded_publications(tmp_path: Path) -> None:
+    # Given: a record whose queued lyric fetch is still active when a replacement is published.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-coalesce.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    later = now + timedelta(minutes=5)
+    target = tmp_path / 'media' / 'record-lyric-coalesce'
+    backup = tmp_path / 'backup'
+    for staging_name, payload in (('attempt-lyric-first', b'first-output'), ('attempt-lyric-second', b'second-output')):
+        staging = tmp_path / 'staging' / staging_name
+        staging.mkdir(parents=True)
+        _ = (staging / 'audio.flac').write_bytes(payload)
+    target.mkdir(parents=True)
+    _ = (target / 'audio.flac').write_bytes(b'old-output')
+    with Session(engine) as session:
+        record, source = _publication_records('record-lyric-coalesce', 'source-lyric-coalesce', tmp_path, now)
+        session.add_all((record, source))
+        first = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt-lyric-first',
+                record.id,
+                source.id,
+                None,
+                target,
+                'audio.flac',
+                tmp_path / 'staging' / 'attempt-lyric-first',
+                backup / 'attempt-lyric-first',
+                now,
+            ),
+        )
+        mark_staged(session, first, now)
+        expose_attempt(session, first, now)
+        first_publication = finalize_attempt(session, first, now)
+        first_job = session.query(JobRecord).filter_by(kind='lrclib_fetch').one()
+
+        # When: a second publication supersedes the first while that fetch is still queued.
+        second = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt-lyric-second',
+                record.id,
+                source.id,
+                None,
+                target,
+                'audio.flac',
+                tmp_path / 'staging' / 'attempt-lyric-second',
+                backup / 'attempt-lyric-second',
+                later,
+            ),
+        )
+        mark_staged(session, second, later)
+        expose_attempt(session, second, later)
+        second_publication = finalize_attempt(session, second, later)
+        session.commit()
+
+        # Then: one superseded publication, one current publication, and a single coalesced active fetch.
+        first_persisted = session.get(LibraryPublicationRecord, first_publication.id)
+        second_persisted = session.get(LibraryPublicationRecord, second_publication.id)
+        assert first_persisted is not None and second_persisted is not None
+        assert second_publication.id != first_publication.id
+        assert first_persisted.state == 'superseded'
+        assert second_persisted.state == 'current'
+        jobs = session.query(JobRecord).filter_by(kind='lrclib_fetch').all()
+        assert [job.id for job in jobs] == [first_job.id]
+        assert jobs[0].state == 'queued'
+        refreshed = session.get(LibraryRecord, record.id)
+        assert refreshed is not None
+        assert refreshed.lyrics_status == 'pending'
+        assert refreshed.lyrics_updated_at is not None
+        assert refreshed.lyrics_updated_at.replace(tzinfo=UTC) == later
+
+
+def test_finalize_attempt_queues_lrclib_fetch_in_the_publication_transaction(tmp_path: Path) -> None:
+    # Given: a durable record whose exposed replacement is finalized without its caller committing.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-transaction.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    staging = tmp_path / 'staging' / 'attempt-lyric-transaction'
+    target = tmp_path / 'media' / 'record-lyric-transaction'
+    staging.mkdir(parents=True)
+    _ = (staging / 'audio.flac').write_bytes(b'new-output')
+    target.mkdir(parents=True)
+    _ = (target / 'audio.flac').write_bytes(b'old-output')
+    with Session(engine) as session:
+        record, source = _publication_records('record-lyric-transaction', 'source-lyric-transaction', tmp_path, now)
+        session.add_all((record, source))
+        session.commit()
+        attempt = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt-lyric-transaction',
+                record.id,
+                source.id,
+                None,
+                target,
+                'audio.flac',
+                staging,
+                tmp_path / 'backup' / 'attempt-lyric-transaction',
+                now,
+            ),
+        )
+        mark_staged(session, attempt, now)
+        expose_attempt(session, attempt, now)
+        _ = finalize_attempt(session, attempt, now)
+
+        # Then: the current publication, the queued fetch, and the lyric reset are one durable unit of work.
+        assert session.query(JobRecord).filter_by(kind='lrclib_fetch').count() == 1
+        session.rollback()
+        assert session.query(JobRecord).filter_by(kind='lrclib_fetch').count() == 0
+        assert session.get(LibraryPublicationRecord, 'publication-attempt-lyric-transaction') is None
+        persisted = session.get(LibraryRecord, 'record-lyric-transaction')
+        assert persisted is not None and persisted.lyrics_status == 'none'
+
+
+def test_enqueue_lrclib_fetch_coalesces_active_fetch_per_library_record(tmp_path: Path) -> None:
+    # Given: one library record and one unrelated record.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-enqueue.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    with Session(engine) as session:
+        session.add_all(
+            (
+                LibraryRecord(id='record-active', created_at=now, updated_at=now),
+                LibraryRecord(id='record-other', created_at=now, updated_at=now),
+            )
+        )
+        repository = JobRepository(session)
+
+        # When: a fetch is requested again while the first one is queued and then running.
+        queued = repository.enqueue_lrclib_fetch('record-active', now)
+
+        # Then: only the active fetch for that record coalesces the request.
+        assert queued is not None
+        assert (queued.kind, queued.library_record_id, queued.state) == ('lrclib_fetch', 'record-active', 'queued')
+        assert repository.enqueue_lrclib_fetch('record-active', now) is None
+        queued.state = 'running'
+        assert repository.enqueue_lrclib_fetch('record-active', now) is None
+        assert repository.enqueue_lrclib_fetch('record-other', now) is not None
+
+        # Then: a finished fetch never blocks the next publication's fetch.
+        queued.state = 'completed'
+        replacement = repository.enqueue_lrclib_fetch('record-active', now)
+        assert replacement is not None and replacement.id != queued.id
+        session.commit()
+        assert session.query(JobRecord).filter_by(kind='lrclib_fetch').count() == 3
+
+
+def test_reconcile_with_a_disabled_provider_finalizes_without_queueing_a_fetch(tmp_path: Path) -> None:
+    # Given: an exposed replacement for a record with validated lyrics, while the operator has the provider off.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-disabled.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    staging = tmp_path / 'staging' / 'attempt-lyric-disabled'
+    target = tmp_path / 'media' / 'record-lyric-disabled'
+    backup = tmp_path / 'backup' / 'attempt-lyric-disabled'
+    staging.mkdir(parents=True)
+    _ = (staging / 'audio.flac').write_bytes(b'new-output')
+    target.mkdir(parents=True)
+    _ = (target / 'audio.flac').write_bytes(b'old-output')
+    with Session(engine) as session:
+        record, source = _publication_records('record-lyric-disabled', 'source-lyric-disabled', tmp_path, now)
+        record.lyrics_status = 'synced'
+        record.lyrics_path = 'Fixture Artist/Fixture Album/old.lrc'
+        record.lyrics_publication_id = 'publication-old'
+        record.lyrics_sha256 = 'd' * 64
+        record.lyrics_updated_at = now
+        session.add_all((record, source))
+        session.add(
+            LibraryPublicationRecord(
+                id='publication-old',
+                library_record_id=record.id,
+                source_id=source.id,
+                path=str(target / 'audio.flac'),
+                format_name='flac',
+                content_sha256=sha256(b'old-output').hexdigest(),
+                state='current',
+                created_at=now,
+            )
+        )
+        attempt = reserve_attempt(
+            session,
+            PublicationAttemptRequest(
+                'attempt-lyric-disabled', record.id, source.id, None, target, 'audio.flac', staging, backup, now
+            ),
+        )
+        mark_staged(session, attempt, now)
+        expose_attempt(session, attempt, now)
+
+        # When: the worker recovery pass finalizes it with the live switch reporting a disabled provider.
+        reconcile_attempts(session, now, lrclib_enabled=False)
+
+        # Then: the replacement becomes current, but no fetch is queued for lyrics that will never be fetched.
+        persisted = session.get(LibraryRecord, record.id)
+        previous = session.get(LibraryPublicationRecord, 'publication-old')
+        assert persisted is not None and previous is not None
+        assert previous.state == 'superseded'
+        assert session.get(LibraryPublicationRecord, f'publication-{attempt.id}') is not None
+        assert session.query(JobRecord).filter_by(kind='lrclib_fetch').count() == 0
+
+        # ...and: the record is materialized as "no lyrics were requested" rather than pending for a dead fetch.
+        assert persisted.lyrics_status == 'none'
+        assert (persisted.lyrics_path, persisted.lyrics_publication_id, persisted.lyrics_sha256) == (None, None, None)
+        assert persisted.lyrics_updated_at is not None
+        assert persisted.lyrics_updated_at.replace(tzinfo=UTC) == now
+
+        # ...and: the finalized attempt was still cleaned up, so recovery leaves no pending workspace behind.
+        cleaned = session.get(PublicationAttemptRecord, attempt.id)
+        assert cleaned is not None and cleaned.cleaned_at is not None

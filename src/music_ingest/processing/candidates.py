@@ -456,16 +456,26 @@ def _reviewer_selected_musicbrainz_ids(record: LibraryRecord, source: SourceReco
     )
 
 
+def _persisted_duration_seconds(source: SourceRecord) -> int | None:
+    """The canonical published duration: the persisted source duration, else the newest fingerprint's.
+
+    The persisted fingerprint duration is rounded to whole seconds because it is the same whole-second value
+    every provider lookup is asked about.
+    """
+    duration_seconds = source.duration_seconds
+    if duration_seconds is None and source.fingerprints:
+        fingerprint_duration = source.fingerprints[-1].duration_seconds
+        return None if fingerprint_duration is None else round(fingerprint_duration)
+    return duration_seconds
+
+
 def _matching_request(
     record: LibraryRecord,
     source: SourceRecord,
     tags: tuple[tuple[str, str], ...],
 ) -> MatchingRequest:
     values = {name: value for name, value in tags}
-    duration_seconds = source.duration_seconds
-    if duration_seconds is None and source.fingerprints:
-        fingerprint_duration = source.fingerprints[-1].duration_seconds
-        duration_seconds = None if fingerprint_duration is None else round(fingerprint_duration)
+    duration_seconds = _persisted_duration_seconds(source)
     return MatchingRequest(
         values.get('ARTIST', ''),
         values.get('ALBUM', ''),

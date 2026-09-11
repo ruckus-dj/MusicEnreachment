@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import final
+from typing import Final, final
 from uuid import uuid4
 
-from sqlalchemy import Select, and_, select
+from sqlalchemy import Select, and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.models.entities import JobAttemptRecord, JobRecord
+
+_LRCLIB_FETCH_KIND: Final = 'lrclib_fetch'
+_BLOCKED_INFRASTRUCTURE_STATE: Final = 'blocked_infrastructure'
+_FORMER_LRCLIB_MISSING_ADAPTER_REASON: Final = 'ProcessingInfrastructureError: lrclib provider is unavailable'
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +21,14 @@ class ClaimedJob:
     job: JobRecord
     attempt: JobAttemptRecord
     reclaimed_stale: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BlockedLrclibRecovery:
+    """Outcome of one deliberate recovery batch over the former missing-adapter outage."""
+
+    selected: int
+    recovered: int
 
 
 @final
@@ -114,8 +126,88 @@ class JobRepository:
                 raise
             return None
 
+    def enqueue_lrclib_fetch(self, library_record_id: str, now: datetime) -> JobRecord | None:
+        """Queue one synced-lyrics fetch per library record, coalescing an active fetch.
+
+        At most one fetch is active for a record: a queued or running ``lrclib_fetch`` already covering the
+        record is reused instead of a second one being queued, so repeatedly superseded publications do not
+        accumulate duplicate lyric work. The read and the insert share the caller's transaction, so the job
+        becomes durable with the publication that requested it. Database-level uniqueness for this kind is
+        deferred to the migration that declares the index, as with the other coalesced kinds.
+        """
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.library_record_id == library_record_id)
+            .where(JobRecord.kind == _LRCLIB_FETCH_KIND)
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return None
+        try:
+            with self._session.begin_nested():
+                job = JobRecord(
+                    id=f'lrclib-fetch-{uuid4().hex}',
+                    library_record_id=library_record_id,
+                    kind=_LRCLIB_FETCH_KIND,
+                    state='queued',
+                    created_at=now,
+                )
+                self._session.add(job)
+                self._session.flush()
+                return job
+        except IntegrityError:
+            active = self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.library_record_id == library_record_id)
+                .where(JobRecord.kind == _LRCLIB_FETCH_KIND)
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            if active is None:
+                raise
+            return None
+
+    def recoverable_blocked_lrclib_fetches_statement(self) -> Select[tuple[JobRecord]]:
+        """Blocked lyric fetches attributable to exactly the former missing-adapter outage.
+
+        The pattern is anchored at the end of the recorded reason, so a different terminal failure, a
+        wrapped cause, or another provider's outage never matches, and the oldest evidence is offered first.
+        """
+        return (
+            select(JobRecord)
+            .where(JobRecord.kind == _LRCLIB_FETCH_KIND)
+            .where(JobRecord.state == _BLOCKED_INFRASTRUCTURE_STATE)
+            .where(JobRecord.failure_reason.like(f'%{_FORMER_LRCLIB_MISSING_ADAPTER_REASON}'))
+            .order_by(JobRecord.created_at, JobRecord.id)
+        )
+
+    def count_recoverable_blocked_lrclib_fetches(self) -> int:
+        """Count the blocked lyric fetches this deployment can deliberately recover."""
+        statement = self.recoverable_blocked_lrclib_fetches_statement()
+        return int(self._session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+
+    def recover_blocked_lrclib_fetches(self, now: datetime, limit: int) -> BlockedLrclibRecovery:
+        """Queue fresh lyric fetches for records blocked by the former missing adapter.
+
+        One bounded batch per call: a record is queued at most once, and every recovered fetch is created at
+        ``now`` so the batch lands behind the work already waiting instead of starving ordinary processing.
+        The blocked jobs stay untouched as evidence — their attempts and failure reason are preserved.
+        """
+        blocked = list(self._session.scalars(self.recoverable_blocked_lrclib_fetches_statement().limit(limit)).all())
+        recovered_records: set[str] = set()
+        recovered = 0
+        for blocked_job in blocked:
+            record_id = blocked_job.library_record_id
+            if record_id is None or record_id in recovered_records:
+                continue
+            recovered_records.add(record_id)
+            if self.enqueue_lrclib_fetch(record_id, now) is not None:
+                recovered += 1
+        return BlockedLrclibRecovery(selected=len(blocked), recovered=recovered)
+
     def enqueue_folder_release_selection(self, folder_path: str, now: datetime) -> JobRecord | None:
         """Queue one release-selection pass for a source folder."""
+
         active = self._session.scalar(
             select(JobRecord)
             .where(JobRecord.folder_path == folder_path)

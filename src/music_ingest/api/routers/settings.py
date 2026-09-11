@@ -46,6 +46,14 @@ def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
         acoustid_request_delay_seconds=settings.acoustid_request_delay_seconds,
         acoustid_client_key_configured=bool(settings.acoustid_client_key),
         artwork_enabled=settings.artwork_enabled,
+        lrclib_enabled=settings.lrclib_enabled,
+        lrclib_host=settings.lrclib_host,
+        lrclib_user_agent=settings.lrclib_user_agent,
+        lrclib_timeout_seconds=settings.lrclib_timeout_seconds,
+        lrclib_max_attempts=settings.lrclib_max_attempts,
+        lrclib_request_delay_seconds=settings.lrclib_request_delay_seconds,
+        lrclib_max_response_bytes=settings.lrclib_max_response_bytes,
+        lrclib_match_confidence_threshold=settings.lrclib_match_confidence_threshold,
     )
 
 
@@ -225,6 +233,14 @@ def create_router(
                     current.acoustid_client_key if request.acoustid_client_key is None else request.acoustid_client_key
                 ),
                 artwork_enabled=request.artwork_enabled,
+                lrclib_enabled=request.lrclib_enabled,
+                lrclib_host=request.lrclib_host,
+                lrclib_user_agent=request.lrclib_user_agent,
+                lrclib_timeout_seconds=request.lrclib_timeout_seconds,
+                lrclib_max_attempts=request.lrclib_max_attempts,
+                lrclib_request_delay_seconds=request.lrclib_request_delay_seconds,
+                lrclib_max_response_bytes=request.lrclib_max_response_bytes,
+                lrclib_match_confidence_threshold=request.lrclib_match_confidence_threshold,
             )
             if settings.acoustid_enabled and not settings.acoustid_client_key:
                 raise HTTPException(status_code=422, detail='AcoustID requires a client key when enabled')

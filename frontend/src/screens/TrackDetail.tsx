@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CandidateReview } from "../components/CandidateReview";
 import { MetadataComparison } from "../components/MetadataComparison";
+import { lyricsDisplay, lyricsSynced } from "../domain/lyrics";
 import {
   isPublicationHash,
   latestRevision,
@@ -197,6 +198,9 @@ export function TrackDetail({
     metadata: detail.states.metadata === "final" ? "Финальная" : detail.states.metadata,
   };
 
+  const lyrics = lyricsDisplay(detail.lyrics_status);
+  const syncedLyrics = lyricsSynced(detail.lyrics_status, detail.lyrics_synced);
+
   return (
     <section className="inspector">
       <div
@@ -316,6 +320,33 @@ export function TrackDetail({
               Обработка: {lifecycleLabels.processing} · Сопоставление: {lifecycleLabels.match} ·
               Метаданные: {lifecycleLabels.metadata}
             </small>
+          </div>
+        </div>
+      </section>
+
+      <section className="evidence-card lyrics-panel" aria-labelledby="lyrics-panel-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Текст песни</p>
+            <h2 id="lyrics-panel-title">Синхронный текст</h2>
+          </div>
+          <span
+            className={`badge ${lyrics.tone === "ready" ? "success" : lyrics.tone}`}
+            data-testid="lyrics-status-badge"
+          >
+            {lyrics.label}
+          </span>
+        </div>
+        <div className="evidence-grid">
+          <div data-testid="lyrics-status-card">
+            <span>Состояние</span>
+            <strong data-testid="lyrics-status-state">{lyrics.label}</strong>
+            <small data-testid="lyrics-status-detail">{lyrics.detail}</small>
+          </div>
+          <div>
+            <span>Синхронизация</span>
+            <strong data-testid="lyrics-status-sync">{syncedLyrics ? "Есть" : "Нет"}</strong>
+            <small>Строки с таймингом; отдельно от текста без тайминга</small>
           </div>
         </div>
       </section>

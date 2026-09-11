@@ -44,6 +44,8 @@ const detail: Detail = {
     publication: "current",
     metadata: "final",
   },
+  lyrics_status: "synced",
+  lyrics_synced: true,
   events: [],
 };
 
@@ -621,5 +623,70 @@ describe("TrackDetail recording correction", () => {
 
     expect(screen.getByTestId("recording-correction-error").getAttribute("role")).toBe("alert");
     expect(screen.getByTestId("recording-review-status").getAttribute("role")).toBe("status");
+  });
+});
+
+describe("TrackDetail lyrics status", () => {
+  it("reports synchronized lyrics with a text label", () => {
+    renderDetail({ detail: { ...detail, lyrics_status: "synced", lyrics_synced: true } });
+
+    expect(screen.getByTestId("lyrics-status-badge").textContent).toBe("Синхронный текст найден");
+    expect(screen.getByTestId("lyrics-status-state").textContent).toBe("Синхронный текст найден");
+    expect(screen.getByTestId("lyrics-status-sync").textContent).toBe("Есть");
+    expect(screen.getByTestId("lyrics-status-badge").className).toContain("success");
+  });
+
+  it.each([
+    [
+      "pending",
+      "pending",
+      "Поиск текста ещё не завершён",
+      "Обработка текста идёт в фоне, состояние обновится автоматически.",
+    ],
+    [
+      "none",
+      "pending",
+      "Текст не запрашивался",
+      "Для этой записи поиск синхронного текста ещё не запускался.",
+    ],
+    [
+      "no_candidate",
+      "pending",
+      "Подходящий текст не найден",
+      "Ни один источник не предложил синхронный текст для этой записи.",
+    ],
+    [
+      "validation_rejected",
+      "error",
+      "Текст отклонён проверкой",
+      "Найденный текст не прошёл проверку и не будет опубликован.",
+    ],
+    [
+      "error",
+      "error",
+      "Ошибка получения текста",
+      "Источник текста недоступен или вернул ошибку. Повторите обработку позже.",
+    ],
+  ] as const)(
+    "distinguishes %s without synchronized lyrics",
+    (status, tone, label, explanation) => {
+      renderDetail({
+        detail: { ...detail, lyrics_status: status, lyrics_synced: false },
+      });
+
+      expect(screen.getByTestId("lyrics-status-state").textContent).toBe(label);
+      expect(screen.getByTestId("lyrics-status-detail").textContent).toBe(explanation);
+      expect(screen.getByTestId("lyrics-status-sync").textContent).toBe("Нет");
+      expect(screen.getByTestId("lyrics-status-badge").className).toBe(`badge ${tone}`);
+    },
+  );
+
+  it("does not render lyric lines or lyrics paths", () => {
+    renderDetail({ detail: { ...detail, lyrics_status: "synced", lyrics_synced: true } });
+
+    expect(screen.getByTestId("lyrics-status-card").textContent).not.toMatch(
+      /\[00:|\.lrc|lyrics\//i,
+    );
+    expect(screen.getByTestId("lyrics-status-detail").textContent).not.toContain("/incoming");
   });
 });

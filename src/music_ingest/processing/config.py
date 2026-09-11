@@ -9,6 +9,9 @@ from music_ingest.dto import FieldPolicy, GenrePolicy
 from music_ingest.enrichment.artwork import (
     ArtworkProvider,
 )
+from music_ingest.external.lrclib import (
+    LrclibAdapter,
+)
 from music_ingest.matching.providers import (
     AcoustIdProvider,
     LiveTransport,
@@ -35,5 +38,6 @@ class ProcessingConfig:
     musicbrainz_provider: MusicBrainzProvider | None = None
     acoustid_provider: AcoustIdProvider | None = None
     artwork_provider: ArtworkProvider | None = None
+    lrclib_adapter: LrclibAdapter | None = None
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     unsorted_filename_allocator: Callable[[str], str] | None = None

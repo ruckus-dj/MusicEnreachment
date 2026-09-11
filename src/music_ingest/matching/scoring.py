@@ -380,6 +380,11 @@ def _album_artist_name(request: MatchingRequest) -> str:
 
 
 def _text_similarity(left: str, right: str) -> float:
+    return text_similarity(left, right)
+
+
+def text_similarity(left: str, right: str) -> float:
+    """Compare two music metadata strings using the normalization used by candidate matching."""
     if not left or not right:
         return 0.0
     original_similarity = _soft_token_ratio(left, right)

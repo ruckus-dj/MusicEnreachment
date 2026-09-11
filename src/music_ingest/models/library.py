@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, select, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -74,7 +74,11 @@ class LibraryRecord(Base):
     """Stable identity for one composition across source and publication changes."""
 
     __tablename__ = 'library_records'
-    __table_args__: tuple[UniqueConstraint | Index, ...] = (
+    __table_args__: tuple[UniqueConstraint | Index | CheckConstraint, ...] = (
+        CheckConstraint(
+            "lyrics_status IN ('none', 'pending', 'synced', 'no_candidate', 'validation_rejected', 'error')",
+            name='ck_library_records_lyrics_status',
+        ),
         UniqueConstraint('musicbrainz_recording_id', 'musicbrainz_release_id'),
         Index(
             'uq_library_records_musicbrainz_recording_without_release',
@@ -94,6 +98,11 @@ class LibraryRecord(Base):
     match_state: Mapped[str] = mapped_column(Text, nullable=False, default='unmatched')
     publication_state: Mapped[str] = mapped_column(Text, nullable=False, default='absent')
     metadata_state: Mapped[str] = mapped_column(Text, nullable=False, default='original')
+    lyrics_status: Mapped[str] = mapped_column(Text, nullable=False, default='none', server_default=text("'none'"))
+    lyrics_path: Mapped[str | None] = mapped_column(Text)
+    lyrics_publication_id: Mapped[str | None] = mapped_column(ForeignKey('library_publications.id'))
+    lyrics_sha256: Mapped[str | None] = mapped_column(Text)
+    lyrics_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -101,7 +110,10 @@ class LibraryRecord(Base):
         'SourceRecord', back_populates='library_record', lazy='selectin', order_by='SourceRecord.id'
     )
     publications: Mapped[list[LibraryPublicationRecord]] = relationship(
-        back_populates='library_record', lazy='selectin', order_by='LibraryPublicationRecord.created_at'
+        back_populates='library_record',
+        foreign_keys='LibraryPublicationRecord.library_record_id',
+        lazy='selectin',
+        order_by='LibraryPublicationRecord.created_at',
     )
     metadata_revisions: Mapped[list[LibraryMetadataRevisionRecord]] = relationship(
         back_populates='library_record', lazy='selectin', order_by='LibraryMetadataRevisionRecord.created_at'
@@ -155,7 +167,9 @@ class LibraryPublicationRecord(Base):
     state: Mapped[str] = mapped_column(Text, nullable=False, default='current')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    library_record: Mapped[LibraryRecord] = relationship(back_populates='publications')
+    library_record: Mapped[LibraryRecord] = relationship(
+        back_populates='publications', foreign_keys='LibraryPublicationRecord.library_record_id'
+    )
     source: Mapped[SourceRecordView] = relationship('SourceRecord', back_populates='library_publications')
     metadata_revision: Mapped[LibraryMetadataRevisionRecord | None] = relationship(back_populates='publications')
 

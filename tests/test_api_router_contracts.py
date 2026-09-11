@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
 
+import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -54,6 +55,14 @@ def _runtime_settings_payload(confidence_threshold: float) -> dict[str, object]:
         'acoustid_request_delay_seconds': 0.34,
         'acoustid_client_key': None,
         'artwork_enabled': True,
+        'lrclib_enabled': True,
+        'lrclib_host': 'https://lrclib.net',
+        'lrclib_user_agent': 'Music Ingest/0.1',
+        'lrclib_timeout_seconds': 15.0,
+        'lrclib_max_attempts': 3,
+        'lrclib_request_delay_seconds': 0.3,
+        'lrclib_max_response_bytes': 4 * 1024 * 1024,
+        'lrclib_match_confidence_threshold': 0.7,
     }
 
 
@@ -74,8 +83,10 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     canonical_schema = json.dumps(application.openapi(), sort_keys=True, separators=(',', ':')).encode()
 
     # Baseline captured before app.py was decomposed; router extraction must not alter the public API schema.
+    # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
+    # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        'fcfd71f2b602acba5c95f352dfb4303c4b156ee96312047e06aa8231c7140aa8'
+        'e77288eb0999ce6679bf9dfcd182592fafe540179ae11df351d1532090121225'
     )
 
 
@@ -105,11 +116,45 @@ def test_create_app_instances_isolate_session_factories_and_runtime_callbacks(tm
 
             assert response.status_code == 200
             assert [settings.confidence_threshold for settings in first_updates] == [0.73]
+            assert response.json()['lrclib_request_delay_seconds'] == 0.3
+            assert first.get('/api/settings').json()['lrclib_max_response_bytes'] == 4 * 1024 * 1024
             assert second_updates == []
             assert second.get('/api/settings/matching').json() == {'confidence_threshold': 0.87}
     finally:
         first_engine.dispose()
         second_engine.dispose()
+
+
+@pytest.mark.parametrize(
+    'override',
+    (
+        {'lrclib_host': 'http://lrclib.net'},
+        {'lrclib_host': 'https://lrclib.net/api/get'},
+        {'lrclib_user_agent': ''},
+        {'lrclib_timeout_seconds': 0},
+        {'lrclib_max_attempts': 0},
+        {'lrclib_max_attempts': 11},
+        {'lrclib_request_delay_seconds': -1},
+        {'lrclib_max_response_bytes': 1023},
+        {'lrclib_max_response_bytes': 16 * 1024 * 1024 + 1},
+    ),
+)
+def test_runtime_settings_when_lrclib_values_violate_the_contract_are_rejected(
+    tmp_path: Path, override: dict[str, object]
+) -> None:
+    engine = _database(tmp_path, 'lrclib-contract.db', 0.61)
+    try:
+        application = create_app(lambda: Session(engine))
+        with TestClient(application) as client:
+            response = client.put('/api/settings', json={**_runtime_settings_payload(0.7), **override})
+            settings = client.get('/api/settings').json()
+
+        # Then: the untrusted value never reaches persisted state and the computed defaults stand.
+        assert response.status_code == 422
+        assert settings['lrclib_host'] == 'https://lrclib.net'
+        assert settings['lrclib_max_response_bytes'] == 4 * 1024 * 1024
+    finally:
+        engine.dispose()
 
 
 def test_create_app_preserves_the_supplied_lifespan() -> None:

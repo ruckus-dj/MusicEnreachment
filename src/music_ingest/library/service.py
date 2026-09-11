@@ -59,6 +59,7 @@ class CatalogTrack:
     album_name: str | None
     title: str
     track_number: str | None
+    lyrics_status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,7 @@ class CatalogSourceTags:
     match_state: str
     publication_state: str
     tags: dict[str, str]
+    lyrics_status: str
 
 
 def new_library_record(session: Session, now: datetime | None = None) -> LibraryRecord:
@@ -560,6 +562,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
             LibraryRecord.processing_state,
             LibraryRecord.match_state,
             LibraryRecord.publication_state,
+            LibraryRecord.lyrics_status,
             SourceTagRecord.tag_name,
             SourceTagRecord.value,
         )
@@ -573,7 +576,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         raw_query = raw_query.where(
             LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'
         )
-    raw_by_source: dict[tuple[str, str], tuple[str, str, str, str, str | None, str, str, str, dict[str, str]]] = {}
+    raw_by_source: dict[tuple[str, str], tuple[str, str, str, str, str | None, str, str, str, str, dict[str, str]]] = {}
     for (
         record_id,
         source_id,
@@ -583,6 +586,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
         processing_state,
         match_state,
         publication_state,
+        lyrics_status,
         tag_name,
         value,
     ) in session.execute(raw_query):
@@ -597,9 +601,10 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
                 processing_state,
                 match_state,
                 publication_state,
+                lyrics_status,
                 {},
             ),
-        )[8]
+        )[9]
         if tag_name is not None and value is not None:
             tags[tag_name] = value
     result: list[CatalogSourceTags] = []
@@ -614,6 +619,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
             processing_state,
             match_state,
             publication_state,
+            lyrics_status,
             tags,
         ),
     ) in raw_by_source.items():
@@ -629,6 +635,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
                 revision[4] if revision else match_state,
                 revision[5] if revision else publication_state,
                 revision[1] if revision else tags,
+                lyrics_status,
             )
         )
     return result
@@ -742,6 +749,7 @@ def library_album_tracks(
                 album_name=album_value or None,
                 title=source.tags.get('TITLE', ''),
                 track_number=source.tags.get('TRACKNUMBER'),
+                lyrics_status=source.lyrics_status,
             )
         )
     return tracks

@@ -21,7 +21,49 @@ const draft: RuntimeSettingsDraft = {
   acoustid_request_delay_seconds: 1 / 3,
   acoustid_client_key: "",
   artwork_enabled: true,
+  lrclib_enabled: true,
+  lrclib_host: "https://lrclib.net",
+  lrclib_user_agent: "Music Ingest",
+  lrclib_timeout_seconds: 15,
+  lrclib_max_attempts: 3,
+  lrclib_request_delay_seconds: 0.3,
+  lrclib_max_response_bytes: 4_194_304,
+  lrclib_match_confidence_threshold: 0.7,
 };
+
+type SettingsScreenProps = Parameters<typeof SettingsScreen>[0];
+
+const settingsScreenProps = {
+  draft,
+  loading: false,
+  saving: false,
+  onChange: vi.fn(),
+  onSave: vi.fn(),
+  genres: null,
+  genreSearch: "",
+  onGenreSearch: vi.fn(),
+  genreLoading: false,
+  genreSyncing: false,
+  onSyncGenres: vi.fn(),
+  sourceRoots: [],
+  sourceRootsLoading: false,
+  sourceRootsError: "",
+  sourceRootCreating: false,
+  sourceRootRemoving: false,
+  storageBrowser: null,
+  storageConfig: null,
+  storageOutputPreview: null,
+  storageLoading: false,
+  onCreateSourceRoot: vi.fn(),
+  onRemoveSourceRoot: vi.fn(),
+  onBrowseStorage: vi.fn(),
+  onPreviewStorageOutput: vi.fn(),
+  onMoveStorageOutput: vi.fn(),
+} satisfies SettingsScreenProps;
+
+function renderSettings(overrides: Partial<SettingsScreenProps> = {}) {
+  render(<SettingsScreen {...settingsScreenProps} {...overrides} />);
+}
 
 describe("SettingsScreen source roots", () => {
   it("lists a persisted root and removes it through the provided callback", () => {
@@ -275,5 +317,77 @@ describe("SettingsScreen processing", () => {
     fireEvent.change(screen.getByLabelText("Параллельные воркеры"), { target: { value: "4" } });
 
     expect(onChange).toHaveBeenCalledWith({ ...draft, worker_concurrency: 4 });
+  });
+});
+
+describe("SettingsScreen LRCLIB", () => {
+  it("loads every LRCLIB field from the persisted draft", () => {
+    renderSettings();
+
+    const group = within(screen.getByRole("group", { name: "Тексты LRCLIB" }));
+    const value = (label: string) => (group.getByLabelText(label) as HTMLInputElement).value;
+
+    expect((group.getByLabelText("LRCLIB включён") as HTMLInputElement).checked).toBe(true);
+    expect(value("User-Agent LRCLIB")).toBe("Music Ingest");
+    expect(value("Хост LRCLIB")).toBe("https://lrclib.net");
+    expect(value("Таймаут LRCLIB, секунд")).toBe("15");
+    expect(value("Максимум попыток LRCLIB")).toBe("3");
+    expect(value("Задержка запросов LRCLIB, секунд")).toBe("0.3");
+    expect(value("Максимальный размер ответа LRCLIB, байт")).toBe("4194304");
+    expect(
+      screen.getByRole("button", { name: "Сохранить настройки" }).hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
+  it("sends every edit as a complete draft", () => {
+    const onChange = vi.fn();
+    renderSettings({ onChange });
+
+    fireEvent.change(screen.getByLabelText("Хост LRCLIB"), {
+      target: { value: "https://lrclib.internal" },
+    });
+    fireEvent.change(screen.getByLabelText("Задержка запросов LRCLIB, секунд"), {
+      target: { value: "0.5" },
+    });
+    fireEvent.change(screen.getByLabelText("Максимальный размер ответа LRCLIB, байт"), {
+      target: { value: "8388608" },
+    });
+    fireEvent.click(screen.getByLabelText("LRCLIB включён"));
+
+    expect(onChange).toHaveBeenNthCalledWith(1, {
+      ...draft,
+      lrclib_host: "https://lrclib.internal",
+    });
+    expect(onChange).toHaveBeenNthCalledWith(2, {
+      ...draft,
+      lrclib_request_delay_seconds: 0.5,
+    });
+    expect(onChange).toHaveBeenNthCalledWith(3, {
+      ...draft,
+      lrclib_max_response_bytes: 8_388_608,
+    });
+    expect(onChange).toHaveBeenNthCalledWith(4, { ...draft, lrclib_enabled: false });
+  });
+
+  it("announces a rejected host and blocks saving until the draft is valid", () => {
+    renderSettings({
+      draft: { ...draft, lrclib_host: "http://lrclib.net", lrclib_timeout_seconds: 0 },
+    });
+
+    const error = screen.getByTestId("lrclib-settings-error");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(error.textContent).toContain("https://lrclib.net");
+    expect(error.textContent).toContain("Таймаут LRCLIB");
+    expect(screen.getByLabelText("Хост LRCLIB").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Хост LRCLIB").getAttribute("aria-describedby")).toBe(
+      "lrclib-settings-error",
+    );
+    expect(screen.getByLabelText("Таймаут LRCLIB, секунд").getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+    expect(screen.getByLabelText("User-Agent LRCLIB").hasAttribute("aria-invalid")).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Сохранить настройки" }).hasAttribute("disabled"),
+    ).toBe(true);
   });
 });

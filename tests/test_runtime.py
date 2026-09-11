@@ -16,10 +16,22 @@ from music_ingest import __main__ as command
 from music_ingest.api.app import create_app
 from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
 from music_ingest.dto import RuntimeSettings
+from music_ingest.external.lrclib import (
+    DEFAULT_USER_AGENT,
+    MAX_RESPONSE_BODY_BYTES,
+    LrclibLookupRequest,
+    lookup_url,
+)
 from music_ingest.models import Base, JobRecord, RuntimeSettingRecord, SourceRootRecord
 from music_ingest.processing import ProcessingConfig
 from music_ingest.processing import runtime as processing_runtime
-from music_ingest.settings import SettingKey, build_runtime_settings, get_setting_value, get_setting_values
+from music_ingest.settings import (
+    SettingKey,
+    build_runtime_settings,
+    get_setting_value,
+    get_setting_values,
+    save_runtime_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +99,14 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             'acoustid_request_delay_seconds': 0.5,
             'acoustid_client_key': None,
             'artwork_enabled': True,
+            'lrclib_enabled': False,
+            'lrclib_host': 'https://lrclib.internal',
+            'lrclib_user_agent': 'Music Ingest/0.1 (ops@example.com)',
+            'lrclib_timeout_seconds': 20,
+            'lrclib_max_attempts': 5,
+            'lrclib_request_delay_seconds': 0.75,
+            'lrclib_max_response_bytes': 2 * 1024 * 1024,
+            'lrclib_match_confidence_threshold': 0.7,
         },
     )
 
@@ -96,7 +116,57 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
     assert response.json()['musicbrainz_request_delay_seconds'] == 0
     assert response.json()['acoustid_request_delay_seconds'] == 0.5
     assert response.json()['worker_concurrency'] == 4
+    assert response.json()['lrclib_enabled'] is False
+    assert response.json()['lrclib_host'] == 'https://lrclib.internal'
+    assert response.json()['lrclib_user_agent'] == 'Music Ingest/0.1 (ops@example.com)'
+    assert response.json()['lrclib_timeout_seconds'] == 20
+    assert response.json()['lrclib_max_attempts'] == 5
+    assert response.json()['lrclib_request_delay_seconds'] == 0.75
+    assert response.json()['lrclib_max_response_bytes'] == 2 * 1024 * 1024
+    assert response.json()['lrclib_match_confidence_threshold'] == 0.7
     assert updates[-1].musicbrainz_request_delay_seconds == 0
+    assert updates[-1].lrclib_max_attempts == 5
+
+
+def test_settings_when_lrclib_values_are_saved_round_trip_through_the_persisted_keys(tmp_path: Path) -> None:
+    # Given: an empty settings database.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lrclib-settings.db"}')
+    Base.metadata.create_all(engine)
+
+    # When: lrclib settings are saved as one aggregate and rebuilt from persistence.
+    with Session(engine) as session:
+        save_runtime_settings(
+            session,
+            RuntimeSettings().model_copy(
+                update={
+                    'lrclib_enabled': False,
+                    'lrclib_host': 'https://lrclib.internal',
+                    'lrclib_user_agent': 'Music Ingest/0.1 (ops@example.com)',
+                    'lrclib_timeout_seconds': 25.5,
+                    'lrclib_max_attempts': 7,
+                    'lrclib_request_delay_seconds': 1.25,
+                    'lrclib_max_response_bytes': 512 * 1024,
+                    'lrclib_match_confidence_threshold': 0.8,
+                }
+            ),
+        )
+        session.commit()
+        persisted = build_runtime_settings(session)
+
+    # Then: every lrclib key is written and read back, including the boolean as a lowercase scalar.
+    assert persisted.lrclib_enabled is False
+    assert persisted.lrclib_host == 'https://lrclib.internal'
+    assert persisted.lrclib_user_agent == 'Music Ingest/0.1 (ops@example.com)'
+    assert persisted.lrclib_timeout_seconds == 25.5
+    assert persisted.lrclib_max_attempts == 7
+    assert persisted.lrclib_request_delay_seconds == 1.25
+    assert persisted.lrclib_max_response_bytes == 512 * 1024
+    assert persisted.lrclib_match_confidence_threshold == 0.8
+    with Session(engine) as session:
+        assert get_setting_value(session, SettingKey.LRCLIB_ENABLED) == 'false'
+        assert get_setting_value(session, SettingKey.LRCLIB_HOST) == 'https://lrclib.internal'
+        assert get_setting_value(session, SettingKey.LRCLIB_MAX_RESPONSE_BYTES) == str(512 * 1024)
+        assert get_setting_value(session, SettingKey.LRCLIB_MATCH_CONFIDENCE_THRESHOLD) == '0.8'
 
 
 def test_setting_values_when_requested_keys_are_persisted_uses_one_query_and_omits_missing_keys(
@@ -167,6 +237,25 @@ def test_build_runtime_settings_when_values_are_missing_uses_defaults_without_lo
     assert settings.musicbrainz_host == RuntimeSettings().musicbrainz_host
     assert settings.worker_concurrency == RuntimeSettings().worker_concurrency
     assert missing is None
+
+
+def test_build_runtime_settings_when_lrclib_is_unconfigured_uses_the_live_adapter_defaults(tmp_path: Path) -> None:
+    # Given: an empty settings database and the live lrclib adapter's own request surface.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lrclib-defaults.db"}')
+    Base.metadata.create_all(engine)
+
+    # When: runtime settings are rebuilt without any persisted scalar value.
+    with Session(engine) as session:
+        settings = build_runtime_settings(session)
+
+    # Then: the defaults match the adapter's live host, user agent, size bound, and transport bounds.
+    assert settings.lrclib_enabled is True
+    assert lookup_url(LrclibLookupRequest('track', 'artist', 180)).startswith(f'{settings.lrclib_host}/api/')
+    assert settings.lrclib_user_agent == DEFAULT_USER_AGENT
+    assert settings.lrclib_max_response_bytes == MAX_RESPONSE_BODY_BYTES
+    assert settings.lrclib_timeout_seconds == 15.0
+    assert settings.lrclib_max_attempts == 3
+    assert settings.lrclib_request_delay_seconds == 0.3
 
 
 @pytest.mark.parametrize(

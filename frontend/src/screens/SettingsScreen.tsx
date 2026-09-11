@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { runtimeSettingsFieldErrors } from "../domain/settings";
 import type {
   GenreCatalog,
   RuntimeSettingsDraft,
@@ -67,6 +68,10 @@ export function SettingsScreen({
   if (loading || !draft) return <div className="empty-state">Загрузка настроек…</div>;
   const update = <K extends keyof RuntimeSettingsDraft>(key: K, value: RuntimeSettingsDraft[K]) =>
     onChange({ ...draft, [key]: value });
+  const fieldErrors = runtimeSettingsFieldErrors(draft);
+  const fieldErrorList = Object.values(fieldErrors);
+  const invalidProps = (invalid: boolean) =>
+    invalid ? { "aria-describedby": "lrclib-settings-error", "aria-invalid": true } : {};
   const visibleGenres = (genres?.items ?? []).filter((genre) =>
     `${genre.display_name} ${genre.source_name}`.toLowerCase().includes(genreSearch.toLowerCase()),
   );
@@ -88,7 +93,12 @@ export function SettingsScreen({
           <p className="eyebrow">Runtime configuration</p>
           <h2>Настройки сервиса</h2>
         </div>
-        <button type="button" className="primary" disabled={saving} onClick={onSave}>
+        <button
+          type="button"
+          className="primary"
+          disabled={saving || fieldErrorList.length > 0}
+          onClick={onSave}
+        >
           {saving ? "Сохраняем…" : "Сохранить настройки"}
         </button>
       </div>
@@ -235,6 +245,113 @@ export function SettingsScreen({
             />{" "}
             Artwork enrichment включён
           </label>
+        </fieldset>
+        <fieldset className="settings-card">
+          <legend>Тексты LRCLIB</legend>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={draft.lrclib_enabled}
+              onChange={(event) => update("lrclib_enabled", event.target.checked)}
+            />{" "}
+            LRCLIB включён
+          </label>
+          <label>
+            User-Agent LRCLIB
+            <input
+              {...invalidProps(Boolean(fieldErrors.lrclib_user_agent))}
+              value={draft.lrclib_user_agent}
+              onChange={(event) => update("lrclib_user_agent", event.target.value)}
+            />
+          </label>
+          <label>
+            Хост LRCLIB
+            <input
+              type="url"
+              pattern="https://[^/?#]+"
+              {...invalidProps(Boolean(fieldErrors.lrclib_host))}
+              value={draft.lrclib_host}
+              onChange={(event) => update("lrclib_host", event.target.value)}
+            />
+          </label>
+          <label>
+            Таймаут LRCLIB, секунд
+            <input
+              type="number"
+              min="1"
+              max="120"
+              step="0.1"
+              {...invalidProps(Boolean(fieldErrors.lrclib_timeout_seconds))}
+              value={draft.lrclib_timeout_seconds}
+              onChange={(event) => update("lrclib_timeout_seconds", Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Максимум попыток LRCLIB
+            <input
+              type="number"
+              min="1"
+              max="10"
+              {...invalidProps(Boolean(fieldErrors.lrclib_max_attempts))}
+              value={draft.lrclib_max_attempts}
+              onChange={(event) => update("lrclib_max_attempts", Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Задержка запросов LRCLIB, секунд
+            <input
+              type="number"
+              min="0"
+              max="3600"
+              step="0.1"
+              {...invalidProps(Boolean(fieldErrors.lrclib_request_delay_seconds))}
+              value={draft.lrclib_request_delay_seconds}
+              onChange={(event) =>
+                update("lrclib_request_delay_seconds", Number(event.target.value))
+              }
+            />
+          </label>
+          <label>
+            Максимальный размер ответа LRCLIB, байт
+            <input
+              type="number"
+              min="1024"
+              max="16777216"
+              step="1024"
+              {...invalidProps(Boolean(fieldErrors.lrclib_max_response_bytes))}
+              value={draft.lrclib_max_response_bytes}
+              onChange={(event) => update("lrclib_max_response_bytes", Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Порог совпадения LRCLIB
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              {...invalidProps(Boolean(fieldErrors.lrclib_match_confidence_threshold))}
+              value={draft.lrclib_match_confidence_threshold}
+              onChange={(event) =>
+                update("lrclib_match_confidence_threshold", Number(event.target.value))
+              }
+            />
+          </label>
+          {fieldErrorList.length > 0 && (
+            <p
+              className="settings-help"
+              data-testid="lrclib-settings-error"
+              id="lrclib-settings-error"
+              role="alert"
+            >
+              {fieldErrorList.join(" ")}
+            </p>
+          )}
+          <small className="settings-help">
+            Поиск ранжирует синхронные варианты по title, artist и album после обязательной проверки
+            длительности ±2 секунды. Порог по умолчанию — 0,70; задержка — 0,3 секунды, лимит ответа
+            — 4 МиБ. Пока значения не исправлены, сохранение настроек недоступно.
+          </small>
         </fieldset>
         <fieldset className="settings-card settings-card-wide">
           <legend>Жанры MusicBrainz</legend>

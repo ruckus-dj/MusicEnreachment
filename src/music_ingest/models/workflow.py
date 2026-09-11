@@ -78,6 +78,15 @@ _ = Index(
 )
 
 _ = Index(
+    'uq_active_lrclib_fetch_job',
+    JobRecord.library_record_id,
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'lrclib_fetch') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'lrclib_fetch') & JobRecord.state.in_(['queued', 'running']),
+)
+
+_ = Index(
     'uq_active_folder_release_selection_job',
     JobRecord.folder_path,
     JobRecord.kind,

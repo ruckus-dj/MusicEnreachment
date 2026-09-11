@@ -3,9 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import get_args
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine, insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
@@ -13,13 +17,14 @@ from music_ingest.api.candidate_views import (
     _candidate_is_displayable,
     _merge_candidate_evidence,
 )
-from music_ingest.dto import CandidateEvidencePayload
+from music_ingest.dto import CandidateEvidencePayload, LibraryTrackResponse, LyricsStatus
 from music_ingest.dto.api import CandidateScoreComponents
 from music_ingest.library.service import append_metadata_revision, attach_source
 from music_ingest.models import (
     Base,
     CandidateRecord,
     JobRecord,
+    LibraryEventRecord,
     LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
@@ -122,6 +127,89 @@ def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path:
     assert persisted.musicbrainz_recording_id == '11111111-1111-4111-8111-111111111111'
     assert {source.id for source in persisted.sources} == {'source-mp3', 'source-flac'}
     assert persisted.publications[0].source_id == 'source-mp3'
+
+
+def test_library_record_lyric_state_defaults_and_round_trips_with_publication_association(tmp_path: Path) -> None:
+    # Given: a library record with an intake source and a current managed publication.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-state.db"}')
+    Base.metadata.create_all(engine)
+    observed_at = datetime(2026, 8, 4, tzinfo=UTC)
+
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-lyrics', created_at=observed_at, updated_at=observed_at)
+        source = SourceRecord(
+            id='source-lyrics',
+            source_path='/incoming/song.flac',
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        publication = LibraryPublicationRecord(
+            id='publication-lyrics',
+            library_record=record,
+            source=source,
+            path='Artist/Album/song.flac',
+            format_name='flac',
+            content_sha256='b' * 64,
+            state='current',
+            created_at=observed_at,
+        )
+        session.add_all((record, source, publication))
+        session.commit()
+
+        # Then: a record without lyric work owns the neutral lyric state and no lyric payload.
+        assert record.lyrics_status == 'none'
+        assert (record.lyrics_path, record.lyrics_publication_id, record.lyrics_sha256, record.lyrics_updated_at) == (
+            None,
+            None,
+            None,
+            None,
+        )
+
+        # When: synced lyrics are materialized for that record.
+        record.lyrics_status = 'synced'
+        record.lyrics_path = 'Artist/Album/song.lrc'
+        record.lyrics_publication_id = publication.id
+        record.lyrics_sha256 = 'c' * 64
+        record.lyrics_updated_at = observed_at
+        session.commit()
+        session.expire_all()
+        persisted = session.get(LibraryRecord, 'record-lyrics')
+
+    # Then: the current lyric state is read back from the record itself, without affecting publications.
+    assert persisted is not None
+    assert persisted.lyrics_status == 'synced'
+    assert persisted.lyrics_path == 'Artist/Album/song.lrc'
+    assert persisted.lyrics_publication_id == 'publication-lyrics'
+    assert persisted.lyrics_sha256 == 'c' * 64
+    assert persisted.lyrics_updated_at is not None
+    assert persisted.lyrics_updated_at.replace(tzinfo=UTC) == observed_at
+    assert [publication.id for publication in persisted.publications] == ['publication-lyrics']
+
+
+def test_library_record_lyric_state_rejects_undeclared_status(tmp_path: Path) -> None:
+    # Given: a persisted library record.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "lyric-state-check.db"}')
+    Base.metadata.create_all(engine)
+    observed_at = datetime(2026, 8, 4, tzinfo=UTC)
+
+    with Session(engine) as session:
+        session.add(LibraryRecord(id='record-invalid-lyrics', created_at=observed_at, updated_at=observed_at))
+        session.commit()
+        record = session.get(LibraryRecord, 'record-invalid-lyrics')
+        assert record is not None
+
+        # When: an undeclared lyric state is persisted.
+        record.lyrics_status = 'downloaded'
+
+        # Then: the persisted lyric state stays constrained to the declared vocabulary.
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_append_metadata_revision_when_relationship_is_stale_uses_durable_revision(tmp_path: Path) -> None:
@@ -380,6 +468,8 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
         'processing_state': 'analyzing',
         'match_state': 'unmatched',
         'publication_state': 'current',
+        'lyrics_status': 'none',
+        'lyrics_synced': False,
     }
     assert name_only.json()['items'][0]['source_state'] == 'disappeared'
     assert name_only.json()['items'][0]['processing_state'] == 'needs_review'
@@ -1066,6 +1156,8 @@ def test_library_artists_groups_records_without_artist_tags_as_unknown(tmp_path:
         'processing_state': 'queued',
         'match_state': 'unmatched',
         'publication_state': 'absent',
+        'lyrics_status': 'none',
+        'lyrics_synced': False,
     }
 
 
@@ -1429,3 +1521,166 @@ def test_reconciliation_keeps_current_publication_until_replacement_publishes(tm
         persisted = session.get(LibraryRecord, record.id)
         assert persisted is not None
         assert next(item for item in persisted.publications if item.id == 'publication-old').state == 'current'
+
+
+def _lyrics_album_record(
+    record_id: str,
+    source_id: str,
+    *,
+    lyrics_status: str,
+    title: str,
+    timestamp: datetime,
+) -> tuple[LibraryRecord, SourceRecord]:
+    record = LibraryRecord(
+        id=record_id,
+        processing_state='ready',
+        publication_state='current',
+        lyrics_status=lyrics_status,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    source = SourceRecord(
+        id=source_id,
+        source_path=f'/incoming/{source_id}.flac',
+        device=1,
+        inode=1,
+        size_bytes=3,
+        sha256='a' * 64,
+        duration_seconds=180,
+        origin='manual',
+        intake_state='present',
+        library_record=record,
+        tag_observations=[
+            SourceTagRecord(format_name='flac', tag_name='ALBUMARTIST', value='Noize MC'),
+            SourceTagRecord(format_name='flac', tag_name='ALBUM', value='Lyrics Album'),
+            SourceTagRecord(format_name='flac', tag_name='TITLE', value=title),
+        ],
+    )
+    return record, source
+
+
+def test_library_tracks_expose_materialized_lyrics_status(tmp_path: Path) -> None:
+    # Given: two tracks whose materialized lyric state differs and a stale lyric history row.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "track-lyrics-status.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        synced, synced_source = _lyrics_album_record(
+            'record-synced', 'source-synced', lyrics_status='synced', title='Synced Song', timestamp=timestamp
+        )
+        missing, missing_source = _lyrics_album_record(
+            'record-missing',
+            'source-missing',
+            lyrics_status='no_candidate',
+            title='Plain Song',
+            timestamp=timestamp,
+        )
+        stale_history = LibraryEventRecord(
+            library_record=missing,
+            source_id='source-missing',
+            kind='lyrics',
+            state='synced',
+            reason='stale lyric history',
+            details_json='{}',
+            created_at=timestamp,
+        )
+        session.add_all((synced, synced_source, missing, missing_source, stale_history))
+        session.commit()
+
+    # When: the album's tracks are read through the catalog API.
+    response = TestClient(create_app(lambda: Session(engine))).get(
+        '/api/library/tracks?artist=Noize%20MC&album_name=Lyrics%20Album'
+    )
+
+    # Then: each track reports its materialized lyric state without leaking history or sidecar payloads.
+    assert response.status_code == 200
+    items = {item['record_id']: item for item in response.json()['items']}
+    assert items['record-synced']['lyrics_status'] == 'synced'
+    assert items['record-synced']['lyrics_synced'] is True
+    assert items['record-missing']['lyrics_status'] == 'no_candidate'
+    assert items['record-missing']['lyrics_synced'] is False
+    for item in items.values():
+        assert set(item) == {
+            'record_id',
+            'source_id',
+            'source_path',
+            'artist_name',
+            'album_name',
+            'album_id',
+            'title',
+            'track_number',
+            'source_state',
+            'processing_state',
+            'match_state',
+            'publication_state',
+            'lyrics_status',
+            'lyrics_synced',
+        }
+
+
+def test_library_record_detail_exposes_materialized_lyrics_status(tmp_path: Path) -> None:
+    # Given: one record with synced lyrics and one whose lyric validation was rejected.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "detail-lyrics-status.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    with Session(engine) as session:
+        synced, synced_source = _lyrics_album_record(
+            'record-synced', 'source-synced', lyrics_status='synced', title='Synced Song', timestamp=timestamp
+        )
+        rejected, rejected_source = _lyrics_album_record(
+            'record-rejected',
+            'source-rejected',
+            lyrics_status='validation_rejected',
+            title='Rejected Song',
+            timestamp=timestamp,
+        )
+        session.add_all((synced, synced_source, rejected, rejected_source))
+        session.commit()
+
+    client = TestClient(create_app(lambda: Session(engine)))
+
+    # When: each record is read through the detail API.
+    synced_response = client.get('/api/library/records/record-synced')
+    rejected_response = client.get('/api/library/records/record-rejected')
+
+    # Then: the detail reflects the materialized lyric state and an explicit synchronized boolean.
+    assert synced_response.status_code == 200
+    assert synced_response.json()['lyrics_status'] == 'synced'
+    assert synced_response.json()['lyrics_synced'] is True
+    assert rejected_response.status_code == 200
+    assert rejected_response.json()['lyrics_status'] == 'validation_rejected'
+    assert rejected_response.json()['lyrics_synced'] is False
+
+
+def test_track_response_lyrics_status_accepts_only_declared_states() -> None:
+    # Given: the declared lyric statuses mirroring the persisted check constraint.
+    assert get_args(LyricsStatus) == (
+        'none',
+        'pending',
+        'synced',
+        'no_candidate',
+        'validation_rejected',
+        'error',
+    )
+
+    # When/Then: a declared status is accepted and an undeclared one is rejected.
+    track = LibraryTrackResponse(
+        record_id='record-1',
+        source_id='source-1',
+        source_path='/incoming/song.flac',
+        artist_name=None,
+        album_name=None,
+        album_id=None,
+        title='Song',
+        track_number=None,
+        source_state='present',
+        processing_state='ready',
+        match_state='matched',
+        publication_state='current',
+        lyrics_status='synced',
+        lyrics_synced=True,
+    )
+    assert track.lyrics_status == 'synced'
+    assert track.lyrics_synced is True
+    with pytest.raises(ValidationError):
+        LibraryTrackResponse.model_validate({**track.model_dump(), 'lyrics_status': 'downloaded'})

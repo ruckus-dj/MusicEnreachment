@@ -39,8 +39,17 @@ docker compose up --build --wait
 2. Compose starts PostgreSQL, runs Alembic during API startup, starts the
    in-process worker, configures and tests Lidarr's `music-ingest` webhook, and
    exposes the ready API at <http://127.0.0.1:8787/healthz>.
-3. Open Lidarr at <http://127.0.0.1:8686> and Navidrome at
-   <http://127.0.0.1:4533>.
+3. Open Lidarr at <http://127.0.0.1:8686>, Navidrome at
+   <http://127.0.0.1:4533>, and Feishin at <http://127.0.0.1:9180>.
+
+### Checking synchronized lyrics
+
+Navidrome's built-in web player does not render external `.lrc` sidecars. Use
+Feishin at <http://127.0.0.1:9180> to check the synchronized lyrics that
+Navidrome exposes through the OpenSubsonic API. The client is preconfigured for
+this test stand's browser-facing Navidrome URL (`http://127.0.0.1:4533`); sign
+in with the same Navidrome credentials. No credentials are stored in Compose or
+this repository.
 
 ### Colima host-port recovery
 

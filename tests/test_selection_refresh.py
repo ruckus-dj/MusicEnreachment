@@ -257,8 +257,11 @@ def test_selection_refresh_when_better_source_replaces_output_atomically(tmp_pat
         publications = session.query(LibraryPublicationRecord).filter_by(library_record_id='record-replace').all()
         decision = session.get(EffectiveSourceDecisionRecord, 'record-replace')
         assert decision is not None and decision.source_id == 'source-better', decision.reason if decision else None
-        job = session.query(JobRecord).filter_by(library_record_id='record-replace').one()
+        job = session.query(JobRecord).filter_by(library_record_id='record-replace', kind='selection_refresh').one()
         assert job.state == 'completed', job.failure_reason
+        # Finalizing the replacement publication also queues exactly one synced-lyrics fetch for the record.
+        queued = session.query(JobRecord).filter_by(library_record_id='record-replace', kind='lrclib_fetch').all()
+        assert [(item.state, item.source_id) for item in queued] == [('queued', None)]
         assert session.query(PublicationAttemptRecord).count() == 1
         assert [(item.id, item.state) for item in publications] == [
             ('publication-old', 'superseded'),

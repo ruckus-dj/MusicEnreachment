@@ -28,6 +28,7 @@ from music_ingest.processing.execution import (
 from music_ingest.processing.handlers.analysis import AnalysisHandler
 from music_ingest.processing.handlers.artwork import ArtworkHandler
 from music_ingest.processing.handlers.initial import InitialHandler
+from music_ingest.processing.handlers.lrclib import LrclibHandler
 from music_ingest.processing.handlers.publication import PublicationHandler
 from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
 from music_ingest.processing.handlers.selection import SelectionHandler
@@ -70,6 +71,17 @@ class ProcessingWorker:
         self._lease_age: timedelta = lease_age or timedelta(minutes=5)
         self._bind_services()
 
+    def _lrclib_enabled(self) -> bool:
+        """Whether the live runtime wiring still allows lyric fetches.
+
+        The adapter is the runtime's single authority: a settings-backed adapter reads the persisted provider switch,
+        so one saved from the UI is honored on the next finalize without a restart. An unwired adapter is an
+        incomplete deployment rather than a disabled provider, so its fetch stays queued for the handler to retry as
+        infrastructure instead of being settled as if the operator had switched lyrics off.
+        """
+        adapter = self._config.lrclib_adapter
+        return adapter is None or adapter.enabled
+
     def _bind_services(self) -> None:
         self._settings = RuntimeProcessingSettings(self._session, self._config)
         self._outcomes = AttemptFinalizer(self._session, self._config, self._settings)
@@ -93,6 +105,7 @@ class ProcessingWorker:
             'folder_release_selection': self._selection,
             'final_publish': self._publication,
             'artwork_enrichment': ArtworkHandler(),
+            'lrclib_fetch': LrclibHandler(),
             **dict.fromkeys(_INITIAL_JOB_KINDS, self._initial),
         }
 
@@ -100,7 +113,7 @@ class ProcessingWorker:
         now = datetime.now(UTC)
         if resume_storage_migration(self._session):
             return True
-        reconcile_attempts(self._session, now)
+        reconcile_attempts(self._session, now, lrclib_enabled=self._lrclib_enabled())
         acquire_storage_lock(self._session)
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
@@ -167,7 +180,7 @@ class ProcessingWorker:
             if claimed.attempt.state == 'running':
                 JobRepository(self._session).succeed(claimed, datetime.now(UTC))
         self._session.commit()
-        reconcile_attempts(self._session, datetime.now(UTC))
+        reconcile_attempts(self._session, datetime.now(UTC), lrclib_enabled=self._lrclib_enabled())
         return True
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> HandlerOutcome:

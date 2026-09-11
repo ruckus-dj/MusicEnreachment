@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -22,6 +22,7 @@ from music_ingest.dto import (
     LibraryTrackListResponse,
     LibraryTrackQuery,
     LibraryTrackResponse,
+    LyricsStatus,
     ManualActionCountsResponse,
     ManualActionFilter,
     ManualActionListResponse,
@@ -98,6 +99,8 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                         processing_state=track.processing_state,
                         match_state=track.match_state,
                         publication_state=track.publication_state,
+                        lyrics_status=cast(LyricsStatus, track.lyrics_status),
+                        lyrics_synced=track.lyrics_status == 'synced',
                     )
                     for track in library_album_tracks(
                         session,
@@ -165,6 +168,8 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                             'publication': record.publication_state,
                             'metadata': record.metadata_state,
                         },
+                        'lyrics_status': record.lyrics_status,
+                        'lyrics_synced': record.lyrics_status == 'synced',
                         'sources': [
                             {
                                 'source_id': source.id,

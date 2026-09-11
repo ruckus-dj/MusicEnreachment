@@ -471,3 +471,146 @@ describe("useAppController catalog", () => {
     );
   });
 });
+
+function SettingsProbe() {
+  const controller = useAppController();
+  const draft = controller.settingsDraft;
+  return (
+    <>
+      <button type="button" onClick={() => void controller.saveSettings()}>
+        save-settings
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          draft
+            ? controller.setSettingsDraft({
+                ...draft,
+                lrclib_host: "https://mirror.lrclib.net",
+                lrclib_max_attempts: 5,
+              })
+            : undefined
+        }
+      >
+        edit-settings
+      </button>
+      <output data-testid="settings-host">{draft?.lrclib_host ?? ""}</output>
+      <output data-testid="settings-enabled">{String(draft?.lrclib_enabled ?? "")}</output>
+      <output data-testid="settings-notice">{controller.notice}</output>
+    </>
+  );
+}
+
+const settingsResponse = {
+  confidence_threshold: 0.8,
+  timeout_seconds: 30,
+  retry_delay_seconds: 10,
+  max_attempts: 3,
+  worker_concurrency: 1,
+  musicbrainz_enabled: true,
+  musicbrainz_user_agent: "Music Ingest",
+  musicbrainz_host: "https://musicbrainz.org",
+  musicbrainz_request_delay_seconds: 1.5,
+  acoustid_enabled: false,
+  acoustid_request_delay_seconds: 1 / 3,
+  acoustid_client_key_configured: false,
+  artwork_enabled: true,
+  lrclib_enabled: true,
+  lrclib_host: "https://lrclib.net",
+  lrclib_user_agent: "Music Ingest",
+  lrclib_timeout_seconds: 15,
+  lrclib_max_attempts: 3,
+  lrclib_request_delay_seconds: 0.3,
+  lrclib_max_response_bytes: 4_194_304,
+  lrclib_match_confidence_threshold: 0.7,
+};
+
+describe("useAppController runtime settings", () => {
+  it("loads every runtime setting and saves the complete LRCLIB payload", async () => {
+    window.history.replaceState({}, "", "/settings");
+    const putBodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) !== "/api/settings") return Response.json({ items: [] });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        putBodies.push(body);
+        return Response.json({ ...settingsResponse, ...body });
+      }
+      return Response.json(settingsResponse);
+    });
+
+    render(<SettingsProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-host").textContent).toBe("https://lrclib.net"),
+    );
+    expect(screen.getByTestId("settings-enabled").textContent).toBe("true");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "edit-settings" }).click();
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "save-settings" }).click();
+    });
+
+    const { acoustid_client_key_configured: _configured, ...expected } = settingsResponse;
+    expect(putBodies).toEqual([
+      {
+        ...expected,
+        acoustid_client_key: null,
+        lrclib_host: "https://mirror.lrclib.net",
+        lrclib_max_attempts: 5,
+      },
+    ]);
+    expect(screen.getByTestId("settings-notice").textContent).toBe("Настройки сохранены");
+  });
+
+  it("fills missing provider fields from defaults so a save is never partial", async () => {
+    window.history.replaceState({}, "", "/settings");
+    const putBodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) !== "/api/settings") return Response.json({ items: [] });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        putBodies.push(body);
+        return Response.json({ ...settingsResponse, ...body });
+      }
+      return Response.json({ confidence_threshold: 0.9 });
+    });
+
+    render(<SettingsProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-host").textContent).toBe("https://lrclib.net"),
+    );
+
+    await act(async () => {
+      screen.getByRole("button", { name: "save-settings" }).click();
+    });
+
+    expect(putBodies).toHaveLength(1);
+    for (const key of [
+      "confidence_threshold",
+      "timeout_seconds",
+      "retry_delay_seconds",
+      "max_attempts",
+      "worker_concurrency",
+      "musicbrainz_enabled",
+      "musicbrainz_user_agent",
+      "musicbrainz_host",
+      "musicbrainz_request_delay_seconds",
+      "acoustid_enabled",
+      "acoustid_request_delay_seconds",
+      "acoustid_client_key",
+      "artwork_enabled",
+      "lrclib_enabled",
+      "lrclib_host",
+      "lrclib_user_agent",
+      "lrclib_timeout_seconds",
+      "lrclib_max_attempts",
+      "lrclib_request_delay_seconds",
+      "lrclib_max_response_bytes",
+    ])
+      expect(putBodies[0]).toHaveProperty(key);
+    expect(putBodies[0].confidence_threshold).toBe(0.9);
+    expect(putBodies[0].lrclib_max_response_bytes).toBe(4_194_304);
+  });
+});

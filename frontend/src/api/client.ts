@@ -1,6 +1,7 @@
 import { errorMessages } from "../errorMessages";
 import type {
   EffectiveSourceSelection,
+  LyricsStatus,
   ManualSourceSelection,
   RecordingCorrection,
   RecordingCorrectionResult,
@@ -35,6 +36,8 @@ export type LibraryTrack = {
   readonly processing_state: string;
   readonly match_state: string;
   readonly publication_state: string;
+  readonly lyrics_status: LyricsStatus;
+  readonly lyrics_synced: boolean;
 };
 
 export class ApiError extends Error {

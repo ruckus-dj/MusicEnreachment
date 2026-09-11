@@ -26,6 +26,14 @@ class RuntimeSettingsRequest(BaseModel):
     acoustid_request_delay_seconds: float = Field(gt=0.0, le=3600.0)
     acoustid_client_key: str | None = Field(default=None, max_length=255)
     artwork_enabled: bool
+    lrclib_enabled: bool
+    lrclib_host: str = Field(pattern=r'^https://[^/?#]+$')
+    lrclib_user_agent: str = Field(min_length=1, max_length=255)
+    lrclib_timeout_seconds: float = Field(gt=0.0, le=120.0)
+    lrclib_max_attempts: int = Field(ge=1, le=10)
+    lrclib_request_delay_seconds: float = Field(ge=0.0, le=3600.0)
+    lrclib_max_response_bytes: int = Field(ge=1024, le=16 * 1024 * 1024)
+    lrclib_match_confidence_threshold: float = Field(ge=0.0, le=1.0)
 
 
 class RuntimeSettingsResponse(BaseModel):
@@ -44,6 +52,14 @@ class RuntimeSettingsResponse(BaseModel):
     acoustid_request_delay_seconds: float
     acoustid_client_key_configured: bool
     artwork_enabled: bool
+    lrclib_enabled: bool
+    lrclib_host: str
+    lrclib_user_agent: str
+    lrclib_timeout_seconds: float
+    lrclib_max_attempts: int
+    lrclib_request_delay_seconds: float
+    lrclib_max_response_bytes: int
+    lrclib_match_confidence_threshold: float
 
 
 class SourceRootCreateRequest(BaseModel):
@@ -213,6 +229,9 @@ class LibraryAlbumListResponse(BaseModel):
     items: tuple[LibraryAlbumResponse, ...]
 
 
+LyricsStatus = Literal['none', 'pending', 'synced', 'no_candidate', 'validation_rejected', 'error']
+
+
 class LibraryTrackResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -228,6 +247,8 @@ class LibraryTrackResponse(BaseModel):
     processing_state: str
     match_state: str
     publication_state: str
+    lyrics_status: LyricsStatus
+    lyrics_synced: bool
 
 
 class LibraryTrackListResponse(BaseModel):

@@ -33,7 +33,7 @@ from music_ingest.publication import acquire_publication_destination_lock, try_a
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260909_0023'
+_HEAD_REVISION = '20260911_0024'
 
 
 @pytest.mark.postgres
@@ -129,6 +129,41 @@ def test_selection_refresh_when_concurrent_calls_coalesces_at_postgresql_index(m
         # Then: the durable state contains one active refresh and no caller leaked IntegrityError.
         with Session(engine) as session:
             active = session.query(JobRecord).filter_by(library_record_id='record-race', kind='selection_refresh').all()
+            assert sum(created) == 1
+            assert len(active) == 1
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_lrclib_fetch_when_concurrent_calls_coalesces_at_postgresql_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: two independent transactions racing to queue one record's lyric fetch.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(LibraryRecord(id='record-lrclib-race', created_at=now, updated_at=now))
+            session.commit()
+        barrier = Barrier(2)
+
+        def enqueue() -> bool:
+            with Session(engine) as session:
+                barrier.wait()
+                created = JobRepository(session).enqueue_lrclib_fetch('record-lrclib-race', now)
+                session.commit()
+                return created is not None
+
+        # When: both transactions contend for the partial unique active-job index.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            created = tuple(executor.map(lambda _: enqueue(), range(2)))
+
+        # Then: one active lyric fetch persists and the duplicate caller does not leak IntegrityError.
+        with Session(engine) as session:
+            active = (
+                session.query(JobRecord).filter_by(library_record_id='record-lrclib-race', kind='lrclib_fetch').all()
+            )
             assert sum(created) == 1
             assert len(active) == 1
         engine.dispose()
@@ -505,7 +540,11 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
             ).scalar_one()
         assert historic_job_id == 'legacy-targetless-job'
         assert receipt_job_id == 'legacy-targetless-job'
-        assert {'uq_active_selection_refresh_job', 'uq_current_library_publication'}.issubset(indexes)
+        assert {
+            'uq_active_lrclib_fetch_job',
+            'uq_active_selection_refresh_job',
+            'uq_current_library_publication',
+        }.issubset(indexes)
 
         with Session(engine) as session:
             session.execute(
