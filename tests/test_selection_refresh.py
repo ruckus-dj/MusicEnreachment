@@ -250,7 +250,11 @@ def test_selection_refresh_when_better_source_replaces_output_atomically(tmp_pat
 
     # When: the real selection refresh publishes the better source.
     with Session(engine) as session:
-        assert ProcessingWorker(session, config).run_once()
+        worker = ProcessingWorker(session, config)
+        assert worker.run_once(allowed_kinds={'selection_refresh'})
+        assert session.query(PublicationAttemptRecord).count() == 0
+        assert session.query(JobRecord).filter_by(kind='final_publish', state='queued').count() == 1
+        assert worker.run_once(allowed_kinds={'final_publish'})
         session.commit()
 
         # Then: one current publication points at the selected source and the old row is immutable history.
@@ -334,9 +338,17 @@ def test_selection_refresh_dispatches_persisted_effective_source_without_source_
         assert ProcessingWorker(session, _config(tmp_path)).run_once()
         session.commit()
 
-        # Then: only the persisted effective source is dispatched without a second durable source job.
+        # Selection does not borrow publication capacity; repeated refreshes coalesce.
+        assert dispatched_source_ids == []
+        queued = session.query(JobRecord).filter_by(source_id='source-selected', kind='final_publish').one()
+        assert queued.state == 'queued'
+        assert JobRepository(session).enqueue_selection_refresh('record-selected', now) is not None
+        session.commit()
+        assert ProcessingWorker(session, _config(tmp_path)).run_once(allowed_kinds={'selection_refresh'})
+        assert session.query(JobRecord).filter_by(source_id='source-selected', kind='final_publish').count() == 1
+        assert dispatched_source_ids == []
+        assert ProcessingWorker(session, _config(tmp_path)).run_once(allowed_kinds={'final_publish'})
         assert dispatched_source_ids == ['source-selected']
-        assert session.query(JobRecord).filter_by(source_id='source-selected').count() == 0
 
 
 def test_selection_refresh_recovers_final_metadata_from_reassociated_source(
@@ -386,6 +398,8 @@ def test_selection_refresh_recovers_final_metadata_from_reassociated_source(
         session.commit()
 
         # Then: final metadata is copied append-only to the target record before publication dispatch.
+        assert dispatched_source_ids == []
+        assert ProcessingWorker(session, _config(tmp_path)).run_once(allowed_kinds={'final_publish'})
         assert dispatched_source_ids == ['source-recovered']
         revisions = session.query(LibraryMetadataRevisionRecord).order_by(LibraryMetadataRevisionRecord.id).all()
         assert [(item.library_record_id, item.actor) for item in revisions] == [
@@ -506,6 +520,8 @@ def test_selection_refresh_when_current_publication_extension_differs_dispatches
         session.commit()
 
         # Then: the extension difference triggers a publication dispatch.
+        assert dispatched_source_ids == []
+        assert ProcessingWorker(session, _config(tmp_path)).run_once(allowed_kinds={'final_publish'})
         assert dispatched_source_ids == ['source-extension']
 
 

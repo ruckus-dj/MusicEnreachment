@@ -146,19 +146,28 @@ export function SettingsScreen({
               onChange={(event) => update("max_attempts", Number(event.target.value))}
             />
           </label>
-          <label>
-            Параллельные воркеры
-            <input
-              type="number"
-              min="1"
-              max="8"
-              value={draft.worker_concurrency}
-              onChange={(event) => update("worker_concurrency", Number(event.target.value))}
-            />
-          </label>
+          {Object.entries(draft.worker_pools).map(([pool, count]) => (
+            <label key={pool}>
+              Воркеры: {pool}
+              <input
+                type="number"
+                min="1"
+                max="8"
+                step="1"
+                value={count}
+                onChange={(event) =>
+                  update("worker_pools", {
+                    ...draft.worker_pools,
+                    [pool]: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+          ))}
           <small className="settings-help">
-            Одновременно обрабатывается до восьми задач. Изменение применяется к следующей партии
-            задач.
+            Независимые пулы по типу задачи, без заимствования воркеров. Изменения применяются перед
+            следующей задачей; уже начатые задачи завершаются. LRCLIB выполняет запросы
+            последовательно с задержкой 0,3 секунды по умолчанию.
           </small>
         </fieldset>
         <fieldset className="settings-card">

@@ -16,7 +16,7 @@ from music_ingest.models import (
     StorageConfigRecord,
 )
 from music_ingest.publication.attempts import _sha256
-from music_ingest.publication.locks import acquire_storage_lock
+from music_ingest.publication.locks import acquire_migration_lock, acquire_storage_lock
 from music_ingest.storage_migration import MigrationJournal, build_migration
 
 
@@ -107,6 +107,7 @@ class StorageService:
 
     def move_output(self, raw_path: str) -> StorageConfigRecord:
         """Persist a relocation request; the processing worker resumes its manifest."""
+        acquire_migration_lock(self._session, exclusive=True)
         acquire_storage_lock(self._session)
         config = self.config()
         self._session.refresh(config)

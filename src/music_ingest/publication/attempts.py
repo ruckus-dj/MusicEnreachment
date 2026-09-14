@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
 from pydantic import TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from music_ingest.models.jobs import JobRepository
@@ -18,7 +18,7 @@ from music_ingest.models.library import (
     LibraryRecord,
     PublicationAttemptRecord,
 )
-from music_ingest.publication.locks import acquire_storage_lock
+from music_ingest.publication.locks import acquire_migration_lock, acquire_storage_lock, try_acquire_storage_lock
 
 _MANIFEST_ADAPTER = TypeAdapter(dict[str, int | str | None])
 
@@ -149,6 +149,11 @@ def finalize_attempt(
     backup_directory = Path(attempt.backup_directory)
     if backup_directory.is_dir():
         _fsync_directory(backup_directory)
+    record = session.scalar(
+        select(LibraryRecord).where(LibraryRecord.id == attempt.library_record_id).with_for_update()
+    )
+    if record is None:
+        raise LookupError(attempt.library_record_id)
     current = session.scalars(
         select(LibraryPublicationRecord)
         .where(LibraryPublicationRecord.library_record_id == attempt.library_record_id)
@@ -157,9 +162,6 @@ def finalize_attempt(
     ).all()
     for publication in current:
         publication.state = 'superseded'
-    record = session.get(LibraryRecord, attempt.library_record_id)
-    if record is None:
-        raise LookupError(attempt.library_record_id)
     publication = LibraryPublicationRecord(
         id=f'publication-{attempt.id}',
         library_record_id=attempt.library_record_id,
@@ -225,61 +227,123 @@ def cleanup_attempt(attempt: PublicationAttemptRecord) -> None:
         _fsync_directory(workspace.parent)
 
 
-def reconcile_attempts(session: Session, now: datetime, *, lrclib_enabled: bool = True) -> None:
+def reconcile_attempts(
+    session: Session,
+    now: datetime,
+    *,
+    lrclib_enabled: bool = True,
+    source_id: str | None = None,
+) -> None:
     """Run only outside a handler savepoint; every filesystem change has a durable intent.
 
     ``lrclib_enabled`` is the live persisted provider switch, so recovery neither queues a fetch nor promises
     lyrics while the operator has the provider turned off.
     """
-    acquire_storage_lock(session)
-    attempt_ids = session.scalars(
-        select(PublicationAttemptRecord.id)
-        .where(PublicationAttemptRecord.cleaned_at.is_(None))
-        .order_by(PublicationAttemptRecord.created_at, PublicationAttemptRecord.id)
-        .limit(100)
-    ).all()
-    for attempt_id in attempt_ids:
-        acquire_storage_lock(session)
-        attempt = session.get(PublicationAttemptRecord, attempt_id, populate_existing=True)
-        if attempt is None or attempt.cleaned_at is not None:
-            continue
-        if attempt.state in {'finalized', 'failed'}:
-            cleanup_attempt(attempt)
-            attempt.cleaned_at = now
+    statement = select(PublicationAttemptRecord.created_at, PublicationAttemptRecord.id).where(
+        PublicationAttemptRecord.cleaned_at.is_(None)
+    )
+    if source_id is not None:
+        statement = statement.where(PublicationAttemptRecord.source_id == source_id)
+    end = session.execute(
+        statement.order_by(PublicationAttemptRecord.created_at.desc(), PublicationAttemptRecord.id.desc()).limit(1)
+    ).first()
+    if end is None:
+        session.flush()
+        return
+    # Keyset pages cannot skip rows as cleanup shrinks the candidate set. Visit
+    # beyond deferred pages so a later exposed destination owner can make progress.
+    # Freeze the upper key so newly queued work cannot extend this pass forever.
+    key = tuple_(PublicationAttemptRecord.created_at, PublicationAttemptRecord.id)
+    statement = statement.where(key <= tuple_(end.created_at, end.id))
+    cursor: tuple[datetime, str] | None = None
+    while True:
+        page = statement if cursor is None else statement.where(key > tuple_(*cursor))
+        attempts = session.execute(
+            page.order_by(PublicationAttemptRecord.created_at, PublicationAttemptRecord.id).limit(100)
+        ).all()
+        if not attempts:
+            break
+        cursor = (attempts[-1].created_at, attempts[-1].id)
+        for _, attempt_id in attempts:
+            # Each checkpoint releases transaction locks. Re-enter in record -> filesystem
+            # -> publication order. Busy records and writers remain durable work for the next pass.
+            while _reconcile_step(session, attempt_id, now, lrclib_enabled=lrclib_enabled):
+                pass
+    session.flush()
+
+
+def _reconcile_step(session: Session, attempt_id: str, now: datetime, *, lrclib_enabled: bool) -> bool:
+    acquire_migration_lock(session)
+    attempt = session.get(PublicationAttemptRecord, attempt_id, populate_existing=True)
+    if attempt is None or attempt.cleaned_at is not None:
+        session.commit()
+        return False
+    record = session.scalar(
+        select(LibraryRecord).where(LibraryRecord.id == attempt.library_record_id).with_for_update(skip_locked=True)
+    )
+    if record is None:
+        session.commit()
+        return False
+    if not try_acquire_storage_lock(session):
+        session.commit()
+        return False
+    session.refresh(attempt)
+    if attempt.cleaned_at is not None:
+        session.commit()
+        return False
+    if attempt.state in {'finalized', 'failed'}:
+        cleanup_attempt(attempt)
+        attempt.cleaned_at = now
+        session.commit()
+        return False
+    if attempt.state in {'reserved', 'staged', 'prepared'}:
+        # The durable journal is a destination reservation across commits and across
+        # source-scoped recovery. An exposed (including rename-before-commit) owner
+        # always wins, even if an older, slow preparation commits afterwards.
+        peers = session.scalars(
+            select(PublicationAttemptRecord)
+            .where(PublicationAttemptRecord.target_directory == attempt.target_directory)
+            .where(PublicationAttemptRecord.target_audio_name == attempt.target_audio_name)
+            .where(PublicationAttemptRecord.cleaned_at.is_(None))
+            .where(PublicationAttemptRecord.state.not_in(['finalized', 'failed']))
+            .where(PublicationAttemptRecord.id != attempt.id)
+            .execution_options(populate_existing=True)
+        ).all()
+        reservation = min(
+            [attempt, *peers],
+            key=lambda item: (
+                0 if item.state == 'exposed' else 1 if _exposed_output_is_recoverable(item) else 2,
+                item.created_at.replace(tzinfo=UTC),
+                item.id,
+            ),
+        )
+        if reservation.id != attempt.id:
             session.commit()
-            continue
-        if attempt.state == 'prepared':
-            # A previous process may have completed the rename without committing exposed.
-            if _exposed_output_is_recoverable(attempt):
-                attempt.state = 'exposed'
-            else:
-                target = Path(attempt.target_directory) / attempt.target_audio_name
-                owner = session.scalar(
-                    select(LibraryPublicationRecord)
-                    .where(LibraryPublicationRecord.path == str(target.resolve()))
-                    .where(LibraryPublicationRecord.state == 'current')
-                )
-                if owner is not None and owner.library_record_id != attempt.library_record_id:
-                    attempt.state = 'failed'
-                    attempt.failure_reason = 'destination belongs to another library record'
-                    session.commit()
-                    continue
-                expose_attempt(session, attempt, now)
-            session.commit()
-            acquire_storage_lock(session)
-        if attempt.state == 'staged' and _exposed_output_is_recoverable(attempt):
-            attempt.state = 'exposed'
-        if attempt.state in {'reserved', 'staged'}:
-            _restore_backup(attempt)
+            return False
+    if attempt.state == 'prepared':
+        target = Path(attempt.target_directory) / attempt.target_audio_name
+        owner = session.scalar(
+            select(LibraryPublicationRecord)
+            .where(LibraryPublicationRecord.path == str(target.resolve()))
+            .where(LibraryPublicationRecord.state == 'current')
+        )
+        if owner is not None and owner.library_record_id != attempt.library_record_id:
             attempt.state = 'failed'
-            attempt.failure_reason = 'worker restart before output exposure'
-            _event(session, attempt, 'publication_attempt_recovered_failed', 'retrying', now)
-            session.commit()
-            acquire_storage_lock(session)
-            cleanup_attempt(attempt)
-            attempt.cleaned_at = now
-            session.commit()
-            continue
+            attempt.failure_reason = 'destination belongs to another library record'
+        elif _exposed_output_is_recoverable(attempt):
+            attempt.state = 'exposed'
+        else:
+            expose_attempt(session, attempt, now)
+        session.commit()
+        return True
+    if attempt.state == 'staged' and _exposed_output_is_recoverable(attempt):
+        attempt.state = 'exposed'
+    if attempt.state in {'reserved', 'staged'}:
+        _restore_backup(attempt)
+        attempt.state = 'failed'
+        attempt.failure_reason = 'worker restart before output exposure'
+        _event(session, attempt, 'publication_attempt_recovered_failed', 'retrying', now)
+    else:
         try:
             finalize_attempt(session, attempt, now, lrclib_enabled=lrclib_enabled)
         except OSError, ValueError:
@@ -287,13 +351,9 @@ def reconcile_attempts(session: Session, now: datetime, *, lrclib_enabled: bool 
             attempt.state = 'failed'
             attempt.failure_reason = 'exposed output failed manifest or hash recovery verification'
             _event(session, attempt, 'publication_attempt_recovered_failed', 'retrying', now)
-        # Do not catch commit errors: leave the durable journal and backup for restart.
-        session.commit()
-        acquire_storage_lock(session)
-        cleanup_attempt(attempt)
-        attempt.cleaned_at = now
-        session.commit()
-    session.flush()
+    # Commit failures deliberately retain the journal and backup for restart.
+    session.commit()
+    return True
 
 
 def _event(session: Session, attempt: PublicationAttemptRecord, kind: str, state: str, now: datetime) -> None:

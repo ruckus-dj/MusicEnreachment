@@ -89,6 +89,34 @@ def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Pa
         assert {job.kind for job in jobs} == {'filesystem_scan', 'selection_refresh'}
 
 
+def test_reconcile_unchanged_source_does_not_duplicate_completed_filesystem_job(tmp_path: Path) -> None:
+    # Given: an unchanged source whose deterministic filesystem job has already completed.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reconciliation-completed.db"}')
+    _ = Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    _ = (incoming / 'track.flac').write_bytes(b'unchanged source')
+
+    with Session(engine) as session:
+        session.add(_root('incoming', incoming))
+        initial = _reconcile(session)
+        session.commit()
+        job = session.scalars(select(JobRecord).where(JobRecord.kind == 'filesystem_scan')).one()
+        job.state = 'completed'
+        session.commit()
+
+        # When: reconciliation observes exactly the same source version again.
+        repeated = _reconcile(session)
+        session.commit()
+
+        # Then: it is a no-op rather than an insert of the same deterministic job ID.
+        jobs = list(session.scalars(select(JobRecord).where(JobRecord.kind == 'filesystem_scan')))
+        assert initial.queued_jobs == 1
+        assert repeated.queued_jobs == 0
+        assert len(jobs) == 1
+        assert jobs[0].state == 'completed'
+
+
 def test_reconcile_incoming_requeues_present_quarantined_jobs(tmp_path: Path) -> None:
     # Given: a present source whose previous processing attempt was quarantined.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reconciliation-retry.db"}')

@@ -324,6 +324,8 @@ class LiveLrclibTransport:
         self._clock: Callable[[], float] = clock
         self._sleep: Callable[[float], None] = sleep
         self._pacer: _RequestPacer = _RequestPacer(clock, sleep)
+        self._request_lock: Lock = Lock()
+        self._last_completed_at: float | None = None
         self._local: threading.local = threading.local()
         self._clients: list[LrclibHttpClient] = []
         self._clients_lock: Lock = Lock()
@@ -334,6 +336,19 @@ class LiveLrclibTransport:
         return self._settings
 
     def get(self, url: str, *, headers: dict[str, str]) -> LrclibHttpResponse:
+        """Serialize provider requests and leave the configured gap after each completed request."""
+        with self._request_lock:
+            settings = self._settings.snapshot()
+            if self._last_completed_at is not None:
+                delay = self._last_completed_at + settings.request_delay_seconds - self._clock()
+                if delay > 0.0:
+                    self._sleep(delay)
+            try:
+                return self._get_serialized(url, headers=headers)
+            finally:
+                self._last_completed_at = self._clock()
+
+    def _get_serialized(self, url: str, *, headers: dict[str, str]) -> LrclibHttpResponse:
         """Perform one bounded lookup: at most ``max_attempts`` paced attempts inside one retry budget."""
         settings = self._settings.snapshot()
         deadline = self._clock() + settings.retry_budget_seconds

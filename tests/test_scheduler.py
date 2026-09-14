@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import anyio
@@ -9,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, JobRecord
+from music_ingest.models.jobs import JobRepository
 from music_ingest.processing.scheduler import enqueue_reconciliation_scan, run_reconciliation_scheduler
 
 
@@ -30,6 +32,55 @@ def test_enqueue_reconciliation_scan_when_called_persists_a_queued_job(tmp_path:
         jobs = session.query(JobRecord).filter_by(kind='reconciliation_scan').all()
     assert len(jobs) == 1
     assert jobs[0].state == 'queued'
+
+
+def test_claim_next_for_source_prefers_ready_continuation_over_older_global_job(tmp_path: Path) -> None:
+    # Given: an older library job and a ready successor for the source this worker just processed.
+    session_factory = _session_factory(tmp_path)
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add_all(
+            (
+                JobRecord(
+                    id='older-global',
+                    source_id='other-source',
+                    kind='filesystem_scan',
+                    state='queued',
+                    created_at=now,
+                ),
+                JobRecord(
+                    id='source-successor',
+                    source_id='continued-source',
+                    kind='acoustid_analysis',
+                    state='queued',
+                    created_at=now + timedelta(seconds=1),
+                ),
+            )
+        )
+        session.commit()
+
+        # When: the worker asks for its source continuation.
+        claimed = JobRepository(session).claim_next_for_source(
+            'continued-source', now + timedelta(seconds=2), timedelta(minutes=5)
+        )
+
+        # Then: it keeps the source pipeline moving instead of returning to global FIFO.
+        assert claimed is not None
+        assert claimed.job.id == 'source-successor'
+
+
+def test_source_filter_cannot_escape_a_dedicated_pool(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.add(
+            JobRecord(id='selection', source_id='source', kind='candidate_selection', state='queued', created_at=now)
+        )
+        session.commit()
+        assert (
+            JobRepository(session).claim_next_for_source('source', now, timedelta(minutes=5), {'acoustid_analysis'})
+            is None
+        )
 
 
 def test_run_reconciliation_scheduler_when_run_repeatedly_enqueues_one_scan_per_interval(

@@ -12,7 +12,19 @@ const draft: RuntimeSettingsDraft = {
   timeout_seconds: 30,
   retry_delay_seconds: 10,
   max_attempts: 3,
-  worker_concurrency: 1,
+  worker_pools: {
+    filesystem_scan: 4,
+    acoustid_analysis: 1,
+    musicbrainz_analysis: 4,
+    candidate_selection: 4,
+    folder_release_selection: 2,
+    final_publish: 4,
+    selection_refresh: 4,
+    lrclib_fetch: 1,
+    artwork_enrichment: 2,
+    reconciliation_scan: 1,
+    lidarr_intake: 1,
+  },
   musicbrainz_enabled: true,
   musicbrainz_user_agent: "Music Ingest",
   musicbrainz_host: "https://musicbrainz.org",
@@ -314,9 +326,12 @@ describe("SettingsScreen processing", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Параллельные воркеры"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Воркеры: final_publish"), { target: { value: "7" } });
 
-    expect(onChange).toHaveBeenCalledWith({ ...draft, worker_concurrency: 4 });
+    expect(onChange).toHaveBeenCalledWith({
+      ...draft,
+      worker_pools: { ...draft.worker_pools, final_publish: 7 },
+    });
   });
 });
 

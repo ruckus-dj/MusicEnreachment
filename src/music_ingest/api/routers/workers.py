@@ -11,7 +11,7 @@ from sqlalchemy import case, func, select
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.models import JobRecord, SourceRecord
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor
-from music_ingest.settings import SettingKey, get_setting_value
+from music_ingest.settings import build_runtime_settings
 
 _WORKER_QUEUE_JOB_LIMIT = 100
 
@@ -95,11 +95,15 @@ def create_router(
                 content={
                     'observed_at': observed_at.isoformat(),
                     'worker': {
-                        'configured_concurrency': int(get_setting_value(session, SettingKey.WORKER_CONCURRENCY) or '1'),
+                        'configured_concurrency': sum(
+                            build_runtime_settings(session).worker_pools.model_dump().values()
+                        ),
+                        'pools': build_runtime_settings(session).worker_pools.model_dump(),
                         'liveness': 'available' if worker_monitor is not None else 'unavailable',
                         'slots': [
                             {
                                 'slot': slot.slot,
+                                'pool': slot.pool,
                                 'state': slot.state,
                                 'observed_at': slot.observed_at.isoformat(),
                                 'error': slot.error,

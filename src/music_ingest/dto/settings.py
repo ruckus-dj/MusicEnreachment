@@ -1,6 +1,22 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class WorkerPoolSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    filesystem_scan: int = Field(default=4, ge=1, le=8)
+    acoustid_analysis: int = Field(default=1, ge=1, le=8)
+    musicbrainz_analysis: int = Field(default=4, ge=1, le=8)
+    candidate_selection: int = Field(default=4, ge=1, le=8)
+    folder_release_selection: int = Field(default=2, ge=1, le=8)
+    final_publish: int = Field(default=4, ge=1, le=8)
+    selection_refresh: int = Field(default=4, ge=1, le=8)
+    lrclib_fetch: int = Field(default=1, ge=1, le=8)
+    artwork_enrichment: int = Field(default=2, ge=1, le=8)
+    reconciliation_scan: int = Field(default=1, ge=1, le=8)
+    lidarr_intake: int = Field(default=1, ge=1, le=8)
+
+
 class RuntimeSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -8,7 +24,7 @@ class RuntimeSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
     retry_delay_seconds: float = Field(default=30.0, ge=0.0, le=3600.0)
     max_attempts: int = Field(default=3, ge=1, le=10)
-    worker_concurrency: int = Field(default=1, ge=1, le=8)
+    worker_pools: WorkerPoolSettings = Field(default_factory=WorkerPoolSettings)
     musicbrainz_enabled: bool = True
     musicbrainz_user_agent: str = Field(
         default='music-ingest/0.1.0 (music-ingest@example.com)', min_length=1, max_length=255

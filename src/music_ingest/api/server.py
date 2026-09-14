@@ -128,6 +128,9 @@ def create_runtime_app() -> FastAPI:
         runtime_config.database_url,
         connect_args={'connect_timeout': runtime_config.connect_timeout_seconds},
         pool_pre_ping=True,
+        # Eleven independent pools of up to eight jobs, maintenance and API headroom.
+        pool_size=92,
+        max_overflow=0,
     )
 
     session_factory = sessionmaker(engine)

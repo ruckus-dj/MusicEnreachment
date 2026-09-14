@@ -111,11 +111,12 @@ class PublicationHandler:
                 source.id,
             )
             return
+        # Advisory preflight only: recovery rechecks ownership under its filesystem
+        # lock. Do not lock publication rows before later record updates.
         path_owner = self.session.scalar(
             select(LibraryPublicationRecord)
             .where(LibraryPublicationRecord.path == str(target_audio.resolve()))
             .where(LibraryPublicationRecord.state == 'current')
-            .with_for_update()
         )
         if path_owner is not None and path_owner.library_record_id != record.id:
             record_event(

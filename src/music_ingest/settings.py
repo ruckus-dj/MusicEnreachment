@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from music_ingest.dto import RuntimeSettings
+from music_ingest.dto.settings import WorkerPoolSettings
 from music_ingest.matching.genre_catalog import load_genre_catalog
 from music_ingest.models import RuntimeSettingRecord
 
@@ -17,7 +18,7 @@ class SettingKey(StrEnum):
     TIMEOUT_SECONDS = 'processing.timeout_seconds'
     RETRY_DELAY_SECONDS = 'processing.retry_delay_seconds'
     MAX_ATTEMPTS = 'processing.max_attempts'
-    WORKER_CONCURRENCY = 'processing.worker_concurrency'
+    WORKER_POOLS = 'processing.worker_pools'
     MUSICBRAINZ_ENABLED = 'providers.musicbrainz.enabled'
     MUSICBRAINZ_USER_AGENT = 'providers.musicbrainz.user_agent'
     MUSICBRAINZ_HOST = 'providers.musicbrainz.host'
@@ -65,7 +66,7 @@ def build_runtime_settings(session: Session, *, include_genres: bool = False) ->
         timeout_seconds=_parse_float(values.get(SettingKey.TIMEOUT_SECONDS), defaults.timeout_seconds),
         retry_delay_seconds=_parse_float(values.get(SettingKey.RETRY_DELAY_SECONDS), defaults.retry_delay_seconds),
         max_attempts=_parse_int(values.get(SettingKey.MAX_ATTEMPTS), defaults.max_attempts),
-        worker_concurrency=_parse_int(values.get(SettingKey.WORKER_CONCURRENCY), defaults.worker_concurrency),
+        worker_pools=WorkerPoolSettings.model_validate_json(values.get(SettingKey.WORKER_POOLS) or '{}'),
         musicbrainz_enabled=_parse_bool(values.get(SettingKey.MUSICBRAINZ_ENABLED), defaults.musicbrainz_enabled),
         musicbrainz_user_agent=values.get(SettingKey.MUSICBRAINZ_USER_AGENT) or defaults.musicbrainz_user_agent,
         musicbrainz_host=values.get(SettingKey.MUSICBRAINZ_HOST) or defaults.musicbrainz_host,
@@ -105,7 +106,7 @@ def save_runtime_settings(session: Session, settings: RuntimeSettings) -> None:
         SettingKey.TIMEOUT_SECONDS: str(settings.timeout_seconds),
         SettingKey.RETRY_DELAY_SECONDS: str(settings.retry_delay_seconds),
         SettingKey.MAX_ATTEMPTS: str(settings.max_attempts),
-        SettingKey.WORKER_CONCURRENCY: str(settings.worker_concurrency),
+        SettingKey.WORKER_POOLS: settings.worker_pools.model_dump_json(),
         SettingKey.MUSICBRAINZ_ENABLED: str(settings.musicbrainz_enabled).lower(),
         SettingKey.MUSICBRAINZ_USER_AGENT: settings.musicbrainz_user_agent,
         SettingKey.MUSICBRAINZ_HOST: settings.musicbrainz_host,

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.models import LibraryPublicationRecord, ReleaseArtworkRecord, StorageConfigRecord
 from music_ingest.publication.attempts import _fsync_directory, _fsync_file, _sha256
-from music_ingest.publication.locks import acquire_storage_lock
+from music_ingest.publication.locks import acquire_migration_lock, acquire_storage_lock
 
 
 class MigrationFile(BaseModel):
@@ -108,6 +108,7 @@ def _remove_managed_copy(journal: MigrationJournal, item: MigrationFile) -> None
 
 def resume_storage_migration(session: Session) -> bool:
     """One bounded, committed step. The shared lock excludes publication and other movers."""
+    acquire_migration_lock(session, exclusive=True)
     acquire_storage_lock(session)
     config = session.get(StorageConfigRecord, 1, populate_existing=True)
     if config is None or config.state != 'migrating':

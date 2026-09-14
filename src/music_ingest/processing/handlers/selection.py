@@ -39,7 +39,6 @@ from music_ingest.processing.candidates import (
 from music_ingest.processing.execution import (
     ExecutionContext,
     HandlerOutcome,
-    JobHandler,
     ProcessingInfrastructureError,
 )
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
@@ -53,7 +52,6 @@ class SelectionHandler:
     session: Session
     sources: SourceAccess
     settings: RuntimeProcessingSettings
-    publication: JobHandler
 
     def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
         if claimed.job.kind == 'selection_refresh':
@@ -148,17 +146,7 @@ class SelectionHandler:
                 decision.source_id,
             )
             return
-        refresh_publish_job = JobRecord(
-            id=f'selection-refresh-publish-{claimed.job.id}',
-            source_id=decision.source_id,
-            kind='final_publish',
-            metadata_revision_id=revision.id,
-            state='running',
-            created_at=now,
-        )
-        outcome = self.publication.handle(ClaimedJob(refresh_publish_job, claimed.attempt), context)
-        if outcome is not None:
-            return outcome
+        _ = JobRepository(self.session).enqueue(decision.source_id, 'final_publish', now, revision.id)
         record_event(
             self.session,
             record_id,

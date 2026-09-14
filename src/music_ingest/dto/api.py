@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from music_ingest.dto.settings import WorkerPoolSettings
+
 
 class MatchingSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -17,7 +19,7 @@ class RuntimeSettingsRequest(BaseModel):
     timeout_seconds: float = Field(gt=0.0, le=120.0)
     retry_delay_seconds: float = Field(ge=0.0, le=3600.0)
     max_attempts: int = Field(ge=1, le=10)
-    worker_concurrency: int = Field(ge=1, le=8)
+    worker_pools: WorkerPoolSettings
     musicbrainz_enabled: bool
     musicbrainz_user_agent: str = Field(min_length=1, max_length=255)
     musicbrainz_host: str = Field(pattern=r'^https?://[^/?#]+$')
@@ -43,7 +45,7 @@ class RuntimeSettingsResponse(BaseModel):
     timeout_seconds: float
     retry_delay_seconds: float
     max_attempts: int
-    worker_concurrency: int
+    worker_pools: WorkerPoolSettings
     musicbrainz_enabled: bool
     musicbrainz_user_agent: str
     musicbrainz_host: str

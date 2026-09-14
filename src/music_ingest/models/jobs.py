@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Set
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, final
 from uuid import uuid4
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, false, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -36,8 +37,19 @@ class JobRepository:
     def __init__(self, session: Session) -> None:
         self._session: Session = session
 
-    def claim_next(self, now: datetime, lease_age: timedelta) -> ClaimedJob | None:
-        candidate = self._session.scalar(self._claimable_statement(now, lease_age))
+    def claim_next(
+        self, now: datetime, lease_age: timedelta, allowed_kinds: Set[str] | None = None
+    ) -> ClaimedJob | None:
+        return self._claim(self._claimable_statement(now, lease_age, allowed_kinds=allowed_kinds), now)
+
+    def claim_next_for_source(
+        self, source_id: str, now: datetime, lease_age: timedelta, allowed_kinds: Set[str] | None = None
+    ) -> ClaimedJob | None:
+        """Claim a ready continuation for one source before returning to the global queue."""
+        return self._claim(self._claimable_statement(now, lease_age, source_id, allowed_kinds), now)
+
+    def _claim(self, statement: Select[tuple[JobRecord]], now: datetime) -> ClaimedJob | None:
+        candidate = self._session.scalar(statement)
         if candidate is None:
             return None
         stale_attempt = candidate.attempts[-1] if candidate.attempts else None
@@ -313,9 +325,15 @@ class JobRepository:
         self._session.flush()
         return job
 
-    def _claimable_statement(self, now: datetime, lease_age: timedelta) -> Select[tuple[JobRecord]]:
+    def _claimable_statement(
+        self,
+        now: datetime,
+        lease_age: timedelta,
+        source_id: str | None = None,
+        allowed_kinds: Set[str] | None = None,
+    ) -> Select[tuple[JobRecord]]:
         stale_before = now - lease_age
-        return (
+        statement = (
             select(JobRecord)
             .options(selectinload(JobRecord.attempts))
             .where(
@@ -333,7 +351,11 @@ class JobRepository:
                     )
                 )
             )
-            .order_by(JobRecord.created_at, JobRecord.id)
-            .limit(1)
-            .with_for_update(skip_locked=True)
         )
+        if source_id is not None:
+            statement = statement.where(JobRecord.source_id == source_id)
+        if allowed_kinds is not None:
+            if not allowed_kinds:
+                return statement.where(false())
+            statement = statement.where(JobRecord.kind.in_(allowed_kinds))
+        return statement.order_by(JobRecord.created_at, JobRecord.id).limit(1).with_for_update(skip_locked=True)

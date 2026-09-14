@@ -17,3 +17,31 @@ def test_runtime_monitor_keeps_latest_slot_state() -> None:
     assert snapshots[0].job_id is None
     assert snapshots[0].job_kind is None
     assert snapshots[0].observed_at <= datetime.now(UTC)
+
+
+def test_worker_pools_cover_each_kind_exactly_once() -> None:
+    from music_ingest.dto.settings import WorkerPoolSettings
+    from music_ingest.processing.runtime import WORKER_POOLS
+
+    assert set(WORKER_POOLS) == set(WorkerPoolSettings.model_fields)
+    kinds = [kind for allowed in WORKER_POOLS.values() for kind in allowed]
+    assert len(kinds) == len(set(kinds))
+    assert set(kinds) == {
+        'filesystem_scan',
+        'acoustid_analysis',
+        'musicbrainz_analysis',
+        'candidate_selection',
+        'folder_release_selection',
+        'final_publish',
+        'selection_refresh',
+        'lrclib_fetch',
+        'artwork_enrichment',
+        'reconciliation_scan',
+        'lidarr_download',
+        'lidarr_releaseimport',
+        'lidarr_rename',
+        'lidarr_albumdelete',
+    }
+    for pool, allowed in WORKER_POOLS.items():
+        if pool != 'lidarr_intake':
+            assert allowed == frozenset({pool})

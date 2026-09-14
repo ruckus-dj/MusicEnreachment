@@ -259,7 +259,20 @@ def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Pa
     assert response.status_code == 200
     payload = response.json()
     assert payload['worker'] == {
-        'configured_concurrency': 1,
+        'configured_concurrency': 28,
+        'pools': {
+            'filesystem_scan': 4,
+            'acoustid_analysis': 1,
+            'musicbrainz_analysis': 4,
+            'candidate_selection': 4,
+            'folder_release_selection': 2,
+            'final_publish': 4,
+            'selection_refresh': 4,
+            'lrclib_fetch': 1,
+            'artwork_enrichment': 2,
+            'reconciliation_scan': 1,
+            'lidarr_intake': 1,
+        },
         'liveness': 'unavailable',
         'slots': [],
     }

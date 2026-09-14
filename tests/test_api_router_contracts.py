@@ -46,7 +46,7 @@ def _runtime_settings_payload(confidence_threshold: float) -> dict[str, object]:
         'timeout_seconds': 30,
         'retry_delay_seconds': 10,
         'max_attempts': 3,
-        'worker_concurrency': 1,
+        'worker_pools': {},
         'musicbrainz_enabled': True,
         'musicbrainz_user_agent': 'Music Ingest/0.1',
         'musicbrainz_host': 'https://musicbrainz.org',
@@ -86,7 +86,7 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        'e77288eb0999ce6679bf9dfcd182592fafe540179ae11df351d1532090121225'
+        '65101c5e5b73ae1faf6639bf189f0ff0ae9cf0d05050575cc6e734a838256d34'
     )
 
 

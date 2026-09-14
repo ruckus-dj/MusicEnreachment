@@ -199,11 +199,7 @@ def plan_reconciliation(snapshot: ReconciliationSnapshot) -> ReconciliationPlan:
     sources_by_path = {(source.source_root_id, _stored_path(source)): source for source in snapshot.sources}
     sources_by_identity = {(source.source_root_id, *_identity(source)): source for source in snapshot.sources}
     filesystem_job_state_by_source = {
-        job.source_id: job.state
-        for job in snapshot.jobs
-        if job.source_id is not None
-        and job.kind == 'filesystem_scan'
-        and job.state in {'queued', 'running', 'quarantined', 'blocked_infrastructure'}
+        job.source_id: job.state for job in snapshot.jobs if job.source_id is not None and job.kind == 'filesystem_scan'
     }
     new_sources: list[NewSource] = []
     moved_paths: list[tuple[str, str]] = []

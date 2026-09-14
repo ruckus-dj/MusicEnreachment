@@ -33,7 +33,56 @@ from music_ingest.publication import acquire_publication_destination_lock, try_a
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260911_0024'
+_HEAD_REVISION = '20260914_0025'
+
+
+@pytest.mark.postgres
+def test_dedicated_pools_enter_handlers_concurrently_without_global_storage_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime.now(UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        engine = create_engine(postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg'))
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            for kind in ('selection_refresh', 'lrclib_fetch'):
+                session.add(LibraryRecord(id=kind, created_at=now, updated_at=now))
+                session.flush()
+                session.add(JobRecord(id=kind, kind=kind, library_record_id=kind, state='queued', created_at=now))
+            session.commit()
+        entered = Barrier(2)
+
+        def run(kind: str) -> bool:
+            with Session(engine) as session:
+
+                def claimed(job_id: str, job_kind: str) -> None:
+                    assert job_kind == kind
+                    entered.wait(timeout=5)
+                    # Recovery/publication's exclusive lock must not span unrelated handlers.
+                    if kind == 'lrclib_fetch':
+                        return
+                    with Session(engine) as probe:
+                        assert probe.scalar(text('SELECT pg_try_advisory_xact_lock(732014901)'))
+                        # But migration must still exclude all active handlers.
+                        assert not probe.scalar(text('SELECT pg_try_advisory_xact_lock(732014902)'))
+
+                worker = ProcessingWorker(
+                    session,
+                    ProcessingConfig(
+                        incoming_root=tmp_path / 'incoming',
+                        staging_root=tmp_path / 'staging',
+                        media_root=tmp_path / 'media',
+                    ),
+                )
+                result = worker.run_once(allowed_kinds={kind}, on_claimed=claimed)
+                session.commit()
+                return result
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assert all(executor.map(run, ('selection_refresh', 'lrclib_fetch')))
+        engine.dispose()
 
 
 @pytest.mark.postgres

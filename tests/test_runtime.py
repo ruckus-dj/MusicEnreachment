@@ -90,7 +90,7 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
             'timeout_seconds': 30,
             'retry_delay_seconds': 10,
             'max_attempts': 3,
-            'worker_concurrency': 4,
+            'worker_pools': {'filesystem_scan': 7, 'musicbrainz_analysis': 3},
             'musicbrainz_enabled': True,
             'musicbrainz_user_agent': 'Music Ingest/0.1',
             'musicbrainz_host': 'https://musicbrainz.internal',
@@ -115,7 +115,9 @@ def test_settings_when_existing_acoustid_key_and_blank_update_preserves_key(tmp_
     assert response.json()['musicbrainz_host'] == 'https://musicbrainz.internal'
     assert response.json()['musicbrainz_request_delay_seconds'] == 0
     assert response.json()['acoustid_request_delay_seconds'] == 0.5
-    assert response.json()['worker_concurrency'] == 4
+    assert response.json()['worker_pools']['filesystem_scan'] == 7
+    assert response.json()['worker_pools']['musicbrainz_analysis'] == 3
+    assert client.get('/api/settings').json()['worker_pools'] == response.json()['worker_pools']
     assert response.json()['lrclib_enabled'] is False
     assert response.json()['lrclib_host'] == 'https://lrclib.internal'
     assert response.json()['lrclib_user_agent'] == 'Music Ingest/0.1 (ops@example.com)'
@@ -184,8 +186,8 @@ def test_setting_values_when_requested_keys_are_persisted_uses_one_query_and_omi
                     updated_at=datetime.now(UTC),
                 ),
                 RuntimeSettingRecord(
-                    key=SettingKey.WORKER_CONCURRENCY.value,
-                    value='6',
+                    key=SettingKey.WORKER_POOLS.value,
+                    value='{"final_publish":6}',
                     updated_at=datetime.now(UTC),
                 ),
             )
@@ -205,7 +207,7 @@ def test_setting_values_when_requested_keys_are_persisted_uses_one_query_and_omi
                 session,
                 (
                     SettingKey.MUSICBRAINZ_HOST,
-                    SettingKey.WORKER_CONCURRENCY,
+                    SettingKey.WORKER_POOLS,
                     SettingKey.ACOUSTID_ENABLED,
                 ),
             )
@@ -214,7 +216,7 @@ def test_setting_values_when_requested_keys_are_persisted_uses_one_query_and_omi
 
     assert values == {
         SettingKey.MUSICBRAINZ_HOST: 'https://musicbrainz.internal',
-        SettingKey.WORKER_CONCURRENCY: '6',
+        SettingKey.WORKER_POOLS: '{"final_publish":6}',
     }
     assert len(statements) == 1
 
@@ -235,7 +237,7 @@ def test_build_runtime_settings_when_values_are_missing_uses_defaults_without_lo
         missing = get_setting_value(session, SettingKey.MUSICBRAINZ_HOST)
 
     assert settings.musicbrainz_host == RuntimeSettings().musicbrainz_host
-    assert settings.worker_concurrency == RuntimeSettings().worker_concurrency
+    assert settings.worker_pools == RuntimeSettings().worker_pools
     assert missing is None
 
 
@@ -495,12 +497,29 @@ def test_processing_runtime_when_started_supervises_all_configurable_worker_slot
     started: list[int] = []
 
     async def record_worker_slot(
-        _session_factory: Callable[[], Session], _config: ProcessingConfig, worker_slot: int, _poll_seconds: float
+        _session_factory: Callable[[], Session],
+        _config: ProcessingConfig,
+        worker_slot: int,
+        local_slot: int,
+        pool: str,
+        kinds: frozenset[str],
+        limiter: anyio.CapacityLimiter,
+        _poll_seconds: float,
+        _monitor: processing_runtime.ProcessingRuntimeMonitor | None,
+        _settings: processing_runtime.PoolSettingsSnapshot,
     ) -> None:
         started.append(worker_slot)
+        assert local_slot < processing_runtime.MAX_POOL_CONCURRENCY
+        assert kinds == processing_runtime.WORKER_POOLS[pool]
+        assert limiter.total_tokens == processing_runtime.MAX_POOL_CONCURRENCY
         await anyio.sleep_forever()
 
     monkeypatch.setattr(processing_runtime, '_run_processing_worker_slot', record_worker_slot)
+
+    async def maintenance(_session_factory, _config, _poll_seconds) -> None:
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(processing_runtime, '_run_maintenance', maintenance)
 
     async def start_then_cancel() -> None:
         with anyio.move_on_after(0.1):
@@ -512,7 +531,7 @@ def test_processing_runtime_when_started_supervises_all_configurable_worker_slot
     anyio.run(start_then_cancel)
 
     # Then: it creates every bounded slot so the live setting can activate up to the validated maximum.
-    assert started == list(range(8))
+    assert started == list(range(len(processing_runtime.WORKER_POOLS) * processing_runtime.MAX_POOL_CONCURRENCY))
 
 
 def test_runtime_app_when_configured_source_root_receives_download_uses_that_root(

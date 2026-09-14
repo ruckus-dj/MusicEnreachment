@@ -1,3 +1,17 @@
+export interface WorkerPoolSettings {
+  readonly filesystem_scan: number;
+  readonly acoustid_analysis: number;
+  readonly musicbrainz_analysis: number;
+  readonly candidate_selection: number;
+  readonly folder_release_selection: number;
+  readonly final_publish: number;
+  readonly selection_refresh: number;
+  readonly lrclib_fetch: number;
+  readonly artwork_enrichment: number;
+  readonly reconciliation_scan: number;
+  readonly lidarr_intake: number;
+}
+
 export type Tags = Record<string, string>;
 export type ProviderName = "acoustid" | "musicbrainz";
 export type Revision = {
@@ -238,7 +252,7 @@ export type RuntimeSettings = {
   readonly timeout_seconds: number;
   readonly retry_delay_seconds: number;
   readonly max_attempts: number;
-  readonly worker_concurrency: number;
+  readonly worker_pools: WorkerPoolSettings;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
   readonly musicbrainz_host: string;
@@ -310,7 +324,7 @@ export type RuntimeSettingsDraft = {
   readonly timeout_seconds: number;
   readonly retry_delay_seconds: number;
   readonly max_attempts: number;
-  readonly worker_concurrency: number;
+  readonly worker_pools: WorkerPoolSettings;
   readonly musicbrainz_enabled: boolean;
   readonly musicbrainz_user_agent: string;
   readonly musicbrainz_host: string;

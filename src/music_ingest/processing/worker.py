@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Final, final
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from music_ingest.inspectors.decoder import DecoderValidationError
 from music_ingest.models import (
+    PublicationAttemptRecord,
     SourceRecord,
     StorageConfigRecord,
 )
@@ -49,7 +51,7 @@ from music_ingest.processing.support.staging import StagingWorkspace
 from music_ingest.publication import (
     reconcile_attempts,
 )
-from music_ingest.publication.locks import acquire_storage_lock
+from music_ingest.publication.locks import acquire_migration_lock
 from music_ingest.publication.service import (
     PublicationError,
 )
@@ -94,7 +96,7 @@ class ProcessingWorker:
         self._initial = InitialHandler(
             self._session, self._config, self._sources, self._evidence, self._settings, self._staging
         )
-        self._selection = SelectionHandler(self._session, self._sources, self._settings, self._publication)
+        self._selection = SelectionHandler(self._session, self._sources, self._settings)
         self._analysis = AnalysisHandler(self._session, self._sources, self._evidence, self._settings)
         self._handlers: dict[str, JobHandler] = {
             'reconciliation_scan': ReconciliationHandler(),
@@ -109,12 +111,18 @@ class ProcessingWorker:
             **dict.fromkeys(_INITIAL_JOB_KINDS, self._initial),
         }
 
-    def run_once(self, *, on_claimed: Callable[[str, str], None] | None = None) -> bool:
+    def run_once(
+        self,
+        *,
+        on_claimed: Callable[[str, str], None] | None = None,
+        allowed_kinds: Set[str] | None = None,
+    ) -> bool:
         now = datetime.now(UTC)
-        if resume_storage_migration(self._session):
-            return True
-        reconcile_attempts(self._session, now, lrclib_enabled=self._lrclib_enabled())
-        acquire_storage_lock(self._session)
+        if allowed_kinds is None:
+            # Standalone callers retain recovery; runtime pools use their dedicated maintenance loop.
+            self.maintain_storage()
+            self._session.commit()
+        acquire_migration_lock(self._session)
         storage = self._session.get(StorageConfigRecord, 1)
         if storage is not None:
             self._session.refresh(storage)
@@ -122,7 +130,7 @@ class ProcessingWorker:
                 return False
             self._config = replace(self._config, media_root=Path(storage.output_root))
         self._bind_services()
-        claimed = JobRepository(self._session).claim_next(now, self._lease_age)
+        claimed = JobRepository(self._session).claim_next(now, self._lease_age, allowed_kinds)
         if claimed is None:
             return False
         # Freeze scalar settings before any handler or callback can change them.
@@ -180,8 +188,28 @@ class ProcessingWorker:
             if claimed.attempt.state == 'running':
                 JobRepository(self._session).succeed(claimed, datetime.now(UTC))
         self._session.commit()
-        reconcile_attempts(self._session, datetime.now(UTC), lrclib_enabled=self._lrclib_enabled())
+        if allowed_kinds is None:
+            self.maintain_storage()
+        elif claimed.job.source_id is not None and claimed.job.kind in _INITIAL_JOB_KINDS | {'final_publish'}:
+            reconcile_attempts(
+                self._session,
+                datetime.now(UTC),
+                lrclib_enabled=self._lrclib_enabled(),
+                source_id=claimed.job.source_id,
+            )
         return True
+
+    def maintain_storage(self) -> None:
+        """Recovery has its own runtime capacity, never runs before unrelated pool jobs."""
+        storage = self._session.get(StorageConfigRecord, 1, populate_existing=True)
+        if storage is not None and storage.state == 'migrating':
+            resume_storage_migration(self._session)
+            return
+        pending = self._session.scalar(
+            select(PublicationAttemptRecord.id).where(PublicationAttemptRecord.cleaned_at.is_(None)).limit(1)
+        )
+        if pending is not None:
+            reconcile_attempts(self._session, datetime.now(UTC), lrclib_enabled=self._lrclib_enabled())
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> HandlerOutcome:
         if claimed.job.source_id is not None:
