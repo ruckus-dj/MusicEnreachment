@@ -16,23 +16,26 @@ RUN apt-get update \
         ca-certificates \
         ffmpeg \
         libchromaprint-tools \
+    && ln --symbolic /usr/bin/ffmpeg /usr/local/bin/ffmpeg \
+    && ln --symbolic /usr/bin/ffprobe /usr/local/bin/ffprobe \
+    && ln --symbolic /usr/bin/fpcalc /usr/local/bin/fpcalc \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eu; \
-    test -x /usr/bin/fpcalc; \
-    /usr/bin/fpcalc -version; \
-    ffprobe -version; \
-    ffmpeg -hide_banner -loglevel error -f lavfi -i anoisesrc=color=white:sample_rate=44100 -t 10 -c:a pcm_s16le /tmp/fingerprint-smoke.wav; \
-    set +e; /usr/bin/fpcalc -json -length 1 /tmp/fingerprint-smoke.wav >/tmp/fpcalc-short.out 2>/tmp/fpcalc-short.err; short_status=$?; set -e; \
+    test -x /usr/local/bin/fpcalc; \
+    /usr/local/bin/fpcalc -version; \
+    /usr/local/bin/ffprobe -version; \
+    /usr/local/bin/ffmpeg -hide_banner -loglevel error -f lavfi -i anoisesrc=color=white:sample_rate=44100 -t 10 -c:a pcm_s16le /tmp/fingerprint-smoke.wav; \
+    set +e; /usr/local/bin/fpcalc -json -length 1 /tmp/fingerprint-smoke.wav >/tmp/fpcalc-short.out 2>/tmp/fpcalc-short.err; short_status=$?; set -e; \
     test "$short_status" -eq 2; \
     test "$(tr -d '\r\n' </tmp/fpcalc-short.err)" = 'ERROR: Empty fingerprint'; \
-    /usr/bin/fpcalc -json -length 10 /tmp/fingerprint-smoke.wav >/tmp/fpcalc.json; \
+    /usr/local/bin/fpcalc -json -length 10 /tmp/fingerprint-smoke.wav >/tmp/fpcalc.json; \
     python3 -c 'import json; from pathlib import Path; payload = json.loads(Path("/tmp/fpcalc.json").read_text()); assert payload["duration"] > 0 and payload["fingerprint"]'; \
     rm /tmp/fingerprint-smoke.wav /tmp/fpcalc-short.out /tmp/fpcalc-short.err /tmp/fpcalc.json
 
 WORKDIR /app
 
-ENV FPCALC=/usr/bin/fpcalc \
+ENV FPCALC=/usr/local/bin/fpcalc \
     PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/src \
     UV_COMPILE_BYTECODE=1 \
