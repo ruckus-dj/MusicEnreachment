@@ -37,14 +37,51 @@ class PublicationAttemptRequest:
     completion_state: str = 'complete'
 
 
-def reserve_attempt(session: Session, request: PublicationAttemptRequest) -> PublicationAttemptRecord:
+def reserve_attempt(session: Session, request: PublicationAttemptRequest) -> PublicationAttemptRecord | None:
+    """Reserve once per output intent, serialized with finalization on the canonical record.
+
+    Query tables after taking the lock: ORM relationship collections can predate a
+    competing finalization. Pending journals cover the commit-to-exposure window.
+    Never return a peer's attempt to a caller that would overwrite its staging files.
+    """
+    record = session.scalar(
+        select(LibraryRecord).where(LibraryRecord.id == request.library_record_id).with_for_update()
+    )
+    if record is None:
+        raise LookupError(request.library_record_id)
+    target_directory = str(request.target_directory.resolve())
+    current = session.scalar(
+        select(LibraryPublicationRecord.id)
+        .where(
+            LibraryPublicationRecord.library_record_id == request.library_record_id,
+            LibraryPublicationRecord.source_id == request.source_id,
+            LibraryPublicationRecord.metadata_revision_id == request.metadata_revision_id,
+            LibraryPublicationRecord.path == str(Path(target_directory) / request.target_audio_name),
+            LibraryPublicationRecord.state == 'current',
+        )
+        .limit(1)
+    )
+    pending = session.scalar(
+        select(PublicationAttemptRecord.id)
+        .where(
+            PublicationAttemptRecord.library_record_id == request.library_record_id,
+            PublicationAttemptRecord.source_id == request.source_id,
+            PublicationAttemptRecord.metadata_revision_id == request.metadata_revision_id,
+            PublicationAttemptRecord.target_directory == target_directory,
+            PublicationAttemptRecord.target_audio_name == request.target_audio_name,
+            PublicationAttemptRecord.state.in_(['reserved', 'staged', 'prepared', 'exposed']),
+        )
+        .limit(1)
+    )
+    if current is not None or pending is not None:
+        return None
     attempt = PublicationAttemptRecord(
         id=request.attempt_id,
         library_record_id=request.library_record_id,
         source_id=request.source_id,
         metadata_revision_id=request.metadata_revision_id,
         state='reserved',
-        target_directory=str(request.target_directory),
+        target_directory=target_directory,
         target_audio_name=request.target_audio_name,
         staging_directory=str(request.staging_directory),
         backup_directory=str(request.backup_directory),
@@ -180,6 +217,9 @@ def finalize_attempt(
     # The new publication supersedes any sidecar written for the previous one: lyric state is materialized as
     # pending with no bound path, publication, or hash until a fetch validates lyrics against this output. A
     # disabled provider never fetches, so its records are materialized as "no lyrics were requested" instead.
+    # Reusable evidence is deliberately NOT cleared. The handler independently checks its
+    # identity/settings/duration and original file hash before rebinding to this publication.
+    # Disabled means neither network nor cache materialization; evidence/old sidecars survive.
     record.lyrics_status = 'pending' if lrclib_enabled else 'none'
     record.lyrics_path = None
     record.lyrics_publication_id = None

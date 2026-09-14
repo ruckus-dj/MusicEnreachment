@@ -267,7 +267,7 @@ class SelectionHandler:
             _ = append_metadata_revision(
                 self.session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
             )
-            final_revision = append_metadata_revision(
+            _ = append_metadata_revision(
                 self.session,
                 record.id,
                 source.id,
@@ -276,7 +276,9 @@ class SelectionHandler:
                 'folder_selection',
                 now,
             )
-            _ = JobRepository(self.session).enqueue(source.id, 'final_publish', now, final_revision.id)
+            # One canonical selection path for folder intake and later refreshes.
+            # Select after all folder metadata is durable, not once per source.
+            _ = JobRepository(self.session).enqueue_selection_refresh(record.id, now)
             record_event(
                 self.session,
                 record.id,

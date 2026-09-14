@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Final
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from music_ingest.external.lrclib import (
     LrclibProviderError,
     LrclibSynced,
 )
+from music_ingest.lyrics.reuse import LyricEvidence, read_validated_sidecar, reuse_key
 from music_ingest.lyrics.validate import (
     LrcWriteRejected,
     LrcWriteRequest,
@@ -112,11 +115,69 @@ class LrclibHandler:
             self._settle(context, record, publication, _ERROR, 'published audio duration is unknown')
             return None
         lookup = LrclibLookupRequest(track_name, artist_name, duration_seconds, album_name or None)
+        if source is None:
+            return None
+        settings = adapter.settings.snapshot()
+        key = reuse_key(session, record, source, lookup, settings)
+        evidence = None
+        if record.lyrics_evidence_json is not None:
+            # Legacy/corrupt evidence is a miss, never implicit permission to reuse.
+            with suppress(ValidationError):
+                evidence = LyricEvidence.model_validate_json(record.lyrics_evidence_json)
+        if evidence is not None and evidence.input_hash == key and evidence.outcome == _SYNCED:
+            text = read_validated_sidecar(evidence, context.config.media_root, duration_seconds)
+            if text is not None:
+                self._accept(
+                    context,
+                    record,
+                    publication,
+                    evidence.provenance,
+                    text,
+                    duration_seconds,
+                    reused_from=evidence.publication_id,
+                )
+                return None
+        if (
+            evidence is not None
+            and evidence.input_hash == key
+            and evidence.outcome == _NO_CANDIDATE
+            # Explicit fetch on the same publication must still be able to retry.
+            and evidence.publication_id != publication.id
+            and evidence.expires_at is not None
+            and evidence.expires_at.tzinfo is not None
+            and context.now < evidence.expires_at
+        ):
+            self._settle(
+                context, record, publication, _NO_CANDIDATE, f'cached absence: {evidence.reason}', evidence.provenance
+            )
+            record.lyrics_evidence_json = evidence.model_copy(
+                update={'publication_id': publication.id}
+            ).model_dump_json()
+            return None
         match adapter.lookup(lookup, now=context.now):
             case LrclibSynced(provenance=provenance, synced_lyrics=synced_lyrics):
                 self._accept(context, record, publication, provenance, synced_lyrics, duration_seconds)
+                if record.lyrics_status == _SYNCED and adapter.settings.snapshot() == settings:
+                    record.lyrics_evidence_json = LyricEvidence(
+                        input_hash=key,
+                        publication_id=publication.id,
+                        outcome=_SYNCED,
+                        provenance=provenance,
+                        reason='validated synced lyrics',
+                        path=record.lyrics_path,
+                        sha256=record.lyrics_sha256,
+                    ).model_dump_json()
             case LrclibNoCandidate(provenance=provenance, reason=reason):
                 self._settle(context, record, publication, _NO_CANDIDATE, reason, provenance)
+                if adapter.settings.snapshot() == settings:
+                    record.lyrics_evidence_json = LyricEvidence(
+                        input_hash=key,
+                        publication_id=publication.id,
+                        outcome=_NO_CANDIDATE,
+                        provenance=provenance,
+                        reason=reason,
+                        expires_at=context.now + timedelta(hours=24),
+                    ).model_dump_json()
             case LrclibProviderError(provenance=provenance, reason=reason):
                 self._settle(context, record, publication, _ERROR, reason, provenance)
         return None
@@ -129,6 +190,8 @@ class LrclibHandler:
         provenance: LrclibProvenance,
         synced_lyrics: str,
         duration_seconds: int,
+        *,
+        reused_from: str | None = None,
     ) -> None:
         try:
             payload = synced_lyrics.encode('utf-8')
@@ -159,7 +222,8 @@ class LrclibHandler:
                             record,
                             publication,
                             _SYNCED,
-                            f'validated synced lyrics written to {sidecar.relative_path}',
+                            f'validated synced lyrics written to {sidecar.relative_path}'
+                            + ('' if reused_from is None else f' (reused from {reused_from})'),
                             provenance,
                             sidecar=sidecar,
                         )

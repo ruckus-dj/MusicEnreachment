@@ -33,7 +33,7 @@ from music_ingest.publication import acquire_publication_destination_lock, try_a
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260914_0025'
+_HEAD_REVISION = '20260914_0027'
 
 
 @pytest.mark.postgres
@@ -592,6 +592,7 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
         assert {
             'uq_active_lrclib_fetch_job',
             'uq_active_selection_refresh_job',
+            'ix_pending_publication_intent',
             'uq_current_library_publication',
         }.issubset(indexes)
 

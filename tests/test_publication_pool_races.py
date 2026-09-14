@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from threading import Event
+from threading import Barrier, Event
 
 import pytest
 from sqlalchemy import Engine, create_engine, select, text
@@ -59,6 +59,81 @@ def race_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[Engine]:
             yield engine
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize('finalized', [False, True])
+def test_identical_reservation_uses_fresh_state_even_with_cached_publications(
+    race_engine: Engine, tmp_path: Path, finalized: bool
+) -> None:
+    now = datetime.now(UTC)
+    target = tmp_path / 'media' / 'audio.mka'
+    with Session(race_engine) as session:
+        _prepare(session, tmp_path, 'original', 'record', target, now)
+    with Session(race_engine) as cached:
+        record = cached.get(LibraryRecord, 'record')
+        assert record is not None and record.publications == []
+        if finalized:
+            with Session(race_engine) as recovery:
+                reconcile_attempts(recovery, now, lrclib_enabled=False)
+        request = PublicationAttemptRequest(
+            'duplicate',
+            'record',
+            'original',
+            None,
+            target.parent,
+            target.name,
+            tmp_path / 'duplicate' / 'staged',
+            tmp_path / 'duplicate' / 'backup',
+            now,
+        )
+        assert reserve_attempt(cached, request) is None
+        cached.commit()
+        assert len(cached.scalars(select(PublicationAttemptRecord)).all()) == 1
+
+
+def test_concurrent_identical_reservations_create_one_intent(race_engine: Engine, tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    target = tmp_path / 'media' / 'audio.mka'
+    with Session(race_engine) as session:
+        _prepare(session, tmp_path, 'original', 'record', target, now)
+        original = session.get(PublicationAttemptRecord, 'original')
+        assert original is not None
+        original.state = 'failed'
+        session.commit()
+    ready = Barrier(2)
+
+    def reserve(name: str) -> bool:
+        with Session(race_engine) as session:
+            session.execute(text("SET statement_timeout = '5s'"))
+            ready.wait(timeout=5)
+            attempt = reserve_attempt(
+                session,
+                PublicationAttemptRequest(
+                    name,
+                    'record',
+                    'original',
+                    None,
+                    target.parent,
+                    target.name,
+                    tmp_path / name / 'staged',
+                    tmp_path / name / 'backup',
+                    now,
+                ),
+            )
+            session.commit()
+            return attempt is not None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(reserve, ['first', 'second'])) == [False, True]
+    with Session(race_engine) as session:
+        assert (
+            len(
+                session.scalars(
+                    select(PublicationAttemptRecord).where(PublicationAttemptRecord.state == 'reserved')
+                ).all()
+            )
+            == 1
+        )
 
 
 def _prepare(session: Session, root: Path, name: str, record_id: str, target: Path, now: datetime) -> None:

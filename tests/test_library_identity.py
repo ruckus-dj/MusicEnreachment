@@ -33,6 +33,7 @@ from music_ingest.models import (
     ProviderAttemptRecord,
     ProviderScheduleRecord,
     ProviderSnapshotRecord,
+    PublicationAttemptRecord,
     SourceRecord,
     SourceRecordingAssignmentRecord,
     SourceRootRecord,
@@ -751,7 +752,10 @@ def test_library_api_confirms_acoustid_candidate_without_erasing_another_release
         assert retained_alias.musicbrainz_recording_id == 'recording-id'
 
 
-def test_library_api_recording_override_moves_only_selected_source_and_preserves_evidence(tmp_path: Path) -> None:
+@pytest.mark.parametrize('retained', ['none', 'current', 'prepared', 'exposed', 'failed'])
+def test_library_api_recording_override_moves_only_selected_source_and_preserves_evidence(
+    tmp_path: Path, retained: str
+) -> None:
     # Given: two sources on separate records and provider evidence for the source to move.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override.db"}')
     Base.metadata.create_all(engine)
@@ -817,6 +821,33 @@ def test_library_api_recording_override_moves_only_selected_source_and_preserves
             library_record=target_record,
         )
         session.add_all((root, record, target_record, source, sibling))
+        if retained == 'current':
+            session.add(
+                LibraryPublicationRecord(
+                    id='retained',
+                    library_record_id=record.id,
+                    source_id=source.id,
+                    path=str(tmp_path / 'managed.mka'),
+                    format_name='mka',
+                    content_sha256='e' * 64,
+                    state='current',
+                    created_at=timestamp,
+                )
+            )
+        elif retained != 'none':
+            session.add(
+                PublicationAttemptRecord(
+                    id='retained',
+                    library_record_id=record.id,
+                    source_id=source.id,
+                    state=retained,
+                    target_directory=str(tmp_path),
+                    target_audio_name='managed.mka',
+                    staging_directory=str(tmp_path / 'staged'),
+                    backup_directory=str(tmp_path / 'backup'),
+                    created_at=timestamp,
+                )
+            )
         session.commit()
 
     client = TestClient(
@@ -861,7 +892,11 @@ def test_library_api_recording_override_moves_only_selected_source_and_preserves
         assert {event.kind for event in persisted_target_record.events} >= {'source_recording_reassigned'}
         assert {
             job.library_record_id for job in session.query(JobRecord).filter_by(kind='selection_refresh').all()
-        } == {'record-recording-override', 'record-recording-target'}
+        } == (
+            {'record-recording-target', 'record-recording-override'}
+            if retained in {'current', 'prepared', 'exposed'}
+            else {'record-recording-target'}
+        )
 
 
 def test_library_api_recording_override_when_provider_is_unavailable_keeps_source_in_place(tmp_path: Path) -> None:

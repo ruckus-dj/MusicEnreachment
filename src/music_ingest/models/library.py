@@ -103,6 +103,8 @@ class LibraryRecord(Base):
     lyrics_publication_id: Mapped[str | None] = mapped_column(ForeignKey('library_publications.id'))
     lyrics_sha256: Mapped[str | None] = mapped_column(Text)
     lyrics_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Reusable evidence survives publication rebinding; lyric text remains on disk only.
+    lyrics_evidence_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -248,6 +250,16 @@ class PublicationAttemptRecord(Base):
     completion_state: Mapped[str] = mapped_column(Text, nullable=False, default='complete')
 
     library_record: Mapped[LibraryRecord] = relationship(back_populates='publication_attempts')
+
+
+_ = Index(
+    'ix_pending_publication_intent',
+    PublicationAttemptRecord.library_record_id,
+    PublicationAttemptRecord.source_id,
+    PublicationAttemptRecord.metadata_revision_id,
+    postgresql_where=PublicationAttemptRecord.state.in_(['reserved', 'staged', 'prepared', 'exposed']),
+    sqlite_where=PublicationAttemptRecord.state.in_(['reserved', 'staged', 'prepared', 'exposed']),
+)
 
 
 @final

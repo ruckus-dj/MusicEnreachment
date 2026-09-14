@@ -219,6 +219,8 @@ class InitialHandler:
                 completion_state='analyzing' if providers_enabled else 'needs_review',
             ),
         )
+        if attempt is None:
+            return
         prepare_publication_copy(
             pipeline_result.output_path,
             Path(attempt.staging_directory) / output_name,

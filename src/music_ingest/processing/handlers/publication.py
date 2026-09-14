@@ -147,6 +147,17 @@ class PublicationHandler:
                 now,
             ),
         )
+        if attempt is None:
+            record_event(
+                self.session,
+                record.id,
+                'final_publish_no_change',
+                record.processing_state,
+                'identical current publication or pending publication intent already exists',
+                now,
+                source.id,
+            )
+            return
         staged_release = self.staging.staging_directory(claimed.job.id)
         capability = inspect_source_capability(source_path, timeout_seconds=self.settings.timeout_seconds())
         if capability is None:

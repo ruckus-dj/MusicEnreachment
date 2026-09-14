@@ -11,11 +11,18 @@ from sqlalchemy.exc import IntegrityError
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260914_0025'
+_HEAD_REVISION = '20260914_0027'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'
 _LYRIC_STATE_COLUMNS = frozenset(
-    {'lyrics_status', 'lyrics_path', 'lyrics_publication_id', 'lyrics_sha256', 'lyrics_updated_at'}
+    {
+        'lyrics_status',
+        'lyrics_path',
+        'lyrics_publication_id',
+        'lyrics_sha256',
+        'lyrics_updated_at',
+        'lyrics_evidence_json',
+    }
 )
 _LRCLIB_FETCH_INDEX = 'uq_active_lrclib_fetch_job'
 _APPLICATION_TABLES = frozenset(
@@ -136,6 +143,12 @@ def test_lyric_state_migration_when_upgraded_materializes_state_for_existing_rec
                     "FROM library_records WHERE id = 'record-existing'"
                 )
             ).one() == ('none', None, None, None, None)
+            assert (
+                connection.execute(
+                    text("SELECT lyrics_evidence_json FROM library_records WHERE id = 'record-existing'")
+                ).scalar_one()
+                is None
+            )
 
         # Then: only the declared lyric states are accepted.
         with pytest.raises(IntegrityError), engine.begin() as connection:

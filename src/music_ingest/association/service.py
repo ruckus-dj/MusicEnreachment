@@ -18,7 +18,9 @@ from music_ingest.library.service import (
 from music_ingest.matching.providers import FixtureCase, MusicBrainzLookupRequest, MusicBrainzMatch, MusicBrainzProvider
 from music_ingest.models import (
     LibraryEventRecord,
+    LibraryPublicationRecord,
     LibraryRecord,
+    PublicationAttemptRecord,
     ReviewDecisionRecord,
     SourceAssociationOverrideRecord,
     SourceRecord,
@@ -249,7 +251,21 @@ class RecordingAssociationService:
         self._session.flush()
         for record in locked_records:
             _ = reevaluate_effective_source_decision(self._session, record.id, now)
-            _ = JobRepository(self._session).enqueue_selection_refresh(record.id, now)
+            if (
+                record.id == target.id
+                or self._session.scalar(
+                    select(LibraryRecord.id).where(
+                        LibraryRecord.id == record.id,
+                        LibraryRecord.sources.any()
+                        | LibraryRecord.publications.any(LibraryPublicationRecord.state == 'current')
+                        | LibraryRecord.publication_attempts.any(
+                            PublicationAttemptRecord.state.in_(['reserved', 'staged', 'prepared', 'exposed'])
+                        ),
+                    )
+                )
+                is not None
+            ):
+                _ = JobRepository(self._session).enqueue_selection_refresh(record.id, now)
         return AssociationResult(target.id, previous_record_id)
 
     def _source(self, source_id: str) -> SourceRecord:

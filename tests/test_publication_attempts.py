@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import music_ingest.publication.attempts as attempt_operations
+from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     Base,
     JobRecord,
@@ -111,7 +112,15 @@ def test_finalization_commits_before_cleanup_and_is_idempotent(tmp_path: Path) -
         attempt = reserve_attempt(
             session,
             PublicationAttemptRequest(
-                'attempt-order', record.id, source.id, None, target, 'audio.flac', staging, backup, now
+                'attempt-order',
+                record.id,
+                source.id,
+                append_metadata_revision(session, record.id, source.id, 'final', {'TITLE': 'New'}, 'test', now).id,
+                target,
+                'audio.flac',
+                staging,
+                backup,
+                now,
             ),
         )
         mark_staged(session, attempt, now)
@@ -428,7 +437,9 @@ def test_publication_attempt_when_restart_cleans_reserved_and_staged_paths_witho
                     attempt_id,
                     record.id,
                     source.id,
-                    None,
+                    append_metadata_revision(
+                        session, record.id, source.id, 'final', {'TITLE': attempt_id}, 'test', now
+                    ).id,
                     target,
                     'audio.flac',
                     staging,
@@ -641,7 +652,15 @@ def test_finalize_attempt_enqueues_one_lrclib_fetch_and_resets_lyric_state_for_n
         attempt = reserve_attempt(
             session,
             PublicationAttemptRequest(
-                'attempt-lyric-queue', record.id, source.id, None, target, 'audio.flac', staging, backup, now
+                'attempt-lyric-queue',
+                record.id,
+                source.id,
+                append_metadata_revision(session, record.id, source.id, 'final', {'TITLE': 'New'}, 'test', now).id,
+                target,
+                'audio.flac',
+                staging,
+                backup,
+                now,
             ),
         )
         mark_staged(session, attempt, now)
@@ -719,7 +738,7 @@ def test_finalize_attempt_coalesces_lrclib_fetch_across_superseded_publications(
                 'attempt-lyric-second',
                 record.id,
                 source.id,
-                None,
+                append_metadata_revision(session, record.id, source.id, 'final', {'TITLE': 'Second'}, 'test', later).id,
                 target,
                 'audio.flac',
                 tmp_path / 'staging' / 'attempt-lyric-second',
@@ -859,7 +878,15 @@ def test_reconcile_with_a_disabled_provider_finalizes_without_queueing_a_fetch(t
         attempt = reserve_attempt(
             session,
             PublicationAttemptRequest(
-                'attempt-lyric-disabled', record.id, source.id, None, target, 'audio.flac', staging, backup, now
+                'attempt-lyric-disabled',
+                record.id,
+                source.id,
+                append_metadata_revision(session, record.id, source.id, 'final', {'TITLE': 'New'}, 'test', now).id,
+                target,
+                'audio.flac',
+                staging,
+                backup,
+                now,
             ),
         )
         mark_staged(session, attempt, now)

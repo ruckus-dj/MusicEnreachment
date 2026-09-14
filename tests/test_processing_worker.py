@@ -1104,6 +1104,9 @@ def test_worker_reassociates_musicbrainz_only_source_into_existing_recording(tmp
         assert refreshed is not None
         assert refreshed.library_record_id == target.id
         assert any(event.kind == 'source_recording_reassigned' for event in target.events)
+        assert session.query(JobRecord).filter_by(kind='final_publish').count() == 0
+        assert session.query(JobRecord).filter_by(kind='selection_refresh', library_record_id=target.id).count() == 1
+        assert session.query(JobRecord).filter_by(kind='selection_refresh', library_record_id=duplicate.id).count() == 0
 
 
 def test_candidate_selection_queries_folder_membership_in_sql(tmp_path: Path) -> None:
