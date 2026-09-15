@@ -20,7 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.0",
-    "ruff>=0.16.0",
+    "ruff>=0.16.7",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "testcontainers[postgres]>=4.15.0",
