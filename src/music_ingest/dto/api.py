@@ -458,13 +458,6 @@ class DestinationConflictCleanupResponse(BaseModel):
     queued: bool
 
 
-class LidarrDispatchResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    job_id: str | None
-    replayed: bool
-
-
 class Genre(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 

@@ -19,7 +19,6 @@ DEFAULT_POOLS = {
     'lrclib_fetch': 1,
     'artwork_enrichment': 2,
     'reconciliation_scan': 1,
-    'lidarr_intake': 1,
 }
 
 
@@ -65,6 +64,31 @@ def test_migration_adds_dedicated_pools_without_losing_legacy_capacity_on_downgr
         assert connection.scalar(text("SELECT value FROM runtime_settings WHERE key='processing.worker_pools'")) is None
     with Session(engine) as session:
         assert build_runtime_settings(session).worker_pools.model_dump() == DEFAULT_POOLS
+
+
+def test_migration_removes_obsolete_provider_pool_from_saved_settings() -> None:
+    from runpy import run_path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import text
+
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                'INSERT INTO runtime_settings (key, value, updated_at) '
+                "VALUES ('processing.worker_pools', :value, CURRENT_TIMESTAMP)"
+            ),
+            {'value': '{"filesystem_scan": 4, "lidarr_intake": 1}'},
+        )
+        migration = run_path('alembic/versions/20260915_0026_remove_provider_intake.py')
+        with Operations.context(MigrationContext.configure(connection)):
+            migration['upgrade']()
+        stored = connection.scalar(text("SELECT value FROM runtime_settings WHERE key='processing.worker_pools'"))
+
+    assert stored == '{"filesystem_scan": 4}'
 
 
 def test_pool_claim_never_borrows_other_kinds() -> None:

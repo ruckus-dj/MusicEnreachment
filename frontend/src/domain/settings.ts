@@ -21,7 +21,6 @@ export const runtimeSettingsDefaults: RuntimeSettingsDraft = {
     lrclib_fetch: 1,
     artwork_enrichment: 2,
     reconciliation_scan: 1,
-    lidarr_intake: 1,
   },
   musicbrainz_enabled: true,
   musicbrainz_user_agent: "music-ingest/0.1.0 (music-ingest@example.com)",

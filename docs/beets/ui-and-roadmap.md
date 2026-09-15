@@ -55,7 +55,7 @@
 
 Показывает:
 
-- источник: Lidarr, reconciliation scan, manual directory snapshot;
+- источник: external notification, reconciliation scan, manual directory snapshot;
 - policy/config revision;
 - started/updated timestamps;
 - точные раздельные счётчики;

@@ -83,30 +83,6 @@ def test_intake_source_when_conflicting_observations_preserves_source_and_databa
     assert not (tmp_path / 'provenance').exists()
 
 
-def test_intake_source_when_repeated_lidarr_observation_reuses_source_identity(tmp_path: Path) -> None:
-    # Given: a Lidarr source whose path and bytes are observed twice.
-    source = tmp_path / 'lidarr.flac'
-    _ = source.write_bytes(b'lidarr source bytes')
-    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "intake.db"}')
-    Base.metadata.create_all(engine)
-    request = intake_request(source, Origin.LIDARR)
-
-    # When: the same source is submitted twice.
-    with Session(engine) as session:
-        first = intake_source(session, request)
-        session.commit()
-        second = intake_source(session, request)
-        session.commit()
-        persisted = session.get(SourceRecord, first.source_id)
-
-    # Then: its durable identity and evidence are idempotent rather than duplicated.
-    assert first.source_id == second.source_id
-    assert persisted is not None
-    assert persisted.origin == Origin.LIDARR.value
-    assert len(persisted.tag_observations) == 2
-    assert len(persisted.provider_attempts) == 1
-
-
 def test_intake_source_when_distinct_paths_have_identical_bytes_keeps_records_separate(tmp_path: Path) -> None:
     # Given: two immutable observations at distinct paths with exactly the same bytes.
     first = tmp_path / 'first.flac'
@@ -133,12 +109,12 @@ def test_intake_source_when_distinct_paths_have_identical_bytes_keeps_records_se
 
 
 def test_intake_source_when_repeated_database_identity_does_not_create_files(tmp_path: Path) -> None:
-    # Given: a Lidarr source whose database identity already exists.
-    source = tmp_path / 'lidarr.flac'
-    _ = source.write_bytes(b'lidarr source bytes')
+    # Given: a source whose database identity already exists.
+    source = tmp_path / 'source.flac'
+    _ = source.write_bytes(b'source bytes')
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "intake.db"}')
     Base.metadata.create_all(engine)
-    request = intake_request(source, Origin.LIDARR)
+    request = intake_request(source, Origin.MANUAL)
     with Session(engine) as session:
         first = intake_source(session, request)
         session.commit()

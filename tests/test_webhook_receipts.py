@@ -21,7 +21,7 @@ def test_webhook_receipt_when_replayed_reuses_existing_receipt_and_job(tmp_path:
     Base.metadata.create_all(engine)
     receipt = WebhookReceiptInput(
         event_fingerprint='a' * 64,
-        provider_name='lidarr',
+        provider_name='downloader',
         payload_json='{"event":"Download"}',
         received_at=datetime(2026, 7, 29, tzinfo=UTC),
         job_id='job-1',
@@ -56,12 +56,12 @@ def test_webhook_receipt_when_same_fingerprint_has_different_payload_rejects_rep
     received_at = datetime(2026, 7, 29, tzinfo=UTC)
     with Session(engine) as session:
         repository = WebhookReceiptRepository(session)
-        repository.record_or_reuse(WebhookReceiptInput('a' * 64, 'lidarr', '{"event":"Download"}', received_at))
+        repository.record_or_reuse(WebhookReceiptInput('a' * 64, 'downloader', '{"event":"Download"}', received_at))
         session.commit()
 
         # When: the fingerprint is replayed with changed durable content.
         with pytest.raises(ReceiptReplayConflictError):
-            repository.record_or_reuse(WebhookReceiptInput('a' * 64, 'lidarr', '{"event":"Rename"}', received_at))
+            repository.record_or_reuse(WebhookReceiptInput('a' * 64, 'downloader', '{"event":"Rename"}', received_at))
 
         # Then: the original receipt remains the only durable record.
         assert len(session.scalars(select(WebhookReceiptRecord)).all()) == 1

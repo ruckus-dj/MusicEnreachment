@@ -50,27 +50,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  lidarr:
-    image: lscr.io/linuxserver/lidarr:latest
-    container_name: music-enrichment-lidarr
-    environment:
-      PUID: ${PUID:-501}
-      PGID: ${PGID:-20}
-      TZ: ${TZ:-Europe/Moscow}
-      UMASK: "022"
-    ports:
-      - "8686:8686"
-    volumes:
-      - ./config/lidarr:/config
-      - ./data/downloads:/data/downloads
-      - ./data/media:/data/media
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8686/ping >/dev/null"]
-      interval: 5s
-      timeout: 3s
-      retries: 24
-      start_period: 20s
-    restart: unless-stopped
 
   navidrome:
     image: deluan/navidrome:latest
@@ -117,21 +96,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  lidarr-webhook:
-    image: curlimages/curl:latest
-    command: ["/bin/sh", "/configure-lidarr-webhook.sh"]
-    depends_on:
-      lidarr:
-        condition: service_healthy
-      music-ingest:
-        condition: service_healthy
-    environment:
-      LIDARR_URL: http://lidarr:8686
-      WEBHOOK_URL: http://music-ingest:8000/api/intake/lidarr
-    volumes:
-      - ./config/lidarr:/config:ro
-      - ./scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro
-    restart: "no"
 
 networks:
   default:

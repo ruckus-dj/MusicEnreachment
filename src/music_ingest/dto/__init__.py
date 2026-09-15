@@ -21,7 +21,6 @@ from music_ingest.dto.api import (
     LibraryTrackListResponse,
     LibraryTrackQuery,
     LibraryTrackResponse,
-    LidarrDispatchResult,
     LyricsStatus,
     ManualActionCountsResponse,
     ManualActionFilter,
@@ -70,14 +69,6 @@ from music_ingest.dto.intake import (
     SourceId,
     SourceTagObservation,
 )
-from music_ingest.dto.lidarr import (
-    LidarrAlbumDeletePayload,
-    LidarrDownloadPayload,
-    LidarrEvent,
-    LidarrIntakeError,
-    LidarrRenamePayload,
-    LidarrTestPayload,
-)
 from music_ingest.dto.musicbrainz_genres import GenrePage
 from music_ingest.dto.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 from music_ingest.dto.reconciliation import ScanJobResponse, ScanResult
@@ -119,13 +110,6 @@ __all__ = [
     'LibraryTrackListResponse',
     'LibraryTrackQuery',
     'LibraryTrackResponse',
-    'LidarrAlbumDeletePayload',
-    'LidarrDispatchResult',
-    'LidarrDownloadPayload',
-    'LidarrEvent',
-    'LidarrIntakeError',
-    'LidarrRenamePayload',
-    'LidarrTestPayload',
     'LyricsStatus',
     'MatchingSettings',
     'ManualSourceSelection',

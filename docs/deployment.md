@@ -17,8 +17,10 @@ Alembic head before serving and runs the API and processing worker together.
 It exposes port 8000 only on Komodo's internal network. Production authentication
 is owned by the reverse proxy; the application does not configure credentials.
 
-Lidarr must reach `http://music-ingest:8000/api/intake/lidarr` on that internal
-network.
+Any downloader or external service may notify
+`http://music-ingest:8000/api/intake/notification` on the internal network after
+it has changed a configured source root. The notification queues reconciliation;
+the service does not parse provider-specific payloads or persist provider provenance.
 
 ## Operator Configuration
 
@@ -32,10 +34,10 @@ load, the service synchronizes the official MusicBrainz genre catalog through
 original MusicBrainz name for matching and shows a readable display label; the
 manual aliases JSON is not part of the runtime contract.
 
-Configure Lidarr to import into `/mnt/pool/data/music-incoming`, then mount that
+Configure downloaders to write into `/mnt/pool/data/music-incoming`, then mount that
 path read-only as an immediate child of `/data/sources` in `music-ingest` and set
 `MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources`. Configure the mounted directory
-through **Settings → Source roots** before enabling Lidarr. Operators may configure
+through **Settings → Source roots** before enabling notifications. Operators may configure
 only existing, non-symlink immediate children of `/data/sources`.
 Mount
 `/mnt/pool/data/media` as writable `/data/publish/music` for final media, and
@@ -47,7 +49,7 @@ readiness if media cannot support writes, fsync and atomic rename. Navidrome mus
 root and set `ND_SCANNER_PURGEMISSING=full` so confirmed missing files are removed
 after full scans. PostgreSQL is the only durable store for tags, versions, provenance,
 review decisions, failure reasons, and publication metadata. The normal workflow
-does not replace a Lidarr incoming pathname, and Task 9a remains separately gated.
+does not replace any incoming pathname.
 
 The source-roots parent must already exist, be a directory, and not be a symlink. Every configured root must be an existing, non-symlink immediate child. Ingest and publication support `.flac`, `.mp3`, `.m4a`, `.ogg`, and `.opus`. M4A accepts AAC and ALAC; Ogg accepts Vorbis and Opus according to its probed codec. Mutagen handles all tag reads, writes, and verification: Vorbis/Opus Comments for FLAC/Ogg/Opus, ID3v2.4 for MP3, and MP4 atoms for M4A. Raw AAC and unsupported containers remain outside the publication contract.
 

@@ -37,11 +37,6 @@ def test_worker_pools_cover_each_kind_exactly_once() -> None:
         'lrclib_fetch',
         'artwork_enrichment',
         'reconciliation_scan',
-        'lidarr_download',
-        'lidarr_releaseimport',
-        'lidarr_rename',
-        'lidarr_albumdelete',
     }
     for pool, allowed in WORKER_POOLS.items():
-        if pool != 'lidarr_intake':
-            assert allowed == frozenset({pool})
+        assert allowed == frozenset({pool})

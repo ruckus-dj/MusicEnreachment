@@ -424,7 +424,7 @@ def _source(session: Session, path: Path) -> SourceRecord:
         size_bytes=stat.st_size,
         sha256=sha256(path.read_bytes()).hexdigest(),
         duration_seconds=1,
-        origin='lidarr',
+        origin='manual',
         intake_state='discovered',
     )
     session.add(source)
@@ -1626,7 +1626,7 @@ def test_musicbrainz_reprocess_uses_latest_acoustid_or_reviewer_selected_identit
         size_bytes=1,
         sha256='0' * 64,
         duration_seconds=1,
-        origin='lidarr',
+        origin='manual',
         intake_state='present',
     )
     source.candidates.extend(
@@ -1808,7 +1808,7 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
             JobRecord(
                 id='job-non-flac',
                 source_id=source.id,
-                kind='lidarr_download',
+                kind='filesystem_scan',
                 state='queued',
                 created_at=datetime.now(UTC),
             )

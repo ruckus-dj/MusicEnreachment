@@ -1,13 +1,12 @@
 # Music Ingest
 
-Music Ingest receives Lidarr download webhooks, records immutable source provenance, validates media, publishes a reviewable media copy, and exposes the review UI/API.
+Music Ingest receives generic source-change notifications, reconciles configured source roots, validates media, publishes a reviewable media copy, and exposes the review UI/API.
 
 ## Runtime flow
 
 ```text
-Lidarr webhook
-  -> api/lidarr_intake.py
-  -> intake/service.py
+Source-change notification or scheduled scan
+  -> reconciliation scan
   -> persistence models and repositories
   -> processing/worker.py
   -> inspectors + sanitizers + normalize
@@ -26,7 +25,7 @@ The service starts one FastAPI process and one in-process polling worker. Postgr
 | `config/` | Typed YAML policy parsing and safe summaries |
 | `enrichment/` | Optional artwork and fingerprint capabilities |
 | `intake/` | Source intake and provenance registration |
-| `integrations/` | Lidarr and Navidrome adapters |
+| `integrations/` | Navidrome adapters |
 | `inspectors/` | Media structure inspection |
 | `lyrics/` | Lyrics validation |
 | `matching/` | Provider adapters, evidence, and scoring |
@@ -87,7 +86,7 @@ curl --fail http://127.0.0.1:8787/healthz
 docker compose down
 ```
 
-The test stand is intentionally disposable infrastructure for quickly checking Lidarr, PostgreSQL, the worker, and Navidrome together. Its local environment file is not production configuration.
+The test stand is intentionally disposable infrastructure for quickly checking PostgreSQL, the worker, and Navidrome together. Its local environment file is not production configuration.
 
 ## Safety boundaries
 

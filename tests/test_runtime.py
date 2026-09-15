@@ -565,18 +565,15 @@ def test_runtime_app_when_configured_source_root_receives_download_uses_that_roo
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
     monkeypatch.setattr(server, 'run_processing_worker', _record_worker_start)
 
-    # When: the runtime-owned HTTP app receives a Download webhook.
+    # When: the runtime-owned HTTP app receives an external change notification.
     with TestClient(server.create_runtime_app()) as client:
-        response = client.post(
-            '/api/intake/lidarr',
-            json={'eventType': 'Download', 'trackFiles': [{'path': str(source_path)}], 'isUpgrade': False},
-        )
+        response = client.post('/api/intake/notification', json={'paths': [str(source_path)]})
 
-    # Then: the configured source root is accepted and creates source-linked durable work.
+    # Then: the configured source root is reconciled into source-linked durable work.
     assert response.status_code == 202
     with Session(engine) as session:
         job = session.scalars(select(JobRecord)).one()
-        assert job.source_id is not None
+        assert job.kind == 'reconciliation_scan'
 
 
 def test_migrations_when_runtime_starts_upgrades_to_head(monkeypatch: pytest.MonkeyPatch) -> None:

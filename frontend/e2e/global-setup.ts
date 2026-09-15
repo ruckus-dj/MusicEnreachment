@@ -49,14 +49,7 @@ export default async function globalSetup(_config: FullConfig) {
     await writeFile(e2eSeedPath, `${JSON.stringify(seedResponse, null, 2)}\n`, "utf8");
     const fixturePath = process.env.MUSIC_INGEST_E2E_FIXTURE_PATH;
     if (fixturePath) {
-      const seed = await api.post("/api/intake/lidarr", {
-        data: {
-          eventType: "ReleaseImport",
-          isUpgrade: false,
-          trackFiles: [{ path: fixturePath }],
-          deletedFiles: [],
-        },
-      });
+      const seed = await api.post("/api/intake/notification", { data: { paths: [fixturePath] } });
       if (!seed.ok() && seed.status() !== 409) throw new Error(`E2E fixture intake failed: ${seed.status()}`);
       const scan = await api.post("/api/reconciliation/scan");
       if (!scan.ok()) throw new Error(`E2E fixture scan failed: ${scan.status()}`);

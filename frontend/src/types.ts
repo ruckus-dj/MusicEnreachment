@@ -9,7 +9,6 @@ export interface WorkerPoolSettings {
   readonly lrclib_fetch: number;
   readonly artwork_enrichment: number;
   readonly reconciliation_scan: number;
-  readonly lidarr_intake: number;
 }
 
 export type Tags = Record<string, string>;

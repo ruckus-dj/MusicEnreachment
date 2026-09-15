@@ -4,11 +4,10 @@ This isolated Docker test stand does not contact or change the production server
 
 ## Paths and access boundaries
 
-| Host path | Purpose | Lidarr | music-ingest | Navidrome |
-| --- | --- | --- | --- | --- |
-| `data/downloads/` | Raw material placed by a download client | read/write at `/data/downloads` | unavailable | unavailable |
-| `data/sources/legacy/` | Lidarr-managed legacy import library | read/write at `/data/sources/legacy` | read-only at `/data/sources/legacy` | unavailable |
-| `data/media/` | Published canonical media library | unavailable | read/write at `/data/media` | media read-only at `/music` |
+| Host path | Purpose | music-ingest | Navidrome |
+| --- | --- | --- | --- |
+| `data/sources/` | Read-only incoming source roots | read-only at `/data/sources` | unavailable |
+| `data/media/` | Published canonical media library | read/write at `/data/media` | media read-only at `/music` |
 
 The PostgreSQL-backed API and its in-process worker receive only the incoming
 source tree read-only, the final media tree read/write, and the disposable
@@ -37,10 +36,8 @@ docker compose up --build --wait
 ```
 
 2. Compose starts PostgreSQL, runs Alembic during API startup, starts the
-   in-process worker, configures and tests Lidarr's `music-ingest` webhook, and
-   exposes the ready API at <http://127.0.0.1:8787/healthz>.
-3. Open Lidarr at <http://127.0.0.1:8686>, Navidrome at
-   <http://127.0.0.1:4533>, and Feishin at <http://127.0.0.1:9180>.
+   in-process worker, and exposes the ready API at <http://127.0.0.1:8787/healthz>.
+3. Open Navidrome at <http://127.0.0.1:4533> and Feishin at <http://127.0.0.1:9180>.
 
 ### Checking synchronized lyrics
 
@@ -79,13 +76,10 @@ Verify the actual API and its migrated PostgreSQL runtime with:
 curl --fail --silent --show-error http://127.0.0.1:8787/healthz
 curl --fail --silent --show-error http://127.0.0.1:8787/api/settings/source-roots
 docker compose exec postgres psql -U music_ingest -d music_ingest -tAc 'select version_num from alembic_version'
-docker compose logs lidarr-webhook
+
 ```
 
-The local UI and API are public; production authentication is owned by the reverse
-proxy. `lidarr-webhook` is a one-shot setup task, not a healthy long-running
-service: an exit code of zero means Lidarr saved the endpoint and its `testall`
-validation reported success.
+The local UI and API are public; production authentication is owned by the reverse proxy.
 
 ## Stable library flow
 
@@ -114,8 +108,8 @@ bind-mounted fixture or configuration path.
 
 ### Reset for a first library scan
 
-To repeat an initial import while retaining the configured source roots and the
-Lidarr/Navidrome settings, run:
+To repeat an initial import while retaining the configured source roots and
+Navidrome settings, run:
 
 ```sh
 ./scripts/reset-library.sh
@@ -125,6 +119,6 @@ The script stops only `music-ingest`, clears its imported database tables, reset
 the saved source roots to `never_scanned`, and clears only the active `output_root`
 from Music Ingest's `storage_config`. It does not modify `data/incoming/`,
 `data/sources/`, `data/downloads/`, `appdata/`, `config/`, or `.env`; it does not
-stop or restart Lidarr or Navidrome. It then starts only `music-ingest` and checks
+stop or restart Navidrome. It then starts only `music-ingest` and checks
 its API from inside the service. After it completes, open the UI and select
 **«Сканировать новые и изменённые»** to process the source library as a first import.

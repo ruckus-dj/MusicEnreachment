@@ -86,7 +86,7 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '65101c5e5b73ae1faf6639bf189f0ff0ae9cf0d05050575cc6e734a838256d34'
+        'dbe44323bf5835ecb296bee8361d4e50e0ec5aa11ea1d0a1ea5d1f7852b01db4'
     )
 
 

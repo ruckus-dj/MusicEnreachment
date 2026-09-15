@@ -17,17 +17,7 @@ from music_ingest.settings import SettingKey, get_setting_value
 
 LOGGER = logging.getLogger(__name__)
 MAX_POOL_CONCURRENCY = 8
-WORKER_POOLS: dict[str, frozenset[str]] = {
-    name: frozenset({name}) for name in WorkerPoolSettings.model_fields if name != 'lidarr_intake'
-}
-WORKER_POOLS['lidarr_intake'] = frozenset(
-    {
-        'lidarr_download',
-        'lidarr_releaseimport',
-        'lidarr_rename',
-        'lidarr_albumdelete',
-    }
-)
+WORKER_POOLS: dict[str, frozenset[str]] = {name: frozenset({name}) for name in WorkerPoolSettings.model_fields}
 
 
 @dataclass(frozen=True, slots=True)

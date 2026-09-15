@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from alembic import command
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
-_HEAD_REVISION = '20260914_0027'
+_HEAD_REVISION = '20260915_0026'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'
 _LYRIC_STATE_COLUMNS = frozenset(

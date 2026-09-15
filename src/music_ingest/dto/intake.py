@@ -14,7 +14,6 @@ type NonNegativeDuration = Annotated[int, Field(ge=0, strict=True)]
 
 class Origin(StrEnum):
     MANUAL = 'manual'
-    LIDARR = 'lidarr'
 
 
 class IntakeState(StrEnum):

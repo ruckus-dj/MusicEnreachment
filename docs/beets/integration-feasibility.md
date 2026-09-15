@@ -8,7 +8,7 @@ beets часто воспринимают как CLI, однако фактич�
 
 MusicEnreachment уже реализует:
 
-- read-only intake из Lidarr или reconciliation scan;
+- read-only intake через reconciliation scan;
 - стабильный `LibraryRecord`, не зависящий от пути;
 - версии источников и SHA-256 provenance;
 - AcousticID/MusicBrainz evidence и review decisions;

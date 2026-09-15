@@ -25,9 +25,7 @@ class Service(BaseModel):
 class LocalServices(BaseModel):
     postgres: Service
     music_ingest: Service = Field(alias='music-ingest')
-    lidarr: Service
     navidrome: Service
-    lidarr_webhook: Service = Field(alias='lidarr-webhook')
 
 
 class LocalCompose(BaseModel):
@@ -54,7 +52,6 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
     # Then: all runtime dependencies, readiness checks, and a shared processing filesystem exist.
     assert services.postgres
     assert services.music_ingest.healthcheck
-    assert services.lidarr.healthcheck
     assert services.navidrome.healthcheck
     assert services.music_ingest.volumes == [
         './data/sources:/data/sources:ro',
@@ -63,29 +60,7 @@ def test_local_stand_when_rendered_contains_the_complete_runtime_topology() -> N
         './data/downloads:/data/downloads',
         './appdata/music-ingest:/appdata/music-ingest',
     ]
-    assert services.lidarr.volumes == [
-        './config/lidarr:/config',
-        './data/downloads:/data/downloads',
-        './data/media:/data/media',
-    ]
     assert services.navidrome.volumes == ['./config/navidrome:/data', './data/media:/music:ro']
-    assert services.lidarr_webhook.depends_on['lidarr'].condition == 'service_healthy'
-    assert services.lidarr_webhook.depends_on['music-ingest'].condition == 'service_healthy'
-    assert './scripts/configure-lidarr-webhook.sh:/configure-lidarr-webhook.sh:ro' in services.lidarr_webhook.volumes
-    assert services.lidarr_webhook.restart == 'no'
-    assert not services.lidarr_webhook.healthcheck
-
-
-def test_lidarr_webhook_helper_when_reconfigured_replaces_stale_settings() -> None:
-    # Given: the test-stand helper that owns the sole Lidarr notification.
-    helper = (ROOT / 'test_stand' / 'scripts' / 'configure-lidarr-webhook.sh').read_text(encoding='utf-8')
-
-    # When: a prior stand run left the notification with obsolete credentials.
-    # Then: setup replaces it with the unauthenticated application URL.
-    assert 'MUSIC_INGEST_API_TOKEN' not in helper
-    assert 'Authorization' not in helper
-    assert '--request DELETE' in helper
-    assert '"id":[[:space:]]*' in helper
 
 
 def test_production_stack_when_deployed_runs_the_runtime_with_external_storage() -> None:

@@ -58,9 +58,7 @@ from music_ingest.publication.service import (
 from music_ingest.sanitizers.flac import FlacSanitizationFailure
 from music_ingest.storage_migration import resume_storage_migration
 
-_INITIAL_JOB_KINDS: Final = frozenset(
-    {'filesystem_scan', 'lidarr_download', 'lidarr_releaseimport', 'lidarr_rename', 'lidarr_albumdelete'}
-)
+_INITIAL_JOB_KINDS: Final = frozenset({'filesystem_scan'})
 
 
 @final

@@ -311,7 +311,7 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
             with Session(engine) as session:
                 source = session.scalar(select(SourceRecord).where(SourceRecord.id == 'source-race').with_for_update())
                 assert source is not None
-                source.origin = 'lidarr'
+                source.origin = 'updated'
                 holder_acquired.set()
                 assert release_holder.wait(timeout=5)
                 session.commit()
@@ -324,7 +324,7 @@ def test_process_analysis_source_lock_when_two_transactions_target_one_source_bl
                 claimed = ClaimedJob(JobRecord(source_id='source-race'), JobAttemptRecord())
                 contender_started.set()
                 source = SourceAccess(session).locked_source(claimed)
-                assert source is cached and source.origin == 'lidarr'
+                assert source is cached and source.origin == 'updated'
                 contender_acquired.set()
                 session.rollback()
 
@@ -495,7 +495,7 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
             connection.execute(
                 text(
                     'INSERT INTO jobs (id, kind, state, created_at) '
-                    "VALUES ('legacy-targetless-job', 'lidarr_albumdelete', 'queued', :created_at)"
+                    "VALUES ('legacy-targetless-job', 'reconciliation_scan', 'queued', :created_at)"
                 ),
                 {'created_at': observed_at},
             )
@@ -503,7 +503,7 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
                 text(
                     'INSERT INTO webhook_receipts '
                     '(event_fingerprint, provider_name, payload_json, received_at, job_id) '
-                    "VALUES (:fingerprint, 'lidarr', '{}', :created_at, 'legacy-targetless-job')"
+                    "VALUES (:fingerprint, 'notification', '{}', :created_at, 'legacy-targetless-job')"
                 ),
                 {'fingerprint': 'f' * 64, 'created_at': observed_at},
             )

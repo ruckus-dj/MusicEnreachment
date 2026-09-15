@@ -4,7 +4,7 @@
 
 An evidence-led local library: warm archival paper, ink-blue navigation, terracotta decision accent, and restrained depth. The shell should feel like a calm record store back office: fast to scan, safe to edit, and explicit about what is original, analyzed, or final.
 
-The product is source-agnostic. Lidarr, another service, and a manually populated incoming folder are all intake sources, not the library identity:
+The product is source-agnostic. Any downloader, another service, and a manually populated incoming folder are all intake sources, not the library identity:
 
 - **Sources** are immutable files found in configured incoming folders. Music Ingest may inspect, fingerprint, read tags, preserve observations, and record their disappearance, but it must never edit or delete them.
 - **Publications** are files created by Music Ingest in the managed media folder from a source and a metadata revision.

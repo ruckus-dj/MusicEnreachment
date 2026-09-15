@@ -23,7 +23,6 @@ const draft: RuntimeSettingsDraft = {
     lrclib_fetch: 1,
     artwork_enrichment: 2,
     reconciliation_scan: 1,
-    lidarr_intake: 1,
   },
   musicbrainz_enabled: true,
   musicbrainz_user_agent: "Music Ingest",

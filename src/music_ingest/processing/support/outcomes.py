@@ -145,13 +145,12 @@ class AttemptFinalizer:
 
     def requeue_changed_source(self, claimed: ClaimedJob, source: SourceRecord, path: Path, now: datetime) -> None:
         record = ensure_source_record(self.session, source, now)
-        origin = Origin.LIDARR if source.origin == Origin.LIDARR.value else Origin.MANUAL
         replacement = intake_source(
             self.session,
             IntakeRequest(
                 source_path=path,
                 source_root_id=source.source_root_id,
-                origin=origin,
+                origin=Origin.MANUAL,
                 duration_seconds=source.duration_seconds,
                 tag_observations=(),
                 artwork_observations=(),

@@ -14,7 +14,6 @@ class WorkerPoolSettings(BaseModel):
     lrclib_fetch: int = Field(default=1, ge=1, le=8)
     artwork_enrichment: int = Field(default=2, ge=1, le=8)
     reconciliation_scan: int = Field(default=1, ge=1, le=8)
-    lidarr_intake: int = Field(default=1, ge=1, le=8)
 
 
 class RuntimeSettings(BaseModel):
