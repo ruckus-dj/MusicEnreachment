@@ -23,6 +23,7 @@ from music_ingest.models import (
     LibraryPublicationRecord,
 )
 from music_ingest.models.jobs import ClaimedJob, JobRepository
+from music_ingest.normalize.source_values import source_values
 from music_ingest.processing.candidates import _has_explicit_musicbrainz_identity
 from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.execution import (
@@ -47,6 +48,7 @@ from music_ingest.publication import (
 )
 from music_ingest.publication.workspace import durable_directory, prepare_publication_copy
 from music_ingest.settings import build_runtime_settings
+from music_ingest.source_encoding import recover_import_encoding
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,14 +96,20 @@ class InitialHandler:
         plan = plan_media_stage(source_path)
         tags = plan.source_tags
         self.evidence.capture_observations(source, source_path, tags)
-        original_tags = dict(tags)
+        self.session.flush()
+        recover_import_encoding(self.session, source, now)
+        # This worker owns the import. Carry its revision fence forward so a retry
+        # after a later staging failure does not supersede its own corrected input.
+        claimed.job.source_metadata_revision = source.source_metadata_revision
+        original_tags = source_values(source.tag_observations)
+        plan = plan_media_stage(source_path, source_tags=tuple(original_tags.items()))
         metadata = plan.metadata
         record = ensure_source_record(self.session, source, now)
         _ = append_metadata_revision(self.session, record.id, source.id, 'original', original_tags, 'source', now)
         configured_musicbrainz, configured_acoustid, _ = self.settings.configured_providers()
         providers_enabled = configured_musicbrainz is not None or configured_acoustid is not None
         if not _has_explicit_musicbrainz_identity(original_tags):
-            if self.evidence.analyze_source(source, source_path) is None:
+            if self.evidence.import_fingerprint(source, source_path) is None:
                 return
             source.intake_state = 'present'
             _ = reevaluate_effective_source_decision(self.session, record.id, now)

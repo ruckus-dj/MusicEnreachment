@@ -10,6 +10,7 @@ from sqlalchemy import case, func, select
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.models import JobRecord, SourceRecord
+from music_ingest.normalize.source_values import source_values
 from music_ingest.processing.runtime import ProcessingRuntimeMonitor
 from music_ingest.settings import build_runtime_settings
 
@@ -81,7 +82,7 @@ def create_router(
                 source = sources.get(job.source_id)
                 if source is None or source.library_record_id is None:
                     return None
-                tags = {item.tag_name.upper(): item.value for item in source.tag_observations}
+                tags = source_values(source.tag_observations)
                 return {
                     'record_id': source.library_record_id,
                     'source_id': source.id,

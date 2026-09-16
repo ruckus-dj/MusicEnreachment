@@ -49,6 +49,26 @@ const detail: Detail = {
   events: [],
 };
 
+it("mounts source interpretation without changing the Final editor", async () => {
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(Response.json({ source_id: "source-a", source_revision: 1, fields: [] }));
+  try {
+    const setDraft = vi.fn();
+    renderDetail({ onEncodingApplied: vi.fn(), setDraft });
+    await screen.findByText("Source rev 1");
+    fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+    fireEvent.change(screen.getByLabelText("Текущий тег TITLE"), {
+      target: { value: "Final edit" },
+    });
+    expect(setDraft).toHaveBeenCalledWith({ TITLE: "Final edit" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Кодировки исходных полей")).toBeTruthy();
+  } finally {
+    fetcher.mockRestore();
+  }
+});
+
 function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}) {
   const props = {
     detail,

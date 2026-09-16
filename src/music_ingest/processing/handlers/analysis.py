@@ -44,6 +44,7 @@ from music_ingest.models import (
     SourceRecord,
 )
 from music_ingest.models.jobs import ClaimedJob, JobRepository
+from music_ingest.normalize.source_values import source_values
 from music_ingest.processing.candidates import (
     _acoustid_recording_mbids,
     _candidate_records,
@@ -56,9 +57,6 @@ from music_ingest.processing.execution import (
     ExecutionContext,
     HandlerOutcome,
     QuarantineSource,
-)
-from music_ingest.processing.metadata import (
-    read_tags,
 )
 from music_ingest.processing.support.evidence import SourceEvidence
 from music_ingest.processing.support.settings import RuntimeProcessingSettings
@@ -82,8 +80,18 @@ class AnalysisHandler:
             return ChangedSource(source.id, source_path)
         fingerprint = self.evidence.analyze_source(source, source_path)
         if fingerprint is None:
+            record = ensure_source_record(self.session, source, now)
+            record_event(
+                self.session,
+                record.id,
+                'source_evidence_unavailable',
+                'needs_review',
+                'stored fingerprint unavailable; explicit reimport is required',
+                now,
+                source.id,
+            )
             return
-        tags = read_tags(source_path)
+        tags = tuple(source_values(source.tag_observations).items())
         record = ensure_source_record(self.session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
         recording_mbids = tuple(
@@ -251,6 +259,7 @@ class AnalysisHandler:
                 run = ProviderCandidateRunRecord(
                     source_id=source.id,
                     provider_name=provider_name,
+                    source_metadata_revision=source.source_metadata_revision,
                     created_at=now,
                 )
                 source.candidate_runs.append(run)

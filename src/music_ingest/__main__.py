@@ -10,6 +10,11 @@ from music_ingest.cli.media_stage import MediaStageCliError, run_media_stage_cli
 
 
 def main() -> None:
+    if len(argv) > 1 and argv[1] == 'encoding-backfill':
+        from music_ingest.cli.encoding_backfill import main as encoding_backfill_main
+
+        encoding_backfill_main(argv[2:])
+        return
     if len(argv) == 2 and argv[1] == 'serve':
         run('music_ingest.api.server:create_runtime_app', factory=True, host='0.0.0.0', port=8000)  # noqa: S104
         return

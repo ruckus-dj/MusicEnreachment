@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CandidateReview } from "../components/CandidateReview";
 import { MetadataComparison } from "../components/MetadataComparison";
+import { SourceEncoding } from "../components/SourceEncoding";
 import { lyricsDisplay, lyricsSynced } from "../domain/lyrics";
 import {
   isPublicationHash,
@@ -20,6 +21,7 @@ export function TrackDetail({
   reprocessing,
   musicbrainzHost,
   onSave,
+  onEncodingApplied,
   onRetryAcoustId,
   onRetryMusicBrainz,
   onOverrideRelease,
@@ -40,6 +42,7 @@ export function TrackDetail({
   readonly reprocessing: boolean;
   readonly musicbrainzHost?: string | null;
   readonly onSave: () => Promise<boolean>;
+  readonly onEncodingApplied?: (queued: boolean) => Promise<void>;
   readonly onRetryAcoustId?: () => void;
   readonly onRetryMusicBrainz?: () => void;
   readonly onOverrideRelease?: (releaseMbid: string) => void;
@@ -350,6 +353,14 @@ export function TrackDetail({
           </div>
         </div>
       </section>
+
+      {onEncodingApplied && (
+        <SourceEncoding
+          sourceId={sourceId}
+          onApplied={onEncodingApplied}
+          disabled={reprocessing || saving}
+        />
+      )}
 
       <MetadataComparison
         fields={visibleTagFields}

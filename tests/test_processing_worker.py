@@ -645,6 +645,69 @@ def test_musicbrainz_lookup_when_acoustid_supplies_recording_mbid_works_without_
     assert isinstance(result.musicbrainz, MusicBrainzMatch)
 
 
+def test_initial_worker_auto_encoding_precedes_first_musicbrainz_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from music_ingest.models.jobs import JobRepository
+    from music_ingest.normalize.source_values import source_values
+
+    requests: list[MusicBrainzLookupRequest] = []
+
+    class Provider:
+        def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzMatch:
+            requests.append(request)
+            return MusicBrainzMatch(
+                FixtureProvenance(Path('fixture'), 'a' * 64),
+                ReleaseCandidate('release-id', 'Фиги', 'Ангус'),
+            )
+
+    config = replace(_config(tmp_path), musicbrainz_provider=Provider())
+    config.incoming_root.mkdir()
+    path = _flac(config.incoming_root / 'damaged.flac')
+    damaged = tuple(
+        (name, value.encode('cp1251').decode('latin-1'))
+        for name, value in (
+            ('TITLE', 'Морячек'),
+            ('ARTIST', 'Ангус'),
+            ('ALBUM', 'Фиги'),
+        )
+    )
+    write_normalized_tags(path, damaged)
+    original_hash = sha256(path.read_bytes()).hexdigest()
+    fingerprint = FingerprintResult(FingerprintState.SUCCESS, 'cached', 10, 'test', 'a' * 64, None, None)
+    monkeypatch.setattr(source_evidence, 'fingerprint_source', lambda *_args, **_kwargs: fingerprint)
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        item = _source(session, path)
+        from music_ingest.enrichment.fingerprints import persist_fingerprint
+        from music_ingest.intake.service import SourceId
+
+        persist_fingerprint(session, SourceId(item.id), fingerprint)
+        initial_job = JobRepository(session).enqueue(item.id, 'filesystem_scan', datetime.now(UTC))
+        assert initial_job is not None
+        session.commit()
+        worker = ProcessingWorker(session, config)
+        assert worker.run_once(allowed_kinds={'filesystem_scan'})
+        assert initial_job.state == 'completed'
+        assert initial_job.source_metadata_revision == item.source_metadata_revision == 2
+        assert source_values(item.tag_observations)['TITLE'] == 'Морячек'
+        queued = list(session.scalars(select(JobRecord).where(JobRecord.kind == 'musicbrainz_analysis')))
+        assert len(queued) == 1
+        assert queued[0].source_metadata_revision == 2
+        assert not requests
+        assert worker.run_once(allowed_kinds={'musicbrainz_analysis'})
+        assert len(requests) == 1, (queued[0].state, queued[0].failure_reason)
+        assert 'recording:"Морячек"' in requests[0].query
+        assert 'artist:"Ангус"' in requests[0].query
+        assert not list(session.scalars(select(JobRecord).where(JobRecord.kind == 'acoustid_analysis')))
+        assert all(
+            f.original_value == dict(damaged)[f.tag_name] for f in item.tag_observations if f.tag_name in dict(damaged)
+        )
+    assert sha256(path.read_bytes()).hexdigest() == original_hash
+
+
 def test_musicbrainz_lookup_uses_artist_and_title_without_album(tmp_path: Path) -> None:
     # Given: source metadata has an artist and title but no album.
     requests: list[MusicBrainzLookupRequest] = []
@@ -1729,6 +1792,8 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
     config.incoming_root.mkdir()
     source_path = config.incoming_root / f'fixture{suffix}'
     source_path.write_bytes(b'original non-flac bytes')
+    # Synthetic stream test stubs the container reader as well as media probes.
+    monkeypatch.setattr('music_ingest.normalize.source_evidence.File', lambda *_args, **_kwargs: None)
     original_bytes = source_path.read_bytes()
     capability = MediaCapabilityInspection(
         MediaCapability(

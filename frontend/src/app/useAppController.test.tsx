@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { useAppController } from "./useAppController";
@@ -138,6 +138,278 @@ describe("useAppController error messages", () => {
         ? "Исправление не применено: требуется проверка конфликта."
         : "Исправление записи не применено.",
     );
+  });
+});
+
+function encodingRecord(recordId = "record-1", sourceId = "source-a", title = "Saved") {
+  return {
+    record_id: recordId,
+    sources: [{ source_id: sourceId, path: "/track.flac", sha256: "a", state: "present" }],
+    publications: [],
+    metadata_revisions: [{ source_id: sourceId, layer: "final", tags: { TITLE: title } }],
+    events: [],
+  };
+}
+
+describe("useAppController source encoding refresh", () => {
+  it("preserves unsaved Final through queued encoding polling and job completion", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    let completed = false;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/library/records/record-1") {
+        return Response.json({
+          ...encodingRecord(),
+          states: { processing: completed ? "complete" : "analyzing", publication: "current" },
+          events: completed ? [{ kind: "encoding-completed" }] : [],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+    const { result } = renderHook(() => useAppController());
+    await act(async () => {});
+    act(() => result.current.setDraft({ TITLE: "Unsaved edit" }));
+    await act(async () => result.current.encodingApplied(true));
+    expect(Object.keys(result.current.watchedRecords)).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+    expect(result.current.watchedRecords["record-1:source-a"].sawPending).toBe(true);
+    completed = true;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.detail?.events).toEqual([{ kind: "encoding-completed" }]);
+    expect(result.current.items[0]).toEqual(result.current.detail);
+    expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+    expect(result.current.watchedRecords).toEqual({});
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/record-1")).length,
+    ).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each(["complete", "error"])(
+    "ignores stale queued polling %s after navigation and keeps polling the current route",
+    async (outcome) => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+      let resolvePoll: (response: Response) => void = () => {};
+      let rejectPoll: (error: Error) => void = () => {};
+      const pending = new Promise<Response>((resolve, reject) => {
+        resolvePoll = resolve;
+        rejectPoll = reject;
+      });
+      const deferred = { promise: pending, resolve: resolvePoll, reject: rejectPoll };
+      let polling = false;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input) === "/api/library/records/record-1") {
+          if (polling) {
+            polling = false;
+            return deferred.promise;
+          }
+          return Response.json({
+            ...encodingRecord(),
+            states: { processing: "complete", publication: "current" },
+            events: [{ kind: "A completed" }],
+          });
+        }
+        if (String(input) === "/api/library/records/record-2") {
+          return Response.json({
+            ...encodingRecord("record-2", "source-b", "B saved"),
+            states: { processing: "complete", publication: "current" },
+            events: [{ kind: "B completed" }],
+          });
+        }
+        return Response.json({ items: [] });
+      });
+      const { result } = renderHook(() => useAppController());
+      await act(async () => {});
+      await act(async () => result.current.encodingApplied(true));
+      polling = true;
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      await act(async () =>
+        result.current.navigate({ screen: "track", recordId: "record-2", sourceId: "source-b" }),
+      );
+      act(() => {
+        result.current.setDraft({ TITLE: "B unsaved" });
+        result.current.setNotice("B notice");
+      });
+      await act(async () => {
+        if (outcome === "error") deferred.reject(new Error("A stale failure"));
+        else
+          deferred.resolve(
+            Response.json({
+              ...encodingRecord(),
+              states: { processing: "complete", publication: "current" },
+              events: [{ kind: "A completed" }],
+            }),
+          );
+      });
+      expect(result.current.detail?.record_id).toBe("record-2");
+      expect(result.current.items[0]?.record_id).toBe("record-2");
+      expect(result.current.draft).toEqual({ TITLE: "B unsaved" });
+      expect(result.current.notice).toBe("B notice");
+      // A watch remains useful in the background, but cannot surface A errors on B.
+      await act(async () => result.current.encodingApplied(true));
+      await act(async () => vi.advanceTimersByTimeAsync(2_000));
+      expect(result.current.detail?.record_id).toBe("record-2");
+      expect(result.current.draft).toEqual({ TITLE: "B unsaved" });
+      expect(result.current.watchedRecords["record-2:source-b"]).toBeUndefined();
+    },
+  );
+
+  it.each(["complete", "error"])(
+    "ignores an older queued poll %s after a newer encoding refresh on the same route",
+    async (outcome) => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+      let resolvePoll: (response: Response) => void = () => {};
+      let rejectPoll: (error: Error) => void = () => {};
+      const pending = new Promise<Response>((resolve, reject) => {
+        resolvePoll = resolve;
+        rejectPoll = reject;
+      });
+      let deferNext = false;
+      let version = "initial";
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input) !== "/api/library/records/record-1") return Response.json({ items: [] });
+        if (deferNext) {
+          deferNext = false;
+          return pending;
+        }
+        return Response.json({
+          ...encodingRecord(),
+          states: { processing: "analyzing", publication: "current" },
+          events: [{ kind: version }],
+        });
+      });
+      const { result } = renderHook(() => useAppController());
+      await act(async () => {});
+      await act(async () => result.current.encodingApplied(true));
+      deferNext = true;
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      version = "new encoding";
+      await act(async () => result.current.encodingApplied(true));
+      act(() => {
+        result.current.setDraft({ TITLE: "Unsaved edit" });
+        result.current.setNotice("New notice");
+      });
+      await act(async () => {
+        if (outcome === "error") rejectPoll(new Error("Old error"));
+        else
+          resolvePoll(
+            Response.json({
+              ...encodingRecord(),
+              states: { processing: "complete", publication: "current" },
+              events: [{ kind: "old encoding" }],
+            }),
+          );
+      });
+      expect(result.current.detail?.events).toEqual([{ kind: "new encoding" }]);
+      expect(result.current.items[0]).toEqual(result.current.detail);
+      expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+      expect(result.current.notice).toBe("New notice");
+      expect(Object.keys(result.current.watchedRecords)).toHaveLength(1);
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(result.current.watchedRecords["record-1:source-a"].sawPending).toBe(true);
+    },
+  );
+
+  it("keeps Final intact during scan completion and subsequent library polling", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    let version = "initial";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/reconciliation/scan") return Response.json({ job_id: "scan-1" });
+      if (url === "/api/reconciliation/scan/scan-1") {
+        return Response.json({
+          state: "completed",
+          result: { added: 1, changed: 0, moved: 0, removed: 0, queued_jobs: 1 },
+        });
+      }
+      if (url === "/api/library/records/record-1") {
+        return Response.json({ ...encodingRecord(), events: [{ kind: version }] });
+      }
+      return Response.json({ items: [] });
+    });
+    const { result } = renderHook(() => useAppController());
+    await act(async () => {});
+    act(() => result.current.setDraft({ TITLE: "Unsaved edit" }));
+    await act(async () => result.current.scan());
+    version = "scan completed";
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.scanning).toBe(false);
+    expect(result.current.detail?.events).toEqual([{ kind: "scan completed" }]);
+    expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+    expect(result.current.watchedLibraryUntil).toBeGreaterThan(Date.now());
+    version = "background progress";
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.detail?.events).toEqual([{ kind: "background progress" }]);
+    expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+  });
+
+  it("ignores record A readback when navigation to B finishes while refresh is pending", async () => {
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    let refreshing = false;
+    let resolveRefresh: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/library/records/record-1") {
+        return refreshing ? pending : Response.json(encodingRecord());
+      }
+      if (String(input) === "/api/library/records/record-2") {
+        return Response.json(encodingRecord("record-2", "source-b", "B saved"));
+      }
+      return Response.json({ items: [] });
+    });
+    const { result } = renderHook(() => useAppController());
+    await waitFor(() => expect(result.current.detail?.record_id).toBe("record-1"));
+    refreshing = true;
+    let refresh: Promise<void> = Promise.resolve();
+    act(() => {
+      refresh = result.current.encodingApplied(false);
+    });
+    act(() =>
+      result.current.navigate({ screen: "track", recordId: "record-2", sourceId: "source-b" }),
+    );
+    await waitFor(() => expect(result.current.detail?.record_id).toBe("record-2"));
+    act(() => result.current.setDraft({ TITLE: "B unsaved" }));
+    const callsBeforeReadback = fetchMock.mock.calls.length;
+    await act(async () => {
+      resolveRefresh(Response.json(encodingRecord()));
+      await refresh;
+    });
+    expect(result.current.recordId).toBe("record-2");
+    expect(result.current.detail?.record_id).toBe("record-2");
+    expect(result.current.items[0]?.record_id).toBe("record-2");
+    expect(result.current.draft).toEqual({ TITLE: "B unsaved" });
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeReadback);
+  });
+
+  it("refreshes detail and history without replacing an unsaved Final draft", async () => {
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    let applied = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/library/records/record-1") {
+        return Response.json({
+          ...encodingRecord(),
+          events: applied ? [{ kind: "encoding" }] : [],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+    const { result } = renderHook(() => useAppController());
+    await waitFor(() => expect(result.current.draft).toEqual({ TITLE: "Saved" }));
+    act(() => result.current.setDraft({ TITLE: "Unsaved edit" }));
+    applied = true;
+    await act(async () => result.current.encodingApplied(false));
+    expect(result.current.detail?.events).toEqual([{ kind: "encoding" }]);
+    expect(result.current.items[0]).toEqual(result.current.detail);
+    expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
   });
 });
 

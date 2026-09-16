@@ -1,3 +1,9 @@
+import type {
+  EncodingApplied,
+  EncodingDetail,
+  EncodingPreview,
+  EncodingRequest,
+} from "../domain/sourceEncoding";
 import { errorMessages } from "../errorMessages";
 import type {
   EffectiveSourceSelection,
@@ -43,7 +49,11 @@ export type LibraryTrack = {
 export class ApiError extends Error {
   readonly status: number;
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    readonly detail: unknown = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -64,9 +74,36 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(
       response.status,
       typeof detail === "string" ? detail : errorMessages.requestFailed,
+      detail,
     );
   }
   return payload as T;
+}
+
+export function getSourceEncoding(sourceId: string, signal?: AbortSignal): Promise<EncodingDetail> {
+  return api(`/api/sources/${encodeURIComponent(sourceId)}/encoding`, { signal });
+}
+
+export function previewSourceEncoding(
+  sourceId: string,
+  request: EncodingRequest,
+  signal?: AbortSignal,
+): Promise<EncodingPreview> {
+  return api(`/api/sources/${encodeURIComponent(sourceId)}/encoding/preview`, {
+    method: "POST",
+    body: JSON.stringify(request),
+    signal,
+  });
+}
+
+export function applySourceEncoding(
+  sourceId: string,
+  request: EncodingRequest,
+): Promise<EncodingApplied> {
+  return api(`/api/sources/${encodeURIComponent(sourceId)}/encoding/apply`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 export function listSourceRoots(): Promise<SourceRootList> {

@@ -33,7 +33,7 @@ from music_ingest.publication import acquire_publication_destination_lock, try_a
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260915_0026'
+_HEAD_REVISION = '20260916_0029'
 
 
 @pytest.mark.postgres

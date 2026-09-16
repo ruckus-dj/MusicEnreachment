@@ -12,6 +12,7 @@ from music_ingest.models import (
     LibraryRecord,
     ReleaseArtworkRecord,
 )
+from music_ingest.normalize.source_values import source_values
 
 
 def _catalog_tags(record: LibraryRecord, source_id: str) -> dict[str, str]:
@@ -27,7 +28,7 @@ def _catalog_tags(record: LibraryRecord, source_id: str) -> dict[str, str]:
         if revision is not None:
             return json.loads(revision.tags_json)
     source = next(item for item in record.sources if item.id == source_id)
-    return {tag.tag_name: tag.value for tag in source.tag_observations}
+    return source_values(source.tag_observations)
 
 
 def _track_number(value: str | None) -> int | None:

@@ -373,6 +373,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               reprocessing={controller.reprocessing}
               musicbrainzHost={controller.settingsDraft?.musicbrainz_host ?? null}
               onSave={controller.saveMetadata}
+              onEncodingApplied={controller.encodingApplied}
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
               onOverrideRelease={(value) => void controller.overrideRelease(value)}

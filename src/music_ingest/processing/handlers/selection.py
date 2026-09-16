@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
-from music_ingest.dto import ALLOWED_TAG_KEYS
 from music_ingest.library.service import (
     append_metadata_revision,
     library_record_detail,
@@ -30,6 +29,7 @@ from music_ingest.models import (
     SourceRecord,
 )
 from music_ingest.models.jobs import ClaimedJob, JobRepository
+from music_ingest.normalize.source_values import source_values
 from music_ingest.processing.candidates import (
     _folder_selection_root,
     _stored_match_tags,
@@ -45,6 +45,22 @@ from music_ingest.processing.support.settings import RuntimeProcessingSettings
 from music_ingest.processing.support.sources import SourceAccess
 
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
+
+
+def refreshed_final_tags(
+    record: LibraryRecord, source_id: str, source_tags: dict[str, str], analyzed_tags: dict[str, str]
+) -> dict[str, str]:
+    manual = next(
+        (
+            item
+            for item in reversed(record.metadata_revisions)
+            if item.source_id == source_id and item.layer == 'final' and item.actor == 'manual'
+        ),
+        None,
+    )
+    if manual is not None:
+        return _TAGS_ADAPTER.validate_json(manual.tags_json)
+    return {**source_tags, **analyzed_tags}
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,9 +277,7 @@ class SelectionHandler:
                 continue
             record = library_record_detail(self.session, associated.library_record_id)
             analyzed_tags = _stored_match_tags(None, match)
-            source_tags = {
-                item.tag_name: item.value for item in source.tag_observations if item.tag_name in ALLOWED_TAG_KEYS
-            }
+            source_tags = source_values(source.tag_observations)
             _ = append_metadata_revision(
                 self.session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
             )
@@ -272,7 +286,7 @@ class SelectionHandler:
                 record.id,
                 source.id,
                 'final',
-                {**source_tags, **analyzed_tags},
+                refreshed_final_tags(record, source.id, source_tags, analyzed_tags),
                 'folder_selection',
                 now,
             )

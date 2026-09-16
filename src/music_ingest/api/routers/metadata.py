@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Response, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import require_owned_source
@@ -11,13 +12,22 @@ from music_ingest.dto import (
     LibraryIdentityUpdate,
     MetadataUpdate,
 )
+from music_ingest.dto.source_encoding import EncodingApplied, EncodingDetail, EncodingPreview, EncodingRequest
 from music_ingest.library.service import (
     append_metadata_revision,
     attach_source,
     library_record_detail,
     record_event,
 )
+from music_ingest.models import SourceRecord
 from music_ingest.models.jobs import JobRepository
+from music_ingest.source_encoding import (
+    EncodingConflict,
+    EncodingInvalid,
+    apply_encoding,
+    encoding_detail,
+    preview_encoding,
+)
 
 
 def create_router(session_factory: SessionFactory) -> APIRouter:
@@ -91,5 +101,41 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
                 )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
+
+    @router.get('/api/sources/{source_id}/encoding', response_model=EncodingDetail)
+    def source_encoding_detail(source_id: str) -> EncodingDetail:
+        with session_factory() as session:
+            source = session.get(SourceRecord, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail='source not found')
+            return encoding_detail(source)
+
+    @router.post('/api/sources/{source_id}/encoding/preview', response_model=EncodingPreview)
+    def source_encoding_preview(source_id: str, request: EncodingRequest) -> EncodingPreview:
+        with session_factory() as session:
+            source = session.get(SourceRecord, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail='source not found')
+            try:
+                return preview_encoding(source, request)
+            except EncodingConflict as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post('/api/sources/{source_id}/encoding/apply', response_model=EncodingApplied)
+    def source_encoding_apply(source_id: str, request: EncodingRequest) -> EncodingApplied:
+        with session_factory() as session:
+            source = session.get(SourceRecord, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail='source not found')
+            try:
+                result = apply_encoding(session, source, request, datetime.now(UTC))
+                session.commit()
+                return result
+            except EncodingConflict as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            except EncodingInvalid as error:
+                raise HTTPException(status_code=422, detail=error.preview.model_dump()) from error
+            except OperationalError as error:
+                raise HTTPException(status_code=409, detail='source_processing_busy') from error
 
     return router

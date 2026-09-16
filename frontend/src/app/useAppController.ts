@@ -147,6 +147,7 @@ export type AppControllerModel = {
   reprocessAll: () => Promise<void>;
   reprocessSource: (recordId: string, sourceId: string) => Promise<void>;
   saveMetadata: () => Promise<boolean>;
+  encodingApplied: (queued: boolean) => Promise<void>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
   overrideRecording: (request: RecordingCorrection) => Promise<void>;
@@ -249,15 +250,19 @@ export function useAppController(): AppControllerModel {
   const watchedRecordsRef = useRef(watchedRecords);
   const watchedLibraryUntilRef = useRef(watchedLibraryUntil);
   const routeRef = useRef({ recordId, sourceId });
+  const encodingRefreshGeneration = useRef(0);
   watchedRecordsRef.current = watchedRecords;
   watchedLibraryUntilRef.current = watchedLibraryUntil;
   routeRef.current = { recordId, sourceId };
 
-  async function loadLibrary(showLoader = true) {
+  async function loadLibrary(showLoader = true, preserveDraft = false, isActive = () => true) {
+    const generation = encodingRefreshGeneration.current;
+    const isCurrent = () => isActive() && generation === encodingRefreshGeneration.current;
     if (showLoader) setLoading(true);
     try {
       if (screen === "track" && recordId) {
         const loaded = await api<Detail>(`/api/library/records/${encodeURIComponent(recordId)}`);
+        if (!isCurrent()) return;
         const source = sourceId
           ? (loaded.sources.find((entry) => entry.source_id === sourceId) ?? catalogSource(loaded))
           : catalogSource(loaded);
@@ -268,7 +273,7 @@ export function useAppController(): AppControllerModel {
             setSourceId(source.source_id);
             setEffectiveSourceId(source.source_id);
           }
-          setDraft({ ...tagsFor(loaded, source.source_id, "final") });
+          if (!preserveDraft) setDraft({ ...tagsFor(loaded, source.source_id, "final") });
         }
         return;
       }
@@ -277,6 +282,7 @@ export function useAppController(): AppControllerModel {
         screen === "albums" || screen === "tracks" ? listLibraryArtists(published) : null;
       if (screen === "artists") {
         const payload = await listLibraryArtists(published);
+        if (!isCurrent()) return;
         setCatalogArtists(payload.items.map((item) => item.name ?? UNKNOWN_ARTIST_LABEL));
         setCatalogArtistTrackCounts(
           Object.fromEntries(
@@ -293,6 +299,7 @@ export function useAppController(): AppControllerModel {
           listLibraryAlbums(artistMissing ? null : artist, published, artistMissing),
           catalogCountPromise,
         ]);
+        if (!isCurrent()) return;
         if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
         setCatalogAlbums(
           payload.items.map((item) => ({
@@ -307,6 +314,7 @@ export function useAppController(): AppControllerModel {
       }
       if (screen === "manual-actions") {
         const payload = await listManualActions(manualActionFilter);
+        if (!isCurrent()) return;
         setItems(payload.items);
         setManualActionCounts({
           "analysis-error": payload.counts.analysis_error,
@@ -316,6 +324,7 @@ export function useAppController(): AppControllerModel {
       }
       if (screen !== "tracks") {
         const payload = await listLibraryRecords();
+        if (!isCurrent()) return;
         setItems(payload.items);
         return;
       }
@@ -339,13 +348,15 @@ export function useAppController(): AppControllerModel {
         ),
         catalogCountPromise,
       ]);
+      if (!isCurrent()) return;
       if (countPayload !== null) setCatalogTrackCount(countPayload.total_track_count);
       setCatalogAlbumTracks(payload.items);
       setItems([]);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : errorMessages.loadLibrary);
+      if (isCurrent())
+        setNotice(error instanceof Error ? error.message : errorMessages.loadLibrary);
     } finally {
-      if (showLoader) setLoading(false);
+      if (showLoader && isCurrent()) setLoading(false);
     }
   }
   function watchRecord(nextRecordId: string, nextSourceId: string): void {
@@ -377,6 +388,8 @@ export function useAppController(): AppControllerModel {
     return loaded;
   }
   function applyRoute(route: Route): void {
+    encodingRefreshGeneration.current += 1;
+    routeRef.current = { recordId: route.recordId ?? "", sourceId: route.sourceId ?? "" };
     setScreen(route.screen);
     setArtist(route.artistMissing ? UNKNOWN_ARTIST_LABEL : (route.artist ?? ""));
     setArtistMissing(route.artistMissing ?? false);
@@ -811,6 +824,19 @@ export function useAppController(): AppControllerModel {
       }
       busy = true;
       let hadActiveWork = false;
+      const generation = encodingRefreshGeneration.current;
+      const isCurrent = () => !cancelled && generation === encodingRefreshGeneration.current;
+      const isVisibleWatch = (watch: WatchedRecord) =>
+        screen !== "track" ||
+        (routeRef.current.recordId === watch.recordId &&
+          routeRef.current.sourceId === watch.sourceId);
+      const showPollError = (error: unknown) => {
+        setNotice(
+          error instanceof Error
+            ? errorMessages.autoRefreshError(error.message)
+            : errorMessages.autoRefreshUnavailable,
+        );
+      };
       try {
         const libraryWatchActive = watchedLibraryUntilRef.current > 0;
         hadActiveWork =
@@ -821,15 +847,17 @@ export function useAppController(): AppControllerModel {
           const job = await api<ScanJob>(
             `/api/reconciliation/scan/${encodeURIComponent(scanJobId)}`,
           );
+          if (!isCurrent()) return;
           if (job.state === "completed" && job.result !== null) {
             const result = job.result;
             setNotice(
               `Новых: ${result.added}; изменённых: ${result.changed}; перемещённых: ${result.moved}; ` +
                 `удалённых: ${result.removed}; в очереди: ${result.queued_jobs}`,
             );
+            await loadLibrary(false, true, isCurrent);
+            if (!isCurrent()) return;
             setScanJobId(null);
             setScanning(false);
-            await loadLibrary();
             if (result.queued_jobs > 0) watchLibrary();
           } else if (job.state !== "queued" && job.state !== "running") {
             setNotice(errorMessages.scanFailed);
@@ -851,16 +879,26 @@ export function useAppController(): AppControllerModel {
               delete next[key];
               return next;
             });
-            setNotice(errorMessages.autoRefreshTimeout);
+            if (isVisibleWatch(watch)) setNotice(errorMessages.autoRefreshTimeout);
             continue;
           }
-          const loaded = await api<Detail>(`/api/library/records/${watch.recordId}`);
+          let loaded: Detail;
+          try {
+            loaded = await api<Detail>(`/api/library/records/${watch.recordId}`);
+          } catch (error) {
+            if (!isCurrent()) return;
+            if (isVisibleWatch(watch)) showPollError(error);
+            continue;
+          }
+          if (!isCurrent()) return;
           const pending = detailIsPending(loaded);
           if (
             routeRef.current.recordId === watch.recordId &&
             routeRef.current.sourceId === watch.sourceId
-          )
+          ) {
             setDetail(loaded);
+            setItems([loaded]);
+          }
           if (pending && !watch.sawPending) {
             setWatchedRecords((current) => ({ ...current, [key]: { ...watch, sawPending: true } }));
           } else if (!pending && (watch.sawPending || loaded.events.length > 0)) {
@@ -869,28 +907,26 @@ export function useAppController(): AppControllerModel {
               delete next[key];
               return next;
             });
-            setNotice("Данные обновлены после фоновой обработки");
+            if (isVisibleWatch(watch)) setNotice("Данные обновлены после фоновой обработки");
           }
         }
-        if (libraryWatchActive || Object.keys(currentWatches).length > 0) await loadLibrary(false);
+        // Watched track readbacks already refresh detail/items without touching Final.
+        if (libraryWatchActive || (screen !== "track" && Object.keys(currentWatches).length > 0))
+          await loadLibrary(false, true, isCurrent);
       } catch (error) {
-        setNotice(
-          error instanceof Error
-            ? errorMessages.autoRefreshError(error.message)
-            : errorMessages.autoRefreshUnavailable,
-        );
+        if (isCurrent()) showPollError(error);
       } finally {
         busy = false;
+        delay = hadActiveWork ? MIN_POLL_DELAY_MS : Math.min(MAX_POLL_DELAY_MS, delay * 1.5);
+        scheduleNext();
       }
-      delay = hadActiveWork ? MIN_POLL_DELAY_MS : Math.min(MAX_POLL_DELAY_MS, delay * 1.5);
-      scheduleNext();
     };
     scheduleNext();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [scanJobId]);
+  }, [scanJobId, screen, recordId, sourceId, artist, album, manualActionFilter, publicationFilter]);
   useEffect(() => {
     if ((screen === "settings" || screen === "track") && !settingsDraft && !settingsLoading)
       void loadSettings();
@@ -1098,7 +1134,23 @@ export function useAppController(): AppControllerModel {
     else if (screen === "tracks") navigate({ screen: "albums", artist, artistMissing, album });
     else if (screen === "albums") navigate({ screen: "artists" });
   }
+  async function encodingApplied(queued: boolean): Promise<void> {
+    if (routeRef.current.recordId !== recordId || routeRef.current.sourceId !== sourceId) return;
+    const generation = ++encodingRefreshGeneration.current;
+    if (queued) watchRecord(recordId, sourceId);
+    const loaded = await api<Detail>(`/api/library/records/${encodeURIComponent(recordId)}`);
+    if (
+      generation !== encodingRefreshGeneration.current ||
+      routeRef.current.recordId !== recordId ||
+      routeRef.current.sourceId !== sourceId
+    )
+      return;
+    // Encoding changes source interpretation/history, never the user's Final draft.
+    setDetail(loaded);
+    setItems([loaded]);
+  }
   return {
+    encodingApplied,
     items,
     detail,
     screen,

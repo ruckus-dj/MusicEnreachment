@@ -48,6 +48,7 @@ class JobRecord(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_reason: Mapped[str | None] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text)
+    source_metadata_revision: Mapped[int | None] = mapped_column(Integer)
     attempts: Mapped[list[JobAttemptRecord]] = relationship(
         back_populates='job', lazy='selectin', order_by='JobAttemptRecord.attempt_number'
     )

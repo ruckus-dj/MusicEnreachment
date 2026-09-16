@@ -10,6 +10,7 @@ from music_ingest.models.db import Base
 
 
 class SourceTagView(Protocol):
+    selected: bool
     tag_name: str
     value: str
     format_name: str

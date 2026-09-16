@@ -222,12 +222,14 @@ def append_metadata_revision(
     tags: dict[str, str],
     actor: str,
     now: datetime,
+    *,
+    revise_original: bool = False,
 ) -> LibraryMetadataRevisionRecord:
-    """Append one immutable metadata revision for a source layer."""
+    """Append an immutable layer revision; initial original capture is idempotent."""
     record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id).with_for_update())
     if record is None:
         raise LookupError(library_record_id)
-    if layer == 'original':
+    if layer == 'original' and not revise_original:
         existing = session.scalar(
             select(LibraryMetadataRevisionRecord)
             .where(LibraryMetadataRevisionRecord.library_record_id == record.id)
@@ -524,7 +526,8 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
     revision_query = revision_query.where(
         LibraryMetadataRevisionRecord.layer.in_(['final', 'original']),
         ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
-    )
+    ).order_by(LibraryMetadataRevisionRecord.revision.desc(), LibraryMetadataRevisionRecord.id.desc())
+    # Keep the first (latest) revision per source/layer; Final still overrides Original.
     if published is not None:
         revision_query = revision_query.where(
             LibraryRecord.publication_state == 'current' if published else LibraryRecord.publication_state != 'current'

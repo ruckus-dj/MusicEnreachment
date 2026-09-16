@@ -18,10 +18,10 @@ from music_ingest.intake.service import SourceId
 from music_ingest.models import (
     ArtworkRecord,
     SourceRecord,
-    SourceTagRecord,
 )
 from music_ingest.models.entities import DecoderEvidenceRecord
 from music_ingest.models.repositories import DecoderEvidenceRepository, FingerprintRepository
+from music_ingest.normalize.source_evidence import read_source_fields
 from music_ingest.processing.config import ProcessingConfig
 from music_ingest.processing.metadata import (
     file_hash,
@@ -50,6 +50,10 @@ class SourceEvidence:
         )
 
     def analyze_source(self, source: SourceRecord, source_path: Path) -> FingerprintResult | None:
+        """Provider processing uses persisted evidence, including explicit absence."""
+        return self.cached_fingerprint(source)
+
+    def import_fingerprint(self, source: SourceRecord, source_path: Path) -> FingerprintResult | None:
         cached_fingerprint = self.cached_fingerprint(source)
         if cached_fingerprint is not None:
             return cached_fingerprint
@@ -75,9 +79,7 @@ class SourceEvidence:
     def capture_observations(self, source: SourceRecord, path: Path, tags: tuple[tuple[str, str], ...]) -> None:
         if source.tag_observations:
             return
-        source.tag_observations.extend(
-            SourceTagRecord(format_name='vorbis', tag_name=name, value=value) for name, value in tags
-        )
+        source.tag_observations.extend(read_source_fields(path, tags))
         for artwork in (path.parent / 'cover.jpg', path.parent / 'cover.webp'):
             if artwork.is_file():
                 source.artwork_observations.append(ArtworkRecord(sha256=file_hash(artwork)))

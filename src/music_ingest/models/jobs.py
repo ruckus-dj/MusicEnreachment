@@ -10,7 +10,7 @@ from sqlalchemy import Select, and_, false, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from music_ingest.models.entities import JobAttemptRecord, JobRecord
+from music_ingest.models.entities import JobAttemptRecord, JobRecord, SourceRecord
 
 _LRCLIB_FETCH_KIND: Final = 'lrclib_fetch'
 _BLOCKED_INFRASTRUCTURE_STATE: Final = 'blocked_infrastructure'
@@ -296,6 +296,9 @@ class JobRepository:
             source_id=source_id,
             kind=kind,
             metadata_revision_id=metadata_revision_id,
+            source_metadata_revision=self._session.scalar(
+                select(SourceRecord.source_metadata_revision).where(SourceRecord.id == source_id)
+            ),
             state='queued',
             created_at=now,
         )
