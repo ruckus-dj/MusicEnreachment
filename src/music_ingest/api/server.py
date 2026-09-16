@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from typing import Self, final
 
 import anyio
@@ -36,10 +36,11 @@ from music_ingest.settings import build_runtime_settings
 _DATABASE_URL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_URL'
 _CONNECT_TIMEOUT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_DATABASE_CONNECT_TIMEOUT_SECONDS'
 _RECONCILIATION_INTERVAL_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS'
-_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_SOURCE_ROOTS_PARENT'
-_STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE = 'MUSIC_INGEST_STORAGE_BROWSE_ROOTS'
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
 _DEFAULT_RECONCILIATION_INTERVAL_SECONDS = 3600
+_DEFAULT_RUNTIME_ROOT = Path(gettempdir()) / 'music-ingest'
+_DEFAULT_STAGING_ROOT = _DEFAULT_RUNTIME_ROOT / 'staging'
+_DEFAULT_MEDIA_ROOT = _DEFAULT_RUNTIME_ROOT / 'media'
 _ALEMBIC_INI = Path(__file__).resolve().parents[3] / 'alembic.ini'
 
 
@@ -104,16 +105,8 @@ def run_migrations(runtime_config: RuntimeConfig) -> None:
         parent = Path(temporary_parent)
         bootstrap_root = parent / 'bootstrap'
         bootstrap_root.mkdir()
-        previous_parent = os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE)
-        os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE] = str(parent)
         migration_config.cmd_opts = Namespace(x=[f'legacy_incoming_root={bootstrap_root}'])
-        try:
-            command.upgrade(migration_config, 'head')
-        finally:
-            if previous_parent is None:
-                del os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE]
-            else:
-                os.environ[_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE] = previous_parent
+        command.upgrade(migration_config, 'head')
 
 
 def ensure_unsorted_filename_counter(session: Session) -> None:
@@ -136,8 +129,6 @@ def create_runtime_app() -> FastAPI:
     session_factory = sessionmaker(engine)
     processing_config, on_runtime_settings_updated = _processing_config(os.environ, session_factory)
     worker_monitor = ProcessingRuntimeMonitor()
-    raw_source_roots_parent = os.environ.get(_SOURCE_ROOTS_PARENT_ENVIRONMENT_VARIABLE)
-    source_roots_parent = None if raw_source_roots_parent is None else Path(raw_source_roots_parent)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
@@ -166,17 +157,11 @@ def create_runtime_app() -> FastAPI:
     application = create_app(
         session_factory,
         lifespan=lifespan,
-        source_roots_parent=source_roots_parent,
         media_root=processing_config.media_root,
         musicbrainz_provider=processing_config.musicbrainz_provider,
         musicbrainz_transport=processing_config.live_transport,
         genre_transport=processing_config.live_transport,
         e2e_seed_enabled=os.environ.get('MUSIC_INGEST_E2E_SEED_ENABLED') == 'true',
-        storage_browse_roots=tuple(
-            Path(item)
-            for item in os.environ.get(_STORAGE_BROWSE_ROOTS_ENVIRONMENT_VARIABLE, '/data').split(':')
-            if item
-        ),
         worker_monitor=worker_monitor,
         on_runtime_settings_updated=on_runtime_settings_updated,
     )
@@ -217,8 +202,8 @@ def _processing_config(
     return (
         ProcessingConfig(
             incoming_root=Path('/data/incoming'),
-            staging_root=Path(environment.get('MUSIC_INGEST_STAGING_ROOT', '/appdata/music-ingest/staging')),
-            media_root=Path(environment.get('MUSIC_INGEST_MEDIA_ROOT', '/data/media')),
+            staging_root=_DEFAULT_STAGING_ROOT,
+            media_root=_DEFAULT_MEDIA_ROOT,
             live_transport=live_transport,
             lrclib_adapter=lrclib_provider.adapter,
             artwork_provider=MusicBrainzProviderAdapter(

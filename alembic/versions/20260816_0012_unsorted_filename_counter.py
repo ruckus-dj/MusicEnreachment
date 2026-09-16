@@ -6,9 +6,9 @@ Revises: 20260815_0011
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
+from tempfile import gettempdir
 
 import sqlalchemy as sa
 
@@ -27,9 +27,13 @@ def upgrade() -> None:
         sa.Column('next_number', sa.Integer(), nullable=False),
     )
     initial_number = 0
-    media_root = os.environ.get('MUSIC_INGEST_MEDIA_ROOT')
-    unsorted_directory = None if media_root is None else Path(media_root) / 'Unsorted'
-    if unsorted_directory is not None and unsorted_directory.is_dir():
+    media_root = (
+        op.get_bind().execute(sa.text('SELECT output_root FROM storage_config WHERE id = 1')).scalar_one_or_none()
+    )
+    if media_root is None:
+        media_root = str(Path(gettempdir()) / 'music-ingest' / 'media')
+    unsorted_directory = Path(media_root) / 'Unsorted'
+    if unsorted_directory.is_dir():
         initial_number = max(
             (
                 int(match.group(1))

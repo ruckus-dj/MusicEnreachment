@@ -41,8 +41,6 @@ def integrity_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterato
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
     legacy = tmp_path / 'legacy'
     legacy.mkdir()
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(tmp_path))
-    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
     with PostgresContainer('postgres:17') as postgres:
         url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
         config = Config()
@@ -327,8 +325,6 @@ def test_publication_on_separate_processing_and_media_mounts(monkeypatch: pytest
             runner.with_env(
                 'MUSIC_INGEST_DATABASE_URL', f'postgresql+psycopg://integrity:{credential}@integrity-db/integrity'
             )
-            runner.with_env('MUSIC_INGEST_MEDIA_ROOT', '/media')
-            runner.with_env('MUSIC_INGEST_SOURCE_ROOTS_PARENT', '/sources')
             runner.with_tmpfs_mount('/processing', 'rw,size=64m')
             runner.with_tmpfs_mount('/media', 'rw,size=64m')
             runner.with_tmpfs_mount('/sources', 'rw,size=16m')

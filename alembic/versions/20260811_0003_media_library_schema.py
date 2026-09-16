@@ -6,7 +6,6 @@ Revises: 20260810_0002
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -22,20 +21,14 @@ depends_on = None
 def _legacy_root() -> Path:
     arguments = context.get_x_argument(as_dictionary=True)
     raw_root = arguments.get('legacy_incoming_root')
-    raw_parent = os.environ.get('MUSIC_INGEST_SOURCE_ROOTS_PARENT')
-    if raw_root is None or raw_parent is None:
-        raise RuntimeError('legacy_incoming_root and MUSIC_INGEST_SOURCE_ROOTS_PARENT are required')
+    if raw_root is None:
+        raise RuntimeError('legacy_incoming_root is required')
     try:
         root = Path(raw_root).resolve(strict=True)
-        parent = Path(raw_parent).resolve(strict=True)
     except FileNotFoundError as error:
-        raise RuntimeError('legacy_incoming_root and source roots parent must exist') from error
-    if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
+        raise RuntimeError('legacy_incoming_root must exist') from error
+    if not root.is_dir():
         raise RuntimeError('legacy_incoming_root must be a readable directory')
-    if root.parent != parent:
-        raise RuntimeError(
-            'legacy_incoming_root must be a canonical immediate child of MUSIC_INGEST_SOURCE_ROOTS_PARENT'
-        )
     return root
 
 

@@ -56,7 +56,7 @@ and two PostgreSQL workers resuming the same manifest.
 
 ## A03 — separate processing and publication filesystems
 
-Processing scratch uses `MUSIC_INGEST_STAGING_ROOT`. After media validation, the
+Processing scratch is a disposable runtime directory. After media validation, the
 handler copies output to `<target-parent>/.music-ingest-publications/<attempt>/staged/`,
 verifies its SHA-256, fsyncs the file and directory ancestry, and only then commits
 `prepared`. Backups use the same attempt's `backup/` directory. Both final renames

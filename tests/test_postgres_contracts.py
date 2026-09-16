@@ -477,8 +477,6 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
     source_parent = tmp_path / 'sources'
     legacy_root = source_parent / 'legacy'
     legacy_root.mkdir(parents=True)
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
-    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
 
     with PostgresContainer('postgres:17') as postgres:
@@ -675,8 +673,6 @@ def test_migration_when_legacy_root_is_invalid_preserves_baseline_rows(
     source_parent = tmp_path / 'sources'
     legacy_root = source_parent / 'legacy'
     legacy_root.mkdir(parents=True)
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
-    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
     monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
 
     with PostgresContainer('postgres:17') as postgres:

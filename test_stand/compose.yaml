@@ -26,9 +26,6 @@ services:
     environment:
       MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:music_ingest@postgres/music_ingest
       MUSIC_INGEST_E2E_SEED_ENABLED: "true"
-      MUSIC_INGEST_STAGING_ROOT: /appdata/music-ingest/staging
-      MUSIC_INGEST_MEDIA_ROOT: /data/media
-      MUSIC_INGEST_STORAGE_BROWSE_ROOTS: /data
       MUSIC_INGEST_ENABLE_LIVE_TRANSPORT: ${MUSIC_INGEST_ENABLE_LIVE_TRANSPORT:-0}
       MUSIC_INGEST_ACOUSTID_CLIENT_KEY: ${MUSIC_INGEST_ACOUSTID_CLIENT_KEY:-}
       MUSIC_INGEST_MUSICBRAINZ_USER_AGENT: ${MUSIC_INGEST_MUSICBRAINZ_USER_AGENT:-music-ingest/0.1.0 (music-ingest@example.com)}

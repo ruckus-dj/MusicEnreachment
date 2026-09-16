@@ -35,8 +35,7 @@ original MusicBrainz name for matching and shows a readable display label; the
 manual aliases JSON is not part of the runtime contract.
 
 Configure downloaders to write into `/mnt/pool/data/music-incoming`, then mount that
-path read-only as an immediate child of `/data/sources` in `music-ingest` and set
-`MUSIC_INGEST_SOURCE_ROOTS_PARENT=/data/sources`. Configure the mounted directory
+path read-only as an immediate child of `/data/sources` in `music-ingest`. Configure the mounted directory
 through **Settings → Source roots** before enabling notifications. Operators may configure
 only existing, non-symlink immediate children of `/data/sources`.
 Mount

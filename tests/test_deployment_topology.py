@@ -79,10 +79,7 @@ def test_production_stack_when_deployed_runs_the_runtime_with_external_storage()
     environment = service.environment
     assert environment['MUSIC_INGEST_DATABASE_URL'].startswith('infisical://')
     assert 'MUSIC_INGEST_API_TOKEN' not in environment
-    assert environment['MUSIC_INGEST_SOURCE_ROOTS_PARENT'] == '/data/sources'
     assert 'MUSIC_INGEST_INCOMING_ROOT' not in environment
-    assert environment['MUSIC_INGEST_STAGING_ROOT'] == '/appdata/music-ingest/staging'
-    assert environment['MUSIC_INGEST_MEDIA_ROOT'] == '/data/publish/music'
     assert not {
         'MUSIC_INGEST_RETENTION_ROOT',
         'MUSIC_INGEST_QUARANTINE_ROOT',

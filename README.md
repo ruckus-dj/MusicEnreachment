@@ -1,99 +1,188 @@
 # Music Ingest
 
-Music Ingest receives generic source-change notifications, reconciles configured source roots, validates media, publishes a reviewable media copy, and exposes the review UI/API.
+Music Ingest watches one or more read-only incoming music directories, creates a
+reviewable managed copy, and provides a web UI and API for configuration and
+review. It never edits, moves, or deletes an incoming source file.
 
-## Runtime flow
+This guide deploys the published container image:
+`ghcr.io/ruckus-dj/musicenreachment`. It runs the application and PostgreSQL on
+one Docker host. Put the UI behind an authenticated reverse proxy before exposing
+it outside the host: the application itself has no authentication.
 
-```text
-Source-change notification or scheduled scan
-  -> reconciliation scan
-  -> persistence models and repositories
-  -> processing/worker.py
-  -> inspectors + sanitizers + normalize
-  -> publication/service.py
-  -> media library and review records
+## Requirements
+
+- Docker Engine with the Compose plugin (`docker compose version`)
+- A writable directory for Docker configuration, PostgreSQL data, staging, and
+  the managed media library
+- A directory containing incoming music files. It is mounted read-only.
+- Access to the GitHub Container Registry package at
+  <https://github.com/ruckus-dj/MusicEnreachment/pkgs/container/musicenreachment>
+
+The image supports `linux/amd64` and `linux/arm64` and includes FFmpeg, FFprobe,
+and Chromaprint (`fpcalc`). If GitHub packages are private to your account,
+authenticate on the Docker host before starting:
+
+```sh
+docker login ghcr.io
 ```
 
-The service starts one FastAPI process and one in-process polling worker. PostgreSQL migrations run before the application becomes ready.
+Use a GitHub personal access token with permission to read packages as the
+password. Do not place that token in Compose files or `.env`.
 
-## Package layout
+## Install with Docker Compose
 
-| Package | Responsibility |
-| --- | --- |
-| `api/` | FastAPI routes and runtime composition |
-| `cli/` | CLI-only operations such as the non-mutating dry run |
-| `config/` | Typed YAML policy parsing and safe summaries |
-| `enrichment/` | Optional artwork and fingerprint capabilities |
-| `intake/` | Source intake and provenance registration |
-| `integrations/` | Navidrome adapters |
-| `inspectors/` | Media structure inspection |
-| `lyrics/` | Lyrics validation |
-| `matching/` | Provider adapters, evidence, and scoring |
-| `normalize/` | Canonical metadata normalization and writing |
-| `persistence/` | SQLAlchemy models and repositories |
-| `processing/` | Worker orchestration, fallback metadata, and polling runtime |
-| `publication/` | Staged-release validation and atomic publication |
-| `review/` | Source and release review services |
-| `sanitizers/` | Media sanitization |
-| `ui/` | Review page assets |
+1. Create a deployment directory and the host directories that will be mounted
+   into the containers. `sources` is a parent only; every configured source root
+   must be an immediate child of it.
 
-## Commands
+   ```sh
+   mkdir -p music-ingest/{appdata,media,sources/incoming}
+   cd music-ingest
+   ```
 
-Install dependencies with `uv sync`.
+   Copy or configure your downloader to write source media under
+   `./sources/incoming`. Do not make `sources` itself a symlink, and do not
+   mount source directories read-write.
 
-```bash
-uv run pytest
-uv run ruff check src tests alembic
-uv run ruff format --check src tests alembic
-uv run ty check
+2. Create `.env` with a database password. The hexadecimal value below is safe
+   to embed in a PostgreSQL URL. Keep this file private because it contains the
+   database password.
 
-PYTHONPATH=src uv run python -m music_ingest dry-run SOURCE_DIRECTORY REPORT_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest POLICY_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest serve
-```
+   ```sh
+   umask 077
+   printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .env
+   ```
 
-`media-stage` runs the same database-free media inspection, fingerprint calculation, staging, metadata, artwork,
-and final decoder validation stages used by the production worker. It writes one derived audio file below
-`OUTPUT_DIRECTORY`, keeps temporary files below `TMP_DIRECTORY`, and never mutates the input. It does not persist
-fingerprint evidence or publish to the managed library, because those are database-backed worker orchestration steps.
+3. Create `compose.yaml`:
 
-For a local profile, wrap the same command with Python's profiler:
+   ```yaml
+   services:
+     postgres:
+       image: postgres:17
+       environment:
+         POSTGRES_DB: music_ingest
+         POSTGRES_USER: music_ingest
+         POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+       volumes:
+         - postgres-data:/var/lib/postgresql/data
+       healthcheck:
+         test: ["CMD-SHELL", "pg_isready -U music_ingest -d music_ingest"]
+         interval: 5s
+         timeout: 3s
+         retries: 12
+       restart: unless-stopped
 
-```bash
-PYTHONPATH=src uv run python -m cProfile -o media-stage.prof -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
-```
+     music-ingest:
+       image: ghcr.io/ruckus-dj/musicenreachment:latest
+       environment:
+         MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/music_ingest
+       depends_on:
+         postgres:
+           condition: service_healthy
+       ports:
+         - "127.0.0.1:8000:8000"
+       volumes:
+         - ./sources:/data/sources:ro
+         - ./media:/data/media
+         - ./appdata:/appdata/music-ingest
+       healthcheck:
+         test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+         interval: 30s
+         timeout: 3s
+         retries: 3
+         start_period: 30s
+       restart: unless-stopped
 
-The `serve` command requires `MUSIC_INGEST_DATABASE_URL` to be a PostgreSQL URL. Configure `MUSIC_INGEST_SOURCE_ROOTS_PARENT`, then add each source root through Settings; configure final media and transient staging roots with environment variables. Tags, versions, provider evidence, review decisions, failure reasons, and publication metadata are stored in PostgreSQL. Production authentication is owned by the reverse proxy; the local UI and API are public.
-Enabled source roots are automatically reconciled once per hour by default; set `MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS` to change the interval.
+   volumes:
+     postgres-data:
+   ```
 
-`MUSIC_INGEST_SOURCE_ROOTS_PARENT` must be an existing, non-symlink directory. Each configured source root must be an existing, non-symlink immediate child of that mounted parent. Source roots are read-only inputs. The final media root is writable, while the staging root is disposable.
+   `latest` follows the default branch. For a repeatable upgrade, replace it
+   with an immutable digest shown on the package page, for example
+   `ghcr.io/ruckus-dj/musicenreachment@sha256:<digest>`.
 
-## Formats and matching
+4. Pull and start the stack. Startup applies database migrations before the
+   application reports healthy.
 
-Ingest supports FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis, and Opus. Every publication is an MKA/Matroska container with the source audio stream copied without re-encoding. Canonical Matroska tags use the same allowlisted names as FLAC/Vorbis Comments and are written and verified through FFmpeg/FFprobe. Raw AAC and arbitrary scanner-recognized extensions are not publication formats.
+   ```sh
+   docker compose pull
+   docker compose up -d
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/healthz
+   ```
 
-Candidate matching prefers an explicit MusicBrainz ID. Otherwise it scores normalized artist and release text, with duration and release-position matches contributing when available. Ambiguous, stale, unsafe, unavailable, or below-threshold results remain in review rather than being auto-selected.
+   The expected health response is JSON containing `"status":"ok"` and
+   `"service":"music-ingest"`. If it does not become healthy, inspect the
+   service logs:
 
-Published audio uses the `.mka` extension and stable artist, album, and track layout. A replacement is staged and verified before the current publication is superseded. The incoming source pathname is never replaced, and source files are never mutated.
+   ```sh
+   docker compose logs --tail=200 music-ingest
+   ```
 
-## Local integration stand
+## First-time configuration
 
-```bash
-cd test_stand
-docker compose up --build --wait
-curl --fail http://127.0.0.1:8787/healthz
+1. Open <http://127.0.0.1:8000/settings>. If the service is on another host,
+   connect through your reverse proxy or an SSH tunnel; do not expose port 8000
+   directly without authentication.
+2. In **Settings → Source roots**, add `/data/sources/incoming` and enable it.
+   Only existing, non-symlink immediate children of `/data/sources` are valid.
+3. In **Settings → Storage**, confirm `/data/media` as the managed output
+   directory. It must be writable and support fsync and atomic rename. Staging
+   at `/appdata/music-ingest/staging` is disposable scratch space.
+4. Configure matching and optional provider settings in **Settings**. Ambiguous,
+   unavailable, unsafe, stale, and low-confidence matches remain available for
+   review instead of being selected automatically.
+5. Review work at <http://127.0.0.1:8000/review>. The service reconciles enabled
+   source roots hourly by default. Set
+   `MUSIC_INGEST_RECONCILIATION_INTERVAL_SECONDS` in the `music-ingest`
+   environment to a positive number of seconds to change that interval, then run
+   `docker compose up -d` to apply it.
+
+To notify the service immediately after a downloader finishes writing files,
+send a request from the same Docker network to
+`http://music-ingest:8000/api/intake/notification`. The notification queues a
+reconciliation; it does not accept or persist downloader-specific payloads.
+
+## Data and operational boundaries
+
+- `./sources` is read-only input. A changed source is observed as a new version;
+  incoming media is never modified, moved, or deleted.
+- `./media` is the managed published library. Publication is staged and verified
+  with manifests and hashes before it supersedes existing managed media. `.nfo`
+  files are never removed.
+- `./appdata` contains disposable staging data. Do not use it for source media
+  or the published library.
+- The named `postgres-data` volume holds the database: settings, provenance,
+  review decisions, failures, metadata, and publication state. Back it up before
+  upgrades or host migrations.
+
+Stop the stack without deleting its database or managed files:
+
+```sh
 docker compose down
 ```
 
-The test stand is intentionally disposable infrastructure for quickly checking PostgreSQL, the worker, and Navidrome together. Its local environment file is not production configuration.
+Do not use `docker compose down --volumes` unless intentionally discarding all
+PostgreSQL state.
 
-## Safety boundaries
+## Upgrades
 
-- Incoming media is treated as read-only source input.
-- Intake records path, inode, size, and SHA-256 provenance.
-- Staging is validated before publication.
-- Invalid or changed sources are quarantined instead of published.
-- Dry-run reports are written outside the source tree and do not mutate source files.
-- Publication supersedes current audio only after staged output, manifest, and hash checks succeed. `.nfo` files are never removed.
-- Provider and enrichment modules are isolated capabilities; the current worker uses the explicit fallback path when provider enrichment is unavailable.
+1. Back up the PostgreSQL volume and `./media`.
+2. Change the image reference in `compose.yaml` to the selected immutable digest.
+3. Run:
+
+   ```sh
+   docker compose pull
+   docker compose up -d
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/healthz
+   ```
+
+Migrations run at service startup. Do not run two Music Ingest workers against
+the same database and media root during an upgrade.
+
+## Supported media and publication
+
+Incoming FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis, and Opus are supported.
+Published audio is Matroska (`.mka`) with the source audio stream copied without
+re-encoding. Raw AAC and unsupported containers are not published.

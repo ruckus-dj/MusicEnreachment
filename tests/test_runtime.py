@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,11 +31,6 @@ from music_ingest.settings import (
     get_setting_values,
     save_runtime_settings,
 )
-
-
-@pytest.fixture(autouse=True)
-def runtime_media_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('MUSIC_INGEST_MEDIA_ROOT', str(tmp_path / 'media'))
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -412,11 +406,6 @@ def test_runtime_app_when_shutdown_disposes_its_engine(tmp_path: Path, monkeypat
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
     monkeypatch.setattr(engine, 'dispose', lambda: disposed.append(None))
-    source_parent = tmp_path / 'sources'
-    incoming_root = source_parent / 'legacy'
-    incoming_root.mkdir(parents=True)
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
-
     # When: Uvicorn's ASGI lifespan enters and exits through TestClient.
     with TestClient(server.create_runtime_app()) as client:
         response = client.get('/healthz')
@@ -438,10 +427,6 @@ def test_runtime_app_when_started_runs_the_processing_worker(tmp_path: Path, mon
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
-    source_parent = tmp_path / 'sources'
-    incoming_root = source_parent / 'legacy'
-    incoming_root.mkdir(parents=True)
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
     started: list[tuple[object, object, object, object]] = []
 
     async def record_worker_start(
@@ -470,9 +455,6 @@ def test_runtime_app_when_started_runs_the_reconciliation_scheduler(
     monkeypatch.setattr(server, 'run_migrations', lambda _config: None)
     monkeypatch.setattr(server, 'create_engine', lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(RuntimeConfig, 'from_environment', lambda _environment: runtime_config)
-    source_parent = tmp_path / 'sources'
-    (source_parent / 'legacy').mkdir(parents=True)
-    monkeypatch.setenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', str(source_parent))
     monkeypatch.setattr(server, 'run_processing_worker', _record_worker_start)
     started: list[int] = []
 
@@ -591,18 +573,16 @@ def test_migrations_when_runtime_starts_upgrades_to_head(monkeypatch: pytest.Mon
             )
         )
         assert bootstrap_root.is_dir()
-        assert bootstrap_root.parent == Path(os.environ['MUSIC_INGEST_SOURCE_ROOTS_PARENT'])
+        assert bootstrap_root.parent.name.startswith('music-ingest-migration-')
 
     monkeypatch.setattr(server.command, 'upgrade', upgrade)
     monkeypatch.delenv('MUSIC_INGEST_INCOMING_ROOT', raising=False)
-    monkeypatch.delenv('MUSIC_INGEST_SOURCE_ROOTS_PARENT', raising=False)
 
     # When: the runtime executes its migration boundary.
     server.run_migrations(runtime_config)
 
     # Then: an outdated database reaches head using an isolated migration bootstrap.
     assert captured == [(runtime_config.database_url, '7', 'head')]
-    assert 'MUSIC_INGEST_SOURCE_ROOTS_PARENT' not in os.environ
 
 
 def test_runtime_refuses_readiness_when_media_does_not_support_publication(

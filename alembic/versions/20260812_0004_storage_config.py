@@ -6,7 +6,8 @@ Revises: 20260811_0003
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
+from tempfile import gettempdir
 
 import sqlalchemy as sa
 
@@ -28,14 +29,11 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     )
     if op.get_bind().dialect.name == 'postgresql':
-        output_root = os.environ.get('MUSIC_INGEST_MEDIA_ROOT')
-        if output_root is None:
-            raise RuntimeError('MUSIC_INGEST_MEDIA_ROOT is required')
         op.execute(
             sa.text(
                 'INSERT INTO storage_config (id, output_root, state, generation, updated_at) '
                 "VALUES (1, :output_root, 'ready', 1, CURRENT_TIMESTAMP)"
-            ).bindparams(output_root=output_root)
+            ).bindparams(output_root=str(Path(gettempdir()) / 'music-ingest' / 'media'))
         )
 
 

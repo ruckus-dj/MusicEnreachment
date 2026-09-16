@@ -5,10 +5,6 @@ services:
     environment:
       FPCALC: /usr/bin/fpcalc
       MUSIC_INGEST_DATABASE_URL: infisical://music-ingest/database-url
-      MUSIC_INGEST_SOURCE_ROOTS_PARENT: /data/sources
-      # Processing scratch may be on SSD; durable publication workspace lives beside each media target.
-      MUSIC_INGEST_STAGING_ROOT: /appdata/music-ingest/staging
-      MUSIC_INGEST_MEDIA_ROOT: /data/publish/music
     expose:
       - "8000"
     volumes:
