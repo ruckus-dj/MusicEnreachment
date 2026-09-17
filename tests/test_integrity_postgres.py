@@ -25,6 +25,7 @@ from music_ingest.models import (
     ReviewDecisionRecord,
     SourceRecord,
     SourceRootRecord,
+    StorageConfigRecord,
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.normalize.tags import write_normalized_tags
@@ -68,6 +69,9 @@ def seed_publication(engine: Engine, root: Path) -> tuple[ProcessingConfig, Path
     now = datetime.now(UTC)
     stat = source_path.stat()
     with Session(engine) as session:
+        storage = session.get(StorageConfigRecord, 1)
+        assert storage is not None
+        storage.output_root = str(config.media_root)
         record = LibraryRecord(id='record', created_at=now, updated_at=now)
         source_root = SourceRootRecord(
             id='root',

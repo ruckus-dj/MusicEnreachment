@@ -20,6 +20,7 @@ from music_ingest.models import (
     ReviewDecisionRecord,
     SourceRecord,
     SourceRootRecord,
+    StorageConfigRecord,
 )
 from music_ingest.models.jobs import JobRepository
 from music_ingest.processing import ProcessingConfig, ProcessingWorker
@@ -56,6 +57,9 @@ def main() -> None:
     now = datetime.now(UTC)
     stat = source_path.stat()
     with Session(engine) as session:
+        storage = session.get(StorageConfigRecord, 1)
+        assert storage is not None
+        storage.output_root = '/media'
         record = LibraryRecord(id='record', created_at=now, updated_at=now)
         root = SourceRootRecord(
             id='root',
