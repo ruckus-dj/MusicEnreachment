@@ -23,6 +23,11 @@ def seed_storage(engine: Engine, root: Path) -> tuple[Path, Path]:
         config = session.get(StorageConfigRecord, 1)
         if config is None:
             session.add(StorageConfigRecord(id=1, output_root=str(old), state='ready', generation=1, updated_at=now))
+        else:
+            config.output_root = str(old)
+            config.state = 'ready'
+            config.migration_json = None
+            config.updated_at = now
         for index in range(2):
             path = old / f'{index}.mka'
             path.write_bytes(f'audio-{index}'.encode())
