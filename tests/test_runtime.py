@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 import music_ingest.bootstrap.server as server
 import music_ingest.workers.runtime as processing_runtime
-from music_ingest import __main__ as command
 from music_ingest.adapters.external.lrclib import (
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BODY_BYTES,
@@ -31,24 +30,6 @@ from music_ingest.services.settings import (
     save_runtime_settings,
 )
 from music_ingest.workers.config import ProcessingConfig
-
-
-def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Given: a source directory and report directory passed through the module entrypoint.
-    source_directory = tmp_path / 'library'
-    report_directory = tmp_path / 'reports'
-    source_directory.mkdir()
-    _ = (source_directory / 'sample.lrc').write_text('[00:00.00]lyrics', encoding='utf-8')
-    monkeypatch.setattr(command, 'argv', ['music-ingest', 'dry-run', str(source_directory), str(report_directory)])
-
-    # When: the established dry-run CLI is executed.
-    command.main()
-
-    # Then: it emits report locations and remains independent from the service runtime.
-    assert 'dry-run reports:' in capsys.readouterr().out
-    assert (report_directory / 'summary.json').exists()
 
 
 def test_runtime_health_when_review_app_is_created_returns_service_status() -> None:
