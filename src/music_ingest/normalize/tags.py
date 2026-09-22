@@ -216,15 +216,6 @@ def write_normalized_tags(path: Path, tags: tuple[tuple[str, str], ...]) -> tupl
     return filtered
 
 
-def _read_vorbis(path: Path) -> tuple[tuple[str, str], ...]:
-    audio = _open_vorbis(path)
-    return tuple(
-        (name.upper(), _LIST_SEPARATOR.join(values))
-        for name, values in audio.items()
-        if name.upper() in ALLOWED_TAG_KEYS and values
-    )
-
-
 def _write_vorbis(path: Path, values: Mapping[str, str]) -> None:
     audio = _open_vorbis(path)
     audio.clear()
@@ -243,36 +234,6 @@ def _open_vorbis(path: Path) -> FLAC | OggVorbis | OggOpus:
             return OggOpus(path)
         case _:
             raise MetadataTagError(path)
-
-
-def _read_mp3(path: Path) -> tuple[tuple[str, str], ...]:
-    tags = ID3(path)
-    values: dict[str, str] = {}
-    for name, frame_name in _ID3_TEXT_FRAME_NAMES.items():
-        frame = tags.get(frame_name)
-        if frame is not None:
-            values[name] = _LIST_SEPARATOR.join(str(value) for value in frame.text)
-    _read_position(tags, 'TRCK', 'TRACKNUMBER', 'TRACKTOTAL', values)
-    _read_position(tags, 'TPOS', 'DISCNUMBER', 'DISCTOTAL', values)
-    for name, description in _ID3_TXXX_FIELDS.items():
-        frame = next((item for item in tags.getall('TXXX') if item.desc == description), None)
-        if frame is not None:
-            values[name] = _LIST_SEPARATOR.join(frame.text)
-    ufid = next((item for item in tags.getall('UFID') if item.owner == 'http://musicbrainz.org'), None)
-    if ufid is not None:
-        values['MUSICBRAINZ_RECORDINGID'] = ufid.data.decode()
-    return tuple(values.items())
-
-
-def _read_position(tags: ID3, frame_name: str, number_name: str, total_name: str, values: dict[str, str]) -> None:
-    frame = tags.get(frame_name)
-    if frame is None or not frame.text:
-        return
-    number, separator, total = str(frame.text[0]).partition('/')
-    if number:
-        values[number_name] = number
-    if separator and total:
-        values[total_name] = total
 
 
 def _write_mp3(path: Path, values: Mapping[str, str]) -> None:
@@ -296,36 +257,6 @@ def _write_mp3(path: Path, values: Mapping[str, str]) -> None:
 def _add_position(tags: ID3, frame_type: type[TRCK] | type[TPOS], number: str | None, total: str | None) -> None:
     if number is not None:
         tags.add(frame_type(encoding=3, text=f'{number}/{total}' if total is not None else number))
-
-
-def _read_mp4(path: Path) -> tuple[tuple[str, str], ...]:
-    tags = MP4(path).tags or {}
-    values: dict[str, str] = {}
-    for name, atom in _MP4_FIELDS.items():
-        atom_values = tags.get(atom)
-        if atom_values:
-            values[name] = _LIST_SEPARATOR.join(str(value) for value in atom_values)
-    _read_mp4_position(tags.get('trkn'), 'TRACKNUMBER', 'TRACKTOTAL', values)
-    _read_mp4_position(tags.get('disk'), 'DISCNUMBER', 'DISCTOTAL', values)
-    for name, atom_name in _MP4_FREEFORM_FIELDS.items():
-        atom_values = tags.get(_MP4_FREEFORM_PREFIX + atom_name)
-        if atom_values:
-            values[name] = _LIST_SEPARATOR.join(value.decode() for value in atom_values)
-    return tuple(values.items())
-
-
-def _read_mp4_position(
-    position: list[tuple[int, int]] | None,
-    number_name: str,
-    total_name: str,
-    values: dict[str, str],
-) -> None:
-    if position:
-        number, total = position[0]
-        if number:
-            values[number_name] = str(number)
-        if total:
-            values[total_name] = str(total)
 
 
 def _write_mp4(path: Path, values: Mapping[str, str]) -> None:

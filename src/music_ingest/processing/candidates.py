@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import replace
 from pathlib import Path
 
 from pydantic import TypeAdapter
@@ -10,12 +9,6 @@ from pydantic import TypeAdapter
 from music_ingest.dto import CandidateEvidencePayload
 from music_ingest.matching.evidence import ProviderEvidenceResult
 from music_ingest.matching.providers import (
-    AcoustIdMatch,
-    Ambiguous,
-    FixtureProvenance,
-    LiveProvenance,
-    MusicBrainzMatch,
-    MusicBrainzResult,
     ReleaseCandidate,
     release_display_title,
 )
@@ -36,28 +29,6 @@ from music_ingest.models import (
 from music_ingest.normalize.genre_names import display_genre_name
 
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
-
-
-def _analyzed_tags(
-    provider_result: ProviderEvidenceResult | None,
-    match_result: MatchResult | None,
-) -> dict[str, str]:
-    analyzed: dict[str, str] = {}
-    if provider_result is None:
-        return analyzed
-    match provider_result.musicbrainz:
-        case MusicBrainzMatch(candidate=candidate):
-            analyzed.update(_candidate_tags(candidate))
-        case _:
-            pass
-    match provider_result.acoustid:
-        case AcoustIdMatch(evidence=evidence) if 'MUSICBRAINZ_RECORDINGID' not in analyzed:
-            analyzed['MUSICBRAINZ_RECORDINGID'] = evidence.recording_mbid
-        case _:
-            pass
-    if match_result is not None and match_result.selected_release_mbid is not None:
-        analyzed['MUSICBRAINZ_ALBUMID'] = match_result.selected_release_mbid
-    return analyzed
 
 
 def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
@@ -330,46 +301,10 @@ def _stored_release_recording_mbid(release: tuple[str, CandidateEvidencePayload]
     )
 
 
-def _aggregate_musicbrainz_results(results: tuple[ProviderEvidenceResult, ...]) -> MusicBrainzResult:
-    candidates: dict[str, ReleaseCandidate] = {}
-    provenance: LiveProvenance | FixtureProvenance | None = None
-    for result in results:
-        match result.musicbrainz:
-            case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
-                provenance = result_provenance
-                _merge_release_candidate(candidates, candidate)
-            case Ambiguous(provenance=result_provenance, candidates=result_candidates):
-                provenance = result_provenance
-                for candidate in result_candidates:
-                    _merge_release_candidate(candidates, candidate)
-            case _:
-                continue
-    if provenance is None or not candidates:
-        return results[0].musicbrainz
-    unique_candidates = tuple(candidates.values())
-    return (
-        MusicBrainzMatch(provenance, unique_candidates[0])
-        if len(unique_candidates) == 1
-        else Ambiguous(provenance, unique_candidates)
-    )
-
-
 def _release_candidates_for_recording(
     recording_mbid: str, candidates: Iterable[ReleaseCandidate]
 ) -> tuple[ReleaseCandidate, ...]:
     return tuple(candidate for candidate in candidates if recording_mbid in candidate.recording_mbids)
-
-
-def _merge_release_candidate(candidates: dict[str, ReleaseCandidate], candidate: ReleaseCandidate) -> None:
-    existing = candidates.get(candidate.release_mbid)
-    candidates[candidate.release_mbid] = (
-        candidate
-        if existing is None
-        else replace(
-            existing,
-            recording_mbids=tuple(dict.fromkeys((*existing.recording_mbids, *candidate.recording_mbids))),
-        )
-    )
 
 
 def _unique_acoustid_album_match(
