@@ -3,7 +3,7 @@
 ## Project map
 
 - `src/music_ingest/` is the Python 3.14 FastAPI service. Follow the domain flow: intake → persisted provenance → processing worker → inspection/sanitization/normalization → staged publication and review.
-- `frontend/` is a separate React, TypeScript, and Vite application. Its build output is served by FastAPI from `src/music_ingest/ui/dist`.
+- `frontend/` is a separate React, TypeScript, and Vite application. Its build output is served by FastAPI from `src/music_ingest/static/dist`.
 - `tests/` contains the backend test suite and fixtures; `alembic/` contains database migrations.
 - `test_stand/` is disposable Docker integration infrastructure for PostgreSQL, the worker, and Navidrome.
 
