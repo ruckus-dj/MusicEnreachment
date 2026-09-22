@@ -6,7 +6,6 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -15,6 +14,7 @@ from music_ingest.models import (
     ProviderAttemptRecord,
     SourceRecord,
 )
+from music_ingest.services.association import AutomaticAssociationRequest, RecordingAssociationService
 
 
 def test_automatic_association_when_identical_content_has_other_recording_requires_review(tmp_path: Path) -> None:

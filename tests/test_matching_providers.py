@@ -8,11 +8,12 @@ from threading import Barrier
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.external.acoustid import AcoustIdV2Adapter
-from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
-from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
-from music_ingest.matching.musicbrainz_mapping import select_genres
-from music_ingest.matching.providers import (
+from music_ingest.adapters.external.acoustid import AcoustIdV2Adapter
+from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
+from music_ingest.services.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
+from music_ingest.services.matching.musicbrainz import MusicBrainzProviderAdapter
+from music_ingest.services.matching.musicbrainz_mapping import select_genres
+from music_ingest.services.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
     Ambiguous,
@@ -30,7 +31,6 @@ from music_ingest.matching.providers import (
     ReleaseCandidate,
     Unavailable,
 )
-from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 FIXTURES = Path(__file__).parent / 'fixtures'

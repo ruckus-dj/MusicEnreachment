@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.media_capabilities import MediaCapability, inspect_media_capability
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.inspectors.media_capabilities import MediaCapability, inspect_media_capability
 
 
 def _successful_probe(monkeypatch: pytest.MonkeyPatch, payload: object) -> None:
     probe_output = json.dumps(payload)
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -38,7 +38,7 @@ def test_inspect_media_capability_accepts_declared_source(
         {'streams': [{'codec_type': 'audio', 'codec_name': expected_codec}], 'format': {'format_name': container}}
     )
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -69,7 +69,7 @@ def test_inspect_media_capability_preserves_quality_properties_for_selection_pol
         }
     )
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -102,7 +102,7 @@ def test_inspect_media_capability_uses_raw_bit_depth_when_codec_bit_depth_is_zer
         }
     )
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -135,7 +135,7 @@ def test_inspect_media_capability_accepts_any_container_with_one_audio_stream(
         }
     )
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -160,7 +160,7 @@ def test_inspect_media_capability_rejects_multiple_audio_streams(
         }
     )
     monkeypatch.setattr(
-        'music_ingest.inspectors.media_capabilities.run_tool',
+        'music_ingest.adapters.inspectors.media_capabilities.run_tool',
         lambda *_args: ToolEvidence(ToolState.SUCCESS, 0, probe_output, ''),
     )
 
@@ -184,7 +184,7 @@ def test_inspect_media_capability_preserves_ffprobe_failure_evidence(
         calls.append((command, timeout_seconds))
         return evidence
 
-    monkeypatch.setattr('music_ingest.inspectors.media_capabilities.run_tool', fake_run_tool)
+    monkeypatch.setattr('music_ingest.adapters.inspectors.media_capabilities.run_tool', fake_run_tool)
 
     result = inspect_media_capability(source, ffprobe_command='custom-ffprobe', timeout_seconds=2.5)
 

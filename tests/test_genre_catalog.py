@@ -6,9 +6,9 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.matching.genre_catalog import load_genre_catalog, replace_genre_catalog
-from music_ingest.matching.genres import GenreCatalogEntry
 from music_ingest.models import Base
+from music_ingest.services.matching.genre_catalog import load_genre_catalog, replace_genre_catalog
+from music_ingest.services.matching.genres import GenreCatalogEntry
 
 
 def _engine(tmp_path: Path) -> object:

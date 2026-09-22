@@ -10,27 +10,27 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
-import music_ingest.api.server as server
+import music_ingest.bootstrap.server as server
+import music_ingest.workers.runtime as processing_runtime
 from music_ingest import __main__ as command
-from music_ingest.api.app import create_app
-from music_ingest.api.server import RuntimeConfig, RuntimeConfigurationError
-from music_ingest.dto import RuntimeSettings
-from music_ingest.external.lrclib import (
+from music_ingest.adapters.external.lrclib import (
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BODY_BYTES,
     LrclibLookupRequest,
     lookup_url,
 )
+from music_ingest.api.app import create_app
+from music_ingest.bootstrap.server import RuntimeConfig, RuntimeConfigurationError
+from music_ingest.contracts import RuntimeSettings
 from music_ingest.models import Base, JobRecord, RuntimeSettingRecord, SourceRootRecord
-from music_ingest.processing import ProcessingConfig
-from music_ingest.processing import runtime as processing_runtime
-from music_ingest.settings import (
+from music_ingest.services.settings import (
     SettingKey,
     build_runtime_settings,
     get_setting_value,
     get_setting_values,
     save_runtime_settings,
 )
+from music_ingest.workers.config import ProcessingConfig
 
 
 def test_entrypoint_when_dry_run_is_requested_keeps_the_dry_run_command(
@@ -225,7 +225,7 @@ def test_build_runtime_settings_when_values_are_missing_uses_defaults_without_lo
     def fail_if_genres_are_loaded(_session: Session) -> tuple[object, ...]:
         raise AssertionError('genre catalog should be opt-in')
 
-    monkeypatch.setattr('music_ingest.settings.load_genre_catalog', fail_if_genres_are_loaded)
+    monkeypatch.setattr('music_ingest.services.settings.load_genre_catalog', fail_if_genres_are_loaded)
     with Session(engine) as session:
         settings = build_runtime_settings(session)
         missing = get_setting_value(session, SettingKey.MUSICBRAINZ_HOST)

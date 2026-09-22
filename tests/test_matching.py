@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from music_ingest.matching.musicbrainz_mapping import merge_recording_candidate
-from music_ingest.matching.providers import ReleaseCandidate
-from music_ingest.matching.scoring import (
+from music_ingest.services.matching.musicbrainz_mapping import merge_recording_candidate
+from music_ingest.services.matching.providers import ReleaseCandidate
+from music_ingest.services.matching.scoring import (
     CandidateScore,
     MatchingRequest,
     score_recording_candidate,

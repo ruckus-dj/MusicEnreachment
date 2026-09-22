@@ -10,8 +10,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
-from music_ingest.intake.service import IntakeRequest, Origin, intake_source
-from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -23,9 +21,12 @@ from music_ingest.models import (
     SourceRootRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.processing.runtime import ProcessingRuntimeMonitor
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.intake.service import IntakeRequest, Origin, intake_source
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.runtime import ProcessingRuntimeMonitor
+from music_ingest.workers.worker import ProcessingWorker
 
 
 def _source_root(path: Path, *, enabled: bool = True) -> SourceRootRecord:

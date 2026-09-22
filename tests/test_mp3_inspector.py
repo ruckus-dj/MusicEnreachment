@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
-from music_ingest.inspectors.mp3 import InspectionState, Mp3FindingKind, inspect_mp3
+from music_ingest.adapters.inspectors.mp3 import InspectionState, Mp3FindingKind, inspect_mp3
 
 
 def _snapshot(source: Path) -> tuple[int, int, int, str]:

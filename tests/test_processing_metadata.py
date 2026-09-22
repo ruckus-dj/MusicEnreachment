@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from music_ingest.processing.metadata import _fallback_metadata, _publication_layout
+from music_ingest.services.metadata import _fallback_metadata, _publication_layout
 
 
 def test_fallback_metadata_when_source_is_missing_canonical_tags_returns_no_fallback() -> None:

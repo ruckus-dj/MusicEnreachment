@@ -6,36 +6,36 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from music_ingest.adapters.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.api.catalog_views import _catalog_tags
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import require_owned_source
-from music_ingest.association import (
-    ManualAssociationRequest,
-    RecordingAssociationService,
-    RecordingAssociationUnavailable,
-)
-from music_ingest.dto import (
+from music_ingest.contracts import (
     CandidateEvidencePayload,
     CandidateSelection,
     ManualSourceSelection,
     MusicBrainzOverride,
 )
-from music_ingest.external.musicbrainz import SyncMusicBrainzTransport
-from music_ingest.library.service import (
+from music_ingest.models import (
+    LibraryRecord,
+    ReviewDecisionRecord,
+)
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.association import (
+    ManualAssociationRequest,
+    RecordingAssociationService,
+    RecordingAssociationUnavailable,
+)
+from music_ingest.services.library.service import (
     append_metadata_revision,
     library_record_detail,
     record_event,
     reevaluate_effective_source_decision,
 )
-from music_ingest.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
-from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
-from music_ingest.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
-from music_ingest.models import (
-    LibraryRecord,
-    ReviewDecisionRecord,
-)
-from music_ingest.models.jobs import JobRepository
-from music_ingest.settings import (
+from music_ingest.services.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
+from music_ingest.services.matching.musicbrainz import MusicBrainzProviderAdapter
+from music_ingest.services.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
+from music_ingest.services.settings import (
     build_runtime_settings,
 )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from music_ingest.dto import (
+from music_ingest.contracts import (
     CandidateEvidencePayload,
 )
 from music_ingest.models.library import CandidateView, SourceRecordView

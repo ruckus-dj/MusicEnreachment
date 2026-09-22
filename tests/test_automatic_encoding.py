@@ -4,9 +4,9 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
+from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
 from music_ingest.models import Base, JobRecord, SourceRecord, SourceTagRecord
-from music_ingest.source_encoding import apply_encoding, preview_field
+from music_ingest.services.source_encoding import apply_encoding, preview_field
 
 
 def source(session: Session, values: tuple[str, ...] = ('Морячек', 'Ангус', 'Фиги')) -> SourceRecord:
@@ -41,7 +41,7 @@ def source(session: Session, values: tuple[str, ...] = ('Морячек', 'Ан�
 
 
 def test_backfill_is_db_only_dry_run_default_apply_idempotent_and_manual_safe() -> None:
-    from music_ingest.source_encoding import backfill_source_encoding
+    from music_ingest.services.source_encoding import backfill_source_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -70,7 +70,7 @@ def test_backfill_is_db_only_dry_run_default_apply_idempotent_and_manual_safe() 
 
 @pytest.mark.parametrize('state', ['running', 'legacy'])
 def test_backfill_skips_busy_and_missing_evidence(state: str) -> None:
-    from music_ingest.source_encoding import backfill_source_encoding
+    from music_ingest.services.source_encoding import backfill_source_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -92,7 +92,7 @@ def test_backfill_skips_busy_and_missing_evidence(state: str) -> None:
 
 
 def test_initial_automatic_recovery_preserves_original_and_has_no_jobs() -> None:
-    from music_ingest.source_encoding import recover_import_encoding
+    from music_ingest.services.source_encoding import recover_import_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -108,7 +108,7 @@ def test_initial_automatic_recovery_preserves_original_and_has_no_jobs() -> None
 
 
 def test_codec_selection_is_from_immutable_original_after_auto_and_manual() -> None:
-    from music_ingest.source_encoding import recover_import_encoding
+    from music_ingest.services.source_encoding import recover_import_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -209,7 +209,7 @@ def test_codec_selection_rejects_nonreversible_utf16(declared_codec: str) -> Non
 
 @pytest.mark.parametrize('value', ['Beyoncé', 'Motörhead', 'Île', 'Don’t', 'Привет', '', '    ', 'Ôèãè'])
 def test_auto_does_not_change_controls(value: str) -> None:
-    from music_ingest.source_encoding import recover_import_encoding
+    from music_ingest.services.source_encoding import recover_import_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)

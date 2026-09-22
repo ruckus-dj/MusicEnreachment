@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.dto.settings import RuntimeSettings
+from music_ingest.contracts.settings import RuntimeSettings
 from music_ingest.models import Base, JobRecord
-from music_ingest.models.jobs import JobRepository
-from music_ingest.settings import build_runtime_settings, save_runtime_settings
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.settings import build_runtime_settings, save_runtime_settings
 
 DEFAULT_POOLS = {
     'filesystem_scan': 4,

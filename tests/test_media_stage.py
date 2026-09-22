@@ -8,18 +8,18 @@ from threading import Barrier
 
 import pytest
 
+import music_ingest.workers.media_stage as media_stage
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.remux import RemuxRequest, _muxer
 from music_ingest.cli.media_stage import run_media_stage_cli
-from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.processing import media_stage
-from music_ingest.processing.media_stage import (
+from music_ingest.services.enrichment.fingerprints import FingerprintResult, FingerprintState
+from music_ingest.workers.media_stage import (
     MediaPipelineRequest,
     SourceAudioCorruptionError,
     inspect_source_capability,
     plan_media_stage,
     process_media,
 )
-from music_ingest.processing.remux import RemuxRequest, _muxer
 
 _FFMPEG = which('ffmpeg') or ''
 assert _FFMPEG

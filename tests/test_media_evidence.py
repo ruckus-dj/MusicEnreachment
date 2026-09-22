@@ -7,10 +7,10 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.inspectors._tool import ToolState
+from music_ingest.adapters.inspectors._tool import ToolState
 from music_ingest.models import Base, SourceRecord
 from music_ingest.models.entities import DecoderEvidenceRecord
-from music_ingest.models.repositories import DecoderEvidenceRepository
+from music_ingest.repositories.persistence import DecoderEvidenceRepository
 
 
 def test_decoder_evidence_when_same_source_and_command_reuses_success(tmp_path: Path) -> None:

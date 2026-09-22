@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, SourceRecord, SourceRootRecord
-from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source, resolve_regular_file
+from music_ingest.services.source_boundary import SourceBoundaryError, resolve_owned_source, resolve_regular_file
 
 
 def test_resolve_regular_file_when_path_is_inside_root_returns_the_resolved_path(tmp_path: Path) -> None:

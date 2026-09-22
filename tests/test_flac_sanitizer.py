@@ -6,9 +6,9 @@ from subprocess import run
 
 import pytest
 
-import music_ingest.sanitizers.flac as processing
-from music_ingest.inspectors.decoder import validate_decoder
-from music_ingest.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
+import music_ingest.adapters.sanitizers.flac as processing
+from music_ingest.adapters.inspectors.decoder import validate_decoder
+from music_ingest.adapters.sanitizers.flac import FlacSanitizationFailure, FlacSanitizationRequest, sanitize_flac
 
 
 def _create_flac(directory: Path, name: str) -> Path:

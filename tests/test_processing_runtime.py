@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from music_ingest.processing.runtime import ProcessingRuntimeMonitor
+from music_ingest.workers.runtime import ProcessingRuntimeMonitor
 
 
 def test_runtime_monitor_keeps_latest_slot_state() -> None:
@@ -20,8 +20,8 @@ def test_runtime_monitor_keeps_latest_slot_state() -> None:
 
 
 def test_worker_pools_cover_each_kind_exactly_once() -> None:
-    from music_ingest.dto.settings import WorkerPoolSettings
-    from music_ingest.processing.runtime import WORKER_POOLS
+    from music_ingest.contracts.settings import WorkerPoolSettings
+    from music_ingest.workers.runtime import WORKER_POOLS
 
     assert set(WORKER_POOLS) == set(WorkerPoolSettings.model_fields)
     kinds = [kind for allowed in WORKER_POOLS.values() for kind in allowed]

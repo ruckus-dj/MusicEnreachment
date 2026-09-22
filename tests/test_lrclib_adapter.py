@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from music_ingest.external.lrclib import (
+from music_ingest.adapters.external.lrclib import (
     DEFAULT_USER_AGENT,
     LrclibAdapter,
     LrclibHttpResponse,

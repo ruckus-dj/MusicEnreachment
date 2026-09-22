@@ -8,7 +8,7 @@ from typing import ClassVar, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from music_ingest.matching.providers import (
+from music_ingest.services.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
     AcoustIdResult,

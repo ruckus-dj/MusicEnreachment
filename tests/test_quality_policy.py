@@ -12,7 +12,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
-from music_ingest.library.service import persist_effective_source_decision, reevaluate_effective_source_decision
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -23,7 +22,11 @@ from music_ingest.models import (
     SourceRecord,
     SourceRootRecord,
 )
-from music_ingest.quality_policy import (
+from music_ingest.services.library.service import (
+    persist_effective_source_decision,
+    reevaluate_effective_source_decision,
+)
+from music_ingest.services.quality_policy import (
     POLICY_VERSION,
     Codec,
     DecisionReason,

@@ -6,18 +6,18 @@ from unittest.mock import Mock
 
 import pytest
 
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.inspectors.media_capabilities import MediaCapability
+from music_ingest.adapters.remux import RemuxFailure
 from music_ingest.cli import media_stage as cli
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.media_capabilities import MediaCapability
-from music_ingest.normalize.metadata import MetadataWriteError
-from music_ingest.processing.media_stage import (
+from music_ingest.services.normalize.metadata import MetadataWriteError
+from music_ingest.workers.media_stage import (
     MediaPipelineInfrastructureError,
     MediaPipelineRequest,
     MediaStagePlan,
     PipelineOutputFailure,
     SourceAudioCorruptionError,
 )
-from music_ingest.processing.remux import RemuxFailure
 
 
 @pytest.fixture

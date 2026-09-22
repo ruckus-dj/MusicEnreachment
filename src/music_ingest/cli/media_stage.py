@@ -7,8 +7,9 @@ from subprocess import CalledProcessError, TimeoutExpired
 from tempfile import TemporaryDirectory
 from typing import override
 
-from music_ingest.normalize.metadata import MetadataWriteError
-from music_ingest.processing.media_stage import (
+from music_ingest.adapters.remux import RemuxFailure
+from music_ingest.services.normalize.metadata import MetadataWriteError
+from music_ingest.workers.media_stage import (
     MediaPipelineInfrastructureError,
     MediaPipelineRequest,
     PipelineOutputFailure,
@@ -17,7 +18,6 @@ from music_ingest.processing.media_stage import (
     plan_media_stage,
     process_media,
 )
-from music_ingest.processing.remux import RemuxFailure
 
 
 @dataclass(frozen=True, slots=True)

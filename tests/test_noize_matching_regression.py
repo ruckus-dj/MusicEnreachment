@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
-from music_ingest.external.acoustid import AcoustIdV2Adapter
-from music_ingest.matching.evidence import ProviderEvidenceResult
-from music_ingest.matching.providers import (
+import music_ingest.services.candidates as processing
+from music_ingest.adapters.external.acoustid import AcoustIdV2Adapter
+from music_ingest.services.matching.evidence import ProviderEvidenceResult
+from music_ingest.services.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
     FixtureCase,
@@ -16,8 +17,7 @@ from music_ingest.matching.providers import (
     RecordingCandidate,
     ReleaseCandidate,
 )
-from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchResult
-from music_ingest.processing import candidates as processing
+from music_ingest.services.matching.scoring import CandidateScore, MatchDecision, MatchResult
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
 FIXTURE = Path(__file__).parent / 'fixtures' / 'acoustid' / 'noize-pesnya-dlya-radio.json'

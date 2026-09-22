@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
-from music_ingest.library.service import _catalog_source_tags, append_metadata_revision, ensure_source_record
+from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
 from music_ingest.models import Base, LibraryMetadataRevisionRecord, SourceRecord, SourceTagRecord
-from music_ingest.source_encoding import apply_encoding
+from music_ingest.services.library.service import _catalog_source_tags, append_metadata_revision, ensure_source_record
+from music_ingest.services.source_encoding import apply_encoding
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def make_source(session: Session, value: str) -> SourceRecord:
 
 def test_nonreversible_unicode_preview_and_apply_are_atomic(session: Session) -> None:
     from music_ingest.models import JobRecord
-    from music_ingest.source_encoding import EncodingInvalid, preview_encoding
+    from music_ingest.services.source_encoding import EncodingInvalid, preview_encoding
 
     source = make_source(session, 'þÿAB')
     second = SourceTagRecord(format_name='legacy', tag_name='ARTIST', value='Ïðèâåò')
@@ -122,7 +122,7 @@ def test_apply_appends_current_original_preserving_import(session: Session) -> N
 @pytest.mark.parametrize('value', ['ASCII', ''])
 def test_decision_only_apply_versions_without_stranding_jobs(session: Session, value: str) -> None:
     from music_ingest.models import JobRecord, ProviderCandidateRunRecord
-    from music_ingest.models.jobs import JobRepository
+    from music_ingest.repositories.jobs import JobRepository
 
     now = datetime.now(UTC)
     source = make_source(session, value)
@@ -143,8 +143,8 @@ def test_decision_only_apply_versions_without_stranding_jobs(session: Session, v
 
 
 def test_id3_physical_precedence_and_numeric_genre_keep_evidence() -> None:
-    from music_ingest.normalize.source_evidence import _id3_fields
-    from music_ingest.normalize.source_values import source_values
+    from music_ingest.services.normalize.source_evidence import _id3_fields
+    from music_ingest.services.normalize.source_values import source_values
 
     def frame(name: bytes, value: bytes) -> bytes:
         payload = b'\x00' + value
@@ -159,7 +159,7 @@ def test_id3_physical_precedence_and_numeric_genre_keep_evidence() -> None:
 def test_stage_plan_uses_persisted_projection_without_reread() -> None:
     from pathlib import Path
 
-    from music_ingest.processing.media_stage import plan_media_stage
+    from music_ingest.workers.media_stage import plan_media_stage
 
     tags = (('TITLE', 'Current'), ('GENRE', 'Rock'), ('DATE', '2000'))
     plan = plan_media_stage(Path('/absent.mp3'), source_tags=tags)

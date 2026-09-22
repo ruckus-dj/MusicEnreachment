@@ -11,7 +11,7 @@ from music_ingest.api.candidate_views import _display_candidates
 from music_ingest.api.catalog_views import _catalog_record_response, _catalog_sort_key
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import destination_conflict
-from music_ingest.dto import (
+from music_ingest.contracts import (
     LibraryAlbumListResponse,
     LibraryAlbumResponse,
     LibraryArtistListResponse,
@@ -27,7 +27,10 @@ from music_ingest.dto import (
     ManualActionFilter,
     ManualActionListResponse,
 )
-from music_ingest.library.service import (
+from music_ingest.models import (
+    ReleaseArtworkRecord,
+)
+from music_ingest.services.library.service import (
     library_active_record_count,
     library_album_tracks,
     library_artist_albums,
@@ -36,9 +39,6 @@ from music_ingest.library.service import (
     library_manual_action_records,
     library_record_detail,
     library_records,
-)
-from music_ingest.models import (
-    ReleaseArtworkRecord,
 )
 
 

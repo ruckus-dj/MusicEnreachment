@@ -9,10 +9,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.dto.settings import RuntimeSettings
+import music_ingest.workers.runtime as runtime
+from music_ingest.contracts.settings import RuntimeSettings
 from music_ingest.models import Base
-from music_ingest.processing import ProcessingConfig, runtime
-from music_ingest.settings import save_runtime_settings
+from music_ingest.services.settings import save_runtime_settings
+from music_ingest.workers.config import ProcessingConfig
 
 
 def test_pool_settings_reads_one_immutable_snapshot_and_picks_up_persisted_updates(tmp_path: Path) -> None:

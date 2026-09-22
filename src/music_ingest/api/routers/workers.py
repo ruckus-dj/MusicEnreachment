@@ -10,9 +10,9 @@ from sqlalchemy import case, func, select
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.models import JobRecord, SourceRecord
-from music_ingest.normalize.source_values import source_values
-from music_ingest.processing.runtime import ProcessingRuntimeMonitor
-from music_ingest.settings import build_runtime_settings
+from music_ingest.services.normalize.source_values import source_values
+from music_ingest.services.settings import build_runtime_settings
+from music_ingest.workers.runtime import ProcessingRuntimeMonitor
 
 _WORKER_QUEUE_JOB_LIMIT = 100
 

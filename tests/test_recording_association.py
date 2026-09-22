@@ -6,12 +6,6 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.association import (
-    AutomaticAssociationRequest,
-    ManualAssociationRequest,
-    RecordingAssociationService,
-)
-from music_ingest.library import append_metadata_revision
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -20,6 +14,12 @@ from music_ingest.models import (
     SourceAssociationOverrideRecord,
     SourceRecord,
 )
+from music_ingest.services.association import (
+    AutomaticAssociationRequest,
+    ManualAssociationRequest,
+    RecordingAssociationService,
+)
+from music_ingest.services.library import append_metadata_revision
 from tests.support.providers import MusicBrainzFixtureProvider
 
 

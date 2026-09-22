@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.processing import remux
+import music_ingest.adapters.remux as remux
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
 
 
 @pytest.mark.parametrize(

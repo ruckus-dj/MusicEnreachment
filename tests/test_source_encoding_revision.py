@@ -5,8 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, JobAttemptRecord, JobRecord, SourceRecord
-from music_ingest.models.jobs import ClaimedJob
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.repositories.jobs import ClaimedJob
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 
 
 def test_stale_source_revision_job_is_superseded_before_handler(tmp_path: Path) -> None:
@@ -44,7 +45,7 @@ def test_stale_source_revision_job_is_superseded_before_handler(tmp_path: Path) 
 
 def test_automatic_final_preserves_manual_revision() -> None:
     from music_ingest.models import LibraryMetadataRevisionRecord, LibraryRecord
-    from music_ingest.processing.handlers.selection import refreshed_final_tags
+    from music_ingest.workers.handlers.selection import refreshed_final_tags
 
     record = LibraryRecord(id='record')
     record.metadata_revisions.append(

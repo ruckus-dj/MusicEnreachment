@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from music_ingest.matching.genres import GenreCatalogEntry, GenreCatalogSyncError, sync_genres
-from music_ingest.matching.providers import MusicBrainzHttpResponse
+from music_ingest.services.matching.genres import GenreCatalogEntry, GenreCatalogSyncError, sync_genres
+from music_ingest.services.matching.providers import MusicBrainzHttpResponse
 
 
 @dataclass

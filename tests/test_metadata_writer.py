@@ -14,15 +14,15 @@ from mutagen.mp4 import MP4
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 
-from music_ingest.dto import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
-from music_ingest.normalize.metadata import (
+from music_ingest.contracts import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.services.normalize.metadata import (
     CanonicalMetadata,
     CanonicalSource,
     MetadataWriteError,
     MetadataWriteRequest,
     write_canonical_metadata,
 )
-from music_ingest.normalize.tags import read_normalized_tags
+from music_ingest.services.normalize.tags import read_normalized_tags
 
 _FFPROBE = which('ffprobe') or ''
 assert _FFPROBE
@@ -260,15 +260,15 @@ def test_write_canonical_metadata_copies_declared_capability_before_canonical_re
     fields, genres = _policies()
     observed = source.read_bytes()
     monkeypatch.setattr(
-        'music_ingest.normalize.metadata.inspect_media_capability',
+        'music_ingest.services.normalize.metadata.inspect_media_capability',
         lambda _path: type('Inspection', (), {'capability': type('Capability', (), {'codec': codec})()})(),
     )
-    monkeypatch.setattr('music_ingest.normalize.metadata._write_vorbis_comments', lambda *_args: None)
-    monkeypatch.setattr('music_ingest.normalize.metadata._verify_vorbis_comments', lambda *_args: None)
-    monkeypatch.setattr('music_ingest.normalize.metadata._write_mp3_tags', lambda *_args: None)
-    monkeypatch.setattr('music_ingest.normalize.metadata._verify_mp3_tags', lambda *_args: None)
-    monkeypatch.setattr('music_ingest.normalize.metadata._write_mp4_tags', lambda *_args: None)
-    monkeypatch.setattr('music_ingest.normalize.metadata._verify_mp4_tags', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._write_vorbis_comments', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._verify_vorbis_comments', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._write_mp3_tags', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._verify_mp3_tags', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._write_mp4_tags', lambda *_args: None)
+    monkeypatch.setattr('music_ingest.services.normalize.metadata._verify_mp4_tags', lambda *_args: None)
 
     result = write_canonical_metadata(
         MetadataWriteRequest(source, staging / f'track{suffix}', staging, _metadata(), fields, genres)
@@ -286,7 +286,7 @@ def test_write_canonical_metadata_rejects_unsupported_capability_before_staging(
     staging.mkdir()
     fields, genres = _policies()
     monkeypatch.setattr(
-        'music_ingest.normalize.metadata.inspect_media_capability',
+        'music_ingest.services.normalize.metadata.inspect_media_capability',
         lambda _path: type('Inspection', (), {'capability': None})(),
     )
 

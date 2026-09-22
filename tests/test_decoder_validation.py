@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from music_ingest.inspectors.decoder import DecoderValidationError, validate_decoder
+from music_ingest.adapters.inspectors.decoder import DecoderValidationError, validate_decoder
 
 
 def test_validate_decoder_invokes_ffmpeg_for_declared_staged_input(tmp_path: Path) -> None:

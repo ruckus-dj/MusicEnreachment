@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     Base,
     EffectiveSourceDecisionRecord,
@@ -23,11 +22,13 @@ from music_ingest.models import (
     SourceRecord,
     SourceRootRecord,
 )
-from music_ingest.models.jobs import ClaimedJob, JobRepository
-from music_ingest.normalize.tags import write_normalized_tags
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.processing.execution import ExecutionContext
-from music_ingest.processing.handlers.publication import PublicationHandler
+from music_ingest.repositories.jobs import ClaimedJob, JobRepository
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.services.normalize.tags import write_normalized_tags
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.execution import ExecutionContext
+from music_ingest.workers.handlers.publication import PublicationHandler
+from music_ingest.workers.worker import ProcessingWorker
 
 
 def _flac(path: Path, title: str) -> Path:

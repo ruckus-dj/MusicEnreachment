@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, JobRecord
-from music_ingest.models.jobs import JobRepository
+from music_ingest.repositories.jobs import JobRepository
 
 
 def test_enqueue_release_artwork_when_same_release_is_active_coalesces_job(tmp_path: Path) -> None:

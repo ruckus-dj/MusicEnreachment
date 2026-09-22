@@ -4,13 +4,13 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 
+from music_ingest.adapters.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.api.dependencies import SessionFactory
-from music_ingest.dto import GenreCatalogItemResponse, GenreCatalogResponse
-from music_ingest.external.musicbrainz import SyncMusicBrainzTransport
-from music_ingest.matching.genre_catalog import load_genre_catalog, replace_genre_catalog
-from music_ingest.matching.genres import GenreCatalogSyncError, sync_genres
+from music_ingest.contracts import GenreCatalogItemResponse, GenreCatalogResponse
 from music_ingest.models import GenreCatalogRecord
-from music_ingest.settings import build_runtime_settings
+from music_ingest.services.matching.genre_catalog import load_genre_catalog, replace_genre_catalog
+from music_ingest.services.matching.genres import GenreCatalogSyncError, sync_genres
+from music_ingest.services.settings import build_runtime_settings
 
 
 def _genre_catalog_response(entries: tuple[GenreCatalogRecord, ...]) -> GenreCatalogResponse:

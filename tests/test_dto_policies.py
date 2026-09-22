@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from music_ingest.dto.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
+from music_ingest.contracts.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
 
 
 def test_field_policy_when_allowed_tag_keys_matches_the_canonical_set_is_accepted() -> None:

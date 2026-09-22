@@ -5,14 +5,14 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from music_ingest.dto import (
+from music_ingest.contracts import (
     LibraryRecordSummaryResponse,
 )
 from music_ingest.models import (
     LibraryRecord,
     ReleaseArtworkRecord,
 )
-from music_ingest.normalize.source_values import source_values
+from music_ingest.services.normalize.source_values import source_values
 
 
 def _catalog_tags(record: LibraryRecord, source_id: str) -> dict[str, str]:

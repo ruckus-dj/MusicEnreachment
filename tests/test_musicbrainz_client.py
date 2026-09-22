@@ -7,10 +7,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import anyio
 
-from music_ingest.external.musicbrainz import MusicBrainzClient
-from music_ingest.matching.evidence import parse_musicbrainz_snapshot, serialize_musicbrainz_snapshot
-from music_ingest.matching.musicbrainz import MusicBrainzProviderAdapter
-from music_ingest.matching.providers import (
+from music_ingest.adapters.external.musicbrainz import MusicBrainzClient
+from music_ingest.services.matching.evidence import parse_musicbrainz_snapshot, serialize_musicbrainz_snapshot
+from music_ingest.services.matching.musicbrainz import MusicBrainzProviderAdapter
+from music_ingest.services.matching.providers import (
     Ambiguous,
     FixtureCase,
     LiveProvenance,

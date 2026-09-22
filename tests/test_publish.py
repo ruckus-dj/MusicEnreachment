@@ -10,8 +10,8 @@ from subprocess import run
 import pytest
 
 from music_ingest.models import SourceRecord, SourceRootRecord
-from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
-from music_ingest.publication.service import (
+from music_ingest.services.normalize.tags import read_normalized_tags, write_normalized_tags
+from music_ingest.services.publication.service import (
     PublicationError,
     PublicationRequest,
     publish_release,

@@ -6,11 +6,11 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
-from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
-from music_ingest.library.service import ensure_source_record
+from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
 from music_ingest.models import Base, SourceRecord, SourceRootRecord, SourceTagRecord
-from music_ingest.publication import PublicationAttemptRequest, reserve_attempt
-from music_ingest.source_encoding import EncodingConflict, apply_encoding
+from music_ingest.services.library.service import ensure_source_record
+from music_ingest.services.publication import PublicationAttemptRequest, reserve_attempt
+from music_ingest.services.source_encoding import EncodingConflict, apply_encoding
 
 
 @pytest.mark.postgres

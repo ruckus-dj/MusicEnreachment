@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from music_ingest.enrichment.artwork import (
+from music_ingest.services.enrichment.artwork import (
     ArtworkCandidate,
     ArtworkFormat,
     ArtworkWriteError,

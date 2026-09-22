@@ -6,9 +6,13 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.dto import ScanResult
+from music_ingest.contracts import ScanResult
 from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord, SourceRootRecord
-from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
+from music_ingest.services.reconciliation import (
+    apply_reconciliation_plan,
+    load_reconciliation_snapshot,
+    plan_reconciliation,
+)
 
 
 def _root(root_id: str, path: Path, *, enabled: bool = True) -> SourceRootRecord:

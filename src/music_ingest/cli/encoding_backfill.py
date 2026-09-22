@@ -11,7 +11,7 @@ from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 
 from music_ingest.models import SourceRecord
-from music_ingest.source_encoding import backfill_source_encoding
+from music_ingest.services.source_encoding import backfill_source_encoding
 
 
 def positive(value: str) -> int:
@@ -109,7 +109,7 @@ def run_backfill(
 
 
 def main(arguments: list[str]) -> None:
-    from music_ingest.api.server import RuntimeConfig
+    from music_ingest.bootstrap.server import RuntimeConfig
 
     args = parser().parse_args(arguments)
     config = RuntimeConfig.from_environment(os.environ)

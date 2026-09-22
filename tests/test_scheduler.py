@@ -10,8 +10,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, JobRecord
-from music_ingest.models.jobs import JobRepository
-from music_ingest.processing.scheduler import enqueue_reconciliation_scan, run_reconciliation_scheduler
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.workers.scheduler import enqueue_reconciliation_scan, run_reconciliation_scheduler
 
 
 def _session_factory(tmp_path: Path) -> object:
@@ -117,7 +117,7 @@ def test_run_reconciliation_scheduler_when_enqueue_fails_logs_and_continues(
         calls += 1
         raise SQLAlchemyError('boom')
 
-    monkeypatch.setattr('music_ingest.processing.scheduler.enqueue_reconciliation_scan', failing_enqueue)
+    monkeypatch.setattr('music_ingest.workers.scheduler.enqueue_reconciliation_scan', failing_enqueue)
 
     async def driver() -> None:
         async with anyio.create_task_group() as task_group:

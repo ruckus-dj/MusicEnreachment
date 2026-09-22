@@ -17,9 +17,8 @@ from music_ingest.api.candidate_views import (
     _candidate_is_displayable,
     _merge_candidate_evidence,
 )
-from music_ingest.dto import CandidateEvidencePayload, LibraryTrackResponse, LyricsStatus
-from music_ingest.dto.api import CandidateScoreComponents
-from music_ingest.library.service import append_metadata_revision, attach_source
+from music_ingest.contracts import CandidateEvidencePayload, LibraryTrackResponse, LyricsStatus
+from music_ingest.contracts.api import CandidateScoreComponents
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -39,7 +38,12 @@ from music_ingest.models import (
     SourceRootRecord,
     SourceTagRecord,
 )
-from music_ingest.reconciliation import apply_reconciliation_plan, load_reconciliation_snapshot, plan_reconciliation
+from music_ingest.services.library.service import append_metadata_revision, attach_source
+from music_ingest.services.reconciliation import (
+    apply_reconciliation_plan,
+    load_reconciliation_snapshot,
+    plan_reconciliation,
+)
 from tests.support.providers import MusicBrainzFixtureProvider
 
 

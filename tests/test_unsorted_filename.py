@@ -7,9 +7,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
-from music_ingest.api.server import ensure_unsorted_filename_counter
+from music_ingest.bootstrap.server import ensure_unsorted_filename_counter
 from music_ingest.models import Base, UnsortedFilenameCounterRecord
-from music_ingest.processing.metadata import allocate_unsorted_filename, allocate_unsorted_filename_with_factory
+from music_ingest.services.metadata import allocate_unsorted_filename, allocate_unsorted_filename_with_factory
 
 
 def test_allocate_unsorted_filename_increments_the_persisted_counter(tmp_path: Path) -> None:

@@ -10,9 +10,9 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from alembic import command
-from music_ingest.matching.providers import DatabaseRequestRateLimiter
 from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
-from music_ingest.models.repositories import ProviderPersistenceRepository, ensure_provider_schedules
+from music_ingest.repositories.persistence import ProviderPersistenceRepository, ensure_provider_schedules
+from music_ingest.services.matching.providers import DatabaseRequestRateLimiter
 
 
 def test_provider_snapshot_is_global_append_only_and_lookup_is_newest(tmp_path: Path) -> None:

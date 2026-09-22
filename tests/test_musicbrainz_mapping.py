@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from music_ingest.dto import Release
-from music_ingest.matching.musicbrainz_mapping import candidate_for_release
+from music_ingest.contracts import Release
+from music_ingest.services.matching.musicbrainz_mapping import candidate_for_release
 
 
 def _release(**overrides: object) -> Release:

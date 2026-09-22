@@ -10,8 +10,8 @@ from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, LibraryPublicationRecord, LibraryRecord, SourceRecord, StorageConfigRecord
-from music_ingest.storage import StorageService, StorageValidationError
-from music_ingest.storage_migration import MigrationJournal, resume_storage_migration
+from music_ingest.services.storage import StorageService, StorageValidationError
+from music_ingest.services.storage_migration import MigrationJournal, resume_storage_migration
 
 
 def seed_storage(engine: Engine, root: Path) -> tuple[Path, Path]:
@@ -101,7 +101,7 @@ def test_storage_migration_resumes_without_losing_old_files(
             raise OSError('injected after rename')
 
         with monkeypatch.context() as patch:
-            patch.setattr('music_ingest.storage_migration.os.replace', interrupt_rename)
+            patch.setattr('music_ingest.services.storage_migration.os.replace', interrupt_rename)
             with Session(engine) as session, pytest.raises(OSError, match='injected'):
                 resume_storage_migration(session)
         assert (new / '1.mka').read_bytes() == b'audio-1'
@@ -112,7 +112,7 @@ def test_storage_migration_resumes_without_losing_old_files(
                 destination.write_bytes(b'partial')
                 raise OSError(ENOSPC if failure == 'disk-full' else 5, 'injected copy failure')
 
-            patch.setattr('music_ingest.storage_migration.shutil.copyfile', fail_copy)
+            patch.setattr('music_ingest.services.storage_migration.shutil.copyfile', fail_copy)
             with Session(engine) as session, pytest.raises(OSError, match='injected'):
                 resume_storage_migration(session)
         assert (old / '0.mka').read_bytes() == b'audio-0'

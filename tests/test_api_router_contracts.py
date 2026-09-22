@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
 from music_ingest.models import Base, RuntimeSettingRecord
-from music_ingest.settings import RuntimeSettings
+from music_ingest.services.settings import RuntimeSettings
 
 
 def _unexpected_session() -> Never:

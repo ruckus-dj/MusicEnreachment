@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
-from music_ingest.association import ManualAssociationRequest, RecordingAssociationService
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -26,10 +25,15 @@ from music_ingest.models import (
     SourceRecord,
     SourceRootRecord,
 )
-from music_ingest.models.jobs import ClaimedJob, JobRepository
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.processing.support.sources import SourceAccess
-from music_ingest.publication import acquire_publication_destination_lock, try_acquire_publication_destination_lock
+from music_ingest.repositories.jobs import ClaimedJob, JobRepository
+from music_ingest.services.association import ManualAssociationRequest, RecordingAssociationService
+from music_ingest.services.publication import (
+    acquire_publication_destination_lock,
+    try_acquire_publication_destination_lock,
+)
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.support.sources import SourceAccess
+from music_ingest.workers.worker import ProcessingWorker
 
 _MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
 _BASE_REVISION = '20260810_0002'

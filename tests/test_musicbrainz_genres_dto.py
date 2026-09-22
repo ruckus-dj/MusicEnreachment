@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from music_ingest.dto.musicbrainz_genres import GenrePage, GenrePayload
+from music_ingest.contracts.musicbrainz_genres import GenrePage, GenrePayload
 
 
 def test_genre_payload_when_given_musicbrainz_field_aliases_parses_id_and_name() -> None:

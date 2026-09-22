@@ -23,7 +23,7 @@ node_modules/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
 frontend/test-results/
-src/music_ingest/ui/dist/
+src/music_ingest/static/dist/
 
 # Local configuration and credentials
 .env

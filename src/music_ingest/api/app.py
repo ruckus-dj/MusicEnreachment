@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Lifespan
 
+from music_ingest.adapters.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.routers import (
     catalog,
@@ -21,10 +22,9 @@ from music_ingest.api.routers import (
     settings,
     workers,
 )
-from music_ingest.external.musicbrainz import SyncMusicBrainzTransport
-from music_ingest.matching.providers import MusicBrainzProvider
-from music_ingest.processing.runtime import ProcessingRuntimeMonitor
-from music_ingest.settings import RuntimeSettings
+from music_ingest.services.matching.providers import MusicBrainzProvider
+from music_ingest.services.settings import RuntimeSettings
+from music_ingest.workers.runtime import ProcessingRuntimeMonitor
 
 
 def create_app(
@@ -43,7 +43,7 @@ def create_app(
     """Compose application-local routers without changing request transaction ownership."""
     app = FastAPI(title='Music ingestion review', version='0.1.0', lifespan=lifespan)
     app.state.e2e_seed_enabled = e2e_seed_enabled
-    assets_root = Path(__file__).parents[1] / 'ui' / 'dist' / 'assets'
+    assets_root = Path(__file__).parents[1] / 'static' / 'dist' / 'assets'
     if assets_root.is_dir():
         app.mount('/assets', StaticFiles(directory=assets_root), name='ui-assets')
 

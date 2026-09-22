@@ -5,15 +5,15 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.models import Base, JobAttemptRecord, JobRecord, SourceRecord, SourceTagRecord
-from music_ingest.models.jobs import ClaimedJob
-from music_ingest.processing import ProcessingConfig
-from music_ingest.processing.execution import ExecutionContext
-from music_ingest.processing.handlers.analysis import AnalysisHandler
-from music_ingest.processing.support.evidence import SourceEvidence
-from music_ingest.processing.support.settings import RuntimeProcessingSettings
-from music_ingest.processing.support.sources import SourceAccess
+from music_ingest.repositories.jobs import ClaimedJob
+from music_ingest.services.enrichment.fingerprints import FingerprintResult, FingerprintState
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.execution import ExecutionContext
+from music_ingest.workers.handlers.analysis import AnalysisHandler
+from music_ingest.workers.support.evidence import SourceEvidence
+from music_ingest.workers.support.settings import RuntimeProcessingSettings
+from music_ingest.workers.support.sources import SourceAccess
 
 
 def test_analysis_missing_fingerprint_never_reads_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,7 +27,7 @@ def test_analysis_missing_fingerprint_never_reads_source(tmp_path: Path, monkeyp
         def forbidden(*args: object, **kwargs: object) -> None:
             pytest.fail('provider processing attempted fingerprint calculation')
 
-        monkeypatch.setattr('music_ingest.processing.support.evidence.fingerprint_source', forbidden)
+        monkeypatch.setattr('music_ingest.workers.support.evidence.fingerprint_source', forbidden)
         assert evidence.analyze_source(source, tmp_path / 'does-not-exist') is None
 
 
@@ -78,8 +78,8 @@ def test_musicbrainz_uses_db_tags_without_source_read(tmp_path: Path, monkeypatc
 
 
 def test_preview_strict_field_recovery_and_legacy_evidence() -> None:
-    from music_ingest.dto.source_encoding import EncodingChoice
-    from music_ingest.source_encoding import preview_field
+    from music_ingest.contracts.source_encoding import EncodingChoice
+    from music_ingest.services.source_encoding import preview_field
 
     field = SourceTagRecord(id=1, format_name='id3v1', tag_name='TITLE', value='Ïðèâåò')
     choice = EncodingChoice(field_id=1, mode='unicode', encode_codec='latin-1', decode_codec='cp1251')
@@ -96,8 +96,8 @@ def test_preview_strict_field_recovery_and_legacy_evidence() -> None:
 
 @pytest.mark.parametrize('pending_state', ['reserved', 'staged', 'prepared', 'exposed'])
 def test_apply_is_atomic_revision_guarded_and_queues_only_musicbrainz(pending_state: str) -> None:
-    from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
-    from music_ingest.source_encoding import EncodingConflict, EncodingInvalid, apply_encoding
+    from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
+    from music_ingest.services.source_encoding import EncodingConflict, EncodingInvalid, apply_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
@@ -169,9 +169,9 @@ def test_apply_is_atomic_revision_guarded_and_queues_only_musicbrainz(pending_st
 def test_apply_preserves_queued_folder_selection_for_other_folder_members() -> None:
     from sqlalchemy import select
 
-    from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
-    from music_ingest.models.jobs import JobRepository
-    from music_ingest.source_encoding import apply_encoding
+    from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
+    from music_ingest.repositories.jobs import JobRepository
+    from music_ingest.services.source_encoding import apply_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)

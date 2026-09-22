@@ -8,17 +8,17 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from music_ingest.library.service import (
-    record_event,
-)
 from music_ingest.models import (
     JobRecord,
     LibraryRecord,
     SourceRecord,
 )
-from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
-from music_ingest.source_boundary import SourceBoundaryError, resolve_owned_source
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import (
+    record_event,
+)
+from music_ingest.services.source_boundary import SourceBoundaryError, resolve_owned_source
 
 
 def destination_conflict(

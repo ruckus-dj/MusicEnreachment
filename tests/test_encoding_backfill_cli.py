@@ -68,9 +68,9 @@ def test_cli_apply_idempotent_manual_safe_and_paginates(tmp_path: Path) -> None:
     from sqlalchemy import select
 
     from music_ingest.cli.encoding_backfill import run_backfill
-    from music_ingest.dto.source_encoding import EncodingChoice, EncodingRequest
+    from music_ingest.contracts.source_encoding import EncodingChoice, EncodingRequest
     from music_ingest.models import JobRecord
-    from music_ingest.source_encoding import apply_encoding
+    from music_ingest.services.source_encoding import apply_encoding
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)

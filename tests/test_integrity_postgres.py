@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
-from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     JobRecord,
     LibraryPublicationRecord,
@@ -27,11 +26,13 @@ from music_ingest.models import (
     SourceRootRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.normalize.tags import write_normalized_tags
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.processing.metadata import publication_layout
-from music_ingest.publication import attempts
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.services.metadata import publication_layout
+from music_ingest.services.normalize.tags import write_normalized_tags
+from music_ingest.services.publication import attempts
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 from tests.test_selection_refresh import _flac
 
 pytestmark = pytest.mark.postgres
@@ -225,7 +226,7 @@ def test_storage_request_and_publication_share_lock(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
-    from music_ingest.storage import StorageService, StorageValidationError
+    from music_ingest.services.storage import StorageService, StorageValidationError
     from tests.test_storage_migration import finish_migration
 
     config, source, target = seed_publication(integrity_engine, tmp_path)
@@ -285,7 +286,7 @@ def test_two_workers_resume_storage_manifest_once(integrity_engine: Engine, tmp_
     from concurrent.futures import ThreadPoolExecutor
 
     from music_ingest.models import StorageConfigRecord
-    from music_ingest.storage import StorageService
+    from music_ingest.services.storage import StorageService
     from tests.test_storage_migration import seed_storage
 
     old, new = seed_storage(integrity_engine, tmp_path)

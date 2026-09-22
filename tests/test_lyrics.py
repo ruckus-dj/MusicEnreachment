@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from music_ingest.lyrics.validate import (
+from music_ingest.services.lyrics.validate import (
     LrcWriteRejected,
     LrcWriteRequest,
     LrcWritten,

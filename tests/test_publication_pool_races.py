@@ -12,7 +12,7 @@ from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
-from music_ingest.external.lrclib import LrclibAdapter, LrclibHttpResponse
+from music_ingest.adapters.external.lrclib import LrclibAdapter, LrclibHttpResponse
 from music_ingest.models import (
     Base,
     LibraryPublicationRecord,
@@ -21,15 +21,16 @@ from music_ingest.models import (
     SourceRecord,
     SourceRootRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.publication import (
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.publication import (
     PublicationAttemptRequest,
     expose_attempt,
     mark_staged,
     reconcile_attempts,
     reserve_attempt,
 )
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 from tests.test_lrclib_handler import _published_record
 
 pytestmark = pytest.mark.postgres

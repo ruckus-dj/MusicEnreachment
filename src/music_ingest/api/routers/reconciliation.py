@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, status
 
 from music_ingest.api.dependencies import SessionFactory
-from music_ingest.dto import ScanJobResponse, ScanResult
+from music_ingest.contracts import ScanJobResponse, ScanResult
 from music_ingest.models import JobRecord
-from music_ingest.models.jobs import JobRepository
+from music_ingest.repositories.jobs import JobRepository
 
 
 def create_router(session_factory: SessionFactory) -> APIRouter:

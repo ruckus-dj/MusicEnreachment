@@ -16,7 +16,7 @@ def main() -> None:
         encoding_backfill_main(argv[2:])
         return
     if len(argv) == 2 and argv[1] == 'serve':
-        run('music_ingest.api.server:create_runtime_app', factory=True, host='0.0.0.0', port=8000)  # noqa: S104
+        run('music_ingest.bootstrap.server:create_runtime_app', factory=True, host='0.0.0.0', port=8000)  # noqa: S104
         return
     if len(argv) == 4 and argv[1] == 'dry-run':
         try:

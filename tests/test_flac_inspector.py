@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
-from music_ingest.inspectors.flac import FlacFindingKind, InspectionState, inspect_flac
+from music_ingest.adapters.inspectors.flac import FlacFindingKind, InspectionState, inspect_flac
 
 
 def _snapshot(source: Path) -> tuple[int, int, int, str]:

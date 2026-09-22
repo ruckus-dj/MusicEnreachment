@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
 from music_ingest.models import Base, JobRecord, SourceRecord, SourceRootRecord
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 
 
 def test_change_notification_queues_standard_reconciliation_without_provider_provenance(tmp_path: Path) -> None:

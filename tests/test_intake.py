@@ -10,7 +10,8 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
 from alembic import command
-from music_ingest.intake.service import (
+from music_ingest.models import Base, SourceRecord
+from music_ingest.services.intake.service import (
     ArtworkObservation,
     CandidateEvidence,
     IntakeEvidence,
@@ -21,7 +22,6 @@ from music_ingest.intake.service import (
     SourceTagObservation,
     intake_source,
 )
-from music_ingest.models import Base, SourceRecord
 
 
 def intake_request(source: Path, origin: Origin) -> IntakeRequest:

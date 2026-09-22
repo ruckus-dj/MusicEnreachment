@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Response
 from fastapi.responses import HTMLResponse
 
-from music_ingest.ui.page import REVIEW_PAGE
+from music_ingest.static.page import REVIEW_PAGE
 
 
 def create_router() -> APIRouter:

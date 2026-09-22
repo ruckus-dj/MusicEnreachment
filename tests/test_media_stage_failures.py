@@ -5,18 +5,18 @@ from unittest.mock import Mock
 
 import pytest
 
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.media_capabilities import MediaCapability
-from music_ingest.normalize.metadata import MetadataWriteResult
-from music_ingest.processing import media_stage
-from music_ingest.processing.media_stage import (
+import music_ingest.workers.media_stage as media_stage
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.inspectors.media_capabilities import MediaCapability
+from music_ingest.adapters.remux import RemuxRequest
+from music_ingest.services.normalize.metadata import MetadataWriteResult
+from music_ingest.workers.media_stage import (
     MediaPipelineInfrastructureError,
     MediaPipelineRequest,
     MediaStagePlan,
     PipelineOutputFailure,
     process_media,
 )
-from music_ingest.processing.remux import RemuxRequest
 
 
 def _evidence(state: ToolState, stderr: str = '') -> ToolEvidence:

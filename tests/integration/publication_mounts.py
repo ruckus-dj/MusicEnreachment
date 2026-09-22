@@ -11,8 +11,7 @@ from subprocess import run
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from music_ingest.api.server import RuntimeConfig, run_migrations
-from music_ingest.library.service import append_metadata_revision
+from music_ingest.bootstrap.server import RuntimeConfig, run_migrations
 from music_ingest.models import (
     LibraryPublicationRecord,
     LibraryRecord,
@@ -22,9 +21,11 @@ from music_ingest.models import (
     SourceRootRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.publication.workspace import validate_publication_storage
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.services.publication.workspace import validate_publication_storage
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 
 
 def main() -> None:

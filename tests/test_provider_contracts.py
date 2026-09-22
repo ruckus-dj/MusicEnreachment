@@ -10,7 +10,7 @@ from typing import assert_never
 import pytest
 import requests
 
-from music_ingest.matching.providers import (
+from music_ingest.services.matching.providers import (
     AcoustIdLookupRequest,
     AcoustIdMatch,
     AcoustIdResult,

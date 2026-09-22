@@ -1,7 +1,7 @@
 import pytest
 
-from music_ingest.dto.source_encoding import EncodingChoice, EncodingField
-from music_ingest.normalize.encoding_suggestions import suggest_encodings
+from music_ingest.contracts.source_encoding import EncodingChoice, EncodingField
+from music_ingest.services.normalize.encoding_suggestions import suggest_encodings
 
 
 def field(value: str, name: str = 'TITLE', number: int = 1, container: str = 'ID3v2') -> EncodingField:

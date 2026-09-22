@@ -11,8 +11,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Final, override
 
-from music_ingest.inspectors.flac import inspect_flac
-from music_ingest.inspectors.mp3 import inspect_mp3
+from music_ingest.adapters.inspectors.flac import inspect_flac
+from music_ingest.adapters.inspectors.mp3 import inspect_mp3
 
 AUDIO_SUFFIXES: Final = frozenset(
     {'.aac', '.aiff', '.alac', '.ape', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.wma'}

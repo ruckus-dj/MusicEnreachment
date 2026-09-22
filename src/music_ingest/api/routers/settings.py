@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from music_ingest.api.dependencies import SessionFactory
-from music_ingest.dto import (
+from music_ingest.contracts import (
     MatchingSettings,
     NextUnsortedFilenameResponse,
     RuntimeSettingsRequest,
@@ -25,10 +25,10 @@ from music_ingest.dto import (
     StoragePathRequest,
 )
 from music_ingest.models import SourceRootRecord
-from music_ingest.processing.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
-from music_ingest.settings import RuntimeSettings, build_runtime_settings, save_runtime_settings
-from music_ingest.source_roots import SourceRootConflictError, SourceRootService, SourceRootValidationError
-from music_ingest.storage import StorageService, StorageValidationError
+from music_ingest.services.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
+from music_ingest.services.settings import RuntimeSettings, build_runtime_settings, save_runtime_settings
+from music_ingest.services.source_roots import SourceRootConflictError, SourceRootService, SourceRootValidationError
+from music_ingest.services.storage import StorageService, StorageValidationError
 
 
 def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:

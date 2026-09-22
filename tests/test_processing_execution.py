@@ -16,17 +16,18 @@ from music_ingest.models import (
     SourceTagRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.jobs import ClaimedJob
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
-from music_ingest.processing.execution import (
+from music_ingest.repositories.jobs import ClaimedJob
+from music_ingest.services.settings import SettingKey
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.execution import (
     ExecutionContext,
     HandlerOutcome,
     ProcessingInfrastructureError,
     QuarantineSource,
 )
-from music_ingest.processing.handlers.initial import InitialHandler
-from music_ingest.processing.handlers.reconciliation import ReconciliationHandler
-from music_ingest.settings import SettingKey
+from music_ingest.workers.handlers.initial import InitialHandler
+from music_ingest.workers.handlers.reconciliation import ReconciliationHandler
+from music_ingest.workers.worker import ProcessingWorker
 
 
 @pytest.mark.parametrize(

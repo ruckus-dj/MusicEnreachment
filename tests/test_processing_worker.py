@@ -14,21 +14,17 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
-import music_ingest.processing.media_stage as media_stage
-import music_ingest.processing.worker as processing
-import music_ingest.publication.service as publication_service
-from music_ingest.dto import CandidateEvidencePayload
-from music_ingest.enrichment.fingerprints import FingerprintResult, FingerprintState
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
-from music_ingest.matching.evidence import ProviderEvidenceResult
-from music_ingest.matching.providers import (
-    FixtureProvenance,
-    MusicBrainzLookupRequest,
-    MusicBrainzMatch,
-    ReleaseCandidate,
-)
-from music_ingest.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, MatchResult
+import music_ingest.services.candidates as candidates
+import music_ingest.services.publication.service as publication_service
+import music_ingest.workers.handlers.initial as initial
+import music_ingest.workers.handlers.publication as publication
+import music_ingest.workers.media_stage as media_stage
+import music_ingest.workers.support.evidence as source_evidence
+import music_ingest.workers.worker as processing
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.inspectors.media_capabilities import MediaCapability, MediaCapabilityInspection
+from music_ingest.adapters.remux import RemuxRequest
+from music_ingest.contracts import CandidateEvidencePayload
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -45,17 +41,24 @@ from music_ingest.models import (
     SourceRootRecord,
     UnsortedFilenameCounterRecord,
 )
-from music_ingest.models.jobs import ClaimedJob
-from music_ingest.normalize.metadata import MetadataWriteRequest, MetadataWriteResult
-from music_ingest.normalize.tags import read_normalized_tags, write_normalized_tags
-from music_ingest.processing import ProcessingConfig, ProcessingWorker, candidates
-from music_ingest.processing.candidates import _latest_candidate_run, _release_candidates_for_recording
-from music_ingest.processing.execution import ExecutionContext
-from music_ingest.processing.handlers import initial, publication
-from music_ingest.processing.handlers.initial import InitialHandler
-from music_ingest.processing.remux import RemuxRequest
-from music_ingest.processing.support import evidence as source_evidence
-from music_ingest.publication.service import PublicationError, PublicationResult
+from music_ingest.repositories.jobs import ClaimedJob
+from music_ingest.services.candidates import _latest_candidate_run, _release_candidates_for_recording
+from music_ingest.services.enrichment.fingerprints import FingerprintResult, FingerprintState
+from music_ingest.services.matching.evidence import ProviderEvidenceResult
+from music_ingest.services.matching.providers import (
+    FixtureProvenance,
+    MusicBrainzLookupRequest,
+    MusicBrainzMatch,
+    ReleaseCandidate,
+)
+from music_ingest.services.matching.scoring import CandidateScore, MatchDecision, MatchingRequest, MatchResult
+from music_ingest.services.normalize.metadata import MetadataWriteRequest, MetadataWriteResult
+from music_ingest.services.normalize.tags import read_normalized_tags, write_normalized_tags
+from music_ingest.services.publication.service import PublicationError, PublicationResult
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.execution import ExecutionContext
+from music_ingest.workers.handlers.initial import InitialHandler
+from music_ingest.workers.worker import ProcessingWorker
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 _FFMPEG: Final[str] = which('ffmpeg') or ''
@@ -649,8 +652,8 @@ def test_initial_worker_auto_encoding_precedes_first_musicbrainz_query(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from music_ingest.models.jobs import JobRepository
-    from music_ingest.normalize.source_values import source_values
+    from music_ingest.repositories.jobs import JobRepository
+    from music_ingest.services.normalize.source_values import source_values
 
     requests: list[MusicBrainzLookupRequest] = []
 
@@ -681,8 +684,8 @@ def test_initial_worker_auto_encoding_precedes_first_musicbrainz_query(
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         item = _source(session, path)
-        from music_ingest.enrichment.fingerprints import persist_fingerprint
-        from music_ingest.intake.service import SourceId
+        from music_ingest.services.enrichment.fingerprints import persist_fingerprint
+        from music_ingest.services.intake.service import SourceId
 
         persist_fingerprint(session, SourceId(item.id), fingerprint)
         initial_job = JobRepository(session).enqueue(item.id, 'filesystem_scan', datetime.now(UTC))
@@ -1793,7 +1796,7 @@ def test_worker_publishes_every_supported_source_as_mka_without_changing_audio_b
     source_path = config.incoming_root / f'fixture{suffix}'
     source_path.write_bytes(b'original non-flac bytes')
     # Synthetic stream test stubs the container reader as well as media probes.
-    monkeypatch.setattr('music_ingest.normalize.source_evidence.File', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr('music_ingest.services.normalize.source_evidence.File', lambda *_args, **_kwargs: None)
     original_bytes = source_path.read_bytes()
     capability = MediaCapabilityInspection(
         MediaCapability(

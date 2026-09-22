@@ -14,7 +14,7 @@ from music_ingest.api.library_access import (
     queue_source_recovery,
     require_owned_source,
 )
-from music_ingest.dto import (
+from music_ingest.contracts import (
     DestinationConflictCleanupResponse,
     FullReprocessResponse,
     ProviderRetryRequest,
@@ -23,21 +23,21 @@ from music_ingest.dto import (
     RecoveryResponse,
     SourceRecoveryResponse,
 )
-from music_ingest.library.service import (
-    library_record_detail,
-    library_records,
-    record_event,
-)
 from music_ingest.models import (
     JobRecord,
     PublicationAttemptRecord,
     SourceRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.jobs import JobRepository
 from music_ingest.models.library import SourceRecordView
-from music_ingest.publication.locks import acquire_storage_lock
-from music_ingest.reconciliation import mark_disappeared_source
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import (
+    library_record_detail,
+    library_records,
+    record_event,
+)
+from music_ingest.services.publication.locks import acquire_storage_lock
+from music_ingest.services.reconciliation import mark_disappeared_source
 
 _DEFAULT_PROVIDER_RETRY_REQUEST = ProviderRetryRequest()
 

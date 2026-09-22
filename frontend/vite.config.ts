@@ -7,7 +7,7 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
   build: {
-    outDir: '../src/music_ingest/ui/dist',
+    outDir: '../src/music_ingest/static/dist',
     emptyOutDir: true,
   },
 })

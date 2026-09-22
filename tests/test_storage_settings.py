@@ -105,7 +105,7 @@ def test_storage_settings_when_same_device_rename_reports_cross_device_then_copi
             raise OSError(EXDEV, 'Invalid cross-device link', source, destination)
         replace(source, destination)
 
-    monkeypatch.setattr('music_ingest.storage_migration.os.replace', reject_rename)
+    monkeypatch.setattr('music_ingest.services.storage_migration.os.replace', reject_rename)
 
     # When: the operator confirms output relocation.
     moved = client.put('/api/settings/storage/output', json={'path': str(new_media)})

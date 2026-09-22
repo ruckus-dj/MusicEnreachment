@@ -10,8 +10,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-import music_ingest.publication.attempts as attempt_operations
-from music_ingest.library.service import append_metadata_revision
+import music_ingest.services.publication.attempts as attempt_operations
 from music_ingest.models import (
     Base,
     JobRecord,
@@ -21,8 +20,9 @@ from music_ingest.models import (
     ReviewDecisionRecord,
     SourceRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.publication import (
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.services.publication import (
     PublicationAttemptRequest,
     cleanup_attempt,
     expose_attempt,

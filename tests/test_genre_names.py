@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from music_ingest.normalize.genre_names import display_genre_name, genre_key
+from music_ingest.services.normalize.genre_names import display_genre_name, genre_key
 
 
 @pytest.mark.parametrize(

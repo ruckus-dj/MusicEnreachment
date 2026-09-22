@@ -10,8 +10,8 @@ from mutagen.id3 import ID3, TIT2, TPE1
 
 @pytest.mark.parametrize('multi_value', [False, True])
 def test_id3_rejects_aggregate_evidence_amplification(multi_value: bool) -> None:
-    from music_ingest.normalize.source_evidence import _id3_fields
-    from music_ingest.normalize.tags import MetadataTagError
+    from music_ingest.services.normalize.source_evidence import _id3_fields
+    from music_ingest.services.normalize.tags import MetadataTagError
 
     payload = b'\x00' + (b'a\0' * 4000 if multi_value else b'a')
     frame = b'TIT2' + len(payload).to_bytes(4, 'big') + b'\0\0' + payload
@@ -21,8 +21,8 @@ def test_id3_rejects_aggregate_evidence_amplification(multi_value: bool) -> None
 
 
 def test_id3_rejects_excessive_field_count() -> None:
-    from music_ingest.normalize.source_evidence import _id3_fields
-    from music_ingest.normalize.tags import MetadataTagError
+    from music_ingest.services.normalize.source_evidence import _id3_fields
+    from music_ingest.services.normalize.tags import MetadataTagError
 
     body = b'TIT2' + (5001).to_bytes(4, 'big') + b'\0\0' + b'\x00' + b'\0' * 5000
     with pytest.raises(MetadataTagError, match='field count'):
@@ -34,10 +34,10 @@ def test_evidence_limit_does_not_attach_partial_observations(tmp_path: Path, mon
     from sqlalchemy.orm import Session
 
     from music_ingest.models import Base, SourceRecord
-    from music_ingest.normalize.tags import MetadataTagError
-    from music_ingest.processing import ProcessingConfig
-    from music_ingest.processing.support.evidence import SourceEvidence
-    from music_ingest.processing.support.settings import RuntimeProcessingSettings
+    from music_ingest.services.normalize.tags import MetadataTagError
+    from music_ingest.workers.config import ProcessingConfig
+    from music_ingest.workers.support.evidence import SourceEvidence
+    from music_ingest.workers.support.settings import RuntimeProcessingSettings
 
     frame = b'TIT2' + (2).to_bytes(4, 'big') + b'\0\0\x00a'
     body = frame * 2000
@@ -45,7 +45,7 @@ def test_evidence_limit_does_not_attach_partial_observations(tmp_path: Path, mon
     path = tmp_path / 'large.mp3'
     original = b'ID3\x03\x00\x80' + size + body
     path.write_bytes(original)
-    monkeypatch.setattr('music_ingest.normalize.source_evidence.File', lambda *args, **kwargs: None)
+    monkeypatch.setattr('music_ingest.services.normalize.source_evidence.File', lambda *args, **kwargs: None)
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -60,7 +60,7 @@ def test_evidence_limit_does_not_attach_partial_observations(tmp_path: Path, mon
 
 
 def test_utf16_txxx_inherits_description_bom() -> None:
-    from music_ingest.normalize.source_evidence import _id3_fields
+    from music_ingest.services.normalize.source_evidence import _id3_fields
 
     text = 'MusicBrainz Album Id'.encode('utf-16-le')
     value = 'release-id'.encode('utf-16-le')
@@ -73,7 +73,7 @@ def test_utf16_txxx_inherits_description_bom() -> None:
 
 @pytest.mark.parametrize('container', ['flac', 'asf', 'id3v2', 'id3v1'])
 def test_import_evidence_actual_audio_immutable(tmp_path: Path, container: str) -> None:
-    from music_ingest.normalize.source_evidence import read_source_fields
+    from music_ingest.services.normalize.source_evidence import read_source_fields
 
     extension, codec = {
         'flac': ('flac', 'flac'),
@@ -139,9 +139,9 @@ def test_import_evidence_actual_audio_immutable(tmp_path: Path, container: str) 
     from sqlalchemy.orm import Session
 
     from music_ingest.models import Base, SourceRecord
-    from music_ingest.processing import ProcessingConfig
-    from music_ingest.processing.support.evidence import SourceEvidence
-    from music_ingest.processing.support.settings import RuntimeProcessingSettings
+    from music_ingest.workers.config import ProcessingConfig
+    from music_ingest.workers.support.evidence import SourceEvidence
+    from music_ingest.workers.support.settings import RuntimeProcessingSettings
 
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)

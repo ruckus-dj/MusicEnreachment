@@ -6,16 +6,16 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.enrichment.fingerprints import (
+from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
+from music_ingest.adapters.inspectors.flac import FlacFinding, FlacFindingKind, FlacInspectionResult, InspectionState
+from music_ingest.models import Base, FingerprintRecord, SourceRecord
+from music_ingest.services.enrichment.fingerprints import (
     FingerprintRequest,
     FingerprintState,
     calculate_fingerprint,
     fingerprint_source,
 )
-from music_ingest.inspectors._tool import ToolEvidence, ToolState
-from music_ingest.inspectors.flac import FlacFinding, FlacFindingKind, FlacInspectionResult, InspectionState
-from music_ingest.intake.service import SourceId
-from music_ingest.models import Base, FingerprintRecord, SourceRecord
+from music_ingest.services.intake.service import SourceId
 
 
 def _source(session: Session, source_path: Path) -> SourceRecord:

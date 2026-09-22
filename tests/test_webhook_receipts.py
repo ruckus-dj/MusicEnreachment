@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from music_ingest.models import Base, JobRecord, WebhookReceiptRecord
-from music_ingest.models.repositories import (
+from music_ingest.repositories.persistence import (
     ReceiptReplayConflictError,
     WebhookReceiptInput,
     WebhookReceiptRepository,

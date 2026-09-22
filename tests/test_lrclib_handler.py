@@ -11,13 +11,12 @@ import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
-from music_ingest.external.lrclib import (
+from music_ingest.adapters.external.lrclib import (
     LrclibAdapter,
     LrclibHttpResponse,
     LrclibSettings,
     LrclibSettingsHolder,
 )
-from music_ingest.library.service import append_metadata_revision
 from music_ingest.models import (
     Base,
     FingerprintRecord,
@@ -28,8 +27,10 @@ from music_ingest.models import (
     LibraryRecord,
     SourceRecord,
 )
-from music_ingest.models.jobs import JobRepository
-from music_ingest.processing import ProcessingConfig, ProcessingWorker
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import append_metadata_revision
+from music_ingest.workers.config import ProcessingConfig
+from music_ingest.workers.worker import ProcessingWorker
 
 NOW = datetime(2026, 9, 11, tzinfo=UTC)
 DURATION_SECONDS = 232

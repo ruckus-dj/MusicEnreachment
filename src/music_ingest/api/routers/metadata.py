@@ -8,20 +8,20 @@ from sqlalchemy.exc import OperationalError
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import require_owned_source
-from music_ingest.dto import (
+from music_ingest.contracts import (
     LibraryIdentityUpdate,
     MetadataUpdate,
 )
-from music_ingest.dto.source_encoding import EncodingApplied, EncodingDetail, EncodingPreview, EncodingRequest
-from music_ingest.library.service import (
+from music_ingest.contracts.source_encoding import EncodingApplied, EncodingDetail, EncodingPreview, EncodingRequest
+from music_ingest.models import SourceRecord
+from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.library.service import (
     append_metadata_revision,
     attach_source,
     library_record_detail,
     record_event,
 )
-from music_ingest.models import SourceRecord
-from music_ingest.models.jobs import JobRepository
-from music_ingest.source_encoding import (
+from music_ingest.services.source_encoding import (
     EncodingConflict,
     EncodingInvalid,
     apply_encoding,

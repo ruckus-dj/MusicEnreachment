@@ -16,7 +16,7 @@ src/.ruff_cache/
 .nox/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
-src/music_ingest/ui/dist/
+src/music_ingest/static/dist/
 
 # Local IDE and agent state
 .idea/

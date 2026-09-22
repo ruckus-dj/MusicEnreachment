@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.models import LibraryPublicationRecord, SourceRecord
 from music_ingest.models.entities import SourceRecordingAssignmentRecord
-from music_ingest.publication import (
+from music_ingest.services.publication import (
     PublicationAttemptRequest,
     expose_attempt,
     finalize_attempt,
@@ -94,7 +94,7 @@ def test_verified_recording_reuses_sidecar_across_mp3_flac(
         if change == 'identity':
             record.musicbrainz_recording_id = '00000000-0000-4000-8000-000000000002'
         if change == 'settings':
-            from music_ingest.external.lrclib import LrclibSettings, LrclibSettingsHolder
+            from music_ingest.adapters.external.lrclib import LrclibSettings, LrclibSettingsHolder
 
             monkeypatch.setattr(
                 LrclibSettingsHolder, 'snapshot', lambda self: LrclibSettings(match_confidence_threshold=0.9)
@@ -159,7 +159,7 @@ def test_verified_recording_reuses_sidecar_across_mp3_flac(
 
 
 def test_explicit_retry_after_reused_negative_cache_calls_provider_before_expiry(tmp_path: Path) -> None:
-    from music_ingest.lyrics.reuse import LyricEvidence
+    from music_ingest.services.lyrics.reuse import LyricEvidence
     from tests.test_lrclib_handler import _status_response
 
     engine = _engine(tmp_path)
@@ -203,7 +203,7 @@ def test_explicit_retry_after_reused_negative_cache_calls_provider_before_expiry
 
 @pytest.mark.parametrize('status', [404, 503])
 def test_negative_cache_expires_but_transient_errors_retry(tmp_path: Path, status: int) -> None:
-    from music_ingest.lyrics.reuse import LyricEvidence
+    from music_ingest.services.lyrics.reuse import LyricEvidence
     from tests.test_lrclib_handler import _status_response
 
     engine = _engine(tmp_path)
