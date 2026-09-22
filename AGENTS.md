@@ -84,4 +84,4 @@ Do not use `docker compose down --volumes` unless an intentional database reset 
 
 ## UI requirements
 
-The product design contract is in `DESIGN.md`. Preserve semantic HTML, labeled native controls, visible focus, responsive reflow, readable contrast, and non-color-only status communication. Respect `prefers-reduced-motion`. Only Final metadata is editable; saving creates a new revision and must not mutate the source file.
+Preserve semantic HTML, labeled native controls, visible focus, responsive reflow, readable contrast, and non-color-only status communication. Respect `prefers-reduced-motion`. Only Final metadata is editable; saving creates a new revision and must not mutate the source file.
