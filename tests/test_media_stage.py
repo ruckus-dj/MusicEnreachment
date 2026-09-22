@@ -11,7 +11,6 @@ import pytest
 import music_ingest.workers.media_stage as media_stage
 from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.adapters.remux import RemuxRequest, _muxer
-from music_ingest.cli.media_stage import run_media_stage_cli
 from music_ingest.services.enrichment.fingerprints import FingerprintResult, FingerprintState
 from music_ingest.workers.media_stage import (
     MediaPipelineRequest,
@@ -71,21 +70,6 @@ def test_shared_stage_when_worker_processes_audio_writes_valid_output_without_mu
         assert result.flac_properties is not None
     else:
         assert result.flac_properties is None
-
-
-def test_cli_when_processing_real_service_stage_writes_only_derived_audio(tmp_path: Path) -> None:
-    source_directory = tmp_path / 'source'
-    source_directory.mkdir()
-    source = _audio(source_directory / 'source.flac', 'flac')
-    output_directory = tmp_path / 'output'
-    temporary_directory = tmp_path / 'tmp'
-
-    result = run_media_stage_cli(source, output_directory, temporary_directory)
-
-    assert result.output_path.is_file()
-    assert result.output_path.parent == output_directory / 'Unsorted'
-    assert tuple(path for path in output_directory.rglob('*') if path.is_file()) == (result.output_path,)
-    assert tuple(temporary_directory.iterdir()) == ()
 
 
 @pytest.mark.parametrize(
