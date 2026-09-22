@@ -22,7 +22,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     container_name: music-enrichment-ingest
-    command: ["python", "-m", "music_ingest", "serve"]
+    command: ["uvicorn", "music_ingest.bootstrap.server:create_runtime_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       MUSIC_INGEST_DATABASE_URL: postgresql+psycopg://music_ingest:music_ingest@postgres/music_ingest
       MUSIC_INGEST_E2E_SEED_ENABLED: "true"
