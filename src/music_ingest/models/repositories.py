@@ -40,16 +40,6 @@ class IntakeRepository:
             )
         )
 
-    def find_other_source_by_sha256(self, sha256: str, source_id: str) -> SourceRecord | None:
-        return self._session.scalar(
-            select(SourceRecord)
-            .where(SourceRecord.sha256 == sha256)
-            .where(SourceRecord.id != source_id)
-            .where(SourceRecord.library_record_id.is_not(None))
-            .order_by(SourceRecord.id)
-            .limit(1)
-        )
-
     def add_source(self, source: SourceRecord) -> SourceRecord:
         self._session.add(source)
         self._session.flush()

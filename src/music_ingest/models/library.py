@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, final
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint, select, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -132,14 +132,6 @@ class LibraryRecord(Base):
     @staticmethod
     def get(session: Session, record_id: str) -> LibraryRecord | None:
         return session.get(LibraryRecord, record_id)
-
-    @staticmethod
-    def get_by_identity(session: Session, recording_id: str, release_id: str) -> LibraryRecord | None:
-        return session.scalar(
-            select(LibraryRecord)
-            .where(LibraryRecord.musicbrainz_recording_id == recording_id)
-            .where(LibraryRecord.musicbrainz_release_id == release_id)
-        )
 
 
 @final

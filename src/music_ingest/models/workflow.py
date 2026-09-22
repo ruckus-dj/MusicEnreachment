@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import final
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint, select
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -57,16 +57,6 @@ class JobRecord(Base):
     @staticmethod
     def get(session: Session, job_id: str) -> JobRecord | None:
         return session.get(JobRecord, job_id)
-
-    @staticmethod
-    def get_pending(session: Session, now: datetime) -> JobRecord | None:
-        return session.scalar(
-            select(JobRecord)
-            .where(JobRecord.state == 'queued')
-            .where((JobRecord.next_attempt_at.is_(None)) | (JobRecord.next_attempt_at <= now))
-            .order_by(JobRecord.created_at)
-            .limit(1)
-        )
 
 
 _ = Index(

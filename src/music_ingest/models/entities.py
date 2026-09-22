@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import final
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text, select
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -69,10 +69,6 @@ class SourceRecord(Base):
     @staticmethod
     def get(session: Session, source_id: str) -> SourceRecord | None:
         return session.get(SourceRecord, source_id)
-
-    @staticmethod
-    def get_by_path(session: Session, source_path: str) -> SourceRecord | None:
-        return session.scalar(select(SourceRecord).where(SourceRecord.source_path == source_path))
 
 
 @final
@@ -309,10 +305,6 @@ class GenreCatalogRecord(Base):
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_key: Mapped[str] = mapped_column(Text, index=True, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    @staticmethod
-    def list_all(session: Session) -> tuple[GenreCatalogRecord, ...]:
-        return tuple(session.scalars(select(GenreCatalogRecord).order_by(GenreCatalogRecord.display_name)).all())
 
 
 __all__ = [
