@@ -111,11 +111,6 @@ export function trackNumberFor(item: Summary, sourceId: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-export function trackNumberLabelFor(item: Summary, sourceId: string): string {
-  const trackNumber = trackNumberFor(item, sourceId);
-  return trackNumber === null ? "—" : String(trackNumber).padStart(2, "0");
-}
-
 export function compareNames(left: string, right: string): number {
   return catalogCollator.compare(left, right) || left.localeCompare(right);
 }
