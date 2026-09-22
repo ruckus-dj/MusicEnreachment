@@ -52,13 +52,10 @@ uv run pre-commit run --all-files
 ## Runtime and manual verification
 
 ```sh
-PYTHONPATH=src uv run python -m music_ingest dry-run SOURCE_DIRECTORY REPORT_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest media-stage INPUT OUTPUT_DIRECTORY TMP_DIRECTORY
-PYTHONPATH=src uv run python -m music_ingest serve
+PYTHONPATH=src uv run uvicorn music_ingest.bootstrap.server:create_runtime_app --factory --host 0.0.0.0 --port 8000
 ```
 
-- `dry-run` and `media-stage` must not mutate their input source files.
-- `serve` starts FastAPI on port 8000, applies Alembic migrations before readiness, and starts the in-process worker. It requires a PostgreSQL `MUSIC_INGEST_DATABASE_URL`; SQLite is not a supported runtime database.
+- The Uvicorn command starts FastAPI on port 8000, applies Alembic migrations before readiness, and starts the in-process worker. It requires a PostgreSQL `MUSIC_INGEST_DATABASE_URL`; SQLite is not a supported runtime database.
 - Runtime filesystem paths are security boundaries: `MUSIC_INGEST_SOURCE_ROOTS_PARENT` and configured source roots must be existing non-symlink directories; source roots are immediate children of the parent and read-only. `MUSIC_INGEST_STAGING_ROOT` is disposable and writable; `MUSIC_INGEST_MEDIA_ROOT` is writable managed output.
 
 For end-to-end integration work:
