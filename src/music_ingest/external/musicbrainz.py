@@ -70,10 +70,6 @@ class MusicBrainzClient:
         response = await self._get('/ws/2/recording/', {'query': query, 'fmt': 'json', 'limit': 25})
         return self._parse(response, RecordingSearchResponse.model_validate_json)
 
-    async def search_recording_ids(self, query: str) -> tuple[str, ...]:
-        response = await self.search_recordings(query)
-        return () if response.payload is None else tuple(recording.id for recording in response.payload.recordings)
-
     async def recording_detail(self, recording_mbid: str) -> RecordingDetail:
         offset = 0
         releases: list[Release] = []

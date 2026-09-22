@@ -258,29 +258,6 @@ class ProviderEvidenceService:
             case multiple_candidates:
                 return Ambiguous(provenance, multiple_candidates)
 
-    def _merge_musicbrainz_results(self, results: tuple[MusicBrainzResult, ...]) -> MusicBrainzResult:
-        candidates: dict[str, ReleaseCandidate] = {}
-        provenance = None
-        for result in results:
-            match result:
-                case MusicBrainzMatch(provenance=result_provenance, candidate=candidate):
-                    provenance = result_provenance
-                    self._merge_release_candidate(candidates, candidate)
-                case Ambiguous(provenance=result_provenance, candidates=result_candidates):
-                    provenance = result_provenance
-                    for candidate in result_candidates:
-                        self._merge_release_candidate(candidates, candidate)
-                case _:
-                    continue
-        if not candidates or provenance is None:
-            return results[0]
-        unique_candidates = tuple(candidates.values())
-        match unique_candidates:
-            case (candidate,):
-                return MusicBrainzMatch(provenance, candidate)
-            case multiple_candidates:
-                return Ambiguous(provenance, multiple_candidates)
-
     @staticmethod
     def _merge_release_candidate(candidates: dict[str, ReleaseCandidate], candidate: ReleaseCandidate) -> None:
         existing = candidates.get(candidate.release_mbid)

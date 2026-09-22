@@ -257,10 +257,6 @@ def _duration_matches(expected_seconds: int, provider_duration: float | None) ->
     return abs(provider_duration - expected_seconds) <= _DURATION_TOLERANCE_SECONDS
 
 
-def _normalize(value: str) -> str:
-    return ''.join(character for character in value.casefold() if character.isalnum())
-
-
 class LrclibHttpClient(Protocol):
     """HTTP client seam for the live transport; ``requests.Session`` satisfies it."""
 

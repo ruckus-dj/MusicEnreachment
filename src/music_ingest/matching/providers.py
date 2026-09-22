@@ -25,7 +25,6 @@ from urllib3.util import Retry
 from music_ingest.models import RuntimeSettingRecord
 from music_ingest.models.repositories import ProviderPersistenceRepository
 
-LIVE_TRANSPORT_ENVIRONMENT: Final = 'MUSIC_INGEST_ENABLE_LIVE_TRANSPORT'
 SHA256_HEX_PATTERN: Final = re.compile(r'^[0-9a-f]{64}$')
 HTTP_STATUS_MINIMUM: Final = 100
 HTTP_STATUS_MAXIMUM: Final = 599
@@ -326,15 +325,6 @@ class MusicBrainzProvider(Protocol):
 
 class AcoustIdProvider(Protocol):
     def lookup(self, request: AcoustIdLookupRequest, now: datetime | None = None) -> AcoustIdResult: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ProductionTransportDisabledError(Exception):
-    environment_name: str
-
-    @override
-    def __str__(self) -> str:
-        return f'production transport requires {self.environment_name}=1'
 
 
 class PublicHttpClient(Protocol):
