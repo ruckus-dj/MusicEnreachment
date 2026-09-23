@@ -302,7 +302,21 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   <button
                     type="button"
                     className="secondary"
-                    disabled={controller.reprocessing}
+                    disabled={
+                      controller.refreshingMetadata ||
+                      controller.scanning ||
+                      controller.reprocessing
+                    }
+                    onClick={() => void controller.refreshMetadata()}
+                  >
+                    {controller.refreshingMetadata
+                      ? "Ставим в очередь…"
+                      : "Обновить все метаданные"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={controller.reprocessing || controller.refreshingMetadata}
                     onClick={() => void controller.reprocessAll()}
                   >
                     {controller.reprocessing ? "Ставим в очередь…" : "Переобработать всю медиатеку"}
@@ -310,7 +324,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   <button
                     type="button"
                     className="primary scan"
-                    disabled={controller.scanning || controller.reprocessing}
+                    disabled={
+                      controller.scanning ||
+                      controller.reprocessing ||
+                      controller.refreshingMetadata
+                    }
                     onClick={() => void controller.scan()}
                   >
                     {controller.scanning ? "Сканируем…" : "Сканировать новые и изменённые"}

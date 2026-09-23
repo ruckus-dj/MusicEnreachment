@@ -1209,6 +1209,9 @@ h2 {
   .library-toolbar .provider-actions {
     width: 100%;
   }
+  .library-toolbar .provider-actions > * {
+    flex-basis: 100%;
+  }
   .evidence-card .section-heading {
     flex-direction: column;
   }
