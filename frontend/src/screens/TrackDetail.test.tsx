@@ -655,6 +655,42 @@ describe("TrackDetail recording correction", () => {
     });
   });
 
+  it("requires explicit selection when loaded candidates do not include the current release", () => {
+    renderDetail({
+      detail: {
+        ...detail,
+        musicbrainz_release_id: "old-release",
+        sources: detail.sources.map((source) =>
+          source.source_id === "source-a"
+            ? {
+                ...source,
+                candidates: [
+                  {
+                    candidate_key: "new-release:new-recording",
+                    evidence: {
+                      provider: "musicbrainz",
+                      entity: "recording_release",
+                      recording_mbid: "new-recording",
+                      release_mbid: "new-release",
+                      artist: "Candidate Artist",
+                      release: "Candidate Release",
+                      title: "Candidate Track",
+                      album: "Candidate Release",
+                      score: null,
+                      tags: { TITLE: "Candidate Track", ALBUM: "Candidate Release" },
+                    },
+                  },
+                ],
+              }
+            : source,
+        ),
+      },
+    });
+
+    expect(screen.getByText("Нужно выбрать")).toBeTruthy();
+    expect(screen.getByText("Выбрать и подтвердить")).toBeTruthy();
+  });
+
   it("exposes conflict review feedback as accessible state", () => {
     renderDetail({
       detail: { ...detail, musicbrainz_recording_id: "old-recording" },

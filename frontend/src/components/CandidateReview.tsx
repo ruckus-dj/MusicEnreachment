@@ -83,14 +83,13 @@ export function CandidateReview({
       candidate.evidence.recording_mbid === selectedKey ||
       candidate.evidence.release_mbid === selectedKey,
   );
+  const hasSelectedCandidate = selectedCandidate !== undefined;
   const selectedMetadata = selectedCandidate ? decoded[selectedCandidate.candidate_key] : undefined;
   const selectedTitle =
     selectedMetadata?.title ||
     selectedCandidate?.evidence.title ||
     selectedCandidate?.evidence.release ||
-    (selectedKey
-      ? `${entity === "recording" ? "Запись" : "Запись и релиз"} ${selectedKey}`
-      : "Вариант не выбран");
+    "Вариант не выбран";
   const selectedSubtitle = selectedCandidate
     ? [
         selectedMetadata?.artist || selectedCandidate.evidence.artist,
@@ -98,13 +97,11 @@ export function CandidateReview({
       ]
         .filter(Boolean)
         .join(" · ")
-    : selectedKey
-      ? "Подтверждённый вариант"
-      : "Нужно выбрать вариант для продолжения";
-  const [isOpen, setIsOpen] = useState(!selectedKey && unique.length > 0);
+    : "Нужно выбрать вариант для продолжения";
+  const [isOpen, setIsOpen] = useState(!hasSelectedCandidate && unique.length > 0);
   useEffect(() => {
-    setIsOpen(!selectedKey && unique.length > 0);
-  }, [selectedKey, candidateKeys]);
+    setIsOpen(!hasSelectedCandidate && unique.length > 0);
+  }, [hasSelectedCandidate, candidateKeys]);
   useEffect(() => {
     if (!route.recordId || !route.sourceId) return;
     let cancelled = false;
@@ -160,7 +157,7 @@ export function CandidateReview({
     <section className="candidate-review" aria-labelledby={`${entity}-candidate-title`}>
       <button
         type="button"
-        className={`candidate-disclosure ${selectedKey ? "selected" : "needs-selection"}`}
+        className={`candidate-disclosure ${hasSelectedCandidate ? "selected" : "needs-selection"}`}
         aria-expanded={isOpen}
         aria-controls={`${entity}-candidate-options`}
         onClick={() => setIsOpen((open) => !open)}
@@ -173,8 +170,8 @@ export function CandidateReview({
           <small>{selectedSubtitle}</small>
         </span>
         <span className="candidate-disclosure-meta">
-          <span className={`candidate-state ${selectedKey ? "confirmed" : "attention"}`}>
-            {selectedKey ? "Выбрано" : "Нужно выбрать"}
+          <span className={`candidate-state ${hasSelectedCandidate ? "confirmed" : "attention"}`}>
+            {hasSelectedCandidate ? "Выбрано" : "Нужно выбрать"}
           </span>
           <span className="candidate-chevron" aria-hidden="true">
             {isOpen ? "⌃" : "⌄"}
