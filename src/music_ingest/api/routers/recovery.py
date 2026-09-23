@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, insert, or_, select
 from sqlalchemy.orm import Session
 
 from music_ingest.api.dependencies import SessionFactory
@@ -25,8 +26,12 @@ from music_ingest.contracts import (
 )
 from music_ingest.models import (
     JobRecord,
+    LibraryPublicationRecord,
+    LibraryRecord,
+    LibraryRecordConsolidationRecord,
     PublicationAttemptRecord,
     SourceRecord,
+    SourceRootRecord,
     StorageConfigRecord,
 )
 from music_ingest.models.library import SourceRecordView
@@ -38,6 +43,7 @@ from music_ingest.services.library.service import (
 )
 from music_ingest.services.publication.locks import acquire_storage_lock
 from music_ingest.services.reconciliation import mark_disappeared_source
+from music_ingest.services.source_boundary import SourceBoundaryError, resolve_regular_file
 
 _DEFAULT_PROVIDER_RETRY_REQUEST = ProviderRetryRequest()
 
@@ -106,6 +112,120 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                         queued += 1
             session.commit()
         return FullReprocessResponse(queued=queued)
+
+    @router.post('/api/library/metadata/refresh', response_model=FullReprocessResponse)
+    def refresh_library_metadata() -> FullReprocessResponse:
+        now = datetime.now(UTC)
+        with session_factory() as session:
+            seen_record_ids: set[str] = set()
+            eligible_sources: list[tuple[str, int]] = []
+            rows = session.execute(
+                select(
+                    LibraryRecord.id,
+                    SourceRecord.id,
+                    SourceRecord.source_path,
+                    SourceRecord.disappeared_at,
+                    SourceRecord.intake_state,
+                    SourceRecord.source_metadata_revision,
+                    SourceRootRecord.id,
+                    SourceRootRecord.canonical_path,
+                    SourceRootRecord.enabled,
+                    LibraryPublicationRecord.id,
+                )
+                .join(SourceRecord, SourceRecord.library_record_id == LibraryRecord.id)
+                .join(SourceRootRecord, SourceRootRecord.id == SourceRecord.source_root_id)
+                .outerjoin(
+                    LibraryPublicationRecord,
+                    and_(
+                        LibraryPublicationRecord.library_record_id == LibraryRecord.id,
+                        LibraryPublicationRecord.state == 'current',
+                    ),
+                )
+                .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
+                .where(LibraryRecord.musicbrainz_recording_id.is_not(None))
+                .where(LibraryRecord.musicbrainz_recording_id != '')
+                .where(
+                    or_(
+                        LibraryPublicationRecord.source_id == SourceRecord.id,
+                        and_(
+                            LibraryPublicationRecord.id.is_(None),
+                            SourceRecord.disappeared_at.is_(None),
+                            SourceRecord.intake_state.not_in({'replaced', 'quarantined'}),
+                        ),
+                    )
+                )
+                .order_by(LibraryRecord.id, SourceRecord.id)
+            ).tuples()
+            for (
+                record_id,
+                source_id,
+                source_path,
+                disappeared_at,
+                _intake_state,
+                source_metadata_revision,
+                root_id,
+                root_path,
+                root_enabled,
+                _publication_id,
+            ) in rows:
+                if record_id in seen_record_ids:
+                    continue
+                seen_record_ids.add(record_id)
+                if disappeared_at is not None:
+                    continue
+                path = Path(source_path)
+                if not path.is_file():
+                    persisted_source = SourceRecord.get(session, source_id)
+                    if persisted_source is not None:
+                        mark_disappeared_source(session, persisted_source)
+                    continue
+                if (
+                    not root_enabled
+                    or root_id == 'historical-unmanaged'
+                    or root_path.startswith('historical-unmanaged://')
+                ):
+                    continue
+                try:
+                    _ = resolve_regular_file(path, Path(root_path))
+                except SourceBoundaryError as error:
+                    raise HTTPException(status_code=409, detail=f'source root boundary: {error}') from error
+                eligible_sources.append((source_id, source_metadata_revision))
+            source_ids = tuple(source_id for source_id, _revision in eligible_sources)
+            active_source_ids = (
+                set(
+                    session.scalars(
+                        select(JobRecord.source_id).where(
+                            JobRecord.source_id.in_(source_ids),
+                            JobRecord.kind == 'musicbrainz_analysis',
+                            JobRecord.state.in_(['queued', 'running']),
+                        )
+                    )
+                )
+                if source_ids
+                else set()
+            )
+            pending_sources = tuple(
+                (source_id, source_metadata_revision)
+                for source_id, source_metadata_revision in eligible_sources
+                if source_id not in active_source_ids
+            )
+            if pending_sources:
+                _ = session.execute(
+                    insert(JobRecord),
+                    [
+                        {
+                            'id': f'musicbrainz_analysis-{uuid4().hex}',
+                            'source_id': source_id,
+                            'kind': 'musicbrainz_analysis',
+                            'source_metadata_revision': source_metadata_revision,
+                            'state': 'queued',
+                            'created_at': now,
+                        }
+                        for source_id, source_metadata_revision in pending_sources
+                    ],
+                )
+            session.commit()
+        return FullReprocessResponse(queued=len(pending_sources))
 
     @router.post('/api/library/artwork/reprocess', response_model=FullReprocessResponse)
     def reprocess_library_artwork() -> FullReprocessResponse:
