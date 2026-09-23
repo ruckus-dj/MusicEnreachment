@@ -21,6 +21,7 @@ from music_ingest.services.metadata import (
     fallback_metadata,
     publication_layout,
 )
+from music_ingest.services.musicbrainz_identity import tags_match_persisted_musicbrainz_identity
 from music_ingest.services.normalize.metadata import (
     CanonicalSource,
 )
@@ -87,6 +88,17 @@ class PublicationHandler:
         if revision is None:
             raise ValueError('final metadata revision is missing')
         final_tags = _TAGS_ADAPTER.validate_json(revision.tags_json)
+        if not tags_match_persisted_musicbrainz_identity(final_tags, record):
+            record_event(
+                self.session,
+                record.id,
+                'publication_musicbrainz_identity_mismatch',
+                'needs_review',
+                'final metadata must contain the complete MusicBrainz identity persisted for the library record',
+                now,
+                source.id,
+            )
+            return
         source_path = self.sources.owned_source_path(source)
         if isinstance(source_path, QuarantineSource):
             return source_path

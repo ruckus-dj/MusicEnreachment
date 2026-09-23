@@ -26,6 +26,7 @@ from music_ingest.services.matching.scoring import (
     MatchResult,
     score_recording_release_candidate,
 )
+from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
 from music_ingest.services.normalize.genre_names import display_genre_name
 
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
@@ -59,6 +60,19 @@ def _candidate_tags(candidate: ReleaseCandidate) -> dict[str, str]:
     }
     tags.update({name: value for name, value in optional_tags.items() if value is not None})
     return tags
+
+
+def musicbrainz_pair_tags(candidate: ReleaseCandidate, identity: ConfirmedMusicBrainzIdentity) -> dict[str, str] | None:
+    if candidate.release_mbid != identity.release_mbid:
+        return None
+    recording_candidates = candidate.recording_candidates or (candidate,)
+    matching = next(
+        (item for item in recording_candidates if identity.recording_mbid in item.recording_mbids),
+        None,
+    )
+    if matching is None:
+        return None
+    return {**_candidate_tags(matching), 'MUSICBRAINZ_RECORDINGID': identity.recording_mbid}
 
 
 def _score_components_evidence(unified_score: CandidateScore) -> dict[str, float | bool | None]:

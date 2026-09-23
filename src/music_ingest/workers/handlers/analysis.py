@@ -14,6 +14,7 @@ from music_ingest.models import (
     ProviderCandidateRunRecord,
     SourceRecord,
 )
+from music_ingest.models.library import SourceTagView
 from music_ingest.repositories.jobs import ClaimedJob, JobRepository
 from music_ingest.services.candidates import (
     _acoustid_recording_mbids,
@@ -21,11 +22,13 @@ from music_ingest.services.candidates import (
     _matching_request,
     _tag_number,
     musicbrainz_lookup_ids,
+    musicbrainz_pair_tags,
 )
 from music_ingest.services.enrichment.fingerprints import (
     FingerprintResult,
 )
 from music_ingest.services.library.service import (
+    append_metadata_revision,
     ensure_source_record,
     record_event,
 )
@@ -55,16 +58,42 @@ from music_ingest.services.matching.scoring import (
     MatchingRequest,
     MatchResult,
 )
+from music_ingest.services.musicbrainz_identity import (
+    ConfirmedMusicBrainzIdentity,
+    confirmed_musicbrainz_identity,
+)
 from music_ingest.services.normalize.source_values import source_values
 from music_ingest.workers.execution import (
     ChangedSource,
     ExecutionContext,
     HandlerOutcome,
+    ProcessingInfrastructureError,
     QuarantineSource,
 )
+from music_ingest.workers.handlers.selection import final_metadata_changed, refreshed_final_tags
 from music_ingest.workers.support.evidence import SourceEvidence
 from music_ingest.workers.support.settings import RuntimeProcessingSettings
 from music_ingest.workers.support.sources import SourceAccess
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceTagValue(SourceTagView):
+    selected: bool
+    tag_name: str
+    value: str
+    format_name: str
+
+
+def _source_values(source: SourceRecord) -> dict[str, str]:
+    return source_values(
+        _SourceTagValue(
+            selected=bool(item.selected),
+            tag_name=str(item.tag_name),
+            value=str(item.value),
+            format_name=str(item.format_name),
+        )
+        for item in source.tag_observations
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +104,8 @@ class AnalysisHandler:
     settings: RuntimeProcessingSettings
 
     def handle(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
+        if claimed.job.kind == 'musicbrainz_refresh':
+            return self.refresh_confirmed_identity(claimed, context)
         now = context.now
         source = self.sources.locked_source(claimed)
         source_path = self.sources.owned_source_path(source)
@@ -95,7 +126,7 @@ class AnalysisHandler:
                 source.id,
             )
             return
-        tags = tuple(source_values(source.tag_observations).items())
+        tags = tuple(_source_values(source).items())
         record = ensure_source_record(self.session, source, now)
         recording_mbid, release_mbid = musicbrainz_lookup_ids(record, source)
         recording_mbids = tuple(
@@ -168,6 +199,133 @@ class AnalysisHandler:
             candidate_request,
         )
         self.enqueue_candidate_selection_if_ready(source, claimed.job.id, now)
+
+    def refresh_confirmed_identity(self, claimed: ClaimedJob, context: ExecutionContext) -> HandlerOutcome:
+        now = context.now
+        source = self.sources.locked_source(claimed)
+        source_path = self.sources.owned_source_path(source)
+        if isinstance(source_path, QuarantineSource):
+            return source_path
+        if self.sources.changed(source, source_path):
+            return ChangedSource(source.id, source_path)
+        record = ensure_source_record(self.session, source, now)
+        recording_mbid = claimed.job.expected_musicbrainz_recording_id
+        release_mbid = claimed.job.expected_musicbrainz_release_id
+        if recording_mbid is None or release_mbid is None:
+            raise ProcessingInfrastructureError('MusicBrainz refresh job has no confirmed identity pair')
+        identity = ConfirmedMusicBrainzIdentity(recording_mbid, release_mbid)
+        if confirmed_musicbrainz_identity(record) != identity or record.match_state != 'matched':
+            record_event(
+                self.session,
+                record.id,
+                'musicbrainz_refresh_stale_identity',
+                'complete',
+                'confirmed MusicBrainz identity changed after the refresh was queued',
+                now,
+                source.id,
+            )
+            return
+        fingerprint = self.evidence.analyze_source(source, source_path)
+        if fingerprint is None:
+            record_event(
+                self.session,
+                record.id,
+                'musicbrainz_refresh_missing_evidence',
+                'needs_review',
+                'stored fingerprint unavailable; explicit reimport is required',
+                now,
+                source.id,
+            )
+            return
+        source_tags = _source_values(source)
+        provider_result = self.lookup_providers(
+            tuple(source_tags.items()),
+            fingerprint,
+            now,
+            force_refresh=True,
+            recording_mbid=identity.recording_mbid,
+            release_mbid=identity.release_mbid,
+            run_acoustid=False,
+            run_musicbrainz=True,
+        )
+        if provider_result is None:
+            raise ProcessingInfrastructureError('MusicBrainz provider is unavailable for confirmed identity refresh')
+        result = provider_result.musicbrainz
+        _ = self.capture_provider_attempt(
+            source,
+            'musicbrainz',
+            result,
+            None,
+            now,
+            _matching_request(record, source, tuple(source_tags.items())),
+        )
+        match result:
+            case MusicBrainzMatch(candidate=candidate):
+                analyzed_tags = musicbrainz_pair_tags(candidate, identity)
+                if analyzed_tags is None:
+                    record_event(
+                        self.session,
+                        record.id,
+                        'musicbrainz_refresh_pair_mismatch',
+                        'needs_review',
+                        'MusicBrainz no longer confirms the stored recording and release pair',
+                        now,
+                        source.id,
+                    )
+                    return
+            case NoMatch() | Ambiguous() | Disabled():
+                record_event(
+                    self.session,
+                    record.id,
+                    'musicbrainz_refresh_pair_unconfirmed',
+                    'needs_review',
+                    'MusicBrainz did not confirm the stored recording and release pair',
+                    now,
+                    source.id,
+                )
+                return
+            case RateLimited() | Timeout() | Unavailable() | Malformed():
+                raise ProcessingInfrastructureError('MusicBrainz refresh did not return usable pair metadata')
+        final_tags = refreshed_final_tags(record, source.id, source_tags, analyzed_tags)
+        if not final_metadata_changed(record, source.id, final_tags):
+            record_event(
+                self.session,
+                record.id,
+                'musicbrainz_refresh_unchanged',
+                'complete',
+                'fresh MusicBrainz metadata matches the latest final revision',
+                now,
+                source.id,
+            )
+            return
+        _ = append_metadata_revision(
+            self.session,
+            record.id,
+            source.id,
+            'analyzed',
+            analyzed_tags,
+            'musicbrainz_refresh',
+            now,
+        )
+        _ = append_metadata_revision(
+            self.session,
+            record.id,
+            source.id,
+            'final',
+            final_tags,
+            'musicbrainz_refresh',
+            now,
+        )
+        _ = JobRepository(self.session).enqueue_selection_refresh(record.id, now)
+        record_event(
+            self.session,
+            record.id,
+            'musicbrainz_refresh_updated',
+            'publishing',
+            'confirmed MusicBrainz pair metadata changed and publication was queued',
+            now,
+            source.id,
+        )
 
     def lookup_providers(
         self,
