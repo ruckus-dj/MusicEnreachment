@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import and_, insert, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from music_ingest.api.dependencies import SessionFactory
@@ -41,6 +40,7 @@ from music_ingest.services.library.service import (
     library_records,
     record_event,
 )
+from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
 from music_ingest.services.publication.locks import acquire_storage_lock
 from music_ingest.services.reconciliation import mark_disappeared_source
 from music_ingest.services.source_boundary import SourceBoundaryError, resolve_regular_file
@@ -118,15 +118,16 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         now = datetime.now(UTC)
         with session_factory() as session:
             seen_record_ids: set[str] = set()
-            eligible_sources: list[tuple[str, int]] = []
+            eligible_sources: list[tuple[str, ConfirmedMusicBrainzIdentity]] = []
             rows = session.execute(
                 select(
                     LibraryRecord.id,
+                    LibraryRecord.musicbrainz_recording_id,
+                    LibraryRecord.musicbrainz_release_id,
                     SourceRecord.id,
                     SourceRecord.source_path,
                     SourceRecord.disappeared_at,
                     SourceRecord.intake_state,
-                    SourceRecord.source_metadata_revision,
                     SourceRootRecord.id,
                     SourceRootRecord.canonical_path,
                     SourceRootRecord.enabled,
@@ -144,6 +145,9 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                 .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
                 .where(LibraryRecord.musicbrainz_recording_id.is_not(None))
                 .where(LibraryRecord.musicbrainz_recording_id != '')
+                .where(LibraryRecord.musicbrainz_release_id.is_not(None))
+                .where(LibraryRecord.musicbrainz_release_id != '')
+                .where(LibraryRecord.match_state == 'matched')
                 .where(
                     or_(
                         LibraryPublicationRecord.source_id == SourceRecord.id,
@@ -158,11 +162,12 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
             ).tuples()
             for (
                 record_id,
+                recording_mbid,
+                release_mbid,
                 source_id,
                 source_path,
                 disappeared_at,
                 _intake_state,
-                source_metadata_revision,
                 root_id,
                 root_path,
                 root_enabled,
@@ -189,43 +194,16 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     _ = resolve_regular_file(path, Path(root_path))
                 except SourceBoundaryError as error:
                     raise HTTPException(status_code=409, detail=f'source root boundary: {error}') from error
-                eligible_sources.append((source_id, source_metadata_revision))
-            source_ids = tuple(source_id for source_id, _revision in eligible_sources)
-            active_source_ids = (
-                set(
-                    session.scalars(
-                        select(JobRecord.source_id).where(
-                            JobRecord.source_id.in_(source_ids),
-                            JobRecord.kind == 'musicbrainz_analysis',
-                            JobRecord.state.in_(['queued', 'running']),
-                        )
-                    )
-                )
-                if source_ids
-                else set()
+                if recording_mbid is None or release_mbid is None:
+                    continue
+                eligible_sources.append((source_id, ConfirmedMusicBrainzIdentity(recording_mbid, release_mbid)))
+            jobs = JobRepository(session)
+            queued = sum(
+                jobs.enqueue_musicbrainz_refresh(source_id, identity, now) is not None
+                for source_id, identity in eligible_sources
             )
-            pending_sources = tuple(
-                (source_id, source_metadata_revision)
-                for source_id, source_metadata_revision in eligible_sources
-                if source_id not in active_source_ids
-            )
-            if pending_sources:
-                _ = session.execute(
-                    insert(JobRecord),
-                    [
-                        {
-                            'id': f'musicbrainz_analysis-{uuid4().hex}',
-                            'source_id': source_id,
-                            'kind': 'musicbrainz_analysis',
-                            'source_metadata_revision': source_metadata_revision,
-                            'state': 'queued',
-                            'created_at': now,
-                        }
-                        for source_id, source_metadata_revision in pending_sources
-                    ],
-                )
             session.commit()
-        return FullReprocessResponse(queued=len(pending_sources))
+        return FullReprocessResponse(queued=queued)
 
     @router.post('/api/library/artwork/reprocess', response_model=FullReprocessResponse)
     def reprocess_library_artwork() -> FullReprocessResponse:

@@ -27,8 +27,8 @@ def _source(root: SourceRootRecord, record: LibraryRecord, path: Path, source_id
     )
 
 
-def test_metadata_refresh_queues_musicbrainz_for_known_identities_once(tmp_path: Path) -> None:
-    # Given: two active sources have known MusicBrainz IDs and another does not.
+def test_metadata_refresh_queues_confirmed_musicbrainz_pairs_once(tmp_path: Path) -> None:
+    # Given: two active sources have confirmed MusicBrainz pairs and another has no identity.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "metadata-refresh.db"}')
     Base.metadata.create_all(engine)
     now = datetime(2026, 9, 23, tzinfo=UTC)
@@ -50,12 +50,15 @@ def test_metadata_refresh_queues_musicbrainz_for_known_identities_once(tmp_path:
             id='known-record',
             musicbrainz_recording_id='aaaf4974-c2bd-41dc-9d10-b33f080957cd',
             musicbrainz_release_id='fc71b952-9e68-4b22-bfdc-053233c2adbc',
+            match_state='matched',
             created_at=now,
             updated_at=now,
         )
         another_known = LibraryRecord(
             id='another-known-record',
             musicbrainz_recording_id='9eedf98a-94e5-43a6-8b32-50e3a3f850a3',
+            musicbrainz_release_id='f4b1c8c0-9cf2-4f8f-af5d-13cc0b8bc8f5',
+            match_state='matched',
             created_at=now,
             updated_at=now,
         )
@@ -96,14 +99,16 @@ def test_metadata_refresh_queues_musicbrainz_for_known_identities_once(tmp_path:
     first = client.post('/api/library/metadata/refresh')
     second = client.post('/api/library/metadata/refresh')
 
-    # Then: only known identities each have one coalesced MusicBrainz analysis job.
+    # Then: each confirmed pair has one coalesced exact-identity refresh job.
     assert first.status_code == 200
     assert first.json() == {'queued': 2}
     assert second.status_code == 200
     assert second.json() == {'queued': 0}
     assert not any('candidate_evidence' in statement for statement in statements)
-    job_queries = [statement for statement in statements if 'FROM jobs' in statement]
-    assert len(job_queries) == 2
     with Session(engine) as session:
-        jobs = tuple(session.scalars(select(JobRecord).where(JobRecord.kind == 'musicbrainz_analysis')))
+        jobs = tuple(session.scalars(select(JobRecord).where(JobRecord.kind == 'musicbrainz_refresh')))
         assert {job.source_id for job in jobs} == {'known-source', 'another-known-source'}
+        assert {(job.expected_musicbrainz_recording_id, job.expected_musicbrainz_release_id) for job in jobs} == {
+            ('aaaf4974-c2bd-41dc-9d10-b33f080957cd', 'fc71b952-9e68-4b22-bfdc-053233c2adbc'),
+            ('9eedf98a-94e5-43a6-8b32-50e3a3f850a3', 'f4b1c8c0-9cf2-4f8f-af5d-13cc0b8bc8f5'),
+        }
