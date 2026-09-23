@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from music_ingest.models.entities import JobAttemptRecord, JobRecord, SourceRecord
+from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
 
 _LRCLIB_FETCH_KIND: Final = 'lrclib_fetch'
 _BLOCKED_INFRASTRUCTURE_STATE: Final = 'blocked_infrastructure'
@@ -135,6 +136,55 @@ class JobRepository:
                 .where(JobRecord.state.in_(['queued', 'running']))
             )
             if active is None:
+                raise
+            return None
+
+    def enqueue_musicbrainz_refresh(
+        self,
+        source_id: str,
+        identity: ConfirmedMusicBrainzIdentity,
+        now: datetime,
+    ) -> JobRecord | None:
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.source_id == source_id)
+            .where(JobRecord.kind == 'musicbrainz_refresh')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            if (
+                active.expected_musicbrainz_recording_id == identity.recording_mbid
+                and active.expected_musicbrainz_release_id == identity.release_mbid
+            ):
+                return None
+            active.state = 'superseded'
+            active.next_attempt_at = None
+        try:
+            with self._session.begin_nested():
+                job = JobRecord(
+                    id=f'musicbrainz_refresh-{uuid4().hex}',
+                    source_id=source_id,
+                    kind='musicbrainz_refresh',
+                    source_metadata_revision=self._session.scalar(
+                        select(SourceRecord.source_metadata_revision).where(SourceRecord.id == source_id)
+                    ),
+                    expected_musicbrainz_recording_id=identity.recording_mbid,
+                    expected_musicbrainz_release_id=identity.release_mbid,
+                    state='queued',
+                    created_at=now,
+                )
+                self._session.add(job)
+                self._session.flush()
+                return job
+        except IntegrityError:
+            concurrent = self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.source_id == source_id)
+                .where(JobRecord.kind == 'musicbrainz_refresh')
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            if concurrent is None:
                 raise
             return None
 

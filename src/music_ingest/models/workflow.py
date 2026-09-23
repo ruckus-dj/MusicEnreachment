@@ -34,6 +34,12 @@ class JobRecord(Base):
             + "kind = 'reconciliation_scan'",
             name='ck_jobs_target_or_reconciliation',
         ),
+        CheckConstraint(
+            '(expected_musicbrainz_recording_id IS NULL AND expected_musicbrainz_release_id IS NULL) OR '
+            + "(expected_musicbrainz_recording_id IS NOT NULL AND trim(expected_musicbrainz_recording_id) <> '' AND "
+            + "expected_musicbrainz_release_id IS NOT NULL AND trim(expected_musicbrainz_release_id) <> '')",
+            name='ck_jobs_expected_musicbrainz_pair',
+        ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -49,6 +55,8 @@ class JobRecord(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text)
     source_metadata_revision: Mapped[int | None] = mapped_column(Integer)
+    expected_musicbrainz_recording_id: Mapped[str | None] = mapped_column(Text)
+    expected_musicbrainz_release_id: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[list[JobAttemptRecord]] = relationship(
         back_populates='job', lazy='selectin', order_by='JobAttemptRecord.attempt_number'
     )
@@ -66,6 +74,15 @@ _ = Index(
     unique=True,
     postgresql_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
     sqlite_where=(JobRecord.kind == 'selection_refresh') & JobRecord.state.in_(['queued', 'running']),
+)
+
+_ = Index(
+    'uq_active_musicbrainz_refresh_job',
+    JobRecord.source_id,
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'musicbrainz_refresh') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'musicbrainz_refresh') & JobRecord.state.in_(['queued', 'running']),
 )
 
 _ = Index(
