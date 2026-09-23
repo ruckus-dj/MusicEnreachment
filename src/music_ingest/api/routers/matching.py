@@ -192,14 +192,6 @@ def create_router(
                     raise HTTPException(status_code=409, detail='candidate belongs to another provider')
                 now = datetime.now(UTC)
                 if request.entity == 'recording' or request.provider == 'acoustid':
-                    record.musicbrainz_recording_id = candidate.candidate_key
-                    compatible_ids = evidence.compatible_ids
-                    if (
-                        record.musicbrainz_release_id is not None
-                        and compatible_ids
-                        and record.musicbrainz_release_id not in compatible_ids
-                    ):
-                        record.musicbrainz_release_id = None
                     queued = JobRepository(session).requeue_provider(source.id, 'musicbrainz', now)
                     session.add(
                         ReviewDecisionRecord(

@@ -111,15 +111,21 @@ class RecordingAssociationService:
             {'recording_mbid': request.recording_mbid},
             sort_keys=True,
         )
-        result = self._associate(
-            request.source_id,
-            request.recording_mbid,
-            'manual',
-            _MANUAL_ASSOCIATION_RATIONALE,
-            evidence,
-            request.now,
-            request.release_mbid,
-        )
+        if request.release_mbid is None:
+            if source.library_record_id is None:
+                raise LookupError(source.id)
+            self._record_review(source.id, 'a MusicBrainz release must be selected with the recording', request.now)
+            result = AssociationResult(source.library_record_id, source.library_record_id)
+        else:
+            result = self._associate(
+                request.source_id,
+                request.recording_mbid,
+                'manual',
+                _MANUAL_ASSOCIATION_RATIONALE,
+                evidence,
+                request.now,
+                request.release_mbid,
+            )
         override = source.association_override
         if override is None:
             self._session.add(
@@ -298,6 +304,12 @@ class RecordingAssociationService:
         source = self._source(source_id)
         if source.library_record_id is None:
             raise LookupError(source_id)
+        record = self._session.get(LibraryRecord, source.library_record_id)
+        if record is None:
+            raise LookupError(source.library_record_id)
+        record.processing_state = 'needs_review'
+        record.match_state = 'needs_review'
+        record.updated_at = now
         self._session.add(
             ReviewDecisionRecord(source_id=source.id, state='association_review_required', rationale=rationale)
         )

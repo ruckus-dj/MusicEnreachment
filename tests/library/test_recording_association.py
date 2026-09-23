@@ -442,14 +442,16 @@ def test_manual_association_when_verified_mbid_is_absent_from_candidates_moves_s
         result = service.associate_manual(ManualAssociationRequest(source.id, requested_mbid, now))
         session.commit()
 
-        # Then: the source is separated into the requested recording aggregate.
+        # Then: the source stays reviewable until a release is selected with the recording.
         persisted = session.get(SourceRecord, source.id)
         target = session.get(LibraryRecord, result.library_record_id)
         assert persisted is not None
         assert persisted.library_record_id == result.library_record_id
         assert result.moved_from_record_id == record.id
         assert target is not None
-        assert target.musicbrainz_recording_id == requested_mbid
+        assert target.musicbrainz_recording_id is None
+        assert target.musicbrainz_release_id is None
+        assert target.processing_state == 'needs_review'
 
 
 def test_manual_association_accepts_release_ambiguity_for_one_verified_recording(tmp_path: Path) -> None:
@@ -496,8 +498,9 @@ def test_manual_association_accepts_release_ambiguity_for_one_verified_recording
         persisted = session.get(SourceRecord, source.id)
         assert target is not None
         assert persisted is not None
-        assert target.musicbrainz_recording_id == requested_mbid
+        assert target.musicbrainz_recording_id is None
         assert target.musicbrainz_release_id is None
+        assert target.processing_state == 'needs_review'
         assert persisted.association_override is not None
         assert persisted.association_override.rationale == 'MusicBrainz recording selected manually'
-        assert persisted.recording_assignments[-1].state == 'manual_override'
+        assert persisted.recording_assignments == []

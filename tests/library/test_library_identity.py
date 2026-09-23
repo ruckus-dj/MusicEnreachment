@@ -96,6 +96,7 @@ def test_library_record_keeps_multiple_sources_and_publication_history(tmp_path:
         record = LibraryRecord(
             id='record-1',
             musicbrainz_recording_id='11111111-1111-4111-8111-111111111111',
+            musicbrainz_release_id='11111111-1111-4111-8111-111111111112',
             created_at=observed_at,
             updated_at=observed_at,
         )
@@ -367,7 +368,10 @@ def test_library_api_exposes_stable_record_and_file_history(tmp_path: Path) -> N
 
     identity = client.put(
         '/api/library/records/record-api/identity',
-        json={'musicbrainz_recording_id': '11111111-1111-4111-8111-111111111111'},
+        json={
+            'musicbrainz_recording_id': '11111111-1111-4111-8111-111111111111',
+            'musicbrainz_release_id': '22222222-2222-4222-8222-222222222222',
+        },
     )
 
     assert identity.status_code == 200
@@ -381,6 +385,7 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
     with Session(engine) as session:
         matched_release = LibraryRecord(
             id='record-release',
+            musicbrainz_recording_id='recording-shared',
             musicbrainz_release_id='release-shared',
             processing_state='analyzing',
             match_state='unmatched',
@@ -693,7 +698,7 @@ def test_library_api_confirms_acoustid_candidate_and_queues_musicbrainz_analysis
     with Session(engine) as session:
         persisted = session.get(LibraryRecord, 'record-acoustid')
         assert persisted is not None
-        assert persisted.musicbrainz_recording_id == 'recording-id'
+        assert persisted.musicbrainz_recording_id is None
         assert persisted.musicbrainz_release_id is None
         assert session.query(JobRecord).filter_by(source_id='source-acoustid', kind='musicbrainz_analysis').count() == 1
 
@@ -721,6 +726,7 @@ def test_library_api_confirms_acoustid_candidate_without_erasing_another_release
         alias = LibraryRecord(
             id='record-alias',
             musicbrainz_recording_id='recording-id',
+            musicbrainz_release_id='release-id',
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -772,8 +778,10 @@ def test_library_api_confirms_acoustid_candidate_without_erasing_another_release
         retained_alias = session.get(LibraryRecord, 'record-alias')
         assert canonical is not None
         assert retained_alias is not None
-        assert canonical.musicbrainz_recording_id == 'recording-id'
+        assert canonical.musicbrainz_recording_id is None
+        assert canonical.musicbrainz_release_id is None
         assert retained_alias.musicbrainz_recording_id == 'recording-id'
+        assert retained_alias.musicbrainz_release_id == 'release-id'
 
 
 @pytest.mark.parametrize('retained', ['none', 'current', 'prepared', 'exposed', 'failed'])
@@ -801,12 +809,14 @@ def test_library_api_recording_override_moves_only_selected_source_and_preserves
         record = LibraryRecord(
             id='record-recording-override',
             musicbrainz_recording_id='11111111-1111-4111-8111-111111111111',
+            musicbrainz_release_id='11111111-1111-4111-8111-111111111112',
             created_at=timestamp,
             updated_at=timestamp,
         )
         target_record = LibraryRecord(
             id='record-recording-target',
             musicbrainz_recording_id='f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
+            musicbrainz_release_id='4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c',
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -889,38 +899,31 @@ def test_library_api_recording_override_moves_only_selected_source_and_preserves
         },
     )
 
-    # Then: only that source moves and the before/after audit, evidence, and refreshes survive.
+    # Then: the source and retained publication state stay in place until a release is selected too.
     assert response.status_code == 200
     assert response.json() == {
         'recording_mbid': 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a',
-        'record_id': 'record-recording-target',
+        'record_id': 'record-recording-override',
     }
     with Session(engine) as session:
-        moved = session.get(SourceRecord, 'source-recording-override')
+        reviewed = session.get(SourceRecord, 'source-recording-override')
         unchanged = session.get(SourceRecord, 'source-recording-target')
-        assert moved is not None
+        assert reviewed is not None
         assert unchanged is not None
-        assert moved.library_record_id == 'record-recording-target'
+        assert reviewed.library_record_id == 'record-recording-override'
         assert unchanged.library_record_id == 'record-recording-target'
-        assert len(moved.provider_attempts) == 1
-        assert len(moved.candidates) == 1
-        assignments = session.query(SourceRecordingAssignmentRecord).filter_by(source_id=moved.id).all()
-        assert len(assignments) == 1
-        assert 'record-recording-override' in assignments[0].evidence_json
-        assert 'record-recording-target' in assignments[0].evidence_json
+        assert len(reviewed.provider_attempts) == 1
+        assert len(reviewed.candidates) == 1
+        assignments = session.query(SourceRecordingAssignmentRecord).filter_by(source_id=reviewed.id).all()
+        assert assignments == []
         original_record = session.get(LibraryRecord, 'record-recording-override')
         persisted_target_record = session.get(LibraryRecord, 'record-recording-target')
         assert original_record is not None
         assert persisted_target_record is not None
-        assert {event.kind for event in original_record.events} >= {'source_recording_reassigned'}
-        assert {event.kind for event in persisted_target_record.events} >= {'source_recording_reassigned'}
-        assert {
-            job.library_record_id for job in session.query(JobRecord).filter_by(kind='selection_refresh').all()
-        } == (
-            {'record-recording-target', 'record-recording-override'}
-            if retained in {'current', 'prepared', 'exposed'}
-            else {'record-recording-target'}
-        )
+        assert original_record.processing_state == 'needs_review'
+        assert {event.kind for event in original_record.events} >= {'recording_association_review_required'}
+        assert persisted_target_record.events == []
+        assert session.query(JobRecord).filter_by(kind='selection_refresh').count() == 0
 
 
 def test_library_api_recording_override_when_provider_is_unavailable_keeps_source_in_place(tmp_path: Path) -> None:
@@ -1010,6 +1013,7 @@ def test_library_api_manual_release_loads_reviewable_candidate_without_selecting
         record = LibraryRecord(
             id='record-manual-release',
             musicbrainz_recording_id=recording_mbid,
+            musicbrainz_release_id=release_mbid,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -1051,7 +1055,8 @@ def test_library_api_manual_release_loads_reviewable_candidate_without_selecting
         source = session.get(SourceRecord, 'source-manual-release')
         assert record is not None
         assert source is not None
-        assert record.musicbrainz_release_id is None
+        assert record.musicbrainz_recording_id == recording_mbid
+        assert record.musicbrainz_release_id == release_mbid
         assert [candidate.candidate_key for candidate in source.candidates] == [f'{release_mbid}:{recording_mbid}']
         assert session.query(JobRecord).count() == 0
 
@@ -1274,17 +1279,17 @@ def test_library_api_recording_override_when_evidence_conflicts_persists_review_
         },
     )
 
-    # Then: the selected source is moved to the requested recording aggregate.
+    # Then: the source stays in review until a release is selected with the recording.
     assert response.status_code == 200
     with Session(engine) as session:
         source = session.get(SourceRecord, 'source-conflict-api')
         record = session.get(LibraryRecord, 'record-conflict-api')
         assert source is not None
         assert record is not None
-        assert source.library_record_id != record.id
-        target = session.get(LibraryRecord, source.library_record_id)
-        assert target is not None
-        assert target.musicbrainz_recording_id == 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+        assert source.library_record_id == record.id
+        assert record.musicbrainz_recording_id is None
+        assert record.musicbrainz_release_id is None
+        assert record.processing_state == 'needs_review'
 
 
 def test_library_api_decodes_acoustid_candidate_with_musicbrainz(tmp_path: Path) -> None:
