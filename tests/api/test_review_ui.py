@@ -173,6 +173,7 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         first_record = session.get(LibraryRecord, first_source.library_record_id)
         assert first_record is not None
         first_record.musicbrainz_recording_id = recording_mbid
+        first_record.musicbrainz_release_id = release_mbid
         second_source.candidates.append(
             CandidateRecord(
                 candidate_key=f'{release_mbid}:{recording_mbid}',
@@ -207,12 +208,12 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         },
     )
 
-    # Then: the source gets the selected recording-release identity without merging a different pair.
+    # Then: the source joins the aggregate that owns the same complete recording-release pair.
     assert response.status_code == 200
     with Session(engine) as session:
         moved_source = session.get(SourceRecord, second_source_id)
         assert moved_source is not None
-        assert moved_source.library_record_id != first_record_id
+        assert moved_source.library_record_id == first_record_id
         target = session.get(LibraryRecord, moved_source.library_record_id)
         assert target is not None
         assert target.musicbrainz_release_id == release_mbid

@@ -20,6 +20,7 @@ from music_ingest.models import (
 _E2E_RECORD_ID = 'e2e-record'
 _E2E_SOURCE_IDS = ('e2e-source-a', 'e2e-source-b')
 _E2E_RECORDING_MBID = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+_E2E_RELEASE_MBID = '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
 _E2E_CORRECTION_MBID = '11111111-1111-4111-8111-111111111111'
 
 
@@ -46,7 +47,14 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
                 session.add(root)
             record = session.get(LibraryRecord, _E2E_RECORD_ID)
             if record is None:
-                record = LibraryRecord(id=_E2E_RECORD_ID, created_at=now, updated_at=now, match_state='matched')
+                record = LibraryRecord(
+                    id=_E2E_RECORD_ID,
+                    musicbrainz_recording_id=_E2E_RECORDING_MBID,
+                    musicbrainz_release_id=_E2E_RELEASE_MBID,
+                    created_at=now,
+                    updated_at=now,
+                    match_state='matched',
+                )
                 session.add(record)
             for index, source_id in enumerate(_E2E_SOURCE_IDS):
                 source = session.get(SourceRecord, source_id)
@@ -87,7 +95,7 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
                                         'release': 'Fixture Album',
                                         'score': 1.0,
                                         'tags': {
-                                            'MUSICBRAINZ_ALBUMID': '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c',
+                                            'MUSICBRAINZ_ALBUMID': _E2E_RELEASE_MBID,
                                             'MUSICBRAINZ_TRACKID': _E2E_RECORDING_MBID,
                                         },
                                     },
@@ -98,6 +106,7 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
                     )
                     session.add(source)
             record.musicbrainz_recording_id = _E2E_RECORDING_MBID
+            record.musicbrainz_release_id = _E2E_RELEASE_MBID
             record.match_state = 'matched'
             session.commit()
         return JSONResponse(
