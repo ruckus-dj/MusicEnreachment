@@ -22,6 +22,8 @@ from music_ingest.models import (
     StorageConfigRecord,
 )
 from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.association import RecordingAssociationService
+from music_ingest.services.association.service import AssociationResult, ManualAssociationRequest
 from music_ingest.services.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.services.library.service import append_metadata_revision
 from music_ingest.workers.config import ProcessingConfig
@@ -214,6 +216,57 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         target = session.get(LibraryRecord, moved_source.library_record_id)
         assert target is not None
         assert target.musicbrainz_release_id == release_mbid
+
+
+def test_manual_recording_override_preserves_the_explicit_release_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an operator supplies both sides of a MusicBrainz release-recording pair.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-pair.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'track.flac'
+    source_path.write_bytes(b'fixture')
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        source = session.get(SourceRecord, intake.source_id)
+        assert source is not None and source.library_record_id is not None
+        record_id = source.library_record_id
+        session.commit()
+    requests: list[ManualAssociationRequest] = []
+
+    def associate_manual(_service: RecordingAssociationService, request: ManualAssociationRequest) -> AssociationResult:
+        requests.append(request)
+        return AssociationResult(record_id, record_id)
+
+    monkeypatch.setattr(RecordingAssociationService, 'associate_manual', associate_manual)
+
+    # When: the recording override endpoint receives the explicit pair.
+    response = TestClient(create_app(lambda: Session(engine))).post(
+        f'/api/library/records/{record_id}/sources/{intake.source_id}/musicbrainz/override',
+        json={
+            'recording_mbid': '11111111-1111-4111-8111-111111111111',
+            'release_mbid': '22222222-2222-4222-8222-222222222222',
+        },
+    )
+
+    # Then: association receives both IDs instead of silently dropping the release.
+    assert response.status_code == 200
+    assert len(requests) == 1
+    assert requests[0].recording_mbid == '11111111-1111-4111-8111-111111111111'
+    assert requests[0].release_mbid == '22222222-2222-4222-8222-222222222222'
 
 
 def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Path) -> None:

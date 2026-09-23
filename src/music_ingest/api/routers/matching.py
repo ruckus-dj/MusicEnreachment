@@ -335,6 +335,7 @@ def create_router(
                         source.id,
                         request.recording_mbid.lower(),
                         now,
+                        None if request.release_mbid is None else request.release_mbid.lower(),
                     )
                 )
                 session.commit()
