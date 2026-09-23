@@ -968,6 +968,74 @@ def test_library_api_recording_override_when_provider_is_unavailable_keeps_sourc
         assert source.library_record_id == 'record-unavailable'
 
 
+def test_library_api_manual_release_loads_reviewable_candidate_without_selecting_it(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-release.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(
+            id='record-manual-release',
+            musicbrainz_recording_id=recording_mbid,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        source = SourceRecord(
+            id='source-manual-release',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+        )
+        session.add_all((root, record, source))
+        session.commit()
+
+    response = TestClient(
+        create_app(
+            lambda: Session(engine),
+            musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'),
+        )
+    ).post(
+        '/api/library/records/record-manual-release/sources/source-manual-release/musicbrainz/release-candidates',
+        json={'release_mbid': release_mbid},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'release_mbid': release_mbid,
+        'status': 'review_required',
+        'candidate_count': 1,
+    }
+    with Session(engine) as session:
+        record = session.get(LibraryRecord, 'record-manual-release')
+        source = session.get(SourceRecord, 'source-manual-release')
+        assert record is not None
+        assert source is not None
+        assert record.musicbrainz_release_id is None
+        assert [candidate.candidate_key for candidate in source.candidates] == [f'{release_mbid}:{recording_mbid}']
+        assert session.query(JobRecord).count() == 0
+
+
 def test_library_api_recording_override_when_evidence_conflicts_persists_review_before_409(tmp_path: Path) -> None:
     # Given: a source with retained AcoustID evidence for a different recording.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "recording-override-conflict.db"}')

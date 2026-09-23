@@ -15,10 +15,12 @@ from music_ingest.contracts import (
     CandidateSelection,
     ManualSourceSelection,
     MusicBrainzOverride,
+    MusicBrainzReleaseLookup,
 )
 from music_ingest.models import (
     LibraryRecord,
     ReviewDecisionRecord,
+    SourceRecord,
 )
 from music_ingest.repositories.jobs import JobRepository
 from music_ingest.services.association import (
@@ -26,6 +28,7 @@ from music_ingest.services.association import (
     RecordingAssociationService,
     RecordingAssociationUnavailable,
 )
+from music_ingest.services.candidates import release_candidate_records
 from music_ingest.services.library.service import (
     append_metadata_revision,
     library_record_detail,
@@ -34,7 +37,13 @@ from music_ingest.services.library.service import (
 )
 from music_ingest.services.matching.evidence import ProviderEvidenceRequest, ProviderEvidenceService
 from music_ingest.services.matching.musicbrainz import MusicBrainzProviderAdapter
-from music_ingest.services.matching.providers import Ambiguous, FixtureCase, MusicBrainzMatch, MusicBrainzProvider
+from music_ingest.services.matching.providers import (
+    Ambiguous,
+    FixtureCase,
+    MusicBrainzMatch,
+    MusicBrainzProvider,
+    NoMatch,
+)
 from music_ingest.services.settings import (
     build_runtime_settings,
 )
@@ -213,7 +222,12 @@ def create_router(
                     )
                     session.commit()
                     return JSONResponse(
-                        content={'candidate_key': candidate.candidate_key, 'revision': None, 'queued': bool(queued)}
+                        content={
+                            'candidate_key': candidate.candidate_key,
+                            'record_id': record.id,
+                            'revision': None,
+                            'queued': bool(queued),
+                        }
                     )
                 candidate_tags = evidence.tags
                 if not candidate_tags:
@@ -231,7 +245,7 @@ def create_router(
                 )
                 if target_record is not None and target_record.id != record.id:
                     association = RecordingAssociationService(session).associate_verified_manual(
-                        ManualAssociationRequest(source.id, candidate_recording_mbid, now)
+                        ManualAssociationRequest(source.id, candidate_recording_mbid, now, candidate_release_mbid)
                     )
                     session.expire_all()
                     record = library_record_detail(session, association.library_record_id)
@@ -268,6 +282,7 @@ def create_router(
                 return JSONResponse(
                     content={
                         'candidate_key': candidate.candidate_key,
+                        'record_id': record.id,
                         'revision': final.revision,
                         'queued': queued is not None,
                     }
@@ -298,7 +313,7 @@ def create_router(
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post('/api/library/records/{record_id}/sources/{source_id}/musicbrainz/override')
-    def override_musicbrainz_release(record_id: str, source_id: str, request: MusicBrainzOverride) -> JSONResponse:
+    def override_musicbrainz_recording(record_id: str, source_id: str, request: MusicBrainzOverride) -> JSONResponse:
         try:
             with session_factory() as session:
                 record = library_record_detail(session, record_id)
@@ -330,5 +345,85 @@ def create_router(
             raise HTTPException(status_code=404, detail='library record or source not found') from error
         except RecordingAssociationUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @router.post('/api/library/records/{record_id}/sources/{source_id}/musicbrainz/release-candidates')
+    def load_musicbrainz_release_candidates(
+        record_id: str, source_id: str, request: MusicBrainzReleaseLookup
+    ) -> JSONResponse:
+        try:
+            with session_factory() as session:
+                record = library_record_detail(session, record_id)
+                source = next((item for item in record.sources if item.id == source_id), None)
+                if source is None:
+                    raise LookupError(source_id)
+                _ = require_owned_source(session, source.id)
+                persisted_source = SourceRecord.get(session, source.id)
+                if persisted_source is None:
+                    raise LookupError(source.id)
+                recording_mbid = (
+                    persisted_source.association_override.recording_mbid
+                    if persisted_source.association_override is not None
+                    else record.musicbrainz_recording_id
+                )
+                if recording_mbid is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail='select a recording MBID before loading a release',
+                    )
+                provider = musicbrainz_provider
+                if provider is None and musicbrainz_transport is not None:
+                    settings = build_runtime_settings(session)
+                    provider = MusicBrainzProviderAdapter(
+                        musicbrainz_transport,
+                        settings.musicbrainz_user_agent,
+                        settings.musicbrainz_host,
+                    )
+                if provider is None:
+                    raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
+                source_tags = _catalog_tags(record, source.id)
+                result = (
+                    ProviderEvidenceService(session, provider, None)
+                    .lookup(
+                        ProviderEvidenceRequest(
+                            query='',
+                            musicbrainz_case=FixtureCase.SUCCESS,
+                            fingerprint=None,
+                            acoustid_case=None,
+                            force_refresh=True,
+                            release_title=source_tags.get('ALBUM'),
+                            artist_name=source_tags.get('ARTIST'),
+                            recording_mbid=recording_mbid,
+                            release_mbid=request.release_mbid.lower(),
+                            recording_title=source_tags.get('TITLE'),
+                            duration_seconds=persisted_source.duration_seconds,
+                            run_acoustid=False,
+                            run_musicbrainz=True,
+                        ),
+                        datetime.now(UTC),
+                    )
+                    .musicbrainz
+                )
+                if isinstance(result, NoMatch):
+                    raise HTTPException(status_code=409, detail='recording is not present on the requested release')
+                if not isinstance(result, MusicBrainzMatch):
+                    raise HTTPException(status_code=503, detail='MusicBrainz release is unavailable')
+                candidate = result.candidate
+                if (
+                    candidate.release_mbid != request.release_mbid.lower()
+                    or recording_mbid not in candidate.recording_mbids
+                ):
+                    raise HTTPException(status_code=409, detail='recording is not present on the requested release')
+                candidates = release_candidate_records(source.id, candidate)
+                session.add_all(candidates)
+                session.commit()
+                return JSONResponse(
+                    content={
+                        'release_mbid': request.release_mbid.lower(),
+                        'status': 'review_required',
+                        'candidate_count': len(candidates),
+                    }
+                )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record or source not found') from error
 
     return router

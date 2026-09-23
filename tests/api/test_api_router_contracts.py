@@ -85,8 +85,9 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Baseline captured before app.py was decomposed; router extraction must not alter the public API schema.
     # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
+    # Refreshed when manual MusicBrainz release lookup became an explicit reviewable-candidate endpoint.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '2f2c6cb5754aa51deab0b927bac1c5b68239bf7af0c728eb9a7c07ea85f6e55d'
+        '717eadf898bb019d62f1b35190ec935f2745ecfe08e94ac3e0c23fbb0cf28955'
     )
 
 
@@ -95,7 +96,7 @@ def test_create_app_registers_each_public_method_and_path_once() -> None:
 
     route_keys = [(method, route.path) for route in _api_routes(application) for method in sorted(route.methods or ())]
 
-    assert len(route_keys) == 56
+    assert len(route_keys) == 57
     assert len(route_keys) == len(set(route_keys))
     assert all(route.endpoint.__module__.startswith('music_ingest.api.routers.') for route in _api_routes(application))
 
