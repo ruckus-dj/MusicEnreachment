@@ -124,7 +124,13 @@ class LibraryRecord(Base):
         order_by='LibraryPublicationRecord.created_at',
     )
     metadata_revisions: Mapped[list[LibraryMetadataRevisionRecord]] = relationship(
-        back_populates='library_record', lazy='selectin', order_by='LibraryMetadataRevisionRecord.created_at'
+        back_populates='library_record',
+        lazy='selectin',
+        order_by=(
+            'LibraryMetadataRevisionRecord.created_at, '
+            'LibraryMetadataRevisionRecord.revision, '
+            'LibraryMetadataRevisionRecord.id'
+        ),
     )
     events: Mapped[list[LibraryEventRecord]] = relationship(
         back_populates='library_record', lazy='selectin', order_by='LibraryEventRecord.created_at'
