@@ -17,7 +17,10 @@ def candidate_for_release(
     data_track_recording_ids = frozenset(track.recording.id for medium in release.media for track in medium.data_tracks)
     if track is None and recording_mbid in data_track_recording_ids:
         return None
-    release_artist_name = ''.join(f'{item.name}{item.joinphrase}' for item in release.artist_credit)
+    release_artist_name = ''.join(
+        f'{item.artist.name if item.artist is not None else item.name}{item.joinphrase}'
+        for item in release.artist_credit
+    )
     artist = artist_name or release_artist_name
     if not artist and track is not None:
         artist = ''.join(f'{item.name}{item.joinphrase}' for item in track.recording.artist_credit)
@@ -63,8 +66,14 @@ def candidate_for_release(
             and relation.artist is not None
         ),
         release_artist_name=release_artist_name or None,
-        recording_artist_names=() if track is None else tuple(credit.name for credit in track.recording.artist_credit),
-        release_artist_names=tuple(credit.name for credit in release.artist_credit),
+        recording_artist_names=()
+        if track is None
+        else tuple(
+            credit.artist.name if credit.artist is not None else credit.name for credit in track.recording.artist_credit
+        ),
+        release_artist_names=tuple(
+            credit.artist.name if credit.artist is not None else credit.name for credit in release.artist_credit
+        ),
         recording_artist_mbids=()
         if track is None or any(credit.artist is None for credit in track.recording.artist_credit)
         else tuple(credit.artist.id for credit in track.recording.artist_credit if credit.artist is not None),

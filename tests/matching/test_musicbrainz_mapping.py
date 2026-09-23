@@ -113,3 +113,55 @@ def test_candidate_for_release_when_artist_name_is_not_given_falls_back_to_relea
     assert candidate is not None
     assert candidate.artist_name == 'Album Artist'
     assert candidate.release_artist_name == 'Album Artist'
+
+
+def test_candidate_for_release_prefers_canonical_artist_names_over_credit_variants() -> None:
+    # Given: release and recording credits use aliases for canonical MusicBrainz artists.
+    release = _release(
+        **{
+            'artist-credit': [
+                {
+                    'name': 'Release Alias',
+                    'joinphrase': ' feat. ',
+                    'artist': {'id': 'release-artist-one', 'name': 'Release Canonical'},
+                },
+                {
+                    'name': 'Guest Alias',
+                    'artist': {'id': 'release-artist-two', 'name': 'Guest Canonical'},
+                },
+            ],
+            'media': [
+                {
+                    'position': 1,
+                    'tracks': [
+                        {
+                            'position': 1,
+                            'title': 'Fixture Track',
+                            'recording': {
+                                'id': 'recording-id',
+                                'title': 'Fixture Track',
+                                'artist-credit': [
+                                    {
+                                        'name': 'Recording Alias',
+                                        'artist': {'id': 'recording-artist', 'name': 'Recording Canonical'},
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    # When: the MusicBrainz release is mapped to a publication candidate.
+    candidate = candidate_for_release(release, 'recording-id')
+
+    # Then: canonical entity names are retained while credit joins and artist identities stay intact.
+    assert candidate is not None
+    assert candidate.artist_name == 'Release Canonical feat. Guest Canonical'
+    assert candidate.release_artist_name == 'Release Canonical feat. Guest Canonical'
+    assert candidate.release_artist_names == ('Release Canonical', 'Guest Canonical')
+    assert candidate.recording_artist_names == ('Recording Canonical',)
+    assert candidate.release_artist_mbids == ('release-artist-one', 'release-artist-two')
+    assert candidate.recording_artist_mbids == ('recording-artist',)
