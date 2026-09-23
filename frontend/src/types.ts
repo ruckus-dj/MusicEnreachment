@@ -181,14 +181,6 @@ export type MusicBrainzCandidateLookupResult = {
   readonly status: "review_required";
   readonly candidate_count: number;
 };
-export type RecordingCorrection = {
-  readonly recording_mbid: string;
-  readonly release_mbid?: string;
-};
-export type RecordingCorrectionResult = {
-  readonly recording_mbid: string;
-  readonly record_id: string;
-};
 export type WorkerQueueJob = {
   readonly job_id: string;
   readonly kind: string;

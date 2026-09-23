@@ -428,8 +428,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               onEncodingApplied={controller.encodingApplied}
               onRetryAcoustId={() => void controller.retryProvider("acoustid")}
               onRetryMusicBrainz={() => void controller.retryProvider("musicbrainz")}
-              onOverrideRelease={(value) => void controller.overrideRelease(value)}
-              onOverrideRecording={(request) => void controller.overrideRecording(request)}
+              onLoadMusicBrainzCandidates={(request) =>
+                void controller.loadMusicBrainzCandidates(request)
+              }
               onSelectCandidate={(key) => void controller.selectCandidate(key)}
               onSelectEffectiveSource={(value) => void controller.selectEffectiveSource(value)}
               effectiveSourceId={controller.effectiveSourceId}

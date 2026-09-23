@@ -11,8 +11,6 @@ import type {
   ManualSourceSelection,
   MusicBrainzCandidateLookup,
   MusicBrainzCandidateLookupResult,
-  RecordingCorrection,
-  RecordingCorrectionResult,
   SourceRoot,
   SourceRootCandidateList,
   SourceRootCreate,
@@ -236,17 +234,6 @@ export function loadMusicBrainzCandidates(
 ): Promise<MusicBrainzCandidateLookupResult> {
   return api<MusicBrainzCandidateLookupResult>(
     `/api/library/records/${encodeURIComponent(recordId)}/sources/${encodeURIComponent(sourceId)}/musicbrainz/release-candidates`,
-    { method: "POST", body: JSON.stringify(request) },
-  );
-}
-
-export function submitRecordingCorrection(
-  recordId: string,
-  sourceId: string,
-  request: RecordingCorrection,
-): Promise<RecordingCorrectionResult> {
-  return api<RecordingCorrectionResult>(
-    `/api/library/records/${encodeURIComponent(recordId)}/sources/${encodeURIComponent(sourceId)}/musicbrainz/override`,
     { method: "POST", body: JSON.stringify(request) },
   );
 }

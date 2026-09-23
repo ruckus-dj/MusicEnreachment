@@ -10,7 +10,7 @@ import {
   tagsFor,
   workflowStatus,
 } from "../domain/metadata";
-import type { Detail, RecordingCorrection, Tags } from "../types";
+import type { Detail, MusicBrainzCandidateLookup, Tags } from "../types";
 
 export function TrackDetail({
   detail,
@@ -24,8 +24,7 @@ export function TrackDetail({
   onEncodingApplied,
   onRetryAcoustId,
   onRetryMusicBrainz,
-  onOverrideRelease,
-  onOverrideRecording,
+  onLoadMusicBrainzCandidates,
   onSelectCandidate,
   onSelectEffectiveSource,
   effectiveSourceId,
@@ -45,8 +44,7 @@ export function TrackDetail({
   readonly onEncodingApplied?: (queued: boolean) => Promise<void>;
   readonly onRetryAcoustId?: () => void;
   readonly onRetryMusicBrainz?: () => void;
-  readonly onOverrideRelease?: (releaseMbid: string) => void;
-  readonly onOverrideRecording?: (request: RecordingCorrection) => void;
+  readonly onLoadMusicBrainzCandidates?: (request: MusicBrainzCandidateLookup) => void;
   readonly onSelectCandidate: (selection: string) => void;
   readonly onSelectEffectiveSource: (sourceId: string) => void;
   readonly effectiveSourceId: string | null;
@@ -164,15 +162,17 @@ export function TrackDetail({
   };
   const overrideRelease = () => {
     const releaseMbid = releaseOverride.trim();
-    if (!releaseMbid) return;
-    onOverrideRelease?.(releaseMbid);
+    const recordingMbid = recordingOverride.trim() || detail.musicbrainz_recording_id?.trim();
+    if (!releaseMbid || !recordingMbid) return;
+    setRecordingCorrectionValidationError("");
+    onLoadMusicBrainzCandidates?.({ recording_mbid: recordingMbid, release_mbid: releaseMbid });
   };
   const overrideRecording = () => {
     const recordingMbid = recordingOverride.trim();
     if (!recordingMbid) return;
-    const releaseMbid = releaseOverride.trim() || detail.musicbrainz_release_id?.trim();
+    const releaseMbid = releaseOverride.trim();
     setRecordingCorrectionValidationError("");
-    onOverrideRecording?.({
+    onLoadMusicBrainzCandidates?.({
       recording_mbid: recordingMbid,
       ...(releaseMbid ? { release_mbid: releaseMbid } : {}),
     });
@@ -435,7 +435,10 @@ export function TrackDetail({
           )}
           <details className="release-override">
             <summary>Выбрать release MBID вручную</summary>
-            <p className="candidate-reason">Используйте это только если найденный релиз неверен.</p>
+            <p className="candidate-reason">
+              Укажите recording ниже или используйте уже выбранный recording, чтобы проверить точную
+              пару.
+            </p>
             <div className="provider-actions">
               <input
                 aria-label="MusicBrainz release ID"
@@ -446,10 +449,14 @@ export function TrackDetail({
               <button
                 type="button"
                 className="primary"
-                disabled={!releaseOverride.trim() || reprocessing}
+                disabled={
+                  !releaseOverride.trim() ||
+                  !(recordingOverride.trim() || detail.musicbrainz_recording_id?.trim()) ||
+                  reprocessing
+                }
                 onClick={overrideRelease}
               >
-                {reprocessing ? "Загружаем…" : "Загрузить release"}
+                {reprocessing ? "Проверяем…" : "Проверить пару"}
               </button>
             </div>
           </details>
@@ -481,7 +488,7 @@ export function TrackDetail({
                 disabled={!recordingOverride.trim() || reprocessing}
                 onClick={overrideRecording}
               >
-                {reprocessing ? "Загружаем…" : "Загрузить recording"}
+                {reprocessing ? "Ищем…" : "Найти связанные релизы"}
               </button>
             </div>
             {recordingCorrectionReview && (

@@ -599,8 +599,8 @@ describe("TrackDetail effective source", () => {
 
 describe("TrackDetail recording correction", () => {
   it("keeps manual recording MBID correction available without provider evidence", () => {
-    const onOverrideRecording = vi.fn();
-    renderDetail({ onOverrideRecording });
+    const onLoadMusicBrainzCandidates = vi.fn();
+    renderDetail({ onLoadMusicBrainzCandidates });
 
     expect(screen.getByText("Провайдеры не вернули варианты для этого трека")).toBeTruthy();
     expect(screen.queryByText("Выберите варианты, чтобы продолжить")).toBeNull();
@@ -611,16 +611,20 @@ describe("TrackDetail recording correction", () => {
     });
     fireEvent.click(screen.getByTestId("recording-correction-submit"));
 
-    expect(onOverrideRecording).toHaveBeenCalledWith({
+    expect(onLoadMusicBrainzCandidates).toHaveBeenCalledWith({
       recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
     });
   });
 
-  it("submits only the trimmed recording MBID", () => {
-    const onOverrideRecording = vi.fn();
+  it("does not reuse the currently selected release when looking up another recording", () => {
+    const onLoadMusicBrainzCandidates = vi.fn();
     renderDetail({
-      onOverrideRecording,
-      detail: { ...detail, musicbrainz_recording_id: "old-recording" },
+      onLoadMusicBrainzCandidates,
+      detail: {
+        ...detail,
+        musicbrainz_recording_id: "old-recording",
+        musicbrainz_release_id: "old-release",
+      },
     });
 
     fireEvent.change(screen.getByTestId("recording-mbid-input"), {
@@ -628,14 +632,14 @@ describe("TrackDetail recording correction", () => {
     });
     fireEvent.click(screen.getByTestId("recording-correction-submit"));
 
-    expect(onOverrideRecording).toHaveBeenCalledWith({
+    expect(onLoadMusicBrainzCandidates).toHaveBeenCalledWith({
       recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
     });
   });
 
-  it("keeps the manually entered release MBID with the recording correction", () => {
-    const onOverrideRecording = vi.fn();
-    renderDetail({ onOverrideRecording });
+  it("uses the manually entered release MBID only to narrow candidate lookup", () => {
+    const onLoadMusicBrainzCandidates = vi.fn();
+    renderDetail({ onLoadMusicBrainzCandidates });
 
     fireEvent.change(screen.getByLabelText("MusicBrainz release ID"), {
       target: { value: "  22222222-2222-4222-8222-222222222222  " },
@@ -645,7 +649,7 @@ describe("TrackDetail recording correction", () => {
     });
     fireEvent.click(screen.getByTestId("recording-correction-submit"));
 
-    expect(onOverrideRecording).toHaveBeenCalledWith({
+    expect(onLoadMusicBrainzCandidates).toHaveBeenCalledWith({
       recording_mbid: "11111111-1111-4111-8111-111111111111",
       release_mbid: "22222222-2222-4222-8222-222222222222",
     });

@@ -20,7 +20,6 @@ import {
   refreshLibraryMetadata,
   removeSourceRoot,
   selectEffectiveSource,
-  submitRecordingCorrection,
 } from "../api/client";
 import {
   albumArtistsFor,
@@ -45,8 +44,6 @@ import type {
   ManualActionFilter,
   MusicBrainzCandidateLookup,
   ProviderName,
-  RecordingCorrection,
-  RecordingCorrectionResult,
   Route,
   RuntimeSettings,
   RuntimeSettingsDraft,
@@ -155,8 +152,6 @@ export type AppControllerModel = {
   encodingApplied: (queued: boolean) => Promise<void>;
   retryProvider: (provider: ProviderName) => Promise<void>;
   loadMusicBrainzCandidates: (request: MusicBrainzCandidateLookup) => Promise<void>;
-  overrideRelease: (releaseMbid: string) => Promise<void>;
-  overrideRecording: (request: RecordingCorrection) => Promise<void>;
   selectCandidate: (selection: string) => Promise<void>;
   selectEffectiveSource: (sourceId: string) => Promise<void>;
   saveSettings: () => Promise<void>;
@@ -473,73 +468,6 @@ export function useAppController(): AppControllerModel {
       if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.queueProvider);
-    } finally {
-      setReprocessing(false);
-    }
-  }
-  async function overrideRelease(releaseMbid: string) {
-    if (!recordId || !sourceId) return;
-    setReprocessing(true);
-    try {
-      const result = await api<{
-        release_mbid: string;
-        status: "review_required";
-        candidate_count: number;
-      }>(`/api/library/records/${recordId}/sources/${sourceId}/musicbrainz/release-candidates`, {
-        method: "POST",
-        body: JSON.stringify({ release_mbid: releaseMbid }),
-      });
-      setNotice(`Релиз ${result.release_mbid} добавлен для проверки (${result.candidate_count})`);
-      await refreshRecord(recordId, sourceId);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : errorMessages.loadRelease);
-    } finally {
-      setReprocessing(false);
-    }
-  }
-  async function overrideRecording(request: RecordingCorrection) {
-    if (!recordId || !sourceId) return;
-    setReprocessing(true);
-    setRecordingCorrectionError("");
-    setRecordingCorrectionReview("");
-    try {
-      const result: RecordingCorrectionResult = await submitRecordingCorrection(
-        recordId,
-        sourceId,
-        request,
-      );
-      setNotice(`Запись ${result.recording_mbid} исправлена для выбранного источника`);
-      if (result.record_id !== recordId) {
-        watchRecord(result.record_id, sourceId);
-        setItems([]);
-        navigate({ screen: "track", recordId: result.record_id, sourceId });
-        return;
-      }
-      await refreshRecord(result.record_id, sourceId);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        setRecordingCorrectionError(errorMessages.correctionConflict);
-        setRecordingCorrectionReview(errorMessages.correctionReview);
-      } else {
-        setRecordingCorrectionError(
-          error instanceof ApiError
-            ? error.status === 422
-              ? errorMessages.invalidRecordingMbid
-              : error.status === 503
-                ? errorMessages.correctionProviderUnavailable
-                : error.status === 404
-                  ? errorMessages.correctionSourceUnavailable
-                  : errorMessages.submitCorrection
-            : error instanceof Error
-              ? error.message
-              : errorMessages.submitCorrection,
-        );
-      }
-      setNotice(
-        error instanceof ApiError && error.status === 409
-          ? errorMessages.correctionConflictNotice
-          : errorMessages.correctionFailedNotice,
-      );
     } finally {
       setReprocessing(false);
     }
@@ -1286,8 +1214,6 @@ export function useAppController(): AppControllerModel {
     saveMetadata,
     retryProvider,
     loadMusicBrainzCandidates: loadMusicBrainzCandidateOptions,
-    overrideRelease,
-    overrideRecording,
     selectCandidate,
     selectEffectiveSource: selectEffectiveSourceForRecord,
     saveSettings,
