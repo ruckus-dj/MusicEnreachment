@@ -3,12 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from music_ingest.models import (
     Base,
     CandidateRecord,
+    JobRecord,
+    LibraryMetadataRevisionRecord,
     LibraryRecord,
     ProviderAttemptRecord,
     SourceAssociationOverrideRecord,
@@ -114,6 +117,268 @@ def test_automatic_association_when_verified_recording_matches_groups_sources(tm
         assert first_source is not None
         assert second_source is not None
         assert first_source.library_record_id == second_source.library_record_id
+
+
+def test_automatic_association_batch_when_requests_are_reversed_locks_sources_and_records_by_id(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Given: two source records whose request order conflicts with their stable identifiers.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "batch-association-locks.db"}', echo='debug')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
+    with Session(engine) as session:
+        target = LibraryRecord(
+            id='record-target',
+            musicbrainz_recording_id=recording_mbid,
+            musicbrainz_release_id=release_mbid,
+            created_at=now,
+            updated_at=now,
+        )
+        first = LibraryRecord(id='record-a', created_at=now, updated_at=now)
+        second = LibraryRecord(id='record-z', created_at=now, updated_at=now)
+        source_a = SourceRecord(
+            id='source-a',
+            source_path='/incoming/a.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=first,
+        )
+        source_z = SourceRecord(
+            id='source-z',
+            source_path='/incoming/z.flac',
+            device=1,
+            inode=2,
+            size_bytes=1,
+            sha256='b' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=second,
+        )
+        session.add_all((target, first, second, source_a, source_z))
+        session.commit()
+
+        # When: batch association receives the reverse source order.
+        results = RecordingAssociationService(session).associate_automatic_batch(
+            (
+                AutomaticAssociationRequest(
+                    source_z.id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+                ),
+                AutomaticAssociationRequest(
+                    source_a.id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+                ),
+            )
+        )
+        session.commit()
+
+        # Then: the result preserves request order while both lock phases are ordered by stable identifiers.
+        assert tuple(result.library_record_id if result is not None else None for result in results) == (
+            target.id,
+            target.id,
+        )
+        statements = '\n'.join(record.message for record in caplog.records)
+        assert 'FROM source_records' in statements
+        assert 'ORDER BY source_records.id' in statements
+        assert 'FROM library_records' in statements
+        assert 'ORDER BY library_records.id' in statements
+
+
+def test_automatic_association_batch_moves_sources_and_preserves_assignment_event_and_revision_semantics(
+    tmp_path: Path,
+) -> None:
+    # Given: independently attached sources, including one with immutable final metadata, target one recording-release.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "batch-association.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
+    with Session(engine) as session:
+        target = LibraryRecord(
+            id='record-target',
+            musicbrainz_recording_id=recording_mbid,
+            musicbrainz_release_id=release_mbid,
+            created_at=now,
+            updated_at=now,
+        )
+        first = LibraryRecord(id='record-first', created_at=now, updated_at=now)
+        second = LibraryRecord(id='record-second', created_at=now, updated_at=now)
+        source_one = SourceRecord(
+            id='source-one',
+            source_path='/incoming/one.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=first,
+        )
+        source_two = SourceRecord(
+            id='source-two',
+            source_path='/incoming/two.flac',
+            device=1,
+            inode=2,
+            size_bytes=1,
+            sha256='b' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=second,
+        )
+        session.add_all((target, first, second, source_one, source_two))
+        session.flush()
+        _ = append_metadata_revision(session, first.id, source_one.id, 'final', {'TITLE': 'Fixture'}, 'worker', now)
+        session.commit()
+
+        # When: the qualified requests are associated as one batch.
+        results = RecordingAssociationService(session).associate_automatic_batch(
+            (
+                AutomaticAssociationRequest(
+                    source_two.id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+                ),
+                AutomaticAssociationRequest(
+                    source_one.id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+                ),
+            )
+        )
+        session.commit()
+
+        # Then: both sources move once, each reassignment is recorded, and immutable final metadata is recreated.
+        persisted_one = session.get(SourceRecord, source_one.id)
+        persisted_two = session.get(SourceRecord, source_two.id)
+        persisted_target = session.get(LibraryRecord, target.id)
+        assert all(result is not None and result.library_record_id == target.id for result in results)
+        assert persisted_one is not None
+        assert persisted_two is not None
+        assert persisted_target is not None
+        assert persisted_one.library_record_id == target.id
+        assert persisted_two.library_record_id == target.id
+        assert len(persisted_one.recording_assignments) == 1
+        assert len(persisted_two.recording_assignments) == 1
+        assert [
+            (revision.source_id, revision.tags_json, revision.actor)
+            for revision in persisted_target.metadata_revisions
+            if revision.layer == 'final'
+        ] == [(source_one.id, '{"TITLE": "Fixture"}', 'reassociation')]
+        assert len(persisted_target.events) == 2
+
+
+def test_automatic_association_batch_when_sources_already_target_replays_without_history(tmp_path: Path) -> None:
+    # Given: a completed batch association.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "batch-association-replay.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbid = 'release-id'
+    with Session(engine) as session:
+        target = LibraryRecord(
+            id='record-target',
+            musicbrainz_recording_id=recording_mbid,
+            musicbrainz_release_id=release_mbid,
+            created_at=now,
+            updated_at=now,
+        )
+        previous = LibraryRecord(id='record-previous', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='source-replay',
+            source_path='/incoming/replay.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=previous,
+        )
+        request = AutomaticAssociationRequest(
+            source.id, recording_mbid, 0.98, 0.9, '{"provider":"fixture"}', now, release_mbid
+        )
+        session.add_all((target, previous, source))
+        session.commit()
+        service = RecordingAssociationService(session)
+        _ = service.associate_automatic_batch((request,))
+        session.commit()
+        session.expire_all()
+        persisted_target = session.get(LibraryRecord, target.id)
+        persisted_source = session.get(SourceRecord, source.id)
+        assert persisted_target is not None
+        assert persisted_source is not None
+        event_count = len(persisted_target.events)
+        assignment_count = len(persisted_source.recording_assignments)
+        revision_count = len(persisted_target.metadata_revisions)
+        for refresh_job in session.query(JobRecord).filter_by(kind='selection_refresh'):
+            refresh_job.state = 'completed'
+        session.commit()
+
+        # When: the same source-target association is replayed.
+        results = service.associate_automatic_batch((request,))
+        session.commit()
+        session.expire_all()
+
+        # Then: it reports the resolved target without writing another assignment, event, or revision.
+        replayed_target = session.get(LibraryRecord, target.id)
+        replayed_source = session.get(SourceRecord, source.id)
+        assert results[0] is not None
+        assert results[0].library_record_id == target.id
+        assert results[0].moved_from_record_id == target.id
+        assert replayed_target is not None
+        assert replayed_source is not None
+        assert len(replayed_target.events) == event_count
+        assert len(replayed_source.recording_assignments) == assignment_count
+        assert len(replayed_target.metadata_revisions) == revision_count
+        assert (
+            session.query(JobRecord)
+            .filter_by(kind='selection_refresh', library_record_id=target.id, state='queued')
+            .count()
+            == 1
+        )
+
+
+def test_library_record_metadata_revisions_order_equal_timestamps_by_revision_and_id(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "metadata-revision-order.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-revision-order', created_at=now, updated_at=now)
+        session.add(record)
+        session.flush()
+        session.add_all(
+            (
+                LibraryMetadataRevisionRecord(
+                    id=20,
+                    library_record_id=record.id,
+                    layer='final',
+                    revision=2,
+                    tags_json='{"TITLE":"Second"}',
+                    actor='test',
+                    created_at=now,
+                ),
+                LibraryMetadataRevisionRecord(
+                    id=10,
+                    library_record_id=record.id,
+                    layer='final',
+                    revision=1,
+                    tags_json='{"TITLE":"First"}',
+                    actor='test',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+        session.expire_all()
+
+        persisted = session.get(LibraryRecord, record.id)
+        assert persisted is not None
+        assert [(revision.revision, revision.id) for revision in persisted.metadata_revisions] == [(1, 10), (2, 20)]
 
 
 def test_automatic_association_when_release_pair_is_unconfirmed_uses_the_qualified_score(tmp_path: Path) -> None:

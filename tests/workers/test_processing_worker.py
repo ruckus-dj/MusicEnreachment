@@ -32,6 +32,7 @@ from music_ingest.models import (
     JobAttemptRecord,
     JobRecord,
     LibraryEventRecord,
+    LibraryMetadataRevisionRecord,
     LibraryRecord,
     ProviderAttemptRecord,
     ProviderCandidateRunRecord,
@@ -654,7 +655,6 @@ def test_initial_worker_auto_encoding_precedes_first_musicbrainz_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from music_ingest.repositories.jobs import JobRepository
-    from music_ingest.services.normalize.source_values import source_values
 
     requests: list[MusicBrainzLookupRequest] = []
 
@@ -696,7 +696,10 @@ def test_initial_worker_auto_encoding_precedes_first_musicbrainz_query(
         assert worker.run_once(allowed_kinds={'filesystem_scan'})
         assert initial_job.state == 'completed'
         assert initial_job.source_metadata_revision == item.source_metadata_revision == 2
-        assert source_values(item.tag_observations)['TITLE'] == 'Морячек'
+        assert (
+            next(field.value for field in item.tag_observations if field.selected and field.tag_name == 'TITLE')
+            == 'Морячек'
+        )
         queued = list(session.scalars(select(JobRecord).where(JobRecord.kind == 'musicbrainz_analysis')))
         assert len(queued) == 1
         assert queued[0].source_metadata_revision == 2
@@ -1249,6 +1252,260 @@ def test_candidate_selection_queries_folder_membership_in_sql(tmp_path: Path) ->
 
     # Then: candidate selection constrains members to the source folder in SQL.
     assert any('source_records.source_path like' in statement for statement in statements)
+
+
+def test_folder_release_selection_loads_member_relationships_within_folder_scope(tmp_path: Path) -> None:
+    # Given: three folder members whose completed candidate runs have no release in common.
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    member_count = 3
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "folder-release-selection-loader.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='folder-selection-root',
+            display_name='folder-selection-root',
+            canonical_path='/source',
+            created_at=now,
+            updated_at=now,
+        )
+        sources: list[SourceRecord] = []
+        for index in range(member_count):
+            source_id = f'folder-selection-source-{index}'
+            sources.append(
+                SourceRecord(
+                    id=source_id,
+                    source_path=f'/source/folder-selection/{index}.flac',
+                    device=1,
+                    inode=index,
+                    size_bytes=1,
+                    sha256=f'{index:064x}',
+                    duration_seconds=1,
+                    origin='manual',
+                    intake_state='present',
+                    source_root=root,
+                    library_record=LibraryRecord(
+                        id=f'folder-selection-record-{index}',
+                        source_state='present',
+                        processing_state='analyzing',
+                        match_state='unknown',
+                        publication_state='absent',
+                        metadata_state='original',
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                    candidate_runs=[
+                        ProviderCandidateRunRecord(
+                            source_id=source_id,
+                            provider_name='musicbrainz',
+                            created_at=now,
+                            candidates=[
+                                CandidateRecord(
+                                    source_id=source_id,
+                                    candidate_key=f'release-{index}:recording-{index}',
+                                    evidence=CandidateEvidencePayload(
+                                        provider='musicbrainz',
+                                        entity='recording_release',
+                                        release_mbid=f'release-{index}',
+                                        recording_mbid=f'recording-{index}',
+                                        score=1.0,
+                                    ).model_dump_json(),
+                                )
+                            ],
+                        )
+                    ],
+                )
+            )
+        session.add_all(
+            (
+                root,
+                *sources,
+                JobRecord(
+                    id='folder-release-selection-loader',
+                    folder_path='/source/folder-selection',
+                    kind='folder_release_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+    statements: list[str] = []
+
+    def listener(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        statements.append(statement.lower())
+
+    with Session(engine) as worker_session:
+        # When: folder release selection evaluates all members together.
+        assert ProcessingWorker(worker_session, _config(tmp_path)).run_once(
+            on_claimed=lambda _job_id, _kind: event.listen(engine, 'before_cursor_execute', listener),
+            allowed_kinds={'folder_release_selection'},
+        )
+        worker_session.commit()
+    event.remove(engine, 'before_cursor_execute', listener)
+
+    with Session(engine) as session:
+        review_events = tuple(
+            session.scalars(
+                select(LibraryEventRecord)
+                .where(LibraryEventRecord.kind == 'folder_release_selection_review')
+                .order_by(LibraryEventRecord.source_id)
+            ).all()
+        )
+
+    # Then: every member remains reviewable without per-member relationship SELECT cascades.
+    assert len(review_events) == member_count
+    assert {event_record.state for event_record in review_events} == {'needs_review'}
+    select_count = sum(statement.lstrip().startswith('select') for statement in statements)
+    assert select_count <= 12, f'expected at most 12 SELECTs for {member_count} folder members, got {select_count}'
+
+
+def test_folder_release_selection_success_uses_bounded_queries(tmp_path: Path) -> None:
+    # Given: three folder members with one unique shared release and distinct recordings.
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    member_count = 3
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "folder-release-selection-success.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='folder-selection-success-root',
+            display_name='folder-selection-success-root',
+            canonical_path='/source',
+            created_at=now,
+            updated_at=now,
+        )
+        sources: list[SourceRecord] = []
+        for index in range(member_count):
+            source_id = f'folder-selection-success-source-{index}'
+            sources.append(
+                SourceRecord(
+                    id=source_id,
+                    source_path=f'/source/folder-selection-success/{index}.flac',
+                    device=1,
+                    inode=index,
+                    size_bytes=1,
+                    sha256=f'{index + 10:064x}',
+                    duration_seconds=1,
+                    origin='manual',
+                    intake_state='present',
+                    media_codec='FLAC',
+                    media_bit_depth=16,
+                    media_sample_rate=44_100,
+                    media_channels=2,
+                    source_root=root,
+                    library_record=LibraryRecord(
+                        id=f'folder-selection-success-record-{index}',
+                        source_state='present',
+                        processing_state='analyzing',
+                        match_state='unknown',
+                        publication_state='absent',
+                        metadata_state='original',
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                    candidate_runs=[
+                        ProviderCandidateRunRecord(
+                            source_id=source_id,
+                            provider_name='musicbrainz',
+                            created_at=now,
+                            candidates=[
+                                CandidateRecord(
+                                    source_id=source_id,
+                                    candidate_key=f'shared-release:recording-{index}',
+                                    evidence=CandidateEvidencePayload(
+                                        provider='musicbrainz',
+                                        entity='recording_release',
+                                        release_mbid='shared-release',
+                                        recording_mbid=f'recording-{index}',
+                                        score=1.0,
+                                        tags={'title': f'Track {index}'},
+                                    ).model_dump_json(),
+                                )
+                            ],
+                        )
+                    ],
+                )
+            )
+        session.add_all(
+            (
+                root,
+                *sources,
+                JobRecord(
+                    id='folder-release-selection-success',
+                    folder_path='/source/folder-selection-success',
+                    kind='folder_release_selection',
+                    state='queued',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+    statements: list[str] = []
+
+    def listener(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        statements.append(statement.lower())
+
+    with Session(engine) as worker_session:
+        # When: the worker selects and applies the shared release to the whole folder.
+        assert ProcessingWorker(worker_session, _config(tmp_path)).run_once(
+            on_claimed=lambda _job_id, _kind: event.listen(engine, 'before_cursor_execute', listener),
+            allowed_kinds={'folder_release_selection'},
+        )
+        worker_session.commit()
+    event.remove(engine, 'before_cursor_execute', listener)
+
+    with Session(engine) as session:
+        selected_events = tuple(
+            session.scalars(
+                select(LibraryEventRecord)
+                .where(LibraryEventRecord.kind == 'folder_release_selected')
+                .order_by(LibraryEventRecord.source_id)
+            ).all()
+        )
+        revisions = tuple(
+            session.scalars(
+                select(LibraryMetadataRevisionRecord).where(LibraryMetadataRevisionRecord.actor == 'folder_selection')
+            ).all()
+        )
+        refresh_jobs = tuple(session.scalars(select(JobRecord).where(JobRecord.kind == 'selection_refresh')).all())
+
+    # Then: all results are persisted without per-member SELECT cascades.
+    assert len(selected_events) == member_count
+    assert len(revisions) == member_count * 2
+    assert len(refresh_jobs) == member_count
+    select_count = sum(statement.lstrip().startswith('select') for statement in statements)
+    assert select_count <= 20, f'expected at most 20 SELECTs for {member_count} folder members, got {select_count}'
+
+    # Given: the prior refresh jobs are terminal and the provider metadata changes for already-associated sources.
+    with Session(engine) as session:
+        for refresh_job in session.scalars(select(JobRecord).where(JobRecord.kind == 'selection_refresh')):
+            refresh_job.state = 'completed'
+        persisted_candidates = tuple(session.scalars(select(CandidateRecord).order_by(CandidateRecord.source_id)).all())
+        for index, candidate in enumerate(persisted_candidates):
+            evidence = CandidateEvidencePayload.model_validate_json(candidate.evidence)
+            candidate.evidence = evidence.model_copy(
+                update={'tags': {'title': f'Updated Track {index}'}}
+            ).model_dump_json()
+        session.add(
+            JobRecord(
+                id='folder-release-selection-replay',
+                folder_path='/source/folder-selection-success',
+                kind='folder_release_selection',
+                state='queued',
+                created_at=now,
+            )
+        )
+        session.commit()
+
+    # When: folder selection replays without moving any source.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, _config(tmp_path)).run_once(allowed_kinds={'folder_release_selection'})
+        session.commit()
+
+        # Then: changed metadata receives fresh revisions and a new active refresh without duplicate assignments.
+        assert (
+            session.query(LibraryMetadataRevisionRecord).filter_by(actor='folder_selection').count() == member_count * 4
+        )
+        assert session.query(JobRecord).filter_by(kind='selection_refresh', state='queued').count() == member_count
 
 
 def test_candidate_selection_queues_folder_selection_for_single_file_folder(tmp_path: Path) -> None:

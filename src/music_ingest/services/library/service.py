@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
 from sqlalchemy import exists, func, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, raiseload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from music_ingest.models import SourceRecord, SourceTagRecord
+from music_ingest.models import ReviewDecisionRecord, SourceRecord, SourceTagRecord
 from music_ingest.models.library import (
     EffectiveSourceDecisionRecord,
     LibraryEventRecord,
@@ -298,11 +299,33 @@ def persist_effective_source_decision(
     *,
     manual_source_id: str | None = None,
 ) -> QualityDecision:
-    record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id))
+    record = session.scalar(
+        select(LibraryRecord)
+        .where(LibraryRecord.id == library_record_id)
+        .options(
+            raiseload('*'),
+            selectinload(LibraryRecord.sources).options(raiseload('*')),
+            selectinload(LibraryRecord.effective_source_decision),
+        )
+    )
     if record is None:
         raise LookupError(library_record_id)
-    source_ids = {source.id for source in record.sources}
-    if not {candidate.source_id for candidate in candidates}.issubset(source_ids):
+    decision = _persist_effective_source_decision(session, record, candidates, now, manual_source_id=manual_source_id)
+    session.flush()
+    return decision
+
+
+def _persist_effective_source_decision(
+    session: Session,
+    record: LibraryRecord,
+    candidates: tuple[QualityCandidate, ...],
+    now: datetime,
+    *,
+    manual_source_id: str | None = None,
+    source_ids: set[str] | None = None,
+) -> QualityDecision:
+    record_source_ids = {source.id for source in record.sources} if source_ids is None else source_ids
+    if not {candidate.source_id for candidate in candidates}.issubset(record_source_ids):
         raise ValueError('quality candidates must belong to the library record')
     stored = record.effective_source_decision
     previous = _stored_effective_source_decision(stored)
@@ -334,38 +357,121 @@ def persist_effective_source_decision(
                 created_at=now,
             )
         )
-    session.flush()
     return decision
 
 
 def reevaluate_effective_source_decision(
     session: Session, library_record_id: str, now: datetime, manual_source_id: str | None = None
 ) -> QualityDecision:
-    record = library_record_detail(session, library_record_id)
-    confirmed_source_ids = frozenset(
-        source.id
-        for source in record.sources
-        if source.library_record_id == record.id
-        and (
-            record.musicbrainz_recording_id is not None
-            or any(decision.state == 'confirmed' for decision in source.review_decisions)
-        )
+    consolidation = session.get(LibraryRecordConsolidationRecord, library_record_id)
+    canonical_id = library_record_id if consolidation is None else consolidation.canonical_library_record_id
+    decisions = reevaluate_effective_source_decisions(
+        session, {canonical_id: now}, manual_source_ids={canonical_id: manual_source_id}
     )
-    candidates = tuple(
-        QualityCandidate(
-            source_id=source.id,
-            codec=source.media_codec or '',
-            bit_depth=source.media_bit_depth,
-            sample_rate=source.media_sample_rate,
-            channels=source.media_channels,
-            bitrate=source.media_bitrate,
-            confirmed=source.id in confirmed_source_ids,
-            intake_state=source.intake_state,
-            disappeared=source.disappeared_at is not None,
-        )
-        for source in record.sources
+    return decisions[canonical_id]
+
+
+def reevaluate_effective_source_decisions(
+    session: Session,
+    record_times: Mapping[str, datetime],
+    *,
+    manual_source_ids: Mapping[str, str | None] | None = None,
+) -> dict[str, QualityDecision]:
+    record_ids = tuple(sorted(record_times))
+    records = tuple(
+        session.scalars(
+            select(LibraryRecord)
+            .where(LibraryRecord.id.in_(record_ids))
+            .options(
+                raiseload('*'),
+                joinedload(LibraryRecord.effective_source_decision),
+            )
+        ).all()
     )
-    return persist_effective_source_decision(session, record.id, candidates, now, manual_source_id=manual_source_id)
+    records_by_id = {record.id: record for record in records}
+    missing_ids = set(record_ids) - records_by_id.keys()
+    if missing_ids:
+        raise LookupError(min(missing_ids))
+    confirmed_review = exists(
+        select(ReviewDecisionRecord.id).where(
+            ReviewDecisionRecord.source_id == SourceRecord.id,
+            ReviewDecisionRecord.state == 'confirmed',
+        )
+    ).label('review_confirmed')
+    source_rows = tuple(
+        session.execute(
+            select(
+                SourceRecord.library_record_id,
+                SourceRecord.id,
+                SourceRecord.media_codec,
+                SourceRecord.media_bit_depth,
+                SourceRecord.media_sample_rate,
+                SourceRecord.media_channels,
+                SourceRecord.media_bitrate,
+                SourceRecord.intake_state,
+                SourceRecord.disappeared_at,
+                confirmed_review,
+            ).where(SourceRecord.library_record_id.in_(record_ids))
+        ).all()
+    )
+    sources_by_record: dict[
+        str, list[tuple[str, str, int | None, int | None, int | None, int | None, str, bool, bool]]
+    ] = {record_id: [] for record_id in record_ids}
+    for row in source_rows:
+        if row.library_record_id is None:
+            continue
+        sources_by_record[row.library_record_id].append(
+            (
+                row.id,
+                row.media_codec or '',
+                row.media_bit_depth,
+                row.media_sample_rate,
+                row.media_channels,
+                row.media_bitrate,
+                row.intake_state,
+                row.disappeared_at is not None,
+                row.review_confirmed,
+            )
+        )
+    decisions: dict[str, QualityDecision] = {}
+    for record_id in record_ids:
+        record = records_by_id[record_id]
+        source_values = sources_by_record[record_id]
+        candidates = tuple(
+            QualityCandidate(
+                source_id=source_id,
+                codec=codec,
+                bit_depth=bit_depth,
+                sample_rate=sample_rate,
+                channels=channels,
+                bitrate=bitrate,
+                confirmed=record.musicbrainz_recording_id is not None or review_confirmed,
+                intake_state=intake_state,
+                disappeared=disappeared,
+            )
+            for (
+                source_id,
+                codec,
+                bit_depth,
+                sample_rate,
+                channels,
+                bitrate,
+                intake_state,
+                disappeared,
+                review_confirmed,
+            ) in source_values
+        )
+        manual_source_id = None if manual_source_ids is None else manual_source_ids.get(record_id)
+        decisions[record_id] = _persist_effective_source_decision(
+            session,
+            record,
+            candidates,
+            record_times[record_id],
+            manual_source_id=manual_source_id,
+            source_ids={source_id for source_id, *_ in source_values},
+        )
+    session.flush()
+    return decisions
 
 
 def _stored_effective_source_decision(record: EffectiveSourceDecisionRecord | None) -> ExistingDecision | None:

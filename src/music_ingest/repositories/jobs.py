@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Set
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, final
@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import Select, and_, false, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, raiseload, selectinload
 
 from music_ingest.models.entities import JobAttemptRecord, JobRecord, SourceRecord
 from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
@@ -138,6 +138,46 @@ class JobRepository:
             if active is None:
                 raise
             return None
+
+    def enqueue_selection_refreshes(self, record_times: Mapping[str, datetime]) -> tuple[JobRecord, ...]:
+        record_ids = tuple(sorted(record_times))
+        if not record_ids:
+            return ()
+        active_record_ids = set(
+            self._session.scalars(
+                select(JobRecord.library_record_id)
+                .where(JobRecord.library_record_id.in_(record_ids))
+                .where(JobRecord.kind == 'selection_refresh')
+                .where(JobRecord.state.in_(['queued', 'running']))
+            ).all()
+        )
+        jobs: list[JobRecord] = []
+        for record_id in record_ids:
+            if record_id in active_record_ids:
+                continue
+            try:
+                with self._session.begin_nested():
+                    job = JobRecord(
+                        id=f'selection_refresh-{uuid4().hex}',
+                        library_record_id=record_id,
+                        kind='selection_refresh',
+                        state='queued',
+                        created_at=record_times[record_id],
+                    )
+                    self._session.add(job)
+                    self._session.flush()
+                    jobs.append(job)
+            except IntegrityError:
+                active = self._session.scalar(
+                    select(JobRecord.id)
+                    .where(JobRecord.library_record_id == record_id)
+                    .where(JobRecord.kind == 'selection_refresh')
+                    .where(JobRecord.state.in_(['queued', 'running']))
+                    .options(raiseload('*'))
+                )
+                if active is None:
+                    raise
+        return tuple(jobs)
 
     def enqueue_musicbrainz_refresh(
         self,

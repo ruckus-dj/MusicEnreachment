@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, raiseload, selectinload
 
+from music_ingest.contracts import CandidateEvidencePayload
 from music_ingest.models import (
     EffectiveSourceDecisionRecord,
     JobRecord,
+    LibraryEventRecord,
     LibraryMetadataRevisionRecord,
     LibraryPublicationRecord,
     LibraryRecord,
@@ -240,60 +243,37 @@ class SelectionHandler:
             is not None
         ):
             return
+        confidence_threshold = self.settings.confidence_threshold()
         groups = tuple(_stored_release_scores(item) for item in members)
-        selected_release = select_folder_release(groups, self.settings.confidence_threshold())
+        selected_release = select_folder_release(groups, confidence_threshold)
         if selected_release is None:
-            for source in members:
-                if source.library_record_id is not None:
-                    record = library_record_detail(self.session, source.library_record_id)
-                    record.processing_state = 'needs_review'
-                    record.match_state = 'needs_review'
-                    record_event(
-                        self.session,
-                        source.library_record_id,
-                        'folder_release_selection_review',
-                        'needs_review',
-                        'folder candidates have no unique shared release',
-                        now,
-                        source.id,
-                    )
+            self._mark_folder_review(members, 'folder candidates have no unique shared release', now)
             return
+
+        association_requests: list[AutomaticAssociationRequest] = []
+        association_sources: list[tuple[SourceRecord, tuple[str, CandidateEvidencePayload], dict[str, str]]] = []
+        missing_candidates: list[SourceRecord] = []
         for source in members:
             if source.library_record_id is None:
                 continue
             match = _stored_release_candidate(source, selected_release)
             if match is None:
-                record = library_record_detail(self.session, source.library_record_id)
-                record.processing_state = 'needs_review'
-                record.match_state = 'needs_review'
-                record_event(
-                    self.session,
-                    source.library_record_id,
-                    'folder_release_selection_review',
-                    'needs_review',
-                    'selected folder release is absent from the source candidate run',
-                    now,
-                    source.id,
-                )
+                missing_candidates.append(source)
                 continue
             recording_mbid, match_evidence = match[1].recording_mbid, match[1]
             if recording_mbid is None:
                 continue
-            associated = RecordingAssociationService(self.session).associate_automatic(
+            association_requests.append(
                 AutomaticAssociationRequest(
                     source.id,
                     recording_mbid,
                     match_evidence.score or 0.0,
-                    self.settings.confidence_threshold(),
+                    confidence_threshold,
                     json.dumps({'recording_mbid': recording_mbid, 'release_mbid': selected_release}, sort_keys=True),
                     now,
                     release_mbid=selected_release,
                 )
             )
-            if associated is None:
-                continue
-            record = library_record_detail(self.session, associated.library_record_id)
-            analyzed_tags = _stored_match_tags(None, match)
             source_tags = source_values(
                 _SourceTagValue(
                     selected=bool(item.selected),
@@ -303,39 +283,107 @@ class SelectionHandler:
                 )
                 for item in source.tag_observations
             )
+            association_sources.append((source, match, source_tags))
+
+        self._mark_folder_review(
+            missing_candidates, 'selected folder release is absent from the source candidate run', now
+        )
+        associations = RecordingAssociationService(self.session).associate_automatic_batch(association_requests)
+        record_ids = tuple(sorted({result.library_record_id for result in associations if result is not None}))
+        records = {
+            record.id: record
+            for record in self.session.scalars(
+                select(LibraryRecord)
+                .where(LibraryRecord.id.in_(record_ids))
+                .options(raiseload('*'), selectinload(LibraryRecord.metadata_revisions))
+                .execution_options(populate_existing=True)
+            ).all()
+        }
+        revision_numbers = {
+            (record.id, layer): max(
+                (revision.revision for revision in record.metadata_revisions if revision.layer == layer), default=0
+            )
+            for record in records.values()
+            for layer in ('analyzed', 'final')
+        }
+        for (source, match, source_tags), associated in zip(association_sources, associations, strict=True):
+            if associated is None:
+                continue
+            record = records[associated.library_record_id]
+            analyzed_tags = _stored_match_tags(None, match)
             final_tags = refreshed_final_tags(record, source.id, source_tags, analyzed_tags)
             if not final_metadata_changed(record, source.id, final_tags):
-                record_event(
-                    self.session,
-                    record.id,
-                    'folder_release_metadata_unchanged',
-                    'complete',
-                    'refreshed provider metadata matches the latest final revision',
-                    now,
-                    source.id,
+                self.session.add(
+                    LibraryEventRecord(
+                        library_record_id=record.id,
+                        source_id=source.id,
+                        kind='folder_release_metadata_unchanged',
+                        state='complete',
+                        reason='refreshed provider metadata matches the latest final revision',
+                        details_json='{}',
+                        created_at=now,
+                    )
                 )
+                record.processing_state = 'complete'
+                record.updated_at = now
                 continue
-            _ = append_metadata_revision(
-                self.session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
+            for layer, tags in (('analyzed', analyzed_tags), ('final', final_tags)):
+                key = (record.id, layer)
+                revision_numbers[key] += 1
+                self.session.add(
+                    LibraryMetadataRevisionRecord(
+                        library_record_id=record.id,
+                        source_id=source.id,
+                        layer=layer,
+                        revision=revision_numbers[key],
+                        tags_json=json.dumps(tags, ensure_ascii=False, sort_keys=True),
+                        actor='folder_selection',
+                        created_at=now,
+                    )
+                )
+            record.metadata_state = 'final'
+            record.processing_state = 'publishing'
+            record.updated_at = now
+            self.session.add(
+                LibraryEventRecord(
+                    library_record_id=record.id,
+                    source_id=source.id,
+                    kind='folder_release_selected',
+                    state='publishing',
+                    reason=f'folder release {selected_release} selected from complete candidate runs',
+                    details_json='{}',
+                    created_at=now,
+                )
             )
-            _ = append_metadata_revision(
-                self.session,
-                record.id,
-                source.id,
-                'final',
-                final_tags,
-                'folder_selection',
-                now,
-            )
-            # One canonical selection path for folder intake and later refreshes.
-            # Select after all folder metadata is durable, not once per source.
-            _ = JobRepository(self.session).enqueue_selection_refresh(record.id, now)
-            record_event(
-                self.session,
-                record.id,
-                'folder_release_selected',
-                'publishing',
-                f'folder release {selected_release} selected from complete candidate runs',
-                now,
-                source.id,
+        self.session.flush()
+
+    def _mark_folder_review(self, sources: Sequence[SourceRecord], reason: str, now: datetime) -> None:
+        if not sources:
+            return
+        record_ids = tuple(
+            sorted({source.library_record_id for source in sources if source.library_record_id is not None})
+        )
+        records = {
+            record.id: record
+            for record in self.session.scalars(
+                select(LibraryRecord).where(LibraryRecord.id.in_(record_ids)).options(raiseload('*'))
+            ).all()
+        }
+        for source in sources:
+            if source.library_record_id is None:
+                continue
+            record = records[source.library_record_id]
+            record.processing_state = 'needs_review'
+            record.match_state = 'needs_review'
+            record.updated_at = now
+            self.session.add(
+                LibraryEventRecord(
+                    library_record_id=record.id,
+                    source_id=source.id,
+                    kind='folder_release_selection_review',
+                    state='needs_review',
+                    reason=reason,
+                    details_json='{}',
+                    created_at=now,
+                )
             )
