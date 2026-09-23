@@ -20,6 +20,13 @@ from music_ingest.services.association import (
     RecordingAssociationService,
 )
 from music_ingest.services.library import append_metadata_revision
+from music_ingest.services.matching.providers import (
+    Ambiguous,
+    FixtureProvenance,
+    MusicBrainzLookupRequest,
+    MusicBrainzResult,
+    ReleaseCandidate,
+)
 from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import MusicBrainzFixtureProvider
 
@@ -443,3 +450,54 @@ def test_manual_association_when_verified_mbid_is_absent_from_candidates_moves_s
         assert result.moved_from_record_id == record.id
         assert target is not None
         assert target.musicbrainz_recording_id == requested_mbid
+
+
+def test_manual_association_accepts_release_ambiguity_for_one_verified_recording(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "ambiguous-release-association.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 12, tzinfo=UTC)
+    requested_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+
+    class Provider:
+        def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzResult:
+            del request, now
+            provenance = FixtureProvenance(Path('ambiguous-recording.json'), 'a' * 64)
+            return Ambiguous(
+                provenance,
+                (
+                    ReleaseCandidate('release-one', 'First release', 'Artist', recording_mbids=(requested_mbid,)),
+                    ReleaseCandidate('release-two', 'Second release', 'Artist', recording_mbids=(requested_mbid,)),
+                ),
+            )
+
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-ambiguous-release', created_at=now, updated_at=now)
+        source = SourceRecord(
+            id='source-ambiguous-release',
+            source_path='/incoming/ambiguous.flac',
+            device=1,
+            inode=1,
+            size_bytes=1,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            library_record=record,
+        )
+        session.add_all((record, source))
+        session.commit()
+
+        result = RecordingAssociationService(session, Provider()).associate_manual(
+            ManualAssociationRequest(source.id, requested_mbid, now)
+        )
+        session.commit()
+
+        target = session.get(LibraryRecord, result.library_record_id)
+        persisted = session.get(SourceRecord, source.id)
+        assert target is not None
+        assert persisted is not None
+        assert target.musicbrainz_recording_id == requested_mbid
+        assert target.musicbrainz_release_id is None
+        assert persisted.association_override is not None
+        assert persisted.association_override.rationale == 'MusicBrainz recording selected manually'
+        assert persisted.recording_assignments[-1].state == 'manual_override'

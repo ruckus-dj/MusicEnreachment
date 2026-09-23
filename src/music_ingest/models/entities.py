@@ -115,7 +115,7 @@ class SourceAssociationOverrideRecord(Base):
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), primary_key=True)
     recording_mbid: Mapped[str] = mapped_column(Text, nullable=False)
     actor: Mapped[str] = mapped_column(Text, nullable=False)
-    rationale: Mapped[str | None] = mapped_column(Text)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

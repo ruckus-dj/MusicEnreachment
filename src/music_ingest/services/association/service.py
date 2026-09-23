@@ -27,6 +27,7 @@ from music_ingest.services.library.service import (
     reevaluate_effective_source_decision,
 )
 from music_ingest.services.matching.providers import (
+    Ambiguous,
     FixtureCase,
     MusicBrainzLookupRequest,
     MusicBrainzMatch,
@@ -34,6 +35,7 @@ from music_ingest.services.matching.providers import (
 )
 
 _TAGS: Final = TypeAdapter(dict[str, str])
+_MANUAL_ASSOCIATION_RATIONALE: Final = 'MusicBrainz recording selected manually'
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,7 @@ class ManualAssociationRequest:
     source_id: str
     recording_mbid: str
     now: datetime
+    release_mbid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +111,15 @@ class RecordingAssociationService:
             {'recording_mbid': request.recording_mbid},
             sort_keys=True,
         )
-        result = self._associate(request.source_id, request.recording_mbid, 'manual', None, evidence, request.now, None)
+        result = self._associate(
+            request.source_id,
+            request.recording_mbid,
+            'manual',
+            _MANUAL_ASSOCIATION_RATIONALE,
+            evidence,
+            request.now,
+            request.release_mbid,
+        )
         override = source.association_override
         if override is None:
             self._session.add(
@@ -116,14 +127,14 @@ class RecordingAssociationService:
                     source_id=source.id,
                     recording_mbid=request.recording_mbid,
                     actor='manual',
-                    rationale=None,
+                    rationale=_MANUAL_ASSOCIATION_RATIONALE,
                     created_at=request.now,
                 )
             )
         else:
             override.recording_mbid = request.recording_mbid
             override.actor = 'manual'
-            override.rationale = None
+            override.rationale = _MANUAL_ASSOCIATION_RATIONALE
             override.created_at = request.now
             override.cleared_at = None
         self._session.flush()
@@ -137,6 +148,10 @@ class RecordingAssociationService:
         )
         match result:
             case MusicBrainzMatch(candidate=candidate) if recording_mbid in candidate.recording_mbids:
+                return
+            case Ambiguous(candidates=candidates) if candidates and all(
+                recording_mbid in candidate.recording_mbids for candidate in candidates
+            ):
                 return
             case _:
                 raise RecordingAssociationUnavailable(recording_mbid)
