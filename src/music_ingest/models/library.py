@@ -80,13 +80,18 @@ class LibraryRecord(Base):
             "lyrics_status IN ('none', 'pending', 'synced', 'no_candidate', 'validation_rejected', 'error')",
             name='ck_library_records_lyrics_status',
         ),
+        CheckConstraint(
+            '(musicbrainz_recording_id IS NULL AND musicbrainz_release_id IS NULL) OR '
+            + "(musicbrainz_recording_id IS NOT NULL AND trim(musicbrainz_recording_id) <> '' AND "
+            + "musicbrainz_release_id IS NOT NULL AND trim(musicbrainz_release_id) <> '')",
+            name='ck_library_records_musicbrainz_pair',
+        ),
+        CheckConstraint(
+            "match_state <> 'matched' OR "
+            + '(musicbrainz_recording_id IS NOT NULL AND musicbrainz_release_id IS NOT NULL)',
+            name='ck_library_records_matched_identity',
+        ),
         UniqueConstraint('musicbrainz_recording_id', 'musicbrainz_release_id'),
-        Index(
-            'uq_library_records_musicbrainz_recording_without_release',
-            'musicbrainz_recording_id',
-            unique=True,
-            postgresql_where=text('musicbrainz_recording_id IS NOT NULL AND musicbrainz_release_id IS NULL'),
-        ).ddl_if(dialect='postgresql'),
         Index('ix_library_records_release_publication', 'musicbrainz_release_id', 'publication_state'),
     )
 
