@@ -17,6 +17,7 @@ from music_ingest.models import (
     LibraryRecord,
     SourceRecord,
 )
+from music_ingest.models.library import SourceTagView
 from music_ingest.repositories.jobs import ClaimedJob, JobRepository
 from music_ingest.services.association import AutomaticAssociationRequest, RecordingAssociationService
 from music_ingest.services.candidates import (
@@ -47,6 +48,14 @@ from music_ingest.workers.support.sources import SourceAccess
 _TAGS_ADAPTER = TypeAdapter(dict[str, str])
 
 
+@dataclass(slots=True)
+class _SourceTagValue(SourceTagView):
+    selected: bool
+    tag_name: str
+    value: str
+    format_name: str
+
+
 def refreshed_final_tags(
     record: LibraryRecord, source_id: str, source_tags: dict[str, str], analyzed_tags: dict[str, str]
 ) -> dict[str, str]:
@@ -61,6 +70,14 @@ def refreshed_final_tags(
     if manual is not None:
         return _TAGS_ADAPTER.validate_json(manual.tags_json)
     return {**source_tags, **analyzed_tags}
+
+
+def final_metadata_changed(record: LibraryRecord, source_id: str, tags: dict[str, str]) -> bool:
+    latest = next(
+        (item for item in reversed(record.metadata_revisions) if item.source_id == source_id and item.layer == 'final'),
+        None,
+    )
+    return latest is None or _TAGS_ADAPTER.validate_json(latest.tags_json) != tags
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,7 +294,27 @@ class SelectionHandler:
                 continue
             record = library_record_detail(self.session, associated.library_record_id)
             analyzed_tags = _stored_match_tags(None, match)
-            source_tags = source_values(source.tag_observations)
+            source_tags = source_values(
+                _SourceTagValue(
+                    selected=bool(item.selected),
+                    tag_name=str(item.tag_name),
+                    value=str(item.value),
+                    format_name=str(item.format_name),
+                )
+                for item in source.tag_observations
+            )
+            final_tags = refreshed_final_tags(record, source.id, source_tags, analyzed_tags)
+            if not final_metadata_changed(record, source.id, final_tags):
+                record_event(
+                    self.session,
+                    record.id,
+                    'folder_release_metadata_unchanged',
+                    'complete',
+                    'refreshed provider metadata matches the latest final revision',
+                    now,
+                    source.id,
+                )
+                continue
             _ = append_metadata_revision(
                 self.session, record.id, source.id, 'analyzed', analyzed_tags, 'folder_selection', now
             )
@@ -286,7 +323,7 @@ class SelectionHandler:
                 record.id,
                 source.id,
                 'final',
-                refreshed_final_tags(record, source.id, source_tags, analyzed_tags),
+                final_tags,
                 'folder_selection',
                 now,
             )
