@@ -14,6 +14,7 @@ import {
   listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
+  loadMusicBrainzCandidates,
   moveStorageOutput,
   previewStorageOutput,
   refreshLibraryMetadata,
@@ -42,6 +43,7 @@ import type {
   GenreCatalog,
   Layer,
   ManualActionFilter,
+  MusicBrainzCandidateLookup,
   ProviderName,
   RecordingCorrection,
   RecordingCorrectionResult,
@@ -152,6 +154,7 @@ export type AppControllerModel = {
   saveMetadata: () => Promise<boolean>;
   encodingApplied: (queued: boolean) => Promise<void>;
   retryProvider: (provider: ProviderName) => Promise<void>;
+  loadMusicBrainzCandidates: (request: MusicBrainzCandidateLookup) => Promise<void>;
   overrideRelease: (releaseMbid: string) => Promise<void>;
   overrideRecording: (request: RecordingCorrection) => Promise<void>;
   selectCandidate: (selection: string) => Promise<void>;
@@ -513,6 +516,47 @@ export function useAppController(): AppControllerModel {
         return;
       }
       await refreshRecord(result.record_id, sourceId);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setRecordingCorrectionError(errorMessages.correctionConflict);
+        setRecordingCorrectionReview(errorMessages.correctionReview);
+      } else {
+        setRecordingCorrectionError(
+          error instanceof ApiError
+            ? error.status === 422
+              ? errorMessages.invalidRecordingMbid
+              : error.status === 503
+                ? errorMessages.correctionProviderUnavailable
+                : error.status === 404
+                  ? errorMessages.correctionSourceUnavailable
+                  : errorMessages.submitCorrection
+            : error instanceof Error
+              ? error.message
+              : errorMessages.submitCorrection,
+        );
+      }
+      setNotice(
+        error instanceof ApiError && error.status === 409
+          ? errorMessages.correctionConflictNotice
+          : errorMessages.correctionFailedNotice,
+      );
+    } finally {
+      setReprocessing(false);
+    }
+  }
+  async function loadMusicBrainzCandidateOptions(request: MusicBrainzCandidateLookup) {
+    if (!recordId || !sourceId) return;
+    setReprocessing(true);
+    setRecordingCorrectionError("");
+    setRecordingCorrectionReview("");
+    try {
+      const result = await loadMusicBrainzCandidates(recordId, sourceId, request);
+      setNotice(
+        result.release_mbid
+          ? `Пара ${result.release_mbid}:${result.recording_mbid} добавлена для проверки`
+          : `Для recording ${result.recording_mbid} найдено релизов: ${result.candidate_count}`,
+      );
+      await refreshRecord(recordId, sourceId);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setRecordingCorrectionError(errorMessages.correctionConflict);
@@ -1241,6 +1285,7 @@ export function useAppController(): AppControllerModel {
     reprocessSource,
     saveMetadata,
     retryProvider,
+    loadMusicBrainzCandidates: loadMusicBrainzCandidateOptions,
     overrideRelease,
     overrideRecording,
     selectCandidate,

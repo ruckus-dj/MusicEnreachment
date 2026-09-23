@@ -22,14 +22,22 @@ function ControllerProbe() {
       <button
         type="button"
         onClick={() =>
-          void controller.overrideRecording({
+          void controller.loadMusicBrainzCandidates({
             recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
           })
         }
       >
         correct
       </button>
-      <button type="button" onClick={() => void controller.overrideRelease("release-id")}>
+      <button
+        type="button"
+        onClick={() =>
+          void controller.loadMusicBrainzCandidates({
+            recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+            release_mbid: "release-id",
+          })
+        }
+      >
         load-release
       </button>
       <output data-testid="record-id">{controller.recordId}</output>
@@ -98,15 +106,15 @@ describe("useAppController error messages", () => {
   });
 
   it.each([
-    [409, "Исправление конфликтует с сохранёнными свидетельствами провайдера."],
-    [422, "Проверьте MBID записи."],
-    [503, "MusicBrainz временно недоступен. Повторите исправление позже."],
+    [409, "MusicBrainz не подтвердил связь recording с указанным release."],
+    [422, "Проверьте MBID recording и release."],
+    [503, "MusicBrainz временно недоступен. Повторите поиск позже."],
     [404, "Выбранный источник записи больше недоступен. Обновите данные трека."],
-    [500, "Не удалось отправить исправление записи."],
+    [500, "Не удалось загрузить кандидатов MusicBrainz."],
   ])("preserves correction feedback for HTTP %i", async (status, expected) => {
     window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/musicbrainz/override")) {
+      if (String(input).endsWith("/musicbrainz/release-candidates")) {
         return Response.json({ detail: "Server detail" }, { status });
       }
       if (String(input) === "/api/library/records/record-1") {
@@ -134,23 +142,24 @@ describe("useAppController error messages", () => {
     expect(screen.getByTestId("correction-error").textContent).toBe(expected);
     expect(screen.getByTestId("correction-review").textContent).toBe(
       status === 409
-        ? "Требуется проверка исправления записи. Сверьте свидетельства и повторите позже."
+        ? "Уберите release MBID, чтобы загрузить все связанные релизы, или проверьте оба идентификатора."
         : "",
     );
     expect(screen.getByTestId("notice").textContent).toBe(
       status === 409
-        ? "Исправление не применено: требуется проверка конфликта."
-        : "Исправление записи не применено.",
+        ? "Кандидаты не добавлены: MusicBrainz не подтвердил пару."
+        : "Кандидаты MusicBrainz не загружены.",
     );
   });
 });
 
 describe("useAppController manual MusicBrainz identifiers", () => {
-  it("loads a manually entered release through the release-candidates endpoint", async () => {
+  it("loads a validated recording-release pair through the candidates endpoint", async () => {
     window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
     const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/musicbrainz/release-candidates")) {
         return Response.json({
+          recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
           release_mbid: "release-id",
           status: "review_required",
           candidate_count: 1,
@@ -171,23 +180,25 @@ describe("useAppController manual MusicBrainz identifiers", () => {
       "/api/library/records/record-1/sources/source-a/musicbrainz/release-candidates",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ release_mbid: "release-id" }),
+        body: JSON.stringify({
+          recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+          release_mbid: "release-id",
+        }),
       }),
     );
-    expect(screen.getByTestId("notice").textContent).toContain("добавлен для проверки");
+    expect(screen.getByTestId("notice").textContent).toContain("добавлена для проверки");
   });
 
-  it("opens the destination record returned by a recording correction", async () => {
+  it("loads every release candidate without changing the current route", async () => {
     window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/musicbrainz/override")) {
+      if (String(input).endsWith("/musicbrainz/release-candidates")) {
         return Response.json({
           recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
-          record_id: "record-target",
+          release_mbid: null,
+          status: "review_required",
+          candidate_count: 2,
         });
-      }
-      if (String(input) === "/api/library/records/record-target") {
-        return Response.json(encodingRecord("record-target"));
       }
       if (String(input) === "/api/library/records/record-1") {
         return Response.json(encodingRecord());
@@ -197,14 +208,15 @@ describe("useAppController manual MusicBrainz identifiers", () => {
 
     const { result } = renderHook(() => useAppController());
     await act(async () => {
-      await result.current.overrideRecording({
+      await result.current.loadMusicBrainzCandidates({
         recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
       });
     });
 
-    expect(result.current.recordId).toBe("record-target");
-    expect(window.location.pathname).toBe("/library/track/record-target");
-    expect(window.location.search).toBe("?source_id=source-a");
+    expect(result.current.recordId).toBe("record-1");
+    expect(result.current.notice).toContain("2");
+    expect(window.location.pathname).toBe("/library/record/record-1/source/source-a");
+    expect(window.location.search).toBe("");
   });
 });
 
@@ -609,7 +621,7 @@ describe("useAppController worker queue", () => {
   });
 });
 
-describe("useAppController recording correction", () => {
+describe("useAppController MusicBrainz candidate lookup", () => {
   it("posts only the recording MBID, then refreshes the selected source record", async () => {
     const detail = {
       record_id: "record-1",
@@ -634,13 +646,15 @@ describe("useAppController recording correction", () => {
       if (url === "/api/library/records" && !init?.method)
         return Response.json({ items: [detail] });
       if (url === "/api/library/records/record-1" && !init?.method) return Response.json(detail);
-      if (url.endsWith("/musicbrainz/override")) {
+      if (url.endsWith("/musicbrainz/release-candidates")) {
         expect(JSON.parse(String(init?.body))).toEqual({
           recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
         });
         return Response.json({
           recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
-          record_id: "record-1",
+          release_mbid: null,
+          status: "review_required",
+          candidate_count: 2,
         });
       }
       return Response.json({ items: [detail] });
@@ -652,7 +666,9 @@ describe("useAppController recording correction", () => {
       screen.getByRole("button", { name: "correct" }).click();
     });
 
-    await waitFor(() => expect(screen.getByTestId("notice").textContent).toContain("исправлена"));
+    await waitFor(() =>
+      expect(screen.getByTestId("notice").textContent).toContain("найдено релизов: 2"),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/api/library/records/record-1", expect.anything());
   });
