@@ -87,7 +87,7 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     # Refreshed when bulk MusicBrainz metadata refresh became a public library endpoint.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        'f9c0317467ffab9b996ebe4d8b0debefad7671c51730479c85e5d83f0594d0b1'
+        '4cdc6a5ae6f1518cc973e069d06e42583a694753e2462ea2601111cd9d5af6f5'
     )
 
 

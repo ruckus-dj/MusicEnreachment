@@ -218,10 +218,10 @@ def test_release_candidate_selection_reassigns_source_to_compatible_record(tmp_p
         assert target.musicbrainz_release_id == release_mbid
 
 
-def test_manual_recording_override_preserves_the_explicit_release_pair(
+def test_manual_recording_override_rejects_an_unverified_release_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: an operator supplies both sides of a MusicBrainz release-recording pair.
+    # Given: an operator supplies two identifiers without MusicBrainz pair evidence.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-pair.db"}')
     Base.metadata.create_all(engine)
     source_path = tmp_path / 'track.flac'
@@ -253,7 +253,7 @@ def test_manual_recording_override_preserves_the_explicit_release_pair(
 
     monkeypatch.setattr(RecordingAssociationService, 'associate_manual', associate_manual)
 
-    # When: the recording override endpoint receives the explicit pair.
+    # When: the direct recording override endpoint receives an unverified release too.
     response = TestClient(create_app(lambda: Session(engine))).post(
         f'/api/library/records/{record_id}/sources/{intake.source_id}/musicbrainz/override',
         json={
@@ -262,11 +262,9 @@ def test_manual_recording_override_preserves_the_explicit_release_pair(
         },
     )
 
-    # Then: association receives both IDs instead of silently dropping the release.
-    assert response.status_code == 200
-    assert len(requests) == 1
-    assert requests[0].recording_mbid == '11111111-1111-4111-8111-111111111111'
-    assert requests[0].release_mbid == '22222222-2222-4222-8222-222222222222'
+    # Then: the API rejects the pair before association; only candidate lookup may validate it.
+    assert response.status_code == 422
+    assert requests == []
 
 
 def test_worker_queue_api_returns_active_jobs_and_observed_activity(tmp_path: Path) -> None:

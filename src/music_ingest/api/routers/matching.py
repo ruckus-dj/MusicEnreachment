@@ -331,12 +331,7 @@ def create_router(
                         settings.musicbrainz_host,
                     )
                 result = RecordingAssociationService(session, provider).associate_manual(
-                    ManualAssociationRequest(
-                        source.id,
-                        request.recording_mbid.lower(),
-                        now,
-                        None if request.release_mbid is None else request.release_mbid.lower(),
-                    )
+                    ManualAssociationRequest(source.id, request.recording_mbid.lower(), now)
                 )
                 session.commit()
                 return JSONResponse(
@@ -361,11 +356,13 @@ def create_router(
                 persisted_source = SourceRecord.get(session, source.id)
                 if persisted_source is None:
                     raise LookupError(source.id)
-                recording_mbid = (
-                    persisted_source.association_override.recording_mbid
-                    if persisted_source.association_override is not None
-                    else record.musicbrainz_recording_id
-                )
+                recording_mbid = None if request.recording_mbid is None else request.recording_mbid.lower()
+                if recording_mbid is None:
+                    recording_mbid = (
+                        persisted_source.association_override.recording_mbid
+                        if persisted_source.association_override is not None
+                        else record.musicbrainz_recording_id
+                    )
                 if recording_mbid is None:
                     raise HTTPException(
                         status_code=409,
@@ -381,6 +378,7 @@ def create_router(
                     )
                 if provider is None:
                     raise HTTPException(status_code=503, detail='MusicBrainz provider is not configured')
+                release_mbid = None if request.release_mbid is None else request.release_mbid.lower()
                 source_tags = _catalog_tags(record, source.id)
                 result = (
                     ProviderEvidenceService(session, provider, None)
@@ -394,7 +392,7 @@ def create_router(
                             release_title=source_tags.get('ALBUM'),
                             artist_name=source_tags.get('ARTIST'),
                             recording_mbid=recording_mbid,
-                            release_mbid=request.release_mbid.lower(),
+                            release_mbid=release_mbid,
                             recording_title=source_tags.get('TITLE'),
                             duration_seconds=persisted_source.duration_seconds,
                             run_acoustid=False,
@@ -405,21 +403,37 @@ def create_router(
                     .musicbrainz
                 )
                 if isinstance(result, NoMatch):
-                    raise HTTPException(status_code=409, detail='recording is not present on the requested release')
-                if not isinstance(result, MusicBrainzMatch):
+                    detail = (
+                        'recording has no available releases'
+                        if release_mbid is None
+                        else 'recording is not present on the requested release'
+                    )
+                    raise HTTPException(status_code=409, detail=detail)
+                if isinstance(result, MusicBrainzMatch):
+                    provider_candidates = (result.candidate,)
+                elif isinstance(result, Ambiguous):
+                    provider_candidates = result.candidates
+                else:
                     raise HTTPException(status_code=503, detail='MusicBrainz release is unavailable')
-                candidate = result.candidate
-                if (
-                    candidate.release_mbid != request.release_mbid.lower()
-                    or recording_mbid not in candidate.recording_mbids
-                ):
+                verified_candidates = tuple(
+                    candidate
+                    for candidate in provider_candidates
+                    if recording_mbid in candidate.recording_mbids
+                    and (release_mbid is None or candidate.release_mbid == release_mbid)
+                )
+                if not verified_candidates:
                     raise HTTPException(status_code=409, detail='recording is not present on the requested release')
-                candidates = release_candidate_records(source.id, candidate)
+                candidates = tuple(
+                    persisted
+                    for candidate in verified_candidates
+                    for persisted in release_candidate_records(source.id, candidate)
+                )
                 session.add_all(candidates)
                 session.commit()
                 return JSONResponse(
                     content={
-                        'release_mbid': request.release_mbid.lower(),
+                        'recording_mbid': recording_mbid,
+                        'release_mbid': release_mbid,
                         'status': 'review_required',
                         'candidate_count': len(candidates),
                     }

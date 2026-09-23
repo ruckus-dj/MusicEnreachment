@@ -39,6 +39,14 @@ from music_ingest.models import (
     SourceTagRecord,
 )
 from music_ingest.services.library.service import append_metadata_revision, attach_source
+from music_ingest.services.matching.providers import (
+    Ambiguous,
+    FixtureProvenance,
+    MusicBrainzLookupRequest,
+    MusicBrainzMatch,
+    MusicBrainzResult,
+    ReleaseCandidate,
+)
 from music_ingest.services.reconciliation import (
     apply_reconciliation_plan,
     load_reconciliation_snapshot,
@@ -1033,6 +1041,7 @@ def test_library_api_manual_release_loads_reviewable_candidate_without_selecting
 
     assert response.status_code == 200
     assert response.json() == {
+        'recording_mbid': recording_mbid,
         'release_mbid': release_mbid,
         'status': 'review_required',
         'candidate_count': 1,
@@ -1045,6 +1054,165 @@ def test_library_api_manual_release_loads_reviewable_candidate_without_selecting
         assert record.musicbrainz_release_id is None
         assert [candidate.candidate_key for candidate in source.candidates] == [f'{release_mbid}:{recording_mbid}']
         assert session.query(JobRecord).count() == 0
+
+
+def test_library_api_recording_lookup_loads_every_release_without_selecting_one(tmp_path: Path) -> None:
+    # Given: MusicBrainz resolves one recording to two releases.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "manual-recording.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    recording_mbid = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    release_mbids = (
+        '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c',
+        '22222222-2222-4222-8222-222222222222',
+    )
+    provenance_path = tmp_path / 'recording.json'
+    _ = provenance_path.write_bytes(b'{}')
+
+    class Provider:
+        def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzResult:
+            assert request.recording_mbid == recording_mbid
+            assert request.release_mbid is None
+            provenance = FixtureProvenance(provenance_path, 'a' * 64)
+            return Ambiguous(
+                provenance,
+                tuple(
+                    ReleaseCandidate(
+                        release_mbid,
+                        f'Release {index}',
+                        'Fixture Artist',
+                        recording_mbids=(recording_mbid,),
+                        recording_title='Fixture Track',
+                    )
+                    for index, release_mbid in enumerate(release_mbids, start=1)
+                ),
+            )
+
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(id='record-manual-recording', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-manual-recording',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+        )
+        session.add_all((root, record, source))
+        session.commit()
+
+    response = TestClient(create_app(lambda: Session(engine), musicbrainz_provider=Provider())).post(
+        '/api/library/records/record-manual-recording/sources/source-manual-recording/musicbrainz/release-candidates',
+        json={'recording_mbid': recording_mbid},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'recording_mbid': recording_mbid,
+        'release_mbid': None,
+        'status': 'review_required',
+        'candidate_count': 2,
+    }
+    with Session(engine) as session:
+        record = session.get(LibraryRecord, 'record-manual-recording')
+        source = session.get(SourceRecord, 'source-manual-recording')
+        assert record is not None
+        assert source is not None
+        assert record.musicbrainz_recording_id is None
+        assert record.musicbrainz_release_id is None
+        assert [candidate.candidate_key for candidate in source.candidates] == [
+            f'{release_mbid}:{recording_mbid}' for release_mbid in release_mbids
+        ]
+        assert session.query(JobRecord).count() == 0
+
+
+def test_library_api_candidate_lookup_rejects_an_unrelated_release_recording_pair(tmp_path: Path) -> None:
+    # Given: MusicBrainz returns a release that does not contain the requested recording.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "unrelated-pair.db"}')
+    Base.metadata.create_all(engine)
+    timestamp = datetime(2026, 8, 4, tzinfo=UTC)
+    incoming = tmp_path / 'incoming'
+    incoming.mkdir()
+    song_path = incoming / 'song.flac'
+    _ = song_path.write_bytes(b'fixture')
+    requested_recording = 'f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a'
+    requested_release = '4d4a5ff4-4a38-4cf1-8e2f-0f64a65f4f5c'
+    provenance_path = tmp_path / 'release.json'
+    _ = provenance_path.write_bytes(b'{}')
+
+    class Provider:
+        def lookup(self, request: MusicBrainzLookupRequest, now: datetime | None = None) -> MusicBrainzResult:
+            return MusicBrainzMatch(
+                FixtureProvenance(provenance_path, 'a' * 64),
+                ReleaseCandidate(
+                    requested_release,
+                    'Unrelated Release',
+                    'Fixture Artist',
+                    recording_mbids=('11111111-1111-4111-8111-111111111111',),
+                ),
+            )
+
+    with Session(engine) as session:
+        root = SourceRootRecord(
+            id='legacy',
+            display_name='incoming',
+            canonical_path=str(incoming),
+            enabled=True,
+            scan_state='scanned',
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record = LibraryRecord(id='record-unrelated-pair', created_at=timestamp, updated_at=timestamp)
+        source = SourceRecord(
+            id='source-unrelated-pair',
+            source_path=str(song_path),
+            device=1,
+            inode=2,
+            size_bytes=3,
+            sha256='a' * 64,
+            duration_seconds=180,
+            origin='manual',
+            intake_state='present',
+            source_root=root,
+            library_record=record,
+        )
+        session.add_all((root, record, source))
+        session.commit()
+
+    # When: the operator narrows lookup to the unrelated release.
+    response = TestClient(create_app(lambda: Session(engine), musicbrainz_provider=Provider())).post(
+        '/api/library/records/record-unrelated-pair/sources/source-unrelated-pair/musicbrainz/release-candidates',
+        json={'recording_mbid': requested_recording, 'release_mbid': requested_release},
+    )
+
+    # Then: no candidate or identity change is persisted.
+    assert response.status_code == 409
+    with Session(engine) as session:
+        record = session.get(LibraryRecord, 'record-unrelated-pair')
+        source = session.get(SourceRecord, 'source-unrelated-pair')
+        assert record is not None
+        assert source is not None
+        assert record.musicbrainz_recording_id is None
+        assert record.musicbrainz_release_id is None
+        assert source.candidates == []
 
 
 def test_library_api_recording_override_when_evidence_conflicts_persists_review_before_409(tmp_path: Path) -> None:
