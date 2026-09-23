@@ -170,8 +170,12 @@ export function TrackDetail({
   const overrideRecording = () => {
     const recordingMbid = recordingOverride.trim();
     if (!recordingMbid) return;
+    const releaseMbid = releaseOverride.trim() || detail.musicbrainz_release_id?.trim();
     setRecordingCorrectionValidationError("");
-    onOverrideRecording?.({ recording_mbid: recordingMbid });
+    onOverrideRecording?.({
+      recording_mbid: recordingMbid,
+      ...(releaseMbid ? { release_mbid: releaseMbid } : {}),
+    });
   };
 
   const lifecycleLabels = {

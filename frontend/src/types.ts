@@ -173,6 +173,7 @@ export type EffectiveSourceSelection = {
 };
 export type RecordingCorrection = {
   readonly recording_mbid: string;
+  readonly release_mbid?: string;
 };
 export type RecordingCorrectionResult = {
   readonly recording_mbid: string;
