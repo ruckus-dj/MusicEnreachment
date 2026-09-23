@@ -185,8 +185,8 @@ class LibraryCatalogQuery(LibraryPublicationQuery):
 
     @model_validator(mode='after')
     def require_artist_selector(self) -> LibraryCatalogQuery:
-        if (self.artist is None) != self.artist_missing:
-            raise ValueError('exactly one of artist or artist_missing=true is required')
+        if self.artist is not None and self.artist_missing:
+            raise ValueError('artist and artist_missing=true cannot be combined')
         return self
 
 
@@ -197,7 +197,8 @@ class LibraryTrackQuery(LibraryCatalogQuery):
 
     @model_validator(mode='after')
     def require_one_album_selector(self) -> LibraryTrackQuery:
-        if sum(value is not None for value in (self.album_id, self.album_name)) + self.album_missing != 1:
+        selector_count = sum(value is not None for value in (self.album_id, self.album_name)) + self.album_missing
+        if selector_count > 1 or (selector_count == 0 and (self.artist is not None or self.artist_missing)):
             raise ValueError('exactly one of album_id, album_name, or album_missing=true is required')
         return self
 

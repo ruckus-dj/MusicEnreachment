@@ -74,6 +74,7 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     for album in library_artist_albums(
                         session,
                         None if query.artist_missing else query.artist,
+                        artist_missing=query.artist_missing,
                         published=query.published,
                     )
                 )
@@ -92,7 +93,7 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                         source_path=track.source_path,
                         artist_name=track.artist_name,
                         album_name=track.album_name,
-                        album_id=query.album_id,
+                        album_id=track.release_id,
                         title=track.title,
                         track_number=track.track_number,
                         source_state=track.source_state,
@@ -105,6 +106,7 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     for track in library_album_tracks(
                         session,
                         None if query.artist_missing else query.artist,
+                        artist_missing=query.artist_missing,
                         album_id=query.album_id,
                         album_name=query.album_name,
                         album_missing=query.album_missing,

@@ -685,12 +685,16 @@ def library_artist_albums(
     session: Session,
     artist_name: str | None,
     *,
+    artist_missing: bool = False,
     published: bool | None = None,
 ) -> list[CatalogAlbum]:
-    """Load distinct Final/Original albums for one exact artist name."""
+    """Load distinct Final/Original albums, optionally scoped to one artist."""
     groups: dict[tuple[str | None, str | None], set[str]] = {}
     for source in _catalog_source_tags(session, published):
-        if artist_name not in _catalog_artists(source.tags):
+        source_artists = _catalog_artists(source.tags)
+        if artist_missing and None not in source_artists:
+            continue
+        if artist_name is not None and artist_name not in source_artists:
             continue
         groups.setdefault((source.release_id, source.tags.get('ALBUM')), set()).add(source.record_id)
     release_ids = {album_id for album_id, _ in groups if album_id is not None}
@@ -721,18 +725,22 @@ def library_album_tracks(
     session: Session,
     artist_name: str | None,
     *,
+    artist_missing: bool = False,
     album_id: str | None = None,
     album_name: str | None = None,
     album_missing: bool = False,
     published: bool | None = None,
 ) -> list[CatalogTrack]:
-    """Load minimal Final/Original track data for one exact artist and album."""
+    """Load minimal Final/Original track data with optional artist and album scopes."""
     all_sources: dict[str, list[CatalogSourceTags]] = {}
     matching_sources: dict[str, list[CatalogSourceTags]] = {}
     for source in _catalog_source_tags(session, published):
         all_sources.setdefault(source.record_id, []).append(source)
         album_value = source.tags.get('ALBUM', '')
-        if artist_name not in _catalog_artists(source.tags):
+        source_artists = _catalog_artists(source.tags)
+        if artist_missing and None not in source_artists:
+            continue
+        if artist_name is not None and artist_name not in source_artists:
             continue
         if album_id is not None and source.release_id != album_id:
             continue
@@ -782,7 +790,7 @@ def library_album_tracks(
                 processing_state=source.processing_state,
                 match_state=source.match_state,
                 publication_state=source.publication_state,
-                artist_name=artist_name,
+                artist_name=artist_name if artist_name is not None else _catalog_artists(source.tags)[0],
                 album_name=album_value or None,
                 title=source.tags.get('TITLE', ''),
                 track_number=source.tags.get('TRACKNUMBER'),

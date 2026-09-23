@@ -448,6 +448,8 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
     client = TestClient(create_app(lambda: Session(engine)))
 
     artists = client.get('/api/library/artists')
+    all_albums = client.get('/api/library/albums')
+    all_tracks = client.get('/api/library/tracks')
     albums = client.get('/api/library/albums?artist=Artist%2FSide')
     release = client.get('/api/library/tracks?artist=Artist%2FSide&album_id=release-shared')
     name_only = client.get('/api/library/tracks?artist=Artist%2FSide&album_name=Shared')
@@ -456,6 +458,15 @@ def test_library_api_filters_catalog_in_sql_by_release_and_name(tmp_path: Path) 
         {'name': 'Artist/Side', 'track_count': 2},
         {'name': 'Other Artist', 'track_count': 1},
     ]
+    assert all_albums.json()['items'] == [
+        {'album_id': None, 'album_name': 'Shared', 'track_count': 2, 'artwork_url': None},
+        {'album_id': 'release-shared', 'album_name': 'Shared', 'track_count': 1, 'artwork_url': None},
+    ]
+    assert {(item['record_id'], item['artist_name'], item['album_name']) for item in all_tracks.json()['items']} == {
+        ('record-release', 'Artist/Side', 'Shared'),
+        ('record-name-only', 'Artist/Side', 'Shared'),
+        ('record-other', 'Other Artist', 'Shared'),
+    }
     assert albums.json()['items'] == [
         {'album_id': None, 'album_name': 'Shared', 'track_count': 1, 'artwork_url': None},
         {'album_id': 'release-shared', 'album_name': 'Shared', 'track_count': 1, 'artwork_url': None},
