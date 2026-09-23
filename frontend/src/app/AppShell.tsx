@@ -344,8 +344,8 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                     onClick={() => void controller.refreshMetadata()}
                   >
                     {controller.refreshingMetadata
-                      ? "Ставим в очередь…"
-                      : "Обновить все метаданные"}
+                      ? "Ставим пары в очередь…"
+                      : "Обновить подтверждённые пары MusicBrainz"}
                   </button>
                   <button
                     type="button"

@@ -239,7 +239,9 @@ describe("useAppController bulk metadata refresh", () => {
       "/api/library/metadata/refresh",
       expect.objectContaining({ method: "POST" }),
     );
-    expect(result.current.notice).toBe("Обновление метаданных поставлено в очередь: 3");
+    expect(result.current.notice).toBe(
+      "Обновление подтверждённых пар MusicBrainz поставлено в очередь: 3",
+    );
     expect(result.current.refreshingMetadata).toBe(false);
   });
 

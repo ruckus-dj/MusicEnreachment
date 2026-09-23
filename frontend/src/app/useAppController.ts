@@ -652,7 +652,7 @@ export function useAppController(): AppControllerModel {
     setRefreshingMetadata(true);
     try {
       const result = await refreshLibraryMetadata();
-      setNotice(`Обновление метаданных поставлено в очередь: ${result.queued}`);
+      setNotice(`Обновление подтверждённых пар MusicBrainz поставлено в очередь: ${result.queued}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.refreshMetadata);
     } finally {
