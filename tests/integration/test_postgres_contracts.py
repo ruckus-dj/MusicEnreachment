@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -8,7 +9,7 @@ from threading import Barrier, Event
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
@@ -20,13 +21,18 @@ from music_ingest.models import (
     JobAttemptRecord,
     JobRecord,
     LibraryEventRecord,
+    LibraryMetadataRevisionRecord,
     LibraryRecord,
     ProviderAttemptRecord,
     SourceRecord,
     SourceRootRecord,
 )
 from music_ingest.repositories.jobs import ClaimedJob, JobRepository
-from music_ingest.services.association import ManualAssociationRequest, RecordingAssociationService
+from music_ingest.services.association import (
+    AutomaticAssociationRequest,
+    ManualAssociationRequest,
+    RecordingAssociationService,
+)
 from music_ingest.services.publication import (
     acquire_publication_destination_lock,
     try_acquire_publication_destination_lock,
@@ -38,7 +44,7 @@ from tests.support.paths import ALEMBIC_DIRECTORY
 
 _MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
 _BASE_REVISION = '20260810_0002'
-_HEAD_REVISION = '20260916_0029'
+_HEAD_REVISION = '20260923_0031'
 
 
 @pytest.mark.postgres
@@ -446,7 +452,7 @@ def test_recording_association_when_two_sources_race_converges_on_one_record(mon
             with Session(engine) as session:
                 barrier.wait()
                 result = RecordingAssociationService(session).associate_verified_manual(
-                    ManualAssociationRequest(source_id, recording_mbid, now)
+                    ManualAssociationRequest(source_id, recording_mbid, now, release_mbid='release-id')
                 )
                 session.commit()
                 assert result is not None
@@ -458,11 +464,431 @@ def test_recording_association_when_two_sources_race_converges_on_one_record(mon
 
         # Then: the unique MBID record is shared and neither transaction leaks IntegrityError.
         with Session(engine) as session:
-            records = session.query(LibraryRecord).filter_by(musicbrainz_recording_id=recording_mbid).all()
+            records = (
+                session.query(LibraryRecord)
+                .filter_by(musicbrainz_recording_id=recording_mbid, musicbrainz_release_id='release-id')
+                .all()
+            )
             sources = session.query(SourceRecord).filter(SourceRecord.id.in_(('source-1', 'source-2'))).all()
             assert len(records) == 1
             assert set(resolved) == {records[0].id}
             assert {source.library_record_id for source in sources} == {records[0].id}
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_automatic_association_batch_when_eight_transactions_race_converges_without_deadlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 9, 24, tzinfo=UTC)
+    member_count = 8
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            root = SourceRootRecord(
+                id='batch-race-root',
+                display_name='batch-race-root',
+                canonical_path='/sources/batch-race',
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+            sources = tuple(
+                SourceRecord(
+                    id=f'batch-race-source-{index}',
+                    source_path=f'/sources/batch-race/{index}.flac',
+                    device=1,
+                    inode=index,
+                    size_bytes=1,
+                    sha256=f'{index:064x}',
+                    duration_seconds=180,
+                    origin='manual',
+                    intake_state='present',
+                    media_codec='FLAC',
+                    media_bit_depth=16,
+                    media_sample_rate=44_100,
+                    media_channels=2,
+                    source_root=root,
+                    library_record=LibraryRecord(id=f'batch-race-record-{index}', created_at=now, updated_at=now),
+                )
+                for index in range(member_count)
+            )
+            session.add_all((root, *sources))
+            session.commit()
+
+        requests = tuple(
+            AutomaticAssociationRequest(
+                source_id=f'batch-race-source-{index}',
+                recording_mbid=f'batch-race-recording-{index}',
+                score=1.0,
+                confidence_threshold=0.9,
+                evidence_json='{}',
+                now=now,
+                release_mbid='batch-race-release',
+            )
+            for index in range(member_count)
+        )
+        barrier = Barrier(member_count)
+
+        def associate(worker_index: int) -> dict[str, str]:
+            worker_requests = requests if worker_index % 2 == 0 else tuple(reversed(requests))
+            with Session(engine) as session:
+                barrier.wait(timeout=10)
+                results = RecordingAssociationService(session).associate_automatic_batch(worker_requests)
+                session.commit()
+                return {
+                    request.source_id: result.library_record_id
+                    for request, result in zip(worker_requests, results, strict=True)
+                    if result is not None
+                }
+
+        with ThreadPoolExecutor(max_workers=member_count) as executor:
+            resolved = tuple(executor.map(associate, range(member_count)))
+
+        assert all(mapping == resolved[0] for mapping in resolved)
+        with Session(engine) as session:
+            stored_sources = tuple(
+                session.scalars(
+                    select(SourceRecord)
+                    .where(SourceRecord.id.in_(tuple(sorted(resolved[0]))))
+                    .order_by(SourceRecord.id)
+                ).all()
+            )
+            assert {source.id: source.library_record_id for source in stored_sources} == resolved[0]
+            assert (
+                session.query(LibraryRecord).filter_by(musicbrainz_release_id='batch-race-release').count()
+                == member_count
+            )
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_single_association_refreshes_preloaded_source_after_lock_is_acquired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 9, 24, tzinfo=UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            root = SourceRootRecord(
+                id='source-race-root',
+                display_name='source-race-root',
+                canonical_path='/sources/source-race',
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+            original = LibraryRecord(id='source-race-original', created_at=now, updated_at=now)
+            current = LibraryRecord(id='source-race-current', created_at=now, updated_at=now)
+            target = LibraryRecord(
+                id='source-race-target',
+                musicbrainz_recording_id='source-race-recording',
+                musicbrainz_release_id='source-race-release',
+                match_state='matched',
+                created_at=now,
+                updated_at=now,
+            )
+            session.add_all(
+                (
+                    root,
+                    original,
+                    current,
+                    target,
+                    SourceRecord(
+                        id='source-race-source',
+                        source_path='/sources/source-race/source.flac',
+                        device=1,
+                        inode=1,
+                        size_bytes=1,
+                        sha256='d' * 64,
+                        duration_seconds=180,
+                        origin='manual',
+                        intake_state='present',
+                        source_root=root,
+                        library_record=original,
+                    ),
+                )
+            )
+            session.commit()
+
+        reassignment_committed = False
+
+        def reassign_source_before_lock(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            nonlocal reassignment_committed
+            if reassignment_committed or 'FROM source_records' not in statement or 'FOR UPDATE' not in statement:
+                return
+            reassignment_committed = True
+            with engine.begin() as writer:
+                writer.execute(
+                    text(
+                        "UPDATE source_records SET library_record_id = 'source-race-current' "
+                        "WHERE id = 'source-race-source'"
+                    )
+                )
+
+        with Session(engine) as session:
+            preloaded = session.get(SourceRecord, 'source-race-source')
+            assert preloaded is not None
+            assert preloaded.library_record_id == 'source-race-original'
+            event.listen(engine, 'before_cursor_execute', reassign_source_before_lock)
+            try:
+                result = RecordingAssociationService(session).associate_verified_manual(
+                    ManualAssociationRequest(
+                        preloaded.id,
+                        'source-race-recording',
+                        now + timedelta(seconds=1),
+                        release_mbid='source-race-release',
+                    )
+                )
+                session.commit()
+            finally:
+                event.remove(engine, 'before_cursor_execute', reassign_source_before_lock)
+
+        assert reassignment_committed
+        assert result.library_record_id == 'source-race-target'
+        assert result.moved_from_record_id == 'source-race-current'
+        with Session(engine) as session:
+            event_record_ids = set(
+                session.scalars(
+                    select(LibraryEventRecord.library_record_id).where(
+                        LibraryEventRecord.source_id == 'source-race-source'
+                    )
+                ).all()
+            )
+            assert event_record_ids == {'source-race-current', 'source-race-target'}
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_single_association_refreshes_target_metadata_after_lock_is_acquired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 9, 24, tzinfo=UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            root = SourceRootRecord(
+                id='metadata-race-root',
+                display_name='metadata-race-root',
+                canonical_path='/sources/metadata-race',
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+            previous = LibraryRecord(id='metadata-race-previous', created_at=now, updated_at=now)
+            target = LibraryRecord(
+                id='metadata-race-target',
+                musicbrainz_recording_id='metadata-race-recording',
+                musicbrainz_release_id='metadata-race-release',
+                match_state='matched',
+                created_at=now,
+                updated_at=now,
+            )
+            source = SourceRecord(
+                id='metadata-race-source',
+                source_path='/sources/metadata-race/source.flac',
+                device=1,
+                inode=1,
+                size_bytes=1,
+                sha256='c' * 64,
+                duration_seconds=180,
+                origin='manual',
+                intake_state='present',
+                source_root=root,
+                library_record=previous,
+            )
+            session.add_all(
+                (
+                    root,
+                    previous,
+                    target,
+                    source,
+                    LibraryMetadataRevisionRecord(
+                        library_record=target,
+                        layer='final',
+                        revision=1,
+                        tags_json=json.dumps({'TITLE': 'Stale provider title'}),
+                        actor='provider',
+                        created_at=now,
+                    ),
+                )
+            )
+            session.commit()
+
+        revision_committed = False
+
+        def commit_provider_revision_before_record_lock(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            nonlocal revision_committed
+            if revision_committed or 'FROM library_records' not in statement or 'FOR UPDATE' not in statement:
+                return
+            revision_committed = True
+            with Session(engine) as writer:
+                writer.add(
+                    LibraryMetadataRevisionRecord(
+                        library_record_id='metadata-race-target',
+                        layer='final',
+                        revision=2,
+                        tags_json=json.dumps({'TITLE': 'Current provider title'}),
+                        actor='provider',
+                        created_at=now + timedelta(seconds=1),
+                    )
+                )
+                writer.commit()
+
+        event.listen(engine, 'before_cursor_execute', commit_provider_revision_before_record_lock)
+        try:
+            with Session(engine) as session:
+                result = RecordingAssociationService(session).associate_verified_manual(
+                    ManualAssociationRequest(
+                        'metadata-race-source',
+                        'metadata-race-recording',
+                        now + timedelta(seconds=2),
+                        release_mbid='metadata-race-release',
+                    )
+                )
+                session.commit()
+                assert result.library_record_id == 'metadata-race-target'
+        finally:
+            event.remove(engine, 'before_cursor_execute', commit_provider_revision_before_record_lock)
+
+        assert revision_committed
+        with Session(engine) as session:
+            inherited = session.scalar(
+                select(LibraryMetadataRevisionRecord)
+                .where(LibraryMetadataRevisionRecord.library_record_id == 'metadata-race-target')
+                .where(LibraryMetadataRevisionRecord.actor == 'reassociation')
+            )
+            assert inherited is not None
+            assert json.loads(inherited.tags_json) == {'TITLE': 'Current provider title'}
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_manual_and_batch_association_when_records_are_swapped_use_one_lock_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    now = datetime(2026, 9, 24, tzinfo=UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        database_url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            root = SourceRootRecord(
+                id='swap-root',
+                display_name='swap-root',
+                canonical_path='/sources/swap',
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+            record_a = LibraryRecord(
+                id='record-a',
+                musicbrainz_recording_id='recording-a',
+                musicbrainz_release_id='release-a',
+                match_state='matched',
+                created_at=now,
+                updated_at=now,
+            )
+            record_z = LibraryRecord(
+                id='record-z',
+                musicbrainz_recording_id='recording-z',
+                musicbrainz_release_id='release-z',
+                match_state='matched',
+                created_at=now,
+                updated_at=now,
+            )
+            session.add_all(
+                (
+                    root,
+                    SourceRecord(
+                        id='source-a',
+                        source_path='/sources/swap/a.flac',
+                        device=1,
+                        inode=1,
+                        size_bytes=1,
+                        sha256='a' * 64,
+                        duration_seconds=180,
+                        origin='manual',
+                        intake_state='present',
+                        source_root=root,
+                        library_record=record_a,
+                    ),
+                    SourceRecord(
+                        id='source-z',
+                        source_path='/sources/swap/z.flac',
+                        device=1,
+                        inode=2,
+                        size_bytes=1,
+                        sha256='b' * 64,
+                        duration_seconds=180,
+                        origin='manual',
+                        intake_state='present',
+                        source_root=root,
+                        library_record=record_z,
+                    ),
+                )
+            )
+            session.commit()
+        barrier = Barrier(2)
+
+        def associate_manual() -> str:
+            with Session(engine) as session:
+                session.execute(text("SET LOCAL lock_timeout = '10s'"))
+                barrier.wait(timeout=10)
+                result = RecordingAssociationService(session).associate_verified_manual(
+                    ManualAssociationRequest('source-a', 'recording-z', now, release_mbid='release-z')
+                )
+                session.commit()
+                return result.library_record_id
+
+        def associate_batch() -> str:
+            with Session(engine) as session:
+                session.execute(text("SET LOCAL lock_timeout = '10s'"))
+                barrier.wait(timeout=10)
+                result = RecordingAssociationService(session).associate_automatic_batch(
+                    (
+                        AutomaticAssociationRequest(
+                            'source-z', 'recording-a', 1.0, 0.9, '{}', now, release_mbid='release-a'
+                        ),
+                    )
+                )[0]
+                session.commit()
+                assert result is not None
+                return result.library_record_id
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            manual = executor.submit(associate_manual)
+            batch = executor.submit(associate_batch)
+            assert manual.result(timeout=20) == 'record-z'
+            assert batch.result(timeout=20) == 'record-a'
         engine.dispose()
 
 
@@ -597,6 +1023,10 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
             'uq_active_selection_refresh_job',
             'ix_pending_publication_intent',
             'uq_current_library_publication',
+            'ix_candidate_evidence_source_id',
+            'ix_candidate_evidence_run_id',
+            'ix_provider_candidate_runs_source_id',
+            'ix_source_tag_observations_source_id',
         }.issubset(indexes)
 
         with Session(engine) as session:
