@@ -300,7 +300,7 @@ export function useAppController(): AppControllerModel {
       }
       if (screen === "albums") {
         const [payload, countPayload] = await Promise.all([
-          listLibraryAlbums(artistMissing ? null : artist, published, artistMissing),
+          listLibraryAlbums(artistMissing || !artist ? null : artist, published, artistMissing),
           catalogCountPromise,
         ]);
         if (!isCurrent()) return;
@@ -343,7 +343,7 @@ export function useAppController(): AppControllerModel {
         : undefined;
       const [payload, countPayload] = await Promise.all([
         listLibraryTracks(
-          artistMissing ? null : artist,
+          artistMissing || !artist ? null : artist,
           selectedAlbumId,
           selectedAlbumName,
           published,

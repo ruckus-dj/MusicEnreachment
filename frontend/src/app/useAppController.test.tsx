@@ -659,6 +659,26 @@ describe("useAppController recording correction", () => {
 });
 
 describe("useAppController catalog", () => {
+  it.each([
+    ["/library/albums", "/api/library/albums"],
+    ["/library/tracks", "/api/library/tracks"],
+  ])("omits an empty artist selector for the global route %s", async (route, expectedRequest) => {
+    window.history.replaceState({}, "", route);
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/library/artists"))
+        return Response.json({ items: [], total_track_count: 0 });
+      return Response.json({ items: [] });
+    });
+
+    renderHook(() => useAppController());
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(expectedRequest, expect.anything()));
+    expect(fetcher.mock.calls.map(([input]) => String(input))).not.toContain(
+      `${expectedRequest}?artist=`,
+    );
+  });
+
   it("lists each semicolon-separated album artist with the same album and tracks", async () => {
     const _sharedAlbum = {
       record_id: "record-collaboration",

@@ -172,7 +172,8 @@ export function listLibraryAlbums(
   if (artistName !== null) params.set("artist", artistName);
   if (artistMissing) params.set("artist_missing", "true");
   if (published !== undefined) params.set("published", String(published));
-  return api<{ items: LibraryAlbum[] }>(`/api/library/albums?${params.toString()}`);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return api<{ items: LibraryAlbum[] }>(`/api/library/albums${suffix}`);
 }
 
 export function listLibraryTracks(
@@ -190,7 +191,8 @@ export function listLibraryTracks(
   if (albumId) params.set("album_id", albumId);
   if (albumName) params.set("album_name", albumName);
   if (published !== undefined) params.set("published", String(published));
-  return api<{ items: LibraryTrack[] }>(`/api/library/tracks?${params.toString()}`);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return api<{ items: LibraryTrack[] }>(`/api/library/tracks${suffix}`);
 }
 
 export function getStorageConfig(): Promise<StorageConfig> {
