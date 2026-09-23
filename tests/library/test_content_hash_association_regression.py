@@ -28,6 +28,7 @@ def test_automatic_association_when_identical_content_has_other_recording_requir
         record = LibraryRecord(
             id='record-vol-1',
             musicbrainz_recording_id=recording_a,
+            musicbrainz_release_id='release-a',
             created_at=now,
             updated_at=now,
         )

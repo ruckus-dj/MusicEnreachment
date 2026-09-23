@@ -49,6 +49,7 @@ def test_verified_recording_reuses_sidecar_across_mp3_flac(
     with Session(engine) as session:
         record, source, old = _published_record(session, root, audio_relative_path=Path('album/track.mp3'))
         record.musicbrainz_recording_id = '00000000-0000-4000-8000-000000000001'
+        record.musicbrainz_release_id = '00000000-0000-4000-8000-000000000010'
         record.match_state = 'matched'
         session.add(
             SourceRecordingAssignmentRecord(

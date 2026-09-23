@@ -93,6 +93,7 @@ def test_automatic_recording_match_when_reevaluated_selects_the_source_for_publi
         record = LibraryRecord(
             id='record-automatic',
             musicbrainz_recording_id='recording-mbid',
+            musicbrainz_release_id='release-mbid',
             created_at=now,
             updated_at=now,
         )
