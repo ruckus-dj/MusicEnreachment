@@ -367,6 +367,14 @@ class MusicBrainzOverride(BaseModel):
     )
 
 
+class MusicBrainzReleaseLookup(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    release_mbid: str = Field(
+        pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    )
+
+
 class CandidateReleasePayload(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 

@@ -148,6 +148,10 @@ def _candidate_records(
     return tuple(records)
 
 
+def release_candidate_records(source_id: str, candidate: ReleaseCandidate) -> tuple[CandidateRecord, ...]:
+    return _candidate_records(source_id, candidate, None, None)
+
+
 def _latest_candidate_run(source: SourceRecord, provider: str) -> ProviderCandidateRunRecord | None:
     runs = tuple(run for run in source.candidate_runs if run.provider_name == provider)
     return None if not runs else max(runs, key=lambda run: run.id)
