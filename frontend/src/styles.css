@@ -357,6 +357,55 @@ button:disabled {
     11px "DM Mono",
     monospace;
 }
+.nav-library-group {
+  display: grid;
+}
+.nav-submenu {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  margin: var(--space-1) 0 var(--space-3) 30px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--panel) 18%, var(--nav));
+  padding: 0 0 0 var(--space-3);
+}
+.nav-subitem {
+  position: relative;
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-tight);
+  background: transparent;
+  color: color-mix(in srgb, var(--panel) 58%, var(--nav));
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  transition:
+    background var(--ease),
+    color var(--ease),
+    transform var(--ease);
+}
+.nav-subitem::before {
+  position: absolute;
+  top: 50%;
+  left: calc(-1 * var(--space-3) - 3px);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 32%, var(--nav));
+  content: "";
+  transform: translateY(-50%);
+}
+.nav-subitem:hover {
+  background: color-mix(in srgb, var(--panel) 7%, var(--nav));
+  color: var(--panel);
+  transform: translateX(2px);
+}
+.nav-subitem.active {
+  background: color-mix(in srgb, var(--panel) 9%, var(--nav));
+  color: var(--panel);
+}
+.nav-subitem.active::before {
+  background: var(--accent);
+}
 .sidebar-bottom {
   margin-top: auto;
 }
@@ -783,6 +832,9 @@ h2 {
   text-overflow: clip;
   white-space: normal;
 }
+.track-catalog-context {
+  margin-top: var(--space-1);
+}
 .track-meta {
   white-space: nowrap;
 }
@@ -1074,6 +1126,16 @@ h2 {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .track-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .track-title-row > strong {
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
 }
 @media (max-width: 700px) {
   .app-shell {
@@ -1086,8 +1148,39 @@ h2 {
   .sidebar nav {
     display: flex;
     gap: var(--space-2);
-    overflow-x: auto;
+    flex-wrap: wrap;
     padding-bottom: var(--space-1);
+  }
+  .nav-library-group {
+    display: grid;
+    flex: 1 0 100%;
+    gap: var(--space-2);
+  }
+  .nav-library-group > .nav-item {
+    width: 100%;
+  }
+  .nav-submenu {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin: 0;
+    border: 0;
+    padding: 0;
+  }
+  .nav-subitem {
+    min-height: auto;
+    padding: var(--space-2) var(--space-3);
+    text-align: center;
+    white-space: normal;
+  }
+  .nav-subitem::before {
+    display: none;
+  }
+  .nav-subitem.active {
+    box-shadow: inset 0 -3px var(--accent);
+  }
+  .nav-subitem:hover {
+    transform: translateY(-1px);
   }
   .nav-item {
     flex: 0 0 auto;

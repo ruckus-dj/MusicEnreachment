@@ -60,6 +60,12 @@ Use `color-mix()` with these tokens for state variants. Never rely on color alon
 - Structure: `.provider-actions` wraps related operational buttons.
 - Layout: wraps on desktop and stretches controls on mobile; long labels must not clip.
 
+### Library navigation group
+
+- Structure: the main `Медиатека` action is followed by an always-visible `.nav-submenu` with artist, album and track grouping destinations.
+- States: the current grouping uses text plus the accent marker; the parent stays selected throughout catalog and track-detail routes.
+- Responsive behavior: nested destinations remain grouped vertically in the desktop rail and become an always-visible three-column row in the mobile navigation strip.
+
 ## 6. Motion & Interaction
 
 - `--ease`: 180ms ease for hover, press and state feedback.

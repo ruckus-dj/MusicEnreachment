@@ -1,6 +1,7 @@
 import { Icon as icon } from "../components/Icon";
 import { LibraryCatalog } from "../components/LibraryCatalog";
 import { titleFor } from "../domain/metadata";
+import { russianCountNoun } from "../domain/russianCount";
 import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrackDetail } from "../screens/TrackDetail";
@@ -49,6 +50,22 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
       item.processing_state === "needs_review" ||
       item.match_state === "needs_review",
   ).length;
+  const libraryActive =
+    screen === "artists" || screen === "albums" || screen === "tracks" || screen === "track";
+  const libraryTitle =
+    screen === "artists"
+      ? "По артистам"
+      : screen === "albums"
+        ? artist || "По альбомам"
+        : screen === "tracks"
+          ? album
+            ? albumTracks[0]?.album_name || album
+            : "Список треков"
+          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId);
+  const showLibraryBack =
+    screen === "track" ||
+    (screen === "albums" && Boolean(artist)) ||
+    (screen === "tracks" && Boolean(artist || album));
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -63,26 +80,54 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             <span>LIBRARY / REVIEW</span>
           </div>
         </div>
-        <nav>
-          <button
-            type="button"
-            className={
-              screen !== "track" &&
-              screen !== "settings" &&
-              screen !== "manual-actions" &&
-              screen !== "workers"
-                ? "nav-item active"
-                : "nav-item"
-            }
-            data-testid="nav-library"
-            onClick={() => controller.navigate({ screen: "artists" })}
-          >
-            {icon(
-              "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 8h10M7 12h10M7 16h6",
-            )}
-            <span>Медиатека</span>
-            <b>{catalogTrackCount}</b>
-          </button>
+        <nav aria-label="Основная навигация">
+          <div className="nav-library-group">
+            <button
+              type="button"
+              className={libraryActive ? "nav-item active" : "nav-item"}
+              aria-expanded="true"
+              data-testid="nav-library"
+              onClick={() => controller.navigate({ screen: "artists" })}
+            >
+              {icon(
+                "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 8h10M7 12h10M7 16h6",
+              )}
+              <span>Медиатека</span>
+              <b>{catalogTrackCount}</b>
+            </button>
+            <fieldset className="nav-submenu">
+              <legend className="visually-hidden">Группировка медиатеки</legend>
+              <button
+                type="button"
+                className={screen === "artists" ? "nav-subitem active" : "nav-subitem"}
+                aria-current={screen === "artists" ? "page" : undefined}
+                data-testid="nav-library-artists"
+                onClick={() => controller.navigate({ screen: "artists" })}
+              >
+                <span>По&nbsp;артистам</span>
+              </button>
+              <button
+                type="button"
+                className={screen === "albums" ? "nav-subitem active" : "nav-subitem"}
+                aria-current={screen === "albums" ? "page" : undefined}
+                data-testid="nav-library-albums"
+                onClick={() => controller.navigate({ screen: "albums" })}
+              >
+                <span>По&nbsp;альбомам</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  screen === "tracks" || screen === "track" ? "nav-subitem active" : "nav-subitem"
+                }
+                aria-current={screen === "tracks" ? "page" : undefined}
+                data-testid="nav-library-tracks"
+                onClick={() => controller.navigate({ screen: "tracks" })}
+              >
+                <span>Список треков</span>
+              </button>
+            </fieldset>
+          </div>
           <button
             type="button"
             className={screen === "manual-actions" ? "nav-item active" : "nav-item"}
@@ -148,13 +193,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                   ? "Ручные действия"
                   : screen === "workers"
                     ? "Очередь worker’ов"
-                    : screen === "artists"
-                      ? "Медиатека"
-                      : screen === "albums"
-                        ? artist
-                        : screen === "tracks"
-                          ? (albumTracks[0]?.album_name ?? album)
-                          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                    : libraryTitle}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -171,14 +210,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
         <div className="content">
           <section className="hero">
             <div>
-              {screen !== "artists" &&
-                screen !== "settings" &&
-                screen !== "manual-actions" &&
-                screen !== "workers" && (
-                  <button type="button" className="back" onClick={controller.back}>
-                    ← Назад
-                  </button>
-                )}
+              {showLibraryBack && (
+                <button type="button" className="back" onClick={controller.back}>
+                  ← Назад
+                </button>
+              )}
               <p className="eyebrow">
                 {screen === "settings"
                   ? "Панель управления"
@@ -197,13 +233,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                     ? "Ручные действия"
                     : screen === "workers"
                       ? "Очередь worker’ов"
-                      : screen === "artists"
-                        ? "Исполнители"
-                        : screen === "albums"
-                          ? artist
-                          : screen === "tracks"
-                            ? (albumTracks[0]?.album_name ?? album)
-                            : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId)}
+                      : libraryTitle}
               </h1>
               <p className="hero-copy">
                 {screen === "settings"
@@ -213,11 +243,15 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                     : screen === "workers"
                       ? "Сохранённые задачи анализа, публикации и восстановления. Состояние процесса отдельно не измеряется."
                       : screen === "artists"
-                        ? "Отдельный каталог артистов. Откройте исполнителя, чтобы увидеть его альбомы."
+                        ? "Медиатека по артистам. Откройте исполнителя, чтобы увидеть его альбомы."
                         : screen === "albums"
-                          ? "Альбомы исполнителя и их состояние обработки."
+                          ? artist
+                            ? "Альбомы исполнителя и их состояние обработки."
+                            : "Все альбомы медиатеки, включая сборники с несколькими исполнителями."
                           : screen === "tracks"
-                            ? "Треки альбома. Выберите файл, чтобы открыть проверку и Final."
+                            ? artist || album
+                              ? "Треки выбранной группы. Выберите файл, чтобы открыть проверку и Final."
+                              : "Полный список треков медиатеки без привязки к одному исполнителю."
                             : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
               </p>
             </div>
@@ -245,11 +279,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                     : screen === "workers"
                       ? "активных задач"
                       : screen === "artists"
-                        ? "артистов"
+                        ? russianCountNoun(artists.length, ["артист", "артиста", "артистов"])
                         : screen === "albums"
-                          ? "альбомов"
+                          ? russianCountNoun(albums.length, ["альбом", "альбома", "альбомов"])
                           : screen === "tracks"
-                            ? "треков"
+                            ? russianCountNoun(albumTracks.length, ["трек", "трека", "треков"])
                             : "трек"}
               </span>
             </div>
