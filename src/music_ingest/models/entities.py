@@ -125,7 +125,10 @@ class SourceAssociationOverrideRecord(Base):
 @final
 class SourceTagRecord(Base):
     __tablename__ = 'source_tag_observations'
-    __table_args__ = (Index('ix_source_tag_observations_tag_value_source', 'tag_name', 'value', 'source_id'),)
+    __table_args__ = (
+        Index('ix_source_tag_observations_tag_value_source', 'tag_name', 'value', 'source_id'),
+        Index('ix_source_tag_observations_source_id', 'source_id'),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
@@ -173,6 +176,7 @@ class ProviderAttemptRecord(Base):
 @final
 class ProviderCandidateRunRecord(Base):
     __tablename__ = 'provider_candidate_runs'
+    __table_args__ = (Index('ix_provider_candidate_runs_source_id', 'source_id'),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
@@ -186,6 +190,10 @@ class ProviderCandidateRunRecord(Base):
 @final
 class CandidateRecord(Base):
     __tablename__ = 'candidate_evidence'
+    __table_args__ = (
+        Index('ix_candidate_evidence_source_id', 'source_id'),
+        Index('ix_candidate_evidence_run_id', 'run_id'),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)

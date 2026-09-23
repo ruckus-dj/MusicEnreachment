@@ -12,7 +12,8 @@ from alembic import command
 from tests.support.paths import ALEMBIC_DIRECTORY
 
 _MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
-_HEAD_REVISION = '20260923_0030'
+_HEAD_REVISION = '20260923_0031'
+_FOLDER_CANDIDATE_INDEXES_PREVIOUS_REVISION = '20260923_0030'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'
 _LYRIC_STATE_COLUMNS = frozenset(
@@ -26,6 +27,14 @@ _LYRIC_STATE_COLUMNS = frozenset(
     }
 )
 _LRCLIB_FETCH_INDEX = 'uq_active_lrclib_fetch_job'
+_FOLDER_CANDIDATE_INDEXES = frozenset(
+    {
+        ('provider_candidate_runs', 'ix_provider_candidate_runs_source_id', ('source_id',), False),
+        ('candidate_evidence', 'ix_candidate_evidence_source_id', ('source_id',), False),
+        ('candidate_evidence', 'ix_candidate_evidence_run_id', ('run_id',), False),
+        ('source_tag_observations', 'ix_source_tag_observations_source_id', ('source_id',), False),
+    }
+)
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
@@ -101,6 +110,36 @@ def test_baseline_migration_when_upgraded_exposes_existing_source_lineage(tmp_pa
         # Then: source provenance still owns its stable source and record linkage fields.
         columns = {column['name'] for column in inspect(engine).get_columns('source_records')}
         assert {'id', 'source_path', 'library_record_id', 'sha256', 'mtime_ns'}.issubset(columns)
+    finally:
+        engine.dispose()
+
+
+def test_folder_candidate_indexes_when_upgraded_and_downgraded_match_loader_queries(tmp_path: Path) -> None:
+    # Given: an isolated database at the current migration head.
+    database_path = tmp_path / 'folder-candidate-indexes.db'
+    config = Config()
+    config.set_main_option('script_location', str(_MIGRATION_DIRECTORY))
+    config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
+    engine = create_engine(f'sqlite+pysqlite:///{database_path}')
+
+    try:
+        # When: the complete migration lineage is applied, then rolled back to the current head.
+        command.upgrade(config, 'head')
+        upgraded_indexes = frozenset(
+            (table_name, index['name'], tuple(index['column_names']), bool(index['unique']))
+            for table_name in {'provider_candidate_runs', 'candidate_evidence', 'source_tag_observations'}
+            for index in inspect(engine).get_indexes(table_name)
+        )
+        command.downgrade(config, _FOLDER_CANDIDATE_INDEXES_PREVIOUS_REVISION)
+        downgraded_indexes = frozenset(
+            (table_name, index['name'], tuple(index['column_names']), bool(index['unique']))
+            for table_name in {'provider_candidate_runs', 'candidate_evidence', 'source_tag_observations'}
+            for index in inspect(engine).get_indexes(table_name)
+        )
+
+        # Then: the lookup indexes exist at head and are fully removed by the reversible migration.
+        assert upgraded_indexes >= _FOLDER_CANDIDATE_INDEXES
+        assert _FOLDER_CANDIDATE_INDEXES.isdisjoint(downgraded_indexes)
     finally:
         engine.dispose()
 
