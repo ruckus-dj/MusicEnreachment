@@ -9,6 +9,8 @@ import type {
   EffectiveSourceSelection,
   LyricsStatus,
   ManualSourceSelection,
+  MusicBrainzCandidateLookup,
+  MusicBrainzCandidateLookupResult,
   RecordingCorrection,
   RecordingCorrectionResult,
   SourceRoot,
@@ -223,6 +225,17 @@ export function selectEffectiveSource(
 ): Promise<EffectiveSourceSelection> {
   return api<EffectiveSourceSelection>(
     `/api/library/records/${encodeURIComponent(recordId)}/effective-source`,
+    { method: "POST", body: JSON.stringify(request) },
+  );
+}
+
+export function loadMusicBrainzCandidates(
+  recordId: string,
+  sourceId: string,
+  request: MusicBrainzCandidateLookup,
+): Promise<MusicBrainzCandidateLookupResult> {
+  return api<MusicBrainzCandidateLookupResult>(
+    `/api/library/records/${encodeURIComponent(recordId)}/sources/${encodeURIComponent(sourceId)}/musicbrainz/release-candidates`,
     { method: "POST", body: JSON.stringify(request) },
   );
 }

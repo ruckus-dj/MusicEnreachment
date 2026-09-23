@@ -171,6 +171,16 @@ export type EffectiveSourceSelection = {
   readonly baseline_source_id: string | null;
   readonly policy_version: string;
 };
+export type MusicBrainzCandidateLookup = {
+  readonly recording_mbid: string;
+  readonly release_mbid?: string;
+};
+export type MusicBrainzCandidateLookupResult = {
+  readonly recording_mbid: string;
+  readonly release_mbid: string | null;
+  readonly status: "review_required";
+  readonly candidate_count: number;
+};
 export type RecordingCorrection = {
   readonly recording_mbid: string;
   readonly release_mbid?: string;

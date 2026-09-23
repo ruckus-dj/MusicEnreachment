@@ -6,10 +6,10 @@ import {
   listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
+  loadMusicBrainzCandidates,
   moveStorageOutput,
   removeSourceRoot,
   selectEffectiveSource,
-  submitRecordingCorrection,
 } from "./client";
 
 describe("API error messages", () => {
@@ -121,25 +121,29 @@ describe("source-root API client", () => {
     fetchMock.mockRestore();
   });
 
-  it("posts the source-scoped recording correction with only the recording MBID", async () => {
+  it("posts a source-scoped MusicBrainz candidate lookup without applying it", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
-        record_id: "record-1",
+        release_mbid: null,
+        status: "review_required",
+        candidate_count: 2,
       }),
     );
 
     await expect(
-      submitRecordingCorrection("record-1", "source-a", {
+      loadMusicBrainzCandidates("record-1", "source-a", {
         recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
       }),
     ).resolves.toEqual({
       recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
-      record_id: "record-1",
+      release_mbid: null,
+      status: "review_required",
+      candidate_count: 2,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/library/records/record-1/sources/source-a/musicbrainz/override",
+      "/api/library/records/record-1/sources/source-a/musicbrainz/release-candidates",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
