@@ -52,9 +52,11 @@ export function parseRoute(pathname: string, search = ""): Route {
       artist: artistName,
       ...(artistMissing ? { artistMissing: true } : {}),
       ...(albumMissing ? { albumMissing: true } : {}),
-      album: params.has("album_id")
-        ? `id:${decodeRouteIdentifier(params.get("album_id") ?? undefined)}`
-        : `album:${decodeRouteIdentifier(params.get("album_name") ?? undefined)}`,
+      ...(params.has("album_id")
+        ? { album: `id:${decodeRouteIdentifier(params.get("album_id") ?? undefined)}` }
+        : params.has("album_name")
+          ? { album: `album:${decodeRouteIdentifier(params.get("album_name") ?? undefined)}` }
+          : {}),
       publicationFilter: filter,
     };
   if (parts[1] === "track" && parts[2])
@@ -114,30 +116,35 @@ export function routePath(route: Route): string {
       route.publicationFilter,
     );
   }
-  if (
-    route.screen === "tracks" &&
-    (route.artist || route.artistMissing) &&
-    (route.album || route.albumMissing)
-  ) {
+  if (route.screen === "tracks") {
+    if (!(route.artist || route.artistMissing || route.album || route.albumMissing))
+      return withPublicationFilter("/library/tracks", route.publicationFilter);
     const album = route.album ?? "";
     const albumQuery = route.albumMissing
       ? "album_missing=true"
       : album.startsWith("album:")
         ? `album_name=${encodeURIComponent(album.slice("album:".length))}`
-        : `album_id=${encodeURIComponent(album.replace(/^id:/, ""))}`;
+        : album
+          ? `album_id=${encodeURIComponent(album.replace(/^id:/, ""))}`
+          : "";
     const artistQuery = route.artistMissing
       ? "artist_missing=true"
-      : `artist_name=${encodeURIComponent(route.artist ?? "")}`;
+      : route.artist
+        ? `artist_name=${encodeURIComponent(route.artist)}`
+        : "";
+    const query = [artistQuery, albumQuery].filter(Boolean).join("&");
     return withPublicationFilter(
-      `/library/tracks?${artistQuery}&${albumQuery}`,
+      `/library/tracks${query ? `?${query}` : ""}`,
       route.publicationFilter,
     );
   }
-  if (route.screen === "albums" && (route.artist || route.artistMissing))
+  if (route.screen === "albums")
     return withPublicationFilter(
       route.artistMissing
         ? "/library/albums?artist_missing=true"
-        : `/library/albums?artist_name=${encodeURIComponent(route.artist ?? "")}`,
+        : route.artist
+          ? `/library/albums?artist_name=${encodeURIComponent(route.artist)}`
+          : "/library/albums",
       route.publicationFilter,
     );
   return withPublicationFilter("/library", route.publicationFilter);

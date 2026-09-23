@@ -15,6 +15,16 @@ describe("parseRoute", () => {
   });
 
   it("parses canonical collection queries", () => {
+    expect(parseRoute("/library/albums")).toEqual({
+      screen: "albums",
+      artist: "",
+      publicationFilter: "all",
+    });
+    expect(parseRoute("/library/tracks")).toEqual({
+      screen: "tracks",
+      artist: "",
+      publicationFilter: "all",
+    });
     expect(
       parseRoute("/library/tracks", "?artist_name=Noize%20MC&album_id=release-123&published=false"),
     ).toEqual({
@@ -34,6 +44,11 @@ describe("parseRoute", () => {
   });
 
   it("builds canonical album and track URLs", () => {
+    expect(routePath({ screen: "albums" })).toBe("/library/albums");
+    expect(routePath({ screen: "tracks" })).toBe("/library/tracks");
+    expect(routePath({ screen: "tracks", album: "release-123" })).toBe(
+      "/library/tracks?album_id=release-123",
+    );
     expect(
       routePath({
         screen: "tracks",
