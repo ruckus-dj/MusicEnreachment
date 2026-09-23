@@ -49,6 +49,7 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
             with session_factory() as session:
                 record = library_record_detail(session, record_id)
                 record.musicbrainz_recording_id = request.musicbrainz_recording_id.lower()
+                record.musicbrainz_release_id = request.musicbrainz_release_id.lower()
                 record.match_state = 'matched'
                 record.updated_at = datetime.now(UTC)
                 record_event(
@@ -61,7 +62,11 @@ def create_router(session_factory: SessionFactory) -> APIRouter:
                 )
                 session.commit()
                 return JSONResponse(
-                    content={'record_id': record.id, 'musicbrainz_recording_id': record.musicbrainz_recording_id}
+                    content={
+                        'record_id': record.id,
+                        'musicbrainz_recording_id': record.musicbrainz_recording_id,
+                        'musicbrainz_release_id': record.musicbrainz_release_id,
+                    }
                 )
         except LookupError as error:
             raise HTTPException(status_code=404, detail='library record not found') from error
