@@ -1,6 +1,7 @@
 import type { CatalogAlbum, LibraryCatalogTrack } from "../app/useAppController";
 import { lyricsDisplay, lyricsListLabel, lyricsSynced } from "../domain/lyrics";
-import { UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
+import { UNKNOWN_ALBUM_LABEL, UNKNOWN_ARTIST_LABEL } from "../domain/metadata";
+import { formatRussianCount } from "../domain/russianCount";
 import type { Screen } from "../types";
 
 type LibraryCatalogProps = {
@@ -59,7 +60,9 @@ export function LibraryCatalog({
               <span className="entity-art">{name.slice(0, 1)}</span>
               <span>
                 <strong>{name}</strong>
-                <small>{artistTrackCounts[name] ?? 0} треков</small>
+                <small>
+                  {formatRussianCount(artistTrackCounts[name] ?? 0, ["трек", "трека", "треков"])}
+                </small>
               </span>
               <b>→</b>
             </button>
@@ -103,7 +106,9 @@ export function LibraryCatalog({
                 )}
                 <span>
                   <strong>{albumEntry.title}</strong>
-                  <small>{albumEntry.trackCount} треков</small>
+                  <small>
+                    {formatRussianCount(albumEntry.trackCount, ["трек", "трека", "треков"])}
+                  </small>
                 </span>
                 <b>→</b>
               </button>
@@ -117,7 +122,9 @@ export function LibraryCatalog({
     <section className="track-screen">
       <div className="screen-heading">
         <div>
-          <p className="eyebrow">{albumTracks.length} треков</p>
+          <p className="eyebrow">
+            {formatRussianCount(albumTracks.length, ["трек", "трека", "треков"])}
+          </p>
           <h2>Список треков</h2>
         </div>
         <button type="button" className="secondary" disabled={loading} onClick={onRefresh}>
@@ -160,6 +167,10 @@ export function LibraryCatalog({
                       {` ${lyricsListLabel(synced)}`}
                     </span>
                   </span>
+                  <small className="track-catalog-context">
+                    {track.artist_name ?? UNKNOWN_ARTIST_LABEL} ·{" "}
+                    {track.album_name ?? UNKNOWN_ALBUM_LABEL}
+                  </small>
                   <small className="source-path" title={track.source_path}>
                     {track.source_path}
                   </small>

@@ -54,6 +54,7 @@ describe("LibraryCatalog lyrics indication", () => {
     expect(flag.textContent).toContain("Синхронный текст: есть");
     expect(flag.className).toContain("ready");
     expect(flag.getAttribute("title")).toContain("Синхронный текст найден");
+    expect(document.body.textContent).toContain("Artist · Album");
   });
 
   it("marks tracks without synchronized lyrics for pending and rejected candidates", () => {
