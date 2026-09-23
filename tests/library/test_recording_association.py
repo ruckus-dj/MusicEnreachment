@@ -20,6 +20,7 @@ from music_ingest.services.association import (
     RecordingAssociationService,
 )
 from music_ingest.services.library import append_metadata_revision
+from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import MusicBrainzFixtureProvider
 
 
@@ -430,7 +431,7 @@ def test_manual_association_when_verified_mbid_is_absent_from_candidates_moves_s
         session.commit()
 
         # When: a reviewer supplies a verified MusicBrainz recording absent from the candidates.
-        service = RecordingAssociationService(session, MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz')))
+        service = RecordingAssociationService(session, MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'))
         result = service.associate_manual(ManualAssociationRequest(source.id, requested_mbid, now))
         session.commit()
 

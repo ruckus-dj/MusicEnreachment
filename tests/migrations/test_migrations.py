@@ -9,8 +9,9 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from alembic import command
+from tests.support.paths import ALEMBIC_DIRECTORY
 
-_MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
+_MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
 _HEAD_REVISION = '20260916_0029'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'

@@ -43,8 +43,8 @@ extraPaths = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = ["-m", "not postgres"]
 markers = [
-    "live: requires explicit MUSIC_INGEST_ENABLE_LIVE_TESTS=1 opt-in",
     "postgres: requires explicit MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1 opt-in",
 ]
 

@@ -4,7 +4,6 @@ import dataclasses
 import socket
 from datetime import UTC, datetime, timedelta, timezone
 from hashlib import sha256
-from pathlib import Path
 from typing import assert_never
 
 import pytest
@@ -33,9 +32,10 @@ from music_ingest.services.matching.providers import (
     Unavailable,
     build_live_transport,
 )
+from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
-FIXTURE_DIRECTORY = Path(__file__).parent / 'fixtures'
+FIXTURE_DIRECTORY = FIXTURES_DIRECTORY
 
 FORBIDDEN_PROVENANCE_FIELDS = frozenset(
     {
@@ -429,14 +429,6 @@ def test_live_transport_when_musicbrainz_is_requested_acquires_rate_limit_for_ea
 
     # Then: each external metadata provider reserves its own persisted schedule.
     assert limiter.providers == ['musicbrainz', 'musicbrainz', 'acoustid']
-
-
-@pytest.mark.live
-def test_live_marker_when_environment_gate_is_absent_is_skipped() -> None:
-    # Given: this test is marked as a live test without a live environment gate.
-    # When: pytest collects the test.
-    # Then: conftest skips it before its body can run.
-    pytest.fail('live test body must not run without an explicit environment gate')
 
 
 def outcome_name(result: MusicBrainzResult | AcoustIdResult) -> str:

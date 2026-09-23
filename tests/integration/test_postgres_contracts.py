@@ -34,8 +34,9 @@ from music_ingest.services.publication import (
 from music_ingest.workers.config import ProcessingConfig
 from music_ingest.workers.support.sources import SourceAccess
 from music_ingest.workers.worker import ProcessingWorker
+from tests.support.paths import ALEMBIC_DIRECTORY
 
-_MIGRATION_DIRECTORY = Path(__file__).parents[1] / 'alembic'
+_MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
 _BASE_REVISION = '20260810_0002'
 _HEAD_REVISION = '20260916_0029'
 
@@ -668,7 +669,7 @@ def test_schema_when_upgraded_on_postgresql_enforces_media_library_contracts(
         engine.dispose()
 
 
-@pytest.mark.live
+@pytest.mark.postgres
 @pytest.mark.parametrize('legacy_argument', ('', '/not-a-child', '../legacy'))
 def test_migration_when_legacy_root_is_invalid_preserves_baseline_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_argument: str

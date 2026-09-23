@@ -4,11 +4,12 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
 from alembic import command
+from tests.support.paths import ALEMBIC_DIRECTORY
 
 
 def test_encoding_migration_adds_nullable_evidence_without_source_io(tmp_path: Path) -> None:
     config = Config()
-    config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
+    config.set_main_option('script_location', str(ALEMBIC_DIRECTORY))
     url = f'sqlite:///{tmp_path / "encoding.db"}'
     config.set_main_option('sqlalchemy.url', url)
     command.upgrade(config, '20260916_0028')

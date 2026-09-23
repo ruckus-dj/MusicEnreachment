@@ -33,7 +33,8 @@ from music_ingest.services.normalize.tags import write_normalized_tags
 from music_ingest.services.publication import attempts
 from music_ingest.workers.config import ProcessingConfig
 from music_ingest.workers.worker import ProcessingWorker
-from tests.test_selection_refresh import _flac
+from tests.support.paths import ALEMBIC_DIRECTORY, REPOSITORY_DIRECTORY
+from tests.workers.test_selection_refresh import _flac
 
 pytestmark = pytest.mark.postgres
 
@@ -46,7 +47,7 @@ def integrity_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterato
     with PostgresContainer('postgres:17') as postgres:
         url = postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg')
         config = Config()
-        config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
+        config.set_main_option('script_location', str(ALEMBIC_DIRECTORY))
         config.set_main_option('sqlalchemy.url', url)
         config.cmd_opts = Namespace(x=[f'legacy_incoming_root={legacy}'])
         command.upgrade(config, 'head')
@@ -227,7 +228,7 @@ def test_storage_request_and_publication_share_lock(
     from threading import Event
 
     from music_ingest.services.storage import StorageService, StorageValidationError
-    from tests.test_storage_migration import finish_migration
+    from tests.storage.test_storage_migration import finish_migration
 
     config, source, target = seed_publication(integrity_engine, tmp_path)
     original = source.read_bytes()
@@ -287,7 +288,7 @@ def test_two_workers_resume_storage_manifest_once(integrity_engine: Engine, tmp_
 
     from music_ingest.models import StorageConfigRecord
     from music_ingest.services.storage import StorageService
-    from tests.test_storage_migration import seed_storage
+    from tests.storage.test_storage_migration import seed_storage
 
     old, new = seed_storage(integrity_engine, tmp_path)
     with Session(integrity_engine) as session:
@@ -324,7 +325,7 @@ def test_publication_on_separate_processing_and_media_mounts(monkeypatch: pytest
         postgres.with_network(network).with_network_aliases('integrity-db')
         with postgres:
             runner = DockerContainer(image).with_network(network)
-            runner.with_volume_mapping(Path(__file__).parents[1], '/work', 'ro')
+            runner.with_volume_mapping(REPOSITORY_DIRECTORY, '/work', 'ro')
             runner.with_kwargs(working_dir='/work')
             runner.with_env('PYTHONPATH', '/work/src')
             runner.with_env(

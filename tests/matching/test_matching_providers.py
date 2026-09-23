@@ -31,9 +31,10 @@ from music_ingest.services.matching.providers import (
     ReleaseCandidate,
     Unavailable,
 )
+from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
-FIXTURES = Path(__file__).parent / 'fixtures'
+FIXTURES = FIXTURES_DIRECTORY
 NOW = datetime(2026, 7, 28, tzinfo=UTC)
 
 _RECORDING_RELEASES = {

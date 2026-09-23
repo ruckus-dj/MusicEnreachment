@@ -1,0 +1,6 @@
+from pathlib import Path
+
+TESTS_DIRECTORY = Path(__file__).parents[1]
+REPOSITORY_DIRECTORY = TESTS_DIRECTORY.parent
+FIXTURES_DIRECTORY = TESTS_DIRECTORY / 'fixtures'
+ALEMBIC_DIRECTORY = REPOSITORY_DIRECTORY / 'alembic'

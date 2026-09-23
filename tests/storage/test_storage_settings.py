@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
 from music_ingest.models import Base
-from tests.test_storage_migration import finish_migration
+from tests.storage.test_storage_migration import finish_migration
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path, Path, Engine]:

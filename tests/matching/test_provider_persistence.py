@@ -13,6 +13,7 @@ from alembic import command
 from music_ingest.models import Base, ProviderScheduleRecord, ProviderSnapshotRecord
 from music_ingest.repositories.persistence import ProviderPersistenceRepository, ensure_provider_schedules
 from music_ingest.services.matching.providers import DatabaseRequestRateLimiter
+from tests.support.paths import ALEMBIC_DIRECTORY
 
 
 def test_provider_snapshot_is_global_append_only_and_lookup_is_newest(tmp_path: Path) -> None:
@@ -224,7 +225,7 @@ def test_runtime_initialization_seeds_provider_schedules_idempotently(tmp_path: 
 def test_provider_migration_creates_schedule_tables_without_runtime_rows(tmp_path: Path) -> None:
     database_path = tmp_path / 'migration.db'
     config = Config()
-    config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
+    config.set_main_option('script_location', str(ALEMBIC_DIRECTORY))
     config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
     command.upgrade(config, 'head')
     engine = create_engine(f'sqlite+pysqlite:///{database_path}')

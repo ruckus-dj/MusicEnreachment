@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
 
 import music_ingest.services.candidates as processing
 from music_ingest.adapters.external.acoustid import AcoustIdV2Adapter
@@ -18,9 +17,10 @@ from music_ingest.services.matching.providers import (
     ReleaseCandidate,
 )
 from music_ingest.services.matching.scoring import CandidateScore, MatchDecision, MatchResult
+from tests.support.paths import FIXTURES_DIRECTORY
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
-FIXTURE = Path(__file__).parent / 'fixtures' / 'acoustid' / 'noize-pesnya-dlya-radio.json'
+FIXTURE = FIXTURES_DIRECTORY / 'acoustid' / 'noize-pesnya-dlya-radio.json'
 VOL_1_RECORDING = '47d13484-9eed-4460-babd-bca3a19fcd77'
 VOL_2_RECORDING = '48c984ee-2333-442b-9483-f091162f2a62'
 

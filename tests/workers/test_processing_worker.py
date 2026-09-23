@@ -59,6 +59,7 @@ from music_ingest.workers.config import ProcessingConfig
 from music_ingest.workers.execution import ExecutionContext
 from music_ingest.workers.handlers.initial import InitialHandler
 from music_ingest.workers.worker import ProcessingWorker
+from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import AcoustIdFixtureProvider, MusicBrainzFixtureProvider
 
 _FFMPEG: Final[str] = which('ffmpeg') or ''
@@ -619,7 +620,7 @@ def test_musicbrainz_lookup_when_acoustid_supplies_recording_mbid_works_without_
     # Given: a fingerprint match with no source tags and an available MusicBrainz provider.
     config = replace(
         _config(tmp_path),
-        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
+        musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'),
     )
     fingerprint = FingerprintResult(
         FingerprintState.SUCCESS,
@@ -720,7 +721,7 @@ def test_musicbrainz_lookup_uses_artist_and_title_without_album(tmp_path: Path) 
             _ = now
             requests.append(request)
             return MusicBrainzMatch(
-                FixtureProvenance(Path(__file__).parent / 'fixtures' / 'musicbrainz' / 'success.json', 'a' * 64),
+                FixtureProvenance(FIXTURES_DIRECTORY / 'musicbrainz' / 'success.json', 'a' * 64),
                 ReleaseCandidate('release-id', 'Страна дождей', 'Noize MC'),
             )
 
@@ -2000,8 +2001,8 @@ def test_worker_analyzes_flac_in_staged_provider_phases(tmp_path: Path, monkeypa
     # Given: an import with both providers configured and durable provider schedules.
     config = replace(
         _config(tmp_path),
-        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
-        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+        musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'),
+        acoustid_provider=AcoustIdFixtureProvider(FIXTURES_DIRECTORY / 'acoustid'),
     )
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
@@ -2098,8 +2099,8 @@ def test_worker_when_reanalysis_source_is_unchanged_reuses_decoder_and_fingerpri
     # Given: a processed FLAC source with durable decoder and fingerprint evidence.
     config = replace(
         _config(tmp_path),
-        musicbrainz_provider=MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz'),
-        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+        musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'),
+        acoustid_provider=AcoustIdFixtureProvider(FIXTURES_DIRECTORY / 'acoustid'),
     )
     config.incoming_root.mkdir()
     source_path = _flac(config.incoming_root / 'fixture.flac')
@@ -2166,7 +2167,7 @@ def test_worker_when_valid_source_has_no_canonical_tags_queues_review_without_pu
 
     config = replace(
         _config(tmp_path),
-        acoustid_provider=AcoustIdFixtureProvider(Path(__file__).parent / 'fixtures' / 'acoustid'),
+        acoustid_provider=AcoustIdFixtureProvider(FIXTURES_DIRECTORY / 'acoustid'),
         unsorted_filename_allocator=allocate_filename,
     )
     config.incoming_root.mkdir()

@@ -13,7 +13,7 @@ from music_ingest.services.publication import (
     mark_staged,
     reserve_attempt,
 )
-from tests.test_lrclib_handler import (
+from tests.adapters.test_lrclib_handler import (
     NOW,
     SYNCED_LYRICS,
     _engine,
@@ -160,7 +160,7 @@ def test_verified_recording_reuses_sidecar_across_mp3_flac(
 
 def test_explicit_retry_after_reused_negative_cache_calls_provider_before_expiry(tmp_path: Path) -> None:
     from music_ingest.services.lyrics.reuse import LyricEvidence
-    from tests.test_lrclib_handler import _status_response
+    from tests.adapters.test_lrclib_handler import _status_response
 
     engine = _engine(tmp_path)
     root = tmp_path / 'media'
@@ -204,7 +204,7 @@ def test_explicit_retry_after_reused_negative_cache_calls_provider_before_expiry
 @pytest.mark.parametrize('status', [404, 503])
 def test_negative_cache_expires_but_transient_errors_retry(tmp_path: Path, status: int) -> None:
     from music_ingest.services.lyrics.reuse import LyricEvidence
-    from tests.test_lrclib_handler import _status_response
+    from tests.adapters.test_lrclib_handler import _status_response
 
     engine = _engine(tmp_path)
     root = tmp_path / 'media'

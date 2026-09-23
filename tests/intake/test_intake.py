@@ -22,6 +22,7 @@ from music_ingest.services.intake.service import (
     SourceTagObservation,
     intake_source,
 )
+from tests.support.paths import ALEMBIC_DIRECTORY
 
 
 def intake_request(source: Path, origin: Origin) -> IntakeRequest:
@@ -203,7 +204,7 @@ def test_provenance_migration_when_upgraded_and_downgraded_creates_only_its_sche
     # Given: a disposable SQLite database and the repository migration directory.
     database_path = tmp_path / 'migration.db'
     config = Config()
-    config.set_main_option('script_location', str(Path(__file__).parents[1] / 'alembic'))
+    config.set_main_option('script_location', str(ALEMBIC_DIRECTORY))
     config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
 
     # When: the complete migration lineage is upgraded then returned to baseline.

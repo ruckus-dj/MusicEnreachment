@@ -31,7 +31,7 @@ from music_ingest.services.publication import (
 )
 from music_ingest.workers.config import ProcessingConfig
 from music_ingest.workers.worker import ProcessingWorker
-from tests.test_lrclib_handler import _published_record
+from tests.adapters.test_lrclib_handler import _published_record
 
 pytestmark = pytest.mark.postgres
 

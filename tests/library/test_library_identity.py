@@ -44,6 +44,7 @@ from music_ingest.services.reconciliation import (
     load_reconciliation_snapshot,
     plan_reconciliation,
 )
+from tests.support.paths import FIXTURES_DIRECTORY
 from tests.support.providers import MusicBrainzFixtureProvider
 
 
@@ -857,7 +858,7 @@ def test_library_api_recording_override_moves_only_selected_source_and_preserves
     client = TestClient(
         create_app(
             lambda: Session(engine),
-            musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz')),
+            musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz'),
         )
     )
 
@@ -942,7 +943,7 @@ def test_library_api_recording_override_when_provider_is_unavailable_keeps_sourc
     client = TestClient(
         create_app(
             lambda: Session(engine),
-            musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz_unavailable')),
+            musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz_unavailable'),
         )
     )
 
@@ -1014,7 +1015,7 @@ def test_library_api_recording_override_when_evidence_conflicts_persists_review_
 
     client = TestClient(
         create_app(
-            lambda: Session(engine), musicbrainz_provider=MusicBrainzFixtureProvider(Path('tests/fixtures/musicbrainz'))
+            lambda: Session(engine), musicbrainz_provider=MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz')
         )
     )
 
@@ -1085,7 +1086,7 @@ def test_library_api_decodes_acoustid_candidate_with_musicbrainz(tmp_path: Path)
         )
         session.commit()
 
-    provider = MusicBrainzFixtureProvider(Path(__file__).parent / 'fixtures' / 'musicbrainz')
+    provider = MusicBrainzFixtureProvider(FIXTURES_DIRECTORY / 'musicbrainz')
     client = TestClient(create_app(lambda: Session(engine), musicbrainz_provider=provider))
     response = client.get(
         '/api/library/records/record-decode/sources/source-decode/candidates/recording-id/musicbrainz'
