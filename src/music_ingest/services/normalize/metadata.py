@@ -233,6 +233,8 @@ def _read_mka_tags(path: Path, ffprobe_command: str, timeout_seconds: float) -> 
 def _collapse_tags(tags: tuple[tuple[str, str], ...]) -> dict[str, str]:
     values: dict[str, list[str]] = {}
     for name, value in tags:
+        if not value:
+            continue
         values.setdefault(name, []).append(value)
     return {name: '; '.join(items) for name, items in values.items()}
 

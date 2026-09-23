@@ -247,6 +247,22 @@ def test_write_canonical_metadata_when_output_is_mka_stream_copies_audio_and_wri
     assert sha256(source.read_bytes()).hexdigest() == source_hash
 
 
+def test_write_canonical_metadata_when_mka_release_date_is_unknown_omits_the_empty_tag(tmp_path: Path) -> None:
+    # Given: MusicBrainz metadata for a release with no known date.
+    source = _create_flac(tmp_path, 'source.flac')
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    fields, genres = _policies()
+
+    # When: canonical metadata is written to the managed Matroska format.
+    output = write_canonical_metadata(
+        MetadataWriteRequest(source, staging / 'track.mka', staging, replace(_metadata(), date=''), fields, genres)
+    )
+
+    # Then: an unknown optional date does not prevent publication or create an empty tag.
+    assert 'DATE' not in dict(read_normalized_tags(output.output_path))
+
+
 @pytest.mark.parametrize(
     ('suffix', 'codec'),
     (('.flac', 'flac'), ('.m4a', 'alac'), ('.m4a', 'aac'), ('.mp3', 'mp3'), ('.opus', 'opus'), ('.ogg', 'vorbis')),
