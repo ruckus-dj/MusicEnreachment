@@ -19,6 +19,7 @@ from music_ingest.workers.worker import ProcessingWorker
 LOGGER = logging.getLogger(__name__)
 MAX_POOL_CONCURRENCY = 8
 WORKER_POOLS: dict[str, frozenset[str]] = {name: frozenset({name}) for name in WorkerPoolSettings.model_fields}
+WORKER_POOLS['musicbrainz_analysis'] = frozenset({'musicbrainz_analysis', 'musicbrainz_refresh'})
 
 
 @dataclass(frozen=True, slots=True)

@@ -30,6 +30,7 @@ def test_worker_pools_cover_each_kind_exactly_once() -> None:
         'filesystem_scan',
         'acoustid_analysis',
         'musicbrainz_analysis',
+        'musicbrainz_refresh',
         'candidate_selection',
         'folder_release_selection',
         'final_publish',
@@ -38,5 +39,7 @@ def test_worker_pools_cover_each_kind_exactly_once() -> None:
         'artwork_enrichment',
         'reconciliation_scan',
     }
+    assert WORKER_POOLS['musicbrainz_analysis'] == frozenset({'musicbrainz_analysis', 'musicbrainz_refresh'})
     for pool, allowed in WORKER_POOLS.items():
-        assert allowed == frozenset({pool})
+        if pool != 'musicbrainz_analysis':
+            assert allowed == frozenset({pool})

@@ -102,6 +102,7 @@ class ProcessingWorker:
             'candidate_selection': self._selection,
             'acoustid_analysis': self._analysis,
             'musicbrainz_analysis': self._analysis,
+            'musicbrainz_refresh': self._analysis,
             'folder_release_selection': self._selection,
             'final_publish': self._publication,
             'artwork_enrichment': ArtworkHandler(),
@@ -137,7 +138,7 @@ class ProcessingWorker:
             on_claimed(claimed.job.id, claimed.job.kind)
         if (
             claimed.reclaimed_stale
-            and claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis'}
+            and claimed.job.kind in {'acoustid_analysis', 'musicbrainz_analysis', 'musicbrainz_refresh'}
             and claimed.attempt.attempt_number > self._settings.max_attempts()
         ):
             self._outcomes.retry_claim(claimed, 'provider job exceeded max attempts after stale worker lease', now)
