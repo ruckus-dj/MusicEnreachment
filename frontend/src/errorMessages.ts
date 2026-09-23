@@ -4,6 +4,7 @@ export const errorMessages = {
   loadLibrary: "Не удалось загрузить медиатеку",
   openTrack: "Не удалось открыть трек",
   recoverLibrary: "Восстановление не удалось",
+  refreshMetadata: "Не удалось обновить метаданные MusicBrainz",
   queueProvider: "Не удалось поставить провайдер в очередь",
   loadRelease: "Не удалось загрузить release",
   correctionConflict: "Исправление конфликтует с сохранёнными свидетельствами провайдера.",

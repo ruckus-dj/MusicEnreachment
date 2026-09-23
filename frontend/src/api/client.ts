@@ -45,6 +45,7 @@ export type LibraryTrack = {
   readonly lyrics_status: LyricsStatus;
   readonly lyrics_synced: boolean;
 };
+export type MetadataRefreshResult = { readonly queued: number };
 
 export class ApiError extends Error {
   readonly status: number;
@@ -134,6 +135,10 @@ export function browseStorage(path?: string): Promise<StorageBrowser> {
 
 export function listLibraryRecords(): Promise<{ items: Summary[] }> {
   return api<{ items: Summary[] }>("/api/library/records");
+}
+
+export function refreshLibraryMetadata(): Promise<MetadataRefreshResult> {
+  return api<MetadataRefreshResult>("/api/library/metadata/refresh", { method: "POST" });
 }
 
 export type ManualActionCounts = {

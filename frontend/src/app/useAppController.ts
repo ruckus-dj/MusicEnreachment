@@ -16,6 +16,7 @@ import {
   listSourceRoots,
   moveStorageOutput,
   previewStorageOutput,
+  refreshLibraryMetadata,
   removeSourceRoot,
   selectEffectiveSource,
   submitRecordingCorrection,
@@ -104,6 +105,7 @@ export type AppControllerModel = {
   scanning: boolean;
   saving: boolean;
   reprocessing: boolean;
+  refreshingMetadata: boolean;
   effectiveSourceId: string | null;
   effectiveSourceError: string;
   effectiveSourceSuccess: string;
@@ -145,6 +147,7 @@ export type AppControllerModel = {
   loadLibrary: (showLoader?: boolean) => Promise<void>;
   scan: () => Promise<void>;
   reprocessAll: () => Promise<void>;
+  refreshMetadata: () => Promise<void>;
   reprocessSource: (recordId: string, sourceId: string) => Promise<void>;
   saveMetadata: () => Promise<boolean>;
   encodingApplied: (queued: boolean) => Promise<void>;
@@ -212,6 +215,7 @@ export function useAppController(): AppControllerModel {
   const [scanJobId, setScanJobId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [effectiveSourceId, setEffectiveSourceId] = useState<string | null>(
     initialRoute.sourceId ?? null,
   );
@@ -670,6 +674,17 @@ export function useAppController(): AppControllerModel {
       return false;
     } finally {
       setSaving(false);
+    }
+  }
+  async function refreshMetadata() {
+    setRefreshingMetadata(true);
+    try {
+      const result = await refreshLibraryMetadata();
+      setNotice(`Обновление метаданных поставлено в очередь: ${result.queued}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : errorMessages.refreshMetadata);
+    } finally {
+      setRefreshingMetadata(false);
     }
   }
   async function loadSettings() {
@@ -1180,6 +1195,7 @@ export function useAppController(): AppControllerModel {
     scanning,
     saving,
     reprocessing,
+    refreshingMetadata,
     effectiveSourceId,
     effectiveSourceError,
     effectiveSourceSuccess,
@@ -1221,6 +1237,7 @@ export function useAppController(): AppControllerModel {
     loadLibrary,
     scan,
     reprocessAll,
+    refreshMetadata,
     reprocessSource,
     saveMetadata,
     retryProvider,

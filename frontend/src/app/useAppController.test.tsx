@@ -208,6 +208,46 @@ describe("useAppController manual MusicBrainz identifiers", () => {
   });
 });
 
+describe("useAppController bulk metadata refresh", () => {
+  it("queues known MusicBrainz identities and reports the count", async () => {
+    window.history.replaceState({}, "", "/library");
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/library/metadata/refresh") {
+        return Response.json({ queued: 3 });
+      }
+      return Response.json({ items: [], total_track_count: 0 });
+    });
+    const { result } = renderHook(() => useAppController());
+
+    await act(async () => {
+      await result.current.refreshMetadata();
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/library/metadata/refresh",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.current.notice).toBe("Обновление метаданных поставлено в очередь: 3");
+    expect(result.current.refreshingMetadata).toBe(false);
+  });
+
+  it("reports a fallback when metadata refresh cannot be queued", async () => {
+    window.history.replaceState({}, "", "/library");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/library/metadata/refresh") throw null;
+      return Response.json({ items: [], total_track_count: 0 });
+    });
+    const { result } = renderHook(() => useAppController());
+
+    await act(async () => {
+      await result.current.refreshMetadata();
+    });
+
+    expect(result.current.notice).toBe("Не удалось обновить метаданные MusicBrainz");
+    expect(result.current.refreshingMetadata).toBe(false);
+  });
+});
+
 function encodingRecord(recordId = "record-1", sourceId = "source-a", title = "Saved") {
   return {
     record_id: recordId,
