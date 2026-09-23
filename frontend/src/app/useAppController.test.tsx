@@ -29,6 +29,10 @@ function ControllerProbe() {
       >
         correct
       </button>
+      <button type="button" onClick={() => void controller.overrideRelease("release-id")}>
+        load-release
+      </button>
+      <output data-testid="record-id">{controller.recordId}</output>
       <output data-testid="effective-source-id">{controller.effectiveSourceId}</output>
       <output data-testid="effective-source-success">{controller.effectiveSourceSuccess}</output>
       <output data-testid="notice">{controller.notice}</output>
@@ -138,6 +142,69 @@ describe("useAppController error messages", () => {
         ? "Исправление не применено: требуется проверка конфликта."
         : "Исправление записи не применено.",
     );
+  });
+});
+
+describe("useAppController manual MusicBrainz identifiers", () => {
+  it("loads a manually entered release through the release-candidates endpoint", async () => {
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/musicbrainz/release-candidates")) {
+        return Response.json({
+          release_mbid: "release-id",
+          status: "review_required",
+          candidate_count: 1,
+        });
+      }
+      if (String(input) === "/api/library/records/record-1") {
+        return Response.json(encodingRecord());
+      }
+      return Response.json({ items: [] });
+    });
+
+    render(<ControllerProbe />);
+    await act(async () => {
+      screen.getByRole("button", { name: "load-release" }).click();
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/library/records/record-1/sources/source-a/musicbrainz/release-candidates",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ release_mbid: "release-id" }),
+      }),
+    );
+    expect(screen.getByTestId("notice").textContent).toContain("добавлен для проверки");
+  });
+
+  it("opens the destination record returned by a recording correction", async () => {
+    window.history.replaceState({}, "", "/library/record/record-1/source/source-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/musicbrainz/override")) {
+        return Response.json({
+          recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+          record_id: "record-target",
+        });
+      }
+      if (String(input) === "/api/library/records/record-target") {
+        return Response.json(encodingRecord("record-target"));
+      }
+      if (String(input) === "/api/library/records/record-1") {
+        return Response.json(encodingRecord());
+      }
+      return Response.json({ items: [] });
+    });
+
+    const { result } = renderHook(() => useAppController());
+    await act(async () => {
+      await result.current.overrideRecording({
+        recording_mbid: "f31c102e-5e6c-4c33-8a57-52c3c2a3ea6a",
+      });
+    });
+
+    expect(result.current.recordId).toBe("record-target");
+    expect(window.location.pathname).toBe("/library/track/record-target");
+    expect(window.location.search).toBe("?source_id=source-a");
   });
 });
 

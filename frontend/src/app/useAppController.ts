@@ -474,17 +474,16 @@ export function useAppController(): AppControllerModel {
     if (!recordId || !sourceId) return;
     setReprocessing(true);
     try {
-      const result = await api<{ release_mbid: string; queued: boolean }>(
-        `/api/library/records/${recordId}/sources/${sourceId}/musicbrainz/override`,
-        { method: "POST", body: JSON.stringify({ release_mbid: releaseMbid }) },
-      );
-      setNotice(
-        result.queued
-          ? `Релиз ${result.release_mbid} поставлен в очередь анализа`
-          : `Релиз ${result.release_mbid} сохранён`,
-      );
+      const result = await api<{
+        release_mbid: string;
+        status: "review_required";
+        candidate_count: number;
+      }>(`/api/library/records/${recordId}/sources/${sourceId}/musicbrainz/release-candidates`, {
+        method: "POST",
+        body: JSON.stringify({ release_mbid: releaseMbid }),
+      });
+      setNotice(`Релиз ${result.release_mbid} добавлен для проверки (${result.candidate_count})`);
       await refreshRecord(recordId, sourceId);
-      if (result.queued) watchRecord(recordId, sourceId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.loadRelease);
     } finally {
@@ -503,7 +502,13 @@ export function useAppController(): AppControllerModel {
         request,
       );
       setNotice(`Запись ${result.recording_mbid} исправлена для выбранного источника`);
-      await refreshRecord(recordId, sourceId);
+      if (result.record_id !== recordId) {
+        watchRecord(result.record_id, sourceId);
+        setItems([]);
+        navigate({ screen: "track", recordId: result.record_id, sourceId });
+        return;
+      }
+      await refreshRecord(result.record_id, sourceId);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setRecordingCorrectionError(errorMessages.correctionConflict);
@@ -542,7 +547,7 @@ export function useAppController(): AppControllerModel {
     if (!recordId || !sourceId) return;
     setReprocessing(true);
     try {
-      const result = await api<{ revision: number | null; queued: boolean }>(
+      const result = await api<{ record_id: string; revision: number | null; queued: boolean }>(
         `/api/library/records/${recordId}/sources/${sourceId}/candidates/select`,
         {
           method: "POST",
@@ -560,8 +565,14 @@ export function useAppController(): AppControllerModel {
             ? `Релиз подтверждён. Final rev ${result.revision} поставлена в публикацию`
             : `Релиз подтверждён. Final rev ${result.revision} сохранена`,
       );
-      await refreshRecord(recordId, sourceId, true);
-      if (result.queued) watchRecord(recordId, sourceId);
+      if (result.record_id !== recordId) {
+        if (result.queued) watchRecord(result.record_id, sourceId);
+        setItems([]);
+        navigate({ screen: "track", recordId: result.record_id, sourceId });
+        return;
+      }
+      await refreshRecord(result.record_id, sourceId, true);
+      if (result.queued) watchRecord(result.record_id, sourceId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.confirmCandidate);
     } finally {
