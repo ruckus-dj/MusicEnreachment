@@ -9,7 +9,7 @@ from stat import S_ISREG
 from uuid import uuid4
 
 from sqlalchemy import bindparam, delete, insert, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, raiseload
 
 from music_ingest.contracts import ScanResult
 from music_ingest.models import (
@@ -145,7 +145,9 @@ def load_reconciliation_snapshot(session: Session, observed_at: datetime) -> Rec
     """Load every durable fact needed by the stat-only reconciliation planner."""
     roots = tuple(
         RootSnapshot(id=root.id, canonical_path=root.canonical_path)
-        for root in session.scalars(select(SourceRootRecord).where(SourceRootRecord.enabled.is_(True)))
+        for root in session.scalars(
+            select(SourceRootRecord).where(SourceRootRecord.enabled.is_(True)).options(raiseload('*'))
+        )
     )
     sources = tuple(
         SourceSnapshot(
@@ -159,7 +161,7 @@ def load_reconciliation_snapshot(session: Session, observed_at: datetime) -> Rec
             intake_state=source.intake_state,
             library_record_id=source.library_record_id,
         )
-        for source in session.scalars(select(SourceRecord))
+        for source in session.scalars(select(SourceRecord).options(raiseload('*')))
     )
     jobs = tuple(
         JobSnapshot(
@@ -169,7 +171,7 @@ def load_reconciliation_snapshot(session: Session, observed_at: datetime) -> Rec
             kind=job.kind,
             state=job.state,
         )
-        for job in session.scalars(select(JobRecord).order_by(JobRecord.id))
+        for job in session.scalars(select(JobRecord).order_by(JobRecord.id).options(raiseload('*')))
     )
     current_publication_source_ids = frozenset(
         session.scalars(select(LibraryPublicationRecord.source_id).where(LibraryPublicationRecord.state == 'current'))
