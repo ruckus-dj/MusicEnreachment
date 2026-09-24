@@ -5,6 +5,7 @@ import {
   browseStorage,
   createSourceRoot,
   getLibraryStatus,
+  getPublicationReconciliation,
   getStorageConfig,
   getWorkerQueue,
   type LibraryStatus,
@@ -21,6 +22,7 @@ import {
   refreshLibraryMetadata,
   removeSourceRoot,
   selectEffectiveSource,
+  startPublicationReconciliation,
 } from "../api/client";
 import {
   albumArtistsFor,
@@ -45,6 +47,7 @@ import type {
   ManualActionFilter,
   MusicBrainzCandidateLookup,
   ProviderName,
+  PublicationReconciliationJob,
   Route,
   RuntimeSettings,
   RuntimeSettingsDraft,
@@ -109,6 +112,7 @@ export type AppControllerModel = {
   saving: boolean;
   reprocessing: boolean;
   refreshingMetadata: boolean;
+  reconcilingPublications: boolean;
   effectiveSourceId: string | null;
   effectiveSourceError: string;
   effectiveSourceSuccess: string;
@@ -151,6 +155,7 @@ export type AppControllerModel = {
   scan: () => Promise<void>;
   reprocessAll: () => Promise<void>;
   refreshMetadata: () => Promise<void>;
+  reconcilePublications: () => Promise<void>;
   reprocessSource: (recordId: string, sourceId: string) => Promise<void>;
   saveMetadata: () => Promise<boolean>;
   encodingApplied: (queued: boolean) => Promise<void>;
@@ -222,6 +227,10 @@ export function useAppController(): AppControllerModel {
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
+  const [reconcilingPublications, setReconcilingPublications] = useState(false);
+  const [publicationReconciliationJobId, setPublicationReconciliationJobId] = useState<
+    string | null
+  >(null);
   const [effectiveSourceId, setEffectiveSourceId] = useState<string | null>(
     initialRoute.sourceId ?? null,
   );
@@ -462,6 +471,17 @@ export function useAppController(): AppControllerModel {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.recoverLibrary);
       setScanning(false);
+    }
+  }
+  async function reconcilePublications() {
+    setReconcilingPublications(true);
+    setNotice("Проверка папки публикаций поставлена в очередь…");
+    try {
+      const job = await startPublicationReconciliation();
+      setPublicationReconciliationJobId(job.job_id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : errorMessages.publicationReconciliation);
+      setReconcilingPublications(false);
     }
   }
   async function retryProvider(provider: ProviderName) {
@@ -852,6 +872,7 @@ export function useAppController(): AppControllerModel {
         const libraryWatchActive = watchedLibraryUntilRef.current > 0;
         hadActiveWork =
           scanJobId !== null ||
+          publicationReconciliationJobId !== null ||
           libraryWatchActive ||
           Object.keys(watchedRecordsRef.current).length > 0;
         if (scanJobId !== null) {
@@ -877,6 +898,35 @@ export function useAppController(): AppControllerModel {
           } else {
             setNotice(
               job.state === "running" ? "Сканирование выполняется…" : "Сканирование в очереди…",
+            );
+          }
+        }
+        if (publicationReconciliationJobId !== null) {
+          const job: PublicationReconciliationJob = await getPublicationReconciliation(
+            publicationReconciliationJobId,
+          );
+          if (!isCurrent()) return;
+          if (job.state === "completed" && job.result !== null) {
+            const result = job.result;
+            setNotice(
+              `Удалено файлов: ${result.removed_files}; папок: ${result.removed_directories}; ` +
+                `отсутствующих публикаций: ${result.missing_publications}; ` +
+                `повторно поставлено: ${result.queued_jobs}; сохранено NFO: ${result.preserved_nfo}`,
+            );
+            await loadLibrary(false, true, isCurrent);
+            if (!isCurrent()) return;
+            setPublicationReconciliationJobId(null);
+            setReconcilingPublications(false);
+            if (result.queued_jobs > 0) watchLibrary();
+          } else if (job.state !== "queued" && job.state !== "running") {
+            setNotice(errorMessages.publicationReconciliationFailed);
+            setPublicationReconciliationJobId(null);
+            setReconcilingPublications(false);
+          } else {
+            setNotice(
+              job.state === "running"
+                ? "Проверка папки публикаций выполняется…"
+                : "Проверка папки публикаций в очереди…",
             );
           }
         }
@@ -943,7 +993,17 @@ export function useAppController(): AppControllerModel {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [scanJobId, screen, recordId, sourceId, artist, album, manualActionFilter, publicationFilter]);
+  }, [
+    scanJobId,
+    publicationReconciliationJobId,
+    screen,
+    recordId,
+    sourceId,
+    artist,
+    album,
+    manualActionFilter,
+    publicationFilter,
+  ]);
   useEffect(() => {
     if ((screen === "settings" || screen === "track") && !settingsDraft && !settingsLoading)
       void loadSettings();
@@ -1188,6 +1248,7 @@ export function useAppController(): AppControllerModel {
     saving,
     reprocessing,
     refreshingMetadata,
+    reconcilingPublications,
     effectiveSourceId,
     effectiveSourceError,
     effectiveSourceSuccess,
@@ -1230,6 +1291,7 @@ export function useAppController(): AppControllerModel {
     scan,
     reprocessAll,
     refreshMetadata,
+    reconcilePublications,
     reprocessSource,
     saveMetadata,
     retryProvider,

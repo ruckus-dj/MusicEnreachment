@@ -1299,6 +1299,14 @@ h2 {
   .provider-actions > * {
     flex: 1;
   }
+  .dashboard-source-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dashboard-source-actions > * {
+    flex: none;
+    width: 100%;
+  }
   .library-toolbar .provider-actions {
     width: 100%;
   }

@@ -224,6 +224,7 @@ export type WorkerQueue = {
   readonly jobs: readonly WorkerQueueJob[];
 };
 export type Screen =
+  | "dashboard"
   | "artists"
   | "albums"
   | "tracks"
@@ -369,4 +370,19 @@ export type ScanJob = {
   readonly job_id: string;
   readonly state: string;
   readonly result: ScanResult | null;
+};
+export type PublicationReconciliationResult = {
+  readonly removed_files: number;
+  readonly removed_directories: number;
+  readonly preserved_nfo: number;
+  readonly missing_publications: number;
+  readonly queued_jobs: number;
+  readonly already_queued: number;
+  readonly deferred_publications: number;
+  readonly unsafe_entries: number;
+};
+export type PublicationReconciliationJob = {
+  readonly job_id: string;
+  readonly state: string;
+  readonly result: PublicationReconciliationResult | null;
 };

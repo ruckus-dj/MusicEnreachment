@@ -2,6 +2,7 @@ import { Icon as icon } from "../components/Icon";
 import { LibraryCatalog } from "../components/LibraryCatalog";
 import { titleFor } from "../domain/metadata";
 import { russianCountNoun } from "../domain/russianCount";
+import { DashboardScreen } from "../screens/DashboardScreen";
 import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { TrackDetail } from "../screens/TrackDetail";
@@ -81,6 +82,16 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           </div>
         </div>
         <nav aria-label="Основная навигация">
+          <button
+            type="button"
+            className={screen === "dashboard" ? "nav-item active" : "nav-item"}
+            aria-current={screen === "dashboard" ? "page" : undefined}
+            data-testid="nav-dashboard"
+            onClick={() => controller.navigate({ screen: "dashboard" })}
+          >
+            {icon("M4 4h6v6H4V4Zm10 0h6v10h-6V4ZM4 14h6v6H4v-6Zm10 4h6v2h-6v-2Z")}
+            <span>Дашборд</span>
+          </button>
           <div className="nav-library-group">
             <button
               type="button"
@@ -185,11 +196,13 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             <strong>
               {screen === "settings"
                 ? "Настройки"
-                : screen === "manual-actions"
-                  ? "Ручные действия"
-                  : screen === "workers"
-                    ? "Очередь worker’ов"
-                    : libraryTitle}
+                : screen === "dashboard"
+                  ? "Дашборд"
+                  : screen === "manual-actions"
+                    ? "Ручные действия"
+                    : screen === "workers"
+                      ? "Очередь worker’ов"
+                      : libraryTitle}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -214,73 +227,83 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               <p className="eyebrow">
                 {screen === "settings"
                   ? "Панель управления"
-                  : screen === "manual-actions"
-                    ? "Очередь оператора"
-                    : screen === "workers"
-                      ? "Состояние обработки"
-                      : screen === "track"
-                        ? "Инспектор трека"
-                        : "Ваша медиатека"}
+                  : screen === "dashboard"
+                    ? "Главный экран"
+                    : screen === "manual-actions"
+                      ? "Очередь оператора"
+                      : screen === "workers"
+                        ? "Состояние обработки"
+                        : screen === "track"
+                          ? "Инспектор трека"
+                          : "Ваша медиатека"}
               </p>
               <h1>
                 {screen === "settings"
                   ? "Настройки"
-                  : screen === "manual-actions"
-                    ? "Ручные действия"
-                    : screen === "workers"
-                      ? "Очередь worker’ов"
-                      : libraryTitle}
+                  : screen === "dashboard"
+                    ? "Дашборд"
+                    : screen === "manual-actions"
+                      ? "Ручные действия"
+                      : screen === "workers"
+                        ? "Очередь worker’ов"
+                        : libraryTitle}
               </h1>
               <p className="hero-copy">
                 {screen === "settings"
                   ? "Настройки runtime и провайдеров"
-                  : screen === "manual-actions"
-                    ? "Ошибки анализа и треки, для которых нельзя безопасно выбрать результат автоматически."
-                    : screen === "workers"
-                      ? "Сохранённые задачи анализа, публикации и восстановления. Состояние процесса отдельно не измеряется."
-                      : screen === "artists"
-                        ? "Медиатека по артистам. Откройте исполнителя, чтобы увидеть его альбомы."
-                        : screen === "albums"
-                          ? artist
-                            ? "Альбомы исполнителя и их состояние обработки."
-                            : "Все альбомы медиатеки, включая сборники с несколькими исполнителями."
-                          : screen === "tracks"
-                            ? artist || album
-                              ? "Треки выбранной группы. Выберите файл, чтобы открыть проверку и Final."
-                              : "Полный список треков медиатеки без привязки к одному исполнителю."
-                            : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
+                  : screen === "dashboard"
+                    ? "Фоновые операции для проверки, обновления и\u00a0переобработки медиатеки."
+                    : screen === "manual-actions"
+                      ? "Ошибки анализа и треки, для которых нельзя безопасно выбрать результат автоматически."
+                      : screen === "workers"
+                        ? "Сохранённые задачи анализа, публикации и восстановления. Состояние процесса отдельно не измеряется."
+                        : screen === "artists"
+                          ? "Медиатека по артистам. Откройте исполнителя, чтобы увидеть его альбомы."
+                          : screen === "albums"
+                            ? artist
+                              ? "Альбомы исполнителя и их состояние обработки."
+                              : "Все альбомы медиатеки, включая сборники с несколькими исполнителями."
+                            : screen === "tracks"
+                              ? artist || album
+                                ? "Треки выбранной группы. Выберите файл, чтобы открыть проверку и Final."
+                                : "Полный список треков медиатеки без привязки к одному исполнителю."
+                              : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
               </p>
             </div>
             <div className="hero-stat">
               <strong>
                 {screen === "settings"
                   ? "DB"
-                  : screen === "manual-actions"
-                    ? manualActionCount
-                    : screen === "workers"
-                      ? (controller.workerQueue?.jobs.length ?? "—")
-                      : screen === "artists"
-                        ? artists.length
-                        : screen === "albums"
-                          ? albums.length
-                          : screen === "tracks"
-                            ? albumTracks.length
-                            : "01"}
+                  : screen === "dashboard"
+                    ? "04"
+                    : screen === "manual-actions"
+                      ? manualActionCount
+                      : screen === "workers"
+                        ? (controller.workerQueue?.jobs.length ?? "—")
+                        : screen === "artists"
+                          ? artists.length
+                          : screen === "albums"
+                            ? albums.length
+                            : screen === "tracks"
+                              ? albumTracks.length
+                              : "01"}
               </strong>
               <span>
                 {screen === "settings"
                   ? "runtime параметров"
-                  : screen === "manual-actions"
-                    ? "треков"
-                    : screen === "workers"
-                      ? "активных задач"
-                      : screen === "artists"
-                        ? russianCountNoun(artists.length, ["артист", "артиста", "артистов"])
-                        : screen === "albums"
-                          ? russianCountNoun(albums.length, ["альбом", "альбома", "альбомов"])
-                          : screen === "tracks"
-                            ? russianCountNoun(albumTracks.length, ["трек", "трека", "треков"])
-                            : "трек"}
+                  : screen === "dashboard"
+                    ? "действия"
+                    : screen === "manual-actions"
+                      ? "треков"
+                      : screen === "workers"
+                        ? "активных задач"
+                        : screen === "artists"
+                          ? russianCountNoun(artists.length, ["артист", "артиста", "артистов"])
+                          : screen === "albums"
+                            ? russianCountNoun(albums.length, ["альбом", "альбома", "альбомов"])
+                            : screen === "tracks"
+                              ? russianCountNoun(albumTracks.length, ["трек", "трека", "треков"])
+                              : "трек"}
               </span>
             </div>
           </section>
@@ -292,81 +315,53 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               </button>
             </div>
           )}
-          {screen !== "track" &&
-            screen !== "settings" &&
-            screen !== "manual-actions" &&
-            screen !== "workers" && (
-              <div className="library-toolbar">
-                <label className="search">
-                  {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
-                  <input
-                    aria-label="Поиск"
-                    value={controller.query}
-                    onChange={(event) => controller.setQuery(event.target.value)}
-                    placeholder="Поиск по артисту, альбому или треку"
-                  />
-                </label>
-                <fieldset className="publication-filter">
-                  <legend>Публикация</legend>
-                  {(
-                    [
-                      ["all", "Все"],
-                      ["published", "Только опубликованные"],
-                      ["unpublished", "Только неопубликованные"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      type="button"
-                      className={
-                        controller.publicationFilter === value ? "secondary active" : "secondary"
-                      }
-                      aria-pressed={controller.publicationFilter === value}
-                      key={value}
-                      onClick={() => controller.setPublicationFilter(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </fieldset>
-                <div className="provider-actions">
+          {libraryActive && screen !== "track" && (
+            <div className="library-toolbar">
+              <label className="search">
+                {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
+                <input
+                  aria-label="Поиск"
+                  value={controller.query}
+                  onChange={(event) => controller.setQuery(event.target.value)}
+                  placeholder="Поиск по артисту, альбому или треку"
+                />
+              </label>
+              <fieldset className="publication-filter">
+                <legend>Публикация</legend>
+                {(
+                  [
+                    ["all", "Все"],
+                    ["published", "Только опубликованные"],
+                    ["unpublished", "Только неопубликованные"],
+                  ] as const
+                ).map(([value, label]) => (
                   <button
                     type="button"
-                    className="secondary"
-                    disabled={
-                      controller.refreshingMetadata ||
-                      controller.scanning ||
-                      controller.reprocessing
+                    className={
+                      controller.publicationFilter === value ? "secondary active" : "secondary"
                     }
-                    onClick={() => void controller.refreshMetadata()}
+                    aria-pressed={controller.publicationFilter === value}
+                    key={value}
+                    onClick={() => controller.setPublicationFilter(value)}
                   >
-                    {controller.refreshingMetadata
-                      ? "Ставим пары в очередь…"
-                      : "Обновить подтверждённые пары MusicBrainz"}
+                    {label}
                   </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={controller.reprocessing || controller.refreshingMetadata}
-                    onClick={() => void controller.reprocessAll()}
-                  >
-                    {controller.reprocessing ? "Ставим в очередь…" : "Переобработать всю медиатеку"}
-                  </button>
-                  <button
-                    type="button"
-                    className="primary scan"
-                    disabled={
-                      controller.scanning ||
-                      controller.reprocessing ||
-                      controller.refreshingMetadata
-                    }
-                    onClick={() => void controller.scan()}
-                  >
-                    {controller.scanning ? "Сканируем…" : "Сканировать новые и изменённые"}
-                  </button>
-                </div>
-              </div>
-            )}
-          {screen === "settings" ? (
+                ))}
+              </fieldset>
+            </div>
+          )}
+          {screen === "dashboard" ? (
+            <DashboardScreen
+              scanning={controller.scanning}
+              reprocessing={controller.reprocessing}
+              refreshingMetadata={controller.refreshingMetadata}
+              reconcilingPublications={controller.reconcilingPublications}
+              onScan={() => void controller.scan()}
+              onReprocessAll={() => void controller.reprocessAll()}
+              onRefreshMetadata={() => void controller.refreshMetadata()}
+              onReconcilePublications={() => void controller.reconcilePublications()}
+            />
+          ) : screen === "settings" ? (
             <SettingsScreen
               draft={controller.settingsDraft}
               loading={controller.settingsLoading}

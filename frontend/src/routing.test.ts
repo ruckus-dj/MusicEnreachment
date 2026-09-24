@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseRoute, routePath } from "./routing";
 
 describe("parseRoute", () => {
+  it("uses the dashboard as the root screen", () => {
+    expect(parseRoute("/")).toEqual({ screen: "dashboard" });
+    expect(parseRoute("/dashboard")).toEqual({ screen: "dashboard" });
+    expect(routePath({ screen: "dashboard" })).toBe("/dashboard");
+  });
+
   it("ignores accidental trailing whitespace in track identifiers", () => {
     expect(
       parseRoute(

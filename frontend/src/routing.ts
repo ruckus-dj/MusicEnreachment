@@ -32,12 +32,13 @@ export function parseRoute(pathname: string, search = ""): Route {
   const artistName = artistMissing ? "" : (params.get("artist_name") ?? "");
   const albumMissing = params.get("album_missing") === "true";
   const sourceId = decodeRouteIdentifier(params.get("source_id") ?? undefined);
+  if (parts.length === 0 || parts[0] === "dashboard") return { screen: "dashboard" };
   if (parts[0] === "settings") return { screen: "settings" };
   if (parts[0] === "manual-actions") {
     return { screen: "manual-actions", manualActionFilter: manualActionFilter(search) };
   }
   if (parts[0] === "workers") return { screen: "workers" };
-  if (parts[0] !== "library") return { screen: "artists", publicationFilter: filter };
+  if (parts[0] !== "library") return { screen: "dashboard" };
   if (parts[1] === "albums")
     return {
       screen: "albums",
@@ -105,6 +106,7 @@ export function parseRoute(pathname: string, search = ""): Route {
 }
 
 export function routePath(route: Route): string {
+  if (route.screen === "dashboard") return "/dashboard";
   if (route.screen === "settings") return "/settings";
   if (route.screen === "manual-actions")
     return `/manual-actions?action=${route.manualActionFilter ?? "analysis-error"}`;

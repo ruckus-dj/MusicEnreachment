@@ -11,6 +11,7 @@ import type {
   ManualSourceSelection,
   MusicBrainzCandidateLookup,
   MusicBrainzCandidateLookupResult,
+  PublicationReconciliationJob,
   SourceRoot,
   SourceRootCandidateList,
   SourceRootCreate,
@@ -143,6 +144,16 @@ export function getLibraryStatus(): Promise<LibraryStatus> {
 
 export function refreshLibraryMetadata(): Promise<MetadataRefreshResult> {
   return api<MetadataRefreshResult>("/api/library/metadata/refresh", { method: "POST" });
+}
+
+export function startPublicationReconciliation(): Promise<PublicationReconciliationJob> {
+  return api<PublicationReconciliationJob>("/api/reconciliation/publications", { method: "POST" });
+}
+
+export function getPublicationReconciliation(jobId: string): Promise<PublicationReconciliationJob> {
+  return api<PublicationReconciliationJob>(
+    `/api/reconciliation/publications/${encodeURIComponent(jobId)}`,
+  );
 }
 
 export type ManualActionCounts = {
