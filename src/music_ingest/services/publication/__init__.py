@@ -15,6 +15,7 @@ from .attempts import (
     reserve_attempt,
 )
 from .cleanup import cleanup_attempt
+from .reconciliation import reconcile_publication_directory
 
 _POSTGRESQL_DIALECT: Final = 'postgresql'
 
@@ -50,6 +51,7 @@ __all__ = [
     'finalize_and_cleanup_attempt',
     'mark_staged',
     'reconcile_attempts',
+    'reconcile_publication_directory',
     'reserve_attempt',
     'try_acquire_publication_destination_lock',
 ]
