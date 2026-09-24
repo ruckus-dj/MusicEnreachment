@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, raiseload
 
 from music_ingest.models import (
     JobRecord,
@@ -36,6 +36,7 @@ def destination_conflict(
                 JobRecord.source_id == source.id,
                 JobRecord.kind.not_in(['acoustid_analysis', 'musicbrainz_analysis', 'final_publish']),
             )
+            .options(raiseload('*'))
             .order_by(JobRecord.created_at.desc())
         ).all()
     )

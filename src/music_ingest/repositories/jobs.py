@@ -375,6 +375,7 @@ class JobRepository:
                 JobRecord.kind == kind,
                 JobRecord.state.in_(['queued', 'running']),
             )
+            .options(raiseload('*'))
             .order_by(JobRecord.created_at.desc())
         )
         if active is not None:
@@ -403,6 +404,7 @@ class JobRepository:
             .where(JobRecord.release_mbid == release_mbid)
             .where(JobRecord.kind == 'artwork_enrichment')
             .where(JobRecord.state.in_(['queued', 'running']))
+            .options(raiseload('*'))
             .order_by(JobRecord.created_at.desc())
         )
         if active is not None:
@@ -428,7 +430,7 @@ class JobRepository:
         stale_before = now - lease_age
         statement = (
             select(JobRecord)
-            .options(selectinload(JobRecord.attempts))
+            .options(raiseload('*'), selectinload(JobRecord.attempts))
             .where(
                 (
                     (JobRecord.state == 'queued')

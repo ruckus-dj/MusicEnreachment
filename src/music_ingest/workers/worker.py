@@ -212,12 +212,16 @@ class ProcessingWorker:
 
     def _process(self, claimed: ClaimedJob, now: datetime) -> HandlerOutcome:
         if claimed.job.source_id is not None:
-            source = self._session.get(SourceRecord, claimed.job.source_id)
-            if source is not None and (
-                source.intake_state == 'replaced'
+            source_state = self._session.execute(
+                select(SourceRecord.intake_state, SourceRecord.source_metadata_revision).where(
+                    SourceRecord.id == claimed.job.source_id
+                )
+            ).one_or_none()
+            if source_state is not None and (
+                source_state.intake_state == 'replaced'
                 or (
                     claimed.job.source_metadata_revision is not None
-                    and claimed.job.source_metadata_revision != source.source_metadata_revision
+                    and claimed.job.source_metadata_revision != source_state.source_metadata_revision
                 )
             ):
                 claimed.attempt.state = 'succeeded'
