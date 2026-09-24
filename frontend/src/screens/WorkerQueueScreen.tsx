@@ -15,6 +15,7 @@ function jobLabel(kind: string): string {
     final_publish: "Публикация Final",
     musicbrainz_analysis: "Анализ MusicBrainz",
     musicbrainz_refresh: "Обновление подтверждённой пары MusicBrainz",
+    publication_reconciliation: "Проверка папки публикаций",
     reconciliation_scan: "Сверка источников",
     selection_refresh: "Обновление выбора",
     artwork_enrichment: "Обогащение обложкой",
