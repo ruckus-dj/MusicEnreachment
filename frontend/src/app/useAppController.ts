@@ -4,12 +4,13 @@ import {
   api,
   browseStorage,
   createSourceRoot,
+  getLibraryStatus,
   getStorageConfig,
   getWorkerQueue,
+  type LibraryStatus,
   type LibraryTrack,
   listLibraryAlbums,
   listLibraryArtists,
-  listLibraryRecords,
   listLibraryTracks,
   listManualActions,
   listSourceRootCandidates,
@@ -101,6 +102,7 @@ export type AppControllerModel = {
   publicationFilter: PublicationFilter;
   manualActionFilter: ManualActionFilter;
   manualActionCounts: Readonly<Record<ManualActionFilter, number>>;
+  libraryStatus: LibraryStatus;
   notice: string;
   loading: boolean;
   scanning: boolean;
@@ -208,6 +210,10 @@ export function useAppController(): AppControllerModel {
   const [manualActionCounts, setManualActionCounts] = useState<Record<ManualActionFilter, number>>({
     "analysis-error": 0,
     "needs-review": 0,
+  });
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus>({
+    total_track_count: 0,
+    has_analysis: false,
   });
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -328,9 +334,11 @@ export function useAppController(): AppControllerModel {
         return;
       }
       if (screen !== "tracks") {
-        const payload = await listLibraryRecords();
+        const status = await getLibraryStatus();
         if (!isCurrent()) return;
-        setItems(payload.items);
+        setLibraryStatus(status);
+        setCatalogTrackCount(status.total_track_count);
+        setItems([]);
         return;
       }
       const selectedAlbumId =
@@ -1173,6 +1181,7 @@ export function useAppController(): AppControllerModel {
     publicationFilter,
     manualActionFilter,
     manualActionCounts,
+    libraryStatus,
     notice,
     loading,
     scanning,

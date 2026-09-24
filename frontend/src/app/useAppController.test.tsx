@@ -585,8 +585,6 @@ describe("useAppController effective source", () => {
     };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url === "/api/library/records" && !init?.method)
-        return Response.json({ items: [detail] });
       if (url === "/api/library/records/record-1" && !init?.method) return Response.json(detail);
       if (url === "/api/library/records/record-1/effective-source") {
         expect(JSON.parse(String(init?.body))).toEqual({ source_id: "source-b" });
@@ -633,7 +631,9 @@ describe("useAppController worker queue", () => {
     };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/workers/queue") return Response.json(queue);
-      return Response.json({ items: [] });
+      if (String(input) === "/api/library/status")
+        return Response.json({ total_track_count: 3, has_analysis: true });
+      return Response.json({ detail: "unexpected request" }, { status: 500 });
     });
 
     render(<ControllerProbe />);
@@ -644,6 +644,10 @@ describe("useAppController worker queue", () => {
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === "/api/workers/queue"),
     ).toHaveLength(3);
+    expect(fetchMock).toHaveBeenCalledWith("/api/library/status", expect.anything());
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain(
+      "/api/library/records",
+    );
   });
 });
 
@@ -669,8 +673,6 @@ describe("useAppController MusicBrainz candidate lookup", () => {
     };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url === "/api/library/records" && !init?.method)
-        return Response.json({ items: [detail] });
       if (url === "/api/library/records/record-1" && !init?.method) return Response.json(detail);
       if (url.endsWith("/musicbrainz/release-candidates")) {
         expect(JSON.parse(String(init?.body))).toEqual({

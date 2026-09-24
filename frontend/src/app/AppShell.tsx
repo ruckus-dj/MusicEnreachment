@@ -23,7 +23,6 @@ const emptySummary: Summary = {
 export function AppShell({ controller }: { controller: AppControllerModel }) {
   const {
     screen,
-    items,
     tracks,
     loading,
     artist,
@@ -39,6 +38,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
     notice,
     watchedRecords,
     watchedLibraryUntil,
+    libraryStatus,
   } = controller;
   const manualActionCount = tracks.filter(
     ({ item, source }) =>
@@ -163,11 +163,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
         <div className="sidebar-bottom">
           <div className="storage">
             <span>Состояние</span>
-            <strong>
-              {items.some((item) => item.processing_state !== "complete")
-                ? "Есть анализ"
-                : "Готово"}
-            </strong>
+            <strong>{libraryStatus.has_analysis ? "Есть анализ" : "Готово"}</strong>
             <small>Исходники не изменяются</small>
           </div>
           <button

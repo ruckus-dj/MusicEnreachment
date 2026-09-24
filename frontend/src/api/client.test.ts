@@ -3,6 +3,7 @@ import type { SourceRoot } from "../types";
 import {
   api,
   createSourceRoot,
+  getLibraryStatus,
   listManualActions,
   listSourceRootCandidates,
   listSourceRoots,
@@ -23,7 +24,7 @@ describe("API error messages", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ detail }, { status: 500 }));
     try {
-      await expect(api("/api/library/records")).rejects.toMatchObject({
+      await expect(api("/api/library/status")).rejects.toMatchObject({
         name: "ApiError",
         status: 500,
         message,
@@ -35,6 +36,18 @@ describe("API error messages", () => {
 });
 
 describe("source-root API client", () => {
+  it("loads the compact library status", async () => {
+    const status = { total_track_count: 12, has_analysis: true };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(status));
+
+    await expect(getLibraryStatus()).resolves.toEqual(status);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/library/status",
+      expect.objectContaining({ headers: { "content-type": "application/json" } }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it("uses the list, candidate, create, and removal contracts", async () => {
     const root: SourceRoot = {
       id: "root-archive",
