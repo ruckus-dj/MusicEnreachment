@@ -72,7 +72,12 @@ from music_ingest.contracts.intake import (
 )
 from music_ingest.contracts.musicbrainz_genres import GenrePage
 from music_ingest.contracts.policies import ALLOWED_TAG_KEYS, FieldPolicy, GenrePolicy
-from music_ingest.contracts.reconciliation import ScanJobResponse, ScanResult
+from music_ingest.contracts.reconciliation import (
+    PublicationReconciliationJobResponse,
+    PublicationReconciliationResult,
+    ScanJobResponse,
+    ScanResult,
+)
 from music_ingest.contracts.settings import RuntimeSettings
 
 __all__ = [
@@ -123,6 +128,8 @@ __all__ = [
     'ProviderRetryRequest',
     'ProviderRetryResponse',
     'ProviderRetryResult',
+    'PublicationReconciliationJobResponse',
+    'PublicationReconciliationResult',
     'RecoveryResponse',
     'RecordingResponse',
     'RecordingSearchResponse',
