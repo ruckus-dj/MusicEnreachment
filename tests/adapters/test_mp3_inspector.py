@@ -4,6 +4,8 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
+import pytest
+
 from music_ingest.adapters.inspectors.mp3 import InspectionState, Mp3FindingKind, inspect_mp3
 
 
@@ -93,3 +95,16 @@ def test_inspect_mp3_malformed_container_quarantines_and_preserves_source(tmp_pa
     assert Mp3FindingKind.MALFORMED_CONTAINER in [finding.kind for finding in result.findings]
     assert result.ffprobe.return_code != 0
     assert _snapshot(source) == before
+
+
+def test_inspect_mp3_does_not_read_the_full_media_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _create_mp3(tmp_path, 'bounded.mp3')
+
+    def fail_full_read(_: Path) -> bytes:
+        raise AssertionError('inspection must not buffer the complete source file')
+
+    monkeypatch.setattr(Path, 'read_bytes', fail_full_read)
+
+    result = inspect_mp3(source)
+
+    assert result.state is InspectionState.VALID

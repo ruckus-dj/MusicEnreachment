@@ -45,8 +45,7 @@ class Mp3InspectionResult:
 def inspect_mp3(
     source_path: Path, *, ffprobe_command: str = 'ffprobe', timeout_seconds: float = 10.0
 ) -> Mp3InspectionResult:
-    payload = source_path.read_bytes()
-    findings, version, tag_size, malformed = _parse_mp3(payload)
+    findings, version, tag_size, malformed = _parse_mp3(source_path)
     ffprobe = run_tool(
         (
             ffprobe_command,
@@ -71,26 +70,36 @@ def inspect_mp3(
     return Mp3InspectionResult(state, findings, version, tag_size, ffprobe)
 
 
-def _parse_mp3(payload: bytes) -> tuple[tuple[Mp3Finding, ...], int | None, int | None, bool]:
-    offset, version, tag_size, id3_finding, malformed = _leading_id3v2(payload)
+def _parse_mp3(path: Path) -> tuple[tuple[Mp3Finding, ...], int | None, int | None, bool]:
+    file_size = path.stat().st_size
+    with path.open('rb') as source:
+        offset, version, tag_size, id3_finding, malformed = _leading_id3v2(source.read(10), file_size)
+        _ = source.seek(offset)
+        leading_run = source.read(_MAX_LEADING_RUN_IN_BYTES + 3)
     findings = (id3_finding,) if id3_finding is not None else ()
-    frame_offset = _first_mp3_frame_offset(payload, offset)
+    frame_offset = _first_mp3_frame_offset(leading_run, 0)
     if malformed or frame_offset is None:
         return findings + (Mp3Finding(Mp3FindingKind.MALFORMED_CONTAINER, offset, None),), version, tag_size, True
-    findings += (Mp3Finding(Mp3FindingKind.MP3_FRAME, frame_offset, 4),)
-    if len(payload) >= 128 and payload[-128:-125] == b'TAG':
-        findings += (Mp3Finding(Mp3FindingKind.TRAILING_ID3V1, len(payload) - 128, 128),)
+    findings += (Mp3Finding(Mp3FindingKind.MP3_FRAME, offset + frame_offset, 4),)
+    if file_size >= 128:
+        with path.open('rb') as source:
+            _ = source.seek(file_size - 128)
+            trailing_id3v1 = source.read(3) == b'TAG'
+    else:
+        trailing_id3v1 = False
+    if trailing_id3v1:
+        findings += (Mp3Finding(Mp3FindingKind.TRAILING_ID3V1, file_size - 128, 128),)
     return findings, version, tag_size, False
 
 
-def _leading_id3v2(payload: bytes) -> tuple[int, int | None, int | None, Mp3Finding | None, bool]:
+def _leading_id3v2(payload: bytes, file_size: int) -> tuple[int, int | None, int | None, Mp3Finding | None, bool]:
     if not payload.startswith(b'ID3'):
         return 0, None, None, None, False
     if len(payload) < 10 or payload[3] not in (2, 3, 4) or any(value & 0x80 for value in payload[6:10]):
         return 0, None, None, None, True
     tag_size = sum(value << (7 * index) for index, value in enumerate(reversed(payload[6:10])))
     total_size = 10 + tag_size + (10 if payload[3] == 4 and payload[5] & 0x10 else 0)
-    if total_size > len(payload):
+    if total_size > file_size:
         return 0, payload[3], tag_size, None, True
     return total_size, payload[3], tag_size, Mp3Finding(Mp3FindingKind.ID3V2, 0, total_size), False
 
