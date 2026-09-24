@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import final, override
+from typing import BinaryIO, final, override
 
 from music_ingest.adapters.inspectors._tool import ToolEvidence, ToolState
 from music_ingest.adapters.inspectors.decoder import decoder_evidence
@@ -86,15 +86,15 @@ class FlacSanitizationResult:
 class _FlacLayout:
     streaminfo_payload: bytes
     streaminfo: FlacStreamIdentity
-    audio_frames: bytes
+    audio_start: int
+    audio_end: int
     findings: tuple[FlacSanitizationFinding, ...]
     has_trailing_id3v1: bool
 
 
 def sanitize_flac(request: FlacSanitizationRequest) -> FlacSanitizationResult:
     source_path, output_path, staging_directory = _validated_paths(request)
-    payload = source_path.read_bytes()
-    source_layout = _parse_layout(payload, source_path)
+    source_layout = _parse_layout(source_path)
     preflight = decoder_evidence(
         source_path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds
     )
@@ -113,12 +113,12 @@ def sanitize_flac(request: FlacSanitizationRequest) -> FlacSanitizationResult:
         )
         temporary_path = Path(temporary_name)
         with os.fdopen(file_descriptor, 'wb') as temporary_file:
-            _ = temporary_file.write(_sanitized_payload(source_layout))
+            _ = temporary_file.write(b'fLaC\x80\x00\x00\x22' + source_layout.streaminfo_payload)
+            _copy_audio_frames(source_path, source_layout, temporary_file)
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
 
-        sanitized_payload = temporary_path.read_bytes()
-        output_layout = _parse_layout(sanitized_payload, temporary_path)
+        output_layout = _parse_layout(temporary_path)
         _validate_output_layout(source_layout, output_layout, temporary_path)
         postflight = decoder_evidence(
             temporary_path, ffmpeg_command=request.ffmpeg_command, timeout_seconds=request.timeout_seconds
@@ -173,45 +173,58 @@ def _copy_file_exclusive(source: Path, destination: Path) -> None:
         raise
 
 
-def _parse_layout(payload: bytes, path: Path) -> _FlacLayout:
-    marker_offset, leading_finding = _leading_id3v2(payload, path)
-    if payload[marker_offset : marker_offset + 4] != b'fLaC':
-        raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
-    offset = marker_offset + 4
-    block_number = 0
-    findings = (leading_finding,) if leading_finding is not None else ()
-    streaminfo_payload: bytes | None = None
-    while True:
-        if len(payload) - offset < 4:
+def _parse_layout(path: Path) -> _FlacLayout:
+    file_size = path.stat().st_size
+    with path.open('rb') as source:
+        marker_offset, leading_finding = _leading_id3v2(source, path, file_size)
+        if source.read(4) != b'fLaC':
             raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
-        header = payload[offset]
-        block_type = header & 0x7F
-        block_size = int.from_bytes(payload[offset + 1 : offset + 4], 'big')
-        data_offset = offset + 4
-        block_end = data_offset + block_size
-        if block_end > len(payload):
-            raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
-        block_payload = payload[data_offset:block_end]
-        if block_number == 0 and (block_type != 0 or block_size != 34):
-            raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
-        if block_type == 0:
-            if streaminfo_payload is not None:
+        offset = marker_offset + 4
+        block_number = 0
+        findings = (leading_finding,) if leading_finding is not None else ()
+        streaminfo_payload: bytes | None = None
+        while True:
+            header_bytes = source.read(4)
+            if len(header_bytes) != 4:
                 raise FlacSanitizationFailure(
                     FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path)
                 )
-            streaminfo_payload = block_payload
+            header = header_bytes[0]
+            block_type = header & 0x7F
+            block_size = int.from_bytes(header_bytes[1:4], 'big')
+            data_offset = offset + 4
+            block_end = data_offset + block_size
+            if block_end > file_size:
+                raise FlacSanitizationFailure(
+                    FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path)
+                )
+            if block_number == 0 and (block_type != 0 or block_size != 34):
+                raise FlacSanitizationFailure(
+                    FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path)
+                )
+            if block_type == 0:
+                if streaminfo_payload is not None:
+                    raise FlacSanitizationFailure(
+                        FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path)
+                    )
+                streaminfo_payload = source.read(block_size)
+            else:
+                findings += (
+                    FlacSanitizationFinding(FlacSanitizationFindingKind.METADATA_BLOCK_DROPPED, offset, block_size),
+                )
+                _ = source.seek(block_size, os.SEEK_CUR)
+            offset = block_end
+            block_number += 1
+            if header & 0x80:
+                break
+        if streaminfo_payload is None:
+            raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
+        if file_size - offset >= 128:
+            _ = source.seek(file_size - 128)
+            has_trailing_id3v1 = source.read(3) == b'TAG'
         else:
-            findings += (
-                FlacSanitizationFinding(FlacSanitizationFindingKind.METADATA_BLOCK_DROPPED, offset, block_size),
-            )
-        offset = block_end
-        block_number += 1
-        if header & 0x80:
-            break
-    if streaminfo_payload is None:
-        raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
-    has_trailing_id3v1 = len(payload) - offset >= 128 and payload[-128:-125] == b'TAG'
-    audio_end = len(payload) - 128 if has_trailing_id3v1 else len(payload)
+            has_trailing_id3v1 = False
+    audio_end = file_size - 128 if has_trailing_id3v1 else file_size
     if audio_end <= offset:
         raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
     if has_trailing_id3v1:
@@ -219,14 +232,17 @@ def _parse_layout(payload: bytes, path: Path) -> _FlacLayout:
     return _FlacLayout(
         streaminfo_payload,
         _streaminfo_identity(streaminfo_payload),
-        payload[offset:audio_end],
+        offset,
+        audio_end,
         findings,
         has_trailing_id3v1,
     )
 
 
-def _leading_id3v2(payload: bytes, path: Path) -> tuple[int, FlacSanitizationFinding | None]:
+def _leading_id3v2(source: BinaryIO, path: Path, file_size: int) -> tuple[int, FlacSanitizationFinding | None]:
+    payload = source.read(10)
     if not payload.startswith(b'ID3'):
+        _ = source.seek(0)
         return 0, None
     if len(payload) < 10 or payload[3] not in (2, 3, 4) or payload[5] & 0x0F:
         raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
@@ -242,10 +258,13 @@ def _leading_id3v2(payload: bytes, path: Path) -> tuple[int, FlacSanitizationFin
     )
     footer_size = 10 if payload[3] == 4 and payload[5] & 0x10 else 0
     total_size = 10 + tag_size + footer_size
-    if total_size > len(payload) or (
-        footer_size and payload[10 + tag_size : total_size] != b'3DI' + payload[3:6] + payload[6:10]
-    ):
+    if total_size > file_size:
         raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
+    if footer_size:
+        _ = source.seek(10 + tag_size)
+        if source.read(10) != b'3DI' + payload[3:6] + payload[6:10]:
+            raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.MALFORMED_CONTAINER, path))
+    _ = source.seek(total_size)
     return total_size, FlacSanitizationFinding(FlacSanitizationFindingKind.LEADING_ID3V2_REMOVED, 0, total_size)
 
 
@@ -260,8 +279,18 @@ def _streaminfo_identity(streaminfo_payload: bytes) -> FlacStreamIdentity:
     )
 
 
-def _sanitized_payload(layout: _FlacLayout) -> bytes:
-    return b'fLaC\x80\x00\x00\x22' + layout.streaminfo_payload + layout.audio_frames
+def _copy_audio_frames(source_path: Path, layout: _FlacLayout, output: BinaryIO) -> None:
+    remaining = layout.audio_end - layout.audio_start
+    with source_path.open('rb') as source:
+        _ = source.seek(layout.audio_start)
+        while remaining:
+            chunk = source.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise FlacSanitizationFailure(
+                    FlacSanitizationError(FlacSanitizationErrorKind.FRAME_MISMATCH, source_path)
+                )
+            _ = output.write(chunk)
+            remaining -= len(chunk)
 
 
 def _validate_output_layout(source: _FlacLayout, output: _FlacLayout, temporary_path: Path) -> None:
@@ -269,7 +298,7 @@ def _validate_output_layout(source: _FlacLayout, output: _FlacLayout, temporary_
         raise FlacSanitizationFailure(
             FlacSanitizationError(FlacSanitizationErrorKind.IDENTITY_MISMATCH, temporary_path)
         )
-    if output.audio_frames != source.audio_frames:
+    if output.audio_end - output.audio_start != source.audio_end - source.audio_start:
         raise FlacSanitizationFailure(FlacSanitizationError(FlacSanitizationErrorKind.FRAME_MISMATCH, temporary_path))
     if output.findings or output.has_trailing_id3v1:
         raise FlacSanitizationFailure(

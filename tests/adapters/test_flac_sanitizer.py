@@ -273,3 +273,19 @@ def test_sanitize_flac_does_not_clobber_destination_created_at_publish_seam(
     assert output.read_bytes() == victim
     assert tuple(staging.iterdir()) == (output,)
     assert _source_snapshot(source) == source_before
+
+
+def test_sanitize_flac_does_not_buffer_source_or_output_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _create_flac(tmp_path, 'bounded.flac')
+    staging = tmp_path / 'staging'
+    staging.mkdir()
+    output = staging / 'bounded.flac'
+
+    def fail_full_read(_: Path) -> bytes:
+        raise AssertionError('sanitization must not buffer complete media files')
+
+    monkeypatch.setattr(Path, 'read_bytes', fail_full_read)
+
+    result = sanitize_flac(FlacSanitizationRequest(source, output, staging))
+
+    assert result.output_path == output
