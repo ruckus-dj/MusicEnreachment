@@ -14,6 +14,7 @@ def create_router() -> APIRouter:
         return {'status': 'ok', 'service': 'music-ingest'}
 
     @router.get('/', response_class=HTMLResponse)
+    @router.get('/dashboard', response_class=HTMLResponse)
     @router.get('/review', response_class=HTMLResponse)
     @router.get('/settings', response_class=HTMLResponse)
     @router.get('/manual-actions', response_class=HTMLResponse)
