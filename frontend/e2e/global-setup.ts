@@ -60,7 +60,7 @@ export default async function globalSetup(_config: FullConfig) {
       let lastBody = "";
       let catalogReady = false;
       while (Date.now() < deadline) {
-        const library = await api.get("/api/library/records");
+        const library = await api.get("/api/library/status");
         lastStatus = library.status();
         lastBody = await library.text();
         if (library.ok()) {
@@ -68,9 +68,9 @@ export default async function globalSetup(_config: FullConfig) {
           if (
             typeof payload === "object" &&
             payload !== null &&
-            "items" in payload &&
-            Array.isArray(payload.items) &&
-            payload.items.length > 0
+            "total_track_count" in payload &&
+            typeof payload.total_track_count === "number" &&
+            payload.total_track_count > 0
           ) {
             catalogReady = true;
             break;
