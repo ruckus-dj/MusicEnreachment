@@ -31,7 +31,7 @@ class JobRecord(Base):
             + 'CASE WHEN library_record_id IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN release_mbid IS NOT NULL THEN 1 ELSE 0 END + '
             + 'CASE WHEN folder_path IS NOT NULL THEN 1 ELSE 0 END) = 1 OR '
-            + "kind = 'reconciliation_scan'",
+            + "kind IN ('reconciliation_scan', 'publication_reconciliation')",
             name='ck_jobs_target_or_reconciliation',
         ),
         CheckConstraint(
@@ -109,6 +109,14 @@ _ = Index(
     unique=True,
     postgresql_where=(JobRecord.kind == 'reconciliation_scan') & JobRecord.state.in_(['queued', 'running']),
     sqlite_where=(JobRecord.kind == 'reconciliation_scan') & JobRecord.state.in_(['queued', 'running']),
+)
+
+_ = Index(
+    'uq_active_publication_reconciliation_job',
+    JobRecord.kind,
+    unique=True,
+    postgresql_where=(JobRecord.kind == 'publication_reconciliation') & JobRecord.state.in_(['queued', 'running']),
+    sqlite_where=(JobRecord.kind == 'publication_reconciliation') & JobRecord.state.in_(['queued', 'running']),
 )
 
 
