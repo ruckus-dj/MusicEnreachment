@@ -51,8 +51,7 @@ def inspect_flac(
     timeout_seconds: float = 10.0,
     cached_decoder_evidence: ToolEvidence | None = None,
 ) -> FlacInspectionResult:
-    payload = source_path.read_bytes()
-    findings, malformed = _parse_flac(payload)
+    findings, malformed = _parse_flac(source_path)
     flac_test = cached_decoder_evidence or decoder_evidence(
         source_path, ffmpeg_command=ffmpeg_command, timeout_seconds=timeout_seconds
     )
@@ -69,44 +68,50 @@ def inspect_flac(
     return FlacInspectionResult(state, findings, flac_test)
 
 
-def _parse_flac(payload: bytes) -> tuple[tuple[FlacFinding, ...], bool]:
-    offset, id3_finding, malformed_id3 = _leading_id3v2(payload)
-    findings = (id3_finding,) if id3_finding is not None else ()
-    if malformed_id3 or payload[offset : offset + 4] != b'fLaC':
-        return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, None),), True
-    findings += (FlacFinding(FlacFindingKind.FLAC_MARKER, offset, 4),)
-    offset += 4
-    is_last = False
-    first_block = True
-    while not is_last:
-        if len(payload) - offset < 4:
+def _parse_flac(path: Path) -> tuple[tuple[FlacFinding, ...], bool]:
+    file_size = path.stat().st_size
+    with path.open('rb') as source:
+        offset, id3_finding, malformed_id3 = _leading_id3v2(source.read(10), file_size)
+        findings = (id3_finding,) if id3_finding is not None else ()
+        if malformed_id3 or source.seek(offset) != offset or source.read(4) != b'fLaC':
             return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, None),), True
-        header = payload[offset]
-        is_last = bool(header & 0x80)
-        block_type = header & 0x7F
-        block_size = int.from_bytes(payload[offset + 1 : offset + 4], 'big')
-        data_offset = offset + 4
-        if len(payload) - data_offset < block_size:
-            return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, block_size),), True
-        kind = _block_kind(block_type)
-        findings += (FlacFinding(kind, offset, block_size),)
-        if first_block and (block_type != 0 or block_size != 34):
-            return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, block_size),), True
-        first_block = False
-        offset = data_offset + block_size
-    if payload.endswith(b'TAG' + payload[-125:]) and len(payload) >= 128:
-        findings += (FlacFinding(FlacFindingKind.TRAILING_ID3V1, len(payload) - 128, 128),)
+        findings += (FlacFinding(FlacFindingKind.FLAC_MARKER, offset, 4),)
+        offset += 4
+        is_last = False
+        first_block = True
+        while not is_last:
+            header_bytes = source.read(4)
+            if len(header_bytes) != 4:
+                return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, None),), True
+            header = header_bytes[0]
+            is_last = bool(header & 0x80)
+            block_type = header & 0x7F
+            block_size = int.from_bytes(header_bytes[1:4], 'big')
+            data_offset = offset + 4
+            if file_size - data_offset < block_size:
+                return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, block_size),), True
+            kind = _block_kind(block_type)
+            findings += (FlacFinding(kind, offset, block_size),)
+            if first_block and (block_type != 0 or block_size != 34):
+                return findings + (FlacFinding(FlacFindingKind.MALFORMED_CONTAINER, offset, block_size),), True
+            first_block = False
+            offset = data_offset + block_size
+            _ = source.seek(offset)
+        if file_size >= 128:
+            _ = source.seek(file_size - 128)
+            if source.read(3) == b'TAG':
+                findings += (FlacFinding(FlacFindingKind.TRAILING_ID3V1, file_size - 128, 128),)
     return findings, False
 
 
-def _leading_id3v2(payload: bytes) -> tuple[int, FlacFinding | None, bool]:
+def _leading_id3v2(payload: bytes, file_size: int) -> tuple[int, FlacFinding | None, bool]:
     if not payload.startswith(b'ID3'):
         return 0, None, False
     if len(payload) < 10 or any(value & 0x80 for value in payload[6:10]):
         return 0, None, True
     tag_size = sum(value << (7 * index) for index, value in enumerate(reversed(payload[6:10])))
     total_size = 10 + tag_size
-    if total_size > len(payload):
+    if total_size > file_size:
         return 0, None, True
     return total_size, FlacFinding(FlacFindingKind.LEADING_ID3V2, 0, total_size), False
 

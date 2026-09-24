@@ -4,6 +4,8 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import run
 
+import pytest
+
 from music_ingest.adapters.inspectors.flac import FlacFindingKind, InspectionState, inspect_flac
 
 
@@ -100,3 +102,16 @@ def test_inspect_flac_when_tool_timeout_quarantines_and_preserves_source(tmp_pat
     assert FlacFindingKind.FLAC_TEST_TIMED_OUT in [finding.kind for finding in result.findings]
     assert result.flac_test.return_code is None
     assert _snapshot(source) == before
+
+
+def test_inspect_flac_does_not_read_the_full_media_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _create_flac(tmp_path, 'bounded.flac')
+
+    def fail_full_read(_: Path) -> bytes:
+        raise AssertionError('inspection must not buffer the complete source file')
+
+    monkeypatch.setattr(Path, 'read_bytes', fail_full_read)
+
+    result = inspect_flac(source)
+
+    assert result.state is InspectionState.VALID
