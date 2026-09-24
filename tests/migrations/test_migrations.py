@@ -12,8 +12,9 @@ from alembic import command
 from tests.support.paths import ALEMBIC_DIRECTORY
 
 _MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
-_HEAD_REVISION = '20260923_0031'
+_HEAD_REVISION = '20260924_0032'
 _FOLDER_CANDIDATE_INDEXES_PREVIOUS_REVISION = '20260923_0030'
+_LIBRARY_STATUS_INDEX_PREVIOUS_REVISION = '20260923_0031'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'
 _LYRIC_STATE_COLUMNS = frozenset(
@@ -27,6 +28,7 @@ _LYRIC_STATE_COLUMNS = frozenset(
     }
 )
 _LRCLIB_FETCH_INDEX = 'uq_active_lrclib_fetch_job'
+_LIBRARY_STATUS_INDEX = 'ix_source_records_present_library_record_id'
 _FOLDER_CANDIDATE_INDEXES = frozenset(
     {
         ('provider_candidate_runs', 'ix_provider_candidate_runs_source_id', ('source_id',), False),
@@ -140,6 +142,28 @@ def test_folder_candidate_indexes_when_upgraded_and_downgraded_match_loader_quer
         # Then: the lookup indexes exist at head and are fully removed by the reversible migration.
         assert upgraded_indexes >= _FOLDER_CANDIDATE_INDEXES
         assert _FOLDER_CANDIDATE_INDEXES.isdisjoint(downgraded_indexes)
+    finally:
+        engine.dispose()
+
+
+def test_library_status_index_when_upgraded_and_downgraded_matches_active_source_lookup(tmp_path: Path) -> None:
+    # Given: an isolated database at the current migration head.
+    database_path = tmp_path / 'library-status-index.db'
+    config = Config()
+    config.set_main_option('script_location', str(_MIGRATION_DIRECTORY))
+    config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
+    engine = create_engine(f'sqlite+pysqlite:///{database_path}')
+
+    try:
+        # When: the status index migration is applied and then rolled back.
+        command.upgrade(config, 'head')
+        upgraded_indexes = {index['name'] for index in inspect(engine).get_indexes('source_records')}
+        command.downgrade(config, _LIBRARY_STATUS_INDEX_PREVIOUS_REVISION)
+        downgraded_indexes = {index['name'] for index in inspect(engine).get_indexes('source_records')}
+
+        # Then: the active-source lookup index follows the migration boundary.
+        assert _LIBRARY_STATUS_INDEX in upgraded_indexes
+        assert _LIBRARY_STATUS_INDEX not in downgraded_indexes
     finally:
         engine.dispose()
 

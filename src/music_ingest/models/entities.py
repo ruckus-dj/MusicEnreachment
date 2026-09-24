@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import final
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -23,7 +23,15 @@ from music_ingest.models.workflow import (
 @final
 class SourceRecord(Base):
     __tablename__ = 'source_records'
-    __table_args__ = (Index('ix_source_records_library_record_id', 'library_record_id'),)
+    __table_args__ = (
+        Index('ix_source_records_library_record_id', 'library_record_id'),
+        Index(
+            'ix_source_records_present_library_record_id',
+            'library_record_id',
+            postgresql_where=text("intake_state = 'present'"),
+            sqlite_where=text("intake_state = 'present'"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     source_path: Mapped[str] = mapped_column(Text, nullable=False)

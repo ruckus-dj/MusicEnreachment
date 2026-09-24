@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload, raiseload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -75,6 +75,12 @@ class CatalogSourceTags:
     publication_state: str
     tags: dict[str, str]
     lyrics_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryStatus:
+    total_track_count: int
+    has_analysis: bool
 
 
 def new_library_record(session: Session, now: datetime | None = None) -> LibraryRecord:
@@ -533,23 +539,31 @@ def library_record_detail(session: Session, library_record_id: str) -> LibraryRe
     return record
 
 
-def library_records(session: Session) -> list[LibraryRecord]:
-    """Load stable records for the source/publication catalog."""
-    return list(
-        session.scalars(
-            select(LibraryRecord)
-            .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
-            .options(
-                raiseload('*'),
-                selectinload(LibraryRecord.sources).options(
-                    raiseload('*'),
-                    selectinload(SourceRecord.tag_observations),
-                ),
-                selectinload(LibraryRecord.publications),
-                selectinload(LibraryRecord.metadata_revisions),
-            )
-        ).all()
-    )
+def library_status(session: Session) -> LibraryStatus:
+    """Count active tracks and report whether any still require processing."""
+    total_track_count, processing_track_count = session.execute(
+        select(
+            func.count(func.distinct(LibraryRecord.id)),
+            func.count(func.distinct(LibraryRecord.id)).filter(LibraryRecord.processing_state != 'complete'),
+        )
+        .select_from(LibraryRecord)
+        .outerjoin(
+            SourceRecord,
+            and_(SourceRecord.library_record_id == LibraryRecord.id, SourceRecord.intake_state == 'present'),
+        )
+        .outerjoin(
+            LibraryPublicationRecord,
+            and_(
+                LibraryPublicationRecord.library_record_id == LibraryRecord.id,
+                LibraryPublicationRecord.state == 'current',
+            ),
+        )
+        .where(
+            or_(SourceRecord.id.is_not(None), LibraryPublicationRecord.id.is_not(None)),
+            ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+        )
+    ).one()
+    return LibraryStatus(total_track_count=int(total_track_count), has_analysis=processing_track_count > 0)
 
 
 def _manual_action_predicate(action: Literal['analysis-error', 'needs-review']) -> ColumnElement[bool]:

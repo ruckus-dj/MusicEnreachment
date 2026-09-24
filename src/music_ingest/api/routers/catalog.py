@@ -18,7 +18,7 @@ from music_ingest.contracts import (
     LibraryArtistResponse,
     LibraryCatalogQuery,
     LibraryPublicationQuery,
-    LibraryRecordListResponse,
+    LibraryStatusResponse,
     LibraryTrackListResponse,
     LibraryTrackQuery,
     LibraryTrackResponse,
@@ -38,7 +38,7 @@ from music_ingest.services.library.service import (
     library_manual_action_counts,
     library_manual_action_records,
     library_record_detail,
-    library_records,
+    library_status,
 )
 
 
@@ -115,12 +115,13 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                 )
             )
 
-    @router.get('/api/library/records', response_model=LibraryRecordListResponse)
-    def library_catalog() -> LibraryRecordListResponse:
+    @router.get('/api/library/status', response_model=LibraryStatusResponse)
+    def library_catalog_status() -> LibraryStatusResponse:
         with session_factory() as session:
-            records = sorted(library_records(session), key=_catalog_sort_key)
-            return LibraryRecordListResponse(
-                items=tuple(_catalog_record_response(session, record) for record in records)
+            status = library_status(session)
+            return LibraryStatusResponse(
+                total_track_count=status.total_track_count,
+                has_analysis=status.has_analysis,
             )
 
     @router.get('/api/library/manual-actions', response_model=ManualActionListResponse)

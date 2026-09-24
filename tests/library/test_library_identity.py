@@ -1362,7 +1362,7 @@ def test_library_api_hides_legacy_musicbrainz_recording_candidates() -> None:
     assert not _candidate_is_displayable(release)
 
 
-def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path: Path) -> None:
+def test_manual_actions_sort_records_by_artist_album_track_and_title(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "library-order.db"}')
     Base.metadata.create_all(engine)
     timestamp = datetime(2026, 8, 4, tzinfo=UTC)
@@ -1373,7 +1373,12 @@ def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path:
     )
     with Session(engine) as session:
         for record_id, source_id, artist, album, title, track_number in records:
-            record = LibraryRecord(id=record_id, created_at=timestamp, updated_at=timestamp)
+            record = LibraryRecord(
+                id=record_id,
+                processing_state='needs_review',
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
             source = SourceRecord(
                 id=source_id,
                 source_path=f'/incoming/{source_id}.flac',
@@ -1397,24 +1402,23 @@ def test_library_catalog_sorts_records_by_artist_album_track_and_title(tmp_path:
 
     client = TestClient(create_app(lambda: Session(engine)))
 
-    response = client.get('/api/library/records')
+    response = client.get('/api/library/manual-actions?action=needs-review')
 
     assert response.status_code == 200
     assert [item['record_id'] for item in response.json()['items']] == ['record-a1', 'record-a2', 'record-b']
 
 
-def test_library_catalog_keeps_empty_record_after_source_reassignment(tmp_path: Path) -> None:
+def test_library_status_ignores_empty_record_after_source_reassignment(tmp_path: Path) -> None:
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "empty-record.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         session.add(LibraryRecord(id='empty-record', created_at=datetime.now(UTC), updated_at=datetime.now(UTC)))
         session.commit()
 
-    response = TestClient(create_app(lambda: Session(engine))).get('/api/library/records')
+    response = TestClient(create_app(lambda: Session(engine))).get('/api/library/status')
 
     assert response.status_code == 200
-    assert response.json()['items'][0]['record_id'] == 'empty-record'
-    assert response.json()['items'][0]['sources'] == []
+    assert response.json() == {'total_track_count': 0, 'has_analysis': False}
 
 
 def test_library_catalog_counts_only_present_sources(tmp_path: Path) -> None:

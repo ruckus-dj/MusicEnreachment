@@ -293,10 +293,11 @@ class LibraryRecordSummaryResponse(BaseModel):
     publications: tuple[dict[str, object], ...] = ()
 
 
-class LibraryRecordListResponse(BaseModel):
+class LibraryStatusResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    items: tuple[LibraryRecordSummaryResponse, ...]
+    total_track_count: int = Field(ge=0)
+    has_analysis: bool
 
 
 ManualActionFilter = Literal['analysis-error', 'needs-review']

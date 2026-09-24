@@ -85,9 +85,9 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Baseline captured before app.py was decomposed; router extraction must not alter the public API schema.
     # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
-    # Refreshed when MusicBrainz refresh and identity updates adopted complete recording-release pairs.
+    # Refreshed when the private record collection was replaced by compact library status.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '5964d061d3953a76625bd1d585eac6f2265349fe072f01f812a14d199c25dbc1'
+        '27e7602135e9ac1310822466fd5309f0c6f3419c727cc0980fa220d60e481241'
     )
 
 

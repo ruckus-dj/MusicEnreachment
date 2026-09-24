@@ -484,7 +484,7 @@ def test_reprocess_all_does_not_load_source_evidence(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ('path', 'allowed_evidence_tables'),
     [
-        ('/api/library/records', frozenset({'source_tag_observations'})),
+        ('/api/library/status', frozenset[str]()),
         ('/api/library/artwork/reprocess', frozenset[str]()),
         ('/api/library/recovery', frozenset[str]()),
         ('/api/library/providers/retry', frozenset({'provider_attempts'})),
@@ -539,7 +539,7 @@ def test_bulk_library_routes_load_only_required_source_evidence(
     }
     with _captured_selects(engine) as selected:
         response = TestClient(create_app(lambda: Session(engine))).request(
-            'GET' if path == '/api/library/records' else 'POST', path
+            'GET' if path == '/api/library/status' else 'POST', path
         )
 
     assert response.status_code == 200
