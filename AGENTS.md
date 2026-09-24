@@ -49,6 +49,19 @@ Pre-commit runs repository-wide Python checks, pytest, and frontend checks:
 uv run pre-commit run --all-files
 ```
 
+Before every push, run pre-commit and the PostgreSQL contracts explicitly:
+
+```sh
+uv run pre-commit run --all-files
+MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1 uv run pytest -m postgres
+```
+
+The default pytest configuration excludes the `postgres` marker. Setting
+`MUSIC_INGEST_ENABLE_POSTGRES_TESTS=1` alone is not sufficient; `-m postgres`
+must also override the default marker selection. This PostgreSQL command is
+mandatory after changing migrations, database models, repositories, job
+constraints, worker concurrency, or PostgreSQL-specific behavior.
+
 ## Runtime and manual verification
 
 ```sh
