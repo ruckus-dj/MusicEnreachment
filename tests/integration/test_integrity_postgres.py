@@ -174,7 +174,7 @@ def test_real_worker_recovers_publication_commit_and_restart_failures(
             expose(db, attempt, now)
             raise OSError('injected after expose')
 
-        def fail_cleanup(attempt: PublicationAttemptRecord) -> None:
+        def fail_cleanup(_attempt: PublicationAttemptRecord, _db: Session | None = None) -> bool:
             raise OSError('injected cleanup failure')
 
         monkeypatch.setattr(session, 'commit', fail_commit)
