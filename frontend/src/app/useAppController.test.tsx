@@ -466,9 +466,33 @@ describe("useAppController source encoding refresh", () => {
     expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
     expect(result.current.watchedLibraryUntil).toBeGreaterThan(Date.now());
     version = "background progress";
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
     expect(result.current.detail?.events).toEqual([{ kind: "background progress" }]);
     expect(result.current.draft).toEqual({ TITLE: "Unsaved edit" });
+  });
+
+  it("throttles full catalog reloads while watching a full reprocess", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    window.history.replaceState({}, "", "/library");
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "/api/library/reprocess-all") return Response.json({ queued: 3 });
+      return Response.json({ items: [] });
+    });
+    const { result } = renderHook(() => useAppController());
+    await act(async () => {});
+
+    await act(async () => result.current.reprocessAll());
+    expect(requests.filter((url) => url === "/api/library/artists")).toHaveLength(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(4_000));
+    expect(requests.filter((url) => url === "/api/library/artists")).toHaveLength(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(requests.filter((url) => url === "/api/library/artists")).toHaveLength(3);
   });
 
   it("ignores record A readback when navigation to B finishes while refresh is pending", async () => {

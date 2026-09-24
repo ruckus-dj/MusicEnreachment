@@ -67,6 +67,8 @@ export type LibraryCatalogTrack = LibraryTrack;
 
 export type PublicationFilter = "all" | "published" | "unpublished";
 
+const LIBRARY_WATCH_REFRESH_INTERVAL_MS = 5_000;
+
 export type CatalogAlbum = {
   readonly key: string;
   readonly title: string;
@@ -251,6 +253,7 @@ export function useAppController(): AppControllerModel {
   const [watchedLibraryUntil, setWatchedLibraryUntil] = useState(0);
   const watchedRecordsRef = useRef(watchedRecords);
   const watchedLibraryUntilRef = useRef(watchedLibraryUntil);
+  const nextLibraryRefreshAtRef = useRef(0);
   const routeRef = useRef({ recordId, sourceId });
   const encodingRefreshGeneration = useRef(0);
   watchedRecordsRef.current = watchedRecords;
@@ -374,7 +377,9 @@ export function useAppController(): AppControllerModel {
     }));
   }
   function watchLibrary(): void {
-    setWatchedLibraryUntil(Date.now() + 30_000);
+    const now = Date.now();
+    nextLibraryRefreshAtRef.current = now + LIBRARY_WATCH_REFRESH_INTERVAL_MS;
+    setWatchedLibraryUntil(now + 30_000);
   }
   async function refreshRecord(
     nextRecordId: string,
@@ -867,8 +872,10 @@ export function useAppController(): AppControllerModel {
             );
           }
         }
-        if (libraryWatchActive && Date.now() >= watchedLibraryUntilRef.current)
+        if (libraryWatchActive && Date.now() >= watchedLibraryUntilRef.current) {
+          nextLibraryRefreshAtRef.current = 0;
           setWatchedLibraryUntil(0);
+        }
         const currentWatches = watchedRecordsRef.current;
         for (const [key, watch] of Object.entries(currentWatches)) {
           if (Date.now() - watch.startedAt >= 30_000) {
@@ -909,7 +916,11 @@ export function useAppController(): AppControllerModel {
           }
         }
         // Watched track readbacks already refresh detail/items without touching Final.
-        if (libraryWatchActive || (screen !== "track" && Object.keys(currentWatches).length > 0))
+        const refreshLibraryWatch =
+          libraryWatchActive && Date.now() >= nextLibraryRefreshAtRef.current;
+        if (refreshLibraryWatch)
+          nextLibraryRefreshAtRef.current = Date.now() + LIBRARY_WATCH_REFRESH_INTERVAL_MS;
+        if (refreshLibraryWatch || (screen !== "track" && Object.keys(currentWatches).length > 0))
           await loadLibrary(false, true, isCurrent);
       } catch (error) {
         if (isCurrent()) showPollError(error);
