@@ -35,6 +35,9 @@ export const errorMessages = {
   refreshGenres: "Не удалось обновить жанры",
   saveSettings: "Не удалось сохранить настройки",
   scanFailed: "Сканирование завершилось с ошибкой. Повторите попытку позже.",
+  publicationReconciliation: "Не удалось проверить папку публикаций",
+  publicationReconciliationFailed:
+    "Проверка папки публикаций завершилась с ошибкой. Повторите попытку позже.",
   autoRefreshTimeout: "Автообновление остановлено по таймауту. Обновите данные вручную.",
   autoRefreshUnavailable: "Автообновление временно недоступно",
   autoRefreshError: (message: string) => `Автообновление: ${message}`,
