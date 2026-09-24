@@ -360,6 +360,36 @@ class JobRepository:
                 raise
             return active, False
 
+    def enqueue_publication_reconciliation(self, now: datetime) -> tuple[JobRecord, bool]:
+        active = self._session.scalar(
+            select(JobRecord)
+            .where(JobRecord.kind == 'publication_reconciliation')
+            .where(JobRecord.state.in_(['queued', 'running']))
+            .order_by(JobRecord.created_at.desc())
+        )
+        if active is not None:
+            return active, False
+        try:
+            with self._session.begin_nested():
+                job = JobRecord(
+                    id=f'publication-reconciliation-{uuid4().hex}',
+                    kind='publication_reconciliation',
+                    state='queued',
+                    created_at=now,
+                )
+                self._session.add(job)
+                self._session.flush()
+                return job, True
+        except IntegrityError:
+            active = self._session.scalar(
+                select(JobRecord)
+                .where(JobRecord.kind == 'publication_reconciliation')
+                .where(JobRecord.state.in_(['queued', 'running']))
+            )
+            if active is None:
+                raise
+            return active, False
+
     def enqueue(
         self,
         source_id: str,
