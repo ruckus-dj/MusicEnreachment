@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload, raiseload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -272,14 +272,16 @@ def record_event(
     source_id: str | None = None,
 ) -> None:
     """Append a state explanation to a stable library record."""
-    record = session.scalar(select(LibraryRecord).where(LibraryRecord.id == library_record_id))
-    if record is None:
+    if session.scalar(select(LibraryRecord.id).where(LibraryRecord.id == library_record_id)) is None:
         raise LookupError(library_record_id)
-    record.processing_state = state
-    record.updated_at = now
+    _ = session.execute(
+        update(LibraryRecord)
+        .where(LibraryRecord.id == library_record_id)
+        .values(processing_state=state, updated_at=now)
+    )
     session.add(
         LibraryEventRecord(
-            library_record_id=record.id,
+            library_record_id=library_record_id,
             source_id=source_id,
             kind=kind,
             state=state,
@@ -538,7 +540,11 @@ def library_records(session: Session) -> list[LibraryRecord]:
             select(LibraryRecord)
             .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
             .options(
-                selectinload(LibraryRecord.sources),
+                raiseload('*'),
+                selectinload(LibraryRecord.sources).options(
+                    raiseload('*'),
+                    selectinload(SourceRecord.tag_observations),
+                ),
                 selectinload(LibraryRecord.publications),
                 selectinload(LibraryRecord.metadata_revisions),
             )
@@ -582,7 +588,11 @@ def library_manual_action_records(
                 _manual_action_predicate(action),
             )
             .options(
-                selectinload(LibraryRecord.sources),
+                raiseload('*'),
+                selectinload(LibraryRecord.sources).options(
+                    raiseload('*'),
+                    selectinload(SourceRecord.tag_observations),
+                ),
                 selectinload(LibraryRecord.publications),
                 selectinload(LibraryRecord.metadata_revisions),
             )

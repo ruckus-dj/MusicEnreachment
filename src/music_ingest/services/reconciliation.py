@@ -522,22 +522,31 @@ def mark_disappeared_source(session: Session, source: SourceRecord) -> None:
     now = datetime.now(UTC)
     source.intake_state = 'disappeared'
     source.disappeared_at = now
-    if source.library_record is None:
+    library_record_id = source.library_record_id
+    if library_record_id is None:
         return
-    source.library_record.source_state = 'disappeared'
-    source.library_record.updated_at = now
+    processing_state = session.scalar(
+        select(LibraryRecord.processing_state).where(LibraryRecord.id == library_record_id)
+    )
+    if processing_state is None:
+        return
+    _ = session.execute(
+        update(LibraryRecord)
+        .where(LibraryRecord.id == library_record_id)
+        .values(source_state='disappeared', updated_at=now)
+    )
     _ = session.execute(
         insert(LibraryEventRecord).values(
-            library_record_id=source.library_record.id,
+            library_record_id=library_record_id,
             source_id=source.id,
             kind='source_disappeared',
-            state=source.library_record.processing_state,
+            state=processing_state,
             reason='filesystem_scan_removed',
             details_json='{}',
             created_at=now,
         )
     )
-    _ = JobRepository(session).enqueue_selection_refresh(source.library_record.id, now)
+    _ = JobRepository(session).enqueue_selection_refresh(library_record_id, now)
 
 
 def _root_files(root: RootSnapshot) -> tuple[FileFingerprint, ...] | None:

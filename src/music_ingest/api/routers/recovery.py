@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, raiseload, selectinload
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.library_access import (
@@ -33,11 +34,9 @@ from music_ingest.models import (
     SourceRootRecord,
     StorageConfigRecord,
 )
-from music_ingest.models.library import SourceRecordView
 from music_ingest.repositories.jobs import JobRepository
 from music_ingest.services.library.service import (
     library_record_detail,
-    library_records,
     record_event,
 )
 from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
@@ -53,7 +52,7 @@ _RETRYABLE_PROVIDER_OUTCOMES = frozenset(
 )
 
 
-def _needs_analysis_retry(source: SourceRecordView) -> bool:
+def _needs_analysis_retry(source: SourceRecord) -> bool:
     return not source.provider_attempts or any(
         attempt.outcome.casefold() in _RETRYABLE_PROVIDER_OUTCOMES for attempt in source.provider_attempts
     )
@@ -92,24 +91,45 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         with session_factory() as session:
             queued = 0
             jobs = JobRepository(session)
-            for record in library_records(session):
-                for source in record.sources:
-                    if source.disappeared_at is not None:
-                        continue
-                    persisted_source = SourceRecord.get(session, source.id)
-                    if persisted_source is not None and not Path(persisted_source.source_path).is_file():
+            sources = session.execute(
+                select(
+                    SourceRecord.id,
+                    SourceRecord.source_path,
+                    SourceRootRecord.id,
+                    SourceRootRecord.enabled,
+                    SourceRootRecord.canonical_path,
+                )
+                .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
+                .join(SourceRootRecord, SourceRootRecord.id == SourceRecord.source_root_id)
+                .where(
+                    SourceRecord.disappeared_at.is_(None),
+                    ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+                )
+            )
+            for row in sources:
+                source_id, source_path, root_id, root_enabled, root_path = cast(
+                    tuple[str, str, str, bool, str], tuple(row)
+                )
+                path = Path(source_path)
+                if not path.is_file():
+                    persisted_source = session.scalar(
+                        select(SourceRecord).where(SourceRecord.id == source_id).options(raiseload('*'))
+                    )
+                    if persisted_source is not None:
                         mark_disappeared_source(session, persisted_source)
-                        continue
-                    root = None if persisted_source is None else persisted_source.source_root
-                    if root is not None and (
-                        not root.enabled
-                        or root.id == 'historical-unmanaged'
-                        or root.canonical_path.startswith('historical-unmanaged://')
-                    ):
-                        continue
-                    _ = require_owned_source(session, source.id)
-                    if jobs.enqueue(source.id, 'filesystem_scan', now) is not None:
-                        queued += 1
+                    continue
+                if (
+                    not root_enabled
+                    or root_id == 'historical-unmanaged'
+                    or root_path.startswith('historical-unmanaged://')
+                ):
+                    continue
+                try:
+                    _ = resolve_regular_file(path, Path(root_path))
+                except SourceBoundaryError as error:
+                    raise HTTPException(status_code=409, detail=f'source root boundary: {error}') from error
+                if jobs.enqueue(source_id, 'filesystem_scan', now) is not None:
+                    queued += 1
             session.commit()
         return FullReprocessResponse(queued=queued)
 
@@ -180,7 +200,9 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
                     continue
                 path = Path(source_path)
                 if not path.is_file():
-                    persisted_source = SourceRecord.get(session, source_id)
+                    persisted_source = session.scalar(
+                        select(SourceRecord).where(SourceRecord.id == source_id).options(raiseload('*'))
+                    )
                     if persisted_source is not None:
                         mark_disappeared_source(session, persisted_source)
                     continue
@@ -211,9 +233,17 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         with session_factory() as session:
             queued = 0
             release_mbids = {
-                record.musicbrainz_release_id.strip()
-                for record in library_records(session)
-                if record.musicbrainz_release_id is not None and record.musicbrainz_release_id.strip()
+                release_mbid.strip()
+                for release_mbid in session.scalars(
+                    select(LibraryRecord.musicbrainz_release_id)
+                    .where(
+                        LibraryRecord.musicbrainz_release_id.is_not(None),
+                        LibraryRecord.musicbrainz_release_id != '',
+                        ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+                    )
+                    .distinct()
+                )
+                if release_mbid is not None and release_mbid.strip()
             }
             jobs = JobRepository(session)
             for release_mbid in release_mbids:
@@ -227,7 +257,21 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         now = datetime.now(UTC)
         queued = skipped = conflicts = 0
         with session_factory() as session:
-            for record in library_records(session):
+            records = session.scalars(
+                select(LibraryRecord)
+                .where(~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)))
+                .options(
+                    raiseload('*'),
+                    selectinload(LibraryRecord.sources).options(
+                        raiseload('*'),
+                        joinedload(SourceRecord.source_root),
+                    ),
+                    selectinload(LibraryRecord.publications),
+                    selectinload(LibraryRecord.metadata_revisions),
+                )
+                .execution_options(yield_per=100)
+            )
+            for record in records:
                 record_queued, record_conflicts = queue_record_recovery(session, record, now, media_root)
                 queued += record_queued
                 conflicts += record_conflicts
@@ -283,31 +327,41 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         queued = 0
         with session_factory() as session:
             jobs = JobRepository(session)
-            for record in library_records(session):
-                for source in record.sources:
-                    if (
-                        source.disappeared_at is not None
-                        or source.intake_state == 'replaced'
-                        or (not request.retry_all and not _needs_analysis_retry(source))
-                    ):
-                        continue
-                    _ = require_owned_source(session, source.id)
-                    provider_queued = (
-                        jobs.requeue_provider(source.id, request.provider, now)
-                        if request.provider is not None
-                        else jobs.requeue_source(source.id, now)
+            sources = session.scalars(
+                select(SourceRecord)
+                .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
+                .where(
+                    SourceRecord.disappeared_at.is_(None),
+                    SourceRecord.intake_state != 'replaced',
+                    ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
+                )
+                .options(
+                    raiseload('*'),
+                    joinedload(SourceRecord.source_root),
+                    selectinload(SourceRecord.provider_attempts),
+                )
+                .execution_options(yield_per=100)
+            )
+            for source in sources:
+                if not request.retry_all and not _needs_analysis_retry(source):
+                    continue
+                _ = require_owned_source(session, source.id)
+                provider_queued = (
+                    jobs.requeue_provider(source.id, request.provider, now)
+                    if request.provider is not None
+                    else jobs.requeue_source(source.id, now)
+                )
+                if provider_queued and source.library_record_id is not None:
+                    record_event(
+                        session,
+                        source.library_record_id,
+                        'analysis_retry_queued',
+                        'queued',
+                        f'{request.provider or "all analysis stages"} retry requested from review UI',
+                        now,
+                        source.id,
                     )
-                    if provider_queued:
-                        record_event(
-                            session,
-                            record.id,
-                            'analysis_retry_queued',
-                            'queued',
-                            f'{request.provider or "all analysis stages"} retry requested from review UI',
-                            now,
-                            source.id,
-                        )
-                        queued += 1
+                    queued += 1
             session.commit()
         return ProviderRetryResult(queued=queued)
 

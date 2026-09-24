@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from music_ingest.api.app import create_app
@@ -42,6 +45,28 @@ def _source_root(path: Path, *, enabled: bool = True) -> SourceRootRecord:
         created_at=now,
         updated_at=now,
     )
+
+
+@contextmanager
+def _captured_selects(engine: Engine) -> Generator[list[str]]:
+    selected: list[str] = []
+
+    def capture(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith('SELECT'):
+            selected.append(statement)
+
+    event.listen(engine, 'before_cursor_execute', capture)
+    try:
+        yield selected
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture)
 
 
 def test_review_ui_when_loaded_contains_evidence_diff_and_review_controls(tmp_path: Path) -> None:
@@ -408,6 +433,118 @@ def test_reprocess_all_queues_active_sources_from_filesystem_scan(tmp_path: Path
         jobs = list(session.query(JobRecord).filter(JobRecord.kind == 'filesystem_scan').all())
         assert [job.source_id for job in jobs] == [active.source_id]
         assert session.get(SourceRecord, disappeared.source_id) is None
+
+
+def test_reprocess_all_does_not_load_source_evidence(tmp_path: Path) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "reprocess-all-evidence.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'active.flac'
+    _ = source_path.write_bytes(b'active')
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        _ = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        session.commit()
+
+    selected_tables: list[str] = []
+
+    def capture_selects(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith('SELECT'):
+            selected_tables.append(statement)
+
+    event.listen(engine, 'before_cursor_execute', capture_selects)
+    try:
+        response = TestClient(create_app(lambda: Session(engine))).post('/api/library/reprocess-all')
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture_selects)
+
+    assert response.status_code == 200
+    assert response.json() == {'queued': 1}
+    assert not any('source_tag_observations' in statement for statement in selected_tables)
+
+
+@pytest.mark.parametrize(
+    ('path', 'allowed_evidence_tables'),
+    [
+        ('/api/library/records', frozenset({'source_tag_observations'})),
+        ('/api/library/artwork/reprocess', frozenset[str]()),
+        ('/api/library/recovery', frozenset[str]()),
+        ('/api/library/providers/retry', frozenset({'provider_attempts'})),
+    ],
+)
+def test_bulk_library_routes_load_only_required_source_evidence(
+    tmp_path: Path, path: str, allowed_evidence_tables: frozenset[str]
+) -> None:
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "bulk-library-evidence.db"}')
+    Base.metadata.create_all(engine)
+    source_path = tmp_path / 'active.flac'
+    _ = source_path.write_bytes(b'active')
+    with Session(engine) as session:
+        session.add(_source_root(tmp_path))
+        intake = intake_source(
+            session,
+            IntakeRequest(
+                source_path=source_path,
+                origin=Origin.MANUAL,
+                duration_seconds=None,
+                tag_observations=(),
+                artwork_observations=(),
+                provider_attempts=(),
+                candidates=(),
+                review_decisions=(),
+            ),
+        )
+        if path == '/api/library/providers/retry':
+            session.add(
+                JobRecord(
+                    id='active-provider-job',
+                    source_id=intake.source_id,
+                    kind='acoustid_analysis',
+                    state='queued',
+                    created_at=datetime.now(UTC),
+                )
+            )
+        session.commit()
+
+    evidence_tables = {
+        'artwork_hash_observations',
+        'candidate_evidence',
+        'decoder_evidence',
+        'fingerprint_evidence',
+        'job_attempts',
+        'provider_attempts',
+        'provider_candidate_runs',
+        'review_decisions',
+        'source_recording_assignments',
+        'source_tag_observations',
+        'webhook_receipts',
+    }
+    with _captured_selects(engine) as selected:
+        response = TestClient(create_app(lambda: Session(engine))).request(
+            'GET' if path == '/api/library/records' else 'POST', path
+        )
+
+    assert response.status_code == 200
+    queried_evidence_tables = {table for table in evidence_tables if any(table in statement for statement in selected)}
+    assert queried_evidence_tables <= allowed_evidence_tables
 
 
 def test_reconciliation_scan_api_queues_one_job_and_reports_completed_result(tmp_path: Path) -> None:
