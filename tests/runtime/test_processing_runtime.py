@@ -38,8 +38,10 @@ def test_worker_pools_cover_each_kind_exactly_once() -> None:
         'lrclib_fetch',
         'artwork_enrichment',
         'reconciliation_scan',
+        'publication_reconciliation',
     }
     assert WORKER_POOLS['musicbrainz_analysis'] == frozenset({'musicbrainz_analysis', 'musicbrainz_refresh'})
+    assert WORKER_POOLS['reconciliation_scan'] == frozenset({'publication_reconciliation', 'reconciliation_scan'})
     for pool, allowed in WORKER_POOLS.items():
-        if pool != 'musicbrainz_analysis':
+        if pool not in {'musicbrainz_analysis', 'reconciliation_scan'}:
             assert allowed == frozenset({pool})

@@ -20,6 +20,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_POOL_CONCURRENCY = 8
 WORKER_POOLS: dict[str, frozenset[str]] = {name: frozenset({name}) for name in WorkerPoolSettings.model_fields}
 WORKER_POOLS['musicbrainz_analysis'] = frozenset({'musicbrainz_analysis', 'musicbrainz_refresh'})
+WORKER_POOLS['reconciliation_scan'] = frozenset({'reconciliation_scan', 'publication_reconciliation'})
 
 
 @dataclass(frozen=True, slots=True)

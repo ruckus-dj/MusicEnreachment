@@ -45,7 +45,7 @@ from music_ingest.workers.handlers.artwork import ArtworkHandler
 from music_ingest.workers.handlers.initial import InitialHandler
 from music_ingest.workers.handlers.lrclib import LrclibHandler
 from music_ingest.workers.handlers.publication import PublicationHandler
-from music_ingest.workers.handlers.reconciliation import ReconciliationHandler
+from music_ingest.workers.handlers.reconciliation import PublicationReconciliationHandler, ReconciliationHandler
 from music_ingest.workers.handlers.selection import SelectionHandler
 from music_ingest.workers.media_stage import (
     MediaPipelineInfrastructureError,
@@ -98,6 +98,7 @@ class ProcessingWorker:
         self._analysis = AnalysisHandler(self._session, self._sources, self._evidence, self._settings)
         self._handlers: dict[str, JobHandler] = {
             'reconciliation_scan': ReconciliationHandler(),
+            'publication_reconciliation': PublicationReconciliationHandler(),
             'selection_refresh': self._selection,
             'candidate_selection': self._selection,
             'acoustid_analysis': self._analysis,
