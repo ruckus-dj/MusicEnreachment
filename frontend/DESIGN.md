@@ -52,7 +52,7 @@ Use `color-mix()` with these tokens for state variants. Never rely on color alon
 
 ### Panel
 
-- Structure: bordered `.settings-screen`, `.inspector`, `.track-screen` or `.worker-queue-screen` surface.
+- Structure: bordered `.settings-screen`, `.dashboard-screen`, `.inspector`, `.track-screen` or `.worker-queue-screen` surface.
 - Radius: `--radius-panel`; depth: `--shadow`; internal groups use border separators.
 
 ### Action cluster
