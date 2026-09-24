@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from .attempts import (
     PublicationAttemptRequest,
-    cleanup_attempt,
     expose_attempt,
     finalize_and_cleanup_attempt,
     finalize_attempt,
@@ -15,6 +14,7 @@ from .attempts import (
     reconcile_attempts,
     reserve_attempt,
 )
+from .cleanup import cleanup_attempt
 
 _POSTGRESQL_DIALECT: Final = 'postgresql'
 

@@ -18,6 +18,7 @@ from music_ingest.models.library import (
     PublicationAttemptRecord,
 )
 from music_ingest.repositories.jobs import JobRepository
+from music_ingest.services.publication.cleanup import cleanup_attempt
 from music_ingest.services.publication.locks import (
     acquire_migration_lock,
     acquire_storage_lock,
@@ -246,29 +247,10 @@ def finalize_and_cleanup_attempt(
     publication = finalize_attempt(session, attempt, now, lrclib_enabled=lrclib_enabled)
     session.commit()
     acquire_storage_lock(session)
-    cleanup_attempt(attempt)
-    attempt.cleaned_at = now
+    if cleanup_attempt(attempt, session):
+        attempt.cleaned_at = now
     session.commit()
     return publication
-
-
-def cleanup_attempt(attempt: PublicationAttemptRecord) -> None:
-    # Delete only files owned by this attempt. Sidecars (especially .nfo) are never removed.
-    for directory in (Path(attempt.staging_directory), Path(attempt.backup_directory)):
-        if not directory.exists():
-            continue
-        for name in (attempt.target_audio_name, 'manifest.json', attempt.target_audio_name + '.restore'):
-            path = directory / name
-            if path.suffix.lower() != '.nfo':
-                path.unlink(missing_ok=True)
-        _fsync_directory(directory)
-        if not any(directory.iterdir()):
-            directory.rmdir()
-            _fsync_directory(directory.parent)
-    workspace = Path(attempt.staging_directory).parent
-    if workspace.parent.name == '.music-ingest-publications' and workspace.exists() and not any(workspace.iterdir()):
-        workspace.rmdir()
-        _fsync_directory(workspace.parent)
 
 
 def reconcile_attempts(
@@ -336,8 +318,8 @@ def _reconcile_step(session: Session, attempt_id: str, now: datetime, *, lrclib_
         session.commit()
         return False
     if attempt.state in {'finalized', 'failed'}:
-        cleanup_attempt(attempt)
-        attempt.cleaned_at = now
+        if cleanup_attempt(attempt, session):
+            attempt.cleaned_at = now
         session.commit()
         return False
     if attempt.state in {'reserved', 'staged', 'prepared'}:
