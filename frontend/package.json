@@ -34,7 +34,7 @@
     "@types/react-dom": "latest",
     "jsdom": "^30.0.1",
     "react-doctor": "^0.9.13",
-    "react-grab": "^0.1.50",
+    "react-grab": "^0.2.0",
     "react-scan": "^0.5.7",
     "vitest": "^4.1.10"
   }
