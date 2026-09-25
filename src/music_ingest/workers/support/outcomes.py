@@ -162,14 +162,20 @@ class AttemptFinalizer:
         replacement_source = self.session.get(SourceRecord, replacement.source_id)
         if replacement_source is None:
             raise ProcessingInfrastructureError('changed source replacement was not persisted')
-        orphan_record = replacement_source.library_record
-        _ = attach_source(self.session, replacement_source.id, record.id, reason='source_replaced', now=now)
-        if orphan_record is not None and orphan_record.id != record.id:
-            self.session.delete(orphan_record)
-        source.intake_state = 'replaced'
-        source.replaced_by_source_id = replacement_source.id
+        if replacement.created:
+            orphan_record = replacement_source.library_record
+            _ = attach_source(self.session, replacement_source.id, record.id, reason='source_replaced', now=now)
+            if orphan_record is not None and orphan_record.id != record.id:
+                self.session.delete(orphan_record)
+        if not source.locations:
+            source.intake_state = 'replaced'
+            source.replaced_by_source_id = replacement_source.id
         claimed.attempt.state = 'succeeded'
         claimed.attempt.finished_at = datetime.now(UTC)
         claimed.job.state = 'superseded'
         claimed.job.next_attempt_at = None
-        _ = JobRepository(self.session).enqueue(replacement.source_id, 'filesystem_scan', now)
+        repository = JobRepository(self.session)
+        if source.locations:
+            _ = repository.enqueue(source.id, 'filesystem_scan', now)
+        if replacement.created:
+            _ = repository.enqueue(replacement.source_id, 'filesystem_scan', now)

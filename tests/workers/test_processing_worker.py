@@ -38,6 +38,7 @@ from music_ingest.models import (
     ProviderCandidateRunRecord,
     ProviderScheduleRecord,
     ReviewDecisionRecord,
+    SourceLocationRecord,
     SourceRecord,
     SourceRootRecord,
     UnsortedFilenameCounterRecord,
@@ -45,6 +46,7 @@ from music_ingest.models import (
 from music_ingest.repositories.jobs import ClaimedJob
 from music_ingest.services.candidates import _latest_candidate_run, _release_candidates_for_recording
 from music_ingest.services.enrichment.fingerprints import FingerprintResult, FingerprintState
+from music_ingest.services.intake.service import IntakeRequest, Origin, intake_source
 from music_ingest.services.matching.evidence import ProviderEvidenceResult
 from music_ingest.services.matching.providers import (
     FixtureProvenance,
@@ -443,6 +445,185 @@ def _config(tmp_path: Path) -> ProcessingConfig:
         staging_root=tmp_path / 'staging',
         media_root=tmp_path / 'media',
     )
+
+
+def test_worker_when_one_hardlink_changes_preserves_the_surviving_source_location(tmp_path: Path) -> None:
+    # Given: one source identity has two hardlink locations and a queued job for the first path.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    changed_path = _flac(config.incoming_root / 'changed.flac')
+    surviving_path = config.incoming_root / 'surviving.flac'
+    surviving_path.hardlink_to(changed_path)
+    existing_path = _flac(config.incoming_root / 'existing.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "changed-hardlink.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path=str(config.incoming_root.resolve()),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        request = IntakeRequest(
+            source_path=changed_path,
+            source_root_id='legacy',
+            origin=Origin.MANUAL,
+            duration_seconds=1,
+            tag_observations=(),
+            artwork_observations=(),
+            provider_attempts=(),
+            candidates=(),
+            review_decisions=(),
+        )
+        original = intake_source(session, request)
+        _ = intake_source(session, request.model_copy(update={'source_path': surviving_path}))
+        known_replacement = intake_source(session, request.model_copy(update={'source_path': existing_path}))
+        original_source = session.get_one(SourceRecord, original.source_id)
+        replacement_source = session.get_one(SourceRecord, known_replacement.source_id)
+        original_record_id = original_source.library_record_id
+        replacement_record_id = replacement_source.library_record_id
+        assert replacement_record_id is not None
+        session.add(
+            LibraryEventRecord(
+                library_record_id=replacement_record_id,
+                source_id=replacement_source.id,
+                kind='known_identity_provenance',
+                state='recorded',
+                details_json='{}',
+                created_at=now,
+            )
+        )
+        session.add(
+            JobRecord(
+                id='changed-hardlink-job',
+                source_id=original.source_id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=now,
+            )
+        )
+        session.commit()
+
+    changed_path.unlink()
+    changed_path.hardlink_to(existing_path)
+
+    # When: the worker observes the changed path while the other hardlink still identifies the original source.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+
+    # Then: only the changed path moves to the replacement and the original remains active at its surviving path.
+    with Session(engine) as session:
+        job = session.get(JobRecord, 'changed-hardlink-job')
+        original_source = session.get(SourceRecord, original.source_id)
+        replacement_source = session.get(SourceRecord, known_replacement.source_id)
+        changed_location = session.scalar(
+            select(SourceLocationRecord).where(SourceLocationRecord.path == str(changed_path.resolve()))
+        )
+        queued_source_ids = set(
+            session.scalars(
+                select(JobRecord.source_id).where(JobRecord.kind == 'filesystem_scan', JobRecord.state == 'queued')
+            )
+        )
+        assert job is not None and job.state == 'superseded'
+        assert original_source is not None
+        assert replacement_source is not None
+        assert original_source.intake_state != 'replaced'
+        assert original_source.replaced_by_source_id is None
+        assert original_source.library_record_id == original_record_id
+        assert replacement_source.library_record_id == replacement_record_id
+        assert session.get(LibraryRecord, replacement_record_id) is not None
+        assert (
+            session.query(LibraryEventRecord).filter_by(kind='known_identity_provenance').one().source_id
+            == replacement_source.id
+        )
+        assert original_source.source_path == str(surviving_path.resolve())
+        assert [location.path for location in original_source.locations] == [str(surviving_path.resolve())]
+        assert changed_location is not None and changed_location.source_id == known_replacement.source_id
+        assert queued_source_ids == {original.source_id}
+
+
+def test_worker_when_only_location_changes_to_new_identity_reuses_original_library_record(tmp_path: Path) -> None:
+    # Given: one source has a queued job and no alternate location.
+    config = _config(tmp_path)
+    config.incoming_root.mkdir()
+    source_path = _flac(config.incoming_root / 'changed.flac')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "new-identity.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(
+            SourceRootRecord(
+                id='legacy',
+                display_name='legacy',
+                canonical_path=str(config.incoming_root.resolve()),
+                enabled=True,
+                scan_state='scanned',
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        request = IntakeRequest(
+            source_path=source_path,
+            source_root_id='legacy',
+            origin=Origin.MANUAL,
+            duration_seconds=1,
+            tag_observations=(),
+            artwork_observations=(),
+            provider_attempts=(),
+            candidates=(),
+            review_decisions=(),
+        )
+        original = intake_source(session, request)
+        original_source = session.get_one(SourceRecord, original.source_id)
+        original_record_id = original_source.library_record_id
+        session.add(
+            JobRecord(
+                id='new-identity-job',
+                source_id=original.source_id,
+                kind='filesystem_scan',
+                state='queued',
+                created_at=now,
+            )
+        )
+        session.commit()
+
+    source_path.unlink()
+    _ = source_path.write_bytes(b'new immutable source identity')
+
+    # When: the worker observes a replacement identity that has never been persisted.
+    with Session(engine) as session:
+        assert ProcessingWorker(session, config).run_once()
+
+    # Then: the new source inherits the original record and is queued while the old source is retired.
+    with Session(engine) as session:
+        job = session.get_one(JobRecord, 'new-identity-job')
+        original_source = session.get_one(SourceRecord, original.source_id)
+        replacement_location = session.scalar(
+            select(SourceLocationRecord).where(SourceLocationRecord.path == str(source_path.resolve()))
+        )
+        assert replacement_location is not None
+        replacement_source = session.get_one(SourceRecord, replacement_location.source_id)
+        assert job.state == 'superseded'
+        assert original_source.intake_state == 'replaced'
+        assert original_source.replaced_by_source_id == replacement_source.id
+        assert replacement_source.library_record_id == original_record_id
+        assert session.query(LibraryRecord).count() == 1
+        assert (
+            session.scalar(
+                select(JobRecord.id).where(
+                    JobRecord.source_id == replacement_source.id,
+                    JobRecord.kind == 'filesystem_scan',
+                    JobRecord.state == 'queued',
+                )
+            )
+            is not None
+        )
 
 
 def test_locked_source_refreshes_an_already_loaded_source_record(tmp_path: Path) -> None:
