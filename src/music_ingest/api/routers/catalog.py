@@ -29,6 +29,7 @@ from music_ingest.contracts import (
 )
 from music_ingest.models import (
     ReleaseArtworkRecord,
+    StorageConfigRecord,
 )
 from music_ingest.services.library.service import (
     library_active_record_count,
@@ -141,14 +142,16 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
 
     @router.get('/api/library/release-artwork/{release_mbid}')
     def release_artwork(release_mbid: str) -> FileResponse:
-        if media_root is None:
-            raise HTTPException(status_code=404, detail='artwork not found')
         with session_factory() as session:
             artwork = session.get(ReleaseArtworkRecord, release_mbid)
             if artwork is None or artwork.state != 'ready' or artwork.path is None:
                 raise HTTPException(status_code=404, detail='artwork not found')
+            storage = session.get(StorageConfigRecord, 1)
+            output_root = storage.output_root if storage is not None else media_root
+            if output_root is None:
+                raise HTTPException(status_code=404, detail='artwork not found')
+            root = Path(output_root).resolve()
             path = Path(artwork.path).resolve()
-            root = media_root.resolve()
             if path == root or root not in path.parents or not path.is_file():
                 raise HTTPException(status_code=404, detail='artwork not found')
             return FileResponse(path, media_type=f'image/{artwork.format_name or "jpeg"}')
