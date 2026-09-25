@@ -17,6 +17,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@radix-ui/react-alert-dialog": "^1.1.23",
     "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest",
