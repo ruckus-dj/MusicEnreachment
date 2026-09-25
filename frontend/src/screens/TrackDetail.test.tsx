@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Detail, Tags } from "../types";
 import { TrackDetail } from "./TrackDetail";
@@ -69,18 +69,20 @@ it("mounts source interpretation without changing the Final editor", async () =>
   }
 });
 
-function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}) {
-  const props = {
+function detailProps(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}) {
+  return {
     detail,
     sourceId: "source-a",
     draft: { TITLE: "Track" } satisfies Tags,
     setDraft: vi.fn(),
     saving: false,
     reprocessing: false,
+    removingPublication: false,
     musicbrainzHost: null,
     onSave: vi.fn(async () => true),
     onSelectCandidate: vi.fn(),
     onSelectEffectiveSource: vi.fn(),
+    onRemovePublication: vi.fn(async () => undefined),
     effectiveSourceId: "source-a",
     effectiveSourceError: "",
     effectiveSourceSuccess: "",
@@ -88,8 +90,131 @@ function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}
     recordingCorrectionReview: "",
     ...overrides,
   };
-  return render(<TrackDetail {...props} />);
 }
+
+function renderDetail(overrides: Partial<Parameters<typeof TrackDetail>[0]> = {}) {
+  return render(<TrackDetail {...detailProps(overrides)} />);
+}
+
+describe("TrackDetail publication removal", () => {
+  const publishedDetail: Detail = {
+    ...detail,
+    publications: [
+      {
+        publication_id: "publication-1",
+        source_id: "source-a",
+        path: "/media/Artist/Album/Track.mka",
+        sha256: "c".repeat(64),
+        state: "current",
+      },
+    ],
+  };
+
+  it("opens a styled confirmation and removes only after explicit confirmation", async () => {
+    const nativeConfirm = vi.spyOn(window, "confirm");
+    const onRemovePublication = vi.fn(async () => undefined);
+    try {
+      renderDetail({ detail: publishedDetail, onRemovePublication });
+
+      expect(screen.getByText(/Исходный файл и\s+\.nfo останутся/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Удалить публикацию" }));
+
+      const dialog = screen.getByRole("alertdialog", { name: "Удалить публикацию?" });
+      expect(nativeConfirm).not.toHaveBeenCalled();
+      expect(onRemovePublication).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Удалить публикацию" }));
+
+      await waitFor(() => expect(onRemovePublication).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    } finally {
+      nativeConfirm.mockRestore();
+    }
+  });
+
+  it("cancels with Escape and returns focus to the destructive trigger", async () => {
+    const onRemovePublication = vi.fn(async () => undefined);
+    renderDetail({ detail: publishedDetail, onRemovePublication });
+    const trigger = screen.getByRole("button", { name: "Удалить публикацию" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Отмена"));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(onRemovePublication).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to the publication outcome when successful removal deletes the trigger", async () => {
+    let finishRemoval: () => void = () => undefined;
+    const removal = new Promise<void>((resolve) => {
+      finishRemoval = resolve;
+    });
+    const onRemovePublication = vi.fn(() => removal);
+    const view = renderDetail({ detail: publishedDetail, onRemovePublication });
+
+    fireEvent.click(screen.getByRole("button", { name: "Удалить публикацию" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Удалить публикацию",
+      }),
+    );
+    view.rerender(
+      <TrackDetail
+        {...detailProps({
+          detail: {
+            ...publishedDetail,
+            publication_state: "absent",
+            publications: [],
+            states: { ...publishedDetail.states, publication: "absent" },
+          },
+          onRemovePublication,
+        })}
+      />,
+    );
+    finishRemoval();
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Выходной файл" })),
+    );
+  });
+
+  it("keeps the popup modal and non-dismissible while deletion is busy", () => {
+    const onRemovePublication = vi.fn(() => new Promise<void>(() => undefined));
+    const view = renderDetail({ detail: publishedDetail, onRemovePublication });
+
+    fireEvent.click(screen.getByRole("button", { name: "Удалить публикацию" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Удалить публикацию",
+      }),
+    );
+    view.rerender(
+      <TrackDetail
+        {...detailProps({
+          detail: publishedDetail,
+          onRemovePublication,
+          removingPublication: true,
+        })}
+      />,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(
+      within(dialog).getByRole("button", { name: "Удаляем публикацию…" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("hides the action when the track has no current publication", () => {
+    renderDetail();
+
+    expect(screen.queryByRole("button", { name: "Удалить публикацию" })).toBeNull();
+  });
+});
 
 describe("TrackDetail effective source", () => {
   it("shows the complete source path instead of the technical record id", () => {

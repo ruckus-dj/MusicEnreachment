@@ -23,6 +23,7 @@ import {
   previewStorageOutput,
   refreshLibraryMetadata,
   removeSourceRoot,
+  removePublication as requestPublicationRemoval,
   selectEffectiveSource,
   startPublicationReconciliation,
 } from "../api/client";
@@ -119,6 +120,7 @@ export type AppControllerModel = {
   reprocessing: boolean;
   refreshingMetadata: boolean;
   reconcilingPublications: boolean;
+  removingPublication: boolean;
   effectiveSourceId: string | null;
   effectiveSourceError: string;
   effectiveSourceSuccess: string;
@@ -165,6 +167,7 @@ export type AppControllerModel = {
   reprocessAll: () => Promise<void>;
   refreshMetadata: () => Promise<void>;
   reconcilePublications: () => Promise<void>;
+  removePublication: () => Promise<void>;
   reprocessSource: (recordId: string, sourceId: string) => Promise<void>;
   saveMetadata: () => Promise<boolean>;
   encodingApplied: (queued: boolean) => Promise<void>;
@@ -239,6 +242,7 @@ export function useAppController(): AppControllerModel {
   const [reprocessing, setReprocessing] = useState(false);
   const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [reconcilingPublications, setReconcilingPublications] = useState(false);
+  const [removingPublication, setRemovingPublication] = useState(false);
   const [publicationReconciliationJobId, setPublicationReconciliationJobId] = useState<
     string | null
   >(null);
@@ -497,6 +501,28 @@ export function useAppController(): AppControllerModel {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : errorMessages.publicationReconciliation);
       setReconcilingPublications(false);
+    }
+  }
+
+  async function removeCurrentPublication(): Promise<void> {
+    if (!recordId || removingPublication) return;
+    setRemovingPublication(true);
+    try {
+      await requestPublicationRemoval(recordId);
+      const loaded = await api<Detail>(`/api/library/records/${encodeURIComponent(recordId)}`);
+      setDetail(loaded);
+      setItems([loaded]);
+      setNotice("Публикация удалена. Исходный файл и .nfo не изменены.");
+    } catch (error) {
+      setNotice(
+        error instanceof ApiError && error.status === 409
+          ? errorMessages.removePublicationConflict
+          : error instanceof Error
+            ? error.message
+            : errorMessages.removePublication,
+      );
+    } finally {
+      setRemovingPublication(false);
     }
   }
   async function retryProvider(provider: ProviderName) {
@@ -1297,6 +1323,7 @@ export function useAppController(): AppControllerModel {
     reprocessing,
     refreshingMetadata,
     reconcilingPublications,
+    removingPublication,
     effectiveSourceId,
     effectiveSourceError,
     effectiveSourceSuccess,
@@ -1343,6 +1370,7 @@ export function useAppController(): AppControllerModel {
     reprocessAll,
     refreshMetadata,
     reconcilePublications,
+    removePublication: removeCurrentPublication,
     reprocessSource,
     saveMetadata,
     retryProvider,

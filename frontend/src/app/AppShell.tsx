@@ -455,6 +455,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               setDraft={controller.setDraft}
               saving={controller.saving}
               reprocessing={controller.reprocessing}
+              removingPublication={controller.removingPublication}
               musicbrainzHost={controller.settingsDraft?.musicbrainz_host ?? null}
               onSave={controller.saveMetadata}
               onEncodingApplied={controller.encodingApplied}
@@ -465,6 +466,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               }
               onSelectCandidate={(key) => void controller.selectCandidate(key)}
               onSelectEffectiveSource={(value) => void controller.selectEffectiveSource(value)}
+              onRemovePublication={controller.removePublication}
               effectiveSourceId={controller.effectiveSourceId}
               effectiveSourceError={controller.effectiveSourceError}
               effectiveSourceSuccess={controller.effectiveSourceSuccess}

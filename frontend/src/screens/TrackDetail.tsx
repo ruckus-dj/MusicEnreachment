@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CandidateReview } from "../components/CandidateReview";
+import { ConfirmationDialog } from "../components/ConfirmationDialog";
 import { MetadataComparison } from "../components/MetadataComparison";
 import { SourceEncoding } from "../components/SourceEncoding";
 import { lyricsDisplay, lyricsSynced } from "../domain/lyrics";
@@ -19,6 +20,7 @@ export function TrackDetail({
   setDraft,
   saving,
   reprocessing,
+  removingPublication,
   musicbrainzHost,
   onSave,
   onEncodingApplied,
@@ -27,6 +29,7 @@ export function TrackDetail({
   onLoadMusicBrainzCandidates,
   onSelectCandidate,
   onSelectEffectiveSource,
+  onRemovePublication,
   effectiveSourceId,
   effectiveSourceError,
   effectiveSourceSuccess,
@@ -39,6 +42,7 @@ export function TrackDetail({
   readonly setDraft: (value: Tags) => void;
   readonly saving: boolean;
   readonly reprocessing: boolean;
+  readonly removingPublication: boolean;
   readonly musicbrainzHost?: string | null;
   readonly onSave: () => Promise<boolean>;
   readonly onEncodingApplied?: (queued: boolean) => Promise<void>;
@@ -47,6 +51,7 @@ export function TrackDetail({
   readonly onLoadMusicBrainzCandidates?: (request: MusicBrainzCandidateLookup) => void;
   readonly onSelectCandidate: (selection: string) => void;
   readonly onSelectEffectiveSource: (sourceId: string) => void;
+  readonly onRemovePublication: () => Promise<void>;
   readonly effectiveSourceId: string | null;
   readonly effectiveSourceError: string;
   readonly effectiveSourceSuccess: string;
@@ -57,6 +62,10 @@ export function TrackDetail({
   const [releaseOverride, setReleaseOverride] = useState("");
   const [recordingOverride, setRecordingOverride] = useState("");
   const [recordingCorrectionValidationError, setRecordingCorrectionValidationError] = useState("");
+  const [publicationRemovalOpen, setPublicationRemovalOpen] = useState(false);
+  const publicationTriggerRef = useRef<HTMLButtonElement>(null);
+  const publicationOutcomeRef = useRef<HTMLHeadingElement>(null);
+  const publicationCloseFocusRef = useRef<"trigger" | "outcome" | null>(null);
   const source = detail?.sources.find((item) => item.source_id === sourceId);
   if (!detail || !source) return <div className="empty-state">Открываем данные трека…</div>;
 
@@ -159,6 +168,25 @@ export function TrackDetail({
   };
   const saveEditing = async () => {
     if (await onSave()) setEditing(false);
+  };
+  const confirmPublicationRemoval = async () => {
+    await onRemovePublication();
+    publicationCloseFocusRef.current = "outcome";
+    setPublicationRemovalOpen(false);
+  };
+  const cancelPublicationRemoval = () => {
+    publicationCloseFocusRef.current = "trigger";
+    setPublicationRemovalOpen(false);
+  };
+  const focusAfterPublicationDialog = () => {
+    const target =
+      publicationCloseFocusRef.current === "trigger"
+        ? publicationTriggerRef.current
+        : publicationCloseFocusRef.current === "outcome"
+          ? publicationOutcomeRef.current
+          : null;
+    publicationCloseFocusRef.current = null;
+    target?.focus();
   };
   const overrideRelease = () => {
     const releaseMbid = releaseOverride.trim();
@@ -286,15 +314,40 @@ export function TrackDetail({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Публикация</p>
-            <h2 id="publication-status-title">Выходной файл</h2>
+            <h2 ref={publicationOutcomeRef} id="publication-status-title" tabIndex={-1}>
+              Выходной файл
+            </h2>
           </div>
-          <span
-            data-testid="output-status"
-            className={`badge ${currentPublication ? "success" : ""}`}
-          >
-            {lifecycleLabels.publication}
-          </span>
+          <div className="provider-actions">
+            <span
+              data-testid="output-status"
+              className={`badge ${currentPublication ? "success" : ""}`}
+            >
+              {lifecycleLabels.publication}
+            </span>
+            {currentPublication ? (
+              <button
+                ref={publicationTriggerRef}
+                type="button"
+                className="secondary danger"
+                disabled={removingPublication}
+                aria-describedby="publication-remove-help"
+                aria-haspopup="dialog"
+                aria-expanded={publicationRemovalOpen}
+                onClick={() => setPublicationRemovalOpen(true)}
+              >
+                {removingPublication ? "Удаляем публикацию…" : "Удалить публикацию"}
+              </button>
+            ) : null}
+          </div>
         </div>
+        {currentPublication ? (
+          <p id="publication-remove-help" className="settings-help">
+            {
+              "Удаляется только управляемый выходной аудиофайл. Исходный файл и\u00a0.nfo останутся без изменений."
+            }
+          </p>
+        ) : null}
         {!currentPublication && (
           <p data-testid="no-output" role="status" className="settings-help">
             Выходной файл ещё не создан. После проверки оператором появится управляемая медиакопия.
@@ -330,6 +383,20 @@ export function TrackDetail({
           </div>
         </div>
       </section>
+
+      <ConfirmationDialog
+        open={publicationRemovalOpen}
+        title="Удалить публикацию?"
+        description={
+          "Будет удалён только управляемый выходной аудиофайл. Исходный файл и\u00a0.nfo останутся без изменений."
+        }
+        confirmLabel="Удалить публикацию"
+        busyLabel="Удаляем публикацию…"
+        busy={removingPublication}
+        onCancel={cancelPublicationRemoval}
+        onConfirm={() => void confirmPublicationRemoval()}
+        onAfterCloseFocus={focusAfterPublicationDialog}
+      />
 
       <section className="evidence-card lyrics-panel" aria-labelledby="lyrics-panel-title">
         <div className="section-heading">
