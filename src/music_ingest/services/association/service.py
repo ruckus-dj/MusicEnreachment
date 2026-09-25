@@ -58,12 +58,15 @@ class ManualAssociationRequest:
     recording_mbid: str
     now: datetime
     release_mbid: str | None = None
+    actor: str = 'manual'
+    track_mbid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AssociationResult:
     library_record_id: str
     moved_from_record_id: str
+    publication_refresh_queued: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +380,7 @@ class RecordingAssociationService:
         source = self._source(request.source_id)
         override = source.association_override
         evidence = json.dumps(
-            {'recording_mbid': request.recording_mbid},
+            {'recording_mbid': request.recording_mbid, 'track_mbid': request.track_mbid},
             sort_keys=True,
         )
         if request.release_mbid is None:
@@ -389,7 +392,7 @@ class RecordingAssociationService:
             result = self._associate(
                 request.source_id,
                 request.recording_mbid,
-                'manual',
+                request.actor,
                 _MANUAL_ASSOCIATION_RATIONALE,
                 evidence,
                 request.now,
@@ -400,14 +403,14 @@ class RecordingAssociationService:
                 SourceAssociationOverrideRecord(
                     source_id=source.id,
                     recording_mbid=request.recording_mbid,
-                    actor='manual',
+                    actor=request.actor,
                     rationale=_MANUAL_ASSOCIATION_RATIONALE,
                     created_at=request.now,
                 )
             )
         else:
             override.recording_mbid = request.recording_mbid
-            override.actor = 'manual'
+            override.actor = request.actor
             override.rationale = _MANUAL_ASSOCIATION_RATIONALE
             override.created_at = request.now
             override.cleared_at = None
@@ -526,6 +529,7 @@ class RecordingAssociationService:
                 created_at=now,
             )
         )
+        publication_refresh_queued = False
         for record in locked_records:
             self._session.add(
                 LibraryEventRecord(
@@ -564,8 +568,11 @@ class RecordingAssociationService:
                 )
                 is not None
             ):
-                _ = JobRepository(self._session).enqueue_selection_refresh(record.id, now)
-        return AssociationResult(locked_target.id, previous_record_id)
+                publication_refresh_queued = (
+                    JobRepository(self._session).enqueue_selection_refresh(record.id, now) is not None
+                    or publication_refresh_queued
+                )
+        return AssociationResult(locked_target.id, previous_record_id, publication_refresh_queued)
 
     def _source(self, source_id: str) -> SourceRecord:
         source = self._session.scalar(
