@@ -64,6 +64,14 @@ class RuntimeSettingsResponse(BaseModel):
     lrclib_match_confidence_threshold: float
 
 
+class CurrentStateCleanupResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_count: int = Field(ge=0)
+    library_record_count: int = Field(ge=0)
+    applied: bool
+
+
 class SourceRootCreateRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 

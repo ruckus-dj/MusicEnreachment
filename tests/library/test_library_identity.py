@@ -1819,9 +1819,9 @@ def test_reconciliation_replaces_source_version_without_replacing_record(tmp_pat
 
     assert result.changed == 1
     assert persisted is not None
-    assert len(persisted.sources) == 2
+    assert len(persisted.sources) == 1
     assert {source.library_record_id for source in persisted.sources} == {'record-replaced'}
-    assert any(source.intake_state == 'replaced' for source in persisted.sources)
+    assert persisted.sources[0].intake_state == 'needs_review'
 
 
 def test_reconciliation_keeps_current_publication_until_replacement_publishes(tmp_path: Path) -> None:

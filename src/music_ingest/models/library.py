@@ -165,7 +165,7 @@ class LibraryPublicationRecord(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     library_record_id: Mapped[str] = mapped_column(ForeignKey('library_records.id'), nullable=False)
-    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey('source_records.id'))
     path: Mapped[str] = mapped_column(Text, nullable=False)
     format_name: Mapped[str] = mapped_column(Text, nullable=False)
     content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
@@ -176,7 +176,7 @@ class LibraryPublicationRecord(Base):
     library_record: Mapped[LibraryRecord] = relationship(
         back_populates='publications', foreign_keys='LibraryPublicationRecord.library_record_id'
     )
-    source: Mapped[SourceRecordView] = relationship('SourceRecord', back_populates='library_publications')
+    source: Mapped[SourceRecordView | None] = relationship('SourceRecord', back_populates='library_publications')
     metadata_revision: Mapped[LibraryMetadataRevisionRecord | None] = relationship(back_populates='publications')
 
 

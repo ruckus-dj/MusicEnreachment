@@ -3,11 +3,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from testcontainers.community.postgres import PostgresContainer
 
 from music_ingest.contracts import ScanResult
-from music_ingest.models import Base, JobRecord, LibraryPublicationRecord, SourceRecord, SourceRootRecord
+from music_ingest.models import (
+    Base,
+    JobRecord,
+    LibraryPublicationRecord,
+    SourceLocationRecord,
+    SourceRecord,
+    SourceRootRecord,
+)
 from music_ingest.services.reconciliation import (
     apply_reconciliation_plan,
     load_reconciliation_snapshot,
@@ -87,7 +96,7 @@ def test_reconcile_incoming_detects_added_changed_and_removed_files(tmp_path: Pa
         assert current.changed == 1
         assert current.removed == 1
         assert after_change_removed.removed == 1
-        assert len(session.scalars(select(SourceRecord)).all()) == 2
+        assert len(session.scalars(select(SourceRecord)).all()) == 1
         jobs = list(session.scalars(select(JobRecord)).all())
         assert len(jobs) == 3
         assert {job.kind for job in jobs} == {'filesystem_scan', 'selection_refresh'}
@@ -119,6 +128,150 @@ def test_reconcile_unchanged_source_does_not_duplicate_completed_filesystem_job(
         assert repeated.queued_jobs == 0
         assert len(jobs) == 1
         assert jobs[0].state == 'completed'
+
+
+def test_reconcile_device_change_keeps_the_existing_source(tmp_path: Path) -> None:
+    # Given: a completed source whose persisted device number came from an earlier mount generation.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "device-change.db"}')
+    _ = Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    source_path = incoming / 'track.flac'
+    _ = source_path.write_bytes(b'stable source')
+
+    with Session(engine) as session:
+        session.add(_root('incoming', incoming))
+        _ = _reconcile(session)
+        session.commit()
+        source = session.scalars(select(SourceRecord)).one()
+        source_id = source.id
+        source.device += 1
+        session.scalars(select(JobRecord).where(JobRecord.kind == 'filesystem_scan')).one().state = 'completed'
+        session.commit()
+
+        # When: reconciliation observes the same inode, size, and mtime on the current mount.
+        result = _reconcile(session)
+        session.commit()
+
+        # Then: device drift updates telemetry without creating or reprocessing a source.
+        sources = list(session.scalars(select(SourceRecord)))
+        assert result.changed == 0
+        assert result.unchanged == 1
+        assert result.queued_jobs == 0
+        assert [item.id for item in sources] == [source_id]
+        assert sources[0].device == source_path.stat().st_dev
+
+
+def test_reconcile_hardlinks_share_one_source_with_two_locations(tmp_path: Path) -> None:
+    # Given: two names for the same inode in one configured root.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "hardlinks.db"}')
+    _ = Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    first = incoming / 'first.flac'
+    second = incoming / 'second.flac'
+    _ = first.write_bytes(b'hardlinked source')
+    second.hardlink_to(first)
+
+    with Session(engine) as session:
+        session.add(_root('incoming', incoming))
+
+        # When: reconciliation observes both paths.
+        result = _reconcile(session)
+        session.commit()
+
+        # Then: processing is queued once and both current locations point to the same source.
+        source = session.scalars(select(SourceRecord)).one()
+        locations = list(session.scalars(select(SourceLocationRecord).order_by(SourceLocationRecord.path)))
+        assert result.added == 1
+        assert result.queued_jobs == 1
+        assert [Path(location.path) for location in locations] == [first, second]
+        assert {location.source_id for location in locations} == {source.id}
+
+
+def test_reconcile_hardlink_divergence_keeps_the_original_source_active(tmp_path: Path) -> None:
+    # Given: two paths share one source observation and one path is replaced with new content.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "hardlink-divergence.db"}')
+    _ = Base.metadata.create_all(engine)
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    first = incoming / 'first.flac'
+    second = incoming / 'second.flac'
+    _ = first.write_bytes(b'original hardlinked source')
+    second.hardlink_to(first)
+
+    with Session(engine) as session:
+        session.add(_root('incoming', incoming))
+        _ = _reconcile(session)
+        session.commit()
+        original = session.scalars(select(SourceRecord)).one()
+        original_id = original.id
+        record_id = original.library_record_id
+
+        first.unlink()
+        _ = first.write_bytes(b'replacement source')
+
+        # When: reconciliation sees the replacement and the surviving original hardlink together.
+        result = _reconcile(session)
+        session.commit()
+
+        # Then: both current identities stay active under one library record and own their current path.
+        sources = list(session.scalars(select(SourceRecord).order_by(SourceRecord.id)))
+        locations = list(session.scalars(select(SourceLocationRecord).order_by(SourceLocationRecord.path)))
+        original = session.get(SourceRecord, original_id)
+        assert result.changed == 1
+        assert original is not None
+        assert original.intake_state != 'replaced'
+        assert original.replaced_by_source_id is None
+        assert {source.library_record_id for source in sources} == {record_id}
+        assert {(Path(location.path), location.source_id) for location in locations} == {
+            (first, next(source.id for source in sources if source.id != original_id)),
+            (second, original_id),
+        }
+
+
+@pytest.mark.postgres
+def test_reconcile_hardlink_divergence_then_removal_is_postgres_fk_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Given: PostgreSQL tracks two hardlinks that initially resolve to one source.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    incoming = tmp_path / 'incoming'
+    _ = incoming.mkdir()
+    first = incoming / 'first.flac'
+    second = incoming / 'second.flac'
+    _ = first.write_bytes(b'original hardlinked source')
+    second.hardlink_to(first)
+
+    with PostgresContainer('postgres:17') as postgres:
+        engine = create_engine(postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg'))
+        _ = Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(_root('incoming', incoming))
+            _ = _reconcile(session)
+            session.commit()
+            original_id = session.scalars(select(SourceRecord.id)).one()
+
+            first.unlink()
+            _ = first.write_bytes(b'replacement source')
+            _ = _reconcile(session)
+            session.commit()
+            replacement_id = session.scalars(select(SourceRecord.id).where(SourceRecord.id != original_id)).one()
+            first.unlink()
+
+            # When: the replacement disappears while the original hardlink remains present.
+            result = _reconcile(session)
+            session.commit()
+
+            # Then: PostgreSQL deletes the replacement without an inbound self-FK and retains the original.
+            original = session.get(SourceRecord, original_id)
+            assert result.removed == 1
+            assert session.get(SourceRecord, replacement_id) is None
+            assert original is not None
+            assert original.replaced_by_source_id is None
+            assert [Path(location.path) for location in original.locations] == [second]
+        engine.dispose()
 
 
 def test_reconcile_incoming_requeues_present_quarantined_jobs(tmp_path: Path) -> None:
@@ -331,7 +484,7 @@ def test_reconcile_removes_disappeared_source_without_a_publication(tmp_path: Pa
         assert session.get(SourceRecord, source_id) is None
 
 
-def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_path: Path) -> None:
+def test_reconcile_removes_disappeared_source_but_keeps_current_publication(tmp_path: Path) -> None:
     # Given: a reconciled source that owns a managed publication.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "published-retention.db"}')
     _ = Base.metadata.create_all(engine)
@@ -365,12 +518,14 @@ def test_reconcile_preserves_disappeared_source_with_a_current_publication(tmp_p
         result = _reconcile(session)
         session.commit()
 
-        # Then: the source remains as visibly disappeared provenance for its publication.
+        # Then: current-state cleanup removes the source while retaining managed output without a stale FK.
         retained = session.get(SourceRecord, source.id)
+        publication = session.get(LibraryPublicationRecord, 'publication-retained')
         assert result.removed == 1
-        assert retained is not None
-        assert retained.intake_state == 'disappeared'
-        assert retained.disappeared_at is not None
+        assert retained is None
+        assert publication is not None
+        assert publication.state == 'current'
+        assert publication.source_id is None
 
 
 def test_reconcile_removes_disappeared_source_with_only_a_superseded_publication(tmp_path: Path) -> None:

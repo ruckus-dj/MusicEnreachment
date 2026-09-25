@@ -12,9 +12,10 @@ from alembic import command
 from tests.support.paths import ALEMBIC_DIRECTORY
 
 _MIGRATION_DIRECTORY = ALEMBIC_DIRECTORY
-_HEAD_REVISION = '20260924_0033'
+_HEAD_REVISION = '20260925_0034'
 _FOLDER_CANDIDATE_INDEXES_PREVIOUS_REVISION = '20260923_0030'
 _LIBRARY_STATUS_INDEX_PREVIOUS_REVISION = '20260923_0031'
+_SOURCE_LOCATIONS_PREVIOUS_REVISION = '20260924_0033'
 _PREVIOUS_REVISION = '20260909_0023'
 _OBSERVED_AT = '2026-09-11 00:00:00'
 _LYRIC_STATE_COLUMNS = frozenset(
@@ -40,6 +41,7 @@ _FOLDER_CANDIDATE_INDEXES = frozenset(
 _APPLICATION_TABLES = frozenset(
     {
         'source_records',
+        'source_locations',
         'source_tag_observations',
         'artwork_hash_observations',
         'release_artwork',
@@ -112,6 +114,100 @@ def test_baseline_migration_when_upgraded_exposes_existing_source_lineage(tmp_pa
         # Then: source provenance still owns its stable source and record linkage fields.
         columns = {column['name'] for column in inspect(engine).get_columns('source_records')}
         assert {'id', 'source_path', 'library_record_id', 'sha256', 'mtime_ns'}.issubset(columns)
+    finally:
+        engine.dispose()
+
+
+def test_source_locations_migration_backfills_device_neutral_identity_and_one_current_path(tmp_path: Path) -> None:
+    # Given: the pre-location schema contains duplicate device-era observations for one current path.
+    database_path = tmp_path / 'source-locations-upgrade.db'
+    config = Config()
+    config.set_main_option('script_location', str(_MIGRATION_DIRECTORY))
+    config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
+    engine = create_engine(f'sqlite+pysqlite:///{database_path}')
+
+    try:
+        command.upgrade(config, _SOURCE_LOCATIONS_PREVIOUS_REVISION)
+        with engine.begin() as connection:
+            _ = connection.execute(
+                text(
+                    'INSERT INTO source_roots '
+                    '(id, display_name, canonical_path, enabled, scan_state, created_at, updated_at) '
+                    "VALUES ('root', 'Root', '/incoming', 1, 'scanned', :observed_at, :observed_at)"
+                ),
+                {'observed_at': _OBSERVED_AT},
+            )
+            for source_id, device in (('old-device', 62), ('current-device', 63)):
+                _ = connection.execute(
+                    text(
+                        'INSERT INTO source_records '
+                        '(id, source_path, device, inode, size_bytes, sha256, mtime_ns, origin, intake_state, '
+                        'source_root_id) VALUES '
+                        '(:id, :path, :device, 101, 2048, :sha256, 303, :origin, :state, :root_id)'
+                    ),
+                    {
+                        'id': source_id,
+                        'path': '/incoming/track.flac',
+                        'device': device,
+                        'sha256': 'a' * 64,
+                        'origin': 'manual',
+                        'state': 'present',
+                        'root_id': 'root',
+                    },
+                )
+
+        # When: the source-location migration upgrades the populated database.
+        command.upgrade(config, _HEAD_REVISION)
+
+        # Then: identity ignores the device and only the newest device-era row owns the current path.
+        with engine.connect() as connection:
+            identities = connection.execute(text('SELECT id, identity_key FROM source_records ORDER BY id')).all()
+            locations = connection.execute(text('SELECT source_id, source_root_id, path FROM source_locations')).all()
+        assert identities == [('current-device', '101:2048:303'), ('old-device', '101:2048:303')]
+        assert locations == [('current-device', 'root', '/incoming/track.flac')]
+    finally:
+        engine.dispose()
+
+
+def test_source_locations_migration_refuses_lossy_downgrade_after_cleanup(tmp_path: Path) -> None:
+    # Given: current-state cleanup has retained a publication after deleting its missing source.
+    database_path = tmp_path / 'source-locations-downgrade.db'
+    config = Config()
+    config.set_main_option('script_location', str(_MIGRATION_DIRECTORY))
+    config.set_main_option('sqlalchemy.url', f'sqlite+pysqlite:///{database_path}')
+    engine = create_engine(f'sqlite+pysqlite:///{database_path}')
+
+    try:
+        command.upgrade(config, _HEAD_REVISION)
+        with engine.begin() as connection:
+            _ = connection.execute(
+                text(
+                    'INSERT INTO library_records '
+                    '(id, source_state, processing_state, match_state, publication_state, metadata_state, '
+                    'created_at, updated_at) VALUES '
+                    "('record', 'disappeared', 'completed', 'unmatched', 'published', 'final', "
+                    ':observed_at, :observed_at)'
+                ),
+                {'observed_at': _OBSERVED_AT},
+            )
+            _ = connection.execute(
+                text(
+                    'INSERT INTO library_publications '
+                    '(id, library_record_id, source_id, path, format_name, content_sha256, state, created_at) '
+                    "VALUES ('publication', 'record', NULL, '/media/track.mka', 'mka', :sha256, 'current', "
+                    ':observed_at)'
+                ),
+                {'sha256': 'b' * 64, 'observed_at': _OBSERVED_AT},
+            )
+
+        # When: an operator attempts to downgrade to a schema that requires source provenance.
+        with pytest.raises(RuntimeError, match='publications without source provenance'):
+            command.downgrade(config, _SOURCE_LOCATIONS_PREVIOUS_REVISION)
+
+        # Then: the current publication and migration revision remain intact instead of being discarded.
+        with engine.connect() as connection:
+            assert connection.execute(text('SELECT source_id FROM library_publications')).scalar_one() is None
+            assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == _HEAD_REVISION
     finally:
         engine.dispose()
 

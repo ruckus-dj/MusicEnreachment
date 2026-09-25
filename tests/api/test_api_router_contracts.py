@@ -86,8 +86,9 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Refreshed intentionally when LibraryTrackResponse gained the materialized lyrics_status/lyrics_synced fields.
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     # Refreshed when the private record collection was replaced by compact library status.
+    # Refreshed when Settings gained explicit current-state cleanup preview/apply endpoints.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '46fd07e37bc1536c994a4219d80c4ff7b832f5cd33b38aab93a8aa9d92f299b5'
+        '8560acff36f5b8e5f34738f2b5b64b654d27f0e1639449ceb2e4ffb2f54c31bb'
     )
 
 
@@ -96,7 +97,7 @@ def test_create_app_registers_each_public_method_and_path_once() -> None:
 
     route_keys = [(method, route.path) for route in _api_routes(application) for method in sorted(route.methods or ())]
 
-    assert len(route_keys) == 61
+    assert len(route_keys) == 63
     assert len(route_keys) == len(set(route_keys))
     assert all(route.endpoint.__module__.startswith('music_ingest.api.routers.') for route in _api_routes(application))
 

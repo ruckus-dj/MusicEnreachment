@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.contracts import (
+    CurrentStateCleanupResponse,
     MatchingSettings,
     NextUnsortedFilenameResponse,
     RuntimeSettingsRequest,
@@ -26,6 +27,7 @@ from music_ingest.contracts import (
 )
 from music_ingest.models import SourceRootRecord
 from music_ingest.services.metadata import UnsortedFilenameSuffixError, allocate_unsorted_filename
+from music_ingest.services.reconciliation import CurrentStateCleanupReport, current_state_cleanup
 from music_ingest.services.settings import RuntimeSettings, build_runtime_settings, save_runtime_settings
 from music_ingest.services.source_roots import SourceRootConflictError, SourceRootService, SourceRootValidationError
 from music_ingest.services.storage import StorageService, StorageValidationError
@@ -54,6 +56,14 @@ def _settings_response(settings: RuntimeSettings) -> RuntimeSettingsResponse:
         lrclib_request_delay_seconds=settings.lrclib_request_delay_seconds,
         lrclib_max_response_bytes=settings.lrclib_max_response_bytes,
         lrclib_match_confidence_threshold=settings.lrclib_match_confidence_threshold,
+    )
+
+
+def _cleanup_response(report: CurrentStateCleanupReport) -> CurrentStateCleanupResponse:
+    return CurrentStateCleanupResponse(
+        source_count=len(report.source_ids),
+        library_record_count=len(report.library_record_ids),
+        applied=report.applied,
     )
 
 
@@ -91,6 +101,24 @@ def create_router(
     def runtime_settings() -> RuntimeSettingsResponse:
         with session_factory() as session:
             return _settings_response(build_runtime_settings(session))
+
+    @router.post(
+        '/api/settings/maintenance/current-state/preview',
+        response_model=CurrentStateCleanupResponse,
+    )
+    def preview_current_state_cleanup() -> CurrentStateCleanupResponse:
+        with session_factory() as session:
+            return _cleanup_response(current_state_cleanup(session))
+
+    @router.post(
+        '/api/settings/maintenance/current-state/apply',
+        response_model=CurrentStateCleanupResponse,
+    )
+    def apply_current_state_cleanup() -> CurrentStateCleanupResponse:
+        with session_factory() as session:
+            report = current_state_cleanup(session, apply=True)
+            session.commit()
+            return _cleanup_response(report)
 
     @router.get('/api/settings/source-roots', response_model=SourceRootListResponse)
     def list_source_roots() -> SourceRootListResponse:

@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import final
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Text, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from music_ingest.models.db import Base
@@ -25,6 +36,7 @@ class SourceRecord(Base):
     __tablename__ = 'source_records'
     __table_args__ = (
         Index('ix_source_records_library_record_id', 'library_record_id'),
+        Index('ix_source_records_identity_key', 'identity_key'),
         Index(
             'ix_source_records_present_library_record_id',
             'library_record_id',
@@ -34,6 +46,7 @@ class SourceRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    identity_key: Mapped[str] = mapped_column(Text, nullable=False, default='legacy', server_default='legacy')
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
     device: Mapped[int] = mapped_column(BigInteger, nullable=False)
     inode: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -73,6 +86,7 @@ class SourceRecord(Base):
         back_populates='source', lazy='selectin', order_by='SourceRecordingAssignmentRecord.created_at'
     )
     association_override: Mapped[SourceAssociationOverrideRecord | None] = relationship(back_populates='source')
+    locations: Mapped[list[SourceLocationRecord]] = relationship(back_populates='source', lazy='selectin')
 
     @staticmethod
     def get(session: Session, source_id: str) -> SourceRecord | None:
@@ -94,6 +108,24 @@ class SourceRootRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     sources: Mapped[list[SourceRecord]] = relationship(back_populates='source_root', lazy='selectin')
+    source_locations: Mapped[list[SourceLocationRecord]] = relationship(back_populates='source_root', lazy='selectin')
+
+
+@final
+class SourceLocationRecord(Base):
+    __tablename__ = 'source_locations'
+    __table_args__ = (
+        UniqueConstraint('source_root_id', 'path', name='uq_source_locations_root_path'),
+        Index('ix_source_locations_source_id', 'source_id'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey('source_records.id'), nullable=False)
+    source_root_id: Mapped[str] = mapped_column(ForeignKey('source_roots.id'), nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+
+    source: Mapped[SourceRecord] = relationship(back_populates='locations')
+    source_root: Mapped[SourceRootRecord] = relationship(back_populates='source_locations')
 
 
 @final
@@ -341,6 +373,7 @@ __all__ = [
     'ProviderSnapshotRecord',
     'ReviewDecisionRecord',
     'SourceRecord',
+    'SourceLocationRecord',
     'SourceAssociationOverrideRecord',
     'SourceRecordingAssignmentRecord',
     'SourceRootRecord',

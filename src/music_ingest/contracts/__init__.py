@@ -2,6 +2,7 @@ from music_ingest.contracts.acoustid import Response
 from music_ingest.contracts.api import (
     CandidateEvidencePayload,
     CandidateSelection,
+    CurrentStateCleanupResponse,
     DestinationConflictCleanupResponse,
     EvidenceFixturePayload,
     FullReprocessResponse,
@@ -86,6 +87,7 @@ __all__ = [
     'CandidateEvidence',
     'CandidateEvidencePayload',
     'CandidateSelection',
+    'CurrentStateCleanupResponse',
     'DestinationConflictCleanupResponse',
     'EvidenceFixturePayload',
     'FieldPolicy',
