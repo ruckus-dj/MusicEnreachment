@@ -40,6 +40,23 @@ class IntakeRepository:
             )
         )
 
+    def find_source_by_identity(self, identity_key: str) -> SourceRecord | None:
+        return self._session.scalar(
+            select(SourceRecord)
+            .where(SourceRecord.identity_key == identity_key)
+            .where(SourceRecord.intake_state.not_in(('replaced', 'disappeared')))
+            .order_by(SourceRecord.id)
+            .options(
+                selectinload(SourceRecord.tag_observations),
+                selectinload(SourceRecord.artwork_observations),
+                selectinload(SourceRecord.provider_attempts),
+                selectinload(SourceRecord.candidates),
+                selectinload(SourceRecord.review_decisions),
+                selectinload(SourceRecord.fingerprints),
+                selectinload(SourceRecord.locations),
+            )
+        )
+
     def add_source(self, source: SourceRecord) -> SourceRecord:
         self._session.add(source)
         self._session.flush()
