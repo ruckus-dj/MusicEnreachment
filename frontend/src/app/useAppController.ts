@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   api,
+  applyCurrentStateCleanup,
   browseStorage,
   createSourceRoot,
   getLibraryStatus,
@@ -18,6 +19,7 @@ import {
   listSourceRoots,
   loadMusicBrainzCandidates,
   moveStorageOutput,
+  previewCurrentStateCleanup,
   previewStorageOutput,
   refreshLibraryMetadata,
   removeSourceRoot,
@@ -40,6 +42,7 @@ import { runtimeSettingsDraftFrom, runtimeSettingsPayload } from "../domain/sett
 import { errorMessages } from "../errorMessages";
 import { parseRoute, routePath } from "../routing";
 import type {
+  CurrentStateCleanup,
   Detail,
   EffectiveSourceSelection,
   GenreCatalog,
@@ -70,6 +73,7 @@ export type CatalogTrack = { item: Summary; source: Source };
 export type LibraryCatalogTrack = LibraryTrack;
 
 export type PublicationFilter = "all" | "published" | "unpublished";
+export type CleanupOperation = "preview" | "apply" | null;
 
 const LIBRARY_WATCH_REFRESH_INTERVAL_MS = 5_000;
 
@@ -136,6 +140,9 @@ export type AppControllerModel = {
   storageConfig: StorageConfig | null;
   storageOutputPreview: StorageOutputPreview | null;
   storageLoading: boolean;
+  currentStateCleanup: CurrentStateCleanup | null;
+  cleanupOperation: CleanupOperation;
+  cleanupError: string;
   workerQueue: WorkerQueue | null;
   workerQueueLoading: boolean;
   workerQueueError: string;
@@ -170,6 +177,8 @@ export type AppControllerModel = {
   browseStorage: (path?: string) => Promise<void>;
   previewStorageOutput: (path: string) => Promise<void>;
   moveStorageOutput: (path: string) => Promise<void>;
+  previewCleanup: () => Promise<void>;
+  applyCleanup: () => Promise<void>;
   loadWorkerQueue: () => Promise<void>;
   setQuery: (value: string) => void;
   setPublicationFilter: (value: PublicationFilter) => void;
@@ -260,7 +269,11 @@ export function useAppController(): AppControllerModel {
   const [storageOutputPreview, setStorageOutputPreview] = useState<StorageOutputPreview | null>(
     null,
   );
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [storageLoading, setStorageLoading] = useState(false);
+  const [currentStateCleanup, setCurrentStateCleanup] = useState<CurrentStateCleanup | null>(null);
+  const [cleanupOperation, setCleanupOperation] = useState<CleanupOperation>(null);
+  const [cleanupError, setCleanupError] = useState("");
   const [workerQueue, setWorkerQueue] = useState<WorkerQueue | null>(null);
   const [workerQueueLoading, setWorkerQueueLoading] = useState(false);
   const [workerQueueError, setWorkerQueueError] = useState("");
@@ -746,6 +759,7 @@ export function useAppController(): AppControllerModel {
     } catch (error) {
       setSourceRootsError(error instanceof Error ? error.message : errorMessages.browseStorage);
     } finally {
+      setStorageLoaded(true);
       setStorageLoading(false);
     }
   }
@@ -806,6 +820,34 @@ export function useAppController(): AppControllerModel {
       setSourceRootsError(error instanceof Error ? error.message : errorMessages.removeSourceRoot);
     } finally {
       setSourceRootRemoving(false);
+    }
+  }
+  async function previewCleanup() {
+    setCleanupOperation("preview");
+    setCleanupError("");
+    setCurrentStateCleanup(null);
+    try {
+      setCurrentStateCleanup(await previewCurrentStateCleanup());
+    } catch (error) {
+      setCleanupError(
+        error instanceof Error ? error.message : errorMessages.previewCurrentStateCleanup,
+      );
+    } finally {
+      setCleanupOperation(null);
+    }
+  }
+  async function applyCleanup() {
+    setCleanupOperation("apply");
+    setCleanupError("");
+    try {
+      setCurrentStateCleanup(await applyCurrentStateCleanup());
+    } catch (error) {
+      setCurrentStateCleanup(null);
+      setCleanupError(
+        error instanceof Error ? error.message : errorMessages.applyCurrentStateCleanup,
+      );
+    } finally {
+      setCleanupOperation(null);
     }
   }
   async function syncGenres() {
@@ -1020,8 +1062,8 @@ export function useAppController(): AppControllerModel {
       void loadSourceRootCandidates();
   }, [screen, sourceRootCandidates.length, sourceRootCandidatesLoading]);
   useEffect(() => {
-    if (screen === "settings" && !storageBrowser && !storageLoading) void loadStorage();
-  }, [screen, storageBrowser, storageLoading]);
+    if (screen === "settings" && !storageLoaded && !storageLoading) void loadStorage();
+  }, [screen, storageLoaded, storageLoading]);
   useEffect(() => {
     if (screen !== "settings" || storageConfig?.state !== "migrating") return;
     let active = true;
@@ -1272,6 +1314,9 @@ export function useAppController(): AppControllerModel {
     storageConfig,
     storageOutputPreview,
     storageLoading,
+    currentStateCleanup,
+    cleanupOperation,
+    cleanupError,
     workerQueue,
     workerQueueLoading,
     workerQueueError,
@@ -1305,6 +1350,8 @@ export function useAppController(): AppControllerModel {
     browseStorage: loadStorage,
     previewStorageOutput: previewConfiguredStorageOutput,
     moveStorageOutput: moveConfiguredStorageOutput,
+    previewCleanup,
+    applyCleanup,
     loadWorkerQueue,
     setQuery,
     setPublicationFilter,

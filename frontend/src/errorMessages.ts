@@ -34,6 +34,8 @@ export const errorMessages = {
   removeSourceRoot: "Не удалось удалить корень",
   refreshGenres: "Не удалось обновить жанры",
   saveSettings: "Не удалось сохранить настройки",
+  previewCurrentStateCleanup: "Не удалось проверить устаревшие записи",
+  applyCurrentStateCleanup: "Не удалось удалить устаревшие записи",
   scanFailed: "Сканирование завершилось с ошибкой. Повторите попытку позже.",
   publicationReconciliation: "Не удалось проверить папку публикаций",
   publicationReconciliationFailed:
