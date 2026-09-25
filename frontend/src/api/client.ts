@@ -6,6 +6,7 @@ import type {
 } from "../domain/sourceEncoding";
 import { errorMessages } from "../errorMessages";
 import type {
+  CurrentStateCleanup,
   EffectiveSourceSelection,
   LyricsStatus,
   ManualSourceSelection,
@@ -114,6 +115,18 @@ export function applySourceEncoding(
 
 export function listSourceRoots(): Promise<SourceRootList> {
   return api<SourceRootList>("/api/settings/source-roots");
+}
+
+export function previewCurrentStateCleanup(): Promise<CurrentStateCleanup> {
+  return api<CurrentStateCleanup>("/api/settings/maintenance/current-state/preview", {
+    method: "POST",
+  });
+}
+
+export function applyCurrentStateCleanup(): Promise<CurrentStateCleanup> {
+  return api<CurrentStateCleanup>("/api/settings/maintenance/current-state/apply", {
+    method: "POST",
+  });
 }
 
 export function createSourceRoot(request: SourceRootCreate): Promise<SourceRoot> {

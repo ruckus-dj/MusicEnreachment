@@ -322,6 +322,11 @@ export type StorageOutputPreview = {
   readonly same_filesystem: boolean;
   readonly file_count: number;
 };
+export type CurrentStateCleanup = {
+  readonly source_count: number;
+  readonly library_record_count: number;
+  readonly applied: boolean;
+};
 export type RuntimeSettingsDraft = {
   readonly confidence_threshold: number;
   readonly timeout_seconds: number;
