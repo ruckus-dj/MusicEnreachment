@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from uuid import UUID
 
 import pytest
 from alembic.config import Config
@@ -15,6 +16,8 @@ from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
+from music_ingest.contracts import AlbumRemapApplyRequest, AlbumRemapAssignment, AlbumRemapSelector
+from music_ingest.contracts.api import Release
 from music_ingest.models import (
     Base,
     CandidateRecord,
@@ -28,11 +31,13 @@ from music_ingest.models import (
     SourceRootRecord,
 )
 from music_ingest.repositories.jobs import ClaimedJob, JobRepository
+from music_ingest.services.album_remap import AlbumRemapConflict, AlbumRemapRelease, apply_remap, load_context
 from music_ingest.services.association import (
     AutomaticAssociationRequest,
     ManualAssociationRequest,
     RecordingAssociationService,
 )
+from music_ingest.services.intake.service import IntakeRequest, Origin, SourceTagObservation, intake_source
 from music_ingest.services.publication import (
     acquire_publication_destination_lock,
     try_acquire_publication_destination_lock,
@@ -1134,4 +1139,107 @@ def test_migration_when_legacy_root_is_invalid_preserves_baseline_rows(
         with engine.connect() as connection:
             assert connection.execute(text('SELECT count(*) FROM source_records')).scalar_one() == 1
             assert 'source_roots' not in inspect(engine).get_table_names()
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_album_remap_apply_when_two_sessions_share_a_token_only_one_commits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given: two PostgreSQL sessions hold the same pre-remap token for one source.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    release_id = '11111111-1111-4111-8111-111111111111'
+    track_id = '22222222-2222-4222-8222-222222222222'
+    release = Release.model_validate(
+        {
+            'id': release_id,
+            'title': 'Album',
+            'media': [
+                {
+                    'tracks': [
+                        {
+                            'id': track_id,
+                            'position': 1,
+                            'title': 'Track',
+                            'recording': {'id': '33333333-3333-4333-8333-333333333333', 'title': 'Track'},
+                        }
+                    ]
+                }
+            ],
+        }
+    )
+    selector = AlbumRemapSelector(artist_name='Artist', album_name='Album')
+    now = datetime.now(UTC)
+    with PostgresContainer('postgres:17') as postgres:
+        engine = create_engine(postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg'))
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(
+                SourceRootRecord(
+                    id='root',
+                    display_name='root',
+                    canonical_path=str(tmp_path),
+                    enabled=True,
+                    scan_state='scanned',
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            path = tmp_path / 'track.flac'
+            path.write_bytes(b'track')
+            source_id = intake_source(
+                session,
+                IntakeRequest(
+                    source_path=path,
+                    source_root_id='root',
+                    origin=Origin.MANUAL,
+                    duration_seconds=180,
+                    tag_observations=(
+                        SourceTagObservation(format_name='flac', tag_name='ARTIST', value='Artist'),
+                        SourceTagObservation(format_name='flac', tag_name='ALBUM', value='Album'),
+                    ),
+                    artwork_observations=(),
+                    provider_attempts=(),
+                    candidates=(),
+                    review_decisions=(),
+                ),
+            ).source_id
+            token = load_context(session, selector).album_snapshot_token
+            session.commit()
+        initial_request = AlbumRemapApplyRequest(
+            selector=selector,
+            album_snapshot_token=token,
+            release_mbid=UUID(release_id),
+            release_snapshot_token='0' * 64,
+            assignments=(AlbumRemapAssignment(source_id=source_id, track_mbid=UUID(track_id)),),
+            unmatched_source_ids=(),
+        )
+        with Session(engine) as session:
+            _ = apply_remap(session, initial_request, AlbumRemapRelease(release, '0' * 64))
+            session.commit()
+            selector = AlbumRemapSelector(release_mbid=UUID(release_id))
+            token = load_context(session, selector).album_snapshot_token
+        request = initial_request.model_copy(update={'selector': selector, 'album_snapshot_token': token})
+        started = Barrier(2)
+
+        def apply_with_shared_token() -> str:
+            with Session(engine) as session:
+                started.wait(timeout=5)
+                try:
+                    _ = apply_remap(session, request, AlbumRemapRelease(release, '0' * 64))
+                    session.commit()
+                    return 'committed'
+                except AlbumRemapConflict as error:
+                    session.rollback()
+                    return error.detail
+
+        # When: both apply operations race from that same snapshot.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            attempts = tuple(executor.submit(apply_with_shared_token) for _ in range(2))
+            results = tuple(attempt.result(timeout=5) for attempt in attempts)
+
+        # Then: the selector lock serializes mutation and the second transaction observes stale state.
+        assert sorted(results) == ['album snapshot is stale', 'committed']
+        with Session(engine) as session:
+            assert session.query(LibraryMetadataRevisionRecord).filter_by(actor='manual_album_remap').count() == 2
         engine.dispose()
