@@ -87,8 +87,9 @@ def test_create_app_preserves_the_openapi_contract_across_router_decomposition()
     # Refreshed again when RuntimeSettingsRequest/Response gained the persisted lrclib provider fields.
     # Refreshed when the private record collection was replaced by compact library status.
     # Refreshed when Settings gained explicit current-state cleanup preview/apply endpoints.
+    # Refreshed when the album-level MusicBrainz release remap workflow added four public endpoints.
     assert hashlib.sha256(canonical_schema).hexdigest() == (
-        '8560acff36f5b8e5f34738f2b5b64b654d27f0e1639449ceb2e4ffb2f54c31bb'
+        '946a715923295db529b0c3ec8a2f7b7e880e220a933e1a32a2afd299220dfbf2'
     )
 
 
@@ -97,7 +98,7 @@ def test_create_app_registers_each_public_method_and_path_once() -> None:
 
     route_keys = [(method, route.path) for route in _api_routes(application) for method in sorted(route.methods or ())]
 
-    assert len(route_keys) == 63
+    assert len(route_keys) == 67
     assert len(route_keys) == len(set(route_keys))
     assert all(route.endpoint.__module__.startswith('music_ingest.api.routers.') for route in _api_routes(application))
 

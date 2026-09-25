@@ -10,6 +10,7 @@ from starlette.types import Lifespan
 from music_ingest.adapters.external.musicbrainz import SyncMusicBrainzTransport
 from music_ingest.api.dependencies import SessionFactory
 from music_ingest.api.routers import (
+    album_remap,
     catalog,
     e2e,
     genres,
@@ -54,6 +55,7 @@ def create_app(
     app.include_router(workers.create_router(session_factory, worker_monitor=worker_monitor))
     app.include_router(recovery.create_router(session_factory, media_root=media_root))
     app.include_router(catalog.create_router(session_factory, media_root=media_root))
+    app.include_router(album_remap.create_router(session_factory, musicbrainz_transport=musicbrainz_transport))
     app.include_router(
         matching.create_router(
             session_factory,
