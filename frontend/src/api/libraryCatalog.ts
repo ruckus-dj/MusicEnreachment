@@ -42,6 +42,12 @@ export function refreshLibraryMetadata(): Promise<MetadataRefreshResult> {
   return api<MetadataRefreshResult>("/api/library/metadata/refresh", { method: "POST" });
 }
 
+export async function removePublication(recordId: string): Promise<void> {
+  await api<unknown>(`/api/library/records/${encodeURIComponent(recordId)}/publication`, {
+    method: "DELETE",
+  });
+}
+
 export function startPublicationReconciliation(): Promise<PublicationReconciliationJob> {
   return api<PublicationReconciliationJob>("/api/reconciliation/publications", { method: "POST" });
 }

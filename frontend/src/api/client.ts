@@ -57,6 +57,7 @@ export {
   listLibraryTracks,
   listManualActions,
   refreshLibraryMetadata,
+  removePublication,
   startPublicationReconciliation,
 } from "./libraryCatalog";
 export { ApiError, api } from "./request";

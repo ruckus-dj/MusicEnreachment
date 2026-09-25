@@ -40,6 +40,9 @@ export const errorMessages = {
   publicationReconciliation: "Не удалось проверить папку публикаций",
   publicationReconciliationFailed:
     "Проверка папки публикаций завершилась с ошибкой. Повторите попытку позже.",
+  removePublication: "Не удалось удалить публикацию",
+  removePublicationConflict:
+    "Не удалось безопасно удалить публикацию. Обновите данные трека и повторите попытку после завершения обработки.",
   autoRefreshTimeout: "Автообновление остановлено по таймауту. Обновите данные вручную.",
   autoRefreshUnavailable: "Автообновление временно недоступно",
   autoRefreshError: (message: string) => `Автообновление: ${message}`,
