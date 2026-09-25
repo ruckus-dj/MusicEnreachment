@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import final, override
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from music_ingest.models import SourceRootRecord
+from music_ingest.models import SourceLocationRecord, SourceRecord, SourceRootRecord
+from music_ingest.services.publication.locks import acquire_migration_lock
 
 
 @final
@@ -95,6 +96,7 @@ class SourceRootService:
         return root
 
     def remove(self, root_id: str) -> bool:
+        acquire_migration_lock(self._session, exclusive=True)
         root = self._session.get(SourceRootRecord, root_id)
         if root is None:
             return False
@@ -113,9 +115,38 @@ class SourceRootService:
                 updated_at=now,
             )
             self._session.add(historical)
-        for source in tuple(root.sources):
-            source.source_root = historical
-        self._session.delete(root)
+        affected_source_ids = tuple(
+            self._session.scalars(
+                select(SourceLocationRecord.source_id).where(SourceLocationRecord.source_root_id == root_id)
+            )
+        )
+        _ = self._session.execute(delete(SourceLocationRecord).where(SourceLocationRecord.source_root_id == root_id))
+        affected_sources = tuple(
+            self._session.scalars(
+                select(SourceRecord)
+                .where(
+                    or_(
+                        SourceRecord.source_root_id == root_id,
+                        SourceRecord.id.in_(affected_source_ids),
+                    )
+                )
+                .order_by(SourceRecord.id)
+            )
+        )
+        for source in affected_sources:
+            surviving = self._session.scalar(
+                select(SourceLocationRecord)
+                .where(SourceLocationRecord.source_id == source.id)
+                .order_by(SourceLocationRecord.id)
+                .limit(1)
+            )
+            if surviving is not None:
+                source.source_root_id = surviving.source_root_id
+                source.source_path = surviving.path
+            elif source.source_root_id == root_id:
+                source.source_root = historical
+        self._session.flush()
+        _ = self._session.execute(delete(SourceRootRecord).where(SourceRootRecord.id == root_id))
         self._session.flush()
         return True
 

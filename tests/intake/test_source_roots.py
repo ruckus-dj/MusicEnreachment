@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from testcontainers.community.postgres import PostgresContainer
 
 from music_ingest.api.app import create_app
-from music_ingest.models import Base
+from music_ingest.models import Base, SourceLocationRecord, SourceRecord, SourceRootRecord
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path]:
@@ -121,6 +123,82 @@ def test_source_roots_when_root_has_observations_archives_them_on_removal(tmp_pa
     assert seeded.status_code == 200
     assert removed.status_code == 204
     assert client.get('/api/settings/source-roots').json()['items'] == []
+    with Session(engine) as session:
+        source = session.get(SourceRecord, 'e2e-source-a')
+        assert source is not None
+        assert source.source_root_id == 'historical-unmanaged'
+        assert source.locations == []
+
+
+@pytest.mark.postgres
+def test_source_root_delete_reselects_a_surviving_postgres_location(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Given: a PostgreSQL source is canonically owned by one root but also has a location in another.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    source_parent = tmp_path / 'sources'
+    source_parent.mkdir()
+    first_path = source_parent / 'first'
+    second_path = source_parent / 'second'
+    first_path.mkdir()
+    second_path.mkdir()
+    with PostgresContainer('postgres:17') as postgres:
+        engine = create_engine(postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg'))
+        Base.metadata.create_all(engine)
+        client = TestClient(create_app(lambda: Session(engine), source_roots_parent=source_parent))
+        first_id = str(
+            client.post('/api/settings/source-roots', json={'path': str(first_path), 'display_name': 'First'}).json()[
+                'id'
+            ]
+        )
+        second_id = str(
+            client.post('/api/settings/source-roots', json={'path': str(second_path), 'display_name': 'Second'}).json()[
+                'id'
+            ]
+        )
+        with Session(engine) as session:
+            first = session.get_one(SourceRootRecord, first_id)
+            second = session.get_one(SourceRootRecord, second_id)
+            source = SourceRecord(
+                id='shared-source',
+                identity_key='1:1:1',
+                source_path=str(first_path / 'track.flac'),
+                device=1,
+                inode=1,
+                size_bytes=1,
+                sha256='a' * 64,
+                mtime_ns=1,
+                origin='manual',
+                intake_state='present',
+                source_root=first,
+            )
+            source.locations.extend(
+                (
+                    SourceLocationRecord(source_root=first, path=str(first_path / 'track.flac')),
+                    SourceLocationRecord(source_root=second, path=str(second_path / 'track.flac')),
+                )
+            )
+            session.add(source)
+            session.commit()
+
+        # When: the operator removes the canonical root through the real HTTP endpoint.
+        removed = client.delete(f'/api/settings/source-roots/{first_id}')
+
+        # Then: its location is removed and the surviving path becomes canonical without violating PostgreSQL FKs.
+        assert removed.status_code == 204
+        with Session(engine) as session:
+            source = session.get_one(SourceRecord, 'shared-source')
+            locations = session.scalars(
+                select(SourceLocationRecord).where(SourceLocationRecord.source_id == source.id)
+            ).all()
+            assert source.source_root_id == second_id
+            assert source.source_path == str(second_path / 'track.flac')
+            assert [(location.source_root_id, location.path) for location in locations] == [
+                (second_id, str(second_path / 'track.flac'))
+            ]
+            assert session.get(SourceRootRecord, first_id) is None
+        engine.dispose()
 
 
 def test_full_reprocess_when_historical_sources_exist_skips_them(tmp_path: Path) -> None:
