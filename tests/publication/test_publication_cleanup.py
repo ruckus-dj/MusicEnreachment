@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from music_ingest.api.app import create_app
 from music_ingest.models import (
     Base,
     LibraryPublicationRecord,
@@ -23,6 +25,102 @@ from music_ingest.services.publication import (
     reserve_attempt,
 )
 from music_ingest.services.publication.cleanup import cleanup_attempt
+
+
+def test_remove_publication_endpoint_withdraws_managed_audio_and_preserves_source_and_nfo(tmp_path: Path) -> None:
+    # Given: one current managed publication beside a release-level nfo file.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "withdraw.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+    media_root = tmp_path / 'media'
+    release = media_root / 'Artist' / 'Album'
+    release.mkdir(parents=True)
+    audio = release / '01 - Track.mka'
+    source_path = tmp_path / 'incoming.flac'
+    _ = audio.write_bytes(b'published-output')
+    _ = source_path.write_bytes(b'original-source')
+    nfo = release / 'album.nfo'
+    _ = nfo.write_text('release metadata', encoding='utf-8')
+    with Session(engine) as session:
+        record, source = _record_and_source('withdraw', tmp_path, now)
+        source.source_path = str(source_path)
+        record.publication_state = 'current'
+        record.lyrics_status = 'synced'
+        record.lyrics_publication_id = 'publication-withdraw'
+        publication = LibraryPublicationRecord(
+            id='publication-withdraw',
+            library_record=record,
+            source=source,
+            path=str(audio),
+            format_name='mka',
+            content_sha256=sha256(b'published-output').hexdigest(),
+            state='current',
+            created_at=now,
+        )
+        session.add_all((record, source, publication))
+        session.commit()
+
+    # When: the operator removes the publication through the API.
+    response = TestClient(create_app(lambda: Session(engine), media_root=media_root)).delete(
+        '/api/library/records/record-withdraw/publication'
+    )
+
+    # Then: only managed audio is removed and durable state records the withdrawal.
+    assert response.status_code == 204
+    assert source_path.read_bytes() == b'original-source'
+    assert nfo.read_text(encoding='utf-8') == 'release metadata'
+    assert not audio.exists()
+    with Session(engine) as session:
+        record = session.get(LibraryRecord, 'record-withdraw')
+        publication = session.get(LibraryPublicationRecord, 'publication-withdraw')
+        assert record is not None and record.publication_state == 'absent'
+        assert record.lyrics_status == 'none' and record.lyrics_publication_id is None
+        assert publication is not None and publication.state == 'withdrawn'
+
+
+def test_remove_publication_endpoint_refuses_changed_managed_audio(tmp_path: Path) -> None:
+    # Given: the current output no longer matches its persisted publication hash.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "withdraw-changed.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    audio = media_root / 'Track.mka'
+    _ = audio.write_bytes(b'changed-output')
+    with Session(engine) as session:
+        record, source = _record_and_source('withdraw-changed', tmp_path, now)
+        record.publication_state = 'current'
+        session.add_all(
+            (
+                record,
+                source,
+                LibraryPublicationRecord(
+                    id='publication-withdraw-changed',
+                    library_record=record,
+                    source=source,
+                    path=str(audio),
+                    format_name='mka',
+                    content_sha256=sha256(b'expected-output').hexdigest(),
+                    state='current',
+                    created_at=now,
+                ),
+            )
+        )
+        session.commit()
+
+    # When: removal cannot prove ownership of the current bytes.
+    response = TestClient(create_app(lambda: Session(engine), media_root=media_root)).delete(
+        '/api/library/records/record-withdraw-changed/publication'
+    )
+
+    # Then: neither the file nor current publication state is changed.
+    assert response.status_code == 409
+    assert audio.read_bytes() == b'changed-output'
+    with Session(engine) as session:
+        record = session.get(LibraryRecord, 'record-withdraw-changed')
+        publication = session.get(LibraryPublicationRecord, 'publication-withdraw-changed')
+        assert record is not None and record.publication_state == 'current'
+        assert publication is not None and publication.state == 'current'
 
 
 def test_finalization_removes_superseded_audio_and_empty_directories_after_path_change(tmp_path: Path) -> None:

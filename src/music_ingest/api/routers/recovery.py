@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, joinedload, raiseload, selectinload
 
@@ -40,6 +40,11 @@ from music_ingest.services.library.service import (
     record_event,
 )
 from music_ingest.services.musicbrainz_identity import ConfirmedMusicBrainzIdentity
+from music_ingest.services.publication.cleanup import (
+    PublicationWithdrawalError,
+    cleanup_withdrawn_publications,
+    withdraw_current_publication,
+)
 from music_ingest.services.publication.locks import acquire_storage_lock
 from music_ingest.services.reconciliation import mark_disappeared_source
 from music_ingest.services.source_boundary import SourceBoundaryError, resolve_regular_file
@@ -84,6 +89,21 @@ def create_router(session_factory: SessionFactory, *, media_root: Path | None = 
         ):
             raise HTTPException(status_code=409, detail='publication recovery is active; retry after completion')
         return media_root if config is None else Path(config.output_root)
+
+    @router.delete('/api/library/records/{record_id}/publication', status_code=status.HTTP_204_NO_CONTENT)
+    def remove_publication(record_id: str) -> Response:
+        try:
+            with session_factory() as session:
+                output_root = writable_media_root(session)
+                _ = withdraw_current_publication(session, record_id, output_root, datetime.now(UTC))
+                session.commit()
+                cleanup_withdrawn_publications(session, record_id, output_root)
+                session.commit()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail='library record not found') from error
+        except PublicationWithdrawalError as error:
+            raise HTTPException(status_code=409, detail=error.detail) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post('/api/library/reprocess-all', response_model=FullReprocessResponse)
     def reprocess_all_library() -> FullReprocessResponse:
