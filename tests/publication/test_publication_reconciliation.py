@@ -118,6 +118,43 @@ def test_publication_reconciliation_removes_only_unrepresented_managed_entries(t
         assert all(path.exists() for path in (current_audio, historical_audio, artwork, lyrics, nfo, staged_audio))
 
 
+def test_publication_reconciliation_removes_managed_sidecars_when_no_tracks_remain(tmp_path: Path) -> None:
+    # Given: persisted artwork and lyrics point into a release directory without any published tracks.
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "orphan-sidecars.db"}')
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+    media_root = tmp_path / 'media'
+    album = media_root / 'Artist' / 'Empty Album'
+    album.mkdir(parents=True)
+    artwork = album / 'cover.jpg'
+    lyrics = album / '01 - Missing.lrc'
+    _ = artwork.write_bytes(b'artwork')
+    _ = lyrics.write_text('[00:00.00]Missing', encoding='utf-8')
+
+    with Session(engine) as session:
+        record = LibraryRecord(id='record-missing-track', created_at=now, updated_at=now)
+        record.lyrics_path = str(lyrics)
+        artwork_record = ReleaseArtworkRecord(
+            release_mbid='empty-release',
+            path=str(artwork),
+            format_name='jpeg',
+            provider='fixture',
+            state='current',
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all((record, _storage(media_root, now), artwork_record))
+        session.flush()
+
+        # When: the operator reconciles the publication directory.
+        result = reconcile_publication_directory(session, now)
+
+        # Then: orphaned managed sidecars are removed before their empty release and artist directories.
+        assert result.removed_files == 2
+        assert result.removed_directories == 2
+        assert not album.parent.exists()
+
+
 def test_publication_reconciliation_marks_missing_current_output_and_queues_refresh_once(tmp_path: Path) -> None:
     # Given: a current publication row whose managed audio is absent.
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "missing.db"}')

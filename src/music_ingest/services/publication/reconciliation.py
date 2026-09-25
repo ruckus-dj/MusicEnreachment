@@ -41,22 +41,25 @@ def reconcile_publication_directory(session: Session, now: datetime) -> Publicat
     attempts = tuple(
         session.scalars(select(PublicationAttemptRecord).where(PublicationAttemptRecord.cleaned_at.is_(None))).all()
     )
-    represented_files = {_absolute(Path(item.path)) for item in publications}
-    represented_files.update(
-        _absolute(Path(path))
-        for path in session.scalars(select(ReleaseArtworkRecord.path).where(ReleaseArtworkRecord.path.is_not(None)))
-        if path is not None
-    )
-    represented_files.update(_lyrics_paths(records))
-    protected_directories = {
-        _absolute(Path(path)) for attempt in attempts for path in (attempt.staging_directory, attempt.backup_directory)
-    }
-    represented_files.update(
+    publication_files = {_absolute(Path(item.path)) for item in publications}
+    active_target_files = {
         _absolute(Path(attempt.target_directory) / attempt.target_audio_name)
         for attempt in attempts
         if attempt.state in _PROTECTED_ATTEMPT_STATES
-    )
-
+    }
+    track_directories = {path.parent for path in publication_files if _is_available(str(path), media_root)}
+    track_directories.update(path.parent for path in active_target_files)
+    ancillary_files = {
+        _absolute(Path(path))
+        for path in session.scalars(select(ReleaseArtworkRecord.path).where(ReleaseArtworkRecord.path.is_not(None)))
+        if path is not None
+    }
+    ancillary_files.update(_lyrics_paths(records))
+    represented_files = publication_files | active_target_files
+    represented_files.update(path for path in ancillary_files if path.parent in track_directories)
+    protected_directories = {
+        _absolute(Path(path)) for attempt in attempts for path in (attempt.staging_directory, attempt.backup_directory)
+    }
     removed_files, removed_directories, preserved_nfo, unsafe_entries = _remove_orphans(
         media_root,
         root_device,
