@@ -86,8 +86,7 @@ class SourceAccess:
         if source.mtime_ns == 0:
             return False
         stat = path.stat()
-        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) != (
-            source.device,
+        return (stat.st_ino, stat.st_size, stat.st_mtime_ns) != (
             source.inode,
             source.size_bytes,
             source.mtime_ns,
