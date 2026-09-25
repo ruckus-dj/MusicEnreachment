@@ -66,6 +66,26 @@ Use `color-mix()` with these tokens for state variants. Never rely on color alon
 - States: the current grouping uses text plus the accent marker; the parent stays selected throughout catalog and track-detail routes.
 - Responsive behavior: nested destinations remain grouped vertically in the desktop rail and become an always-visible three-column row in the mobile navigation strip.
 
+### Album remap workspace
+
+- Structure: `.album-remap-screen` contains a semantic two-pane `list-detail` workspace: release search and results come first in DOM order, followed by the selected release mapping pane.
+- Layout: panes use intrinsic `minmax(min(..., 100%), 1fr)` tracks and `min-inline-size: 0`; search/detail stack below 1100px, source/slot columns stack below 900px, and compact controls apply below 700px. The existing `.content` region remains the only vertical scroll owner.
+- Density: the route uses a compact hero, a 64px source-album identity block, a header-level apply action, and ordered target rows. Assigned file details and the native select share a row on desktop so at least three ordinary mappings remain visible in a typical desktop viewport.
+- States: loading context, empty source context, search results, selected release preview, inline stale/error message, no-assignment disabled apply, and ready-to-apply summary.
+- Accessibility: AppShell owns the single visible back action; the workspace keeps labeled native search, semantic headings and ordered lists, native disabled assignment controls, `role="status"` for asynchronous progress, and `role="alert"` for an actionable conflict. Apply locks release selection, file controls, drag/drop, and assignment controls until the mutation settles.
+
+### Album remap file tile
+
+- Structure: a `.remap-file-tile` is a native button with source filename, path, technical metadata, and a labeled native assignment select.
+- States: unassigned, selected for click assignment, assigned, draggable, and disabled only when its parent operation is busy.
+- Accessibility: the select exposes the same assignment path as drag/drop; long paths wrap; selection is indicated with text and border treatment, not color alone.
+
+### Album remap track slot
+
+- Structure: each `.remap-track-slot` is a list row with disc/track position, title, recording context, an explicit `Назначить сюда` control, and one file tile at most.
+- States: empty drop target, assigned, selected-file destination, and nonassignable data track.
+- Accessibility: nonassignable data tracks state their restriction in text and disable both drop and assignment; drag/drop is supplemented by button and select controls.
+
 ## 6. Motion & Interaction
 
 - `--ease`: 180ms ease for hover, press and state feedback.
