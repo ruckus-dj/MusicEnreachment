@@ -228,6 +228,7 @@ export type Screen =
   | "artists"
   | "albums"
   | "tracks"
+  | "album-remap"
   | "track"
   | "manual-actions"
   | "workers"

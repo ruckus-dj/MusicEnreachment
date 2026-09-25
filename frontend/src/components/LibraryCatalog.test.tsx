@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibraryTrack } from "../api/client";
 import { LibraryCatalog } from "./LibraryCatalog";
@@ -27,18 +27,19 @@ function track(overrides: Partial<LibraryTrack> = {}): LibraryTrack {
   };
 }
 
-function renderTracks(albumTracks: LibraryTrack[]) {
+function renderTracks(albumTracks: LibraryTrack[], onNavigate = vi.fn(), album = "id:album-1") {
   return render(
     <LibraryCatalog
       screen="tracks"
       artist="Artist"
-      album="album-1"
+      album={album}
+      albumMissing={album === "album:"}
       artists={["Artist"]}
       artistTrackCounts={{ Artist: albumTracks.length }}
       albums={[]}
       albumTracks={albumTracks}
       loading={false}
-      onNavigate={vi.fn()}
+      onNavigate={onNavigate}
       onRefresh={vi.fn()}
     />,
   );
@@ -90,10 +91,47 @@ describe("LibraryCatalog lyrics indication", () => {
     expect(flags[1].className).toContain("error");
   });
 
-  it("keeps the row button as the only interactive control and renders no lyric content", () => {
+  it("keeps track opening and album remapping as explicit actions without lyric content", () => {
     renderTracks([track()]);
 
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.getAllByRole("button")).toHaveLength(3);
     expect(document.body.textContent).not.toMatch(/\[00:|\.lrc/);
+  });
+
+  it("opens album remapping from the selected album track list", () => {
+    const onNavigate = vi.fn();
+    renderTracks([track()], onNavigate);
+
+    fireEvent.click(screen.getByRole("button", { name: "Сменить релиз" }));
+
+    expect(onNavigate).toHaveBeenCalledWith({
+      screen: "album-remap",
+      artist: "Artist",
+      artistMissing: false,
+      album: "id:album-1",
+      albumMissing: false,
+    });
+  });
+
+  it("hides album remapping from the unfiltered all-tracks list", () => {
+    // Given
+    renderTracks([track()], vi.fn(), "");
+
+    // When
+    const remapAction = screen.queryByRole("button", { name: "Сменить релиз" });
+
+    // Then
+    expect(remapAction).toBeNull();
+  });
+
+  it("renders a pregap at position zero", () => {
+    // Given
+    renderTracks([track({ track_number: "0" })]);
+
+    // When
+    const pregap = screen.getByRole("button", { name: /Track/ });
+
+    // Then
+    expect(pregap.querySelector("b")?.textContent).toBe("0");
   });
 });

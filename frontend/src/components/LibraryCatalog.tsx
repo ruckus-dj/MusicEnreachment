@@ -8,6 +8,7 @@ type LibraryCatalogProps = {
   screen: Extract<Screen, "artists" | "albums" | "tracks">;
   artist: string;
   album: string;
+  albumMissing: boolean;
   artists: string[];
   artistTrackCounts: Readonly<Record<string, number>>;
   albums: CatalogAlbum[];
@@ -29,6 +30,7 @@ export function LibraryCatalog({
   screen,
   artist,
   album,
+  albumMissing,
   artists,
   artistTrackCounts,
   albums,
@@ -127,9 +129,28 @@ export function LibraryCatalog({
           </p>
           <h2>Список треков</h2>
         </div>
-        <button type="button" className="secondary" disabled={loading} onClick={onRefresh}>
-          {loading ? "Обновляем…" : "Обновить список"}
-        </button>
+        <div className="provider-actions">
+          {album || albumMissing ? (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                onNavigate({
+                  screen: "album-remap",
+                  artist,
+                  artistMissing: artist === UNKNOWN_ARTIST_LABEL,
+                  album,
+                  albumMissing,
+                })
+              }
+            >
+              Сменить релиз
+            </button>
+          ) : null}
+          <button type="button" className="secondary" disabled={loading} onClick={onRefresh}>
+            {loading ? "Обновляем…" : "Обновить список"}
+          </button>
+        </div>
       </div>
       <div className="track-table">
         {albumTracks.length === 0 ? (

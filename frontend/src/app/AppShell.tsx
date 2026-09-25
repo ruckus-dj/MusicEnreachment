@@ -2,6 +2,7 @@ import { Icon as icon } from "../components/Icon";
 import { LibraryCatalog } from "../components/LibraryCatalog";
 import { titleFor } from "../domain/metadata";
 import { russianCountNoun } from "../domain/russianCount";
+import { AlbumRemapScreen } from "../screens/AlbumRemapScreen";
 import { DashboardScreen } from "../screens/DashboardScreen";
 import { ManualActionsScreen } from "../screens/ManualActionsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
@@ -27,7 +28,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
     tracks,
     loading,
     artist,
+    artistMissing,
     album,
+    albumMissing,
     detail,
     sourceId,
     currentTrack,
@@ -52,7 +55,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
       item.match_state === "needs_review",
   ).length;
   const libraryActive =
-    screen === "artists" || screen === "albums" || screen === "tracks" || screen === "track";
+    screen === "artists" ||
+    screen === "albums" ||
+    screen === "tracks" ||
+    screen === "album-remap" ||
+    screen === "track";
   const libraryTitle =
     screen === "artists"
       ? "По артистам"
@@ -62,13 +69,16 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           ? album
             ? albumTracks[0]?.album_name || album
             : "Список треков"
-          : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId);
+          : screen === "album-remap"
+            ? "Смена релиза"
+            : titleFor(detail ?? currentTrack?.item ?? emptySummary, sourceId);
   const showLibraryBack =
+    screen === "album-remap" ||
     screen === "track" ||
     (screen === "albums" && Boolean(artist)) ||
     (screen === "tracks" && Boolean(artist || album));
   return (
-    <div className="app-shell">
+    <div className={screen === "album-remap" ? "app-shell remap-route" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -86,6 +96,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             type="button"
             className={screen === "dashboard" ? "nav-item active" : "nav-item"}
             aria-current={screen === "dashboard" ? "page" : undefined}
+            aria-label="Дашборд"
             data-testid="nav-dashboard"
             onClick={() => controller.navigate({ screen: "dashboard" })}
           >
@@ -97,6 +108,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               type="button"
               className={libraryActive ? "nav-item active" : "nav-item"}
               aria-expanded="true"
+              aria-label="Медиатека"
               data-testid="nav-library"
               onClick={() => controller.navigate({ screen: "artists" })}
             >
@@ -129,9 +141,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               <button
                 type="button"
                 className={
-                  screen === "tracks" || screen === "track" ? "nav-subitem active" : "nav-subitem"
+                  screen === "tracks" || screen === "album-remap" || screen === "track"
+                    ? "nav-subitem active"
+                    : "nav-subitem"
                 }
-                aria-current={screen === "tracks" ? "page" : undefined}
+                aria-current={screen === "tracks" || screen === "album-remap" ? "page" : undefined}
                 data-testid="nav-library-tracks"
                 onClick={() => controller.navigate({ screen: "tracks" })}
               >
@@ -143,6 +157,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             type="button"
             className={screen === "manual-actions" ? "nav-item active" : "nav-item"}
             data-testid="nav-manual-actions"
+            aria-label="Ручные действия"
             onClick={() => controller.navigate({ screen: "manual-actions" })}
           >
             {icon(
@@ -154,6 +169,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             type="button"
             className={screen === "settings" ? "nav-item active" : "nav-item"}
             data-testid="nav-settings"
+            aria-label="Настройки"
             onClick={() => controller.navigate({ screen: "settings" })}
           >
             {icon(
@@ -165,6 +181,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
             type="button"
             className={screen === "workers" ? "nav-item active" : "nav-item"}
             data-testid="nav-workers"
+            aria-label="Очередь worker’ов"
             onClick={() => controller.navigate({ screen: "workers" })}
           >
             {icon("M5 5h14M5 12h14M5 19h14M8 3v4m8-4v4M8 10v4m8-4v4m-8 3v4m8-4v4")}
@@ -217,7 +234,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
           </div>
         </header>
         <div className="content">
-          <section className="hero">
+          <section className={screen === "album-remap" ? "hero remap-hero" : "hero"}>
             <div>
               {showLibraryBack && (
                 <button type="button" className="back" onClick={controller.back}>
@@ -233,9 +250,11 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                       ? "Очередь оператора"
                       : screen === "workers"
                         ? "Состояние обработки"
-                        : screen === "track"
-                          ? "Инспектор трека"
-                          : "Ваша медиатека"}
+                        : screen === "album-remap"
+                          ? "Сопоставление альбома"
+                          : screen === "track"
+                            ? "Инспектор трека"
+                            : "Ваша медиатека"}
               </p>
               <h1>
                 {screen === "settings"
@@ -246,7 +265,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                       ? "Ручные действия"
                       : screen === "workers"
                         ? "Очередь worker’ов"
-                        : libraryTitle}
+                        : screen === "album-remap"
+                          ? "Смена релиза"
+                          : libraryTitle}
               </h1>
               <p className="hero-copy">
                 {screen === "settings"
@@ -267,7 +288,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                               ? artist || album
                                 ? "Треки выбранной группы. Выберите файл, чтобы открыть проверку и Final."
                                 : "Полный список треков медиатеки без привязки к одному исполнителю."
-                              : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
+                              : screen === "album-remap"
+                                ? "Найдите релиз MusicBrainz и проверьте сопоставление исходных файлов до применения."
+                                : "Исходные данные, провайдеры, ручная проверка и Final одной записи."}
               </p>
             </div>
             <div className="hero-stat">
@@ -286,7 +309,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                             ? albums.length
                             : screen === "tracks"
                               ? albumTracks.length
-                              : "01"}
+                              : screen === "album-remap"
+                                ? "01"
+                                : "01"}
               </strong>
               <span>
                 {screen === "settings"
@@ -303,7 +328,9 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
                             ? russianCountNoun(albums.length, ["альбом", "альбома", "альбомов"])
                             : screen === "tracks"
                               ? russianCountNoun(albumTracks.length, ["трек", "трека", "треков"])
-                              : "трек"}
+                              : screen === "album-remap"
+                                ? "выбранный альбом"
+                                : "трек"}
               </span>
             </div>
           </section>
@@ -315,7 +342,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               </button>
             </div>
           )}
-          {libraryActive && screen !== "track" && (
+          {libraryActive && screen !== "track" && screen !== "album-remap" && (
             <div className="library-toolbar">
               <label className="search">
                 {icon("m20 20-4.5-4.5M10.75 17a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5Z")}
@@ -350,7 +377,16 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               </fieldset>
             </div>
           )}
-          {screen === "dashboard" ? (
+          {screen === "album-remap" ? (
+            <AlbumRemapScreen
+              artist={artist}
+              album={album}
+              artistMissing={artistMissing}
+              albumMissing={albumMissing}
+              onNavigate={controller.navigate}
+              onNotice={controller.setNotice}
+            />
+          ) : screen === "dashboard" ? (
             <DashboardScreen
               scanning={controller.scanning}
               reprocessing={controller.reprocessing}
@@ -440,6 +476,7 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               screen={screen}
               artist={artist}
               album={album}
+              albumMissing={albumMissing}
               artists={artists}
               artistTrackCounts={catalogArtistTrackCounts}
               albums={albums}

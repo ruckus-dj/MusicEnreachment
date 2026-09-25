@@ -100,7 +100,9 @@ export type AppControllerModel = {
   detail: Detail | null;
   screen: Screen;
   artist: string;
+  artistMissing: boolean;
   album: string;
+  albumMissing: boolean;
   recordId: string;
   sourceId: string;
   layer: Layer;
@@ -1248,7 +1250,9 @@ export function useAppController(): AppControllerModel {
   const currentTags =
     detail && sourceId ? (layer === "final" ? draft : tagsFor(detail, sourceId, layer)) : {};
   function back() {
-    if (screen === "track")
+    if (screen === "album-remap")
+      navigate({ screen: "tracks", artist, artistMissing, album, albumMissing });
+    else if (screen === "track")
       navigate({ screen: "tracks", artist, artistMissing, album, albumMissing });
     else if (screen === "tracks") navigate({ screen: "albums", artist, artistMissing, album });
     else if (screen === "albums") navigate({ screen: "artists" });
@@ -1274,7 +1278,9 @@ export function useAppController(): AppControllerModel {
     detail,
     screen,
     artist,
+    artistMissing,
     album,
+    albumMissing,
     recordId,
     sourceId,
     layer,

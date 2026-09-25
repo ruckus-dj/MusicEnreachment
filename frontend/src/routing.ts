@@ -31,6 +31,7 @@ export function parseRoute(pathname: string, search = ""): Route {
   const artistMissing = params.get("artist_missing") === "true";
   const artistName = artistMissing ? "" : (params.get("artist_name") ?? "");
   const albumMissing = params.get("album_missing") === "true";
+  const identifiedAlbum = params.has("album_id");
   const sourceId = decodeRouteIdentifier(params.get("source_id") ?? undefined);
   if (parts.length === 0 || parts[0] === "dashboard") return { screen: "dashboard" };
   if (parts[0] === "settings") return { screen: "settings" };
@@ -47,10 +48,23 @@ export function parseRoute(pathname: string, search = ""): Route {
       ...(albumMissing ? { albumMissing: true } : {}),
       publicationFilter: filter,
     };
+  if (parts[1] === "album-remap")
+    return {
+      screen: "album-remap",
+      artist: identifiedAlbum ? "" : artistName,
+      ...(artistMissing ? { artistMissing: true } : {}),
+      ...(albumMissing ? { albumMissing: true } : {}),
+      ...(params.has("album_id")
+        ? { album: `id:${decodeRouteIdentifier(params.get("album_id") ?? undefined)}` }
+        : params.has("album_name")
+          ? { album: `album:${decodeRouteIdentifier(params.get("album_name") ?? undefined)}` }
+          : {}),
+      publicationFilter: filter,
+    };
   if (parts[1] === "tracks")
     return {
       screen: "tracks",
-      artist: artistName,
+      artist: identifiedAlbum ? "" : artistName,
       ...(artistMissing ? { artistMissing: true } : {}),
       ...(albumMissing ? { albumMissing: true } : {}),
       ...(params.has("album_id")
@@ -118,10 +132,9 @@ export function routePath(route: Route): string {
       route.publicationFilter,
     );
   }
-  if (route.screen === "tracks") {
-    if (!(route.artist || route.artistMissing || route.album || route.albumMissing))
-      return withPublicationFilter("/library/tracks", route.publicationFilter);
+  if (route.screen === "album-remap") {
     const album = route.album ?? "";
+    const identifiedAlbum = Boolean(album) && !album.startsWith("album:");
     const albumQuery = route.albumMissing
       ? "album_missing=true"
       : album.startsWith("album:")
@@ -131,7 +144,30 @@ export function routePath(route: Route): string {
           : "";
     const artistQuery = route.artistMissing
       ? "artist_missing=true"
-      : route.artist
+      : route.artist && !identifiedAlbum
+        ? `artist_name=${encodeURIComponent(route.artist)}`
+        : "";
+    const query = [artistQuery, albumQuery].filter(Boolean).join("&");
+    return withPublicationFilter(
+      `/library/album-remap${query ? `?${query}` : ""}`,
+      route.publicationFilter,
+    );
+  }
+  if (route.screen === "tracks") {
+    if (!(route.artist || route.artistMissing || route.album || route.albumMissing))
+      return withPublicationFilter("/library/tracks", route.publicationFilter);
+    const album = route.album ?? "";
+    const identifiedAlbum = Boolean(album) && !album.startsWith("album:");
+    const albumQuery = route.albumMissing
+      ? "album_missing=true"
+      : album.startsWith("album:")
+        ? `album_name=${encodeURIComponent(album.slice("album:".length))}`
+        : album
+          ? `album_id=${encodeURIComponent(album.replace(/^id:/, ""))}`
+          : "";
+    const artistQuery = route.artistMissing
+      ? "artist_missing=true"
+      : route.artist && !identifiedAlbum
         ? `artist_name=${encodeURIComponent(route.artist)}`
         : "";
     const query = [artistQuery, albumQuery].filter(Boolean).join("&");
