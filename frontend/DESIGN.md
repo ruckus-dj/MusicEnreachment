@@ -40,10 +40,24 @@ Use `color-mix()` with these tokens for state variants. Never rely on color alon
 
 ### Action button
 
-- Structure: native `<button type="button">` with `.primary` or `.secondary`.
+- Structure: native `<button type="button">` with `.primary` or `.secondary`; destructive actions add the `.danger` modifier.
 - States: default, hover, active, visible focus, disabled and loading label.
 - Accessibility: native disabled semantics; loading and outcome text is announced by the shared status notice.
 - Motion: 180ms background/transform transition; reduced-motion media query makes it effectively instant.
+
+### Destructive publication action
+
+- Structure: a `.secondary.danger` button sits beside the current publication status and is paired with visible scope text.
+- States: available only for a current publication, styled confirmation dialog before mutation, disabled loading label while the request settles.
+- Accessibility: the control references its scope text with `aria-describedby`; wording states that source media and `.nfo` files are preserved, so risk is not conveyed by color alone.
+- Outcome: success refreshes the track detail and uses the shared status notice; failure leaves the current detail visible and reports an actionable error.
+
+### Confirmation dialog
+
+- Structure: reusable modal backdrop and centered `role="alertdialog"` surface with an eyebrow, title, plain-language scope, cancel action and explicit destructive action.
+- Interaction: Radix AlertDialog moves focus to the safe cancel action, traps Tab focus, and locks background scrolling. Cancellation returns focus to the trigger; if a successful mutation removes that trigger, focus moves to a stable outcome heading. Escape cancels unless the mutation is busy; backdrop clicks do not dismiss destructive confirmations.
+- Motion: opacity and transform use `--ease`; `prefers-reduced-motion` collapses both transitions. The centered modal presentation adapts the beui.dev mechanism while Radix owns accessibility and focus behavior.
+- Policy: application confirmations use this styled primitive. Do not introduce `window.alert`, `window.confirm`, or `window.prompt` for product interactions.
 
 ### Status notice
 
@@ -95,7 +109,7 @@ Use `color-mix()` with these tokens for state variants. Never rely on color alon
 
 ## 7. Depth & Surface
 
-Use a mixed strategy: one-pixel structural borders plus the single `--shadow` elevation token for major panels. Nested cards use borders and tonal shifts rather than additional shadows. Dialogs may use the existing stronger tinted shadow.
+Use a mixed strategy: one-pixel structural borders plus `--shadow` for major panels. Nested cards use borders and tonal shifts rather than additional shadows. Modal dialogs use the stronger tinted `--shadow-dialog` token to remain distinct from the workspace beneath them.
 
 ## 8. Accessibility Constraints & Accepted Debt
 
