@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,7 @@ from music_ingest.models import (
     LibraryRecord,
     ProviderAttemptRecord,
     ReviewDecisionRecord,
+    SourceLocationRecord,
     SourceRecord,
     SourceTagRecord,
 )
@@ -50,9 +52,11 @@ __all__ = [
 def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
     source_stat = request.source_path.stat()
     source_fingerprint = _source_fingerprint(source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_ino)
-    source_id = _source_id(request.source_root_id, source_stat.st_dev, source_stat.st_ino, source_fingerprint)
+    identity_key = _identity_key(source_stat.st_ino, source_stat.st_size, source_stat.st_mtime_ns)
+    source_id = _source_id(identity_key)
     repository = IntakeRepository(session)
-    source = repository.find_source(source_id)
+    source = repository.find_source_by_identity(identity_key)
+    created = False
     if source is None:
         try:
             with session.begin_nested():
@@ -60,24 +64,29 @@ def intake_source(session: Session, request: IntakeRequest) -> IntakeResult:
                     repository,
                     request,
                     source_id,
+                    identity_key,
                     source_stat.st_dev,
                     source_stat.st_ino,
                     source_stat.st_size,
                     source_stat.st_mtime_ns,
                     source_fingerprint,
                 )
+                created = True
         except IntegrityError:
             session.expire_all()
-            source = repository.find_source(source_id)
+            source = repository.find_source_by_identity(identity_key)
             if source is None:
                 raise
-    return IntakeResult(source_id=source_id)
+    source.device = source_stat.st_dev
+    _claim_source_location(session, source, request.source_root_id, str(request.source_path.resolve()))
+    return IntakeResult(source_id=SourceId(source.id), created=created)
 
 
 def _persist_source(
     repository: IntakeRepository,
     request: IntakeRequest,
     source_id: SourceId,
+    identity_key: str,
     device: int,
     inode: int,
     size_bytes: int,
@@ -88,6 +97,7 @@ def _persist_source(
     library_record = LibraryRecord(id=f'record-{uuid4().hex}', created_at=now, updated_at=now)
     source = SourceRecord(
         id=source_id,
+        identity_key=identity_key,
         source_path=str(request.source_path),
         device=device,
         inode=inode,
@@ -99,6 +109,7 @@ def _persist_source(
         intake_state=IntakeState.NEEDS_REVIEW.value,
         source_root_id=request.source_root_id,
         library_record=library_record,
+        locations=[],
     )
     source.tag_observations = [
         SourceTagRecord(format_name=item.format_name, tag_name=item.tag_name, value=item.value)
@@ -124,9 +135,44 @@ def _persist_source(
     return source
 
 
+def _claim_source_location(session: Session, source: SourceRecord, source_root_id: str, path: str) -> None:
+    location = session.scalar(
+        select(SourceLocationRecord)
+        .where(SourceLocationRecord.source_root_id == source_root_id)
+        .where(SourceLocationRecord.path == path)
+        .with_for_update()
+    )
+    previous_source = None if location is None or location.source_id == source.id else location.source
+    if location is None:
+        source.locations.append(SourceLocationRecord(source_root_id=source_root_id, path=path))
+    elif previous_source is not None:
+        location.source = source
+    session.flush()
+    _select_canonical_location(session, source)
+    if previous_source is not None:
+        _select_canonical_location(session, previous_source)
+    session.flush()
+
+
+def _select_canonical_location(session: Session, source: SourceRecord) -> None:
+    location = session.scalar(
+        select(SourceLocationRecord)
+        .where(SourceLocationRecord.source_id == source.id)
+        .order_by(SourceLocationRecord.path, SourceLocationRecord.id)
+        .limit(1)
+    )
+    if location is not None:
+        source.source_root_id = location.source_root_id
+        source.source_path = location.path
+
+
 def _source_fingerprint(size_bytes: int, mtime_ns: int, inode: int) -> str:
     return sha256(f'{size_bytes}:{mtime_ns}:{inode}'.encode()).hexdigest()
 
 
-def _source_id(source_root_id: str, device: int, inode: int, source_hash: str) -> SourceId:
-    return SourceId(sha256(f'{source_root_id}:{device}:{inode}:{source_hash}'.encode()).hexdigest())
+def _identity_key(inode: int, size_bytes: int, mtime_ns: int) -> str:
+    return f'{inode}:{size_bytes}:{mtime_ns}'
+
+
+def _source_id(identity_key: str) -> SourceId:
+    return SourceId(sha256(identity_key.encode()).hexdigest())

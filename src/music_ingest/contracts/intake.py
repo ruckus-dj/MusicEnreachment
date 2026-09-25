@@ -65,3 +65,4 @@ class IntakeRequest(IntakeEvidence):
 
 class IntakeResult(IntakeEvidence):
     source_id: SourceId
+    created: bool

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
+from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
-from music_ingest.models import Base, SourceRecord
+from music_ingest.models import Base, SourceLocationRecord, SourceRecord, SourceRootRecord
 from music_ingest.services.intake.service import (
     ArtworkObservation,
     CandidateEvidence,
@@ -127,6 +129,130 @@ def test_intake_source_when_repeated_database_identity_does_not_create_files(tmp
         # Then: the repeat succeeds without creating a provenance artifact.
         assert second.source_id == first.source_id
         assert not (tmp_path / 'provenance').exists()
+
+
+def test_intake_source_when_path_identity_changes_transfers_location_to_new_source(tmp_path: Path) -> None:
+    # Given: one persisted source path whose immutable identity later changes in place.
+    source_path = tmp_path / 'source.flac'
+    _ = source_path.write_bytes(b'original source bytes')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "changed-source.db"}')
+    Base.metadata.create_all(engine)
+    request = intake_request(source_path, Origin.MANUAL)
+    with Session(engine) as session:
+        original = intake_source(session, request)
+        session.commit()
+
+    _ = source_path.write_bytes(b'replacement source bytes with a new size')
+
+    # When: intake observes the new immutable version at the occupied path.
+    with Session(engine) as session:
+        replacement = intake_source(session, request)
+        session.commit()
+
+        # Then: the path has exactly one owner and belongs to the replacement version.
+        locations = session.scalars(select(SourceLocationRecord)).all()
+        original_source = session.get(SourceRecord, original.source_id)
+        replacement_source = session.get(SourceRecord, replacement.source_id)
+        assert replacement.source_id != original.source_id
+        assert [(location.source_id, location.path) for location in locations] == [
+            (replacement.source_id, str(source_path.resolve()))
+        ]
+        assert original_source is not None and original_source.locations == []
+        assert replacement_source is not None and len(replacement_source.locations) == 1
+
+
+def test_intake_source_when_path_changes_to_known_identity_transfers_occupied_location(tmp_path: Path) -> None:
+    # Given: two known identities and an original source with a surviving hardlink location.
+    changed_path = tmp_path / 'changed.flac'
+    surviving_path = tmp_path / 'surviving.flac'
+    existing_path = tmp_path / 'existing.flac'
+    _ = changed_path.write_bytes(b'original source bytes')
+    surviving_path.hardlink_to(changed_path)
+    _ = existing_path.write_bytes(b'already known replacement bytes')
+    engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "known-identity.db"}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        original = intake_source(session, intake_request(changed_path, Origin.MANUAL))
+        _ = intake_source(session, intake_request(surviving_path, Origin.MANUAL))
+        known_replacement = intake_source(session, intake_request(existing_path, Origin.MANUAL))
+        session.commit()
+
+    changed_path.unlink()
+    changed_path.hardlink_to(existing_path)
+
+    # When: intake observes the known replacement identity at the occupied original path.
+    with Session(engine) as session:
+        replacement = intake_source(session, intake_request(changed_path, Origin.MANUAL))
+        session.commit()
+
+        # Then: ownership transfers to the known identity and the original keeps only its surviving hardlink.
+        locations = {location.path: location.source_id for location in session.scalars(select(SourceLocationRecord))}
+        original_source = session.get(SourceRecord, original.source_id)
+        assert replacement.source_id == known_replacement.source_id
+        assert locations == {
+            str(changed_path.resolve()): known_replacement.source_id,
+            str(existing_path.resolve()): known_replacement.source_id,
+            str(surviving_path.resolve()): original.source_id,
+        }
+        assert original_source is not None
+        assert original_source.source_path == str(surviving_path.resolve())
+
+
+@pytest.mark.postgres
+def test_intake_source_when_postgres_path_changes_to_known_identity_transfers_location(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given: PostgreSQL owns an occupied path, its surviving hardlink, and a known replacement identity.
+    monkeypatch.setenv('TESTCONTAINERS_RYUK_DISABLED', 'true')
+    changed_path = tmp_path / 'changed.flac'
+    surviving_path = tmp_path / 'surviving.flac'
+    existing_path = tmp_path / 'existing.flac'
+    _ = changed_path.write_bytes(b'original source bytes')
+    surviving_path.hardlink_to(changed_path)
+    _ = existing_path.write_bytes(b'already known replacement bytes')
+    with PostgresContainer('postgres:17') as postgres:
+        engine = create_engine(postgres.get_connection_url().replace('postgresql+psycopg2', 'postgresql+psycopg'))
+        Base.metadata.create_all(engine)
+        now = datetime.now(UTC)
+        with Session(engine) as session:
+            session.add(
+                SourceRootRecord(
+                    id='legacy',
+                    display_name='legacy',
+                    canonical_path=str(tmp_path.resolve()),
+                    enabled=True,
+                    scan_state='scanned',
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            original = intake_source(session, intake_request(changed_path, Origin.MANUAL))
+            _ = intake_source(session, intake_request(surviving_path, Origin.MANUAL))
+            known_replacement = intake_source(session, intake_request(existing_path, Origin.MANUAL))
+            session.commit()
+
+        changed_path.unlink()
+        changed_path.hardlink_to(existing_path)
+
+        # When: intake observes the known replacement identity while locking the occupied location row.
+        with Session(engine) as session:
+            replacement = intake_source(session, intake_request(changed_path, Origin.MANUAL))
+            session.commit()
+
+            # Then: the changed path joins the known identity while the original retains its surviving hardlink.
+            locations = {
+                location.path: location.source_id for location in session.scalars(select(SourceLocationRecord))
+            }
+            original_source = session.get(SourceRecord, original.source_id)
+            assert replacement.source_id == known_replacement.source_id
+            assert locations == {
+                str(changed_path.resolve()): known_replacement.source_id,
+                str(existing_path.resolve()): known_replacement.source_id,
+                str(surviving_path.resolve()): original.source_id,
+            }
+            assert original_source is not None
+            assert original_source.source_path == str(surviving_path.resolve())
+        engine.dispose()
 
 
 @pytest.mark.parametrize(
