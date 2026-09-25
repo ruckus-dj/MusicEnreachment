@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import override
 
 import pytest
 from alembic.config import Config
@@ -106,12 +107,24 @@ def test_database_rate_limiter_when_called_twice_reserves_one_and_a_half_seconds
     assert 1.4 <= delays[-1] <= 1.6
 
 
-def test_database_rate_limiter_when_acoustid_is_called_twice_reserves_one_third_second(tmp_path: Path) -> None:
+def test_database_rate_limiter_when_acoustid_is_called_twice_reserves_one_third_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given: the official AcoustID provider schedule and no operator override.
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+
+    class FixedDateTime(datetime):
+        @override
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            _ = tz
+            return now
+
+    monkeypatch.setattr('music_ingest.services.matching.providers.datetime', FixedDateTime)
     engine = create_engine(f'sqlite+pysqlite:///{tmp_path / "provider.db"}')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(ProviderScheduleRecord(provider_name='acoustid', next_start_at=datetime.now(UTC)))
+        session.add(ProviderScheduleRecord(provider_name='acoustid', next_start_at=now))
         session.commit()
     delays: list[float] = []
     limiter = DatabaseRequestRateLimiter(lambda: Session(engine), delays.append)
