@@ -1,4 +1,19 @@
 from music_ingest.contracts.acoustid import Response
+from music_ingest.contracts.album_remap import (
+    AlbumReleaseSearchRequest,
+    AlbumReleaseSearchResponse,
+    AlbumReleaseSummary,
+    AlbumRemapApplyRequest,
+    AlbumRemapApplyResponse,
+    AlbumRemapAssignment,
+    AlbumRemapContextRequest,
+    AlbumRemapContextResponse,
+    AlbumRemapPreviewRequest,
+    AlbumRemapPreviewResponse,
+    AlbumRemapSelector,
+    AlbumRemapSource,
+    AlbumRemapTrackSlot,
+)
 from music_ingest.contracts.api import (
     CandidateEvidencePayload,
     CandidateSelection,
@@ -83,6 +98,19 @@ from music_ingest.contracts.settings import RuntimeSettings
 
 __all__ = [
     'ALLOWED_TAG_KEYS',
+    'AlbumReleaseSearchRequest',
+    'AlbumReleaseSearchResponse',
+    'AlbumReleaseSummary',
+    'AlbumRemapApplyRequest',
+    'AlbumRemapApplyResponse',
+    'AlbumRemapAssignment',
+    'AlbumRemapContextRequest',
+    'AlbumRemapContextResponse',
+    'AlbumRemapPreviewRequest',
+    'AlbumRemapPreviewResponse',
+    'AlbumRemapSelector',
+    'AlbumRemapSource',
+    'AlbumRemapTrackSlot',
     'ArtworkObservation',
     'CandidateEvidence',
     'CandidateEvidencePayload',
