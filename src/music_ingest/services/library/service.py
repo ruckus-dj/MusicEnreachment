@@ -78,6 +78,15 @@ class CatalogSourceTags:
 
 
 @dataclass(frozen=True, slots=True)
+class AlbumTrackSelector:
+    artist_name: str | None
+    artist_missing: bool
+    album_id: str | None
+    album_name: str | None
+    album_missing: bool
+
+
+@dataclass(frozen=True, slots=True)
 class LibraryStatus:
     total_track_count: int
     has_analysis: bool
@@ -630,6 +639,18 @@ def _catalog_artists(tags: dict[str, str]) -> tuple[str | None, ...]:
     return artists or (None,)
 
 
+def album_track_selector_matches(selector: AlbumTrackSelector, release_id: str | None, tags: dict[str, str]) -> bool:
+    artists = _catalog_artists(tags)
+    album_value = tags.get('ALBUM', '')
+    return (
+        (not selector.artist_missing or None in artists)
+        and (selector.artist_name is None or selector.artist_name in artists)
+        and (selector.album_id is None or release_id == selector.album_id)
+        and (not selector.album_missing or (release_id is None and not album_value))
+        and (selector.album_name is None or (release_id is None and album_value == selector.album_name))
+    )
+
+
 def _catalog_source_tags(session: Session, published: bool | None) -> list[CatalogSourceTags]:
     """Load tags for present source files without hydrating library relationships."""
     revision_query = (
@@ -699,7 +720,10 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
             SourceTagRecord.tag_name,
             SourceTagRecord.value,
         )
-        .outerjoin(SourceTagRecord, SourceTagRecord.source_id == SourceRecord.id)
+        .outerjoin(
+            SourceTagRecord,
+            (SourceTagRecord.source_id == SourceRecord.id) & SourceTagRecord.selected.is_(True),
+        )
         .join(LibraryRecord, LibraryRecord.id == SourceRecord.library_record_id)
         .where(
             ~LibraryRecord.id.in_(select(LibraryRecordConsolidationRecord.retired_library_record_id)),
@@ -739,7 +763,7 @@ def _catalog_source_tags(session: Session, published: bool | None) -> list[Catal
             ),
         )[9]
         if tag_name is not None and value is not None:
-            tags[tag_name] = value
+            tags[tag_name] = f'{tags[tag_name]}; {value}' if tag_name in tags else value
     result: list[CatalogSourceTags] = []
     for (
         key,
@@ -862,21 +886,12 @@ def library_album_tracks(
     published: bool | None = None,
 ) -> list[CatalogTrack]:
     """Load minimal Final/Original track data with optional artist and album scopes."""
+    selector = AlbumTrackSelector(artist_name, artist_missing, album_id, album_name, album_missing)
     all_sources: dict[str, list[CatalogSourceTags]] = {}
     matching_sources: dict[str, list[CatalogSourceTags]] = {}
     for source in _catalog_source_tags(session, published):
         all_sources.setdefault(source.record_id, []).append(source)
-        album_value = source.tags.get('ALBUM', '')
-        source_artists = _catalog_artists(source.tags)
-        if artist_missing and None not in source_artists:
-            continue
-        if artist_name is not None and artist_name not in source_artists:
-            continue
-        if album_id is not None and source.release_id != album_id:
-            continue
-        if album_missing and (source.release_id is not None or album_value):
-            continue
-        if album_name is not None and (source.release_id is not None or album_value != album_name):
+        if not album_track_selector_matches(selector, source.release_id, source.tags):
             continue
         matching_sources.setdefault(source.record_id, []).append(source)
 
