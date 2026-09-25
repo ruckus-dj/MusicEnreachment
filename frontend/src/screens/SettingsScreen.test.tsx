@@ -65,11 +65,16 @@ const settingsScreenProps = {
   storageConfig: null,
   storageOutputPreview: null,
   storageLoading: false,
+  currentStateCleanup: null,
+  cleanupOperation: null,
+  cleanupError: "",
   onCreateSourceRoot: vi.fn(),
   onRemoveSourceRoot: vi.fn(),
   onBrowseStorage: vi.fn(),
   onPreviewStorageOutput: vi.fn(),
   onMoveStorageOutput: vi.fn(),
+  onPreviewCleanup: vi.fn(),
+  onApplyCleanup: vi.fn(),
 } satisfies SettingsScreenProps;
 
 function renderSettings(overrides: Partial<SettingsScreenProps> = {}) {
@@ -82,6 +87,7 @@ describe("SettingsScreen source roots", () => {
 
     render(
       <SettingsScreen
+        {...settingsScreenProps}
         draft={draft}
         loading={false}
         saving={false}
@@ -138,6 +144,7 @@ describe("SettingsScreen source roots", () => {
 
     render(
       <SettingsScreen
+        {...settingsScreenProps}
         draft={draft}
         loading={false}
         saving={false}
@@ -191,6 +198,7 @@ describe("SettingsScreen source roots", () => {
 
     render(
       <SettingsScreen
+        {...settingsScreenProps}
         draft={draft}
         loading={false}
         saving={false}
@@ -239,12 +247,51 @@ describe("SettingsScreen source roots", () => {
   });
 });
 
+describe("SettingsScreen current-state cleanup", () => {
+  it("requires a successful preview with work before enabling apply", () => {
+    const onPreviewCleanup = vi.fn();
+    const onApplyCleanup = vi.fn();
+    renderSettings({ onPreviewCleanup, onApplyCleanup });
+
+    const group = within(screen.getByRole("group", { name: "Очистка текущего состояния" }));
+    const apply = group.getByRole("button", { name: "Удалить устаревшие записи" });
+    expect(apply.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(group.getByRole("button", { name: "Проверить базу" }));
+    expect(onPreviewCleanup).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderSettings({
+      currentStateCleanup: { source_count: 3, library_record_count: 2, applied: false },
+      onApplyCleanup,
+    });
+
+    const previewed = within(screen.getByRole("group", { name: "Очистка текущего состояния" }));
+    expect(previewed.getByRole("status").textContent).toContain("Найдено источников: 3");
+    const enabledApply = previewed.getByRole("button", { name: "Удалить устаревшие записи" });
+    expect(enabledApply.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(enabledApply);
+    expect(onApplyCleanup).toHaveBeenCalledOnce();
+  });
+
+  it("announces failures and invalidates apply", () => {
+    renderSettings({ cleanupError: "Сервер недоступен" });
+
+    const group = within(screen.getByRole("group", { name: "Очистка текущего состояния" }));
+    expect(group.getByRole("alert").textContent).toContain("Сервер недоступен");
+    expect(
+      group.getByRole("button", { name: "Удалить устаревшие записи" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+});
+
 describe("SettingsScreen MusicBrainz", () => {
   it("updates the host and request delay", () => {
     const onChange = vi.fn();
 
     render(
       <SettingsScreen
+        {...settingsScreenProps}
         draft={draft}
         loading={false}
         saving={false}
@@ -297,6 +344,7 @@ describe("SettingsScreen processing", () => {
 
     render(
       <SettingsScreen
+        {...settingsScreenProps}
         draft={draft}
         loading={false}
         saving={false}

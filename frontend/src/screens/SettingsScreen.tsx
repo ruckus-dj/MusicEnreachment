@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { runtimeSettingsFieldErrors } from "../domain/settings";
 import type {
+  CurrentStateCleanup,
   GenreCatalog,
   RuntimeSettingsDraft,
   SourceRoot,
@@ -31,11 +32,16 @@ export function SettingsScreen({
   storageConfig,
   storageOutputPreview,
   storageLoading,
+  currentStateCleanup,
+  cleanupOperation,
+  cleanupError,
   onCreateSourceRoot,
   onRemoveSourceRoot,
   onBrowseStorage,
   onPreviewStorageOutput,
   onMoveStorageOutput,
+  onPreviewCleanup,
+  onApplyCleanup,
 }: {
   readonly draft: RuntimeSettingsDraft | null;
   readonly loading: boolean;
@@ -57,11 +63,16 @@ export function SettingsScreen({
   readonly storageConfig: StorageConfig | null;
   readonly storageOutputPreview: StorageOutputPreview | null;
   readonly storageLoading: boolean;
+  readonly currentStateCleanup: CurrentStateCleanup | null;
+  readonly cleanupOperation: "preview" | "apply" | null;
+  readonly cleanupError: string;
   readonly onCreateSourceRoot: (request: SourceRootCreate) => void;
   readonly onRemoveSourceRoot: (rootId: string) => void;
   readonly onBrowseStorage: (path?: string) => void;
   readonly onPreviewStorageOutput: (path: string) => void;
   readonly onMoveStorageOutput: (path: string) => void;
+  readonly onPreviewCleanup: () => void;
+  readonly onApplyCleanup: () => void;
 }) {
   const [newRoot, setNewRoot] = useState<SourceRootCreate>({ path: "", display_name: "" });
   const [pickerTarget, setPickerTarget] = useState<"input" | "output" | null>(null);
@@ -507,6 +518,75 @@ export function SettingsScreen({
           >
             {sourceRootCreating ? "Добавляем…" : "Добавить корень"}
           </button>
+        </fieldset>
+        <fieldset className="settings-card settings-card-wide">
+          <legend>Очистка текущего состояния</legend>
+          <p className="settings-help maintenance-copy">
+            Удаляет из базы источники без актуального расположения и записи медиатеки без оставшихся
+            источников или текущей публикации.{" "}
+            {"Исходные и\u00a0опубликованные файлы не\u00a0изменяются."}
+          </p>
+          {cleanupError && (
+            <p className="maintenance-result maintenance-result-error" role="alert">
+              {cleanupError} Выполните проверку ещё раз перед применением.
+            </p>
+          )}
+          {currentStateCleanup && (
+            <div className="maintenance-result" role="status">
+              <strong>
+                {currentStateCleanup.applied
+                  ? "Очистка завершена"
+                  : currentStateCleanup.source_count + currentStateCleanup.library_record_count ===
+                      0
+                    ? "Очистка не требуется"
+                    : "Проверка завершена"}
+              </strong>
+              <p>
+                <span className="maintenance-metric">
+                  {currentStateCleanup.applied ? "Удалено" : "Найдено"} источников:{" "}
+                  <span className="maintenance-count">{currentStateCleanup.source_count}</span>
+                  {";"}
+                </span>{" "}
+                <span className="maintenance-metric">
+                  записей медиатеки:{" "}
+                  <span className="maintenance-count">
+                    {currentStateCleanup.library_record_count}
+                  </span>
+                  .
+                </span>
+              </p>
+              {!currentStateCleanup.applied &&
+                currentStateCleanup.source_count + currentStateCleanup.library_record_count > 0 && (
+                  <small>
+                    При применении сервер повторно проверит текущее состояние и удалит только{" "}
+                    {"всё\u00a0ещё устаревшие записи."}
+                  </small>
+                )}
+            </div>
+          )}
+          <div className="maintenance-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={cleanupOperation !== null}
+              onClick={onPreviewCleanup}
+            >
+              {cleanupOperation === "preview" ? "Проверяем…" : "Проверить базу"}
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={
+                cleanupOperation !== null ||
+                !currentStateCleanup ||
+                currentStateCleanup.applied ||
+                currentStateCleanup.source_count + currentStateCleanup.library_record_count === 0
+              }
+              onClick={onApplyCleanup}
+            >
+              {cleanupOperation === "apply" ? "Удаляем…" : "Удалить устаревшие записи"}
+            </button>
+          </div>
         </fieldset>
         {pickerTarget && storageBrowser && (
           <div className="folder-picker-backdrop" role="presentation">

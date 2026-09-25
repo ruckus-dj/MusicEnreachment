@@ -383,11 +383,16 @@ export function AppShell({ controller }: { controller: AppControllerModel }) {
               storageConfig={controller.storageConfig}
               storageOutputPreview={controller.storageOutputPreview}
               storageLoading={controller.storageLoading}
+              currentStateCleanup={controller.currentStateCleanup}
+              cleanupOperation={controller.cleanupOperation}
+              cleanupError={controller.cleanupError}
               onCreateSourceRoot={(request) => void controller.createSourceRoot(request)}
               onRemoveSourceRoot={(rootId) => void controller.removeSourceRoot(rootId)}
               onBrowseStorage={(path) => void controller.browseStorage(path)}
               onPreviewStorageOutput={(path) => void controller.previewStorageOutput(path)}
               onMoveStorageOutput={(path) => void controller.moveStorageOutput(path)}
+              onPreviewCleanup={() => void controller.previewCleanup()}
+              onApplyCleanup={() => void controller.applyCleanup()}
             />
           ) : screen === "manual-actions" ? (
             <ManualActionsScreen
