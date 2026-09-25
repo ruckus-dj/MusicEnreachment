@@ -536,6 +536,7 @@ class TrackRecording(BaseModel):
 class Track(BaseModel):
     model_config = ConfigDict(extra='ignore', frozen=True)
 
+    id: str | None = None
     position: int
     title: str
     length: int | None = None
@@ -547,6 +548,7 @@ class Medium(BaseModel):
 
     position: int | None = None
     track_count: int | None = Field(default=None, alias='track-count')
+    pregap: Track | None = None
     tracks: tuple[Track, ...] = ()
     data_tracks: tuple[Track, ...] = Field(default=(), alias='data-tracks')
 

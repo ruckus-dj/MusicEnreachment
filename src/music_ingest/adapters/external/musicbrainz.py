@@ -16,6 +16,7 @@ from music_ingest.contracts import (
     RecordingSearchResponse,
     Release,
     ReleaseBrowseResponse,
+    ReleaseResponse,
 )
 from music_ingest.services.matching.providers import MusicBrainzHttpResponse
 
@@ -75,6 +76,10 @@ class MusicBrainzClient:
     async def search_recordings(self, query: str) -> MusicBrainzResponse[RecordingSearchResponse]:
         response = await self._get('/ws/2/recording/', {'query': query, 'fmt': 'json', 'limit': 25})
         return self._parse(response, RecordingSearchResponse.model_validate_json)
+
+    async def search_releases(self, query: str) -> MusicBrainzResponse[ReleaseResponse]:
+        response = await self._get('/ws/2/release/', {'query': query, 'fmt': 'json', 'limit': 25})
+        return self._parse(response, ReleaseResponse.model_validate_json)
 
     async def recording_detail(self, recording_mbid: str) -> RecordingDetail:
         offset = 0
