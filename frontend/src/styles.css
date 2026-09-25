@@ -24,6 +24,7 @@
   --radius-panel: 12px;
   --ease: 180ms ease;
   --shadow: 0 14px 34px color-mix(in srgb, var(--ink) 8%, transparent);
+  --shadow-dialog: 0 24px 64px color-mix(in srgb, var(--nav) 32%, transparent);
 }
 .worker-queue-screen {
   overflow: hidden;
@@ -1124,6 +1125,76 @@ h2 {
   border-color: var(--accent);
   background: var(--selected);
 }
+.secondary.danger {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--control-line));
+  color: var(--accent);
+}
+.secondary.danger:enabled:hover {
+  background: var(--accent-soft);
+}
+.confirmation-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  background: color-mix(in srgb, var(--nav) 62%, transparent);
+  backdrop-filter: blur(3px);
+  animation: confirmation-backdrop-enter var(--ease);
+}
+.confirmation-dialog {
+  position: fixed;
+  z-index: 1001;
+  top: 50%;
+  left: 50%;
+  width: min(440px, calc(100vw - var(--space-8)));
+  max-height: calc(100dvh - var(--space-8));
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: var(--shadow-dialog);
+  padding: var(--space-8);
+  transform: translate(-50%, -50%);
+  animation: confirmation-dialog-enter var(--ease);
+}
+.confirmation-dialog-marker {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--space-1);
+  background: var(--accent);
+}
+.confirmation-dialog .eyebrow {
+  margin: 0 0 var(--space-2);
+  color: var(--accent);
+}
+.confirmation-dialog h2 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 32px);
+}
+.confirmation-dialog-description {
+  margin: var(--space-4) 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.confirmation-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+.confirmation-dialog-actions .danger {
+  min-width: 164px;
+}
+@keyframes confirmation-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes confirmation-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + var(--space-2))) scale(0.98);
+  }
+}
 .primary:enabled:active,
 .secondary:enabled:active {
   transform: translateY(1px) scale(0.985);
@@ -1424,11 +1495,12 @@ h2 {
 }
 .evidence-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 20px;
 }
 .evidence-grid div {
+  min-inline-size: 0;
   border: 1px solid var(--line);
   padding: 12px;
 }
@@ -1445,6 +1517,7 @@ h2 {
 }
 .evidence-grid strong {
   margin-top: 7px;
+  overflow-wrap: anywhere;
   font-size: 13px;
 }
 .evidence-grid small {
@@ -1712,12 +1785,25 @@ h2 {
   .primary {
     width: 100%;
   }
+  .confirmation-dialog {
+    padding: var(--space-6);
+  }
+  .confirmation-dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .confirmation-dialog-actions .secondary,
+  .confirmation-dialog-actions .primary {
+    width: 100%;
+    min-height: 44px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }
@@ -1774,6 +1860,11 @@ h2 {
   }
   .evidence-card .section-heading {
     flex-direction: column;
+  }
+  .evidence-card .section-heading > div,
+  .evidence-card .section-heading > .badge {
+    flex: 0 0 auto;
+    inline-size: 100%;
   }
   .evidence-card .section-heading .provider-actions {
     justify-content: flex-start;
@@ -2797,7 +2888,6 @@ h2 {
     flex: none;
     width: 100%;
   }
-  .evidence-grid strong,
   .provider-summary {
     overflow-wrap: anywhere;
     word-break: break-all;
