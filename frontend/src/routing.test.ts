@@ -35,7 +35,7 @@ describe("parseRoute", () => {
       parseRoute("/library/tracks", "?artist_name=Noize%20MC&album_id=release-123&published=false"),
     ).toEqual({
       screen: "tracks",
-      artist: "Noize MC",
+      artist: "",
       album: "id:release-123",
       publicationFilter: "unpublished",
     });
@@ -62,13 +62,40 @@ describe("parseRoute", () => {
         album: "release-123",
         publicationFilter: "published",
       }),
-    ).toBe("/library/tracks?artist_name=Noize%20MC&album_id=release-123&published=true");
+    ).toBe("/library/tracks?album_id=release-123&published=true");
     expect(routePath({ screen: "track", recordId: "record-123" })).toBe(
       "/library/track/record-123",
     );
     expect(routePath({ screen: "track", recordId: "record-123", sourceId: "source-456" })).toBe(
       "/library/track/record-123?source_id=source-456",
     );
+  });
+
+  it("round-trips canonical album remap selectors", () => {
+    expect(
+      parseRoute("/library/album-remap", "?artist_name=Noize%20MC&album_id=release-123"),
+    ).toEqual({
+      screen: "album-remap",
+      artist: "",
+      album: "id:release-123",
+      publicationFilter: "all",
+    });
+    expect(
+      routePath({
+        screen: "album-remap",
+        artist: "Noize MC",
+        album: "album:Greatest Hits",
+      }),
+    ).toBe("/library/album-remap?artist_name=Noize%20MC&album_name=Greatest%20Hits");
+    expect(
+      routePath({
+        screen: "album-remap",
+        artist: "Неизвестный исполнитель",
+        artistMissing: true,
+        album: "album:",
+        albumMissing: true,
+      }),
+    ).toBe("/library/album-remap?artist_missing=true&album_missing=true");
   });
 
   it("round-trips the missing-artist selector without a display label", () => {
