@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Независимая концепция MusicEnreachment: архивная мастерская. Локальный демонстрационный прототип.">
+  <title>Архивная мастерская · MusicEnreachment</title>
+  <link rel="icon" href="data:,">
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <script src="catalog-data.js" defer></script>
+  <script src="prototype.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">К содержимому</a>
+  <div class="shell">
+    <aside class="rail">
+      <a class="brand" href="#review"><span class="brand-mark" aria-hidden="true">m<span>e</span></span><span>MusicEnreachment<small>АРХИВНАЯ МАСТЕРСКАЯ</small></span></a>
+      <div class="rail-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+      <nav aria-label="Основная навигация">
+        <a href="#review" data-nav="review"><span class="nav-symbol" aria-hidden="true">01</span>Входящие<span class="nav-count" id="review-count">3</span></a>
+        <a href="#library" data-nav="library"><span class="nav-symbol" aria-hidden="true">02</span>Медиатека</a>
+        <a href="#sources" data-nav="sources"><span class="nav-symbol" aria-hidden="true">03</span>Источники</a>
+        <a href="#publications" data-nav="publications"><span class="nav-symbol" aria-hidden="true">04</span>Публикации</a>
+        <a href="#operations" data-nav="operations"><span class="nav-symbol" aria-hidden="true">05</span>Операции</a>
+        <a href="#settings" data-nav="settings"><span class="nav-symbol" aria-hidden="true">06</span>Настройки</a>
+      </nav>
+      <div class="rail-bottom">
+        <div class="rail-label">ОБ ЭТОЙ ВЕРСИИ</div>
+        <a href="#setup">Первый запуск</a>
+        <a href="#components">Визуальная система</a>
+        <p>Независимая концепция<br><span>Плотный каталог · v2</span></p>
+      </div>
+    </aside>
+    <header class="topbar"><span id="breadcrumb">Входящие</span><div class="topbar-controls"><span class="demo-label">МАКЕТ · ТЕСТОВЫЕ ДАННЫЕ</span><label class="theme-control" for="theme-select">Тема<select id="theme-select"><option value="system">Как в системе</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label></div></header>
+    <main id="content" tabindex="-1"><div id="notice" role="status" aria-live="polite"></div><div id="view"></div></main>
+  </div>
+  <dialog id="confirmation" aria-labelledby="dialog-title">
+    <form method="dialog">
+      <p class="eyebrow">ПРОВЕРЬТЕ ПОСЛЕДСТВИЯ</p><h2 id="dialog-title"></h2>
+      <div id="dialog-body"></div>
+      <div class="actions dialog-actions"><button type="submit" value="cancel" formnovalidate autofocus>Отмена</button><button type="submit" class="primary" id="dialog-confirm" value="confirm">Подтвердить</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
