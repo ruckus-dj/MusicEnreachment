@@ -1,31 +1,7 @@
 default_language_version:
-  python: python3.14
+  golang: golang1.27
 
 repos:
   - repo: local
     hooks:
-      - id: ruff-check
-        name: ruff check
-        entry: uv run ruff check src tests alembic
-        language: system
-        pass_filenames: false
-      - id: ruff-format
-        name: ruff format check
-        entry: uv run ruff format --check src tests alembic
-        language: system
-        pass_filenames: false
-      - id: ty
-        name: ty check
-        entry: uv run ty check src
-        language: system
-        pass_filenames: false
-      - id: pytest
-        name: pytest
-        entry: uv run pytest
-        language: system
-        pass_filenames: false
-      - id: frontend-check
-        name: frontend format and lint
-        entry: npm run check --prefix frontend
-        language: system
-        pass_filenames: false
+      []

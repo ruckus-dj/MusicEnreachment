@@ -53,3 +53,6 @@ tmp/
 *.tmp
 *-tmp
 *-tmp/
+
+test_stand/data/downloads/*
+test_stand/data/media/*
