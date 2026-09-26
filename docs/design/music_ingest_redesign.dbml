@@ -1,0 +1,675 @@
+Project music_ingest_redesign {
+  database_type: 'PostgreSQL'
+
+  Note: '''
+    Концептуальная current-state схема Music Ingest.
+    История изменений и завершённые задания намеренно не хранятся.
+    Ответы metadata providers являются долговременным локальным кэшем; остальные таблицы описывают только актуальные сущности,
+    текущие проблемы и единственную действующую публикацию.
+    Очереди, расписания и retries принадлежат River и хранятся в его внутренних таблицах;
+    они намеренно не дублируются в этой domain-схеме.
+  '''
+}
+
+Enum collection_sync_mode {
+  release_groups
+  releases
+  full_discography
+}
+
+Enum media_availability {
+  available
+  missing
+  invalid
+}
+
+Enum match_method {
+  automatic
+  fingerprint
+  tags
+  manual
+}
+
+Enum lyrics_kind {
+  plain
+  synced
+}
+
+Enum publication_phase {
+  reserved
+  staged
+  validated
+  exposed
+  cleaning
+  failed
+}
+
+Table provider {
+  id uuid [pk]
+  code varchar(64) [not null, unique, note: 'musicbrainz, spotify, discogs, deezer, apple_music, embedded, manual']
+  display_name text [not null]
+  capabilities jsonb [not null, default: '{}']
+  enabled boolean [not null, default: true]
+}
+
+Table provider_artist {
+  id uuid [pk]
+  provider_id uuid [not null]
+  provider_key text [not null]
+  name text [not null]
+  disambiguation text
+  genres jsonb [not null, default: '[]']
+  tags jsonb [not null, default: '[]']
+  extra_data jsonb [not null, default: '{}']
+  refreshed_at timestamptz [not null]
+
+  indexes {
+    (provider_id, provider_key) [unique]
+    (id, provider_id) [unique]
+    name
+  }
+}
+
+Table provider_release_artist {
+  provider_release_id uuid [not null]
+  position smallint [not null]
+  provider_artist_id uuid [not null]
+
+  indexes {
+    (provider_release_id, position) [pk]
+    (provider_release_id, provider_artist_id) [unique]
+    provider_artist_id
+  }
+}
+
+Table provider_release {
+  id uuid [pk]
+  provider_id uuid [not null]
+  provider_key text [not null]
+  release_group_key text [note: 'Provider-specific ключ группы разных изданий, если provider поддерживает это понятие']
+  release_group_title text [not null]
+  release_group_primary_type varchar(64)
+  release_group_secondary_types jsonb [not null, default: '[]']
+  title text [not null]
+  status varchar(64)
+  packaging varchar(64)
+  language varchar(16)
+  script varchar(16)
+  country_code varchar(2)
+  release_date varchar(10)
+  barcode varchar(64)
+  label text
+  catalog_number text
+  disambiguation text
+  extra_data jsonb [not null, default: '{}']
+  refreshed_at timestamptz [not null]
+
+  indexes {
+    (provider_id, provider_key) [unique]
+    (id, provider_id) [unique]
+    (provider_id, release_group_key)
+    title
+    status
+  }
+}
+
+Table provider_recording_artist {
+  provider_recording_id uuid [not null]
+  position smallint [not null]
+  provider_artist_id uuid [not null]
+
+  indexes {
+    (provider_recording_id, position) [pk]
+    (provider_recording_id, provider_artist_id) [unique]
+    provider_artist_id
+  }
+}
+
+Table provider_recording {
+  id uuid [pk]
+  provider_id uuid [not null]
+  provider_key text [not null]
+  key_origin varchar(16) [not null, note: 'native или synthetic']
+  title text [not null]
+  duration_ms integer
+  disambiguation text
+  explicit boolean
+  isrcs jsonb [not null, default: '[]']
+  genres jsonb [not null, default: '[]']
+  tags jsonb [not null, default: '[]']
+  extra_data jsonb [not null, default: '{}']
+  refreshed_at timestamptz [not null]
+
+  indexes {
+    (provider_id, provider_key) [unique]
+    (id, provider_id) [unique]
+    title
+  }
+}
+
+Table provider_release_track {
+  id uuid [pk]
+  provider_id uuid [not null]
+  provider_key text [not null, note: 'Native track ID или детерминированный release/disc/position key']
+  provider_release_id uuid [not null]
+  provider_recording_id uuid [not null]
+  medium_number smallint [not null]
+  medium_title text
+  medium_format varchar(64)
+  track_position integer [not null]
+  track_number text [not null, note: 'Отображаемый номер; может быть A1, DVD1-3 и т.п.']
+  title_override text
+  duration_override_ms integer
+  data_track boolean [not null, default: false]
+  extra_data jsonb [not null, default: '{}']
+
+  indexes {
+    (provider_id, provider_key) [unique]
+    (id, provider_id) [unique]
+    (provider_release_id, medium_number, track_position) [unique]
+    provider_release_id
+    provider_recording_id
+  }
+}
+
+Table artwork_asset {
+  id uuid [pk]
+  provider_id uuid [not null]
+  provider_item_id text [not null, note: 'Стабильный ID provider; при его отсутствии собственный UUID или ключ URL']
+  source_media_variant_id uuid [note: 'Заполняется для embedded artwork; provider_item_id включает media variant и позицию изображения']
+  image_data bytea [not null, note: 'Локально закэшированное изображение; PostgreSQL хранит большие значения через TOAST']
+  mime_type varchar(128) [not null]
+  width integer [not null]
+  height integer [not null]
+  byte_size bigint [not null]
+  content_digest varchar(128) [note: 'Опциональный BLAKE3/другой digest для проверки целостности и поиска точных дубликатов']
+  source_url text
+  fetched_at timestamptz [not null]
+
+  indexes {
+    (provider_id, provider_item_id) [unique]
+    content_digest
+  }
+}
+
+Table release_artwork_candidate {
+  id uuid [pk]
+  collection_release_id uuid [not null]
+  provider_release_id uuid [note: 'Необязательный provenance; NULL для embedded и manual artwork']
+  artwork_asset_id uuid [not null]
+  source_scope varchar(32) [not null, note: 'release, release_group, embedded или manual']
+  image_kind varchar(32) [not null, note: 'front, back, booklet или other']
+  source_kind varchar(32) [not null, note: 'digital, scan или unknown']
+  quality_score integer [not null]
+  provider_metadata jsonb [not null, default: '{}']
+  added_at timestamptz [not null]
+
+  indexes {
+    (collection_release_id, artwork_asset_id) [unique]
+    (collection_release_id, quality_score)
+    provider_release_id
+  }
+}
+
+Table source_root {
+  id uuid [pk]
+  canonical_path text [not null, unique]
+  display_name text [not null]
+  enabled boolean [not null, default: true]
+  last_scan_at timestamptz
+}
+
+Table media_variant {
+  id uuid [pk, note: 'Конкретный технический вариант: FLAC, MP3, AAC, Opus и т.д.']
+  availability media_availability [not null, default: 'available']
+  container_format varchar(64) [not null]
+  codec_name varchar(64) [not null]
+  codec_profile varchar(128)
+  lossless boolean [not null]
+  duration_ms integer [not null]
+  bit_rate bigint
+  sample_rate integer
+  sample_format varchar(32)
+  bits_per_sample smallint
+  channels smallint
+  channel_layout varchar(64)
+  audio_stream_count smallint [not null, default: 1]
+  size_bytes bigint [not null]
+  quality_score integer [not null]
+  quality_policy_version integer [not null]
+  ffprobe_json jsonb [not null]
+  observed_tags jsonb [not null, default: '{}', note: 'Нормализованные uppercase tag names; каждое значение всегда является массивом строк']
+  inspected_at timestamptz [not null]
+  chromaprint text [note: 'Fingerprint конкретного media variant; похожесть вычисляется при matching']
+  chromaprint_hash bigint [note: 'Индексируемый SimHash/поисковый ключ для кандидатов']
+  fingerprint_duration_ms integer
+  fingerprint_algorithm integer
+  fpcalc_version varchar(64)
+  fingerprint_calculated_at timestamptz
+  problem_flags bigint [not null, default: 0, note: 'Битовая маска стабильных технических проблем; значение бита после выпуска не переиспользуется']
+  problem_details jsonb [not null, default: '{}', note: 'Текущие причины и evidence, ключованные именем problem flag']
+
+  indexes {
+    chromaprint_hash
+    fingerprint_duration_ms
+    (quality_score, codec_name)
+  }
+
+  Note: 'Для problem_flags миграция должна добавить CHECK (problem_flags >= 0). Provider ambiguity и ошибки внешних сервисов сюда не входят.'
+}
+
+Table source_location {
+  id uuid [pk]
+  source_root_id uuid [not null]
+  media_variant_id uuid [not null]
+  relative_path text [not null]
+  resolved_path text [not null]
+  device bigint [not null]
+  inode bigint [not null]
+  size_bytes bigint [not null]
+  mtime_ns bigint [not null]
+  is_symlink boolean [not null, default: false]
+  observed_at timestamptz [not null]
+
+  indexes {
+    (source_root_id, relative_path) [unique]
+    (device, inode)
+    media_variant_id
+  }
+
+  Note: 'Несколько путей с одинаковыми device+inode указывают на один media_variant. Копии с разными inode остаются вариантами, пока точное совпадение байтов не доказано отдельным digest.'
+}
+
+Table collection_artist {
+  id uuid [pk]
+  name text [not null]
+  disambiguation text
+  genres jsonb [not null, default: '[]']
+  tags jsonb [not null, default: '[]']
+  metadata_version integer [not null, default: 1]
+  added_at timestamptz [not null]
+
+  indexes {
+    name
+  }
+}
+
+Table collection_release {
+  id uuid [pk]
+  title text [not null]
+  release_type varchar(64)
+  secondary_types jsonb [not null, default: '[]']
+  release_date varchar(10)
+  original_date varchar(10)
+  country_code varchar(2)
+  status varchar(64)
+  packaging varchar(64)
+  barcode varchar(64)
+  label text
+  catalog_number text
+  disambiguation text
+  genres jsonb [not null, default: '[]']
+  tags jsonb [not null, default: '[]']
+  extra_tags jsonb [not null, default: '{}']
+  selected_artwork_candidate_id uuid
+  metadata_version integer [not null, default: 1]
+  artwork_version integer [not null, default: 1]
+  publication_version integer [not null, default: 1]
+  added_at timestamptz [not null]
+
+  indexes {
+    title
+    release_date
+  }
+
+  Note: 'Локальный release существует без provider links. Выбранный artwork candidate обязан принадлежать этому collection release.'
+}
+
+Table collection_release_artist {
+  collection_release_id uuid [not null]
+  collection_artist_id uuid [not null]
+  position smallint [not null]
+
+  indexes {
+    (collection_release_id, position) [pk]
+    (collection_release_id, collection_artist_id) [unique]
+    collection_artist_id
+  }
+}
+
+Table collection_recording {
+  id uuid [pk]
+  title text [not null]
+  duration_ms integer
+  disambiguation text
+  explicit boolean
+  isrcs jsonb [not null, default: '[]']
+  genres jsonb [not null, default: '[]']
+  tags jsonb [not null, default: '[]']
+  metadata_version integer [not null, default: 1]
+  added_at timestamptz [not null]
+
+  indexes {
+    title
+  }
+}
+
+Table collection_recording_artist {
+  collection_recording_id uuid [not null]
+  collection_artist_id uuid [not null]
+  position smallint [not null]
+
+  indexes {
+    (collection_recording_id, position) [pk]
+    (collection_recording_id, collection_artist_id) [unique]
+    collection_artist_id
+  }
+}
+
+Table collection_track {
+  id uuid [pk]
+  collection_release_id uuid [not null]
+  collection_recording_id uuid [not null]
+  medium_number smallint [not null]
+  medium_title text
+  medium_format varchar(64)
+  track_position integer [not null]
+  track_number text [not null]
+  title_override text
+  duration_override_ms integer
+  extra_tags jsonb [not null, default: '{}']
+  metadata_version integer [not null, default: 1]
+  publication_version integer [not null, default: 1, note: 'Увеличивается только когда текущий managed artifact действительно надо заменить']
+  selected_lyrics_id uuid
+  enabled boolean [not null, default: true]
+  problem_flags bigint [not null, default: 0, note: 'Битовая маска актуальных track-level проблем; значения выпущенных битов не переиспользуются']
+  problem_details jsonb [not null, default: '{}']
+
+  indexes {
+    (collection_release_id, medium_number, track_position) [unique]
+    collection_recording_id
+  }
+
+  Note: 'Для problem_flags миграция должна добавить CHECK (problem_flags >= 0) и partial indexes для часто используемых битов.'
+}
+
+Table collection_artist_provider_link {
+  collection_artist_id uuid [not null]
+  provider_id uuid [not null]
+  provider_artist_id uuid [not null]
+  confidence numeric(6,5)
+  matched_by varchar(64) [not null, note: 'provider_url, external_id, search или manual']
+  sync_mode collection_sync_mode
+  sync_enabled boolean [not null, default: false]
+  last_catalog_sync_at timestamptz
+
+  indexes {
+    (collection_artist_id, provider_id) [pk]
+    provider_artist_id [unique]
+  }
+}
+
+Table collection_release_provider_link {
+  collection_release_id uuid [not null]
+  provider_id uuid [not null]
+  provider_release_id uuid [not null]
+  confidence numeric(6,5)
+  matched_by varchar(64) [not null]
+
+  indexes {
+    (collection_release_id, provider_id) [pk]
+    provider_release_id [unique]
+  }
+}
+
+Table collection_recording_provider_link {
+  collection_recording_id uuid [not null]
+  provider_id uuid [not null]
+  provider_recording_id uuid [not null]
+  confidence numeric(6,5)
+  matched_by varchar(64) [not null]
+
+  indexes {
+    (collection_recording_id, provider_id) [pk]
+    provider_recording_id [unique]
+  }
+}
+
+Table collection_track_provider_link {
+  collection_track_id uuid [not null]
+  provider_id uuid [not null]
+  provider_release_track_id uuid [not null]
+  confidence numeric(6,5)
+  matched_by varchar(64) [not null]
+
+  indexes {
+    (collection_track_id, provider_id) [pk]
+    provider_release_track_id [unique]
+  }
+}
+
+Table track_source {
+  id uuid [pk]
+  collection_track_id uuid [not null]
+  media_variant_id uuid [not null, note: 'Один локальный media variant может быть назначен нескольким позициям треков в разных или одном релизе']
+  match_method match_method [not null]
+  confidence numeric(6,5)
+  compatible boolean [not null, default: true]
+  selected boolean [not null, default: false]
+  attached_at timestamptz [not null]
+
+  indexes {
+    (collection_track_id, media_variant_id) [unique]
+    (collection_track_id, selected)
+  }
+
+  Note: 'Связь collection_track ↔ media_variant является M:N. PostgreSQL migration должна добавить partial unique index: UNIQUE(collection_track_id) WHERE selected.'
+}
+
+Table match_candidate {
+  id uuid [pk]
+  media_variant_id uuid [not null]
+  provider_release_track_id uuid [not null]
+  score numeric(6,5) [not null]
+  evidence jsonb [not null]
+  calculated_at timestamptz [not null]
+
+  indexes {
+    (media_variant_id, provider_release_track_id) [unique]
+    (media_variant_id, score)
+  }
+
+  Note: 'Текущий набор кандидатов полностью заменяется при повторном matching.'
+}
+
+Table lyrics_document {
+  id uuid [pk]
+  language varchar(16)
+  kind lyrics_kind [not null]
+  provider_id uuid [not null]
+  provider_key text [not null]
+  content text [not null, note: 'Канонический plain text или LRC хранится непосредственно в PostgreSQL']
+  duration_ms integer [note: 'Ожидаемая длительность особенно важна для synced lyrics']
+  content_digest varchar(128)
+  fetched_at timestamptz [not null]
+
+  indexes {
+    (provider_id, provider_key, kind) [unique]
+  }
+}
+
+Table recording_lyrics {
+  collection_recording_id uuid [not null]
+  lyrics_document_id uuid [not null]
+  compatibility varchar(32) [not null, note: 'exact, probable или manual']
+  linked_at timestamptz [not null]
+
+  indexes {
+    (collection_recording_id, lyrics_document_id) [pk]
+    lyrics_document_id
+  }
+
+  Note: 'M:N: один текст может подходить нескольким recordings, а recording может иметь несколько языков и вариантов lyrics.'
+}
+
+Table release_publication {
+  collection_release_id uuid [pk]
+  directory_path text [not null, unique]
+  artwork_asset_id uuid
+  published_artwork_version integer [not null]
+  published_version integer [not null]
+  published_at timestamptz [not null]
+}
+
+Table track_publication {
+  collection_track_id uuid [pk]
+  collection_release_id uuid [not null]
+  lyrics_id uuid
+  source_quality_score integer [not null]
+  source_quality_policy_version integer [not null]
+  source_media_info jsonb [not null, note: 'Snapshot технических характеристик использованного источника; не FK на удаляемый source']
+  relative_audio_path text [not null]
+  output_container varchar(32) [not null]
+  output_codec varchar(64) [not null]
+  output_digest varchar(128) [note: 'Digest управляемого файла для обнаружения внешних изменений; алгоритм задаётся приложением']
+  published_version integer [not null]
+  published_at timestamptz [not null]
+
+  indexes {
+    (collection_release_id, relative_audio_path) [unique]
+  }
+
+  Note: 'Публикация актуальна, когда published_version равен collection_track.publication_version. Добавление или удаление source само по себе версию не меняет.'
+}
+
+Table release_publication_attempt {
+  collection_release_id uuid [pk]
+  phase publication_phase [not null]
+  expected_publication_version integer [not null]
+  expected_artwork_version integer [not null]
+  expected_artwork_asset_id uuid
+  staging_directory text [not null]
+  target_directory text [not null]
+  files_json jsonb [not null, note: 'Album-level files: artwork и будущие assets; для каждого хранит staged, target, backup и digest']
+  failure_reason text
+  started_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Незавершённый journal подготовки директории и album-level assets. Не затрагивает уже опубликованные tracks.'
+}
+
+Table track_publication_attempt {
+  collection_track_id uuid [pk]
+  phase publication_phase [not null]
+  expected_metadata_version integer [not null]
+  expected_track_source_id uuid [not null]
+  expected_lyrics_id uuid
+  staging_directory text [not null]
+  target_directory text [not null]
+  files_json jsonb [not null, note: 'Track bundle: audio, lyrics и будущие sidecars; для каждого хранит staged, target, backup и digest']
+  failure_reason text
+  started_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Незавершённый journal добавления или замены одного track bundle. Остальные tracks релиза не перепубликуются.'
+}
+
+TableGroup provider_cache {
+  provider
+  provider_artist
+  provider_release
+  provider_release_artist
+  provider_recording
+  provider_recording_artist
+  provider_release_track
+  artwork_asset
+  release_artwork_candidate
+}
+
+TableGroup source_inventory {
+  source_root
+  media_variant
+  source_location
+}
+
+TableGroup local_collection {
+  collection_artist
+  collection_release
+  collection_release_artist
+  collection_recording
+  collection_recording_artist
+  collection_track
+  collection_artist_provider_link
+  collection_release_provider_link
+  collection_recording_provider_link
+  collection_track_provider_link
+  track_source
+  match_candidate
+  lyrics_document
+  recording_lyrics
+}
+
+TableGroup managed_publication {
+  release_publication
+  track_publication
+  release_publication_attempt
+  track_publication_attempt
+}
+
+Ref: provider_artist.provider_id > provider.id [delete: cascade]
+Ref: provider_release.provider_id > provider.id [delete: cascade]
+Ref: provider_recording.provider_id > provider.id [delete: cascade]
+Ref: provider_release_track.provider_id > provider.id [delete: cascade]
+
+Ref: provider_release_artist.provider_release_id > provider_release.id [delete: cascade]
+Ref: provider_release_artist.provider_artist_id > provider_artist.id [delete: restrict]
+Ref: provider_recording_artist.provider_recording_id > provider_recording.id [delete: cascade]
+Ref: provider_recording_artist.provider_artist_id > provider_artist.id [delete: restrict]
+Ref: provider_release_track.provider_release_id > provider_release.id [delete: cascade]
+Ref: provider_release_track.provider_recording_id > provider_recording.id [delete: restrict]
+
+Ref: artwork_asset.provider_id > provider.id [delete: restrict]
+Ref: artwork_asset.source_media_variant_id > media_variant.id [delete: set null]
+Ref: release_artwork_candidate.collection_release_id > collection_release.id [delete: cascade]
+Ref: release_artwork_candidate.provider_release_id > provider_release.id [delete: set null]
+Ref: release_artwork_candidate.artwork_asset_id > artwork_asset.id [delete: cascade]
+
+Ref: source_location.source_root_id > source_root.id [delete: cascade]
+Ref: source_location.media_variant_id > media_variant.id [delete: cascade]
+
+Ref: collection_release.selected_artwork_candidate_id > release_artwork_candidate.id [delete: set null]
+Ref: collection_release_artist.collection_release_id > collection_release.id [delete: cascade]
+Ref: collection_release_artist.collection_artist_id > collection_artist.id [delete: restrict]
+Ref: collection_recording_artist.collection_recording_id > collection_recording.id [delete: cascade]
+Ref: collection_recording_artist.collection_artist_id > collection_artist.id [delete: restrict]
+Ref: collection_track.collection_release_id > collection_release.id [delete: cascade]
+Ref: collection_track.collection_recording_id > collection_recording.id [delete: restrict]
+Ref: collection_track.selected_lyrics_id > lyrics_document.id [delete: set null]
+
+Ref: collection_artist_provider_link.collection_artist_id > collection_artist.id [delete: cascade]
+Ref: collection_artist_provider_link.(provider_artist_id, provider_id) > provider_artist.(id, provider_id) [delete: cascade]
+Ref: collection_release_provider_link.collection_release_id > collection_release.id [delete: cascade]
+Ref: collection_release_provider_link.(provider_release_id, provider_id) > provider_release.(id, provider_id) [delete: cascade]
+Ref: collection_recording_provider_link.collection_recording_id > collection_recording.id [delete: cascade]
+Ref: collection_recording_provider_link.(provider_recording_id, provider_id) > provider_recording.(id, provider_id) [delete: cascade]
+Ref: collection_track_provider_link.collection_track_id > collection_track.id [delete: cascade]
+Ref: collection_track_provider_link.(provider_release_track_id, provider_id) > provider_release_track.(id, provider_id) [delete: cascade]
+
+Ref: track_source.collection_track_id > collection_track.id [delete: cascade]
+Ref: track_source.media_variant_id > media_variant.id [delete: cascade]
+Ref: match_candidate.media_variant_id > media_variant.id [delete: cascade]
+Ref: match_candidate.provider_release_track_id > provider_release_track.id [delete: cascade]
+Ref: lyrics_document.provider_id > provider.id [delete: restrict]
+Ref: recording_lyrics.collection_recording_id > collection_recording.id [delete: cascade]
+Ref: recording_lyrics.lyrics_document_id > lyrics_document.id [delete: cascade]
+
+Ref: release_publication.collection_release_id > collection_release.id [delete: cascade]
+Ref: release_publication.artwork_asset_id > artwork_asset.id [delete: set null]
+Ref: track_publication.collection_track_id > collection_track.id [delete: cascade]
+Ref: track_publication.collection_release_id > release_publication.collection_release_id [delete: cascade]
+Ref: track_publication.lyrics_id > lyrics_document.id [delete: set null]
+Ref: release_publication_attempt.collection_release_id - collection_release.id [delete: cascade]
+Ref: release_publication_attempt.expected_artwork_asset_id > artwork_asset.id [delete: restrict]
+Ref: track_publication_attempt.collection_track_id - collection_track.id [delete: cascade]
+Ref: track_publication_attempt.expected_track_source_id > track_source.id [delete: restrict]
+Ref: track_publication_attempt.expected_lyrics_id > lyrics_document.id [delete: restrict]
