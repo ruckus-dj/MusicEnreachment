@@ -7,7 +7,7 @@ Desktop-oriented web application for managing a personal music library.
 ```sh
 bun install --cwd frontend
 bun run --cwd frontend build
-cd backend && go build ./cmd/server
+scripts/build-backend.sh
 ```
 
 The application and its PostgreSQL dependency can be started with Docker Compose
