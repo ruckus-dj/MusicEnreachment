@@ -14,7 +14,7 @@ COPY --from=frontend /src/build/frontend/. ./backend/internal/static/dist
 RUN cd backend && CGO_ENABLED=0 go build -o /music-enreachment ./cmd/server
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install --no-install-recommends -y ffmpeg chromaprint-tools && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /music-enreachment /music-enreachment
 EXPOSE 8080
 ENTRYPOINT ["/music-enreachment"]

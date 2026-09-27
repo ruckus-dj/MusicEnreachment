@@ -30,8 +30,8 @@ type Installation struct {
 }
 
 // Manager owns a persistent directory selected by a future Setup Manager. It
-// deliberately does not download, update, or activate binaries: approved
-// sources for every supported ffmpeg/ffprobe platform are not fixed yet.
+// deliberately does not download, update, or activate binaries: that lifecycle
+// is a separate implementation stage. Approved sources live in docs/design.
 type Manager struct {
 	Directory string
 	runner    CommandRunner

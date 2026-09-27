@@ -11,6 +11,18 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 )
 
+// BootstrapArgs keeps River startable before application jobs are introduced.
+// No bootstrap jobs are scheduled automatically.
+type BootstrapArgs struct{}
+
+func (BootstrapArgs) Kind() string { return "bootstrap" }
+
+type bootstrapWorker struct {
+	river.WorkerDefaults[BootstrapArgs]
+}
+
+func (*bootstrapWorker) Work(context.Context, *river.Job[BootstrapArgs]) error { return nil }
+
 func Start(ctx context.Context, databaseURL string) (*river.Client[pgx.Tx], *pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -26,7 +38,12 @@ func Start(ctx context.Context, databaseURL string) (*river.Client[pgx.Tx], *pgx
 		pool.Close()
 		return nil, nil, fmt.Errorf("apply River migrations: %w", err)
 	}
-	client, err := river.NewClient(driver, &river.Config{Queues: map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}}})
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &bootstrapWorker{})
+	client, err := river.NewClient(driver, &river.Config{
+		Workers: workers,
+		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+	})
 	if err != nil {
 		pool.Close()
 		return nil, nil, fmt.Errorf("create River client: %w", err)

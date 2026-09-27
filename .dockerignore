@@ -1,0 +1,14 @@
+.git
+.codegraph
+.tmp
+.task
+.idea
+.playwright-mcp
+test_stand
+docs
+build
+**/node_modules
+**/tsconfig.tsbuildinfo
+backend/internal/static/dist
+backend/server
+.env*

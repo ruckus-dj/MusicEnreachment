@@ -63,6 +63,13 @@ tasks:
     cmds:
       - task: go:test
       - npm --prefix frontend run test
+      - node --test tools/check-generated.test.mjs
+
+  migrate:rollback:
+    desc: Roll back the last application migration group (stop the server first)
+    dir: backend
+    cmds:
+      - go run ./cmd/migrate -rollback
 
   go:test:
     internal: true

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -42,12 +43,14 @@ func Run(ctx context.Context, config Config) error {
 	if err := applyMigrations(ctx, db); err != nil {
 		return err
 	}
+	log.Print("application migrations complete")
 
 	riverClient, riverPool, err := jobs.Start(ctx, config.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer riverPool.Close()
+	log.Print("River started")
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -68,6 +71,7 @@ func Run(ctx context.Context, config Config) error {
 		_ = server.Shutdown(shutdown)
 	}()
 
+	log.Print("HTTP server starting on :8080")
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP: %w", err)
 	}

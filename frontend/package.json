@@ -12,20 +12,23 @@
     "generate": "orval --config orval.config.ts"
   },
   "dependencies": {
-    "react-aria-components": "^1.10.0",
     "@tailwindcss/vite": "^4.1.0",
+    "@tanstack/react-query": "^5.104.0",
     "react": "^19.1.0",
+    "react-aria-components": "^1.10.0",
     "react-dom": "^19.1.0",
     "tailwindcss": "^4.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
+    "@faker-js/faker": "^10.6.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^30.1.1",
+    "msw": "^2.15.0",
     "orval": "^8.38.0",
     "typescript": "^5.8.0",
     "vite": "^7.0.0",

@@ -2,6 +2,23 @@
 
 Desktop-oriented web application for managing a personal music library.
 
+## Supported platforms and external tools
+
+Target platforms are Linux and macOS (`amd64`, `arm64`) and Windows (`amd64`).
+Windows `arm64` is not supported yet: the approved Chromaprint releases do not
+provide a ready-made `fpcalc` binary for it.
+
+During initial setup, the application is intended to download tools into a
+persistent tools directory from these approved sources:
+
+- `fpcalc`: https://github.com/acoustid/chromaprint/releases
+- `ffmpeg` and `ffprobe`, Windows/Linux: https://github.com/BtbN/FFmpeg-Builds/releases
+- `ffmpeg` and `ffprobe`, macOS: https://ffmpeg.martin-riedl.de/ — release builds only, no snapshots.
+
+Automatic download is not implemented yet. If tools are bundled in a Docker
+image, they are immutable fallbacks; a newer downloaded and successfully verified
+version takes precedence.
+
 ## Development
 
 - Go 1.27 builds and tests the backend.
@@ -20,6 +37,15 @@ underlying Compose command when a detached run is needed.
 To use an external PostgreSQL instance, run `task build` and start
 `./build/backend/server` with `DATABASE_URL` set to its PostgreSQL connection
 URL.
+
+Compose persists downloaded tools at `/var/lib/music-enreachment/tools` in the
+`tools-data` volume. The image contains no bundled audio tools. The future Setup
+Manager will select this directory and download tools from the approved sources.
+
+To roll back the last application migration group, stop the application and run
+`task migrate:rollback` with `DATABASE_URL` pointing to the database. This uses
+embedded down-migrations; River's schema is managed separately. Starting the
+application again reapplies pending application migrations.
 
 ## Generated files
 
