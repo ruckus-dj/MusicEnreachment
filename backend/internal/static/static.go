@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"path"
 )
 
 // Files contains the Vite production build staged here by Task.
@@ -18,5 +19,18 @@ func Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	return http.FileServer(http.FS(assets))
+	fileServer := http.FileServer(http.FS(assets))
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if shouldServeIndex(request.URL.Path) {
+			request = request.Clone(request.Context())
+			request.URL.Path = "/"
+		}
+		fileServer.ServeHTTP(writer, request)
+	})
+}
+
+// shouldServeIndex keeps client-side routes reloadable while allowing missing
+// static assets to retain their normal 404 response.
+func shouldServeIndex(requestPath string) bool {
+	return requestPath != "/" && path.Ext(requestPath) == ""
 }

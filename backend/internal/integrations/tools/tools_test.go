@@ -37,3 +37,12 @@ func TestNewManagerRejectsRelativeDirectory(t *testing.T) {
 		t.Fatal("NewManager accepted a relative path")
 	}
 }
+
+func TestExecutableName(t *testing.T) {
+	if got := executableName("ffmpeg", "windows"); got != "ffmpeg.exe" {
+		t.Fatalf("Windows executable = %q", got)
+	}
+	if got := executableName("ffmpeg", "darwin"); got != "ffmpeg" {
+		t.Fatalf("Darwin executable = %q", got)
+	}
+}

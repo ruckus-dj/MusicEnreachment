@@ -46,6 +46,11 @@ tasks:
       - node tools/prepare-build.mjs
       - task: go:build
 
+  run:
+    desc: Build and run the application with PostgreSQL via Docker Compose
+    cmds:
+      - docker compose -f deploy/compose/docker-compose.yml up --build
+
   go:build:
     internal: true
     dir: backend

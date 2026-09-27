@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -54,7 +55,7 @@ func (m *Manager) Check(ctx context.Context, name string) (Installation, error) 
 	if !isRequired(name) {
 		return Installation{}, fmt.Errorf("unsupported tool %q", name)
 	}
-	path := filepath.Join(m.Directory, name)
+	path := filepath.Join(m.Directory, executableName(name, runtime.GOOS))
 	if _, err := os.Stat(path); err != nil {
 		return Installation{}, fmt.Errorf("inspect %s: %w", name, err)
 	}
@@ -72,4 +73,11 @@ func isRequired(name string) bool {
 		}
 	}
 	return false
+}
+
+func executableName(name, goos string) string {
+	if goos == "windows" {
+		return name + ".exe"
+	}
+	return name
 }
