@@ -23,6 +23,6 @@ jobs:
           version: 3.x
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.11.2
+          version: v2.14.0
           args: --help
       - run: task verify

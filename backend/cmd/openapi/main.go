@@ -19,7 +19,11 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer file.Close()
+		defer func() {
+			if err := file.Close(); err != nil {
+				log.Printf("close OpenAPI output: %v", err)
+			}
+		}()
 		writer = file
 	}
 	if err := json.NewEncoder(writer).Encode(api.New(chi.NewRouter()).OpenAPI()); err != nil {

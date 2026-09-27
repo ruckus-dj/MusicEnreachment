@@ -33,12 +33,12 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(config.DatabaseURL)))
-	defer sqldb.Close()
+	defer func() { _ = sqldb.Close() }()
 	if err := sqldb.PingContext(ctx); err != nil {
 		return fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := applyMigrations(ctx, db); err != nil {
 		return err
 	}

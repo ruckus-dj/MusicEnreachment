@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// Files contains the Vite production build staged here by scripts/build-frontend.sh.
+// Files contains the Vite production build staged here by Task.
 // The generated files are ignored by Git; .gitkeep only makes a clean checkout
 // compilable before a frontend build is staged.
 //
