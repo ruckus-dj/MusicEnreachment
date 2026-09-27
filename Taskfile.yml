@@ -1,0 +1,96 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Build the complete application
+    cmds:
+      - task: build
+
+  frontend:install:
+    desc: Install locked frontend dependencies
+    sources:
+      - frontend/package.json
+      - frontend/package-lock.json
+    cmds:
+      - npm --prefix frontend ci
+
+  frontend:build:
+    desc: Build the Vite frontend into build/frontend
+    deps: [frontend:install]
+    cmds:
+      - npm --prefix frontend run build
+
+  frontend:stage:
+    desc: Stage frontend assets for Go embed
+    deps: [frontend:build]
+    cmds:
+      - node tools/stage-frontend.mjs
+
+  generate:
+    desc: Generate OpenAPI and Orval client code
+    deps: [frontend:install]
+    cmds:
+      - task: go:openapi
+      - npm --prefix frontend run generate
+
+  go:openapi:
+    internal: true
+    dir: backend
+    cmds:
+      - go run ./cmd/openapi -output ../frontend/openapi.json
+
+  build:
+    desc: Build frontend and embedded Go application into build/
+    deps: [frontend:stage]
+    cmds:
+      - node tools/prepare-build.mjs
+      - task: go:build
+
+  go:build:
+    internal: true
+    dir: backend
+    cmds:
+      - go build -o ../build/backend/ ./cmd/server
+
+  test:
+    desc: Run backend and frontend tests
+    deps: [frontend:install]
+    cmds:
+      - task: go:test
+      - npm --prefix frontend run test
+
+  go:test:
+    internal: true
+    dir: backend
+    cmds:
+      - go test ./...
+
+  format:
+    desc: Apply Go and frontend formatting
+    deps: [frontend:install]
+    cmds:
+      - gofmt -w backend
+      - npm --prefix frontend run format
+
+  lint:
+    desc: Run Go and frontend linters
+    deps: [frontend:install]
+    cmds:
+      - node tools/check-gofmt.mjs
+      - task: go:lint
+      - npm --prefix frontend run lint
+
+  go:lint:
+    internal: true
+    dir: backend
+    cmds:
+      - golangci-lint run ./...
+
+  verify:
+    desc: Run generation, linting, tests, and build
+    cmds:
+      - task: generate
+      - node tools/check-generated.mjs
+      - task: lint
+      - task: test
+      - task: build

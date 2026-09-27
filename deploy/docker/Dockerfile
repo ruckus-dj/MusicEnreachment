@@ -1,0 +1,20 @@
+FROM node:24-bookworm-slim AS frontend
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM golang:1.27 AS backend
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./backend/
+RUN cd backend && go mod download
+COPY backend/ ./backend/
+COPY --from=frontend /src/build/frontend/. ./backend/internal/static/dist
+RUN cd backend && CGO_ENABLED=0 go build -o /music-enreachment ./cmd/server
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install --no-install-recommends -y ffmpeg chromaprint-tools && rm -rf /var/lib/apt/lists/*
+COPY --from=backend /music-enreachment /music-enreachment
+EXPOSE 8080
+ENTRYPOINT ["/music-enreachment"]

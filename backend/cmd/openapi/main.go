@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"log"
 	"os"
 
@@ -10,7 +11,18 @@ import (
 )
 
 func main() {
-	if err := json.NewEncoder(os.Stdout).Encode(api.New(chi.NewRouter()).OpenAPI()); err != nil {
+	output := flag.String("output", "", "write OpenAPI JSON to this file")
+	flag.Parse()
+	writer := os.Stdout
+	if *output != "" {
+		file, err := os.Create(*output)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+		writer = file
+	}
+	if err := json.NewEncoder(writer).Encode(api.New(chi.NewRouter()).OpenAPI()); err != nil {
 		log.Fatal(err)
 	}
 }
