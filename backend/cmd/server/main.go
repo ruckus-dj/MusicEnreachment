@@ -1,7 +1,15 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"log"
+	"os"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/app"
+)
 
 func main() {
-	fmt.Println("MusicEnreachment server foundation")
+	if err := app.Run(context.Background(), app.Config{DatabaseURL: os.Getenv("DATABASE_URL")}); err != nil {
+		log.Fatal(err)
+	}
 }
