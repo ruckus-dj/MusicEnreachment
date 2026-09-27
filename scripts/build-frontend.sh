@@ -3,5 +3,6 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 bun run --cwd "$root/frontend" build
-rm -rf "$root/backend/internal/static/dist"
-cp -R "$root/frontend/dist" "$root/backend/internal/static/dist"
+static="$root/backend/internal/static/dist"
+find "$static" -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
+cp -R "$root/build/frontend/." "$static"

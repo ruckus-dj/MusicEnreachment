@@ -10,7 +10,7 @@ WORKDIR /src
 COPY backend/go.mod backend/go.sum ./backend/
 RUN cd backend && go mod download
 COPY backend/ ./backend/
-COPY --from=frontend /src/frontend/dist ./backend/internal/static/dist
+COPY --from=frontend /src/build/frontend/. ./backend/internal/static/dist
 RUN cd backend && CGO_ENABLED=0 go build -o /music-enreachment ./cmd/server
 
 FROM gcr.io/distroless/static-debian12

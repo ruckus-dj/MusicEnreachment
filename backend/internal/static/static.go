@@ -6,9 +6,11 @@ import (
 	"net/http"
 )
 
-// Files contains the Vite production build copied here by scripts/build-frontend.sh.
+// Files contains the Vite production build staged here by scripts/build-frontend.sh.
+// The generated files are ignored by Git; .gitkeep only makes a clean checkout
+// compilable before a frontend build is staged.
 //
-//go:embed dist
+//go:embed dist/*
 var Files embed.FS
 
 func Handler() http.Handler {

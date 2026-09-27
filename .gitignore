@@ -18,10 +18,13 @@ __pycache__/
 src/.venv/
 *.egg-info/
 
-# Frontend dependencies and build output
+# Dependencies and build output (never commit generated artifacts)
 node_modules/
 frontend/node_modules/
 frontend/dist/
+build/
+backend/internal/static/dist/*
+!backend/internal/static/dist/.gitkeep
 frontend/tsconfig.tsbuildinfo
 frontend/test-results/
 src/music_ingest/static/dist/
