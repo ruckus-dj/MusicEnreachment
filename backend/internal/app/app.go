@@ -11,10 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
+	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/migrate"
 )
 
 type Config struct {
@@ -33,6 +36,20 @@ func Run(ctx context.Context, config Config) error {
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
 	defer db.Close()
+	if err := applyMigrations(ctx, db); err != nil {
+		return err
+	}
+
+	riverClient, riverPool, err := jobs.Start(ctx, config.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer riverPool.Close()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = riverClient.Stop(shutdown)
+	}()
 
 	server := &http.Server{Addr: ":8080", Handler: static.Handler()}
 	stop := make(chan os.Signal, 1)
@@ -47,6 +64,21 @@ func Run(ctx context.Context, config Config) error {
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP: %w", err)
+	}
+	return nil
+}
+
+func applyMigrations(ctx context.Context, db *bun.DB) error {
+	collection, err := migrations.Collection()
+	if err != nil {
+		return err
+	}
+	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
+	if err := migrator.Init(ctx); err != nil {
+		return fmt.Errorf("initialize migrations: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
 }
