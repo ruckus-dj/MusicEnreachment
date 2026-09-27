@@ -51,15 +51,18 @@
 │   ├── public/                     # Статические frontend-ресурсы
 │   ├── e2e/                        # Зарезервировано для будущих Playwright-сценариев
 │   ├── package.json
+│   ├── package-lock.json            # Зафиксированные npm-зависимости
 │   └── vite.config.ts
 ├── deploy/
 │   ├── compose/                    # Docker Compose для базового развёртывания
 │   └── docker/                     # Dockerfile и связанные build-артефакты
 ├── docs/
 │   └── design/                     # Настоящие дизайн-документы
-├── scripts/                        # Единые команды build, generate, lint и test
+├── tools/                          # Кроссплатформенные Node-утилиты для build pipeline
 ├── .github/
 │   └── workflows/                  # Проверки GitHub CI
+├── Taskfile.yml                    # Единые команды build, generate, lint, test и format
+├── .node-version                   # Node.js 24 LTS для frontend-инструментов
 └── README.md
 ```
 
@@ -85,9 +88,16 @@
 - `static` получает результат production-сборки `frontend/` и встраивает его в
   Go-бинарник. Это обеспечивает единый app-артефакт без обязательного Nginx.
 
-## Генерация API-типов
+## Сборка и генерация API-типов
 
-Huma-код генерирует OpenAPI-спецификацию. Единая команда в `scripts/`
+Go собирает backend штатными командами Go. Node.js 24 LTS и npm используются
+только для frontend-зависимостей и Vite/Orval/Biome/Vitest. Task является
+единым кроссплатформенным интерфейсом monorepo: `task build`, `task test`,
+`task lint`, `task format`, `task generate` и `task verify`. Build-артефакты
+находятся в игнорируемом `build/`; staging Vite assets рядом с Go embed также
+не коммитится.
+
+Huma-код генерирует OpenAPI-спецификацию. Задача `task generate`
 экспортирует её и запускает Orval, генерирующий TypeScript-клиент, React Query
 hooks и mock-сценарии в `frontend/src/api/generated/`. Эта команда входит в
 локальные и CI-проверки, чтобы frontend не использовал устаревший контракт.

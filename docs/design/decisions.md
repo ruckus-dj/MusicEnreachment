@@ -19,7 +19,7 @@
 | Область | Решение |
 | --- | --- |
 | Backend | Go 1.27 |
-| Frontend | TypeScript, React Aria, Tailwind CSS |
+| Frontend | TypeScript, React Aria, Tailwind CSS; Node.js 24 LTS + npm для frontend toolchain |
 | Реляционная БД | PostgreSQL (приоритетный выбор) |
 | Деплой | Docker Compose; приложение также должно запускаться локально и на собственном сервере вне Docker |
 | Репозиторий | Один GitHub monorepo для всех компонентов проекта |
@@ -28,6 +28,7 @@
 | PostgreSQL | ORM Bun |
 | Очередь | PostgreSQL-backed River |
 | Frontend-сборка | Vite |
+| Оркестрация задач | Task (`Taskfile.yml`) для build, test, lint, format и generate во всём monorepo |
 
 ## Интеграции
 
@@ -56,7 +57,8 @@
   запуском нескольких реплик требуется отдельная сериализация миграций; такой
   deployment не входит в область проекта.
 - Huma OpenAPI является источником истины API; TypeScript-типы для frontend
-  генерируются из этой спецификации с самого начала проекта.
+  генерируются из этой спецификации с самого начала проекта. Task запускает
+  экспорт и Orval через npm.
 - Orval генерирует TypeScript-клиент, React Query hooks и mock-сценарии из
   OpenAPI.
 
@@ -110,6 +112,11 @@
   необходимости.
 - Набор проверок pre-commit должен в точности совпадать с набором проверок
   GitHub CI.
+- Единые команды разработчика и CI — задачи Task: `build`, `test`, `lint`,
+  `format`, `generate` и `verify`. Shell-скрипты не являются интерфейсом
+  сборки, чтобы локальные команды работали одинаково на Linux, Windows и macOS.
+- Node.js 24 LTS используется только для frontend-инструментов; npm фиксирует
+  их зависимости в `frontend/package-lock.json`.
 - Frontend formatter и linter: Biome.
 - Backend formatter и linter: `gofmt` + golangci-lint; набор правил может
   уточняться по мере разработки.

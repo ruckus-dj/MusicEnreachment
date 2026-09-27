@@ -20,7 +20,7 @@ runtime, проверяемые сборки, миграции, API-generation p
    встроенные static assets.
 3. При старте приложение подключается к PostgreSQL, применяет embedded
    миграции, затем запускает River и HTTP server.
-4. Разработчик запускает единый pipeline генерации OpenAPI и Orval; CI
+4. Разработчик запускает задачу Task для pipeline генерации OpenAPI и Orval; CI
    обнаруживает неактуальный generated-код.
 5. Локальные проверки и GitHub CI запускают одинаковый набор форматтеров,
    линтеров, тестов и сборок.
@@ -54,8 +54,8 @@ runtime, проверяемые сборки, миграции, API-generation p
 
 В этапе не утверждаются продуктовые REST operations, DTO или read-models.
 
-Создаётся code-first pipeline: Huma экспортирует OpenAPI, а единая команда из
-`scripts/` запускает Orval и обновляет TypeScript-клиент, React Query hooks и
+Создаётся code-first pipeline: Huma экспортирует OpenAPI, а единая задача Task
+запускает Orval и обновляет TypeScript-клиент, React Query hooks и
 mocks в `frontend/src/api/generated/`. Конкретные endpoints появятся только в
 отдельных продуктовых задачах.
 
@@ -69,14 +69,14 @@ mocks в `frontend/src/api/generated/`. Конкретные endpoints появ�
 - `frontend/src/api/{generated,client}`, `components`, `routes`, `styles`:
   frontend shell и generated API boundary.
 - `deploy/compose`, `deploy/docker`: локальный и Docker запуск.
-- `scripts/`, `.github/workflows/`: единые проверки и генерация.
+- `Taskfile.yml`, `tools/`, `.github/workflows/`: единые проверки и генерация.
 
 ## Этапы выполнения
 
 ### 1. Каркас репозитория и toolchain
 
 Создать утверждённую структуру monorepo: `backend/`, `frontend/`, `deploy/`,
-`scripts/`, `.github/`. Инициализировать Go-модуль и Vite/TypeScript frontend,
+`tools/`, `.github/`, `Taskfile.yml`. Инициализировать Go-модуль и Vite/TypeScript frontend,
 подключить React Aria и Tailwind.
 
 **Результат:** backend и frontend собираются в чистом checkout без предметной
@@ -102,7 +102,7 @@ SQL-файлов в runtime; River не стартует при неуспешн
 
 ### 4. API-generation pipeline и frontend shell
 
-Добавить экспорт OpenAPI из Huma и единый скрипт генерации Orval. Подготовить
+Добавить экспорт OpenAPI из Huma и единую задачу Task для генерации Orval. Подготовить
 frontend-маршрутизацию, глобальные стили и базовые React Aria-компоненты без
 предметных экранов и вымышленных API-контрактов.
 
