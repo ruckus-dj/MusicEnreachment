@@ -21,6 +21,7 @@ src/.venv/
 # Frontend dependencies and build output
 node_modules/
 frontend/node_modules/
+frontend/dist/
 frontend/tsconfig.tsbuildinfo
 frontend/test-results/
 src/music_ingest/static/dist/
@@ -56,3 +57,6 @@ tmp/
 
 test_stand/data/downloads/*
 test_stand/data/media/*
+
+# Local Go build output
+backend/server
