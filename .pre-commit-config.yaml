@@ -4,4 +4,8 @@ default_language_version:
 repos:
   - repo: local
     hooks:
-      []
+      - id: quality-gates
+        name: quality gates
+        entry: scripts/verify.sh
+        language: system
+        pass_filenames: false
