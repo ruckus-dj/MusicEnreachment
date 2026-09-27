@@ -4,18 +4,12 @@ Desktop-oriented web application for managing a personal music library.
 
 ## Development
 
-```sh
-bun install --cwd frontend
-bun run --cwd frontend build
-scripts/build-backend.sh
-```
-
-The application and its PostgreSQL dependency can be started with Docker Compose
-after the runtime foundation is configured.
+The cross-platform frontend toolchain and unified build command are selected
+before implementation. No JavaScript runtime, package manager, shell build
+scripts, Docker build recipe, or CI build command is currently prescribed.
 
 ## Generated files
 
 Build output is always generated locally in `build/` and is never committed.
-`scripts/build-frontend.sh` stages that output for Go embedding; the staged
-assets are ignored as well. Commit source code, lockfiles, and generated API
-contracts only — never build artifacts.
+The staging assets for Go embedding are ignored as well. Commit source code,
+lockfiles, and generated API contracts only — never build artifacts.
