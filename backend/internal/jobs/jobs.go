@@ -2,12 +2,12 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
 )
 
@@ -23,19 +23,26 @@ type bootstrapWorker struct {
 
 func (*bootstrapWorker) Work(context.Context, *river.Job[BootstrapArgs]) error { return nil }
 
-func Start(ctx context.Context, databaseURL string) (*river.Client[pgx.Tx], *pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create River pool: %w", err)
+func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+	if database == nil {
+		return nil, nil, fmt.Errorf("start River: database pool is required")
 	}
-	driver := riverpgxv5.New(pool)
+	listenerConfig, err := newListenerConfig(databaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	listenerPool, err := pgxpool.NewWithConfig(ctx, listenerConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create River listener pool: %w", err)
+	}
+	driver := riverdatabasesql.NewWithPgxListener(database, listenerPool)
 	migrator, err := rivermigrate.New(driver, nil)
 	if err != nil {
-		pool.Close()
+		listenerPool.Close()
 		return nil, nil, fmt.Errorf("create River migrator: %w", err)
 	}
 	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		pool.Close()
+		listenerPool.Close()
 		return nil, nil, fmt.Errorf("apply River migrations: %w", err)
 	}
 	workers := river.NewWorkers()
@@ -45,12 +52,22 @@ func Start(ctx context.Context, databaseURL string) (*river.Client[pgx.Tx], *pgx
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
 	})
 	if err != nil {
-		pool.Close()
+		listenerPool.Close()
 		return nil, nil, fmt.Errorf("create River client: %w", err)
 	}
 	if err := client.Start(ctx); err != nil {
-		pool.Close()
+		listenerPool.Close()
 		return nil, nil, fmt.Errorf("start River: %w", err)
 	}
-	return client, pool, nil
+	return client, listenerPool, nil
+}
+
+func newListenerConfig(databaseURL string) (*pgxpool.Config, error) {
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse River listener configuration: %w", err)
+	}
+	config.MinConns = 0
+	config.MaxConns = 1
+	return config, nil
 }

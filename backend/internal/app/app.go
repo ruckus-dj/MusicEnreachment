@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
@@ -20,7 +21,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -33,9 +33,12 @@ func Run(ctx context.Context, config Config) error {
 		return errors.New("DATABASE_URL is required")
 	}
 
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(config.DatabaseURL)))
-	defer func() { _ = sqldb.Close() }()
+	sqldb, err := sql.Open("pgx", config.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL: %w", err)
+	}
 	if err := sqldb.PingContext(ctx); err != nil {
+		_ = sqldb.Close()
 		return fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
@@ -45,11 +48,11 @@ func Run(ctx context.Context, config Config) error {
 	}
 	log.Print("application migrations complete")
 
-	riverClient, riverPool, err := jobs.Start(ctx, config.DatabaseURL)
+	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
 	if err != nil {
 		return err
 	}
-	defer riverPool.Close()
+	defer riverListenerPool.Close()
 	log.Print("River started")
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
