@@ -1,8 +1,5 @@
 import { createRoot } from 'react-dom/client'
+import { AppShell } from './routes/AppShell'
 import './styles/index.css'
 
-function App() {
-  return <main><h1>MusicEnreachment</h1></main>
-}
-
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<AppShell />)

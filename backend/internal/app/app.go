@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
@@ -51,7 +54,10 @@ func Run(ctx context.Context, config Config) error {
 		_ = riverClient.Stop(shutdown)
 	}()
 
-	server := &http.Server{Addr: ":8080", Handler: static.Handler()}
+	router := chi.NewRouter()
+	router.Mount("/api", api.Handler())
+	router.Handle("/*", static.Handler())
+	server := &http.Server{Addr: ":8080", Handler: router}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
