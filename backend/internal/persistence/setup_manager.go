@@ -314,6 +314,56 @@ func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context
 	})
 }
 
+func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "move_tools_root" || operation.State != "running" {
+			return fmt.Errorf("tools root move operation is not running")
+		}
+		var currentRoot string
+		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ? FOR UPDATE", "tools_directory").Scan(ctx, &currentRoot); err != nil {
+			return fmt.Errorf("read current tools directory: %w", err)
+		}
+		if currentRoot != oldRoot {
+			return fmt.Errorf("tools directory changed since move was started")
+		}
+		if _, err := tx.NewInsert().Model(&AppSetting{Name: "tools_directory", Value: newRoot}).
+			On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+			return fmt.Errorf("switch tools directory: %w", err)
+		}
+		now := time.Now().UTC()
+		operation.Stage = "switched"
+		operation.UpdatedAt = now
+		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("record tools root switch: %w", err)
+		}
+		return nil
+	})
+}
+
+func (repository *SetupManagerRepository) FinishToolsRootMove(ctx context.Context, operationID uuid.UUID) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "move_tools_root" || operation.State != "running" || operation.Stage != "switched" {
+			return fmt.Errorf("tools root move has not switched")
+		}
+		now := time.Now().UTC()
+		operation.State = "succeeded"
+		operation.FinishedAt = &now
+		operation.UpdatedAt = now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("finish tools root move: %w", err)
+		}
+		return nil
+	})
+}
+
 func (repository *SetupManagerRepository) GetOperation(ctx context.Context, id uuid.UUID) (*Operation, error) {
 	operation := new(Operation)
 	if err := repository.db.NewSelect().Model(operation).Where("id = ?", id).Scan(ctx); err != nil {

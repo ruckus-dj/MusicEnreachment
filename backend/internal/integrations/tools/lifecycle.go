@@ -247,6 +247,23 @@ func VerifySHA256(file, expected string) error {
 	return nil
 }
 
+func SHA256File(file string) (string, error) {
+	input, err := os.Open(file)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = input.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, input); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func HasSymlinkAncestors(root, target string) error {
+	return rejectSymlinkAncestors(root, target)
+}
+
 type Lifecycle struct{ runner CommandRunner }
 
 type MaterializeOptions struct {
@@ -279,6 +296,35 @@ func ResetOperationStaging(root string, operationID uuid.UUID) (string, error) {
 		if err := os.RemoveAll(operationRoot); err != nil {
 			return "", fmt.Errorf("clear operation staging: %w", err)
 		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect operation staging: %w", err)
+	}
+	if err := os.Mkdir(operationRoot, 0o700); err != nil {
+		return "", fmt.Errorf("create operation staging: %w", err)
+	}
+	return operationRoot, nil
+}
+
+func EnsureOperationStaging(root string, operationID uuid.UUID) (string, error) {
+	if !filepath.IsAbs(root) || operationID == uuid.Nil {
+		return "", fmt.Errorf("staging root and operation ID are required")
+	}
+	stagingRoot := filepath.Join(root, ".staging")
+	if err := rejectSymlinkAncestors(root, stagingRoot); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create operation staging root: %w", err)
+	}
+	operationRoot := filepath.Join(stagingRoot, operationID.String())
+	if err := rejectSymlinkAncestors(stagingRoot, operationRoot); err != nil {
+		return "", err
+	}
+	if info, err := os.Lstat(operationRoot); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("operation staging path has an unsupported file type")
+		}
+		return operationRoot, nil
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("inspect operation staging: %w", err)
 	}

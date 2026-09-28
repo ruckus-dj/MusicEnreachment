@@ -202,6 +202,57 @@ func TestSetupActivationStopsAfterCompletion(t *testing.T) {
 	}
 }
 
+func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	settingsRepository := persistence.NewSettingsRepository(database)
+	if err := settingsRepository.Set(ctx, settings.ToolsDirectoryKey, "/old-tools"); err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
+		InputSnapshot: json.RawMessage(`{"old_root":"/old-tools","new_root":"/new-tools"}`),
+	}
+	if err := repository.CreateOperation(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, operation.ID, "/old-tools", "/new-tools"); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || current != "/new-tools" {
+		t.Fatalf("tools directory = %q, %v", current, err)
+	}
+	switched, err := repository.GetOperation(ctx, operation.ID)
+	if err != nil || switched.State != "running" || switched.Stage != "switched" {
+		t.Fatalf("switched move operation = %#v, %v", switched, err)
+	}
+	if err := repository.FinishToolsRootMove(ctx, operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := repository.GetOperation(ctx, operation.ID)
+	if err != nil || finished.State != "succeeded" || finished.Stage != "switched" || finished.FinishedAt == nil {
+		t.Fatalf("finished move operation = %#v, %v", finished, err)
+	}
+
+	stale := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
+		InputSnapshot: json.RawMessage(`{"old_root":"/old-tools","new_root":"/other-tools"}`),
+	}
+	if err := repository.CreateOperation(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, stale.ID, "/old-tools", "/other-tools"); err == nil {
+		t.Fatal("stale move switched the tools root")
+	}
+	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || current != "/new-tools" {
+		t.Fatalf("stale move changed tools directory to %q: %v", current, err)
+	}
+}
+
 func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)

@@ -45,6 +45,7 @@ type InstallationWorker struct {
 	settings   setupSettings
 	platform   tools.Platform
 	lifecycle  *tools.Lifecycle
+	moveWorker *MoveWorker
 }
 
 func NewInstallationWorker(repository installRepository, operations *service.Operations, catalog installCatalog, runtimeSettings setupSettings, platform tools.Platform, lifecycle *tools.Lifecycle) *InstallationWorker {
@@ -57,6 +58,10 @@ func NewInstallationWorker(repository installRepository, operations *service.Ope
 	}
 }
 
+func (worker *InstallationWorker) SetMoveWorker(moveWorker *MoveWorker) {
+	worker.moveWorker = moveWorker
+}
+
 func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[service.OperationJobArgs]) error {
 	operationID := job.Args.OperationID
 	operation, err := worker.repository.GetOperation(ctx, operationID)
@@ -65,6 +70,12 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return nil
+	}
+	if operation.Kind == "move_tools_root" {
+		if worker.moveWorker == nil {
+			return fmt.Errorf("tools root move worker is unavailable")
+		}
+		return worker.moveWorker.Work(ctx, operation)
 	}
 	if operation.Kind != "install" || operation.TargetInstallationID == nil {
 		return fmt.Errorf("operation is not an installation")

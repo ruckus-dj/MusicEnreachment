@@ -83,6 +83,9 @@ func Run(ctx context.Context, config Config) error {
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil))
+	installWorker.SetMoveWorker(jobs.NewMoveWorker(setupManagerRepository, operationService, registry, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	}, tools.NewLifecycle(nil)))
 
 	riverClient, riverListenerPool, err := jobs.StartWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {

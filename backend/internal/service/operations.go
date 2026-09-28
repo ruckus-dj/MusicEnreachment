@@ -177,6 +177,11 @@ func (s *Operations) Subscribe(id uuid.UUID) (<-chan struct{}, func()) {
 		s.mu.Unlock()
 	}
 }
+
+func (s *Operations) Notify(id uuid.UUID) {
+	s.notify(id)
+}
+
 func (s *Operations) notify(id uuid.UUID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
