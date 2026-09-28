@@ -9,7 +9,7 @@ import (
 )
 
 func New(router chi.Router) huma.API {
-	return humachi.New(router, huma.DefaultConfig("MusicEnreachment API", "0.0.0"))
+	return humachi.New(router, huma.DefaultConfig("MeloTrove API", "0.0.0"))
 }
 
 func Handler() http.Handler {

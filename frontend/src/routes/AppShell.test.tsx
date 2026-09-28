@@ -5,7 +5,7 @@ import { AppShell } from "./AppShell";
 describe("AppShell", () => {
   it("renders the application shell", () => {
     render(<AppShell />);
-    expect(screen.getByRole("main").textContent).toContain("MusicEnreachment");
+    expect(screen.getByRole("main").textContent).toContain("MeloTrove");
   });
 
   it("renders the settings route", () => {

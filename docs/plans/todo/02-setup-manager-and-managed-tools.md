@@ -158,7 +158,7 @@
 
 - Управляемая медиатека подключается как bind mount пользователя через Compose
   interpolation, например
-  `${MUSIC_OUTPUT_DIR:-./music}:/var/lib/music-enreachment/output`.
+  `${MELOTROVE_OUTPUT_DIR:-./music}:/var/lib/melotrove/output`.
 - Внутренний container path передаётся и подтверждается в Setup как
   output-directory. Host path не является runtime env-настройкой Go-приложения.
 - Существующий persistent volume tools-directory сохраняется; fallback-бинарники

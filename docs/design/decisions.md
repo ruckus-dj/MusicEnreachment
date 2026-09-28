@@ -121,7 +121,7 @@
   - GPL builds `ffmpeg` и `ffprobe` для macOS:
     https://ffmpeg.martin-riedl.de/ — только релизные билды, snapshots запрещены.
 - Upstream-проект FFmpeg и его source code доступны на https://ffmpeg.org/ и
-  https://github.com/FFmpeg/FFmpeg. MusicEnreachment не распространяет FFmpeg,
+  https://github.com/FFmpeg/FFmpeg. MeloTrove не распространяет FFmpeg,
   а инициирует прямую загрузку выбранной сборки с утверждённого источника и
   запускает отдельный executable.
 - Compatible release catalog не сохраняется в PostgreSQL. Backend получает его

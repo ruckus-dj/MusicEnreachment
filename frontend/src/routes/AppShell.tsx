@@ -22,7 +22,7 @@ export function AppShell() {
     <main className="min-h-screen bg-stone-100 p-3 text-stone-900">
       <header className="flex items-center justify-between border-b border-stone-300 pb-3">
         <div>
-          <strong>MusicEnreachment</strong>
+          <strong>MeloTrove</strong>
           <p className="text-sm">Медиатека</p>
         </div>
         <AppButton

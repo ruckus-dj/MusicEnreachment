@@ -17,7 +17,7 @@
 - Готовые `ffmpeg` и `ffprobe` для macOS берутся из
   https://ffmpeg.martin-riedl.de/ — GPL release builds, никаких snapshots.
 - Upstream-проект и source code FFmpeg: https://ffmpeg.org/ и
-  https://github.com/FFmpeg/FFmpeg. MusicEnreachment инициирует прямую загрузку
+  https://github.com/FFmpeg/FFmpeg. MeloTrove инициирует прямую загрузку
   со стороннего источника и запускает отдельный executable, но не включает и не
   распространяет FFmpeg в собственных artifacts.
 - Готовый `fpcalc` берётся из GitHub Releases проекта AcoustID Chromaprint:

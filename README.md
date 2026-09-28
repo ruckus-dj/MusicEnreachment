@@ -1,4 +1,4 @@
-# MusicEnreachment
+# MeloTrove
 
 Server application for managing a personal music library, intended primarily
 for deployment on a NAS or another always-on local server. The application is
@@ -7,7 +7,7 @@ mobile-first interface is not a product goal.
 
 ## Filesystem model
 
-MusicEnreachment treats configured source directories as external inputs, not as
+MeloTrove treats configured source directories as external inputs, not as
 the managed library. Sources are read-only by default and remain separate from
 the writable output directory containing managed publications. Optional source
 deletion is allowed only when explicitly enabled and only after a successful
@@ -35,7 +35,7 @@ persistent tools directory from these approved sources:
   https://ffmpeg.martin-riedl.de/ — release builds only, no snapshots.
 
 FFmpeg is developed by the [FFmpeg project](https://ffmpeg.org/); its source code
-is available at https://github.com/FFmpeg/FFmpeg. MusicEnreachment does not bundle
+is available at https://github.com/FFmpeg/FFmpeg. MeloTrove does not bundle
 or redistribute FFmpeg: the future Setup Manager downloads the selected build
 directly from its approved third-party source and runs it as a separate
 executable. Automatic download is not implemented yet.
@@ -81,7 +81,7 @@ on `:8080`. All other settings—including log level and external API keys—bel
 to the runtime UI and PostgreSQL rather than environment variables or config
 files.
 
-Compose persists downloaded tools at `/var/lib/music-enreachment/tools` in the
+Compose persists downloaded tools at `/var/lib/melotrove/tools` in the
 `tools-data` volume. The image contains no bundled audio tools. The future Setup
 Manager will select this directory and download tools from the approved sources.
 
@@ -92,7 +92,7 @@ response includes `X-Request-ID` for correlation.
 
 ## Security and network exposure
 
-MusicEnreachment intentionally has no built-in authentication or authorization:
+MeloTrove intentionally has no built-in authentication or authorization:
 there are no users, sessions, API tokens, roles, or permissions. Every client
 that can reach the backend has full access to all application operations. The
 deployment operator is responsible for TLS, authentication, and network access,
@@ -121,6 +121,10 @@ Build output is always generated locally in `build/` and is never committed.
 Task stages the frontend only transiently for Go embedding; those assets are
 ignored as well. Commit source code, lockfiles, and generated API contracts
 only — never build artifacts.
+
+The GitHub repository name and Go module/import path temporarily retain the
+legacy `MusicEnreachment` identifier. They will be renamed together after the
+prototype branch is merged, so Go imports remain valid in the meantime.
 
 ## Design documentation
 

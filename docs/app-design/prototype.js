@@ -1,7 +1,7 @@
 /// <reference path="./catalog-data.js" />
 const view = document.querySelector('#view');
 const dialog = document.querySelector('#confirmation');
-const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/music/tools', pathChecked: false };
+const ui = { groupId: 'north', selectedFile: null, selectedTarget: null, inspector: 'tags', tagScope: 'track', differencesOnly: false, libraryView: 'artists', libraryQuery: '', publicationFilter: 'all', providerQuery: 'Northern Lines', providerResults: null, recordingQuery: '', recordingResults: null, recordingTarget: null, plan: null, notice: '', toolsChecked: false, toolsUpdated: false, setupStep: 0, toolsPath: '/var/lib/melotrove/tools', pathChecked: false };
 let confirmAction = null;
 let draggedFile = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -306,7 +306,7 @@ function operations() {
 
 function settings() {
   return header('Настройки', 'Тема доступна в верхней панели. Рабочие настройки продукта сохраняются в БД; здесь демонстрация.', button('check-updates', 'Проверить обновления', '', true)) +
-    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '--version']]) + `<div class="panel-foot"><code>/var/lib/music/tools</code> · persistent directory<br>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
+    `<div class="two-columns">${panel('Инструменты · Linux amd64', table(['Инструмент', 'Активная версия', 'Источник', 'Проверено'], [['ffmpeg', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['ffprobe', ui.toolsUpdated ? '8.0.1' : '8.0', 'BtbN/FFmpeg-Builds', 'upstream checksum + --version'], ['fpcalc', '1.5.1', 'AcoustID Chromaprint', '--version']]) + `<div class="panel-foot"><code>/var/lib/melotrove/tools</code> · persistent directory<br>Версии условные. Проверка только уведомляет; установка и откат явные.<div class="actions">${ui.toolsChecked && !ui.toolsUpdated ? button('install-tools', 'Установить обновление') : ''}${ui.toolsUpdated ? button('rollback', 'Откатить к 8.0') : ''}</div></div>`)}${panel('Обработка и публикация', facts([['Полный уверенный релиз', 'Автоматически сопоставить и опубликовать'], ['Частичный / неоднозначный', 'Ручной разбор; частичная публикация разрешена'], ['Исходники', 'Сохранить; неразмеченные остаются во входящих'], ['Score', 'Формула, веса и порог ещё не утверждены'], ['Формат / каталог', 'MKA · /srv/music'], ['Метаданные / тексты', 'MusicBrainz / LRCLIB']]))}</div>`;
 }
 
 function setup() {
@@ -341,7 +341,7 @@ function render(resetScroll = true) {
   view.innerHTML = renderers[page]();
   document.querySelector('#notice').textContent = ui.notice;
   const heading = view.querySelector('h1');
-  document.title = `${heading.textContent} · MusicEnreachment · макет v2`;
+  document.title = `${heading.textContent} · MeloTrove · макет v2`;
   document.querySelector('#breadcrumb').textContent = `${page === 'match' ? 'Входящие / ' : ''}${heading.textContent}`;
   const section = ['artist', 'release', 'track', 'tags'].includes(page) ? 'library' : page === 'match' ? 'review' : page;
   document.querySelectorAll('[data-nav]').forEach(item => {
@@ -433,7 +433,7 @@ document.addEventListener('click', event => {
     case 'check-updates': ui.toolsChecked = true; ui.notice = 'Демо: есть обновление FFmpeg/ffprobe. Оно не установлено автоматически.'; render(false); break;
     case 'install-tools': confirm('Установить обновление инструментов?', '<p>Скачать из доверенного HTTPS-источника, проверить опубликованную upstream checksum при наличии и версию, затем активировать. Предыдущая версия останется для отката. Действие демонстрационное.</p>', () => { ui.toolsUpdated = true; render(false); }); break;
     case 'rollback': confirm('Откатить инструменты к 8.0?', '<p>Будет выбрана предыдущая проверенная версия. Действие демонстрационное.</p>', () => { ui.toolsUpdated = false; render(false); }); break;
-    case 'check-path': ui.toolsPath = document.querySelector('#tools-path').value.trim(); ui.pathChecked = ui.toolsPath.startsWith('/') && ui.toolsPath.length > 1; document.querySelector('#tools-path').setAttribute('aria-invalid', String(!ui.pathChecked)); document.querySelector('[data-action="setup-next"]').disabled = !ui.pathChecked; notify(ui.pathChecked ? 'Абсолютный путь принят в демонстрации. Права и persistent volume не проверялись.' : 'Введите абсолютный путь, например /var/lib/music/tools.'); break;
+    case 'check-path': ui.toolsPath = document.querySelector('#tools-path').value.trim(); ui.pathChecked = ui.toolsPath.startsWith('/') && ui.toolsPath.length > 1; document.querySelector('#tools-path').setAttribute('aria-invalid', String(!ui.pathChecked)); document.querySelector('[data-action="setup-next"]').disabled = !ui.pathChecked; notify(ui.pathChecked ? 'Абсолютный путь принят в демонстрации. Права и persistent volume не проверялись.' : 'Введите абсолютный путь, например /var/lib/melotrove/tools.'); break;
     case 'setup-back': ui.setupStep--; render(false); break;
     case 'setup-next': if (ui.setupStep === 3) location.hash = 'review'; else { ui.setupStep++; render(false); } break;
     case 'sample': notify('Состояние компонента. Domain-данные не изменены.'); break;
