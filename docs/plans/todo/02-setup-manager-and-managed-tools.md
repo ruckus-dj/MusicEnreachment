@@ -2,9 +2,13 @@
 
 ## Статус документа
 
-Текущий исполняемый план. Продуктовые и технические границы этапа согласованы.
-План не определяет модель медиатеки, сканирования, matching или публикации
-файлов.
+Текущий исполняемый план, частично реализованный. Ревизия 2026-09-28 отделила
+фактически завершённую работу от оставшихся задач. Раздел «Осталось выполнить»
+является последовательной инструкцией для реализации: задачи выполняются по
+порядку, если в самой задаче явно не сказано обратное.
+
+Продуктовые и технические границы этапа согласованы. План не определяет модель
+медиатеки, сканирования, matching или публикации файлов.
 
 ## Цель
 
@@ -286,125 +290,475 @@ Service layer повторяет validation, compatibility и transition checks 
 сверяемую identity, чтобы подтверждение нельзя было применить к изменившемуся
 списку paths.
 
-## Порядок реализации
-
-Тесты добавляются вместе с каждым этапом. Финальный quality-gate этап не должен
-впервые вводить PostgreSQL, transaction или worker tests.
+## Выполнено
 
 ### 1. Bootstrap runtime и Compose prerequisites
 
-- Добавить validation `HTTP_BIND_ADDRESS`/`HTTP_PORT`, listener address и
-  healthcheck, использующий фактический port.
-- Ввести `slog.LevelVar`, пока с default `info`.
-- Добавить output bind mount interpolation
-  `${MELOTROVE_OUTPUT_DIR:-./music}:/var/lib/melotrove/output`; host path не
-  передаётся Go-приложению как runtime setting.
-- Сохранить существующий persistent tools volume и отсутствие tools в image.
+Завершено и проверено:
 
-**Результат:** bootstrap env и container filesystem готовы до появления Setup.
+- `HTTP_BIND_ADDRESS` и `HTTP_PORT` валидируются, listener использует
+  вычисленный адрес, container healthcheck обращается к фактическому port;
+- logging использует `slog.LevelVar` с bootstrap level `info`;
+- Compose монтирует
+  `${MELOTROVE_OUTPUT_DIR:-./music}:/var/lib/melotrove/output`, не передавая host
+  path приложению;
+- tools-directory остаётся persistent volume, инструменты не входят в image.
 
-### 2. Миграция и PostgreSQL test harness
+Связанные файлы: `backend/cmd/server/main.go`, `backend/internal/app/app.go`,
+`deploy/compose/docker-compose.yml`, `deploy/docker/Dockerfile`.
 
-- Добавить `app_setting`, `tool_installation`, `operation`, constraints и
-  indexes одной согласованной up/down migration.
-- Сразу создать integration-test harness с реальным PostgreSQL для migration
-  up/down, repositories, partial uniqueness и транзакционного River enqueue.
-- Не использовать SQLite или mocks для SQL/River семантики.
+## Уже существующая частичная основа
 
-**Результат:** persistence contract и критические DB-инварианты проверяются до
-service/API реализации.
+Следующие компоненты можно дорабатывать, но нельзя считать завершёнными
+этапами или подключать в UI как готовую функциональность:
 
-### 3. Typed settings, immutable platform и filesystem primitives
+- migration `20260928000000_setup_manager` создаёт базовые таблицы и часть
+  operation constraints; есть PostgreSQL test harness и rollback test;
+- `settings.Registry` фиксирует отдельные platform keys и умеет менять
+  `slog.LevelVar`;
+- filesystem package содержит path normalization и writable-empty probe;
+- tool integrations содержат начальные catalog adapters, безопасную распаковку
+  ZIP/TAR.GZ, SHA-256 helper, preflight и materialization;
+- service package содержит in-memory notification и часть operation state
+  transitions;
+- frontend содержит только каркасы Setup/Settings, а не рабочие flows.
 
-- Реализовать registry/repository типизированных settings и dynamic log level.
-- Атомарно зафиксировать platform при первом старте и добавить diagnostic mode
-  для mismatch/unsupported platform.
-- Разделить `setup_completed_at` и вычисляемый configuration health.
-- Реализовать безопасную нормализацию/сравнение paths, writable/empty probes,
-  filesystem semantics probe и tools conflict preflight.
-- Покрыть Linux/macOS/Windows path cases unit tests, а реальные filesystem
-  semantics — platform tests там, где они доступны runner.
+Нельзя считать комментарии или тестовые helper-вызовы production wiring.
+Особенно важно: текущий `bootstrapWorker`, прямой `fetch`, disabled buttons и
+локальное изменение catalog timestamp являются заглушками.
 
-**Результат:** базовые настройки и файловые правила не зависят от UI.
+## Осталось выполнить
 
-### 4. Source adapters и transient catalog
+### Правила выполнения оставшихся задач
 
-- Определить единый package adapter API: list compatible releases, resolve
-  package artifacts, download/verify и materialize expected executables.
-- Реализовать Chromaprint, BtbN и отдельный macOS adapter. Детали двух macOS
-  artifacts не выходят за FFmpeg package adapter.
-- Добавить HTTP limits/timeouts и fixtures для normal, malformed, rate-limited,
-  missing asset, prerelease/snapshot/master и unavailable responses.
-- Реализовать catalog service/endpoint без backend persistence/cache.
+- Выполнять задачи ниже по порядку. Один change set должен закрывать одну задачу
+  и её тесты.
+- Перед изменением существующей migration определить, могла ли она уже быть
+  применена вне disposable development DB. Если могла — добавить новую up/down
+  migration, а не переписывать историю.
+- Не ослаблять server-side validation ради UI. Каждый mutation use case повторно
+  проверяет platform, Setup state, package identity и допустимость transition.
+- Не использовать реальные upstream requests в tests/CI: только `httptest`,
+  fixtures и fake command runner.
+- После каждой задачи запускать релевантные Go/frontend tests; после изменения
+  API обязательно выполнять `task generate` и проверять generated diff.
+- Не переходить к frontend flow, пока соответствующий backend contract и его
+  integration tests не готовы.
 
-**Результат:** backend возвращает текущий валидированный список совместимых
-release versions для immutable platform.
+### 2. Завершить persistence contract и repositories
 
-### 5. Installation lifecycle
+**Цель:** БД должна выражать все долговременные сущности и критические
+инварианты, а service layer не должен собирать SQL вручную.
 
-- Реализовать operation staging, безопасную распаковку, checksum/signature при
-  наличии, version checks и managed layout.
-- Реализовать conflict preflight/explicit overwrite, идемпотентную фиксацию
-  ready installation, отдельные activation/delete use cases и cleanup staging.
-- Проверить package-level failure: FFmpeg installation не существует как ready,
-  если любой artifact, `ffmpeg` или `ffprobe` не прошёл проверку.
+**Существующая основа:**
+`backend/internal/migrations/20260928000000_setup_manager.tx.{up,down}.sql`,
+`backend/internal/persistence/settings.go`,
+`backend/internal/persistence/setup_manager.go`,
+`backend/internal/testpostgres/postgres.go`.
 
-**Результат:** несколько версий сосуществуют, а любой сбой оставляет active
-installation неизменной.
+**Сделать:**
 
-### 6. River operations, move, retry и SSE
+1. Сверить `tool_installation` и `operation` с разделом «Модель данных и
+   инварианты». Добавить недостающие constraints/indexes и поля, необходимые для
+   artifact identities, безопасного retry и move snapshot.
+2. Реализовать repository methods для list/get/update installations, проверки
+   identity, фиксации ready/failed, чтения active operation conflicts и
+   блокировки строк в service transactions.
+3. Не пытаться сделать foreign key из text EAV value. Инвариант active ID
+   реализовать транзакционным service method: installation существует, ready,
+   имеет правильные package/platform; setting обновляется в той же транзакции.
+4. Сделать общий transaction boundary, внутри которого production code вызывает
+   `River.InsertTx` и создаёт operation row. Перенести доказательство атомарности
+   из isolated test helper в реально вызываемый repository/service method.
+5. Убедиться, что move взаимно исключается со всеми install/activate/delete/move,
+   а install конфликтует только с тем же logical target. Не полагаться только на
+   process-local mutex.
+6. Добавить repositories для REST list/get operation snapshots и installations;
+   storage types не должны напрямую становиться HTTP DTO.
 
-- Зарегистрировать install/move workers, transactionally enqueue jobs и
-  реализовать operation state machine.
-- Реализовать move только известных DB paths, полную повторную проверку,
-  атомарное переключение root и опциональную точечную очистку старых files.
-- Добавить REST snapshots, retry/dismiss, SSE notifier и cleanup successful
-  snapshots старше 24 часов.
-- Проверить process interruption на каждой filesystem stage и отсутствие
-  duplicate installations/jobs после retry.
+**Тесты:**
 
-**Результат:** долгие операции переживают HTTP disconnect/reload и безопасно
-продолжаются или повторяются.
+- реальная PostgreSQL: migration up/down;
+- duplicate installation identity;
+- active operation uniqueness и move exclusivity;
+- commit/rollback operation + River job;
+- concurrent activation и неверный package/platform/ready state;
+- retry переиспользует logical target и не создаёт вторую installation.
 
-### 7. Setup/settings services и Huma contract
+**Готово, когда:** production enqueue использует проверенный transaction method,
+все repository paths покрыты PostgreSQL integration tests, а DB/service
+инварианты не зависят от UI или in-memory state.
 
-- Реализовать typed Setup/runtime settings use cases и обязательный
-  MusicBrainz connectivity check.
-- Зарегистрировать API, экспортировать OpenAPI и обновить Orval client.
-- Проверить route gate policy и финальную server-side Setup validation.
+### 3. Завершить typed settings, platform policy и filesystem validation
 
-**Результат:** весь vertical backend flow доступен через стабильный
-типизированный контракт, не раскрывающий storage details.
+**Цель:** создать единый backend boundary для всех runtime settings и path
+правил до реализации Setup API.
 
-### 8. Production Setup Manager
+**Существующая основа:** `backend/internal/settings/settings.go`,
+`backend/internal/settings/filesystem.go`,
+`backend/internal/persistence/settings.go`.
 
-- Реализовать согласованный S01 в React Aria/Tailwind: environment/platform,
-  tools, publication, metadata providers и summary.
-- Добавить route gate, восстановление сохранённых шагов, operation progress,
-  keyboard/focus/loading/error states и отсутствие фиктивных статусов.
-- В Setup выбранные installations активируются только после полной проверки.
+**Сделать:**
 
-**Результат:** fresh database можно полностью подготовить без ручного изменения
-БД, env или filesystem.
+1. Заменить набор ad-hoc constants полноценным registry: для каждого ключа
+   определить type, parser, serializer, default, validation, mutability и
+   sensitive metadata. Включить все ключи из раздела `app_setting`.
+2. Добавить typed methods/DTO-level values для tools/output directories,
+   publication format, MusicBrainz mode/base URL/secret при наличии, LRCLIB,
+   log level, active installation IDs, filesystem semantics и
+   `setup_completed_at`. Generic key/value API не создавать.
+3. Фиксировать GOOS и GOARCH атомарно одной DB transaction. Не допускать
+   состояния, где сохранён только один ключ. Unsupported/mismatch возвращать как
+   typed platform state, не изменяя сохранённую platform.
+4. Хранить нормализованный server path, а не исходную строку. Перед сохранением
+   проверять absolute path, writable/createable, empty output и overlap
+   tools/output с учётом symlink ancestors и правил текущей ОС.
+5. Добавить probe case sensitivity и Unicode normalization. Probe files должны
+   удаляться при success и при любой ошибке; результат сохраняется только после
+   успешного probe и пересчитывается при смене output.
+6. Разделить необратимый `setup_completed_at` и вычисляемый configuration health.
+   Повторный Complete не должен менять первоначальный timestamp.
+7. Сделать сохранение взаимосвязанных runtime settings атомарным: invalid format
+   или path не должны оставлять частично обновлённые values.
+8. Sensitive reads возвращают только configured/masked state. Реализовать явные
+   replace/clear и redaction для errors/logging/diagnostics.
 
-### 9. Обычные Settings
+**Тесты:** table tests для Linux/macOS/Windows path forms; symlink overlap;
+empty/non-empty/unwritable paths; cleanup probe files; filesystem semantics;
+platform initialization race/rollback/mismatch; log level; sensitive redaction;
+atomic settings update.
 
-- Реализовать редактирование output/publication/MusicBrainz/LRCLIB/log level.
-- Реализовать installed/active/available tool states, client-side 24-hour
-  catalog cooldown, manual Refresh, install, explicit activate, delete и move.
-- Показывать configuration health после Setup без возврата в Setup Manager.
+**Готово, когда:** любой следующий service получает только typed validated
+settings, а platform mismatch и configuration health можно вычислить без UI.
 
-**Результат:** весь lifecycle настроек этого этапа доступен после первичной
-настройки.
+### 4. Реализовать Setup/settings domain services и MusicBrainz check
 
-### 10. Документация и общие quality gates
+**Цель:** финальное завершение Setup должно быть невозможно без каждого
+обязательного условия.
 
-- Обновить README и deployment docs: host/container paths, empty output rule,
-  mixed tools root ownership, platform mismatch и macOS Intel limitation.
-- Выполнить `task generate`, `task verify`, migration rollback, production build
-  и Linux Compose smoke. Сохранить Linux/macOS/Windows `amd64`/`arm64` build/test
-  matrix для поддерживаемых сочетаний.
-- Реальные upstream requests в CI не выполнять.
+**Существующая основа:** `backend/internal/service/setup.go` проверяет только три
+непустых значения и должен быть существенно расширен.
+
+**Сделать:**
+
+1. Разделить use cases чтения Setup state, сохранения отдельных шагов, path
+   validation, MusicBrainz check, runtime Settings mutations и Complete.
+2. Setup state должен возвращать сохранённые значения каждого шага в безопасном
+   typed DTO, platform state, completion fact, health problems и ссылки на
+   активные installations.
+3. MusicBrainz public mode всегда использует официальный endpoint; self-hosted
+   принимает только валидный HTTP(S) base URL. Добавить route-specific timeout,
+   ограничение response body и проверку минимально ожидаемой структуры ответа.
+4. Сохранять результат успешной проверки вместе с identity текущей конфигурации
+   MusicBrainz. Изменение mode/base URL/secret инвалидирует прежний success.
+5. LRCLIB включать по умолчанию, но не выполнять блокирующий Setup network call.
+6. `Complete` в одной server-side проверке валидирует platform, paths,
+   filesystem semantics, explicit publication format, актуальный MusicBrainz
+   success и ready active FFmpeg/fpcalc нужной platform.
+7. После completion изменения settings пересчитывают health, но никогда не
+   очищают `setup_completed_at` и не возвращают пользователя в Setup.
+8. Запретить прямую смену tools-directory после появления installations:
+   использовать только move use case. Output по-прежнему должен быть пустым на
+   этом этапе.
+
+**Тесты:** public/self-hosted success; timeout, malformed и oversized response;
+инвалидация check после изменения config; полный набор причин отказа Complete;
+неизменность completion timestamp; health degradation после Setup.
+
+**Готово, когда:** unit/service tests доказывают все критерии 1–5 без HTTP и
+frontend.
+
+### 5. Завершить source adapters и catalog service
+
+**Цель:** по immutable platform вернуть только совместимые stable releases и
+безопасно повторно разрешить artifacts перед download.
+
+**Существующая основа:** `backend/internal/integrations/tools/catalog.go` умеет
+читать часть GitHub/macOS metadata, но не имеет полного package adapter API и не
+подключён к приложению.
+
+**Сделать:**
+
+1. Определить adapter interface для list releases, resolve selected release,
+   получения artifact/checksum metadata, download/verify и materialization.
+   Service принимает package/source/release/artifact identities, но никогда URL
+   от клиента.
+2. BtbN: только numbered GPL release assets, без master/prerelease; выбрать один
+   package archive, содержащий `ffmpeg` и `ffprobe`.
+3. Chromaprint: выбрать совместимый `fpcalc` asset для сохранённой platform.
+4. macOS: сгруппировать два upstream artifacts (`ffmpeg` и `ffprobe`) в один
+   логический Release/package; исключить snapshots и non-GPL. Для `amd64`
+   корректно сообщать ограничение последнего доступного compatible release.
+5. Перед каждым download заново resolve release через adapter и проверить HTTPS
+   scheme и allowlisted hostname каждого artifact/checksum URL. Не доверять URL,
+   ранее полученному frontend или сохранённому из catalog response.
+6. Добавить HTTP timeout, redirect policy, status handling, body/download limits
+   и безопасные ошибки без URL secrets.
+7. Catalog service остаётся stateless: никаких DB/backend cache writes.
+
+**Тесты:** fixtures normal/malformed/rate-limit/missing assets/unavailable;
+master/prerelease/snapshot/non-GPL filters; все supported platform combinations;
+redirect на запрещённый host; подмена artifact URL; macOS package с одной
+отсутствующей частью.
+
+**Готово, когда:** catalog service возвращает два logical packages с releases,
+а resolve никогда не принимает произвольный download URL.
+
+### 6. Реализовать installation lifecycle как production use cases
+
+**Цель:** безопасно устанавливать, активировать и удалять версии, не затрагивая
+неизвестные файлы.
+
+**Существующая основа:** `backend/internal/integrations/tools/lifecycle.go`
+содержит extraction/materialization helpers. Текущие `overwrite bool` и
+`os.RemoveAll(versionDirectory)` использовать как финальную модель нельзя.
+
+**Сделать:**
+
+1. Staging root формировать только backend из operation UUID. На старте/retry
+   очищать только staging этой operation; cleanup выполнять при success,
+   terminal failure и восстановлении оборванной попытки.
+2. Ограничить число entries и распакованный размер. Запретить absolute/traversal,
+   symlink/hardlink и escape через существующие filesystem objects.
+3. Проверять опубликованную checksum/signature, если adapter её предоставляет;
+   отсутствие checksum у allowlisted source не считать ошибкой.
+4. Проверять все executables через injected runner и immutable target platform,
+   а не `runtime.GOOS` внутри materializer. Проверять ожидаемую release identity.
+5. Preflight возвращает только exact target executable paths. Выдать
+   short-lived signed/server-stored confirmation token, связанный с operation,
+   root, package, release и точным conflict list.
+6. Overwrite заменяет только подтверждённые exact files. Никогда не делать
+   `RemoveAll` version directory: там могут находиться чужие файлы.
+7. Ready installation фиксировать идемпотентно только после полной package
+   verification. Частичный FFmpeg не становится ready.
+8. Activation повторно проверяет executables и транзакционно меняет active ID;
+   предыдущий active остаётся при ошибке.
+9. Delete разрешён только для ready/failed неактивной installation без активной
+   operation и удаляет exact DB-managed files; пустые parent directories можно
+   удалить отдельно.
+
+**Тесты:** traversal и links; corrupt archive/checksum; missing/mismatched
+executable; package-level rollback; conflict token expiry/mismatch; unknown file
+survives overwrite/delete; repeated commit is idempotent; active/busy delete
+rejected.
+
+**Готово, когда:** lifecycle tests проверяют filesystem до уровня exact paths и
+ни один failure path не меняет active setting.
+
+### 7. Подключить River install operations и безопасный retry
+
+**Цель:** install выполняется реальным worker и переживает HTTP disconnect и
+process interruption.
+
+**Существующая основа:** `backend/internal/jobs/jobs.go` запускает River только с
+`bootstrapWorker`; `backend/internal/service/operations.go` содержит часть state
+machine, но не enqueue.
+
+**Сделать:**
+
+1. Определить versioned River args только с operation ID; immutable input
+   snapshot читать из operation row.
+2. Start install в одной transaction создаёт operation/installation target и
+   вызывает `River.InsertTx`; записывает River job ID.
+3. Worker реализует явные idempotent stages: resolve, download, verify archive,
+   extract, verify executables, commit installation, cleanup. До и после каждой
+   filesystem boundary сохранять stage.
+4. Progress обновлять только измеримыми bytes downloaded/copied. Не вычислять
+   фиктивные проценты.
+5. Ошибки преобразовывать в заранее определённые safe messages; raw URL,
+   response body, secrets и command environment не сохранять.
+6. Retry разрешать только failed operation, очищать её terminal fields и
+   транзакционно создавать новый River job для того же operation/target. Не
+   создавать duplicate installation.
+7. При startup/retry распознавать уже выполненный stage и безопасно продолжать
+   либо повторять его.
+
+**Тесты:** PostgreSQL + River test client; rollback enqueue; interruption после
+каждого stage; duplicate delivery; retry; concurrent same/different target;
+active ID остаётся прежним при failure.
+
+**Готово, когда:** ни service, ни test напрямую не симулируют успешную установку
+в обход production worker path.
+
+### 8. Реализовать move tools-directory
+
+**Цель:** перенести только DB-managed files и переключить root лишь после полной
+проверки копии.
+
+**Сделать:**
+
+1. Preflight проверяет absolute/writable new root, отсутствие overlap со старым
+   root и output, а также exact target conflicts.
+2. Snapshot фиксирует old/new normalized roots, installation IDs, exact
+   source/target files и подтверждённые conflicts. Изменение набора после
+   preflight инвалидирует token.
+3. Transactionally enqueue move worker с глобальной tools-operation
+   exclusivity.
+4. Копировать только snapshot files во временные target paths; unknown files в
+   обоих roots не читать как managed и не удалять.
+5. Повторно запустить `--version` для каждого copied executable. Только после
+   проверки всех packages атомарно изменить tools-directory; active IDs не
+   менять.
+6. При ошибке удалить только созданные этой operation temp/target files,
+   сохранив старый root действующим.
+7. После switch выполнить выбранную оператором политику cleanup: удалить exact
+   old snapshot files либо оставить их. Parent directories удалять только если
+   пусты.
+8. Сделать stages идемпотентными для River retry и process interruption.
+
+**Тесты:** mixed source/target roots; overlap; conflicts и stale confirmation;
+copy/verify/switch failures; оба cleanup решения; interruption на каждом stage;
+unknown files сохраняются.
+
+**Готово, когда:** failure никогда не меняет root, success не зависит от
+неизвестного содержимого roots, повторная доставка job безопасна.
+
+### 9. Реализовать полный Huma API, route gates, REST operations и SSE
+
+**Цель:** предоставить frontend стабильный типизированный contract и сделать
+REST snapshot единственным источником истины.
+
+**Существующая основа:** `backend/internal/api/setup.go` регистрирует только три
+неполных endpoint; `backend/cmd/openapi/main.go` сейчас генерирует пустой
+contract, потому что создаёт API без registrations.
+
+**Сделать:**
+
+1. Создать единый registration function, используемый и production handler, и
+   OpenAPI generator. Dependency interfaces для generation не должны требовать
+   живую БД.
+2. Добавить typed endpoints из раздела «API»: platform/health, Setup steps,
+   runtime Settings, path/MusicBrainz checks, catalog, install/move preflight и
+   start, installations, activation/delete, operation get/retry/dismiss.
+3. DTO не раскрывают EAV rows, arbitrary URLs, upstream local paths, River args
+   или raw errors. Sensitive values возвращаются только masked/configured.
+4. Gate policy: до completion доступны diagnostics и необходимые Setup API;
+   product/settings mutations закрыты. После completion Setup mutation/routes
+   закрыты. Platform diagnostic блокирует Setup/product mutations, но оставляет
+   UI, liveness и diagnostics доступными.
+5. Передать platform state в readiness: mismatch/unsupported даёт 503 даже при
+   доступной БД.
+6. SSE endpoint конкретной operation отправляет только change notification/
+   operation ID, heartbeat при необходимости и корректные no-cache headers.
+   После connect/reconnect frontend обязан читать REST snapshot; event history
+   не создавать.
+7. Запланировать cleanup succeeded snapshots старше 24 часов. Failed удаляется
+   только Dismiss/Retry, active — никогда cleanup job.
+8. Исправить OpenAPI generation, выполнить Orval generation и перевести обычные
+   REST вызовы frontend на generated client. Ручным остаётся только SSE transport
+   в `frontend/src/api/client/`.
+
+**Тесты:** API status/body tests для каждого transition и gate; diagnostic
+readiness; no secret leakage; SSE reconnect contract; cleanup policy; generated
+OpenAPI содержит все operation IDs и generated files не имеют drift.
+
+**Готово, когда:** `frontend/openapi.json` не пуст, production и generator
+используют один набор registrations, а обойти gates прямым HTTP нельзя.
+
+### 10. Реализовать production Setup Manager
+
+**Цель:** fresh database полностью настраивается из UI и сохраняет прогресс после
+reload/restart.
+
+**Существующая основа:**
+`frontend/src/features/setup/SetupManager.tsx` — визуальный каркас. Текущий
+tools step является текстом, publication format заранее выбран, state не
+загружается, а route `#/` ошибочно снова открывает Setup.
+
+**Сделать:**
+
+1. App bootstrap сначала загружает Setup/platform state и показывает явный
+   loading/error/retry state. Не выбирать route до ответа backend.
+2. Исправить router: до completion product routes перенаправляются в Setup;
+   после completion Setup перенаправляется в обычное приложение. Platform
+   diagnostic показывает отдельный экран с diagnostics.
+3. Реализовать шаги S01: environment/platform, directories, tools, publication,
+   metadata providers, summary. Использовать React Aria components и generated
+   client.
+4. Восстанавливать сохранённые server values и текущий шаг после reload. Не
+   считать frontend state источником истины.
+5. Publication format должен требовать явного выбора; не отправлять default до
+   выбора пользователя.
+6. Tools step загружает catalog, позволяет выбрать версии, выполнить preflight,
+   подтвердить точные conflicts, запустить обе installs и показывает REST
+   operation progress с SSE wake-ups/reconnect.
+7. Активировать выбранные installations только после ready verification.
+   Summary показывает server validation и не имитирует готовность локально.
+8. MusicBrainz step поддерживает public/self-hosted config и отдельную кнопку
+   проверки; LRCLIB toggle не выполняет блокирующий request.
+9. Для каждого async action реализовать disabled/loading/error/retry, перенос
+   focus к heading/error после navigation, keyboard navigation и текстовые
+   статусы без зависимости только от цвета.
+
+**Тесты:** MSW для полного happy path и каждой server error; reload каждого
+шага; SSE disconnect + REST recovery; conflict confirmation; route gates до/после
+completion и diagnostic mode; keyboard/focus assertions.
+
+**Готово, когда:** критерии 1–8 можно пройти в браузере на fresh database без
+ручного SQL/filesystem вмешательства.
+
+### 11. Реализовать обычные Settings и managed-tools UI
+
+**Цель:** после Setup оператор управляет всеми созданными настройками без
+возврата в Setup Manager.
+
+**Существующая основа:** `frontend/src/features/settings/SettingsScreen.tsx`
+сохраняет только три поля, не загружает server state и показывает disabled
+кнопки. Текущий Refresh меняет только localStorage и не запрашивает catalog.
+
+**Сделать:**
+
+1. Загружать typed Settings и configuration health; показать проблемы и
+   блокировать только зависящие от них actions.
+2. Реализовать edit/save для output, publication, MusicBrainz, LRCLIB и log
+   level. Tools root изменяется только через move flow.
+3. Показать installed/active/available версии раздельно для FFmpeg package и
+   fpcalc. Install после Setup не активирует версию автоматически.
+4. Реализовать manual activation с server re-verification и delete только для
+   допустимой неактивной/незанятой installation.
+5. Реализовать install и move dialogs с preflight conflict list, scoped
+   confirmation, operation progress, failure Retry/Dismiss и REST recovery после
+   SSE reconnect.
+6. Catalog response держать только в памяти. Timestamp последней успешной
+   проверки хранить persistent на клиенте. Автоматический request — максимум раз
+   в 24 часа; при reload во время cooldown показать timestamp и manual Refresh,
+   не выполнять скрытый request. Manual Refresh всегда вызывает backend.
+7. После settings mutation перечитывать server state/health; не оптимистично
+   объявлять операцию успешной до server response.
+
+**Тесты:** initial load; save и validation errors; dynamic log level; 24-hour
+cooldown/reload/manual refresh; install без activation; activate rollback;
+active/busy delete; successful/failed move; health degradation без Setup redirect;
+accessibility states.
+
+**Готово, когда:** критерии 9–15 и 17 выполняются через обычный UI.
+
+### 12. Документация и финальные quality gates
+
+**Цель:** удалить расхождения между документацией, contract и реально
+проверенным deployment.
+
+**Сделать:**
+
+1. После реализации убрать из README утверждения `future Setup Manager` и
+   `Automatic download is not implemented yet`; документировать фактические
+   sources, host/container paths, empty output, mixed tools ownership, platform
+   mismatch recovery и macOS Intel limitation.
+2. Обновить deployment/design docs и примеры API только после стабилизации
+   generated contract.
+3. Расширить CI fixtures/tests без реальных upstream requests. Сохранить matrix
+   для Linux/macOS `amd64`/`arm64` и Windows `amd64`; Windows `arm64` может
+   проверять только явный unsupported behavior, но не считаться supported build.
+4. Выполнить `task generate`, затем убедиться в содержательном generated diff;
+   выполнить `task verify`, migration rollback на реальной PostgreSQL,
+   production build и Linux Compose smoke с persistence после пересоздания app
+   container.
+5. Вручную пройти весь раздел «План проверки» и сохранить результаты в PR/issue
+   checklist. Не заменять эти проверки фактом прохождения коротких unit tests.
+
+**Готово, когда:** все 18 критериев готовности подтверждены тестом или явно
+зафиксированной smoke/manual проверкой, документация не описывает функцию как
+будущую, а этот файл можно целиком перенести из `todo/` в `done/`.
 
 ## Критерии готовности
 
