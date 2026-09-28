@@ -30,6 +30,13 @@ func (m *memoryOperations) UpdateOperation(_ context.Context, o *persistence.Ope
 	m.values[o.ID] = o
 	return nil
 }
+func (m *memoryOperations) TransitionOperation(_ context.Context, id uuid.UUID, transition func(*persistence.Operation) error) error {
+	o, err := m.GetOperation(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	return transition(o)
+}
 func (*memoryOperations) DismissOperation(context.Context, uuid.UUID) error      { return nil }
 func (*memoryOperations) DeleteSucceededBefore(context.Context, time.Time) error { return nil }
 func TestOperationTransitionsAndRetry(t *testing.T) {

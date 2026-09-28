@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -169,6 +170,41 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	if err := repository.MarkInstallationFailed(ctx, installation.ID); err == nil {
 		t.Fatal("mark failed accepted a non-preparing installation")
 	}
+	missingTarget := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:missing-target:linux:amd64"}`)}
+	if err := repository.CreateOperation(ctx, missingTarget); err == nil {
+		t.Fatal("install operation without a target installation was accepted")
+	}
+
+	concurrent := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:concurrent:linux:amd64"}`), TargetInstallationID: &installation.ID}
+	if err := repository.CreateOperation(ctx, concurrent); err != nil {
+		t.Fatalf("create concurrent operation: %v", err)
+	}
+	transitionErrors := make(chan error, 2)
+	for range 2 {
+		go func() {
+			transitionErrors <- repository.TransitionOperation(ctx, concurrent.ID, func(operation *persistence.Operation) error {
+				if operation.State == "succeeded" || operation.State == "failed" {
+					return fmt.Errorf("operation is already final")
+				}
+				now := time.Now().UTC()
+				operation.State = "succeeded"
+				operation.Stage = "complete"
+				operation.FinishedAt = &now
+				return nil
+			})
+		}()
+	}
+	var successes, failures int
+	for range 2 {
+		if err := <-transitionErrors; err != nil {
+			failures++
+		} else {
+			successes++
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("concurrent transitions: %d successes, %d failures; want 1 and 1", successes, failures)
+	}
 
 	finishedAt := time.Now().UTC()
 	operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:1.0:linux:amd64"}`), TargetInstallationID: &installation.ID}
@@ -197,7 +233,7 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 		t.Fatal("dismissed operation is still present")
 	}
 
-	succeeded := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "succeeded", Stage: "complete", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:2.0:linux:amd64"}`), FinishedAt: &finishedAt}
+	succeeded := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "succeeded", Stage: "complete", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:2.0:linux:amd64"}`), TargetInstallationID: &installation.ID, FinishedAt: &finishedAt}
 	if err := repository.CreateOperation(ctx, succeeded); err != nil {
 		t.Fatalf("create succeeded operation: %v", err)
 	}
@@ -235,8 +271,9 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if err != nil {
 		t.Fatalf("create River client: %v", err)
 	}
+	transactionInstallation := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
 	committedSnapshot := json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.5.1:linux:amd64"}`)
-	committedOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: committedSnapshot}
+	committedOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: committedSnapshot, TargetInstallationID: &transactionInstallation.ID}
 	err = repository.CreateOperationAndEnqueue(ctx, committedOperation, client, transactionTestArgs{}, nil)
 	if err != nil {
 		t.Fatalf("commit operation and River job transaction: %v", err)

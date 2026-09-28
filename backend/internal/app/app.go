@@ -74,7 +74,6 @@ func Run(ctx context.Context, config Config) error {
 		return fmt.Errorf("load runtime log level: %w", err)
 	}
 	setup := service.NewSetup(settingsRepository, registry, platform)
-	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 
 	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
 	if err != nil {
@@ -87,11 +86,6 @@ func Run(ctx context.Context, config Config) error {
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
 	}()
-	// Operation API wiring arrives with the full typed API contract, but create
-	// the production service here so all future Start/Retry calls use the
-	// transactional River boundary rather than the test-only constructor.
-	operations := service.NewOperationsWithRiver(setupManagerRepository, riverClient)
-	_ = operations
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)

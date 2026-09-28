@@ -158,7 +158,7 @@ func (repository *SetupManagerRepository) ListInstallations(ctx context.Context,
 
 func (repository *SetupManagerRepository) UpdateInstallation(ctx context.Context, installation *ToolInstallation) error {
 	_, err := repository.db.NewUpdate().Model(installation).
-		Column("state", "relative_path", "executable_versions", "artifact_identities", "verified_at", "updated_at").WherePK().Exec(ctx)
+		Column("relative_path", "artifact_identities", "updated_at").WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("update tool installation: %w", err)
 	}
@@ -254,6 +254,25 @@ func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, o
 		return fmt.Errorf("update operation: %w", err)
 	}
 	return nil
+}
+
+// TransitionOperation serializes read-modify-write operation state changes.
+// The callback runs while the row is locked and is never invoked for a missing
+// operation.
+func (repository *SetupManagerRepository) TransitionOperation(ctx context.Context, id uuid.UUID, transition func(*Operation) error) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := transition(operation); err != nil {
+			return err
+		}
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("transition operation: %w", err)
+		}
+		return nil
+	})
 }
 
 // RetryOperationAndEnqueue locks the failed operation, preserves its immutable

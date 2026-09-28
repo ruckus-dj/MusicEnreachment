@@ -17,6 +17,7 @@ type OperationRepository interface {
 	CreateOperation(context.Context, *persistence.Operation) error
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	UpdateOperation(context.Context, *persistence.Operation) error
+	TransitionOperation(context.Context, uuid.UUID, func(*persistence.Operation) error) error
 	DismissOperation(context.Context, uuid.UUID) error
 	DeleteSucceededBefore(context.Context, time.Time) error
 }
@@ -130,30 +131,29 @@ func (s *Operations) Cleanup(ctx context.Context) error {
 	return s.repository.DeleteSucceededBefore(ctx, s.now().Add(-24*time.Hour))
 }
 func (s *Operations) transition(ctx context.Context, id uuid.UUID, state, stage, safe string, modify func(*persistence.Operation)) error {
-	o, err := s.Get(ctx, id)
+	err := s.repository.TransitionOperation(ctx, id, func(o *persistence.Operation) error {
+		if o.State == "succeeded" || o.State == "failed" {
+			return fmt.Errorf("operation is already final")
+		}
+		now := s.now()
+		o.State = state
+		o.Stage = stage
+		if state == "running" && o.StartedAt == nil {
+			o.StartedAt = &now
+		}
+		if state == "failed" {
+			o.SafeError = &safe
+			o.FinishedAt = &now
+		}
+		if state == "succeeded" {
+			o.FinishedAt = &now
+		}
+		if modify != nil {
+			modify(o)
+		}
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	if o.State == "succeeded" || o.State == "failed" {
-		return fmt.Errorf("operation is already final")
-	}
-	now := s.now()
-	o.State = state
-	o.Stage = stage
-	if state == "running" && o.StartedAt == nil {
-		o.StartedAt = &now
-	}
-	if state == "failed" {
-		o.SafeError = &safe
-		o.FinishedAt = &now
-	}
-	if state == "succeeded" {
-		o.FinishedAt = &now
-	}
-	if modify != nil {
-		modify(o)
-	}
-	if err := s.repository.UpdateOperation(ctx, o); err != nil {
 		return err
 	}
 	s.notify(id)

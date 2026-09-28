@@ -345,18 +345,22 @@ Service layer повторяет validation, compatibility и transition checks 
 - Не переходить к frontend flow, пока соответствующий backend contract и его
   integration tests не готовы.
 
-### 2. Завершить persistence contract и repositories — ✅ выполнено (2026-09-28)
+### 2. Завершить persistence contract и repositories — ⏳ в работе
 
-Реализовано отдельной migration `20260929000000_setup_manager_persistence_contract`:
+Реализована основа отдельными migrations
+`20260929000000_setup_manager_persistence_contract` и
+`20260930000000_setup_manager_transition_invariants`:
 installation хранит artifact identities, operation — target installation и номер
 попытки; активные install/activate/delete/move операции защищены индексами и
 exclusion constraint. `SetupManagerRepository` получил typed list/get/update,
-row locks и production transaction boundary для совместного создания/retry
-operation и River job. Активация проверяет ready package и immutable platform
+row locks и transaction boundary для совместного создания/retry operation и
+River job. Активация проверяет ready package и immutable platform
 под row/advisory locks и меняет active setting в той же transaction. PostgreSQL
 integration tests покрывают identity, active conflicts, row locks, все state
 transitions, activation (включая concurrent/wrong state) и commit/rollback
-River enqueue/retry без второй installation.
+River enqueue/retry без второй installation. Остаётся подключить этот boundary
+к доступным install worker/API use cases в пунктах 7 и 9; до этого пункт нельзя
+считать завершённым.
 
 **Цель:** БД должна выражать все долговременные сущности и критические
 инварианты, а service layer не должен собирать SQL вручную.
