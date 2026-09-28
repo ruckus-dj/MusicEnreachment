@@ -31,6 +31,7 @@ const (
 type Store interface {
 	Get(context.Context, string) (string, bool, error)
 	Set(context.Context, string, string) error
+	SetMany(context.Context, map[string]string) error
 	SetIfAbsent(context.Context, string, string) (string, error)
 }
 
@@ -122,7 +123,8 @@ func (r *Registry) LoadLogLevel(ctx context.Context) error {
 }
 
 func (r *Registry) CompleteSetup(ctx context.Context) error {
-	return r.store.Set(ctx, SetupCompletedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+	_, err := r.store.SetIfAbsent(ctx, SetupCompletedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 func (r *Registry) SetupCompleted(ctx context.Context) (bool, error) {
 	_, ok, err := r.store.Get(ctx, SetupCompletedAtKey)
@@ -143,7 +145,7 @@ func (r *Registry) SetToolsDirectory(ctx context.Context, path string, outputDir
 	if outputDirectory != "" && PathsOverlap(normalized, outputDirectory) {
 		return fmt.Errorf("tools directory overlaps with output directory")
 	}
-	if err := ProbeWritableEmpty(normalized); err != nil {
+	if err := ProbeWritable(normalized); err != nil {
 		return fmt.Errorf("tools directory: %w", err)
 	}
 	return r.store.Set(ctx, ToolsDirectoryKey, normalized)
@@ -174,13 +176,11 @@ func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDir
 	}
 
 	// Store all three values atomically by validating first, then setting
-	if err := r.store.Set(ctx, OutputDirectoryKey, normalized); err != nil {
-		return err
-	}
-	if err := r.store.Set(ctx, OutputCaseSensitiveKey, fmt.Sprintf("%t", semantics.CaseSensitive)); err != nil {
-		return err
-	}
-	return r.store.Set(ctx, OutputUnicodeNormalizationKey, semantics.UnicodeNormalization)
+	return r.store.SetMany(ctx, map[string]string{
+		OutputDirectoryKey:            normalized,
+		OutputCaseSensitiveKey:        fmt.Sprintf("%t", semantics.CaseSensitive),
+		OutputUnicodeNormalizationKey: semantics.UnicodeNormalization,
+	})
 }
 
 // GetOutputFilesystemSemantics returns the probed filesystem characteristics.
@@ -255,14 +255,11 @@ func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL strin
 		baseURL = "" // Public mode ignores base URL
 	}
 
-	if err := r.store.Set(ctx, MusicBrainzModeKey, mode); err != nil {
-		return err
-	}
-	if err := r.store.Set(ctx, MusicBrainzBaseURLKey, baseURL); err != nil {
-		return err
-	}
-	// Clear verification timestamp when config changes
-	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, "")
+	return r.store.SetMany(ctx, map[string]string{
+		MusicBrainzModeKey:       mode,
+		MusicBrainzBaseURLKey:    baseURL,
+		MusicBrainzVerifiedAtKey: "",
+	})
 }
 
 // MarkMusicBrainzVerified records successful connectivity check.
@@ -301,7 +298,7 @@ func (r *Registry) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
 }
 
 // ComputeConfigurationHealth checks all required settings and returns health status.
-func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform PlatformState) ConfigurationHealth {
+func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform PlatformState) (ConfigurationHealth, error) {
 	health := ConfigurationHealth{Healthy: true}
 
 	if platform.Diagnostic {
@@ -319,7 +316,10 @@ func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform Plat
 
 	for _, key := range requiredKeys {
 		value, exists, err := r.store.Get(ctx, key)
-		if err != nil || !exists || value == "" {
+		if err != nil {
+			return ConfigurationHealth{}, fmt.Errorf("read setting %q: %w", key, err)
+		}
+		if !exists || value == "" {
 			health.Healthy = false
 			health.Problems = append(health.Problems, fmt.Sprintf("missing or invalid %s", key))
 		}
@@ -327,12 +327,15 @@ func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform Plat
 
 	// MusicBrainz must have recent successful verification
 	mbConfig, err := r.GetMusicBrainzConfig(ctx)
-	if err != nil || mbConfig.VerifiedAt == nil {
+	if err != nil {
+		return ConfigurationHealth{}, fmt.Errorf("read MusicBrainz configuration: %w", err)
+	}
+	if mbConfig.VerifiedAt == nil {
 		health.Healthy = false
 		health.Problems = append(health.Problems, "musicbrainz not verified")
 	}
 
-	return health
+	return health, nil
 }
 
 func parseLogLevel(value string) (slog.Level, bool) {

@@ -2,12 +2,22 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+type successfulMusicBrainzCheck struct{}
+
+func (successfulMusicBrainzCheck) CheckConnectivity(context.Context, string, string) musicbrainz.CheckResult {
+	return musicbrainz.CheckResult{Success: true}
+}
 
 type mockSettingsStore struct {
 	data map[string]string
@@ -27,6 +37,13 @@ func (m *mockSettingsStore) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
+func (m *mockSettingsStore) SetMany(_ context.Context, values map[string]string) error {
+	for key, value := range values {
+		m.data[key] = value
+	}
+	return nil
+}
+
 func (m *mockSettingsStore) SetIfAbsent(_ context.Context, key, value string) (string, error) {
 	if _, exists := m.data[key]; !exists {
 		m.data[key] = value
@@ -42,7 +59,7 @@ func TestCheckMusicBrainz_PublicMode_Success(t *testing.T) {
 	registry := settings.NewRegistryWithClock(store, func() time.Time { return time.Now() })
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},
-	})
+	}, nil, successfulMusicBrainzCheck{})
 
 	if err := setupService.CheckMusicBrainz(context.Background()); err != nil {
 		t.Errorf("expected success, got: %v", err)
@@ -86,7 +103,7 @@ func TestComplete_RequiresMusicBrainzVerification(t *testing.T) {
 	registry := settings.NewRegistryWithClock(store, func() time.Time { return time.Now() })
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},
-	})
+	}, nil, nil)
 
 	err := setupService.Complete(context.Background())
 	if err == nil {
@@ -99,20 +116,26 @@ func TestComplete_Success(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_ = store.Set(context.Background(), settings.PlatformGOOSKey, "linux")
 	_ = store.Set(context.Background(), settings.PlatformGOARCHKey, "amd64")
-	_ = store.Set(context.Background(), settings.ToolsDirectoryKey, "/tools")
-	_ = store.Set(context.Background(), settings.OutputDirectoryKey, "/output")
+	_ = store.Set(context.Background(), settings.ToolsDirectoryKey, t.TempDir())
+	_ = store.Set(context.Background(), settings.OutputDirectoryKey, t.TempDir())
 	_ = store.Set(context.Background(), settings.OutputCaseSensitiveKey, "true")
 	_ = store.Set(context.Background(), settings.OutputUnicodeNormalizationKey, "nfc")
 	_ = store.Set(context.Background(), settings.PublicationFormatKey, "source")
 	_ = store.Set(context.Background(), settings.MusicBrainzModeKey, "public")
 	_ = store.Set(context.Background(), settings.MusicBrainzVerifiedAtKey, now)
-	_ = store.Set(context.Background(), settings.ActiveFFmpegInstallationKey, "some-uuid")
-	_ = store.Set(context.Background(), settings.ActiveFPCalcInstallationKey, "another-uuid")
+	ffmpegID := uuid.New()
+	fpcalcID := uuid.New()
+	_ = store.Set(context.Background(), settings.ActiveFFmpegInstallationKey, ffmpegID.String())
+	_ = store.Set(context.Background(), settings.ActiveFPCalcInstallationKey, fpcalcID.String())
 
 	registry := settings.NewRegistryWithClock(store, func() time.Time { return time.Now() })
+	installations := testInstallationLookup{items: map[uuid.UUID]*persistence.ToolInstallation{
+		ffmpegID: {ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"},
+		fpcalcID: {ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"},
+	}}
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},
-	})
+	}, installations, nil)
 
 	if err := setupService.Complete(context.Background()); err != nil {
 		t.Errorf("expected Complete to succeed, got: %v", err)
@@ -122,4 +145,16 @@ func TestComplete_Success(t *testing.T) {
 	if !completed {
 		t.Error("expected setup_completed_at to be set")
 	}
+}
+
+type testInstallationLookup struct {
+	items map[uuid.UUID]*persistence.ToolInstallation
+}
+
+func (lookup testInstallationLookup) GetInstallation(_ context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
+	installation, ok := lookup.items[id]
+	if !ok {
+		return nil, errors.New("installation not found")
+	}
+	return installation, nil
 }

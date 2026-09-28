@@ -73,6 +73,29 @@ func ProbeWritableEmpty(path string) error {
 	return nil
 }
 
+func ProbeWritable(path string) error {
+	normalized, err := NormalizePath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(normalized, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	probe, err := os.CreateTemp(normalized, ".melotrove-write-probe-")
+	if err != nil {
+		return fmt.Errorf("directory is not writable: %w", err)
+	}
+	name := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("remove write probe: %w", err)
+	}
+	return nil
+}
+
 // ProbeFilesystemSemantics determines case sensitivity and Unicode normalization
 // behavior by creating temporary probe files. All probes are cleaned up on both
 // success and error paths.
@@ -84,6 +107,11 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 	if err := os.MkdirAll(normalized, 0o755); err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("create directory: %w", err)
 	}
+	probeRoot, err := os.MkdirTemp(normalized, ".melotrove-semantics-")
+	if err != nil {
+		return FilesystemSemantics{}, fmt.Errorf("create semantics probe: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(probeRoot) }()
 
 	var probeFiles []string
 	defer func() {
@@ -93,8 +121,8 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 	}()
 
 	// Case sensitivity probe
-	lowerProbe := filepath.Join(normalized, ".melotrove-case-probe-lower")
-	upperProbe := filepath.Join(normalized, ".melotrove-case-probe-LOWER")
+	lowerProbe := filepath.Join(probeRoot, ".melotrove-case-probe-lower")
+	upperProbe := filepath.Join(probeRoot, ".melotrove-case-probe-LOWER")
 	probeFiles = append(probeFiles, lowerProbe, upperProbe)
 
 	if err := os.WriteFile(lowerProbe, []byte("lower"), 0o644); err != nil {
@@ -107,35 +135,39 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 		return FilesystemSemantics{}, fmt.Errorf("case probe stat: %w", err)
 	}
 
-	// Unicode normalization probe: test NFC vs NFD representation of "é"
-	// NFC: single codepoint U+00E9
-	// NFD: base 'e' U+0065 + combining accent U+0301
-	nfcProbe := filepath.Join(normalized, ".melotrove-unicode-\u00e9")
-	nfdProbe := filepath.Join(normalized, ".melotrove-unicode-e\u0301")
+	unicodePrefix := ".melotrove-unicode-"
+	nfcName := unicodePrefix + "\u00e9"
+	nfdName := unicodePrefix + "e\u0301"
+	nfcProbe := filepath.Join(probeRoot, nfcName)
+	nfdProbe := filepath.Join(probeRoot, nfdName)
 	probeFiles = append(probeFiles, nfcProbe, nfdProbe)
 
 	if err := os.WriteFile(nfcProbe, []byte("nfc"), 0o644); err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("write unicode probe: %w", err)
 	}
 
-	unicodeNorm := "none"
-	if nfdContent, err := os.ReadFile(nfdProbe); err == nil && string(nfdContent) == "nfc" {
-		// NFD path read the NFC file content → filesystem normalizes to NFD
-		unicodeNorm = "nfd"
-	} else if _, err := os.Stat(nfdProbe); err == nil {
-		// Both files exist separately → no normalization or NFC
-		// Distinguish by checking if reading nfcProbe with NFD name works
-		if content, readErr := os.ReadFile(nfcProbe); readErr == nil && string(content) == "nfc" {
-			// Could also check if nfdProbe exists separately
-			if _, statErr := os.Lstat(nfdProbe); os.IsNotExist(statErr) {
+	entries, err := os.ReadDir(probeRoot)
+	if err != nil {
+		return FilesystemSemantics{}, fmt.Errorf("read unicode probe: %w", err)
+	}
+	unicodeNorm := "unknown"
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, unicodePrefix) {
+			switch strings.TrimPrefix(name, unicodePrefix) {
+			case "\u00e9":
 				unicodeNorm = "nfc"
-			} else {
-				unicodeNorm = "none"
+			case "e\u0301":
+				unicodeNorm = "nfd"
 			}
 		}
-	} else if os.IsNotExist(err) {
-		// NFD path does not exist → filesystem uses NFC
-		unicodeNorm = "nfc"
+	}
+	if unicodeNorm == "unknown" {
+		if _, err := os.Stat(nfdProbe); err == nil {
+			unicodeNorm = "nfc"
+		} else if !os.IsNotExist(err) {
+			return FilesystemSemantics{}, fmt.Errorf("stat unicode probe: %w", err)
+		}
 	}
 
 	return FilesystemSemantics{CaseSensitive: caseSensitive, UnicodeNormalization: unicodeNorm}, nil

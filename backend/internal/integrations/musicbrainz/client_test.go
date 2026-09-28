@@ -35,7 +35,7 @@ func TestCheckConnectivity_SelfHosted_EmptyURL(t *testing.T) {
 
 func TestCheckConnectivity_Timeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(15 * time.Second)
+		<-r.Context().Done()
 	}))
 	defer server.Close()
 
@@ -91,6 +91,21 @@ func TestCheckConnectivity_MissingID(t *testing.T) {
 	}
 	if result.Error != "response missing expected fields" {
 		t.Errorf("unexpected error: %s", result.Error)
+	}
+}
+
+func TestCheckConnectivity_OversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da","padding":"`))
+		_, _ = w.Write(make([]byte, musicbrainz.MaxResponseSize))
+		_, _ = w.Write([]byte(`"}`))
+	}))
+	defer server.Close()
+
+	result := musicbrainz.NewClient().CheckConnectivity(context.Background(), "self-hosted", server.URL)
+	if result.Success || result.Error != "response exceeds size limit" {
+		t.Fatalf("oversized response result = %#v", result)
 	}
 }
 

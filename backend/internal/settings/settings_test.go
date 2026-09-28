@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -21,6 +22,13 @@ func (m *memoryStore) Get(_ context.Context, key string) (string, bool, error) {
 
 func (m *memoryStore) Set(_ context.Context, key, value string) error {
 	m.data[key] = value
+	return nil
+}
+
+func (m *memoryStore) SetMany(_ context.Context, values map[string]string) error {
+	for key, value := range values {
+		m.data[key] = value
+	}
 	return nil
 }
 
@@ -250,7 +258,10 @@ func TestConfigurationHealthChecksAllRequirements(t *testing.T) {
 	ctx := context.Background()
 
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
-	health := registry.ComputeConfigurationHealth(ctx, platform)
+	health, err := registry.ComputeConfigurationHealth(ctx, platform)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if health.Healthy {
 		t.Fatal("empty configuration reported as healthy")
@@ -278,5 +289,31 @@ func TestLRCLIBEnabledDefaultsToTrue(t *testing.T) {
 	enabled, err = registry.GetLRCLIBEnabled(ctx)
 	if err != nil || enabled {
 		t.Fatalf("disabled LRCLIB: %v, %v; want false, nil", enabled, err)
+	}
+}
+
+func TestCompleteSetupPreservesOriginalTimestamp(t *testing.T) {
+	store := newMemoryStore()
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	registry := settings.NewRegistryWithClock(store, func() time.Time { return now })
+	ctx := context.Background()
+
+	if err := registry.CompleteSetup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := store.Get(ctx, settings.SetupCompletedAtKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	if err := registry.CompleteSetup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.Get(ctx, settings.SetupCompletedAtKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Fatalf("completion timestamp changed from %q to %q", first, second)
 	}
 }

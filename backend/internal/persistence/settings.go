@@ -34,14 +34,25 @@ func (r *SettingsRepository) Get(ctx context.Context, name string) (string, bool
 }
 
 func (r *SettingsRepository) Set(ctx context.Context, name, value string) error {
-	_, err := r.db.NewInsert().Model(&AppSetting{Name: name, Value: value}).
-		On("CONFLICT (setting_name) DO UPDATE").
-		Set("setting_value = EXCLUDED.setting_value").
-		Set("updated_at = now()").Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("set setting %q: %w", name, err)
+	return r.SetMany(ctx, map[string]string{name: value})
+}
+
+func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]string) error {
+	if len(values) == 0 {
+		return nil
 	}
-	return nil
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for name, value := range values {
+			_, err := tx.NewInsert().Model(&AppSetting{Name: name, Value: value}).
+				On("CONFLICT (setting_name) DO UPDATE").
+				Set("setting_value = EXCLUDED.setting_value").
+				Set("updated_at = now()").Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("set setting %q: %w", name, err)
+			}
+		}
+		return nil
+	})
 }
 
 // SetIfAbsent atomically writes a setting once and returns its persisted value.

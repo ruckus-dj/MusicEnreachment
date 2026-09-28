@@ -15,6 +15,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -73,7 +74,8 @@ func Run(ctx context.Context, config Config) error {
 	if err := registry.LoadLogLevel(ctx); err != nil {
 		return fmt.Errorf("load runtime log level: %w", err)
 	}
-	setup := service.NewSetup(settingsRepository, registry, platform)
+	setupManagerRepository := persistence.NewSetupManagerRepository(db)
+	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient())
 
 	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
 	if err != nil {

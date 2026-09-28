@@ -2,18 +2,23 @@ package service
 
 import (
 	"context"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
+	"fmt"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	store := newMemoryStore()
 	registry := settings.New(store, nil)
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
-	service := NewSetup(store, registry, platform)
+	installations := testInstallationLookup{items: make(map[uuid.UUID]*persistence.ToolInstallation)}
+	setup := NewSetup(store, registry, platform, installations, nil)
 	ctx := context.Background()
 
-	if err := service.Complete(ctx); err == nil {
+	if err := setup.Complete(ctx); err == nil {
 		t.Fatal("complete succeeded without required settings")
 	}
 
@@ -35,11 +40,18 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	if err := store.Set(ctx, settings.ActiveFFmpegInstallationKey, "test-ffmpeg-id"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Set(ctx, settings.ActiveFPCalcInstallationKey, "test-fpcalc-id"); err != nil {
+	ffmpegID := uuid.New()
+	fpcalcID := uuid.New()
+	if err := store.Set(ctx, settings.ActiveFFmpegInstallationKey, ffmpegID.String()); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Set(ctx, settings.ActiveFPCalcInstallationKey, fpcalcID.String()); err != nil {
+		t.Fatal(err)
+	}
+	installations.items[ffmpegID] = &persistence.ToolInstallation{ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"}
+	installations.items[fpcalcID] = &persistence.ToolInstallation{ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"}
 
-	if err := service.Complete(ctx); err != nil {
+	if err := setup.Complete(ctx); err != nil {
 		t.Fatalf("complete failed with all required settings: %v", err)
 	}
 
@@ -47,6 +59,34 @@ func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
 	if err != nil || !completed {
 		t.Fatalf("setup not marked completed: %v, %v", completed, err)
 	}
+}
+
+func TestSaveRuntimeDoesNotPartiallyPersistInvalidSettings(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	setup := NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	toolsPath := t.TempDir()
+	outputPath := t.TempDir()
+
+	if err := setup.SaveRuntime(ctx, toolsPath, outputPath, "invalid"); err == nil {
+		t.Fatal("invalid publication format was accepted")
+	}
+	if len(store.data) != 0 {
+		t.Fatalf("invalid settings were partially persisted: %#v", store.data)
+	}
+}
+
+type testInstallationLookup struct {
+	items map[uuid.UUID]*persistence.ToolInstallation
+}
+
+func (lookup testInstallationLookup) GetInstallation(_ context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
+	installation, ok := lookup.items[id]
+	if !ok {
+		return nil, fmt.Errorf("installation not found")
+	}
+	return installation, nil
 }
 
 func newMemoryStore() *memoryStore {
@@ -62,6 +102,12 @@ func (m *memoryStore) Get(_ context.Context, k string) (string, bool, error) {
 	return v, ok, nil
 }
 func (m *memoryStore) Set(_ context.Context, k, v string) error { m.data[k] = v; return nil }
+func (m *memoryStore) SetMany(_ context.Context, values map[string]string) error {
+	for k, v := range values {
+		m.data[k] = v
+	}
+	return nil
+}
 func (m *memoryStore) SetIfAbsent(_ context.Context, k, v string) (string, error) {
 	if x, ok := m.data[k]; ok {
 		return x, nil

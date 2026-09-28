@@ -26,16 +26,17 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type Checker interface {
+	CheckConnectivity(context.Context, string, string) CheckResult
+}
+
 func NewClient() *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: RequestTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 3 {
+				if len(via) >= 3 || len(via) == 0 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
 					return fmt.Errorf("too many redirects")
-				}
-				if req.URL.Scheme != "https" {
-					return fmt.Errorf("redirect to non-HTTPS URL")
 				}
 				return nil
 			},
@@ -50,7 +51,7 @@ func (c *Client) CheckConnectivity(ctx context.Context, mode, baseURL string) Ch
 			return CheckResult{Success: false, Error: "self-hosted mode requires base URL"}
 		}
 		parsed, err := url.Parse(baseURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return CheckResult{Success: false, Error: "invalid base URL: must be HTTP or HTTPS"}
 		}
 		endpoint = strings.TrimSuffix(baseURL, "/")
@@ -71,7 +72,7 @@ func (c *Client) CheckConnectivity(ctx context.Context, mode, baseURL string) Ch
 		if ctx.Err() != nil {
 			return CheckResult{Success: false, Error: "request timeout"}
 		}
-		return CheckResult{Success: false, Error: fmt.Sprintf("connection failed: %v", sanitizeError(err))}
+		return CheckResult{Success: false, Error: "connection failed"}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -79,10 +80,13 @@ func (c *Client) CheckConnectivity(ctx context.Context, mode, baseURL string) Ch
 		return CheckResult{Success: false, Error: fmt.Sprintf("unexpected status: %d", resp.StatusCode)}
 	}
 
-	body := io.LimitReader(resp.Body, MaxResponseSize)
+	body := io.LimitReader(resp.Body, MaxResponseSize+1)
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return CheckResult{Success: false, Error: "failed to read response"}
+	}
+	if len(data) > MaxResponseSize {
+		return CheckResult{Success: false, Error: "response exceeds size limit"}
 	}
 
 	var response struct {
@@ -97,14 +101,4 @@ func (c *Client) CheckConnectivity(ctx context.Context, mode, baseURL string) Ch
 	}
 
 	return CheckResult{Success: true}
-}
-
-func sanitizeError(err error) error {
-	msg := err.Error()
-	if idx := strings.Index(msg, "://"); idx > 0 {
-		if end := strings.Index(msg[idx:], "@"); end > 0 {
-			return fmt.Errorf("connection error")
-		}
-	}
-	return err
 }
