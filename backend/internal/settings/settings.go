@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	PlatformGOOSKey      = "instance.goos"
-	PlatformGOARCHKey    = "instance.goarch"
-	ToolsDirectoryKey    = "tools_directory"
-	OutputDirectoryKey   = "output_directory"
-	PublicationFormatKey = "publication_format"
-	LogLevelKey          = "log_level"
-	SetupCompletedAtKey  = "setup_completed_at"
+	PlatformGOOSKey             = "instance.goos"
+	PlatformGOARCHKey           = "instance.goarch"
+	ToolsDirectoryKey           = "tools_directory"
+	OutputDirectoryKey          = "output_directory"
+	PublicationFormatKey        = "publication_format"
+	LogLevelKey                 = "log_level"
+	ActiveFFmpegInstallationKey = "active_ffmpeg_installation_id"
+	ActiveFPCalcInstallationKey = "active_fpcalc_installation_id"
+	SetupCompletedAtKey         = "setup_completed_at"
 )
 
 type Store interface {

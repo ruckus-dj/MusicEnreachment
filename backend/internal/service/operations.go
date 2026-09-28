@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
@@ -20,10 +21,26 @@ type OperationRepository interface {
 	DeleteSucceededBefore(context.Context, time.Time) error
 }
 
+type operationEnqueuingRepository interface {
+	OperationRepository
+	CreateOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	RetryOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+}
+
+// operationArgs carries only the durable operation ID. Workers always reload
+// their immutable inputs from the operation snapshot.
+type operationArgs struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
+func (operationArgs) Kind() string { return "operation" }
+
 // Operations provides the REST source of truth; Subscribe is only a wake-up
 // signal, so reconnecting clients must re-read the operation snapshot.
 type Operations struct {
 	repository OperationRepository
+	enqueuer   operationEnqueuingRepository
+	river      persistence.RiverInserter
 	mu         sync.Mutex
 	watchers   map[uuid.UUID]map[chan struct{}]struct{}
 	now        func() time.Time
@@ -32,13 +49,29 @@ type Operations struct {
 func NewOperations(repository OperationRepository) *Operations {
 	return &Operations{repository: repository, watchers: map[uuid.UUID]map[chan struct{}]struct{}{}, now: time.Now}
 }
+
+// NewOperationsWithRiver makes production operation creation and retry atomic
+// with their River jobs. The simpler constructor remains useful for pure state
+// machine tests.
+func NewOperationsWithRiver(repository operationEnqueuingRepository, client persistence.RiverInserter) *Operations {
+	operations := NewOperations(repository)
+	operations.enqueuer = repository
+	operations.river = client
+	return operations
+}
+
 func (s *Operations) Start(ctx context.Context, kind, stage string, snapshot any) (*persistence.Operation, error) {
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
 	operation := &persistence.Operation{ID: uuid.New(), Kind: kind, State: "queued", Stage: stage, InputSnapshot: raw}
-	if err = s.repository.CreateOperation(ctx, operation); err != nil {
+	if s.enqueuer != nil {
+		err = s.enqueuer.CreateOperationAndEnqueue(ctx, operation, s.river, operationArgs{OperationID: operation.ID}, nil)
+	} else {
+		err = s.repository.CreateOperation(ctx, operation)
+	}
+	if err != nil {
 		return nil, err
 	}
 	s.notify(operation.ID)
@@ -63,6 +96,14 @@ func (s *Operations) Fail(ctx context.Context, id uuid.UUID, stage, safe string)
 	return s.transition(ctx, id, "failed", stage, safe, nil)
 }
 func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
+	if s.enqueuer != nil {
+		operation, err := s.enqueuer.RetryOperationAndEnqueue(ctx, id, s.river, operationArgs{OperationID: id}, nil)
+		if err != nil {
+			return nil, err
+		}
+		s.notify(id)
+		return operation, nil
+	}
 	existing, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err

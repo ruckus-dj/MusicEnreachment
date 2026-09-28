@@ -166,21 +166,49 @@ func (repository *SetupManagerRepository) UpdateInstallation(ctx context.Context
 }
 
 func (repository *SetupManagerRepository) MarkInstallationReady(ctx context.Context, id uuid.UUID, versions json.RawMessage, verifiedAt time.Time) error {
-	_, err := repository.db.NewUpdate().Model((*ToolInstallation)(nil)).
+	result, err := repository.db.NewUpdate().Model((*ToolInstallation)(nil)).
 		Set("state = 'ready'").Set("executable_versions = ?", versions).Set("verified_at = ?", verifiedAt).
 		Set("updated_at = ?", verifiedAt).Where("id = ?", id).Where("state = 'preparing'").Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("mark tool installation ready: %w", err)
 	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return fmt.Errorf("mark tool installation ready: installation must exist and be preparing")
+	}
 	return nil
 }
 
 func (repository *SetupManagerRepository) MarkInstallationFailed(ctx context.Context, id uuid.UUID) error {
-	_, err := repository.db.NewUpdate().Model((*ToolInstallation)(nil)).Set("state = 'failed'").Set("updated_at = now()").Where("id = ?", id).Where("state = 'preparing'").Exec(ctx)
+	result, err := repository.db.NewUpdate().Model((*ToolInstallation)(nil)).Set("state = 'failed'").Set("updated_at = now()").Where("id = ?", id).Where("state = 'preparing'").Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("mark tool installation failed: %w", err)
 	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return fmt.Errorf("mark tool installation failed: installation must exist and be preparing")
+	}
 	return nil
+}
+
+// ActivateInstallation validates a ready installation for the immutable
+// platform and updates its package's active setting in the same transaction.
+func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
+			return fmt.Errorf("lock active installation: %w", err)
+		}
+		installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if installation.PackageKind != packageKind || installation.PlatformGOOS != goos || installation.PlatformGOARCH != goarch || installation.State != "ready" {
+			return fmt.Errorf("installation is not a ready %s installation for %s/%s", packageKind, goos, goarch)
+		}
+		if _, err := tx.NewInsert().Model(&AppSetting{Name: activeSetting, Value: id.String()}).
+			On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+			return fmt.Errorf("set active installation: %w", err)
+		}
+		return nil
+	})
 }
 
 func (repository *SetupManagerRepository) GetOperation(ctx context.Context, id uuid.UUID) (*Operation, error) {
@@ -226,6 +254,46 @@ func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, o
 		return fmt.Errorf("update operation: %w", err)
 	}
 	return nil
+}
+
+// RetryOperationAndEnqueue locks the failed operation, preserves its immutable
+// target installation and snapshot, and atomically creates its next River job.
+func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.Context, id uuid.UUID, client RiverInserter, args river.JobArgs, options *river.InsertOpts) (*Operation, error) {
+	if client == nil {
+		return nil, fmt.Errorf("retry operation: River client is required")
+	}
+	var operation *Operation
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if locked.State != "failed" {
+			return fmt.Errorf("only failed operations can be retried")
+		}
+		result, err := client.InsertTx(ctx, tx.Tx, args, options)
+		if err != nil {
+			return fmt.Errorf("insert retry River job: %w", err)
+		}
+		locked.State = "queued"
+		locked.Stage = "retry"
+		locked.SafeError = nil
+		locked.StartedAt = nil
+		locked.FinishedAt = nil
+		locked.BytesCompleted = 0
+		locked.BytesTotal = nil
+		locked.RiverJobID = &result.Job.ID
+		locked.Attempt++
+		if _, err := tx.NewUpdate().Model(locked).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("retry operation: %w", err)
+		}
+		operation = locked
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return operation, nil
 }
 
 func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, id uuid.UUID) error {
