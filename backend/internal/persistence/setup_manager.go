@@ -75,3 +75,38 @@ func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Contex
 	}
 	return nil
 }
+
+func (repository *SetupManagerRepository) GetOperation(ctx context.Context, id uuid.UUID) (*Operation, error) {
+	operation := new(Operation)
+	if err := repository.db.NewSelect().Model(operation).Where("id = ?", id).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("get operation: %w", err)
+	}
+	return operation, nil
+}
+
+func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, operation *Operation) error {
+	_, err := repository.db.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("update operation: %w", err)
+	}
+	return nil
+}
+
+func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, id uuid.UUID) error {
+	result, err := repository.db.NewDelete().Model((*Operation)(nil)).Where("id = ?", id).Where("state = 'failed'").Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("dismiss operation: %w", err)
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return fmt.Errorf("only failed operations can be dismissed")
+	}
+	return nil
+}
+
+func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Context, before time.Time) error {
+	_, err := repository.db.NewDelete().Model((*Operation)(nil)).Where("state = 'succeeded'").Where("finished_at < ?", before).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("cleanup succeeded operations: %w", err)
+	}
+	return nil
+}
