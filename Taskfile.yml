@@ -47,9 +47,14 @@ tasks:
       - task: go:build
 
   run:
-    desc: Build and run the application with PostgreSQL via Docker Compose
+    desc: Build and run the application with PostgreSQL via Docker Compose in the background
     cmds:
-      - docker compose -f deploy/compose/docker-compose.yml up --build
+      - docker compose -f deploy/compose/docker-compose.yml up --build --detach
+
+  stop:
+    desc: Stop the application Docker Compose services
+    cmds:
+      - docker compose -f deploy/compose/docker-compose.yml stop
 
   go:build:
     internal: true
