@@ -71,6 +71,10 @@ func New(store Store, level *slog.LevelVar) *Registry {
 	return &Registry{store: store, level: level, now: time.Now}
 }
 
+func NewRegistryWithClock(store Store, clock func() time.Time) *Registry {
+	return &Registry{store: store, level: new(slog.LevelVar), now: clock}
+}
+
 func (r *Registry) InitializePlatform(ctx context.Context, current Platform) (PlatformState, error) {
 	if !current.Supported() {
 		return PlatformState{Platform: current, Diagnostic: true, Reason: "unsupported platform"}, nil
@@ -263,6 +267,19 @@ func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL strin
 
 // MarkMusicBrainzVerified records successful connectivity check.
 func (r *Registry) MarkMusicBrainzVerified(ctx context.Context) error {
+	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+}
+
+// SetMusicBrainzVerified records successful connectivity check for the given configuration.
+// This method should be called after a successful CheckMusicBrainz call.
+func (r *Registry) SetMusicBrainzVerified(ctx context.Context, config MusicBrainzConfig) error {
+	current, err := r.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if current.Mode != config.Mode || current.BaseURL != config.BaseURL {
+		return fmt.Errorf("configuration changed since check was initiated")
+	}
 	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, r.now().UTC().Format(time.RFC3339Nano))
 }
 
