@@ -345,22 +345,27 @@ Service layer повторяет validation, compatibility и transition checks 
 - Не переходить к frontend flow, пока соответствующий backend contract и его
   integration tests не готовы.
 
-### 2. Завершить persistence contract и repositories — ⏳ в работе
+### 2. Завершить persistence contract и repositories — ✅ выполнено
 
 Реализована основа отдельными migrations
 `20260929000000_setup_manager_persistence_contract` и
-`20260930000000_setup_manager_transition_invariants`:
+`20260930000000_setup_manager_transition_invariants`, а migration
+`20261001000000_setup_manager_operation_targets` валидирует добавленные
+constraints и привязывает exclusivity к `target_installation_id`, а не к
+клиентскому значению в JSON snapshot. Она также исправляет диапазон глобальной
+move-блокировки, чтобы standalone move не переполнял `bigint`.
 installation хранит artifact identities, operation — target installation и номер
 попытки; активные install/activate/delete/move операции защищены индексами и
-exclusion constraint. `SetupManagerRepository` получил typed list/get/update,
+exclusion constraint. Изменения operation и retry обновляют `updated_at`.
+`SetupManagerRepository` получил typed list/get/update,
 row locks и transaction boundary для совместного создания/retry operation и
 River job. Активация проверяет ready package и immutable platform
 под row/advisory locks и меняет active setting в той же transaction. PostgreSQL
 integration tests покрывают identity, active conflicts, row locks, все state
-transitions, activation (включая concurrent/wrong state) и commit/rollback
-River enqueue/retry без второй installation. Остаётся подключить этот boundary
-к доступным install worker/API use cases в пунктах 7 и 9; до этого пункт нельзя
-считать завершённым.
+transitions, полную матрицу move/installation exclusivity, activation (включая
+concurrent/wrong state), timestamps и commit/rollback River enqueue/retry без
+второй installation. Подключение этого завершённого boundary к реальному install
+worker и API относится соответственно к пунктам 7 и 9.
 
 **Цель:** БД должна выражать все долговременные сущности и критические
 инварианты, а service layer не должен собирать SQL вручную.
@@ -382,9 +387,10 @@ River enqueue/retry без второй installation. Остаётся подк�
 3. Не пытаться сделать foreign key из text EAV value. Инвариант active ID
    реализовать транзакционным service method: installation существует, ready,
    имеет правильные package/platform; setting обновляется в той же транзакции.
-4. Сделать общий transaction boundary, внутри которого production code вызывает
-   `River.InsertTx` и создаёт operation row. Перенести доказательство атомарности
-   из isolated test helper в реально вызываемый repository/service method.
+4. Сделать общий transaction boundary, внутри которого вызывающий production
+   use case сможет вызвать `River.InsertTx` и создать operation row. Перенести
+   доказательство атомарности из isolated test helper в реально вызываемый
+   repository/service method; подключение install worker выполняется в пункте 7.
 5. Убедиться, что move взаимно исключается со всеми install/activate/delete/move,
    а install конфликтует только с тем же logical target. Не полагаться только на
    process-local mutex.
@@ -400,9 +406,10 @@ River enqueue/retry без второй installation. Остаётся подк�
 - concurrent activation и неверный package/platform/ready state;
 - retry переиспользует logical target и не создаёт вторую installation.
 
-**Готово, когда:** production enqueue использует проверенный transaction method,
+**Готово, когда:** проверенный transaction method готов для production enqueue,
 все repository paths покрыты PostgreSQL integration tests, а DB/service
-инварианты не зависят от UI или in-memory state.
+инварианты не зависят от UI или in-memory state. Реальный production enqueue
+подключается вместе с install worker в пункте 7.
 
 ### 3. Завершить typed settings, platform policy и filesystem validation
 

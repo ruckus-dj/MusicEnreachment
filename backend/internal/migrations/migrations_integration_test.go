@@ -27,6 +27,21 @@ func TestMigrationsApplyAndRollbackWithPostgreSQL(t *testing.T) {
 	if tableCount != 3 {
 		t.Fatalf("setup-manager table count = %d, want 3", tableCount)
 	}
+	var validatedConstraintCount int
+	if err := database.NewRaw(`
+		SELECT count(*)
+		FROM pg_constraint
+		WHERE conname IN (
+			'tool_installation_ready_is_verified',
+			'operation_mutation_has_target_installation'
+		)
+		  AND convalidated
+	`).Scan(ctx, &validatedConstraintCount); err != nil {
+		t.Fatalf("count validated setup-manager constraints: %v", err)
+	}
+	if validatedConstraintCount != 2 {
+		t.Fatalf("validated setup-manager constraints = %d, want 2", validatedConstraintCount)
+	}
 	collection, err := migrations.Collection()
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)

@@ -239,16 +239,17 @@ func (repository *SetupManagerRepository) ListOperations(ctx context.Context, st
 	return operations, nil
 }
 
-func (repository *SetupManagerRepository) ListActiveOperationConflictsForUpdate(ctx context.Context, tx bun.Tx, targetIdentity string) ([]Operation, error) {
+func (repository *SetupManagerRepository) ListActiveOperationConflictsForUpdate(ctx context.Context, tx bun.Tx, targetInstallationID uuid.UUID) ([]Operation, error) {
 	operations := make([]Operation, 0)
 	if err := tx.NewSelect().Model(&operations).Where("state IN ('queued', 'running')").
-		Where("kind = 'move_tools_root' OR input_snapshot ->> 'target_identity' = ?", targetIdentity).For("UPDATE").Scan(ctx); err != nil {
+		Where("kind = 'move_tools_root' OR target_installation_id = ?", targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list active operation conflicts: %w", err)
 	}
 	return operations, nil
 }
 
 func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, operation *Operation) error {
+	operation.UpdatedAt = time.Now().UTC()
 	_, err := repository.db.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("update operation: %w", err)
@@ -268,6 +269,7 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 		if err := transition(operation); err != nil {
 			return err
 		}
+		operation.UpdatedAt = time.Now().UTC()
 		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("transition operation: %w", err)
 		}
@@ -303,6 +305,7 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		locked.BytesTotal = nil
 		locked.RiverJobID = &result.Job.ID
 		locked.Attempt++
+		locked.UpdatedAt = time.Now().UTC()
 		if _, err := tx.NewUpdate().Model(locked).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("retry operation: %w", err)
 		}

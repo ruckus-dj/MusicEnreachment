@@ -74,8 +74,17 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	}
 	duplicateOperation := *operation
 	duplicateOperation.ID = uuid.New()
+	duplicateOperation.InputSnapshot = json.RawMessage(`{"target_identity":"different-client-value"}`)
 	if err := repository.CreateOperation(ctx, &duplicateOperation); err == nil {
-		t.Fatal("conflicting active operation was accepted")
+		t.Fatal("conflicting operation for the same installation was accepted")
+	}
+	differentTarget := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "chromaprint", ReleaseIdentity: "1.5.1", RelativePath: "fpcalc/1.5.1", State: "preparing"}
+	if err := repository.CreateInstallation(ctx, differentTarget); err != nil {
+		t.Fatalf("create different target installation: %v", err)
+	}
+	differentTargetOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.5.1:linux:amd64"}`), TargetInstallationID: &differentTarget.ID}
+	if err := repository.CreateOperation(ctx, differentTargetOperation); err != nil {
+		t.Fatalf("create operation for a different installation: %v", err)
 	}
 	moveOperation := &persistence.Operation{
 		ID:            uuid.New(),
@@ -88,15 +97,15 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 		t.Fatal("tools-root move concurrent with installation was accepted")
 	}
 	operations, err := repository.ListOperations(ctx, "queued")
-	if err != nil || len(operations) != 1 {
-		t.Fatalf("list queued operations = %d, %v; want 1, nil", len(operations), err)
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("list queued operations = %d, %v; want 2, nil", len(operations), err)
 	}
 	err = database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		locked, err := repository.GetInstallationForUpdate(ctx, tx, installation.ID)
 		if err != nil || locked.ID != installation.ID {
 			t.Fatalf("lock installation = %#v, %v", locked, err)
 		}
-		conflicts, err := repository.ListActiveOperationConflictsForUpdate(ctx, tx, "ffmpeg:btbn:7.1:linux:amd64")
+		conflicts, err := repository.ListActiveOperationConflictsForUpdate(ctx, tx, installation.ID)
 		if err != nil || len(conflicts) != 1 {
 			t.Fatalf("lock operation conflicts = %d, %v; want 1, nil", len(conflicts), err)
 		}
@@ -151,6 +160,51 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestActiveOperationExclusivityWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	first := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	second := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
+
+	missingTarget := &persistence.Operation{ID: uuid.New(), Kind: "activate", State: "queued", Stage: "verify", InputSnapshot: json.RawMessage(`{"target_identity":"ffmpeg:missing"}`)}
+	if err := repository.CreateOperation(ctx, missingTarget); err == nil {
+		t.Fatal("activate operation without a target installation was accepted")
+	}
+	activate := &persistence.Operation{ID: uuid.New(), Kind: "activate", State: "queued", Stage: "verify", InputSnapshot: json.RawMessage(`{"target_identity":"ffmpeg:first"}`), TargetInstallationID: &first.ID}
+	if err := repository.CreateOperation(ctx, activate); err != nil {
+		t.Fatalf("create activate operation: %v", err)
+	}
+	sameInstallationDelete := &persistence.Operation{ID: uuid.New(), Kind: "delete", State: "queued", Stage: "delete", InputSnapshot: json.RawMessage(`{"target_identity":"different-client-value"}`), TargetInstallationID: &first.ID}
+	if err := repository.CreateOperation(ctx, sameInstallationDelete); err == nil {
+		t.Fatal("delete concurrent with activation of the same installation was accepted")
+	}
+	differentInstallationDelete := &persistence.Operation{ID: uuid.New(), Kind: "delete", State: "queued", Stage: "delete", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:second"}`), TargetInstallationID: &second.ID}
+	if err := repository.CreateOperation(ctx, differentInstallationDelete); err != nil {
+		t.Fatalf("create operation for a different installation: %v", err)
+	}
+	move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "preflight", InputSnapshot: json.RawMessage(`{"old_root":"/tools","new_root":"/new-tools"}`)}
+	if err := repository.CreateOperation(ctx, move); err == nil {
+		t.Fatal("move concurrent with activate/delete was accepted")
+	}
+	finishOperation(t, ctx, repository, activate.ID)
+	finishOperation(t, ctx, repository, differentInstallationDelete.ID)
+
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatalf("create move operation: %v", err)
+	}
+	secondMove := *move
+	secondMove.ID = uuid.New()
+	if err := repository.CreateOperation(ctx, &secondMove); err == nil {
+		t.Fatal("second active move operation was accepted")
+	}
+	installDuringMove := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:during-move"}`), TargetInstallationID: &second.ID}
+	if err := repository.CreateOperation(ctx, installDuringMove); err == nil {
+		t.Fatal("install concurrent with move was accepted")
+	}
+}
+
 func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
@@ -179,6 +233,10 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	if err := repository.CreateOperation(ctx, concurrent); err != nil {
 		t.Fatalf("create concurrent operation: %v", err)
 	}
+	oldUpdatedAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(ctx, "UPDATE operation SET updated_at = ? WHERE id = ?", oldUpdatedAt, concurrent.ID); err != nil {
+		t.Fatalf("set old operation timestamp: %v", err)
+	}
 	transitionErrors := make(chan error, 2)
 	for range 2 {
 		go func() {
@@ -205,6 +263,13 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	if successes != 1 || failures != 1 {
 		t.Fatalf("concurrent transitions: %d successes, %d failures; want 1 and 1", successes, failures)
 	}
+	transitioned, err := repository.GetOperation(ctx, concurrent.ID)
+	if err != nil {
+		t.Fatalf("get transitioned operation: %v", err)
+	}
+	if !transitioned.UpdatedAt.After(oldUpdatedAt) {
+		t.Fatalf("transition updated_at = %v; want after %v", transitioned.UpdatedAt, oldUpdatedAt)
+	}
 
 	finishedAt := time.Now().UTC()
 	operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:1.0:linux:amd64"}`), TargetInstallationID: &installation.ID}
@@ -223,8 +288,12 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	operation.State = "failed"
 	operation.SafeError = stringPointer("safe failure")
 	operation.FinishedAt = &finishedAt
+	operation.UpdatedAt = oldUpdatedAt
 	if err := repository.UpdateOperation(ctx, operation); err != nil {
 		t.Fatalf("update operation: %v", err)
+	}
+	if !operation.UpdatedAt.After(oldUpdatedAt) {
+		t.Fatalf("updated operation timestamp = %v; want after %v", operation.UpdatedAt, oldUpdatedAt)
 	}
 	if err := repository.DismissOperation(ctx, operation.ID); err != nil {
 		t.Fatalf("dismiss failed operation: %v", err)
@@ -255,6 +324,19 @@ func createReadyInstallation(t *testing.T, ctx context.Context, repository *pers
 		t.Fatalf("mark installation ready: %v", err)
 	}
 	return installation
+}
+
+func finishOperation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, id uuid.UUID) {
+	t.Helper()
+	if err := repository.TransitionOperation(ctx, id, func(operation *persistence.Operation) error {
+		now := time.Now().UTC()
+		operation.State = "succeeded"
+		operation.Stage = "complete"
+		operation.FinishedAt = &now
+		return nil
+	}); err != nil {
+		t.Fatalf("finish operation %s: %v", id, err)
+	}
 }
 
 func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SetupManagerRepository) {
@@ -313,6 +395,10 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if err := repository.CreateOperation(ctx, retryOperation); err != nil {
 		t.Fatalf("create failed operation: %v", err)
 	}
+	oldUpdatedAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(ctx, "UPDATE operation SET updated_at = ? WHERE id = ?", oldUpdatedAt, retryOperation.ID); err != nil {
+		t.Fatalf("set old retry timestamp: %v", err)
+	}
 	retried, err := repository.RetryOperationAndEnqueue(ctx, retryOperation.ID, client, transactionTestArgs{}, nil)
 	if err != nil {
 		t.Fatalf("retry operation: %v", err)
@@ -320,9 +406,35 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if retried.Attempt != 2 || retried.TargetInstallationID == nil || *retried.TargetInstallationID != retryInstallation.ID || retried.RiverJobID == nil {
 		t.Fatalf("retried operation did not preserve its target and create attempt: %#v", retried)
 	}
+	if !retried.UpdatedAt.After(oldUpdatedAt) {
+		t.Fatalf("retry updated_at = %v; want after %v", retried.UpdatedAt, oldUpdatedAt)
+	}
 	installations, err := repository.ListInstallations(ctx, "ffmpeg", "linux", "amd64")
 	if err != nil || len(installations) != 2 {
 		t.Fatalf("retry installations = %d, %v; want two existing targets", len(installations), err)
+	}
+
+	rollbackInstallation := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.6.0")
+	blockingOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:1.6.0:linux:amd64"}`), TargetInstallationID: &rollbackInstallation.ID}
+	if err := repository.CreateOperation(ctx, blockingOperation); err != nil {
+		t.Fatalf("create retry blocker: %v", err)
+	}
+	failedRetry := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed", Stage: "verify", InputSnapshot: json.RawMessage(`{"target_identity":"different-client-value"}`), TargetInstallationID: &rollbackInstallation.ID, SafeError: stringPointer("safe failure"), FinishedAt: &finishedAt}
+	if err := repository.CreateOperation(ctx, failedRetry); err != nil {
+		t.Fatalf("create failed retry candidate: %v", err)
+	}
+	if _, err := repository.RetryOperationAndEnqueue(ctx, failedRetry.ID, client, transactionTestArgs{}, nil); err == nil {
+		t.Fatal("retry conflicting with an active operation was committed")
+	}
+	failedAfterRollback, err := repository.GetOperation(ctx, failedRetry.ID)
+	if err != nil || failedAfterRollback.State != "failed" || failedAfterRollback.Attempt != 1 || failedAfterRollback.RiverJobID != nil {
+		t.Fatalf("rolled-back retry changed operation: %#v, %v", failedAfterRollback, err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM river_job WHERE kind = ?", transactionTestArgs{}.Kind()).Scan(&jobs); err != nil {
+		t.Fatalf("count River jobs after retry rollback: %v", err)
+	}
+	if jobs != 2 {
+		t.Fatalf("River jobs after retry rollback = %d, want two committed jobs", jobs)
 	}
 
 	_, err = database.ExecContext(ctx, "INSERT INTO operation (id, kind, state, stage, input_snapshot) VALUES (?, 'install', 'failed', 'download', '{}'::jsonb)", uuid.New())
