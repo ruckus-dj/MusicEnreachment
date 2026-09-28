@@ -13,9 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/riverqueue/river"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -76,8 +78,17 @@ func Run(ctx context.Context, config Config) error {
 	}
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient())
+	operationService := service.NewOperations(setupManagerRepository)
+	catalog := tools.NewDefaultCatalog(nil)
+	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	}, tools.NewLifecycle(nil))
 
-	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
+	riverClient, riverListenerPool, err := jobs.StartWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
+		if !platform.Diagnostic && platform.Platform.Supported() {
+			river.AddWorker(workers, installWorker)
+		}
+	})
 	if err != nil {
 		return err
 	}

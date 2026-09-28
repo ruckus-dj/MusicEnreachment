@@ -67,3 +67,17 @@ func (r *SettingsRepository) SetIfAbsent(ctx context.Context, name, value string
 	persisted, _, err := r.Get(ctx, name)
 	return persisted, err
 }
+
+func (r *SettingsRepository) CompleteSetupOnce(ctx context.Context, value string) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
+			return fmt.Errorf("lock setup completion: %w", err)
+		}
+		_, err := tx.NewInsert().Model(&AppSetting{Name: "setup_completed_at", Value: value}).
+			On("CONFLICT (setting_name) DO NOTHING").Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("complete setup: %w", err)
+		}
+		return nil
+	})
+}

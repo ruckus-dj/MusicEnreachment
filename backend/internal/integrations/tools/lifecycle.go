@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/ulikunitz/xz"
 )
 
@@ -253,6 +254,53 @@ type MaterializeOptions struct {
 	GOARCH             string
 	ManagedPaths       []string
 	ConfirmedConflicts []string
+	Progress           func(int64)
+}
+
+func ResetOperationStaging(root string, operationID uuid.UUID) (string, error) {
+	if !filepath.IsAbs(root) || operationID == uuid.Nil {
+		return "", fmt.Errorf("staging root and operation ID are required")
+	}
+	stagingRoot := filepath.Join(root, ".staging")
+	if err := rejectSymlinkAncestors(root, stagingRoot); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create operation staging root: %w", err)
+	}
+	operationRoot := filepath.Join(stagingRoot, operationID.String())
+	if err := rejectSymlinkAncestors(stagingRoot, operationRoot); err != nil {
+		return "", err
+	}
+	if info, err := os.Lstat(operationRoot); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("operation staging path has an unsupported file type")
+		}
+		if err := os.RemoveAll(operationRoot); err != nil {
+			return "", fmt.Errorf("clear operation staging: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect operation staging: %w", err)
+	}
+	if err := os.Mkdir(operationRoot, 0o700); err != nil {
+		return "", fmt.Errorf("create operation staging: %w", err)
+	}
+	return operationRoot, nil
+}
+
+func CleanupOperationStaging(root string, operationID uuid.UUID) error {
+	if !filepath.IsAbs(root) || operationID == uuid.Nil {
+		return fmt.Errorf("staging root and operation ID are required")
+	}
+	stagingRoot := filepath.Join(root, ".staging")
+	operationRoot := filepath.Join(stagingRoot, operationID.String())
+	if err := rejectSymlinkAncestors(root, operationRoot); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(operationRoot); err != nil {
+		return fmt.Errorf("clean operation staging: %w", err)
+	}
+	return nil
 }
 
 func NewLifecycle(runner CommandRunner) *Lifecycle {
@@ -299,6 +347,7 @@ func (l *Lifecycle) Materialize(ctx context.Context, staging, root string, kind 
 		}
 	}()
 	versions := map[string]string{}
+	var bytesCopied int64
 	for _, name := range ExpectedExecutables(kind, options.GOOS) {
 		source, err := findExecutable(staging, name)
 		if err != nil {
@@ -328,6 +377,14 @@ func (l *Lifecycle) Materialize(ctx context.Context, staging, root string, kind 
 		}
 		if err := copyExecutable(source, tempPath); err != nil {
 			return "", nil, err
+		}
+		info, err := os.Stat(source)
+		if err != nil {
+			return "", nil, err
+		}
+		bytesCopied += info.Size()
+		if options.Progress != nil {
+			options.Progress(bytesCopied)
 		}
 		output, err := l.runner.Run(ctx, tempPath, "--version")
 		if err != nil {

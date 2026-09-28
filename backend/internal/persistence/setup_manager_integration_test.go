@@ -175,6 +175,33 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestSetupActivationStopsAfterCompletion(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	first := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
+	activated, err := repository.ActivateInstallationDuringSetup(ctx, first.ID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey)
+	if err != nil || !activated {
+		t.Fatalf("setup activation = %v, %v; want true, nil", activated, err)
+	}
+	settingsRepository := persistence.NewSettingsRepository(database)
+	registry := settings.New(settingsRepository, nil)
+	if err := registry.CompleteSetup(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	second := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.6.0")
+	activated, err = repository.ActivateInstallationDuringSetup(ctx, second.ID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey)
+	if err != nil || activated {
+		t.Fatalf("post-setup activation = %v, %v; want false, nil", activated, err)
+	}
+	var active string
+	if err := database.QueryRowContext(ctx, "SELECT setting_value FROM app_setting WHERE setting_name = ?", settings.ActiveFPCalcInstallationKey).Scan(&active); err != nil || active != first.ID.String() {
+		t.Fatalf("active installation changed after setup: %q, %v", active, err)
+	}
+}
+
 func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
@@ -479,6 +506,9 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if err := repository.CreateOperation(ctx, retryOperation); err != nil {
 		t.Fatalf("create failed operation: %v", err)
 	}
+	if _, err := database.ExecContext(ctx, "UPDATE tool_installation SET state = 'failed' WHERE id = ?", retryInstallation.ID); err != nil {
+		t.Fatalf("mark retry target failed: %v", err)
+	}
 	oldUpdatedAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := database.ExecContext(ctx, "UPDATE operation SET updated_at = ? WHERE id = ?", oldUpdatedAt, retryOperation.ID); err != nil {
 		t.Fatalf("set old retry timestamp: %v", err)
@@ -492,6 +522,10 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 	if !retried.UpdatedAt.After(oldUpdatedAt) {
 		t.Fatalf("retry updated_at = %v; want after %v", retried.UpdatedAt, oldUpdatedAt)
+	}
+	retriedInstallation, err := repository.GetInstallation(ctx, retryInstallation.ID)
+	if err != nil || retriedInstallation.State != "preparing" {
+		t.Fatalf("retry installation state = %#v, %v; want preparing", retriedInstallation, err)
 	}
 	installations, err := repository.ListInstallations(ctx, "ffmpeg", "linux", "amd64")
 	if err != nil || len(installations) != 2 {
@@ -519,6 +553,53 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 	if jobs != 2 {
 		t.Fatalf("River jobs after retry rollback = %d, want two committed jobs", jobs)
+	}
+
+	preparing := &persistence.ToolInstallation{
+		ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "1.7.0", RelativePath: "fpcalc/1.7.0",
+		State: "preparing", ArtifactIdentities: json.RawMessage(`[{"name":"chromaprint-fpcalc-1.7.0-linux-x86_64.tar.gz"}]`),
+	}
+	installOperation := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
+		InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.7.0:linux:amd64"}`),
+		TargetInstallationID: &preparing.ID,
+	}
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, preparing, installOperation, client, transactionTestArgs{}, nil); err != nil {
+		t.Fatalf("atomically create installation, operation, and job: %v", err)
+	}
+	if _, err := repository.GetInstallation(ctx, preparing.ID); err != nil {
+		t.Fatalf("get atomically created installation: %v", err)
+	}
+	var jobsAfterInstall int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM river_job WHERE kind = ?", transactionTestArgs{}.Kind()).Scan(&jobsAfterInstall); err != nil {
+		t.Fatal(err)
+	}
+	if jobsAfterInstall != 3 {
+		t.Fatalf("River jobs after install start = %d, want 3", jobsAfterInstall)
+	}
+
+	duplicateTarget := *preparing
+	duplicateTarget.ID = uuid.New()
+	duplicateOperation := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
+		InputSnapshot: installOperation.InputSnapshot, TargetInstallationID: &duplicateTarget.ID,
+	}
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, &duplicateTarget, duplicateOperation, client, transactionTestArgs{}, nil); err == nil {
+		t.Fatal("duplicate installation identity was enqueued")
+	}
+	var rolledBackInstallRows int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM tool_installation WHERE id = ?", duplicateTarget.ID).Scan(&rolledBackInstallRows); err != nil {
+		t.Fatal(err)
+	}
+	if rolledBackInstallRows != 0 {
+		t.Fatalf("duplicate installation rows = %d, want 0", rolledBackInstallRows)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM river_job WHERE kind = ?", transactionTestArgs{}.Kind()).Scan(&jobsAfterInstall); err != nil {
+		t.Fatal(err)
+	}
+	if jobsAfterInstall != 3 {
+		t.Fatalf("River job persisted after failed install creation: %d", jobsAfterInstall)
 	}
 
 	_, err = database.ExecContext(ctx, "INSERT INTO operation (id, kind, state, stage, input_snapshot) VALUES (?, 'install', 'failed', 'download', '{}'::jsonb)", uuid.New())

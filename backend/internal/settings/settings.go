@@ -36,6 +36,10 @@ type Store interface {
 	SetIfAbsent(context.Context, string, string) (string, error)
 }
 
+type SetupCompletionStore interface {
+	CompleteSetupOnce(context.Context, string) error
+}
+
 type Platform struct{ GOOS, GOARCH string }
 
 func (p Platform) Supported() bool {
@@ -139,7 +143,11 @@ func (r *Registry) LoadLogLevel(ctx context.Context) error {
 }
 
 func (r *Registry) CompleteSetup(ctx context.Context) error {
-	_, err := r.store.SetIfAbsent(ctx, SetupCompletedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+	value := r.now().UTC().Format(time.RFC3339Nano)
+	if store, ok := r.store.(SetupCompletionStore); ok {
+		return store.CompleteSetupOnce(ctx, value)
+	}
+	_, err := r.store.SetIfAbsent(ctx, SetupCompletedAtKey, value)
 	return err
 }
 func (r *Registry) SetupCompleted(ctx context.Context) (bool, error) {

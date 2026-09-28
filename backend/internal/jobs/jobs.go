@@ -24,6 +24,10 @@ type bootstrapWorker struct {
 func (*bootstrapWorker) Work(context.Context, *river.Job[BootstrapArgs]) error { return nil }
 
 func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+	return StartWithWorkers(ctx, databaseURL, database, nil)
+}
+
+func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers)) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
 	if database == nil {
 		return nil, nil, fmt.Errorf("start River: database pool is required")
 	}
@@ -47,6 +51,9 @@ func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Cl
 	}
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &bootstrapWorker{})
+	if register != nil {
+		register(workers)
+	}
 	client, err := river.NewClient(driver, &river.Config{
 		Workers: workers,
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},

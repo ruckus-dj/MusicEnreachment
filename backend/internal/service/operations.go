@@ -30,11 +30,11 @@ type operationEnqueuingRepository interface {
 
 // operationArgs carries only the durable operation ID. Workers always reload
 // their immutable inputs from the operation snapshot.
-type operationArgs struct {
+type OperationJobArgs struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
-func (operationArgs) Kind() string { return "operation" }
+func (OperationJobArgs) Kind() string { return "operation_v1" }
 
 // Operations provides the REST source of truth; Subscribe is only a wake-up
 // signal, so reconnecting clients must re-read the operation snapshot.
@@ -68,7 +68,7 @@ func (s *Operations) Start(ctx context.Context, kind, stage string, snapshot any
 	}
 	operation := &persistence.Operation{ID: uuid.New(), Kind: kind, State: "queued", Stage: stage, InputSnapshot: raw}
 	if s.enqueuer != nil {
-		err = s.enqueuer.CreateOperationAndEnqueue(ctx, operation, s.river, operationArgs{OperationID: operation.ID}, nil)
+		err = s.enqueuer.CreateOperationAndEnqueue(ctx, operation, s.river, OperationJobArgs{OperationID: operation.ID}, nil)
 	} else {
 		err = s.repository.CreateOperation(ctx, operation)
 	}
@@ -98,7 +98,7 @@ func (s *Operations) Fail(ctx context.Context, id uuid.UUID, stage, safe string)
 }
 func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	if s.enqueuer != nil {
-		operation, err := s.enqueuer.RetryOperationAndEnqueue(ctx, id, s.river, operationArgs{OperationID: id}, nil)
+		operation, err := s.enqueuer.RetryOperationAndEnqueue(ctx, id, s.river, OperationJobArgs{OperationID: id}, nil)
 		if err != nil {
 			return nil, err
 		}

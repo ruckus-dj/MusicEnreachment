@@ -111,6 +111,29 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 	})
 }
 
+func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(ctx context.Context, installation *ToolInstallation, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
+	if client == nil {
+		return fmt.Errorf("enqueue installation: River client is required")
+	}
+	if installation == nil || operation == nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installation.ID {
+		return fmt.Errorf("enqueue installation: operation target must match installation")
+	}
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := client.InsertTx(ctx, tx.Tx, args, options)
+		if err != nil {
+			return fmt.Errorf("insert River job: %w", err)
+		}
+		operation.RiverJobID = &result.Job.ID
+		if err := repository.CreateInstallationWith(ctx, tx, installation); err != nil {
+			return err
+		}
+		if err := repository.CreateOperationWith(ctx, tx, operation); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (repository *SetupManagerRepository) GetInstallation(ctx context.Context, id uuid.UUID) (*ToolInstallation, error) {
 	installation := new(ToolInstallation)
 	if err := repository.db.NewSelect().Model(installation).Where("id = ?", id).Scan(ctx); err != nil {
@@ -193,22 +216,49 @@ func (repository *SetupManagerRepository) MarkInstallationFailed(ctx context.Con
 // platform and updates its package's active setting in the same transaction.
 func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
-			return fmt.Errorf("lock active installation: %w", err)
+		return repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting)
+	})
+}
+
+func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) (bool, error) {
+	activated := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
+			return fmt.Errorf("lock setup completion: %w", err)
 		}
-		installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
-		if err != nil {
+		var completedAt string
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt)
+		if err == nil {
+			return nil
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("read setup completion: %w", err)
+		}
+		if err := repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting); err != nil {
 			return err
 		}
-		if installation.PackageKind != packageKind || installation.PlatformGOOS != goos || installation.PlatformGOARCH != goarch || installation.State != "ready" {
-			return fmt.Errorf("installation is not a ready %s installation for %s/%s", packageKind, goos, goarch)
-		}
-		if _, err := tx.NewInsert().Model(&AppSetting{Name: activeSetting, Value: id.String()}).
-			On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
-			return fmt.Errorf("set active installation: %w", err)
-		}
+		activated = true
 		return nil
 	})
+	return activated, err
+}
+
+func (repository *SetupManagerRepository) activateInstallationTx(ctx context.Context, tx bun.Tx, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
+		return fmt.Errorf("lock active installation: %w", err)
+	}
+	installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if installation.PackageKind != packageKind || installation.PlatformGOOS != goos || installation.PlatformGOARCH != goarch || installation.State != "ready" {
+		return fmt.Errorf("installation is not a ready %s installation for %s/%s", packageKind, goos, goarch)
+	}
+	if _, err := tx.NewInsert().Model(&AppSetting{Name: activeSetting, Value: id.String()}).
+		On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+		return fmt.Errorf("set active installation: %w", err)
+	}
+	return nil
 }
 
 func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string, removeFiles func(*ToolInstallation) error) error {
@@ -345,12 +395,20 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		if locked.State != "failed" {
 			return fmt.Errorf("only failed operations can be retried")
 		}
+		previousStage := locked.Stage
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
 			return fmt.Errorf("insert retry River job: %w", err)
 		}
+		if locked.Kind == "install" && locked.TargetInstallationID != nil {
+			if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).
+				Set("state = 'preparing'").Set("updated_at = now()").
+				Where("id = ?", *locked.TargetInstallationID).Where("state = 'failed'").Exec(ctx); err != nil {
+				return fmt.Errorf("reset installation for retry: %w", err)
+			}
+		}
 		locked.State = "queued"
-		locked.Stage = "retry"
+		locked.Stage = "retry:" + previousStage
 		locked.SafeError = nil
 		locked.StartedAt = nil
 		locked.FinishedAt = nil

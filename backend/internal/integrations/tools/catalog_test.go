@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,6 +129,56 @@ func TestGitHubAdapterRejectsMalformedRateLimitedAndOversizedCatalogs(t *testing
 				t.Fatal("invalid catalog response was accepted")
 			}
 		})
+	}
+}
+
+func TestCatalogDownloadResolvesArtifactAndReportsMeasuredProgress(t *testing.T) {
+	archive := []byte("fixture archive")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases" {
+			_, _ = w.Write([]byte(`[{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/ffmpeg-8.0-linux64-gpl.tar.xz","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]`))
+			return
+		}
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+	client := server.Client()
+	adapter := NewBtbNAdapter(client, "https://api.github.com/releases")
+	adapter.client.Transport = rewriteTransport{server: server, base: client.Transport}
+	catalog := NewCatalog(adapter)
+
+	var destination bytes.Buffer
+	var progress []int64
+	artifact, count, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "8.0", "ffmpeg-8.0-linux64-gpl.tar.xz", &destination, func(completed int64) {
+		progress = append(progress, completed)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(destination.Bytes(), archive) || count != int64(len(archive)) || artifact.ChecksumSHA256 == "" {
+		t.Fatalf("download result = %q, %d, %#v", destination.Bytes(), count, artifact)
+	}
+	if len(progress) == 0 || progress[len(progress)-1] != int64(len(archive)) {
+		t.Fatalf("progress events = %#v", progress)
+	}
+}
+
+func TestCatalogDownloadRejectsRedirectOutsideSourceAllowlist(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases" {
+			_, _ = w.Write([]byte(`[{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/ffmpeg-8.0-linux64-gpl.tar.xz"}]}]`))
+			return
+		}
+		http.Redirect(w, r, "https://evil.example/archive", http.StatusFound)
+	}))
+	defer server.Close()
+	client := server.Client()
+	adapter := NewBtbNAdapter(client, "https://api.github.com/releases")
+	adapter.client.Transport = rewriteTransport{server: server, base: client.Transport}
+	catalog := NewCatalog(adapter)
+
+	if _, _, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "8.0", "ffmpeg-8.0-linux64-gpl.tar.xz", io.Discard, nil); err == nil {
+		t.Fatal("redirect to an unallowlisted host was followed")
 	}
 }
 

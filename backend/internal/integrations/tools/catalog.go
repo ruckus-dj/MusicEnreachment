@@ -39,6 +39,8 @@ type Adapter interface {
 	Supports(Platform) bool
 	List(context.Context, Platform) ([]Release, error)
 	Resolve(context.Context, Platform, string) (Release, error)
+	Download(context.Context, Platform, string, string, io.Writer, func(int64)) (Artifact, int64, error)
+	Checksum(context.Context, Platform, string, string) (string, error)
 }
 
 // Catalog is intentionally stateless: callers retain its response in memory.
@@ -90,11 +92,78 @@ func (c *Catalog) Resolve(ctx context.Context, kind PackageKind, platform Platfo
 	return Release{}, fmt.Errorf("no compatible source for package %q on %s/%s", kind, platform.GOOS, platform.GOARCH)
 }
 
+func (c *Catalog) Download(ctx context.Context, kind PackageKind, platform Platform, releaseIdentity, artifactName string, destination io.Writer, progress func(int64)) (Artifact, int64, error) {
+	if !platform.Supported() {
+		return Artifact{}, 0, fmt.Errorf("unsupported platform %s/%s", platform.GOOS, platform.GOARCH)
+	}
+	for _, adapter := range c.adapters[kind] {
+		if adapter.Supports(platform) {
+			return adapter.Download(ctx, platform, releaseIdentity, artifactName, destination, progress)
+		}
+	}
+	return Artifact{}, 0, fmt.Errorf("no compatible source for package %q on %s/%s", kind, platform.GOOS, platform.GOARCH)
+}
+
+func (c *Catalog) Checksum(ctx context.Context, kind PackageKind, platform Platform, releaseIdentity, artifactName string) (string, error) {
+	if !platform.Supported() {
+		return "", fmt.Errorf("unsupported platform %s/%s", platform.GOOS, platform.GOARCH)
+	}
+	for _, adapter := range c.adapters[kind] {
+		if adapter.Supports(platform) {
+			return adapter.Checksum(ctx, platform, releaseIdentity, artifactName)
+		}
+	}
+	return "", fmt.Errorf("no compatible source for package %q on %s/%s", kind, platform.GOOS, platform.GOARCH)
+}
+
 type GitHubAdapter struct {
 	kind         PackageKind
 	endpoint     string
 	client       *http.Client
 	selectAssets func([]githubAsset, Platform) []Artifact
+}
+
+const (
+	maxReleaseDownloadBytes = 4 << 30
+	maxChecksumResponseSize = 1 << 20
+)
+
+func (a *GitHubAdapter) Download(ctx context.Context, platform Platform, releaseIdentity, artifactName string, destination io.Writer, progress func(int64)) (Artifact, int64, error) {
+	release, err := a.Resolve(ctx, platform, releaseIdentity)
+	if err != nil {
+		return Artifact{}, 0, err
+	}
+	artifact, ok := findArtifact(release, artifactName)
+	if !ok {
+		return Artifact{}, 0, fmt.Errorf("selected artifact is no longer available")
+	}
+	count, err := downloadHTTPS(ctx, a.client, artifact.URL, []string{"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}, destination, progress, maxReleaseDownloadBytes)
+	if err != nil {
+		return Artifact{}, count, err
+	}
+	return artifact, count, nil
+}
+
+func (a *GitHubAdapter) Checksum(ctx context.Context, platform Platform, releaseIdentity, artifactName string) (string, error) {
+	release, err := a.Resolve(ctx, platform, releaseIdentity)
+	if err != nil {
+		return "", err
+	}
+	artifact, ok := findArtifact(release, artifactName)
+	if !ok {
+		return "", fmt.Errorf("selected artifact is no longer available")
+	}
+	if artifact.ChecksumSHA256 != "" {
+		return artifact.ChecksumSHA256, nil
+	}
+	if artifact.ChecksumURL == "" {
+		return "", nil
+	}
+	var contents boundedBuffer
+	if _, err := downloadHTTPS(ctx, a.client, artifact.ChecksumURL, []string{"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}, &contents, nil, maxChecksumResponseSize); err != nil {
+		return "", err
+	}
+	return checksumForAsset(contents.String(), artifact.Name)
 }
 
 func NewChromaprintAdapter(client *http.Client, endpoint string) *GitHubAdapter {
@@ -179,6 +248,7 @@ func (a *GitHubAdapter) List(ctx context.Context, platform Platform) ([]Release,
 		}
 		artifacts := a.selectAssets(release.Assets, platform)
 		artifacts = validateArtifacts(artifacts, "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
+		artifacts = attachGitHubChecksums(artifacts, release.Assets)
 		if len(artifacts) > 0 && release.Tag != "" {
 			result = append(result, Release{Identity: release.Tag, Artifacts: artifacts})
 		}
@@ -188,6 +258,22 @@ func (a *GitHubAdapter) List(ctx context.Context, platform Platform) ([]Release,
 }
 
 var numberedRelease = regexp.MustCompile(`^v?\d+(?:\.\d+){1,3}$`)
+
+func attachGitHubChecksums(artifacts []Artifact, assets []githubAsset) []Artifact {
+	for index := range artifacts {
+		if artifacts[index].ChecksumSHA256 != "" {
+			continue
+		}
+		for _, asset := range assets {
+			if strings.EqualFold(asset.Name, "checksums.sha256") &&
+				allowedHTTPS(asset.URL, "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com") == nil {
+				artifacts[index].ChecksumURL = asset.URL
+				break
+			}
+		}
+	}
+	return artifacts
+}
 
 func validateArtifacts(artifacts []Artifact, hosts ...string) []Artifact {
 	valid := make([]Artifact, 0, len(artifacts))
@@ -202,6 +288,92 @@ func validateArtifacts(artifacts []Artifact, hosts ...string) []Artifact {
 	}
 	return valid
 }
+
+func findArtifact(release Release, name string) (Artifact, bool) {
+	for _, artifact := range release.Artifacts {
+		if artifact.Name == name {
+			return artifact, true
+		}
+	}
+	return Artifact{}, false
+}
+
+type downloadProgressWriter struct {
+	destination io.Writer
+	completed   int64
+	progress    func(int64)
+}
+
+func (writer *downloadProgressWriter) Write(data []byte) (int, error) {
+	written, err := writer.destination.Write(data)
+	writer.completed += int64(written)
+	if writer.progress != nil && written > 0 {
+		writer.progress(writer.completed)
+	}
+	return written, err
+}
+
+func downloadHTTPS(ctx context.Context, baseClient *http.Client, rawURL string, hosts []string, destination io.Writer, progress func(int64), maxBytes int64) (int64, error) {
+	if err := allowedHTTPS(rawURL, hosts...); err != nil {
+		return 0, fmt.Errorf("release artifact URL is not allowlisted")
+	}
+	client := *baseClient
+	client.Timeout = 30 * time.Minute
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("create release artifact request")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, fmt.Errorf("download release artifact")
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("release artifact returned status %d", response.StatusCode)
+	}
+	if response.ContentLength > maxBytes {
+		return 0, fmt.Errorf("release artifact exceeds size limit")
+	}
+	counter := &downloadProgressWriter{destination: destination, progress: progress}
+	_, err = io.Copy(counter, io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return counter.completed, fmt.Errorf("write release artifact")
+	}
+	if counter.completed > maxBytes {
+		return counter.completed, fmt.Errorf("release artifact exceeds size limit")
+	}
+	return counter.completed, nil
+}
+
+type boundedBuffer struct {
+	data []byte
+}
+
+func (buffer *boundedBuffer) Write(data []byte) (int, error) {
+	if len(data) > maxChecksumResponseSize-len(buffer.data) {
+		return 0, fmt.Errorf("checksum response exceeds size limit")
+	}
+	buffer.data = append(buffer.data, data...)
+	return len(data), nil
+}
+
+func (buffer *boundedBuffer) String() string { return string(buffer.data) }
+
+func checksumForAsset(contents, name string) (string, error) {
+	for _, line := range strings.Split(contents, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		assetName := strings.TrimPrefix(fields[len(fields)-1], "*")
+		if assetName == name && len(fields[0]) == sha256HexLength {
+			return fields[0], nil
+		}
+	}
+	return "", fmt.Errorf("checksum response did not contain selected artifact")
+}
+
+const sha256HexLength = 64
 
 type githubRelease struct {
 	Tag        string        `json:"tag_name"`
@@ -290,6 +462,44 @@ func NewMacOSAdapter(client *http.Client, endpoint string) *MacOSAdapter {
 func (*MacOSAdapter) Package() PackageKind { return PackageFFmpeg }
 func (*MacOSAdapter) Supports(platform Platform) bool {
 	return platform.GOOS == "darwin" && platform.Supported()
+}
+
+func (a *MacOSAdapter) Download(ctx context.Context, platform Platform, releaseIdentity, artifactName string, destination io.Writer, progress func(int64)) (Artifact, int64, error) {
+	release, err := a.Resolve(ctx, platform, releaseIdentity)
+	if err != nil {
+		return Artifact{}, 0, err
+	}
+	artifact, ok := findArtifact(release, artifactName)
+	if !ok {
+		return Artifact{}, 0, fmt.Errorf("selected artifact is no longer available")
+	}
+	count, err := downloadHTTPS(ctx, a.client, artifact.URL, []string{"ffmpeg.martin-riedl.de"}, destination, progress, maxReleaseDownloadBytes)
+	if err != nil {
+		return Artifact{}, count, err
+	}
+	return artifact, count, nil
+}
+
+func (a *MacOSAdapter) Checksum(ctx context.Context, platform Platform, releaseIdentity, artifactName string) (string, error) {
+	release, err := a.Resolve(ctx, platform, releaseIdentity)
+	if err != nil {
+		return "", err
+	}
+	artifact, ok := findArtifact(release, artifactName)
+	if !ok {
+		return "", fmt.Errorf("selected artifact is no longer available")
+	}
+	if artifact.ChecksumSHA256 != "" {
+		return artifact.ChecksumSHA256, nil
+	}
+	if artifact.ChecksumURL == "" {
+		return "", nil
+	}
+	var contents boundedBuffer
+	if _, err := downloadHTTPS(ctx, a.client, artifact.ChecksumURL, []string{"ffmpeg.martin-riedl.de"}, &contents, nil, maxChecksumResponseSize); err != nil {
+		return "", err
+	}
+	return checksumForAsset(contents.String(), artifact.Name)
 }
 
 func (a *MacOSAdapter) Resolve(ctx context.Context, platform Platform, identity string) (Release, error) {
