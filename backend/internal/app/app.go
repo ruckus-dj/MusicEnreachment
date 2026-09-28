@@ -17,6 +17,9 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/static"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -61,6 +64,16 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 	logger.InfoContext(ctx, "application migrations complete")
+	settingsRepository := persistence.NewSettingsRepository(db)
+	registry := settings.New(settingsRepository, level)
+	platform, err := registry.InitializePlatform(ctx, settings.CurrentPlatform())
+	if err != nil {
+		return fmt.Errorf("initialize instance platform: %w", err)
+	}
+	if err := registry.LoadLogLevel(ctx); err != nil {
+		return fmt.Errorf("load runtime log level: %w", err)
+	}
+	setup := service.NewSetup(settingsRepository, registry, platform)
 
 	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
 	if err != nil {
@@ -81,7 +94,7 @@ func Run(ctx context.Context, config Config) error {
 	router.Use(api.RecoverPanics(logger))
 	router.Get("/health/live", api.Liveness)
 	router.Get("/health/ready", api.Readiness(sqldb))
-	router.Mount("/api", api.Handler())
+	router.Mount("/api", api.HandlerWithSetup(setup))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{
 		Addr:              config.HTTPAddress,
