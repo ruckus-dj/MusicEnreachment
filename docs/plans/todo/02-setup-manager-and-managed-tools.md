@@ -345,7 +345,15 @@ Service layer повторяет validation, compatibility и transition checks 
 - Не переходить к frontend flow, пока соответствующий backend contract и его
   integration tests не готовы.
 
-### 2. Завершить persistence contract и repositories
+### 2. Завершить persistence contract и repositories — ✅ выполнено (2026-09-28)
+
+Реализовано отдельной migration `20260929000000_setup_manager_persistence_contract`:
+installation хранит artifact identities, operation — target installation и номер
+попытки; активные install/activate/delete/move операции защищены индексами и
+exclusion constraint. `SetupManagerRepository` получил typed list/get/update,
+row locks и production transaction boundary для совместного создания operation
+и River job. PostgreSQL integration tests покрывают identity, active conflicts,
+row locks, ready-state и commit/rollback River enqueue.
 
 **Цель:** БД должна выражать все долговременные сущности и критические
 инварианты, а service layer не должен собирать SQL вручную.

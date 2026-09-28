@@ -5,8 +5,8 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -27,14 +27,15 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	installation := &persistence.ToolInstallation{
-		ID:              uuid.New(),
-		PackageKind:     "ffmpeg",
-		PlatformGOOS:    "linux",
-		PlatformGOARCH:  "amd64",
-		SourceName:      "btbn",
-		ReleaseIdentity: "7.1",
-		RelativePath:    "ffmpeg/7.1",
-		State:           "preparing",
+		ID:                 uuid.New(),
+		PackageKind:        "ffmpeg",
+		PlatformGOOS:       "linux",
+		PlatformGOARCH:     "amd64",
+		SourceName:         "btbn",
+		ReleaseIdentity:    "7.1",
+		RelativePath:       "ffmpeg/7.1",
+		State:              "preparing",
+		ArtifactIdentities: json.RawMessage(`{"archive":"ffmpeg-7.1"}`),
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create installation: %v", err)
@@ -44,12 +45,27 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	if err := repository.CreateInstallation(ctx, &duplicate); err == nil {
 		t.Fatal("duplicate installation identity was accepted")
 	}
+	installations, err := repository.ListInstallations(ctx, "ffmpeg", "linux", "amd64")
+	if err != nil || len(installations) != 1 {
+		t.Fatalf("list installations = %d, %v; want 1, nil", len(installations), err)
+	}
+	if _, err := repository.GetInstallationByIdentity(ctx, "ffmpeg", "btbn", "7.1", "linux", "amd64"); err != nil {
+		t.Fatalf("get installation by identity: %v", err)
+	}
+	verifiedAt := time.Now().UTC()
+	if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"ffmpeg":"7.1","ffprobe":"7.1"}`), verifiedAt); err != nil {
+		t.Fatalf("mark installation ready: %v", err)
+	}
+	ready, err := repository.GetInstallation(ctx, installation.ID)
+	if err != nil || ready.State != "ready" || ready.VerifiedAt == nil {
+		t.Fatalf("ready installation = %#v, %v", ready, err)
+	}
 
 	snapshot, err := json.Marshal(map[string]string{"target_identity": "ffmpeg:btbn:7.1:linux:amd64"})
 	if err != nil {
 		t.Fatalf("marshal operation snapshot: %v", err)
 	}
-	operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(snapshot)}
+	operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: json.RawMessage(snapshot), TargetInstallationID: &installation.ID}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
 		t.Fatalf("create operation: %v", err)
 	}
@@ -67,6 +83,24 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	}
 	if err := repository.CreateOperation(ctx, moveOperation); err == nil {
 		t.Fatal("tools-root move concurrent with installation was accepted")
+	}
+	operations, err := repository.ListOperations(ctx, "queued")
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("list queued operations = %d, %v; want 1, nil", len(operations), err)
+	}
+	err = database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := repository.GetInstallationForUpdate(ctx, tx, installation.ID)
+		if err != nil || locked.ID != installation.ID {
+			t.Fatalf("lock installation = %#v, %v", locked, err)
+		}
+		conflicts, err := repository.ListActiveOperationConflictsForUpdate(ctx, tx, "ffmpeg:btbn:7.1:linux:amd64")
+		if err != nil || len(conflicts) != 1 {
+			t.Fatalf("lock operation conflicts = %d, %v; want 1, nil", len(conflicts), err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("lock persistence rows: %v", err)
 	}
 
 	assertTransactionalRiverEnqueue(t, ctx, database, repository)
@@ -88,14 +122,7 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 	committedSnapshot := json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.5.1:linux:amd64"}`)
 	committedOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: committedSnapshot}
-	err = database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		result, err := client.InsertTx(ctx, tx.Tx, transactionTestArgs{}, nil)
-		if err != nil {
-			return err
-		}
-		committedOperation.RiverJobID = &result.Job.ID
-		return repository.CreateOperationWith(ctx, tx, committedOperation)
-	})
+	err = repository.CreateOperationAndEnqueue(ctx, committedOperation, client, transactionTestArgs{}, nil)
 	if err != nil {
 		t.Fatalf("commit operation and River job transaction: %v", err)
 	}
@@ -107,20 +134,11 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 		t.Fatalf("committed operations = %d, want 1", committedOperations)
 	}
 
-	rolledBackSnapshot := json.RawMessage(`{"target_identity":"ffmpeg:btbn:8.0:linux:amd64"}`)
+	rolledBackSnapshot := committedSnapshot
 	rolledBackOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "queued", Stage: "download", InputSnapshot: rolledBackSnapshot}
-	rollback := errors.New("force transaction rollback")
-	err = database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := client.InsertTx(ctx, tx.Tx, transactionTestArgs{}, nil); err != nil {
-			return err
-		}
-		if err := repository.CreateOperationWith(ctx, tx, rolledBackOperation); err != nil {
-			return err
-		}
-		return rollback
-	})
-	if !errors.Is(err, rollback) {
-		t.Fatalf("rollback operation and River job transaction error = %v, want %v", err, rollback)
+	err = repository.CreateOperationAndEnqueue(ctx, rolledBackOperation, client, transactionTestArgs{}, nil)
+	if err == nil {
+		t.Fatal("conflicting operation and River job were committed")
 	}
 	var rolledBackOperations int
 	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM operation WHERE id = ?", rolledBackOperation.ID).Scan(&rolledBackOperations); err != nil {
