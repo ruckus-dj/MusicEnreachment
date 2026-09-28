@@ -87,6 +87,29 @@ Compose also bind-mounts `${MELOTROVE_OUTPUT_DIR:-./music}` from the host at
 `/var/lib/melotrove/output`; runtime settings use only this server/container
 path, never the host path.
 
+## Initial setup and managed tools
+
+On a fresh database MeloTrove opens the one-time Setup Manager. It records the
+current supported instance platform, requires an absolute writable tools path,
+an absolute **empty** writable output path, an explicit publication format and
+verified active FFmpeg and Chromaprint installations. Completing Setup is
+irreversible: a later configuration problem is shown as configuration health in
+Settings and does not reopen Setup.
+
+The tools root may contain unrelated files. MeloTrove manages only exact paths
+recorded for its installations (`ffmpeg/<version>/` and
+`fpcalc/<version>/`) and never scans or deletes other files. A pre-existing
+unknown target binary requires explicit overwrite confirmation. When moving a
+tools root, only those recorded paths are copied and verified before switching
+the setting.
+
+Platform is immutable for an instance. Moving a PostgreSQL database to a
+different OS/architecture leaves diagnostics and the UI available, but marks
+readiness unsuccessful and blocks Setup/product operations until the deployment
+uses the recorded platform again. macOS Intel uses the final compatible release
+build from the approved source; after that source stops Intel releases, newer
+updates may not be available.
+
 The application API is an internal contract for the bundled web UI. Operational
 probes are available at `/health/live` and `/health/ready`; the image healthcheck
 uses readiness automatically. Runtime logs are structured JSON and every HTTP
@@ -135,4 +158,6 @@ prototype branch is merged, so Go imports remain valid in the meantime.
   decisions.
 - [Repository architecture](docs/design/repository-architecture.md) describes
   component responsibilities and runtime structure.
+- [Deployment and first setup](docs/design/deployment.md) explains server paths,
+  managed tools ownership and platform recovery.
 - [Plans](docs/plans/README.md) explain completed, executable, and future work.
