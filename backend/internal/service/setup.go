@@ -179,6 +179,27 @@ func (s *SetupService) CheckMusicBrainz(ctx context.Context) error {
 	return nil
 }
 
+func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string) error {
+	if err := s.registry.SetMusicBrainzConfig(ctx, mode, baseURL); err != nil {
+		return fmt.Errorf("save MusicBrainz settings: %w", err)
+	}
+	return nil
+}
+
+func (s *SetupService) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
+	if err := s.registry.SetLRCLIBEnabled(ctx, enabled); err != nil {
+		return fmt.Errorf("save LRCLIB setting: %w", err)
+	}
+	return nil
+}
+
+func (s *SetupService) SetLogLevel(ctx context.Context, level string) error {
+	if err := s.registry.SetLogLevel(ctx, level); err != nil {
+		return fmt.Errorf("save log level: %w", err)
+	}
+	return nil
+}
+
 func (s *SetupService) Complete(ctx context.Context) error {
 	if s.platform.Diagnostic || !s.platform.Platform.Supported() {
 		return fmt.Errorf("setup is unavailable for the current platform")

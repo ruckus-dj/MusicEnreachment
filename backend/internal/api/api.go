@@ -20,8 +20,13 @@ func Handler() http.Handler {
 }
 
 func HandlerWithSetup(setup *service.SetupService) http.Handler {
+	return HandlerWithDependencies(Dependencies{Setup: setup})
+}
+
+func HandlerWithDependencies(dependencies Dependencies) http.Handler {
 	router := chi.NewRouter()
 	api := New(router)
-	RegisterSetup(api, setup)
+	RegisterAll(api, dependencies)
+	registerOperationEvents(router, dependencies.Operations)
 	return router
 }

@@ -59,6 +59,16 @@ func TestExtractZipRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestPreflightRejectsSymlinkedVersionDirectory(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "ffmpeg")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreflightTargets(root, PackageFFmpeg, "8.0", "linux", nil); err == nil {
+		t.Fatal("preflight traversed a symlinked package directory")
+	}
+}
+
 func TestExtractZipRejectsSymlinkEntries(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "link.zip")
 	file, err := os.Create(archive)

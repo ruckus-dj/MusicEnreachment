@@ -39,6 +39,13 @@ func (repository *workerRepository) GetOperation(_ context.Context, id uuid.UUID
 	return repository.operation, nil
 }
 
+func (repository *workerRepository) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
+	if repository.operation == nil {
+		return nil, nil
+	}
+	return []persistence.Operation{*repository.operation}, nil
+}
+
 func (repository *workerRepository) UpdateOperation(_ context.Context, operation *persistence.Operation) error {
 	repository.operation = operation
 	return nil

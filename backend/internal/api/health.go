@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"net/http"
 	"time"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type databasePinger interface {
@@ -15,8 +17,12 @@ func Liveness(writer http.ResponseWriter, _ *http.Request) {
 	writeHealth(writer, http.StatusOK, "live")
 }
 
-func Readiness(database databasePinger) http.HandlerFunc {
+func Readiness(database databasePinger, platforms ...settings.PlatformState) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		if len(platforms) > 0 && (platforms[0].Diagnostic || !platforms[0].Platform.Supported()) {
+			writeHealth(writer, http.StatusServiceUnavailable, "not_ready")
+			return
+		}
 		if database == nil {
 			writeHealth(writer, http.StatusServiceUnavailable, "not_ready")
 			return

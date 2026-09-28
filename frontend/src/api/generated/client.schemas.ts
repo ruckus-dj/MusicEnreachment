@@ -4,3 +4,334 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
+export interface ArtifactResponse {
+  checksum_provided: boolean;
+  name: string;
+}
+
+export interface PlatformResponse {
+  diagnostic: boolean;
+  goarch: string;
+  goos: string;
+  reason?: string;
+  supported: boolean;
+}
+
+export interface ReleaseResponse {
+  /** @nullable */
+  artifacts: ArtifactResponse[] | null;
+  identity: string;
+  source: string;
+}
+
+export interface CatalogBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  package_kind: string;
+  platform: PlatformResponse;
+  /** @nullable */
+  releases: ReleaseResponse[] | null;
+}
+
+export interface CheckMusicBrainzBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  error?: string;
+  success: boolean;
+}
+
+export interface ConfigurationHealthResponse {
+  healthy: boolean;
+  /** @nullable */
+  problems: string[] | null;
+}
+
+export interface ErrorDetail {
+  /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
+  location?: string;
+  /** Error message text */
+  message?: string;
+  /** The value at the given location */
+  value?: unknown;
+}
+
+export interface ErrorModel {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** A human-readable explanation specific to this occurrence of the problem. */
+  detail?: string;
+  /**
+     * Optional list of individual error details
+     * @nullable
+     */
+  errors?: ErrorDetail[] | null;
+  /** A URI reference that identifies the specific occurrence of the problem. */
+  instance?: string;
+  /** HTTP status code */
+  status?: number;
+  /** A short, human-readable summary of the problem type. This value should not change between occurrences of the error. */
+  title?: string;
+  /** A URI reference to human-readable documentation for the error. */
+  type?: string;
+}
+
+export interface InstallPreflightBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  conflicts: string[] | null;
+  preflight_token: string;
+  /** @nullable */
+  targets: string[] | null;
+}
+
+export type InstallPreflightInputBodyPackageKind = typeof InstallPreflightInputBodyPackageKind[keyof typeof InstallPreflightInputBodyPackageKind];
+
+
+export const InstallPreflightInputBodyPackageKind = {
+  ffmpeg: 'ffmpeg',
+  fpcalc: 'fpcalc',
+} as const;
+
+export interface InstallPreflightInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  package_kind: InstallPreflightInputBodyPackageKind;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  release_identity: string;
+}
+
+export type InstallationActionInputBodyPackageKind = typeof InstallationActionInputBodyPackageKind[keyof typeof InstallationActionInputBodyPackageKind];
+
+
+export const InstallationActionInputBodyPackageKind = {
+  ffmpeg: 'ffmpeg',
+  fpcalc: 'fpcalc',
+} as const;
+
+export interface InstallationActionInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  package_kind: InstallationActionInputBodyPackageKind;
+}
+
+export type InstallationResponseExecutableVersions = {[key: string]: string};
+
+export interface InstallationResponse {
+  active: boolean;
+  created_at: string;
+  executable_versions: InstallationResponseExecutableVersions;
+  id: string;
+  package_kind: string;
+  release_identity: string;
+  source_name: string;
+  state: string;
+  verified_at?: string;
+}
+
+export interface InstallationsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  installations: InstallationResponse[] | null;
+}
+
+export interface MovePreflightBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  conflicts: string[] | null;
+  managed_file_count: number;
+  preflight_token: string;
+}
+
+export interface MovePreflightInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  new_tools_directory: string;
+  remove_old_files: boolean;
+}
+
+export interface OperationResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  bytes_completed: number;
+  bytes_total?: number;
+  created_at: string;
+  finished_at?: string;
+  id: string;
+  kind: string;
+  safe_error?: string;
+  stage: string;
+  started_at?: string;
+  state: string;
+  target_identity?: string;
+  target_installation_id?: string;
+  updated_at: string;
+}
+
+export interface OperationsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  operations: OperationResponse[] | null;
+}
+
+export interface RuntimeSettingsResponse {
+  active_ffmpeg_installation_id?: string;
+  active_fpcalc_installation_id?: string;
+  log_level: string;
+  lrclib_enabled: boolean;
+  musicbrainz_base_url: string;
+  musicbrainz_mode: string;
+  musicbrainz_verified_at?: string;
+  output_case_sensitive?: boolean;
+  output_directory: string;
+  output_unicode_normalization?: string;
+  publication_format: string;
+  tools_directory: string;
+}
+
+export type SaveRuntimeBodyPublicationFormat = typeof SaveRuntimeBodyPublicationFormat[keyof typeof SaveRuntimeBodyPublicationFormat];
+
+
+export const SaveRuntimeBodyPublicationFormat = {
+  source: 'source',
+  mka: 'mka',
+} as const;
+
+export interface SaveRuntimeBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  output_directory?: string;
+  publication_format?: SaveRuntimeBodyPublicationFormat;
+  /** @maxLength 4096 */
+  tools_directory?: string;
+}
+
+export interface SetupStateBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  completed: boolean;
+  configuration_health: ConfigurationHealthResponse;
+  platform: PlatformResponse;
+  settings: RuntimeSettingsResponse;
+}
+
+export interface StartInstallBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  confirmed_conflicts?: string[] | null;
+  /** @minLength 1 */
+  preflight_token: string;
+}
+
+export interface StartMoveBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  confirmed_conflicts?: string[] | null;
+  /** @minLength 1 */
+  preflight_token: string;
+}
+
+export interface UpdateLRCLIBBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  enabled: boolean;
+}
+
+export type UpdateLogLevelBodyLevel = typeof UpdateLogLevelBodyLevel[keyof typeof UpdateLogLevelBodyLevel];
+
+
+export const UpdateLogLevelBodyLevel = {
+  debug: 'debug',
+  info: 'info',
+  warn: 'warn',
+  error: 'error',
+} as const;
+
+export interface UpdateLogLevelBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  level: UpdateLogLevelBodyLevel;
+}
+
+export type UpdateMusicBrainzBodyMode = typeof UpdateMusicBrainzBodyMode[keyof typeof UpdateMusicBrainzBodyMode];
+
+
+export const UpdateMusicBrainzBodyMode = {
+  public: 'public',
+  'self-hosted': 'self-hosted',
+} as const;
+
+export interface UpdateMusicBrainzBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 2048 */
+  base_url?: string;
+  mode: UpdateMusicBrainzBodyMode;
+}
+
+export type UpdateSettingsBodyPublicationFormat = typeof UpdateSettingsBodyPublicationFormat[keyof typeof UpdateSettingsBodyPublicationFormat];
+
+
+export const UpdateSettingsBodyPublicationFormat = {
+  source: 'source',
+  mka: 'mka',
+} as const;
+
+export interface UpdateSettingsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  output_directory?: string;
+  publication_format?: UpdateSettingsBodyPublicationFormat;
+}
+
+export type ListOperationsParams = {
+state?: ListOperationsState;
+};
+
+export type ListOperationsState = typeof ListOperationsState[keyof typeof ListOperationsState];
+
+
+export const ListOperationsState = {
+  queued: 'queued',
+  running: 'running',
+  failed: 'failed',
+} as const;
+
+export type ListToolCatalogParams = {
+package_kind: ListToolCatalogPackageKind;
+};
+
+export type ListToolCatalogPackageKind = typeof ListToolCatalogPackageKind[keyof typeof ListToolCatalogPackageKind];
+
+
+export const ListToolCatalogPackageKind = {
+  ffmpeg: 'ffmpeg',
+  fpcalc: 'fpcalc',
+} as const;
+
+export type ListInstallationsParams = {
+package_kind?: ListInstallationsPackageKind;
+};
+
+export type ListInstallationsPackageKind = typeof ListInstallationsPackageKind[keyof typeof ListInstallationsPackageKind];
+
+
+export const ListInstallationsPackageKind = {
+  ffmpeg: 'ffmpeg',
+  fpcalc: 'fpcalc',
+} as const;
+

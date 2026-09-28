@@ -26,6 +26,13 @@ func (m *memoryOperations) GetOperation(_ context.Context, id uuid.UUID) (*persi
 	}
 	return nil, fmt.Errorf("missing")
 }
+func (m *memoryOperations) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
+	operations := make([]persistence.Operation, 0, len(m.values))
+	for _, operation := range m.values {
+		operations = append(operations, *operation)
+	}
+	return operations, nil
+}
 func (m *memoryOperations) UpdateOperation(_ context.Context, o *persistence.Operation) error {
 	m.values[o.ID] = o
 	return nil

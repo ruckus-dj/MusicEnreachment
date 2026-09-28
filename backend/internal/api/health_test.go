@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type fakePinger struct {
@@ -43,5 +45,17 @@ func TestReadiness(t *testing.T) {
 				t.Errorf("status = %d, want %d", response.Code, test.want)
 			}
 		})
+	}
+}
+
+func TestReadinessRejectsPlatformDiagnosticState(t *testing.T) {
+	platform := settings.PlatformState{
+		Platform:   settings.Platform{GOOS: "linux", GOARCH: "amd64"},
+		Diagnostic: true, Reason: "platform differs",
+	}
+	response := httptest.NewRecorder()
+	Readiness(fakePinger{}, platform)(response, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
 	}
 }

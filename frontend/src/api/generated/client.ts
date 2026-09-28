@@ -4,4 +4,2994 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
+import type {
+  DataTag,
+  DefinedInitialDataOptions,
+  DefinedUseQueryResult,
+  MutationFunction,
+  QueryClient,
+  QueryFunction,
+  QueryKey,
+  UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
+  UseQueryOptions,
+  UseQueryResult
+} from '@tanstack/react-query';
+
+import type {
+  CatalogBody,
+  CheckMusicBrainzBody,
+  ErrorModel,
+  InstallPreflightBody,
+  InstallPreflightInputBody,
+  InstallationActionInputBody,
+  InstallationsBody,
+  ListInstallationsParams,
+  ListOperationsParams,
+  ListToolCatalogParams,
+  MovePreflightBody,
+  MovePreflightInputBody,
+  OperationResponse,
+  OperationsBody,
+  SaveRuntimeBody,
+  SetupStateBody,
+  StartInstallBody,
+  StartMoveBody,
+  UpdateLRCLIBBody,
+  UpdateLogLevelBody,
+  UpdateMusicBrainzBody,
+  UpdateSettingsBody
+} from './client.schemas';
+
+
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
+T,
+>() => T extends Y ? 1 : 2
+? A
+: B;
+
+type WritableKeys<T> = {
+[P in keyof T]-?: IfEquals<
+  { [Q in P]: T[P] },
+  { -readonly [Q in P]: T[P] },
+  P
+>;
+}[keyof T];
+
+type UnionToIntersection<U> =
+  (U extends any ? (k: U)=>void : never) extends ((k: infer I)=>void) ? I : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
+  [P in keyof Writable<T>]: T[P] extends object
+    ? NonReadonly<NonNullable<T[P]>>
+    : T[P];
+} : DistributeReadOnlyOverUnions<T>;
+
+
+export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
+export type HTTPStatusCode2xx = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207;
+export type HTTPStatusCode3xx = 300 | 301 | 302 | 303 | 304 | 305 | 307 | 308;
+export type HTTPStatusCode4xx = 400 | 401 | 402 | 403 | 404 | 405 | 406 | 407 | 408 | 409 | 410 | 411 | 412 | 413 | 414 | 415 | 416 | 417 | 418 | 419 | 420 | 421 | 422 | 423 | 424 | 426 | 428 | 429 | 431 | 451;
+export type HTTPStatusCode5xx = 500 | 501 | 502 | 503 | 504 | 505 | 507 | 511;
+export type HTTPStatusCodes = HTTPStatusCode1xx | HTTPStatusCode2xx | HTTPStatusCode3xx | HTTPStatusCode4xx | HTTPStatusCode5xx;
+
+
+
+
+const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKey: K } => {
+  const result = { queryKey } as T & { queryKey: K };
+  for (const key of Object.keys(query)) {
+    // The explicit queryKey always wins, matching the previous
+    // `{ ...query, queryKey }` spread where it was set last.
+    if (key === 'queryKey') continue;
+    Object.defineProperty(result, key, {
+      enumerable: true,
+      configurable: true,
+      get: () => (query as Record<string, unknown>)[key],
+    });
+  }
+  return result;
+};
+
+export type listOperationsResponse200 = {
+  data: OperationsBody
+  status: 200
+}
+
+export type listOperationsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listOperationsResponseSuccess = (listOperationsResponse200) & {
+  headers: Headers;
+};
+export type listOperationsResponseError = (listOperationsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listOperationsResponse = (listOperationsResponseSuccess | listOperationsResponseError)
+
+export const getListOperationsUrl = (params?: ListOperationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/operations?${stringifiedParams}` : `/api/operations`
+}
+
+/**
+ * @summary List current operation snapshots
+ */
+export const listOperations = async (params?: ListOperationsParams, options?: RequestInit): Promise<listOperationsResponse> => {
+
+  const res = await fetch(getListOperationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listOperationsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listOperationsResponse
+}
+
+
+
+
+
+export const getListOperationsQueryKey = (params?: ListOperationsParams,) => {
+    return [
+    `/api/operations`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListOperationsQueryOptions = <TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(params?: ListOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListOperationsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOperations>>> = ({ signal }) => listOperations(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListOperationsQueryResult = NonNullable<Awaited<ReturnType<typeof listOperations>>>
+export type ListOperationsQueryError = ErrorModel
+
+
+export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
+ params: undefined |  ListOperationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listOperations>>,
+          TError,
+          Awaited<ReturnType<typeof listOperations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
+ params?: ListOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listOperations>>,
+          TError,
+          Awaited<ReturnType<typeof listOperations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
+ params?: ListOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List current operation snapshots
+ */
+
+export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
+ params?: ListOperationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListOperationsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type dismissOperationResponse204 = {
+  data: void
+  status: 204
+}
+
+export type dismissOperationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type dismissOperationResponseSuccess = (dismissOperationResponse204) & {
+  headers: Headers;
+};
+export type dismissOperationResponseError = (dismissOperationResponseDefault) & {
+  headers: Headers;
+};
+
+export type dismissOperationResponse = (dismissOperationResponseSuccess | dismissOperationResponseError)
+
+export const getDismissOperationUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}`
+}
+
+/**
+ * @summary Dismiss a failed operation
+ */
+export const dismissOperation = async (operationId: string, options?: RequestInit): Promise<dismissOperationResponse> => {
+
+  const res = await fetch(getDismissOperationUrl(operationId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: dismissOperationResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as dismissOperationResponse
+}
+
+
+
+
+
+export const getDismissOperationMutationKey = () => ['dismissOperation'] as const;
+
+export const getDismissOperationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dismissOperation>>, TError,DismissOperationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof dismissOperation>>, TError,DismissOperationMutationVariables, TContext> => {
+
+const mutationKey = getDismissOperationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof dismissOperation>>, DismissOperationMutationVariables> = (props) => {
+          const {operationId} = props ?? {};
+
+          return  dismissOperation(operationId,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DismissOperationMutationResult = NonNullable<Awaited<ReturnType<typeof dismissOperation>>>
+
+    export type DismissOperationMutationError = ErrorModel
+    export type DismissOperationMutationVariables = {operationId: string}
+
+    /**
+ * @summary Dismiss a failed operation
+ */
+export const useDismissOperation = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dismissOperation>>, TError,DismissOperationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof dismissOperation>>,
+        TError,
+        DismissOperationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDismissOperationMutationOptions(options), queryClient);
+    }
+
+export type getOperationResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type getOperationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getOperationResponseSuccess = (getOperationResponse200) & {
+  headers: Headers;
+};
+export type getOperationResponseError = (getOperationResponseDefault) & {
+  headers: Headers;
+};
+
+export type getOperationResponse = (getOperationResponseSuccess | getOperationResponseError)
+
+export const getGetOperationUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}`
+}
+
+/**
+ * @summary Get an operation snapshot
+ */
+export const getOperation = async (operationId: string, options?: RequestInit): Promise<getOperationResponse> => {
+
+  const res = await fetch(getGetOperationUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getOperationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getOperationResponse
+}
+
+
+
+
+
+export const getGetOperationQueryKey = (operationId: string,) => {
+    return [
+    `/api/operations/${operationId}`
+    ] as const;
+    }
+
+
+export const getGetOperationQueryOptions = <TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOperationQueryKey(operationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOperation>>> = ({ signal }) => getOperation(operationId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: operationId !== null && operationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOperationQueryResult = NonNullable<Awaited<ReturnType<typeof getOperation>>>
+export type GetOperationQueryError = ErrorModel
+
+
+export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
+ operationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOperation>>,
+          TError,
+          Awaited<ReturnType<typeof getOperation>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOperation>>,
+          TError,
+          Awaited<ReturnType<typeof getOperation>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get an operation snapshot
+ */
+
+export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
+ operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOperationQueryOptions(operationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type retryOperationResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type retryOperationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type retryOperationResponseSuccess = (retryOperationResponse200) & {
+  headers: Headers;
+};
+export type retryOperationResponseError = (retryOperationResponseDefault) & {
+  headers: Headers;
+};
+
+export type retryOperationResponse = (retryOperationResponseSuccess | retryOperationResponseError)
+
+export const getRetryOperationUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/operations/${operationId}/retry`
+}
+
+/**
+ * @summary Retry a failed operation
+ */
+export const retryOperation = async (operationId: string, options?: RequestInit): Promise<retryOperationResponse> => {
+
+  const res = await fetch(getRetryOperationUrl(operationId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: retryOperationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as retryOperationResponse
+}
+
+
+
+
+
+export const getRetryOperationMutationKey = () => ['retryOperation'] as const;
+
+export const getRetryOperationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryOperation>>, TError,RetryOperationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof retryOperation>>, TError,RetryOperationMutationVariables, TContext> => {
+
+const mutationKey = getRetryOperationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryOperation>>, RetryOperationMutationVariables> = (props) => {
+          const {operationId} = props ?? {};
+
+          return  retryOperation(operationId,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryOperationMutationResult = NonNullable<Awaited<ReturnType<typeof retryOperation>>>
+
+    export type RetryOperationMutationError = ErrorModel
+    export type RetryOperationMutationVariables = {operationId: string}
+
+    /**
+ * @summary Retry a failed operation
+ */
+export const useRetryOperation = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryOperation>>, TError,RetryOperationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retryOperation>>,
+        TError,
+        RetryOperationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryOperationMutationOptions(options), queryClient);
+    }
+
+export type getSettingsResponse200 = {
+  data: SetupStateBody
+  status: 200
+}
+
+export type getSettingsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getSettingsResponseSuccess = (getSettingsResponse200) & {
+  headers: Headers;
+};
+export type getSettingsResponseError = (getSettingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type getSettingsResponse = (getSettingsResponseSuccess | getSettingsResponseError)
+
+export const getGetSettingsUrl = () => {
+
+
+
+
+  return `/api/settings`
+}
+
+/**
+ * @summary Read runtime settings and health
+ */
+export const getSettings = async ( options?: RequestInit): Promise<getSettingsResponse> => {
+
+  const res = await fetch(getGetSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getSettingsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getSettingsResponse
+}
+
+
+
+
+
+export const getGetSettingsQueryKey = () => {
+    return [
+    `/api/settings`
+    ] as const;
+    }
+
+
+export const getGetSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getSettings>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSettings>>> = ({ signal }) => getSettings({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getSettings>>>
+export type GetSettingsQueryError = ErrorModel
+
+
+export function useGetSettings<TData = Awaited<ReturnType<typeof getSettings>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getSettings>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSettings<TData = Awaited<ReturnType<typeof getSettings>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getSettings>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSettings<TData = Awaited<ReturnType<typeof getSettings>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read runtime settings and health
+ */
+
+export function useGetSettings<TData = Awaited<ReturnType<typeof getSettings>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettings>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type updateLogLevelResponse204 = {
+  data: void
+  status: 204
+}
+
+export type updateLogLevelResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type updateLogLevelResponseSuccess = (updateLogLevelResponse204) & {
+  headers: Headers;
+};
+export type updateLogLevelResponseError = (updateLogLevelResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateLogLevelResponse = (updateLogLevelResponseSuccess | updateLogLevelResponseError)
+
+export const getUpdateLogLevelUrl = () => {
+
+
+
+
+  return `/api/settings/log-level`
+}
+
+/**
+ * @summary Set runtime log level
+ */
+export const updateLogLevel = async (updateLogLevelBody: NonReadonly<UpdateLogLevelBody>, options?: RequestInit): Promise<updateLogLevelResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateLogLevelUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateLogLevelBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateLogLevelResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as updateLogLevelResponse
+}
+
+
+
+
+
+export const getUpdateLogLevelMutationKey = () => ['updateLogLevel'] as const;
+
+export const getUpdateLogLevelMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogLevel>>, TError,UpdateLogLevelMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLogLevel>>, TError,UpdateLogLevelMutationVariables, TContext> => {
+
+const mutationKey = getUpdateLogLevelMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLogLevel>>, UpdateLogLevelMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateLogLevel(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLogLevelMutationResult = NonNullable<Awaited<ReturnType<typeof updateLogLevel>>>
+    export type UpdateLogLevelMutationBody = NonReadonly<UpdateLogLevelBody>
+    export type UpdateLogLevelMutationError = ErrorModel
+    export type UpdateLogLevelMutationVariables = {data: NonReadonly<UpdateLogLevelBody>}
+
+    /**
+ * @summary Set runtime log level
+ */
+export const useUpdateLogLevel = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogLevel>>, TError,UpdateLogLevelMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLogLevel>>,
+        TError,
+        UpdateLogLevelMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateLogLevelMutationOptions(options), queryClient);
+    }
+
+export type updateLrclibSettingResponse204 = {
+  data: void
+  status: 204
+}
+
+export type updateLrclibSettingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type updateLrclibSettingResponseSuccess = (updateLrclibSettingResponse204) & {
+  headers: Headers;
+};
+export type updateLrclibSettingResponseError = (updateLrclibSettingResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateLrclibSettingResponse = (updateLrclibSettingResponseSuccess | updateLrclibSettingResponseError)
+
+export const getUpdateLrclibSettingUrl = () => {
+
+
+
+
+  return `/api/settings/lrclib`
+}
+
+/**
+ * @summary Enable or disable LRCLIB
+ */
+export const updateLrclibSetting = async (updateLRCLIBBody: NonReadonly<UpdateLRCLIBBody>, options?: RequestInit): Promise<updateLrclibSettingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateLrclibSettingUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateLRCLIBBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateLrclibSettingResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as updateLrclibSettingResponse
+}
+
+
+
+
+
+export const getUpdateLrclibSettingMutationKey = () => ['updateLrclibSetting'] as const;
+
+export const getUpdateLrclibSettingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLrclibSetting>>, TError,UpdateLrclibSettingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLrclibSetting>>, TError,UpdateLrclibSettingMutationVariables, TContext> => {
+
+const mutationKey = getUpdateLrclibSettingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLrclibSetting>>, UpdateLrclibSettingMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateLrclibSetting(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLrclibSettingMutationResult = NonNullable<Awaited<ReturnType<typeof updateLrclibSetting>>>
+    export type UpdateLrclibSettingMutationBody = NonReadonly<UpdateLRCLIBBody>
+    export type UpdateLrclibSettingMutationError = ErrorModel
+    export type UpdateLrclibSettingMutationVariables = {data: NonReadonly<UpdateLRCLIBBody>}
+
+    /**
+ * @summary Enable or disable LRCLIB
+ */
+export const useUpdateLrclibSetting = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLrclibSetting>>, TError,UpdateLrclibSettingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLrclibSetting>>,
+        TError,
+        UpdateLrclibSettingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateLrclibSettingMutationOptions(options), queryClient);
+    }
+
+export type updateMusicbrainzSettingsResponse204 = {
+  data: void
+  status: 204
+}
+
+export type updateMusicbrainzSettingsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type updateMusicbrainzSettingsResponseSuccess = (updateMusicbrainzSettingsResponse204) & {
+  headers: Headers;
+};
+export type updateMusicbrainzSettingsResponseError = (updateMusicbrainzSettingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateMusicbrainzSettingsResponse = (updateMusicbrainzSettingsResponseSuccess | updateMusicbrainzSettingsResponseError)
+
+export const getUpdateMusicbrainzSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/musicbrainz`
+}
+
+/**
+ * @summary Update MusicBrainz mode and endpoint
+ */
+export const updateMusicbrainzSettings = async (updateMusicBrainzBody: NonReadonly<UpdateMusicBrainzBody>, options?: RequestInit): Promise<updateMusicbrainzSettingsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateMusicbrainzSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateMusicBrainzBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateMusicbrainzSettingsResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as updateMusicbrainzSettingsResponse
+}
+
+
+
+
+
+export const getUpdateMusicbrainzSettingsMutationKey = () => ['updateMusicbrainzSettings'] as const;
+
+export const getUpdateMusicbrainzSettingsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMusicbrainzSettings>>, TError,UpdateMusicbrainzSettingsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMusicbrainzSettings>>, TError,UpdateMusicbrainzSettingsMutationVariables, TContext> => {
+
+const mutationKey = getUpdateMusicbrainzSettingsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMusicbrainzSettings>>, UpdateMusicbrainzSettingsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateMusicbrainzSettings(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMusicbrainzSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateMusicbrainzSettings>>>
+    export type UpdateMusicbrainzSettingsMutationBody = NonReadonly<UpdateMusicBrainzBody>
+    export type UpdateMusicbrainzSettingsMutationError = ErrorModel
+    export type UpdateMusicbrainzSettingsMutationVariables = {data: NonReadonly<UpdateMusicBrainzBody>}
+
+    /**
+ * @summary Update MusicBrainz mode and endpoint
+ */
+export const useUpdateMusicbrainzSettings = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMusicbrainzSettings>>, TError,UpdateMusicbrainzSettingsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateMusicbrainzSettings>>,
+        TError,
+        UpdateMusicbrainzSettingsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateMusicbrainzSettingsMutationOptions(options), queryClient);
+    }
+
+export type checkSettingsMusicbrainzResponse200 = {
+  data: CheckMusicBrainzBody
+  status: 200
+}
+
+export type checkSettingsMusicbrainzResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type checkSettingsMusicbrainzResponseSuccess = (checkSettingsMusicbrainzResponse200) & {
+  headers: Headers;
+};
+export type checkSettingsMusicbrainzResponseError = (checkSettingsMusicbrainzResponseDefault) & {
+  headers: Headers;
+};
+
+export type checkSettingsMusicbrainzResponse = (checkSettingsMusicbrainzResponseSuccess | checkSettingsMusicbrainzResponseError)
+
+export const getCheckSettingsMusicbrainzUrl = () => {
+
+
+
+
+  return `/api/settings/musicbrainz/check`
+}
+
+/**
+ * @summary Check MusicBrainz connectivity
+ */
+export const checkSettingsMusicbrainz = async ( options?: RequestInit): Promise<checkSettingsMusicbrainzResponse> => {
+
+  const res = await fetch(getCheckSettingsMusicbrainzUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: checkSettingsMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as checkSettingsMusicbrainzResponse
+}
+
+
+
+
+
+export const getCheckSettingsMusicbrainzMutationKey = () => ['checkSettingsMusicbrainz'] as const;
+
+export const getCheckSettingsMusicbrainzMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSettingsMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof checkSettingsMusicbrainz>>, TError,void, TContext> => {
+
+const mutationKey = getCheckSettingsMusicbrainzMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkSettingsMusicbrainz>>, void> = () => {
+
+
+          return  checkSettingsMusicbrainz(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckSettingsMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof checkSettingsMusicbrainz>>>
+
+    export type CheckSettingsMusicbrainzMutationError = ErrorModel
+
+
+    /**
+ * @summary Check MusicBrainz connectivity
+ */
+export const useCheckSettingsMusicbrainz = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSettingsMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof checkSettingsMusicbrainz>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCheckSettingsMusicbrainzMutationOptions(options), queryClient);
+    }
+
+export type updateSettingsResponse204 = {
+  data: void
+  status: 204
+}
+
+export type updateSettingsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type updateSettingsResponseSuccess = (updateSettingsResponse204) & {
+  headers: Headers;
+};
+export type updateSettingsResponseError = (updateSettingsResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateSettingsResponse = (updateSettingsResponseSuccess | updateSettingsResponseError)
+
+export const getUpdateSettingsUrl = () => {
+
+
+
+
+  return `/api/settings/runtime`
+}
+
+/**
+ * @summary Update output directory and publication format
+ */
+export const updateSettings = async (updateSettingsBody: NonReadonly<UpdateSettingsBody>, options?: RequestInit): Promise<updateSettingsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateSettingsBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateSettingsResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as updateSettingsResponse
+}
+
+
+
+
+
+export const getUpdateSettingsMutationKey = () => ['updateSettings'] as const;
+
+export const getUpdateSettingsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSettings>>, TError,UpdateSettingsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSettings>>, TError,UpdateSettingsMutationVariables, TContext> => {
+
+const mutationKey = getUpdateSettingsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSettings>>, UpdateSettingsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateSettings(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateSettings>>>
+    export type UpdateSettingsMutationBody = NonReadonly<UpdateSettingsBody>
+    export type UpdateSettingsMutationError = ErrorModel
+    export type UpdateSettingsMutationVariables = {data: NonReadonly<UpdateSettingsBody>}
+
+    /**
+ * @summary Update output directory and publication format
+ */
+export const useUpdateSettings = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSettings>>, TError,UpdateSettingsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateSettings>>,
+        TError,
+        UpdateSettingsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateSettingsMutationOptions(options), queryClient);
+    }
+
+export type getSetupStateResponse200 = {
+  data: SetupStateBody
+  status: 200
+}
+
+export type getSetupStateResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getSetupStateResponseSuccess = (getSetupStateResponse200) & {
+  headers: Headers;
+};
+export type getSetupStateResponseError = (getSetupStateResponseDefault) & {
+  headers: Headers;
+};
+
+export type getSetupStateResponse = (getSetupStateResponseSuccess | getSetupStateResponseError)
+
+export const getGetSetupStateUrl = () => {
+
+
+
+
+  return `/api/setup`
+}
+
+/**
+ * @summary Get current setup state
+ */
+export const getSetupState = async ( options?: RequestInit): Promise<getSetupStateResponse> => {
+
+  const res = await fetch(getGetSetupStateUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getSetupStateResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getSetupStateResponse
+}
+
+
+
+
+
+export const getGetSetupStateQueryKey = () => {
+    return [
+    `/api/setup`
+    ] as const;
+    }
+
+
+export const getGetSetupStateQueryOptions = <TData = Awaited<ReturnType<typeof getSetupState>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStateQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupState>>> = ({ signal }) => getSetupState({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStateQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupState>>>
+export type GetSetupStateQueryError = ErrorModel
+
+
+export function useGetSetupState<TData = Awaited<ReturnType<typeof getSetupState>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupState>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupState>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupState<TData = Awaited<ReturnType<typeof getSetupState>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupState>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupState>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupState<TData = Awaited<ReturnType<typeof getSetupState>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get current setup state
+ */
+
+export function useGetSetupState<TData = Awaited<ReturnType<typeof getSetupState>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupState>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStateQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type checkMusicbrainzResponse200 = {
+  data: CheckMusicBrainzBody
+  status: 200
+}
+
+export type checkMusicbrainzResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type checkMusicbrainzResponseSuccess = (checkMusicbrainzResponse200) & {
+  headers: Headers;
+};
+export type checkMusicbrainzResponseError = (checkMusicbrainzResponseDefault) & {
+  headers: Headers;
+};
+
+export type checkMusicbrainzResponse = (checkMusicbrainzResponseSuccess | checkMusicbrainzResponseError)
+
+export const getCheckMusicbrainzUrl = () => {
+
+
+
+
+  return `/api/setup/check-musicbrainz`
+}
+
+/**
+ * @summary Check MusicBrainz connectivity
+ */
+export const checkMusicbrainz = async ( options?: RequestInit): Promise<checkMusicbrainzResponse> => {
+
+  const res = await fetch(getCheckMusicbrainzUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: checkMusicbrainzResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as checkMusicbrainzResponse
+}
+
+
+
+
+
+export const getCheckMusicbrainzMutationKey = () => ['checkMusicbrainz'] as const;
+
+export const getCheckMusicbrainzMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext> => {
+
+const mutationKey = getCheckMusicbrainzMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkMusicbrainz>>, void> = () => {
+
+
+          return  checkMusicbrainz(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof checkMusicbrainz>>>
+
+    export type CheckMusicbrainzMutationError = ErrorModel
+
+
+    /**
+ * @summary Check MusicBrainz connectivity
+ */
+export const useCheckMusicbrainz = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkMusicbrainz>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof checkMusicbrainz>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCheckMusicbrainzMutationOptions(options), queryClient);
+    }
+
+export type completeSetupResponse204 = {
+  data: void
+  status: 204
+}
+
+export type completeSetupResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type completeSetupResponseSuccess = (completeSetupResponse204) & {
+  headers: Headers;
+};
+export type completeSetupResponseError = (completeSetupResponseDefault) & {
+  headers: Headers;
+};
+
+export type completeSetupResponse = (completeSetupResponseSuccess | completeSetupResponseError)
+
+export const getCompleteSetupUrl = () => {
+
+
+
+
+  return `/api/setup/complete`
+}
+
+/**
+ * @summary Complete setup wizard
+ */
+export const completeSetup = async ( options?: RequestInit): Promise<completeSetupResponse> => {
+
+  const res = await fetch(getCompleteSetupUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: completeSetupResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as completeSetupResponse
+}
+
+
+
+
+
+export const getCompleteSetupMutationKey = () => ['completeSetup'] as const;
+
+export const getCompleteSetupMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext> => {
+
+const mutationKey = getCompleteSetupMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeSetup>>, void> = () => {
+
+
+          return  completeSetup(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompleteSetupMutationResult = NonNullable<Awaited<ReturnType<typeof completeSetup>>>
+
+    export type CompleteSetupMutationError = ErrorModel
+
+
+    /**
+ * @summary Complete setup wizard
+ */
+export const useCompleteSetup = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeSetup>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof completeSetup>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCompleteSetupMutationOptions(options), queryClient);
+    }
+
+export type getConfigurationHealthResponse200 = {
+  data: SetupStateBody
+  status: 200
+}
+
+export type getConfigurationHealthResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getConfigurationHealthResponseSuccess = (getConfigurationHealthResponse200) & {
+  headers: Headers;
+};
+export type getConfigurationHealthResponseError = (getConfigurationHealthResponseDefault) & {
+  headers: Headers;
+};
+
+export type getConfigurationHealthResponse = (getConfigurationHealthResponseSuccess | getConfigurationHealthResponseError)
+
+export const getGetConfigurationHealthUrl = () => {
+
+
+
+
+  return `/api/setup/health`
+}
+
+/**
+ * @summary Get configuration health status
+ */
+export const getConfigurationHealth = async ( options?: RequestInit): Promise<getConfigurationHealthResponse> => {
+
+  const res = await fetch(getGetConfigurationHealthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getConfigurationHealthResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getConfigurationHealthResponse
+}
+
+
+
+
+
+export const getGetConfigurationHealthQueryKey = () => {
+    return [
+    `/api/setup/health`
+    ] as const;
+    }
+
+
+export const getGetConfigurationHealthQueryOptions = <TData = Awaited<ReturnType<typeof getConfigurationHealth>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetConfigurationHealthQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getConfigurationHealth>>> = ({ signal }) => getConfigurationHealth({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetConfigurationHealthQueryResult = NonNullable<Awaited<ReturnType<typeof getConfigurationHealth>>>
+export type GetConfigurationHealthQueryError = ErrorModel
+
+
+export function useGetConfigurationHealth<TData = Awaited<ReturnType<typeof getConfigurationHealth>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getConfigurationHealth>>,
+          TError,
+          Awaited<ReturnType<typeof getConfigurationHealth>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetConfigurationHealth<TData = Awaited<ReturnType<typeof getConfigurationHealth>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getConfigurationHealth>>,
+          TError,
+          Awaited<ReturnType<typeof getConfigurationHealth>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetConfigurationHealth<TData = Awaited<ReturnType<typeof getConfigurationHealth>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get configuration health status
+ */
+
+export function useGetConfigurationHealth<TData = Awaited<ReturnType<typeof getConfigurationHealth>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfigurationHealth>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetConfigurationHealthQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type saveSetupLrclibResponse204 = {
+  data: void
+  status: 204
+}
+
+export type saveSetupLrclibResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type saveSetupLrclibResponseSuccess = (saveSetupLrclibResponse204) & {
+  headers: Headers;
+};
+export type saveSetupLrclibResponseError = (saveSetupLrclibResponseDefault) & {
+  headers: Headers;
+};
+
+export type saveSetupLrclibResponse = (saveSetupLrclibResponseSuccess | saveSetupLrclibResponseError)
+
+export const getSaveSetupLrclibUrl = () => {
+
+
+
+
+  return `/api/setup/lrclib`
+}
+
+/**
+ * @summary Save setup LRCLIB setting
+ */
+export const saveSetupLrclib = async (updateLRCLIBBody: NonReadonly<UpdateLRCLIBBody>, options?: RequestInit): Promise<saveSetupLrclibResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSaveSetupLrclibUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateLRCLIBBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: saveSetupLrclibResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as saveSetupLrclibResponse
+}
+
+
+
+
+
+export const getSaveSetupLrclibMutationKey = () => ['saveSetupLrclib'] as const;
+
+export const getSaveSetupLrclibMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupLrclib>>, TError,SaveSetupLrclibMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof saveSetupLrclib>>, TError,SaveSetupLrclibMutationVariables, TContext> => {
+
+const mutationKey = getSaveSetupLrclibMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveSetupLrclib>>, SaveSetupLrclibMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveSetupLrclib(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveSetupLrclibMutationResult = NonNullable<Awaited<ReturnType<typeof saveSetupLrclib>>>
+    export type SaveSetupLrclibMutationBody = NonReadonly<UpdateLRCLIBBody>
+    export type SaveSetupLrclibMutationError = ErrorModel
+    export type SaveSetupLrclibMutationVariables = {data: NonReadonly<UpdateLRCLIBBody>}
+
+    /**
+ * @summary Save setup LRCLIB setting
+ */
+export const useSaveSetupLrclib = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupLrclib>>, TError,SaveSetupLrclibMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveSetupLrclib>>,
+        TError,
+        SaveSetupLrclibMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveSetupLrclibMutationOptions(options), queryClient);
+    }
+
+export type saveSetupMusicbrainzResponse204 = {
+  data: void
+  status: 204
+}
+
+export type saveSetupMusicbrainzResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type saveSetupMusicbrainzResponseSuccess = (saveSetupMusicbrainzResponse204) & {
+  headers: Headers;
+};
+export type saveSetupMusicbrainzResponseError = (saveSetupMusicbrainzResponseDefault) & {
+  headers: Headers;
+};
+
+export type saveSetupMusicbrainzResponse = (saveSetupMusicbrainzResponseSuccess | saveSetupMusicbrainzResponseError)
+
+export const getSaveSetupMusicbrainzUrl = () => {
+
+
+
+
+  return `/api/setup/musicbrainz`
+}
+
+/**
+ * @summary Save setup MusicBrainz configuration
+ */
+export const saveSetupMusicbrainz = async (updateMusicBrainzBody: NonReadonly<UpdateMusicBrainzBody>, options?: RequestInit): Promise<saveSetupMusicbrainzResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSaveSetupMusicbrainzUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateMusicBrainzBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: saveSetupMusicbrainzResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as saveSetupMusicbrainzResponse
+}
+
+
+
+
+
+export const getSaveSetupMusicbrainzMutationKey = () => ['saveSetupMusicbrainz'] as const;
+
+export const getSaveSetupMusicbrainzMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupMusicbrainz>>, TError,SaveSetupMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof saveSetupMusicbrainz>>, TError,SaveSetupMusicbrainzMutationVariables, TContext> => {
+
+const mutationKey = getSaveSetupMusicbrainzMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveSetupMusicbrainz>>, SaveSetupMusicbrainzMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveSetupMusicbrainz(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveSetupMusicbrainzMutationResult = NonNullable<Awaited<ReturnType<typeof saveSetupMusicbrainz>>>
+    export type SaveSetupMusicbrainzMutationBody = NonReadonly<UpdateMusicBrainzBody>
+    export type SaveSetupMusicbrainzMutationError = ErrorModel
+    export type SaveSetupMusicbrainzMutationVariables = {data: NonReadonly<UpdateMusicBrainzBody>}
+
+    /**
+ * @summary Save setup MusicBrainz configuration
+ */
+export const useSaveSetupMusicbrainz = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupMusicbrainz>>, TError,SaveSetupMusicbrainzMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveSetupMusicbrainz>>,
+        TError,
+        SaveSetupMusicbrainzMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveSetupMusicbrainzMutationOptions(options), queryClient);
+    }
+
+export type saveSetupRuntimeResponse204 = {
+  data: void
+  status: 204
+}
+
+export type saveSetupRuntimeResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type saveSetupRuntimeResponseSuccess = (saveSetupRuntimeResponse204) & {
+  headers: Headers;
+};
+export type saveSetupRuntimeResponseError = (saveSetupRuntimeResponseDefault) & {
+  headers: Headers;
+};
+
+export type saveSetupRuntimeResponse = (saveSetupRuntimeResponseSuccess | saveSetupRuntimeResponseError)
+
+export const getSaveSetupRuntimeUrl = () => {
+
+
+
+
+  return `/api/setup/runtime`
+}
+
+/**
+ * @summary Save runtime settings
+ */
+export const saveSetupRuntime = async (saveRuntimeBody: NonReadonly<SaveRuntimeBody>, options?: RequestInit): Promise<saveSetupRuntimeResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSaveSetupRuntimeUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(saveRuntimeBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: saveSetupRuntimeResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as saveSetupRuntimeResponse
+}
+
+
+
+
+
+export const getSaveSetupRuntimeMutationKey = () => ['saveSetupRuntime'] as const;
+
+export const getSaveSetupRuntimeMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupRuntime>>, TError,SaveSetupRuntimeMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof saveSetupRuntime>>, TError,SaveSetupRuntimeMutationVariables, TContext> => {
+
+const mutationKey = getSaveSetupRuntimeMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveSetupRuntime>>, SaveSetupRuntimeMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveSetupRuntime(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveSetupRuntimeMutationResult = NonNullable<Awaited<ReturnType<typeof saveSetupRuntime>>>
+    export type SaveSetupRuntimeMutationBody = NonReadonly<SaveRuntimeBody>
+    export type SaveSetupRuntimeMutationError = ErrorModel
+    export type SaveSetupRuntimeMutationVariables = {data: NonReadonly<SaveRuntimeBody>}
+
+    /**
+ * @summary Save runtime settings
+ */
+export const useSaveSetupRuntime = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveSetupRuntime>>, TError,SaveSetupRuntimeMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveSetupRuntime>>,
+        TError,
+        SaveSetupRuntimeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveSetupRuntimeMutationOptions(options), queryClient);
+    }
+
+export type listToolCatalogResponse200 = {
+  data: CatalogBody
+  status: 200
+}
+
+export type listToolCatalogResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listToolCatalogResponseSuccess = (listToolCatalogResponse200) & {
+  headers: Headers;
+};
+export type listToolCatalogResponseError = (listToolCatalogResponseDefault) & {
+  headers: Headers;
+};
+
+export type listToolCatalogResponse = (listToolCatalogResponseSuccess | listToolCatalogResponseError)
+
+export const getListToolCatalogUrl = (params: ListToolCatalogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/tools/catalog?${stringifiedParams}` : `/api/tools/catalog`
+}
+
+/**
+ * @summary List compatible tool releases
+ */
+export const listToolCatalog = async (params: ListToolCatalogParams, options?: RequestInit): Promise<listToolCatalogResponse> => {
+
+  const res = await fetch(getListToolCatalogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listToolCatalogResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listToolCatalogResponse
+}
+
+
+
+
+
+export const getListToolCatalogQueryKey = (params?: ListToolCatalogParams,) => {
+    return [
+    `/api/tools/catalog`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListToolCatalogQueryOptions = <TData = Awaited<ReturnType<typeof listToolCatalog>>, TError = ErrorModel>(params: ListToolCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListToolCatalogQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listToolCatalog>>> = ({ signal }) => listToolCatalog(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListToolCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof listToolCatalog>>>
+export type ListToolCatalogQueryError = ErrorModel
+
+
+export function useListToolCatalog<TData = Awaited<ReturnType<typeof listToolCatalog>>, TError = ErrorModel>(
+ params: ListToolCatalogParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listToolCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof listToolCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListToolCatalog<TData = Awaited<ReturnType<typeof listToolCatalog>>, TError = ErrorModel>(
+ params: ListToolCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listToolCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof listToolCatalog>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListToolCatalog<TData = Awaited<ReturnType<typeof listToolCatalog>>, TError = ErrorModel>(
+ params: ListToolCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List compatible tool releases
+ */
+
+export function useListToolCatalog<TData = Awaited<ReturnType<typeof listToolCatalog>>, TError = ErrorModel>(
+ params: ListToolCatalogParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listToolCatalog>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListToolCatalogQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type listInstallationsResponse200 = {
+  data: InstallationsBody
+  status: 200
+}
+
+export type listInstallationsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listInstallationsResponseSuccess = (listInstallationsResponse200) & {
+  headers: Headers;
+};
+export type listInstallationsResponseError = (listInstallationsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listInstallationsResponse = (listInstallationsResponseSuccess | listInstallationsResponseError)
+
+export const getListInstallationsUrl = (params?: ListInstallationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/tools/installations?${stringifiedParams}` : `/api/tools/installations`
+}
+
+/**
+ * @summary List installed tool packages
+ */
+export const listInstallations = async (params?: ListInstallationsParams, options?: RequestInit): Promise<listInstallationsResponse> => {
+
+  const res = await fetch(getListInstallationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listInstallationsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listInstallationsResponse
+}
+
+
+
+
+
+export const getListInstallationsQueryKey = (params?: ListInstallationsParams,) => {
+    return [
+    `/api/tools/installations`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListInstallationsQueryOptions = <TData = Awaited<ReturnType<typeof listInstallations>>, TError = ErrorModel>(params?: ListInstallationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListInstallationsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listInstallations>>> = ({ signal }) => listInstallations(params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListInstallationsQueryResult = NonNullable<Awaited<ReturnType<typeof listInstallations>>>
+export type ListInstallationsQueryError = ErrorModel
+
+
+export function useListInstallations<TData = Awaited<ReturnType<typeof listInstallations>>, TError = ErrorModel>(
+ params: undefined |  ListInstallationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listInstallations>>,
+          TError,
+          Awaited<ReturnType<typeof listInstallations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListInstallations<TData = Awaited<ReturnType<typeof listInstallations>>, TError = ErrorModel>(
+ params?: ListInstallationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listInstallations>>,
+          TError,
+          Awaited<ReturnType<typeof listInstallations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListInstallations<TData = Awaited<ReturnType<typeof listInstallations>>, TError = ErrorModel>(
+ params?: ListInstallationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List installed tool packages
+ */
+
+export function useListInstallations<TData = Awaited<ReturnType<typeof listInstallations>>, TError = ErrorModel>(
+ params?: ListInstallationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstallations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListInstallationsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type startToolInstallResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type startToolInstallResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type startToolInstallResponseSuccess = (startToolInstallResponse200) & {
+  headers: Headers;
+};
+export type startToolInstallResponseError = (startToolInstallResponseDefault) & {
+  headers: Headers;
+};
+
+export type startToolInstallResponse = (startToolInstallResponseSuccess | startToolInstallResponseError)
+
+export const getStartToolInstallUrl = () => {
+
+
+
+
+  return `/api/tools/installations`
+}
+
+/**
+ * @summary Start a tool installation
+ */
+export const startToolInstall = async (startInstallBody: NonReadonly<StartInstallBody>, options?: RequestInit): Promise<startToolInstallResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartToolInstallUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(startInstallBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startToolInstallResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startToolInstallResponse
+}
+
+
+
+
+
+export const getStartToolInstallMutationKey = () => ['startToolInstall'] as const;
+
+export const getStartToolInstallMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startToolInstall>>, TError,StartToolInstallMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startToolInstall>>, TError,StartToolInstallMutationVariables, TContext> => {
+
+const mutationKey = getStartToolInstallMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startToolInstall>>, StartToolInstallMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startToolInstall(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartToolInstallMutationResult = NonNullable<Awaited<ReturnType<typeof startToolInstall>>>
+    export type StartToolInstallMutationBody = NonReadonly<StartInstallBody>
+    export type StartToolInstallMutationError = ErrorModel
+    export type StartToolInstallMutationVariables = {data: NonReadonly<StartInstallBody>}
+
+    /**
+ * @summary Start a tool installation
+ */
+export const useStartToolInstall = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startToolInstall>>, TError,StartToolInstallMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startToolInstall>>,
+        TError,
+        StartToolInstallMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartToolInstallMutationOptions(options), queryClient);
+    }
+
+export type preflightToolInstallResponse200 = {
+  data: InstallPreflightBody
+  status: 200
+}
+
+export type preflightToolInstallResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type preflightToolInstallResponseSuccess = (preflightToolInstallResponse200) & {
+  headers: Headers;
+};
+export type preflightToolInstallResponseError = (preflightToolInstallResponseDefault) & {
+  headers: Headers;
+};
+
+export type preflightToolInstallResponse = (preflightToolInstallResponseSuccess | preflightToolInstallResponseError)
+
+export const getPreflightToolInstallUrl = () => {
+
+
+
+
+  return `/api/tools/installations/preflight`
+}
+
+/**
+ * @summary Preflight a tool installation
+ */
+export const preflightToolInstall = async (installPreflightInputBody: NonReadonly<InstallPreflightInputBody>, options?: RequestInit): Promise<preflightToolInstallResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreflightToolInstallUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(installPreflightInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: preflightToolInstallResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as preflightToolInstallResponse
+}
+
+
+
+
+
+export const getPreflightToolInstallMutationKey = () => ['preflightToolInstall'] as const;
+
+export const getPreflightToolInstallMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightToolInstall>>, TError,PreflightToolInstallMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightToolInstall>>, TError,PreflightToolInstallMutationVariables, TContext> => {
+
+const mutationKey = getPreflightToolInstallMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightToolInstall>>, PreflightToolInstallMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightToolInstall(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightToolInstallMutationResult = NonNullable<Awaited<ReturnType<typeof preflightToolInstall>>>
+    export type PreflightToolInstallMutationBody = NonReadonly<InstallPreflightInputBody>
+    export type PreflightToolInstallMutationError = ErrorModel
+    export type PreflightToolInstallMutationVariables = {data: NonReadonly<InstallPreflightInputBody>}
+
+    /**
+ * @summary Preflight a tool installation
+ */
+export const usePreflightToolInstall = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightToolInstall>>, TError,PreflightToolInstallMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightToolInstall>>,
+        TError,
+        PreflightToolInstallMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreflightToolInstallMutationOptions(options), queryClient);
+    }
+
+export type deleteToolInstallationResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteToolInstallationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteToolInstallationResponseSuccess = (deleteToolInstallationResponse204) & {
+  headers: Headers;
+};
+export type deleteToolInstallationResponseError = (deleteToolInstallationResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteToolInstallationResponse = (deleteToolInstallationResponseSuccess | deleteToolInstallationResponseError)
+
+export const getDeleteToolInstallationUrl = (installationId: string,) => {
+
+
+
+
+  return `/api/tools/installations/${installationId}`
+}
+
+/**
+ * @summary Delete an inactive tool package
+ */
+export const deleteToolInstallation = async (installationId: string,
+    installationActionInputBody: NonReadonly<InstallationActionInputBody>, options?: RequestInit): Promise<deleteToolInstallationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getDeleteToolInstallationUrl(installationId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(installationActionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteToolInstallationResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteToolInstallationResponse
+}
+
+
+
+
+
+export const getDeleteToolInstallationMutationKey = () => ['deleteToolInstallation'] as const;
+
+export const getDeleteToolInstallationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteToolInstallation>>, TError,DeleteToolInstallationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteToolInstallation>>, TError,DeleteToolInstallationMutationVariables, TContext> => {
+
+const mutationKey = getDeleteToolInstallationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteToolInstallation>>, DeleteToolInstallationMutationVariables> = (props) => {
+          const {installationId,data} = props ?? {};
+
+          return  deleteToolInstallation(installationId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteToolInstallationMutationResult = NonNullable<Awaited<ReturnType<typeof deleteToolInstallation>>>
+    export type DeleteToolInstallationMutationBody = NonReadonly<InstallationActionInputBody>
+    export type DeleteToolInstallationMutationError = ErrorModel
+    export type DeleteToolInstallationMutationVariables = {installationId: string;data: NonReadonly<InstallationActionInputBody>}
+
+    /**
+ * @summary Delete an inactive tool package
+ */
+export const useDeleteToolInstallation = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteToolInstallation>>, TError,DeleteToolInstallationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteToolInstallation>>,
+        TError,
+        DeleteToolInstallationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteToolInstallationMutationOptions(options), queryClient);
+    }
+
+export type activateToolInstallationResponse204 = {
+  data: void
+  status: 204
+}
+
+export type activateToolInstallationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type activateToolInstallationResponseSuccess = (activateToolInstallationResponse204) & {
+  headers: Headers;
+};
+export type activateToolInstallationResponseError = (activateToolInstallationResponseDefault) & {
+  headers: Headers;
+};
+
+export type activateToolInstallationResponse = (activateToolInstallationResponseSuccess | activateToolInstallationResponseError)
+
+export const getActivateToolInstallationUrl = (installationId: string,) => {
+
+
+
+
+  return `/api/tools/installations/${installationId}/activate`
+}
+
+/**
+ * @summary Activate a verified tool package
+ */
+export const activateToolInstallation = async (installationId: string,
+    installationActionInputBody: NonReadonly<InstallationActionInputBody>, options?: RequestInit): Promise<activateToolInstallationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getActivateToolInstallationUrl(installationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(installationActionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: activateToolInstallationResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as activateToolInstallationResponse
+}
+
+
+
+
+
+export const getActivateToolInstallationMutationKey = () => ['activateToolInstallation'] as const;
+
+export const getActivateToolInstallationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activateToolInstallation>>, TError,ActivateToolInstallationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof activateToolInstallation>>, TError,ActivateToolInstallationMutationVariables, TContext> => {
+
+const mutationKey = getActivateToolInstallationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof activateToolInstallation>>, ActivateToolInstallationMutationVariables> = (props) => {
+          const {installationId,data} = props ?? {};
+
+          return  activateToolInstallation(installationId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ActivateToolInstallationMutationResult = NonNullable<Awaited<ReturnType<typeof activateToolInstallation>>>
+    export type ActivateToolInstallationMutationBody = NonReadonly<InstallationActionInputBody>
+    export type ActivateToolInstallationMutationError = ErrorModel
+    export type ActivateToolInstallationMutationVariables = {installationId: string;data: NonReadonly<InstallationActionInputBody>}
+
+    /**
+ * @summary Activate a verified tool package
+ */
+export const useActivateToolInstallation = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activateToolInstallation>>, TError,ActivateToolInstallationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof activateToolInstallation>>,
+        TError,
+        ActivateToolInstallationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getActivateToolInstallationMutationOptions(options), queryClient);
+    }
+
+export type startToolsRootMoveResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type startToolsRootMoveResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type startToolsRootMoveResponseSuccess = (startToolsRootMoveResponse200) & {
+  headers: Headers;
+};
+export type startToolsRootMoveResponseError = (startToolsRootMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type startToolsRootMoveResponse = (startToolsRootMoveResponseSuccess | startToolsRootMoveResponseError)
+
+export const getStartToolsRootMoveUrl = () => {
+
+
+
+
+  return `/api/tools/move`
+}
+
+/**
+ * @summary Start a tools directory move
+ */
+export const startToolsRootMove = async (startMoveBody: NonReadonly<StartMoveBody>, options?: RequestInit): Promise<startToolsRootMoveResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartToolsRootMoveUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(startMoveBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startToolsRootMoveResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startToolsRootMoveResponse
+}
+
+
+
+
+
+export const getStartToolsRootMoveMutationKey = () => ['startToolsRootMove'] as const;
+
+export const getStartToolsRootMoveMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startToolsRootMove>>, TError,StartToolsRootMoveMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startToolsRootMove>>, TError,StartToolsRootMoveMutationVariables, TContext> => {
+
+const mutationKey = getStartToolsRootMoveMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startToolsRootMove>>, StartToolsRootMoveMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startToolsRootMove(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartToolsRootMoveMutationResult = NonNullable<Awaited<ReturnType<typeof startToolsRootMove>>>
+    export type StartToolsRootMoveMutationBody = NonReadonly<StartMoveBody>
+    export type StartToolsRootMoveMutationError = ErrorModel
+    export type StartToolsRootMoveMutationVariables = {data: NonReadonly<StartMoveBody>}
+
+    /**
+ * @summary Start a tools directory move
+ */
+export const useStartToolsRootMove = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startToolsRootMove>>, TError,StartToolsRootMoveMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startToolsRootMove>>,
+        TError,
+        StartToolsRootMoveMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartToolsRootMoveMutationOptions(options), queryClient);
+    }
+
+export type preflightToolsRootMoveResponse200 = {
+  data: MovePreflightBody
+  status: 200
+}
+
+export type preflightToolsRootMoveResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type preflightToolsRootMoveResponseSuccess = (preflightToolsRootMoveResponse200) & {
+  headers: Headers;
+};
+export type preflightToolsRootMoveResponseError = (preflightToolsRootMoveResponseDefault) & {
+  headers: Headers;
+};
+
+export type preflightToolsRootMoveResponse = (preflightToolsRootMoveResponseSuccess | preflightToolsRootMoveResponseError)
+
+export const getPreflightToolsRootMoveUrl = () => {
+
+
+
+
+  return `/api/tools/move/preflight`
+}
+
+/**
+ * @summary Preflight a tools directory move
+ */
+export const preflightToolsRootMove = async (movePreflightInputBody: NonReadonly<MovePreflightInputBody>, options?: RequestInit): Promise<preflightToolsRootMoveResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreflightToolsRootMoveUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(movePreflightInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: preflightToolsRootMoveResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as preflightToolsRootMoveResponse
+}
+
+
+
+
+
+export const getPreflightToolsRootMoveMutationKey = () => ['preflightToolsRootMove'] as const;
+
+export const getPreflightToolsRootMoveMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightToolsRootMove>>, TError,PreflightToolsRootMoveMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightToolsRootMove>>, TError,PreflightToolsRootMoveMutationVariables, TContext> => {
+
+const mutationKey = getPreflightToolsRootMoveMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightToolsRootMove>>, PreflightToolsRootMoveMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightToolsRootMove(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightToolsRootMoveMutationResult = NonNullable<Awaited<ReturnType<typeof preflightToolsRootMove>>>
+    export type PreflightToolsRootMoveMutationBody = NonReadonly<MovePreflightInputBody>
+    export type PreflightToolsRootMoveMutationError = ErrorModel
+    export type PreflightToolsRootMoveMutationVariables = {data: NonReadonly<MovePreflightInputBody>}
+
+    /**
+ * @summary Preflight a tools directory move
+ */
+export const usePreflightToolsRootMove = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightToolsRootMove>>, TError,PreflightToolsRootMoveMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightToolsRootMove>>,
+        TError,
+        PreflightToolsRootMoveMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreflightToolsRootMoveMutationOptions(options), queryClient);
+    }
 

@@ -79,38 +79,14 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Get current setup state",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, _ *struct{}) (*SetupStateOutput, error) {
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("setup service is unavailable")
+		}
 		state, err := setup.State(ctx)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to load setup state", err)
 		}
-		return &SetupStateOutput{
-			Body: SetupStateBody{
-				Completed: state.Completed,
-				ConfigurationHealth: ConfigurationHealthResponse{
-					Healthy:  state.ConfigurationHealth.Healthy,
-					Problems: state.ConfigurationHealth.Problems,
-				},
-				Platform: PlatformResponse{
-					GOOS: state.Platform.Platform.GOOS, GOARCH: state.Platform.Platform.GOARCH,
-					Supported: state.Platform.Platform.Supported(), Diagnostic: state.Platform.Diagnostic,
-					Reason: state.Platform.Reason,
-				},
-				Settings: RuntimeSettingsResponse{
-					ToolsDirectory:             state.Runtime.ToolsDirectory,
-					OutputDirectory:            state.Runtime.OutputDirectory,
-					PublicationFormat:          state.Runtime.PublicationFormat,
-					MusicBrainzMode:            state.Runtime.MusicBrainzMode,
-					MusicBrainzBaseURL:         state.Runtime.MusicBrainzBaseURL,
-					MusicBrainzVerifiedAt:      state.Runtime.MusicBrainzVerifiedAt,
-					LRCLIBEnabled:              state.Runtime.LRCLIBEnabled,
-					LogLevel:                   state.Runtime.LogLevel,
-					ActiveFFmpegInstallationID: state.Runtime.ActiveFFmpegInstallation,
-					ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,
-					OutputCaseSensitive:        state.Runtime.OutputCaseSensitive,
-					OutputUnicodeNormalization: state.Runtime.OutputUnicodeNormalization,
-				},
-			},
-		}, nil
+		return setupStateOutput(state), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -120,6 +96,12 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Save runtime settings",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, input *SaveRuntimeInput) (*struct{}, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
 		if err := setup.SaveRuntime(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
 			return nil, huma.Error400BadRequest("invalid runtime settings", err)
 		}
@@ -133,6 +115,15 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Check MusicBrainz connectivity",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, _ *CheckMusicBrainzInput) (*CheckMusicBrainzOutput, error) {
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("setup service is unavailable")
+		}
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
 		if err := setup.CheckMusicBrainz(ctx); err != nil {
 			return &CheckMusicBrainzOutput{
 				Body: CheckMusicBrainzBody{
@@ -155,6 +146,12 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Complete setup wizard",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, _ *CompleteSetupInput) (*struct{}, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
 		if err := setup.Complete(ctx); err != nil {
 			return nil, huma.Error409Conflict("setup requirements are not met", err)
 		}
@@ -168,18 +165,118 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		Summary:     "Get configuration health status",
 		Tags:        []string{"Setup"},
 	}, func(ctx context.Context, _ *struct{}) (*SetupStateOutput, error) {
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("setup service is unavailable")
+		}
 		state, err := setup.State(ctx)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to compute health", err)
 		}
-		return &SetupStateOutput{
-			Body: SetupStateBody{
-				Completed: state.Completed,
-				ConfigurationHealth: ConfigurationHealthResponse{
-					Healthy:  state.ConfigurationHealth.Healthy,
-					Problems: state.ConfigurationHealth.Problems,
-				},
-			},
-		}, nil
+		return setupStateOutput(state), nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "save-setup-musicbrainz", Method: http.MethodPut, Path: "/setup/musicbrainz",
+		Summary: "Save setup MusicBrainz configuration", Tags: []string{"Setup"},
+	}, func(ctx context.Context, input *UpdateMusicBrainzInput) (*struct{}, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
+			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid", err)
+		}
+		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "save-setup-lrclib", Method: http.MethodPut, Path: "/setup/lrclib",
+		Summary: "Save setup LRCLIB setting", Tags: []string{"Setup"},
+	}, func(ctx context.Context, input *UpdateLRCLIBInput) (*struct{}, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
+			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved", err)
+		}
+		return nil, nil
+	})
+}
+
+func setupStateOutput(state service.SetupState) *SetupStateOutput {
+	return &SetupStateOutput{
+		Body: SetupStateBody{
+			Completed: state.Completed,
+			ConfigurationHealth: ConfigurationHealthResponse{
+				Healthy:  state.ConfigurationHealth.Healthy,
+				Problems: state.ConfigurationHealth.Problems,
+			},
+			Platform: PlatformResponse{
+				GOOS: state.Platform.Platform.GOOS, GOARCH: state.Platform.Platform.GOARCH,
+				Supported: state.Platform.Platform.Supported(), Diagnostic: state.Platform.Diagnostic,
+				Reason: state.Platform.Reason,
+			},
+			Settings: RuntimeSettingsResponse{
+				ToolsDirectory:             state.Runtime.ToolsDirectory,
+				OutputDirectory:            state.Runtime.OutputDirectory,
+				PublicationFormat:          state.Runtime.PublicationFormat,
+				MusicBrainzMode:            state.Runtime.MusicBrainzMode,
+				MusicBrainzBaseURL:         state.Runtime.MusicBrainzBaseURL,
+				MusicBrainzVerifiedAt:      state.Runtime.MusicBrainzVerifiedAt,
+				LRCLIBEnabled:              state.Runtime.LRCLIBEnabled,
+				LogLevel:                   state.Runtime.LogLevel,
+				ActiveFFmpegInstallationID: state.Runtime.ActiveFFmpegInstallation,
+				ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,
+				OutputCaseSensitive:        state.Runtime.OutputCaseSensitive,
+				OutputUnicodeNormalization: state.Runtime.OutputUnicodeNormalization,
+			},
+		},
+	}
+}
+
+func requireSetupIncomplete(ctx context.Context, setup *service.SetupService) error {
+	if setup == nil {
+		return huma.Error503ServiceUnavailable("setup service is unavailable")
+	}
+	state, err := setup.State(ctx)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to read setup state", err)
+	}
+	if state.Completed {
+		return huma.Error404NotFound("setup route is closed after completion")
+	}
+	return nil
+}
+
+func requireSetupComplete(ctx context.Context, setup *service.SetupService) error {
+	if setup == nil {
+		return huma.Error503ServiceUnavailable("setup service is unavailable")
+	}
+	state, err := setup.State(ctx)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to read setup state", err)
+	}
+	if !state.Completed {
+		return huma.Error409Conflict("setup is not complete")
+	}
+	return nil
+}
+
+func requireSupportedPlatform(ctx context.Context, setup *service.SetupService) error {
+	if setup == nil {
+		return huma.Error503ServiceUnavailable("setup service is unavailable")
+	}
+	state, err := setup.State(ctx)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to read platform state", err)
+	}
+	if state.Platform.Diagnostic || !state.Platform.Platform.Supported() {
+		return huma.Error503ServiceUnavailable("product operations are unavailable for this instance platform")
+	}
+	return nil
 }

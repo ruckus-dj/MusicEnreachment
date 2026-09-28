@@ -16,10 +16,27 @@ import (
 type OperationRepository interface {
 	CreateOperation(context.Context, *persistence.Operation) error
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
+	ListOperations(context.Context, ...string) ([]persistence.Operation, error)
 	UpdateOperation(context.Context, *persistence.Operation) error
 	TransitionOperation(context.Context, uuid.UUID, func(*persistence.Operation) error) error
 	DismissOperation(context.Context, uuid.UUID) error
 	DeleteSucceededBefore(context.Context, time.Time) error
+}
+
+type OperationSnapshot struct {
+	ID                   uuid.UUID
+	Kind                 string
+	State                string
+	Stage                string
+	TargetInstallationID *uuid.UUID
+	TargetIdentity       string
+	BytesCompleted       int64
+	BytesTotal           *int64
+	SafeError            *string
+	CreatedAt            time.Time
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	UpdatedAt            time.Time
 }
 
 type operationEnqueuingRepository interface {
@@ -80,6 +97,39 @@ func (s *Operations) Start(ctx context.Context, kind, stage string, snapshot any
 }
 func (s *Operations) Get(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	return s.repository.GetOperation(ctx, id)
+}
+
+func (s *Operations) Snapshot(ctx context.Context, id uuid.UUID) (OperationSnapshot, error) {
+	operation, err := s.repository.GetOperation(ctx, id)
+	if err != nil {
+		return OperationSnapshot{}, err
+	}
+	return operationSnapshot(operation), nil
+}
+
+func (s *Operations) ListSnapshots(ctx context.Context, states ...string) ([]OperationSnapshot, error) {
+	operations, err := s.repository.ListOperations(ctx, states...)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]OperationSnapshot, 0, len(operations))
+	for index := range operations {
+		snapshots = append(snapshots, operationSnapshot(&operations[index]))
+	}
+	return snapshots, nil
+}
+
+func operationSnapshot(operation *persistence.Operation) OperationSnapshot {
+	var inputs struct {
+		TargetIdentity string `json:"target_identity"`
+	}
+	_ = json.Unmarshal(operation.InputSnapshot, &inputs)
+	return OperationSnapshot{
+		ID: operation.ID, Kind: operation.Kind, State: operation.State, Stage: operation.Stage,
+		TargetInstallationID: operation.TargetInstallationID, TargetIdentity: inputs.TargetIdentity,
+		BytesCompleted: operation.BytesCompleted, BytesTotal: operation.BytesTotal, SafeError: operation.SafeError,
+		CreatedAt: operation.CreatedAt, StartedAt: operation.StartedAt, FinishedAt: operation.FinishedAt, UpdatedAt: operation.UpdatedAt,
+	}
 }
 func (s *Operations) Running(ctx context.Context, id uuid.UUID, stage string) error {
 	return s.transition(ctx, id, "running", stage, "", nil)

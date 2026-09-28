@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,6 +44,10 @@ func (fixture *installEnqueuerFixture) CreateInstallationOperationAndEnqueue(_ c
 	return nil
 }
 
+func (*installEnqueuerFixture) ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error) {
+	return nil, nil
+}
+
 type unusedRiverClient struct{}
 
 func (unusedRiverClient) InsertTx(context.Context, *sql.Tx, river.JobArgs, *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -58,7 +64,7 @@ func TestInstallStartStoresIdentitiesAndQueuesOperationOnlyArgs(t *testing.T) {
 			ChecksumSHA256: "published-digest",
 		}},
 	}}
-	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedRiverClient{})
+	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedRiverClient{}, toolsDirectoryFixture(t.TempDir()))
 	operation, err := installs.Start(context.Background(), tools.PackageFPCalc, "v1.6.1", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -92,11 +98,38 @@ func TestInstallStartStoresIdentitiesAndQueuesOperationOnlyArgs(t *testing.T) {
 func TestInstallStartRequiresCompleteLogicalPackage(t *testing.T) {
 	enqueuer := new(installEnqueuerFixture)
 	catalog := installCatalogFixture{release: tools.Release{Identity: "9.0.2", Artifacts: []tools.Artifact{{Name: "ffmpeg.zip"}}}}
-	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}, unusedRiverClient{})
+	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}, unusedRiverClient{}, toolsDirectoryFixture(t.TempDir()))
 	if _, err := installs.Start(context.Background(), tools.PackageFFmpeg, "9.0.2", nil); err == nil {
 		t.Fatal("incomplete macOS FFmpeg package was accepted")
 	}
 	if enqueuer.operation != nil || enqueuer.installation != nil {
 		t.Fatal("invalid package was persisted")
+	}
+}
+
+func TestInstallStartRejectsStalePreflightAfterUnknownTargetAppears(t *testing.T) {
+	enqueuer := new(installEnqueuerFixture)
+	catalog := installCatalogFixture{release: tools.Release{
+		Identity:  "8.0",
+		Artifacts: []tools.Artifact{{Name: "ffmpeg-8.0-linux64-gpl.tar.xz"}},
+	}}
+	root := t.TempDir()
+	installs := service.NewInstallOperations(enqueuer, catalog, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, unusedRiverClient{}, toolsDirectoryFixture(root))
+	plan, err := installs.Preflight(context.Background(), tools.PackageFFmpeg, "8.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict := filepath.Join(root, "ffmpeg", "8.0", "ffmpeg")
+	if err := os.MkdirAll(filepath.Dir(conflict), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conflict, []byte("unknown"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installs.StartFromPreflight(context.Background(), plan, nil); err == nil {
+		t.Fatal("installation used stale preflight after an unknown target appeared")
+	}
+	if enqueuer.operation != nil {
+		t.Fatal("stale preflight created an operation")
 	}
 }

@@ -26,7 +26,9 @@ func main() {
 		}()
 		writer = file
 	}
-	if err := json.NewEncoder(writer).Encode(api.New(chi.NewRouter()).OpenAPI()); err != nil {
+	humaAPI := api.New(chi.NewRouter())
+	api.RegisterAll(humaAPI, api.Dependencies{})
+	if err := json.NewEncoder(writer).Encode(humaAPI.OpenAPI()); err != nil {
 		log.Fatal(err)
 	}
 }

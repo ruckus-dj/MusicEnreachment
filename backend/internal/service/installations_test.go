@@ -26,6 +26,13 @@ func (fixture *installationRepositoryFixture) GetInstallation(context.Context, u
 	return fixture.installation, nil
 }
 
+func (fixture *installationRepositoryFixture) ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error) {
+	if fixture.installation == nil {
+		return nil, nil
+	}
+	return []persistence.ToolInstallation{*fixture.installation}, nil
+}
+
 func (*installationRepositoryFixture) DeleteInstallation(context.Context, uuid.UUID, string, string, string, string, func(*persistence.ToolInstallation) error) error {
 	return nil
 }

@@ -55,6 +55,9 @@ func PreflightTargets(root string, kind PackageKind, version, goos string, known
 	for _, name := range ExpectedExecutables(kind, goos) {
 		target := filepath.Join(root, relative, name)
 		result.Targets = append(result.Targets, target)
+		if err := rejectSymlinkAncestors(root, filepath.Dir(target)); err != nil {
+			return Preflight{}, err
+		}
 		if info, err := os.Lstat(target); err == nil {
 			if info.IsDir() || (!info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0) {
 				return Preflight{}, fmt.Errorf("managed executable target has unsupported file type: %s", target)

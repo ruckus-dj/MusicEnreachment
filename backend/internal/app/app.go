@@ -91,7 +91,8 @@ func Run(ctx context.Context, config Config) error {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
 		}
-	})
+		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
+	}, jobs.NewCleanupPeriodicJob())
 	if err != nil {
 		return err
 	}
@@ -102,6 +103,17 @@ func Run(ctx context.Context, config Config) error {
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
 	}()
+	apiOperations := service.NewOperationsWithRiver(setupManagerRepository, riverClient)
+	toolCatalog := service.NewCatalogService(catalog, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	})
+	installOperations := service.NewInstallOperations(setupManagerRepository, catalog, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	}, riverClient, registry)
+	installations := service.NewInstallations(setupManagerRepository, platform.Platform, registry, tools.NewLifecycle(nil), registry)
+	moveTools := service.NewMoveTools(setupManagerRepository, registry, tools.Platform{
+		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
+	}, riverClient)
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -109,8 +121,11 @@ func Run(ctx context.Context, config Config) error {
 	router.Use(api.RequestLogger(logger))
 	router.Use(api.RecoverPanics(logger))
 	router.Get("/health/live", api.Liveness)
-	router.Get("/health/ready", api.Readiness(sqldb))
-	router.Mount("/api", api.HandlerWithSetup(setup))
+	router.Get("/health/ready", api.Readiness(sqldb, platform))
+	router.Mount("/api", api.HandlerWithDependencies(api.Dependencies{
+		Setup: setup, Catalog: toolCatalog, InstallOperations: installOperations,
+		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
+	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{
 		Addr:              config.HTTPAddress,

@@ -27,7 +27,7 @@ func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Cl
 	return StartWithWorkers(ctx, databaseURL, database, nil)
 }
 
-func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers)) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
 	if database == nil {
 		return nil, nil, fmt.Errorf("start River: database pool is required")
 	}
@@ -55,8 +55,9 @@ func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB,
 		register(workers)
 	}
 	client, err := river.NewClient(driver, &river.Config{
-		Workers: workers,
-		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+		Workers:      workers,
+		Queues:       map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+		PeriodicJobs: periodicJobs,
 	})
 	if err != nil {
 		listenerPool.Close()
