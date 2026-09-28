@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { AppButton } from "../components/AppButton";
+import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 
 type Route = "/" | "/settings" | "/setup";
@@ -44,7 +45,7 @@ export function AppShell() {
             }}
           />
         ) : route === "/settings" ? (
-          "Настройки будут доступны после Setup Manager."
+          <SettingsScreen />
         ) : (
           "Приложение готово к настройке."
         )}

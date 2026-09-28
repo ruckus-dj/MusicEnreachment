@@ -12,7 +12,7 @@ describe("AppShell", () => {
     window.location.hash = "/settings";
     const { container } = render(<AppShell />);
     expect(within(container).getByRole("main").textContent).toContain(
-      "Setup Manager",
+      "Managed tools",
     );
     window.location.hash = "";
   });
