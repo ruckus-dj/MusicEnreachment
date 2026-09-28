@@ -26,7 +26,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err != nil {
 			return nil, err
 		}
-		return &SetupStateOutput{Body: setupStateBody{Completed: state.Completed, ConfigurationHealth: state.ConfigurationHealth, Problems: state.Problems}}, nil
+		return &SetupStateOutput{Body: setupStateBody{Completed: state.Completed, ConfigurationHealth: state.ConfigurationHealth.Healthy, Problems: state.ConfigurationHealth.Problems}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "save-setup-runtime", Method: http.MethodPut, Path: "/setup/runtime"}, func(ctx context.Context, input *SaveSetupInput) (*struct{}, error) {
 		if err := setup.SaveRuntime(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {

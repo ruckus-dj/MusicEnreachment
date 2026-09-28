@@ -11,15 +11,21 @@ import (
 )
 
 const (
-	PlatformGOOSKey             = "instance.goos"
-	PlatformGOARCHKey           = "instance.goarch"
-	ToolsDirectoryKey           = "tools_directory"
-	OutputDirectoryKey          = "output_directory"
-	PublicationFormatKey        = "publication_format"
-	LogLevelKey                 = "log_level"
-	ActiveFFmpegInstallationKey = "active_ffmpeg_installation_id"
-	ActiveFPCalcInstallationKey = "active_fpcalc_installation_id"
-	SetupCompletedAtKey         = "setup_completed_at"
+	PlatformGOOSKey               = "instance.goos"
+	PlatformGOARCHKey             = "instance.goarch"
+	ToolsDirectoryKey             = "tools_directory"
+	OutputDirectoryKey            = "output_directory"
+	OutputCaseSensitiveKey        = "output_case_sensitive"
+	OutputUnicodeNormalizationKey = "output_unicode_normalization"
+	PublicationFormatKey          = "publication_format"
+	MusicBrainzModeKey            = "musicbrainz_mode"
+	MusicBrainzBaseURLKey         = "musicbrainz_base_url"
+	MusicBrainzVerifiedAtKey      = "musicbrainz_verified_at"
+	LRCLIBEnabledKey              = "lrclib_enabled"
+	LogLevelKey                   = "log_level"
+	ActiveFFmpegInstallationKey   = "active_ffmpeg_installation_id"
+	ActiveFPCalcInstallationKey   = "active_fpcalc_installation_id"
+	SetupCompletedAtKey           = "setup_completed_at"
 )
 
 type Store interface {
@@ -38,6 +44,17 @@ type PlatformState struct {
 	Platform   Platform
 	Diagnostic bool
 	Reason     string
+}
+
+type MusicBrainzConfig struct {
+	Mode       string // "public" or "self-hosted"
+	BaseURL    string // empty for public, HTTP(S) URL for self-hosted
+	VerifiedAt *time.Time
+}
+
+type ConfigurationHealth struct {
+	Healthy  bool
+	Problems []string
 }
 
 type Registry struct {
@@ -106,6 +123,199 @@ func (r *Registry) CompleteSetup(ctx context.Context) error {
 func (r *Registry) SetupCompleted(ctx context.Context) (bool, error) {
 	_, ok, err := r.store.Get(ctx, SetupCompletedAtKey)
 	return ok, err
+}
+
+// GetToolsDirectory returns the normalized tools directory path.
+func (r *Registry) GetToolsDirectory(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, ToolsDirectoryKey)
+}
+
+// SetToolsDirectory validates and stores the normalized tools directory path.
+func (r *Registry) SetToolsDirectory(ctx context.Context, path string, outputDirectory string) error {
+	normalized, err := NormalizePath(path)
+	if err != nil {
+		return fmt.Errorf("tools directory: %w", err)
+	}
+	if outputDirectory != "" && PathsOverlap(normalized, outputDirectory) {
+		return fmt.Errorf("tools directory overlaps with output directory")
+	}
+	if err := ProbeWritableEmpty(normalized); err != nil {
+		return fmt.Errorf("tools directory: %w", err)
+	}
+	return r.store.Set(ctx, ToolsDirectoryKey, normalized)
+}
+
+// GetOutputDirectory returns the normalized output directory path.
+func (r *Registry) GetOutputDirectory(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, OutputDirectoryKey)
+}
+
+// SetOutputDirectory validates, probes filesystem semantics, and stores the output directory.
+func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDirectory string) error {
+	normalized, err := NormalizePath(path)
+	if err != nil {
+		return fmt.Errorf("output directory: %w", err)
+	}
+	if toolsDirectory != "" && PathsOverlap(normalized, toolsDirectory) {
+		return fmt.Errorf("output directory overlaps with tools directory")
+	}
+	if err := ProbeWritableEmpty(normalized); err != nil {
+		return fmt.Errorf("output directory: %w", err)
+	}
+
+	// Probe filesystem semantics
+	semantics, err := ProbeFilesystemSemantics(normalized)
+	if err != nil {
+		return fmt.Errorf("probe filesystem semantics: %w", err)
+	}
+
+	// Store all three values atomically by validating first, then setting
+	if err := r.store.Set(ctx, OutputDirectoryKey, normalized); err != nil {
+		return err
+	}
+	if err := r.store.Set(ctx, OutputCaseSensitiveKey, fmt.Sprintf("%t", semantics.CaseSensitive)); err != nil {
+		return err
+	}
+	return r.store.Set(ctx, OutputUnicodeNormalizationKey, semantics.UnicodeNormalization)
+}
+
+// GetOutputFilesystemSemantics returns the probed filesystem characteristics.
+func (r *Registry) GetOutputFilesystemSemantics(ctx context.Context) (FilesystemSemantics, error) {
+	caseSensitive, csExists, err := r.store.Get(ctx, OutputCaseSensitiveKey)
+	if err != nil {
+		return FilesystemSemantics{}, err
+	}
+	unicodeNorm, unExists, err := r.store.Get(ctx, OutputUnicodeNormalizationKey)
+	if err != nil {
+		return FilesystemSemantics{}, err
+	}
+	if !csExists || !unExists {
+		return FilesystemSemantics{}, fmt.Errorf("filesystem semantics not probed")
+	}
+	return FilesystemSemantics{
+		CaseSensitive:        caseSensitive == "true",
+		UnicodeNormalization: unicodeNorm,
+	}, nil
+}
+
+// GetPublicationFormat returns "source" or "mka".
+func (r *Registry) GetPublicationFormat(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, PublicationFormatKey)
+}
+
+// SetPublicationFormat validates and stores the publication format.
+func (r *Registry) SetPublicationFormat(ctx context.Context, format string) error {
+	if format != "source" && format != "mka" {
+		return fmt.Errorf("publication format must be 'source' or 'mka'")
+	}
+	return r.store.Set(ctx, PublicationFormatKey, format)
+}
+
+// GetMusicBrainzConfig returns the current MusicBrainz configuration.
+func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig, error) {
+	mode, _, err := r.store.Get(ctx, MusicBrainzModeKey)
+	if err != nil {
+		return MusicBrainzConfig{}, err
+	}
+	if mode == "" {
+		mode = "public"
+	}
+
+	baseURL, _, err := r.store.Get(ctx, MusicBrainzBaseURLKey)
+	if err != nil {
+		return MusicBrainzConfig{}, err
+	}
+
+	var verifiedAt *time.Time
+	if verifiedStr, exists, err := r.store.Get(ctx, MusicBrainzVerifiedAtKey); err != nil {
+		return MusicBrainzConfig{}, err
+	} else if exists && verifiedStr != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, verifiedStr); parseErr == nil {
+			verifiedAt = &parsed
+		}
+	}
+
+	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, VerifiedAt: verifiedAt}, nil
+}
+
+// SetMusicBrainzConfig validates and stores MusicBrainz configuration.
+// Changing the configuration invalidates the previous verification.
+func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL string) error {
+	if mode != "public" && mode != "self-hosted" {
+		return fmt.Errorf("musicbrainz mode must be 'public' or 'self-hosted'")
+	}
+	if mode == "self-hosted" && (baseURL == "" || (!strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://"))) {
+		return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
+	}
+	if mode == "public" {
+		baseURL = "" // Public mode ignores base URL
+	}
+
+	if err := r.store.Set(ctx, MusicBrainzModeKey, mode); err != nil {
+		return err
+	}
+	if err := r.store.Set(ctx, MusicBrainzBaseURLKey, baseURL); err != nil {
+		return err
+	}
+	// Clear verification timestamp when config changes
+	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, "")
+}
+
+// MarkMusicBrainzVerified records successful connectivity check.
+func (r *Registry) MarkMusicBrainzVerified(ctx context.Context) error {
+	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+}
+
+// GetLRCLIBEnabled returns whether LRCLIB integration is enabled.
+func (r *Registry) GetLRCLIBEnabled(ctx context.Context) (bool, error) {
+	value, exists, err := r.store.Get(ctx, LRCLIBEnabledKey)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return true, nil // Enabled by default
+	}
+	return value == "true", nil
+}
+
+// SetLRCLIBEnabled stores the LRCLIB integration flag.
+func (r *Registry) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
+	return r.store.Set(ctx, LRCLIBEnabledKey, fmt.Sprintf("%t", enabled))
+}
+
+// ComputeConfigurationHealth checks all required settings and returns health status.
+func (r *Registry) ComputeConfigurationHealth(ctx context.Context, platform PlatformState) ConfigurationHealth {
+	health := ConfigurationHealth{Healthy: true}
+
+	if platform.Diagnostic {
+		health.Healthy = false
+		health.Problems = append(health.Problems, platform.Reason)
+	}
+
+	requiredKeys := []string{
+		ToolsDirectoryKey,
+		OutputDirectoryKey,
+		PublicationFormatKey,
+		ActiveFFmpegInstallationKey,
+		ActiveFPCalcInstallationKey,
+	}
+
+	for _, key := range requiredKeys {
+		value, exists, err := r.store.Get(ctx, key)
+		if err != nil || !exists || value == "" {
+			health.Healthy = false
+			health.Problems = append(health.Problems, fmt.Sprintf("missing or invalid %s", key))
+		}
+	}
+
+	// MusicBrainz must have recent successful verification
+	mbConfig, err := r.GetMusicBrainzConfig(ctx)
+	if err != nil || mbConfig.VerifiedAt == nil {
+		health.Healthy = false
+		health.Problems = append(health.Problems, "musicbrainz not verified")
+	}
+
+	return health
 }
 
 func parseLogLevel(value string) (slog.Level, bool) {

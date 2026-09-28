@@ -10,8 +10,7 @@ import (
 
 type SetupState struct {
 	Completed           bool
-	ConfigurationHealth bool
-	Problems            []string
+	ConfigurationHealth settings.ConfigurationHealth
 }
 type SetupService struct {
 	store    settings.Store
@@ -27,42 +26,24 @@ func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 	if err != nil {
 		return SetupState{}, err
 	}
-	state := SetupState{Completed: completed, ConfigurationHealth: !s.platform.Diagnostic}
-	if s.platform.Diagnostic {
-		state.Problems = append(state.Problems, s.platform.Reason)
-	}
-	for _, key := range []string{settings.ToolsDirectoryKey, settings.OutputDirectoryKey, settings.PublicationFormatKey} {
-		if value, ok, err := s.store.Get(ctx, key); err != nil {
-			return SetupState{}, err
-		} else if !ok || value == "" {
-			state.ConfigurationHealth = false
-			state.Problems = append(state.Problems, "missing "+key)
-		}
-	}
-	return state, nil
+	health := s.registry.ComputeConfigurationHealth(ctx, s.platform)
+	return SetupState{Completed: completed, ConfigurationHealth: health}, nil
 }
 func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
 	if strings.TrimSpace(toolsDirectory) != "" {
-		if _, err := settings.NormalizePath(toolsDirectory); err != nil {
-			return fmt.Errorf("tools directory: %w", err)
-		}
-		if err := s.store.Set(ctx, settings.ToolsDirectoryKey, toolsDirectory); err != nil {
+		currentOutput, _, _ := s.registry.GetOutputDirectory(ctx)
+		if err := s.registry.SetToolsDirectory(ctx, toolsDirectory, currentOutput); err != nil {
 			return err
 		}
 	}
 	if strings.TrimSpace(outputDirectory) != "" {
-		if _, err := settings.NormalizePath(outputDirectory); err != nil {
-			return fmt.Errorf("output directory: %w", err)
-		}
-		if err := s.store.Set(ctx, settings.OutputDirectoryKey, outputDirectory); err != nil {
+		currentTools, _, _ := s.registry.GetToolsDirectory(ctx)
+		if err := s.registry.SetOutputDirectory(ctx, outputDirectory, currentTools); err != nil {
 			return err
 		}
 	}
-	if publicationFormat != "" && publicationFormat != "source" && publicationFormat != "mka" {
-		return fmt.Errorf("invalid publication format")
-	}
 	if publicationFormat != "" {
-		return s.store.Set(ctx, settings.PublicationFormatKey, publicationFormat)
+		return s.registry.SetPublicationFormat(ctx, publicationFormat)
 	}
 	return nil
 }
@@ -71,8 +52,8 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !state.ConfigurationHealth {
-		return fmt.Errorf("setup requirements are not met: %s", strings.Join(state.Problems, ", "))
+	if !state.ConfigurationHealth.Healthy {
+		return fmt.Errorf("setup requirements are not met: %s", strings.Join(state.ConfigurationHealth.Problems, ", "))
 	}
 	return s.registry.CompleteSetup(ctx)
 }

@@ -7,31 +7,65 @@ import (
 )
 
 func TestSetupCanOnlyCompleteWithRequiredSettings(t *testing.T) {
-	store := memoryStore{}
+	store := newMemoryStore()
 	registry := settings.New(store, nil)
-	setup := NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}})
-	if err := setup.Complete(context.Background()); err == nil {
-		t.Fatal("incomplete setup completed")
+	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
+	service := NewSetup(store, registry, platform)
+	ctx := context.Background()
+
+	if err := service.Complete(ctx); err == nil {
+		t.Fatal("complete succeeded without required settings")
 	}
-	if err := setup.SaveRuntime(context.Background(), t.TempDir(), t.TempDir()+"/output", "mka"); err != nil {
+
+	if err := registry.SetToolsDirectory(ctx, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := setup.Complete(context.Background()); err != nil {
+	if err := registry.SetOutputDirectory(ctx, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
+	}
+	if err := registry.SetPublicationFormat(ctx, "mka"); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.MarkMusicBrainzVerified(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(ctx, settings.ActiveFFmpegInstallationKey, "test-ffmpeg-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(ctx, settings.ActiveFPCalcInstallationKey, "test-fpcalc-id"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Complete(ctx); err != nil {
+		t.Fatalf("complete failed with all required settings: %v", err)
+	}
+
+	completed, err := registry.SetupCompleted(ctx)
+	if err != nil || !completed {
+		t.Fatalf("setup not marked completed: %v, %v", completed, err)
 	}
 }
 
-type memoryStore map[string]string
+func newMemoryStore() *memoryStore {
+	return &memoryStore{data: make(map[string]string)}
+}
 
-func (m memoryStore) Get(_ context.Context, k string) (string, bool, error) {
-	v, ok := m[k]
+type memoryStore struct {
+	data map[string]string
+}
+
+func (m *memoryStore) Get(_ context.Context, k string) (string, bool, error) {
+	v, ok := m.data[k]
 	return v, ok, nil
 }
-func (m memoryStore) Set(_ context.Context, k, v string) error { m[k] = v; return nil }
-func (m memoryStore) SetIfAbsent(_ context.Context, k, v string) (string, error) {
-	if x, ok := m[k]; ok {
+func (m *memoryStore) Set(_ context.Context, k, v string) error { m.data[k] = v; return nil }
+func (m *memoryStore) SetIfAbsent(_ context.Context, k, v string) (string, error) {
+	if x, ok := m.data[k]; ok {
 		return x, nil
 	}
-	m[k] = v
+	m.data[k] = v
 	return v, nil
 }

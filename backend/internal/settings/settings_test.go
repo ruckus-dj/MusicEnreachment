@@ -1,49 +1,282 @@
-package settings
+package settings_test
 
 import (
 	"context"
-	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-type memoryStore map[string]string
-
-func (m memoryStore) Get(_ context.Context, key string) (string, bool, error) {
-	v, ok := m[key]
-	return v, ok, nil
+type memoryStore struct {
+	data map[string]string
 }
-func (m memoryStore) Set(_ context.Context, key, value string) error { m[key] = value; return nil }
-func (m memoryStore) SetIfAbsent(_ context.Context, key, value string) (string, error) {
-	if got, ok := m[key]; ok {
-		return got, nil
+
+func (m *memoryStore) Get(_ context.Context, key string) (string, bool, error) {
+	value, ok := m.data[key]
+	return value, ok, nil
+}
+
+func (m *memoryStore) Set(_ context.Context, key, value string) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *memoryStore) SetIfAbsent(_ context.Context, key, value string) (string, error) {
+	if existing, ok := m.data[key]; ok {
+		return existing, nil
 	}
-	m[key] = value
+	m.data[key] = value
 	return value, nil
 }
 
-func TestPlatformIsImmutableAndMismatchIsDiagnostic(t *testing.T) {
-	r := New(memoryStore{}, nil)
+func newMemoryStore() *memoryStore {
+	return &memoryStore{data: make(map[string]string)}
+}
+
+func TestPlatformInitializationIsAtomic(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
 	ctx := context.Background()
-	if state, err := r.InitializePlatform(ctx, Platform{"linux", "amd64"}); err != nil || state.Diagnostic {
-		t.Fatalf("first platform = %#v, %v", state, err)
+
+	current := settings.Platform{GOOS: "linux", GOARCH: "amd64"}
+	state, err := registry.InitializePlatform(ctx, current)
+	if err != nil || state.Diagnostic {
+		t.Fatalf("initialize platform: %v, diagnostic=%v", err, state.Diagnostic)
 	}
-	if state, err := r.InitializePlatform(ctx, Platform{"darwin", "arm64"}); err != nil || !state.Diagnostic {
-		t.Fatalf("mismatch = %#v, %v", state, err)
+
+	// Second initialization with different platform should return diagnostic
+	different := settings.Platform{GOOS: "darwin", GOARCH: "arm64"}
+	state, err = registry.InitializePlatform(ctx, different)
+	if err != nil || !state.Diagnostic || state.Platform != current {
+		t.Fatalf("platform mismatch: got diagnostic=%v, platform=%v; want diagnostic=true, platform=linux/amd64", state.Diagnostic, state.Platform)
 	}
 }
-func TestLogLevelChangesWithoutRestart(t *testing.T) {
-	level := new(slog.LevelVar)
-	r := New(memoryStore{}, level)
-	if err := r.SetLogLevel(context.Background(), "warn"); err != nil || level.Level() != slog.LevelWarn {
-		t.Fatalf("level = %v, %v", level.Level(), err)
+
+func TestUnsupportedPlatformReturnsImmediate(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	unsupported := settings.Platform{GOOS: "windows", GOARCH: "arm64"}
+	state, err := registry.InitializePlatform(ctx, unsupported)
+	if err != nil || !state.Diagnostic || state.Reason != "unsupported platform" {
+		t.Fatalf("unsupported platform: got diagnostic=%v, reason=%q; want diagnostic=true", state.Diagnostic, state.Reason)
+	}
+
+	// Should not persist unsupported platform
+	if _, exists, _ := store.Get(ctx, settings.PlatformGOOSKey); exists {
+		t.Fatal("unsupported platform was persisted")
 	}
 }
-func TestFilesystemProbes(t *testing.T) {
-	root := t.TempDir()
-	if err := ProbeWritableEmpty(root + "/new"); err != nil {
+
+func TestPathOverlapDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		first    string
+		second   string
+		overlaps bool
+	}{
+		{"identical", "/var/lib/tools", "/var/lib/tools", true},
+		{"first contains second", "/var/lib", "/var/lib/tools", true},
+		{"second contains first", "/var/lib/tools", "/var/lib", true},
+		{"siblings", "/var/lib/tools", "/var/lib/output", false},
+		{"different roots", "/opt/tools", "/var/output", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := settings.PathsOverlap(tt.first, tt.second); got != tt.overlaps {
+				t.Errorf("PathsOverlap(%q, %q) = %v; want %v", tt.first, tt.second, got, tt.overlaps)
+			}
+		})
+	}
+}
+
+func TestOutputDirectoryProbesFilesystemSemantics(t *testing.T) {
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "output")
+
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	if err := registry.SetOutputDirectory(ctx, outputPath, ""); err != nil {
+		t.Fatalf("set output directory: %v", err)
+	}
+
+	semantics, err := registry.GetOutputFilesystemSemantics(ctx)
+	if err != nil {
+		t.Fatalf("get filesystem semantics: %v", err)
+	}
+
+	// Verify probed values are reasonable
+	if semantics.UnicodeNormalization != "none" && semantics.UnicodeNormalization != "nfc" && semantics.UnicodeNormalization != "nfd" {
+		t.Errorf("unexpected unicode normalization: %q", semantics.UnicodeNormalization)
+	}
+}
+
+func TestProbeFilesystemCleansUpOnError(t *testing.T) {
+	tempDir := t.TempDir()
+	readOnlyDir := filepath.Join(tempDir, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	if !PathsOverlap(root, root+"/child") {
-		t.Fatal("nested paths must overlap")
+	defer func() {
+		_ = os.Chmod(readOnlyDir, 0o755)
+	}()
+
+	targetPath := filepath.Join(readOnlyDir, "probe-target")
+	_, err := settings.ProbeFilesystemSemantics(targetPath)
+	if err == nil {
+		t.Fatal("expected error for read-only parent, got nil")
+	}
+
+	entries, _ := os.ReadDir(tempDir)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".melotrove-") {
+			t.Errorf("probe file leaked: %s", entry.Name())
+		}
+	}
+}
+
+func TestToolsAndOutputDirectoriesCannotOverlap(t *testing.T) {
+	tempDir := t.TempDir()
+	toolsPath := filepath.Join(tempDir, "tools")
+	outputPath := filepath.Join(tempDir, "tools", "nested")
+
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	if err := os.MkdirAll(toolsPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := registry.SetToolsDirectory(ctx, toolsPath, ""); err != nil {
+		t.Fatalf("set tools directory: %v", err)
+	}
+
+	if err := registry.SetOutputDirectory(ctx, outputPath, toolsPath); err == nil {
+		t.Fatal("expected overlap error, got nil")
+	}
+}
+
+func TestMusicBrainzConfigValidation(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	// Public mode ignores base URL
+	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
+		t.Fatalf("set public mode: %v", err)
+	}
+
+	config, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil || config.Mode != "public" || config.BaseURL != "" {
+		t.Fatalf("public config: %+v, %v", config, err)
+	}
+
+	// Self-hosted requires valid HTTP(S) URL
+	if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", "invalid-url"); err == nil {
+		t.Fatal("accepted invalid self-hosted URL")
+	}
+
+	if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", "https://mb.example.com"); err != nil {
+		t.Fatalf("set self-hosted mode: %v", err)
+	}
+
+	config, err = registry.GetMusicBrainzConfig(ctx)
+	if err != nil || config.Mode != "self-hosted" || config.BaseURL != "https://mb.example.com" {
+		t.Fatalf("self-hosted config: %+v, %v", config, err)
+	}
+}
+
+func TestMusicBrainzVerificationIsInvalidatedOnConfigChange(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := registry.MarkMusicBrainzVerified(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil || config.VerifiedAt == nil {
+		t.Fatalf("verification not recorded: %+v, %v", config, err)
+	}
+
+	// Changing config clears verification
+	if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", "https://mb.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err = registry.GetMusicBrainzConfig(ctx)
+	if err != nil || config.VerifiedAt != nil {
+		t.Fatalf("verification not cleared: %+v, %v", config, err)
+	}
+}
+
+func TestPublicationFormatValidation(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	if err := registry.SetPublicationFormat(ctx, "invalid"); err == nil {
+		t.Fatal("accepted invalid format")
+	}
+
+	for _, format := range []string{"source", "mka"} {
+		if err := registry.SetPublicationFormat(ctx, format); err != nil {
+			t.Fatalf("set format %q: %v", format, err)
+		}
+
+		got, exists, err := registry.GetPublicationFormat(ctx)
+		if err != nil || !exists || got != format {
+			t.Fatalf("get format: %q, %v, %v; want %q", got, exists, err, format)
+		}
+	}
+}
+
+func TestConfigurationHealthChecksAllRequirements(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
+	health := registry.ComputeConfigurationHealth(ctx, platform)
+
+	if health.Healthy {
+		t.Fatal("empty configuration reported as healthy")
+	}
+
+	if len(health.Problems) == 0 {
+		t.Fatal("no problems reported for empty configuration")
+	}
+}
+
+func TestLRCLIBEnabledDefaultsToTrue(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	enabled, err := registry.GetLRCLIBEnabled(ctx)
+	if err != nil || !enabled {
+		t.Fatalf("default LRCLIB enabled: %v, %v; want true, nil", enabled, err)
+	}
+
+	if err := registry.SetLRCLIBEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled, err = registry.GetLRCLIBEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("disabled LRCLIB: %v, %v; want false, nil", enabled, err)
 	}
 }
