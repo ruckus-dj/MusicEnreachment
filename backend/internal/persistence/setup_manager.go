@@ -211,6 +211,59 @@ func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Conte
 	})
 }
 
+func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string, removeFiles func(*ToolInstallation) error) error {
+	if removeFiles == nil {
+		return fmt.Errorf("delete installation: filesystem remover is required")
+	}
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("lock active operations for installation deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
+			return fmt.Errorf("lock active installation: %w", err)
+		}
+		installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if installation.PackageKind != packageKind || installation.PlatformGOOS != goos ||
+			installation.PlatformGOARCH != goarch || (installation.State != "ready" && installation.State != "failed") {
+			return fmt.Errorf("installation is not deletable for %s/%s", goos, goarch)
+		}
+		var activeSettingValue string
+		err = tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", activeSetting).
+			Scan(ctx, &activeSettingValue)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read active installation setting: %w", err)
+		}
+		if activeSettingValue == id.String() {
+			return fmt.Errorf("cannot delete active installation")
+		}
+		conflicts, err := repository.ListActiveOperationConflictsForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if len(conflicts) != 0 {
+			return fmt.Errorf("cannot delete installation with an active operation")
+		}
+		var operationID uuid.UUID
+		err = tx.NewRaw("SELECT id FROM operation WHERE target_installation_id = ? LIMIT 1", id).Scan(ctx, &operationID)
+		if err == nil {
+			return fmt.Errorf("cannot delete installation referenced by an operation snapshot")
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("check installation operation snapshots: %w", err)
+		}
+		if err := removeFiles(installation); err != nil {
+			return fmt.Errorf("remove managed installation files: %w", err)
+		}
+		if _, err := tx.NewDelete().Model(installation).WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("delete tool installation: %w", err)
+		}
+		return nil
+	})
+}
+
 func (repository *SetupManagerRepository) GetOperation(ctx context.Context, id uuid.UUID) (*Operation, error) {
 	operation := new(Operation)
 	if err := repository.db.NewSelect().Model(operation).Where("id = ?", id).Scan(ctx); err != nil {

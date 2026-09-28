@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,12 +15,25 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
+
+type testToolsDirectory string
+
+func (directory testToolsDirectory) GetToolsDirectory(context.Context) (string, bool, error) {
+	return string(directory), true, nil
+}
+
+type acceptingInstallationVerifier struct{}
+
+func (acceptingInstallationVerifier) VerifyInstallation(context.Context, string, string, tools.PackageKind, string, string) (map[string]string, error) {
+	return map[string]string{"ffmpeg": "ffmpeg version 7.1", "ffprobe": "ffprobe version 7.1"}, nil
+}
 
 type transactionTestArgs struct{}
 
@@ -124,11 +139,11 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	ready := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
-	activations := service.NewInstallations(repository, settings.Platform{GOOS: "linux", GOARCH: "amd64"})
+	activations := service.NewInstallations(repository, settings.Platform{GOOS: "linux", GOARCH: "amd64"}, testToolsDirectory("/tools"), acceptingInstallationVerifier{})
 	if err := activations.Activate(ctx, "fpcalc", ready.ID); err == nil {
 		t.Fatal("activation accepted the wrong package")
 	}
-	if err := service.NewInstallations(repository, settings.Platform{GOOS: "darwin", GOARCH: "arm64"}).Activate(ctx, "ffmpeg", ready.ID); err == nil {
+	if err := service.NewInstallations(repository, settings.Platform{GOOS: "darwin", GOARCH: "arm64"}, testToolsDirectory("/tools"), acceptingInstallationVerifier{}).Activate(ctx, "ffmpeg", ready.ID); err == nil {
 		t.Fatal("activation accepted the wrong platform")
 	}
 	unready := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "test", ReleaseIdentity: "6.0", RelativePath: "ffmpeg/6.0", State: "preparing"}
@@ -157,6 +172,75 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	}
 	if err := database.QueryRowContext(ctx, "SELECT setting_value FROM app_setting WHERE setting_name = ?", settings.ActiveFFmpegInstallationKey).Scan(&active); err != nil || (active != ready.ID.String() && active != second.ID.String()) {
 		t.Fatalf("concurrent active installation = %q, %v", active, err)
+	}
+}
+
+func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	ready := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	root := t.TempDir()
+	directory := filepath.Join(root, ready.RelativePath)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe", "operator-note.txt"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := repository.ActivateInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	removeFiles := func(*persistence.ToolInstallation) error {
+		called = true
+		return nil
+	}
+	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, removeFiles); err == nil {
+		t.Fatal("active installation deletion succeeded")
+	}
+	if called {
+		t.Fatal("filesystem callback ran for active installation")
+	}
+
+	if _, err := database.ExecContext(ctx, "DELETE FROM app_setting WHERE setting_name = ?", settings.ActiveFFmpegInstallationKey); err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "delete", State: "queued", Stage: "preflight",
+		InputSnapshot: json.RawMessage(`{"target_identity":"ffmpeg:test:7.1:linux:amd64"}`), TargetInstallationID: &ready.ID,
+	}
+	if err := repository.CreateOperation(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, removeFiles); err == nil {
+		t.Fatal("installation with active operation deletion succeeded")
+	}
+	if called {
+		t.Fatal("filesystem callback ran for busy installation")
+	}
+	if _, err := database.ExecContext(ctx, "DELETE FROM operation WHERE id = ?", operation.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, func(installation *persistence.ToolInstallation) error {
+		called = true
+		return tools.Delete(root, installation.RelativePath, "linux", nil, tools.PackageFFmpeg, installation.ID.String())
+	}); err != nil {
+		t.Fatalf("delete inactive installation: %v", err)
+	}
+	if !called {
+		t.Fatal("filesystem callback was not called")
+	}
+	if _, err := repository.GetInstallation(ctx, ready.ID); err == nil {
+		t.Fatal("deleted installation remains in database")
+	}
+	if _, err := os.Stat(filepath.Join(directory, "operator-note.txt")); err != nil {
+		t.Fatalf("unknown file was deleted: %v", err)
 	}
 }
 
