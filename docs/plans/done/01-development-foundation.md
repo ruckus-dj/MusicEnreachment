@@ -31,8 +31,10 @@ runtime, проверяемые сборки, миграции, API-generation p
   Tailwind CSS, Vite и Orval.
 - Runtime — один Go-процесс: миграции, River workers, HTTP API и встроенный
   frontend. Порядок запуска: миграции → River → HTTP server.
-- Runtime-настройки хранятся в PostgreSQL и изменяются через UI. Переменные
-  окружения допускаются только для подключения к PostgreSQL.
+- Runtime-настройки хранятся в PostgreSQL и изменяются через UI. Реализованный
+  фундамент пока использует env только для подключения к PostgreSQL;
+  утверждённые `HTTP_BIND_ADDRESS`/`HTTP_PORT` добавляются следующим исполняемым
+  планом.
 - Целевые платформы: Linux и macOS в вариантах `amd64` и `arm64`, Windows `amd64`.
   Windows `arm64` пока не поддерживается из-за отсутствия готового `fpcalc`.
   Утверждённые источники бинарников зафиксированы в `docs/design/external-tools.md`.

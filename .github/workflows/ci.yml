@@ -26,3 +26,83 @@ jobs:
           version: v2.14.0
           args: --help
       - run: task verify
+
+  platforms:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+          - name: macOS x64
+            runner: macos-15-intel
+          - name: macOS arm64
+            runner: macos-15
+          - name: Windows x64
+            runner: windows-2025
+          - name: Windows arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Test backend
+        working-directory: backend
+        run: go test ./...
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Stage frontend assets
+        run: node tools/stage-frontend.mjs
+      - name: Prepare backend output
+        run: node tools/prepare-build.mjs
+      - name: Build backend
+        working-directory: backend
+        run: go build -o ../build/backend/ ./cmd/server
+
+  compose-smoke:
+    name: Docker Compose smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify the deployment
+        env:
+          APP_PORT: "18080"
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f deploy/compose/docker-compose.yml)
+          cleanup() {
+            "${compose[@]}" logs --no-color || true
+            "${compose[@]}" down --volumes || true
+          }
+          trap cleanup EXIT
+
+          "${compose[@]}" up --detach --build --wait --wait-timeout 120
+          curl --fail --silent --show-error http://127.0.0.1:18080/health/live |
+            grep --fixed-strings '"status":"live"'
+          curl --fail --silent --show-error http://127.0.0.1:18080/health/ready |
+            grep --fixed-strings '"status":"ready"'
+
+          index=$(curl --fail --silent --show-error http://127.0.0.1:18080/)
+          asset=$(printf '%s' "$index" | sed -n 's/.*src="\([^\"]*\/assets\/[^\"]*\.js\)".*/\1/p')
+          test -n "$asset"
+          curl --fail --silent --show-error --head "http://127.0.0.1:18080$asset" |
+            grep --ignore-case --fixed-strings 'cache-control: public, max-age=31536000, immutable'
+
+          container=$("${compose[@]}" ps --quiet app)
+          "${compose[@]}" stop --timeout 15 app
+          test "$(docker inspect "$container" --format '{{.State.ExitCode}}')" = "0"

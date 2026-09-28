@@ -47,14 +47,29 @@
 
 ### Настройки
 
+- До подключения к БД процесс читает только bootstrap env: `DATABASE_URL`,
+  `HTTP_BIND_ADDRESS` с default `0.0.0.0` и `HTTP_PORT` с default `8080`.
+  Реализация bind/port overrides входит в этот план как небольшое продолжение
+  технического фундамента.
 - Runtime-настройки хранятся в PostgreSQL в EAV-таблице: одна строка на пару
   `setting_name` / `setting_value`.
 - `setting_value` имеет SQL-тип `text`.
 - Реестр настроек в Go задаёт для каждого известного ключа его Go-тип, parser,
-  serializer, допустимость отсутствия и validation. Некорректное значение не
-  записывается.
+  serializer, допустимость отсутствия, validation и признак sensitive.
+  Некорректное значение не записывается.
 - REST API использует типизированные DTO и не открывает generic key/value
   endpoint.
+- Все runtime-настройки, включая log level и credentials внешних APIs,
+  изменяются только через типизированный UI/API; env overrides отсутствуют.
+- Log level поддерживает `debug|info|warn|error`, default `info`, и применяется
+  динамически. До чтения settings startup использует `info`.
+- Sensitive value сохраняется в PostgreSQL в форме, необходимой интеграции, но
+  read DTO возвращает только configured/masked state. Secret не включается в
+  URL, logs, operation errors или копируемую диагностику; replace и clear
+  являются явными operations. PostgreSQL и backups считаются чувствительными.
+- Возможный собственный API key приложения не входит в этап. В будущем он
+  генерируется/перевыпускается в UI, показывается полностью один раз и хранится
+  только как hash.
 - Выбранные установки FFmpeg package и `fpcalc` хранятся как settings со
   значениями-ID. Существование, совместимость и готовность соответствующих
   установок проверяет service layer.
@@ -313,10 +328,13 @@ root и допустимость перехода непосредственно
 
 ## Этапы выполнения
 
-### 1. Схема и typed settings boundary
+### 1. Bootstrap и typed settings boundary
 
-Добавить миграцию, Bun models/repositories и registry известных settings.
-Реализовать типизированное чтение/запись, validation и вычисление Setup readiness.
+Добавить `HTTP_BIND_ADDRESS`/`HTTP_PORT`, их validation и совместимый с выбранным
+port healthcheck. Добавить миграцию, Bun models/repositories и registry известных
+settings, включая sensitive metadata. Реализовать типизированное чтение/запись,
+маскирование secrets, validation, динамический log level и вычисление Setup
+readiness.
 
 **Результат:** настройки сохраняются по шагам, но произвольные ключи и
 невалидные строковые значения не проходят service/API boundary.
@@ -367,11 +385,13 @@ snapshot, реализовать retry и SSE-уведомления без жу
 **Результат:** новый пользователь проходит реальную настройку без ручного
 редактирования конфигов и без фиктивных статусов.
 
-### 7. Tools settings UI
+### 7. Tools и runtime settings UI
 
 Реализовать согласованную часть S16: каталог версий, installed/active states,
 update indicator, ручные install/activate/delete, update check и перенос каталога
-с выбором судьбы старых managed-файлов.
+с выбором судьбы старых managed-файлов. Добавить operational settings, включая
+log level; provider-specific credentials появляются только вместе с контрактом
+соответствующей интеграции и используют общий sensitive-setting boundary.
 
 **Результат:** lifecycle инструментов доступен после Setup и не требует доступа
 к файловой системе или БД вне приложения.
@@ -386,9 +406,12 @@ server/container path, обновить README и примеры запуска.
 
 ### 9. Quality gates
 
-Добавить unit/component tests, HTTP fixture tests, migration discovery/rollback,
-archive traversal tests, job retry tests и Compose smoke scenario. Обновить
-generated contract и сохранить прохождение общего `task verify`.
+Добавить unit/component tests, HTTP fixture tests, migration discovery/rollback
+на реальном PostgreSQL, transactional River enqueue/commit/rollback, archive
+traversal tests и job retry tests. Compose smoke уже выполняется отдельным
+Linux-only GitHub CI job и должен продолжить проходить после изменений этапа.
+Обновить generated contract и сохранить прохождение общего `task verify` и
+platform build/test matrix.
 
 ## Критерии готовности
 
@@ -420,6 +443,10 @@ generated contract и сохранить прохождение общего `ta
     mappings; Windows `arm64` остаётся неподдерживаемым.
 15. OpenAPI/Orval generation, backend/frontend tests, lint и production build
     проходят общие quality gates.
+16. `HTTP_BIND_ADDRESS`/`HTTP_PORT` управляют listener и healthcheck; все
+    остальные runtime settings не имеют env overrides.
+17. Изменение log level применяется без рестарта; sensitive settings никогда не
+    возвращают сохранённое значение и не появляются в logs/diagnostics.
 
 ## План проверки
 

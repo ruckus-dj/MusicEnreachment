@@ -38,11 +38,26 @@ version takes precedence.
 
 ## Development
 
-- Go 1.27 builds and tests the backend.
-- Node.js 24 LTS and npm manage and build the Vite/TypeScript frontend.
-- [Task](https://taskfile.dev/) is the cross-platform task runner for the
-  monorepo. Run `task build`, `task test`, `task generate`, or `task verify`
-  from the repository root.
+Install these prerequisites:
+
+- [Go 1.27](https://go.dev/doc/install);
+- [Node.js 24 LTS](https://nodejs.org/) with npm;
+- [Task 3](https://taskfile.dev/docs/installation);
+- [golangci-lint 2.14](https://golangci-lint.run/docs/welcome/install/);
+- [Docker with Compose](https://docs.docker.com/engine/install/) for the local
+  PostgreSQL deployment and deployment smoke checks;
+- [pre-commit](https://pre-commit.com/#install) for the repository hook.
+
+Install locked frontend dependencies with `task frontend:install`, then run
+`task build`, `task test`, `task generate`, or the complete `task verify` from
+the repository root. Enable the hook with `pre-commit install`. The pre-commit
+hook intentionally runs the complete `task verify`; it can be split into faster
+stages later if repository growth makes that necessary.
+
+For frontend development, `npm --prefix frontend run dev` starts Vite. Its
+`/api` and `/health` requests are proxied to a backend listening on
+`127.0.0.1:8080`, preserving the production same-origin request model without
+CORS.
 
 ## Local launch
 
@@ -54,6 +69,13 @@ underlying Compose command when a detached run is needed.
 To use an external PostgreSQL instance, run `task build` and start
 `./build/backend/server` with `DATABASE_URL` set to its PostgreSQL connection
 URL.
+
+The approved configuration model keeps environment variables limited to startup
+bootstrap: `DATABASE_URL` plus optional `HTTP_BIND_ADDRESS` and `HTTP_PORT`.
+Bind/port overrides are planned but not implemented yet; current builds listen
+on `:8080`. All other settings—including log level and external API keys—belong
+to the runtime UI and PostgreSQL rather than environment variables or config
+files.
 
 Compose persists downloaded tools at `/var/lib/music-enreachment/tools` in the
 `tools-data` volume. The image contains no bundled audio tools. The future Setup

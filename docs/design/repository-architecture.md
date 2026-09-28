@@ -18,8 +18,10 @@
   TypeScript-типы frontend генерируются из этой спецификации.
   Асинхронные механизмы добавляются только когда это требуется продуктовой
   задачей.
-- Runtime-настройки хранятся в PostgreSQL и изменяются через UI/Setup Manager;
-  параметры подключения к БД остаются единственным допустимым env-вводом.
+- Runtime-настройки хранятся в PostgreSQL и изменяются через UI/Setup Manager.
+  Env-ввод ограничен bootstrap-параметрами `DATABASE_URL`,
+  `HTTP_BIND_ADDRESS` и `HTTP_PORT`; provider credentials, log level и domain
+  settings через env не задаются.
 - Базовый Compose запускает PostgreSQL, но поддерживается подключение к внешней
   БД.
 - Bun и River разделяют основной `database/sql` pool. Транзакционный enqueue
@@ -91,7 +93,8 @@
   `NewWithPgxListener`.
 - `integrations` инкапсулирует внешние HTTP API и запуск `ffprobe`/`fpcalc`;
   provider-специфичные структуры не выходят за его границы.
-- `settings` владеет настройками, сохраняемыми в PostgreSQL, и первичной
+- `settings` владеет настройками, сохраняемыми в PostgreSQL, metadata
+  чувствительности/маскирования secrets, динамическим log level и первичной
   настройкой через Setup Manager.
 - `publication` владеет файловой системой управляемой публикации; исходные
   директории читаются через `service` и `integrations` и не изменяются без

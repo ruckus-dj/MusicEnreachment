@@ -39,5 +39,10 @@ Deezer и другие провайдеры относятся к будущим
 сетевого доступа обеспечивает deployment — например, reverse proxy с
 forward-auth. Bundled UI и API работают с одного origin; CORS не требуется.
 
+Environment ограничен bootstrap-конфигурацией: PostgreSQL connection и
+необязательные HTTP bind address/port. Все рабочие настройки, включая log level
+и любые credentials внешних API, изменяются через UI и хранятся в PostgreSQL.
+Сохранённые secrets не возвращаются через API и не попадают в логи или URL.
+
 Каждая новая продуктовая задача должна пройти отдельную полноценную
 проработку до начала реализации.

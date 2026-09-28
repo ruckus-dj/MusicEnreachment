@@ -76,10 +76,29 @@
 
 ## Конфигурация и первичная настройка
 
-- Рабочие настройки приложения задаются только через UI и хранятся в базе
-  данных; конфигурационных файлов и переменных окружения для них нет.
-- Единственное допустимое исключение из переменных окружения — параметры
-  подключения к PostgreSQL.
+- Environment содержит только bootstrap-параметры, необходимые до доступа к БД
+  и UI: обязательный `DATABASE_URL`, а также необязательные
+  `HTTP_BIND_ADDRESS` (default `0.0.0.0`) и `HTTP_PORT` (default `8080`).
+- Все остальные настройки являются runtime-настройками, задаются через UI и
+  хранятся в PostgreSQL. К ним относятся log level, provider endpoints, внешние
+  API keys, пути, limits, schedules и policies. Конфигурационных файлов и
+  дублирующих env overrides для них нет.
+- Log level имеет значения `debug`, `info`, `warn`, `error`, default `info` и
+  применяется без перезапуска. До чтения БД startup использует `info`; startup
+  errors выводятся независимо от сохранённого уровня.
+- Внешние API credentials вводятся и заменяются только через типизированный UI.
+  Сохранённый secret не возвращается через API, показывается как
+  configured/masked и никогда не попадает в URL, logs или копируемую
+  диагностику. Исходный secret хранится в PostgreSQL, потому что нужен для
+  outbound request; поэтому доступ к БД и backups является частью deployment
+  security boundary.
+- Если в будущем приложению понадобится собственный API key, он создаётся и
+  перевыпускается через UI, показывается полностью один раз, а в БД хранится
+  только его hash. Эта возможность не входит в текущую модель доступа и требует
+  отдельной продуктовой проработки.
+- Настройки trusted proxy нет: backend не использует identity headers,
+  client-IP permissions или внутренний rate limiting. Внешний proxy
+  настраивается независимо от приложения.
 - При первом запуске пользователь проходит Setup Manager, который сохраняет
   минимально необходимые настройки.
 
@@ -173,16 +192,31 @@
 ## Проверки и автоматизация качества
 
 - Репозиторий размещается на GitHub.
-- GitHub CI обязательно выполняет тесты и сборку.
+- GitHub CI выполняет полный `task verify` на Linux x64. Отдельная matrix
+  запускает unit tests и production build на реальных GitHub-hosted runners для
+  Linux arm64, macOS x64/arm64 и Windows x64/arm64; Linux x64 уже покрыт полным
+  verify job.
+- Linux-only Compose smoke job собирает production image, запускает PostgreSQL и
+  приложение, ждёт Docker health, проверяет live/ready, embedded UI и immutable
+  asset cache, затем проверяет graceful SIGTERM с exit code `0`.
 - Для backend и frontend обязательны линтеры и форматтеры.
 - Нужны unit-тесты критичной функциональности. E2E-тесты основных
   пользовательских сценариев запланированы, но отложены до прямой
   необходимости.
-- Набор проверок pre-commit должен в точности совпадать с набором проверок
-  GitHub CI.
+- Полный `task verify` остаётся единственным pre-commit hook. Разделение на
+  быстрый pre-commit и полный pre-push откладывается до появления реальной
+  проблемы со временем выполнения. Platform matrix и Compose smoke выполняются
+  только GitHub CI и не входят в локальный hook.
 - Единые команды разработчика и CI — задачи Task: `build`, `test`, `lint`,
   `format`, `generate` и `verify`. Shell-скрипты не являются интерфейсом
   сборки, чтобы локальные команды работали одинаково на Linux, Windows и macOS.
+- Реальные PostgreSQL integration tests не добавляются раньше DB-dependent
+  предметных операций. При появлении persistence/River use cases план этапа
+  обязан включать миграции на чистой БД, transactional `River.InsertTx`, commit,
+  rollback и выполнение job с настоящим PostgreSQL; тест использует отдельный
+  `TEST_DATABASE_URL` и не входит в unit suite без этой переменной.
+- Vite dev server проксирует `/api` и `/health` на backend `127.0.0.1:8080`, не
+  включая CORS и не создавая отдельную development security model.
 - Node.js 24 LTS используется только для frontend-инструментов; npm фиксирует
   их зависимости в `frontend/package-lock.json`.
 - Frontend formatter и linter: Biome.
