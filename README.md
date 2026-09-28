@@ -75,15 +75,17 @@ To use an external PostgreSQL instance, run `task build` and start
 URL.
 
 The approved configuration model keeps environment variables limited to startup
-bootstrap: `DATABASE_URL` plus optional `HTTP_BIND_ADDRESS` and `HTTP_PORT`.
-Bind/port overrides are planned but not implemented yet; current builds listen
-on `:8080`. All other settings—including log level and external API keys—belong
-to the runtime UI and PostgreSQL rather than environment variables or config
-files.
+bootstrap: `DATABASE_URL` plus optional `HTTP_BIND_ADDRESS` (an IP address,
+default `0.0.0.0`) and `HTTP_PORT` (an integer from `1` through `65535`, default
+`8080`). All other settings—including log level and external API keys—belong to
+the runtime UI and PostgreSQL rather than environment variables or config files.
 
 Compose persists downloaded tools at `/var/lib/melotrove/tools` in the
 `tools-data` volume. The image contains no bundled audio tools. The future Setup
 Manager will select this directory and download tools from the approved sources.
+Compose also bind-mounts `${MELOTROVE_OUTPUT_DIR:-./music}` from the host at
+`/var/lib/melotrove/output`; runtime settings use only this server/container
+path, never the host path.
 
 The application API is an internal contract for the bundled web UI. Operational
 probes are available at `/health/live` and `/health/ready`; the image healthcheck

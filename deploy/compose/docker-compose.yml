@@ -9,6 +9,7 @@ services:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     volumes:
       - tools-data:/var/lib/melotrove/tools
+      - ${MELOTROVE_OUTPUT_DIR:-./music}:/var/lib/melotrove/output
     depends_on:
       postgres:
         condition: service_healthy

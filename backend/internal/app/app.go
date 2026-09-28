@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,16 +25,26 @@ import (
 
 type Config struct {
 	DatabaseURL string
+	HTTPAddress string
 	Logger      *slog.Logger
+	LogLevel    *slog.LevelVar
 }
 
 func Run(ctx context.Context, config Config) error {
 	if config.DatabaseURL == "" {
 		return errors.New("DATABASE_URL is required")
 	}
+	level := config.LogLevel
+	if level == nil {
+		level = new(slog.LevelVar)
+		level.Set(slog.LevelInfo)
+	}
 	logger := config.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	}
+	if config.HTTPAddress == "" {
+		config.HTTPAddress = ":8080"
 	}
 
 	sqldb, err := sql.Open("pgx", config.DatabaseURL)
@@ -73,7 +84,7 @@ func Run(ctx context.Context, config Config) error {
 	router.Mount("/api", api.Handler())
 	router.Handle("/*", static.Handler())
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              config.HTTPAddress,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
