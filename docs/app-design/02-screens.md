@@ -35,7 +35,7 @@
 Три рабочие области: слева текстовый поиск releases и кандидаты; в центре трек-лист выбранного релиза; справа свободные входные файлы. Уверенные назначения заполнены. Файлы перетаскиваются на строки либо назначаются через «выбрать файл → назначить». Ниже инспектор тегов/evidence выбранной строки; закреплённый итог показывает выбранные позиции, пустые позиции и остающиеся входящие файлы.
 
 - Кандидат: title, артисты в порядке, дата издания, страна, label/catalog number, формат носителя, число носителей и позиций, disambiguation, MBID/ссылка, дата кэша.
-- Доказательства **по позиции**: raw/normalized значения, длительность и Δ, method, fingerprint/MBID и причины конфликтов. Будущий backend предоставляет score, веса и вклады; в макете числовая формула не выдумывается, fixture-verdict явно подписан.
+- Доказательства **по позиции**: raw/normalized значения, длительность и Δ, fingerprint/MBID и причины конфликтов. Будущий backend предоставляет confidence, веса и вклады; в макете числовая формула не выдумывается, fixture-verdict явно подписан.
 - Сравнение: локальное поле → предлагаемое значение; выбор полей для копирования. Сохраняем возможность подтвердить связь без перезаписи ручного названия.
 - Позиции: исходный файл, current track, target medium/position/track_number, title, duration delta. Видны пропуски и несовместимость; разные издания с тем же recording не сливаются.
 - Команды: текстовый поиск, выбор кандидата, назначить/снять/заменить файл, выбрать публикуемые позиции, preview. Drop на занятую строку требует подтверждения. Повторное использование одного файла допускается явно, не ломая M:N.
@@ -79,14 +79,19 @@
 
 Breadcrumb: релиз → носитель → отображаемый номер. Title override показан как «Название в этом релизе», recording.title как «Название композиции». Это предотвращает случайную правку всех изданий.
 
-- **Источники:** radio на единственный выбранный вариант; codec/container, lossless, bitrate, sample rate, bit depth, channels, duration, size, quality score + policy version, availability, compatibility, method/confidence, problem details. Текущий опубликованный snapshot отдельным блоком. Несовместимый/недоступный вариант не выбирается.
+- **Источники:** radio на единственный выбранный вариант; codec/container,
+  lossless, bitrate, sample rate, bit depth, channels, duration, size, quality
+  score + policy version, доступные locations, compatibility и decision method.
+  Matching confidence показывается у кандидатов, но не копируется в confirmed
+  source link. Текущий опубликованный snapshot отдельным блоком. Вариант без
+  доступной location или несовместимый вариант не выбирается.
 - **Метаданные:** medium number/title/format, position, display number, overrides, extra tags, enabled. Общий recording редактируется отдельно с перечнем других затрагиваемых позиций и подтверждением области.
 - **Текст:** несколько документов и языков от LRCLIB; plain/synced, expected duration, compatibility exact/probable/manual, источник и дата, preview текста/LRC. Выбрать **один** документ для этой позиции или «Без текста». Не называем plain-текст синхронизированным.
 - **Публикация:** путь, codec/container, snapshot качества, selected lyrics, опубликованная/ожидаемая версия, время, pending attempt и ошибка. Нет аудиоплеера в первой концепции.
 
 ## S07. Артист · макет; общий recording · спецификация
 
-Артист: компактная шапка, релизы раскрываемыми блоками, плотные таблицы треков. Одновременно можно раскрыть несколько альбомов. Доступны отдельная страница альбома и сравнение тегов артиста/альбома в контексте конкретного файла. В полном продукте: name, disambiguation, genres/tags, provider-links/method/confidence. Не добавляем биографию, подписчиков и фото, которых нет в модели.
+Артист: компактная шапка, релизы раскрываемыми блоками, плотные таблицы треков. Одновременно можно раскрыть несколько альбомов. Доступны отдельная страница альбома и сравнение тегов артиста/альбома в контексте конкретного файла. В полном продукте: name, disambiguation, genres/tags и provider links с automatic/manual decision method. Confidence принадлежит кандидатам, а не confirmed links. Не добавляем биографию, подписчиков и фото, которых нет в модели.
 
 Recording: title, упорядоченные артисты, duration, disambiguation, explicit (включая неизвестно), ISRCs, genres/tags, provider-link, все позиции использования, связанные документы lyrics. Общая правка предваряется «Затронет N позиций в M релизах». Artist sync/full discography отложены до проработки.
 
@@ -98,7 +103,10 @@ Recording: title, упорядоченные артисты, duration, disambigu
 
 ## S09. Источники · макет
 
-Карточки/строки корней: display name, canonical path, enabled, доступность, last_scan_at, количество наблюдаемых путей и уникальных вариантов (раздельно). Политика read-only видна всегда.
+Карточки/строки корней: display name, configured server path, enabled,
+доступность, processing mode, время последнего успешного scan, количество
+наблюдаемых путей и уникальных вариантов (раздельно). Политика read-only видна
+всегда.
 
 - «Добавить источник»: имя, серверный абсолютный путь, проверка чтения, enabled. Удаление исходников после успеха выключено и вынесено в опасные настройки.
 - «Сканировать» показывает текущую задачу, не фальшивое мгновенное обновление каталога.
@@ -107,11 +115,23 @@ Recording: title, упорядоченные артисты, duration, disambigu
 
 ## S10. Корень и инспектор варианта · спецификация
 
-Корень: путь, доступность, последняя проверка, дерево относительных путей или плоский фильтруемый список; path/size/mtime, media availability, техническая проблема, число использований.
+Корень: путь, доступность, processing mode, последняя успешная проверка, дерево
+относительных путей или плоский фильтруемый список; exact path/size/mtime,
+техническая проблема и число использований. Отсутствующий после успешного scan
+путь не показывается как `missing`: его location удалена.
 
-Вариант: все `source_location` с resolved path, symlink и временем наблюдения; codec/profile/container, streams, channels/layout, sample rate/format/bits, bitrate, duration/size; observed_tags как массивы; раскрываемый ffprobe JSON; fingerprint status/algorithm/duration/fpcalc version/time, сырой fingerprint только в техническом disclosure.
+Вариант: все фактические `source_location` с root/relative path и временем
+наблюдения; nullable SHA-256 и признак cached variant без locations;
+codec/profile/container, streams, channels/layout, sample rate/format/bits,
+bitrate, duration/size; observed_tags как массивы; раскрываемый ffprobe JSON;
+fingerprint status/algorithm/duration/fpcalc version/time, сырой fingerprint
+только в техническом disclosure.
 
-«Используется в»: все track_source-связи с релизом/позицией/selected/compatible/method/confidence. Несколько путей к одному inode не выдаём за отдельные улучшения качества. Нет ненужного удаления варианта из этого экрана до проработки каскадов.
+«Используется в»: все track_source-связи с релизом/позицией/recording
+MBID/selected/compatible/decision method. Confidence показывается отдельно у
+текущих кандидатов. Несколько locations одного SHA-256 не выдаются за отдельные
+улучшения качества. Variant с digest сохраняется как кэш без locations; orphan
+variant без digest очищается автоматически.
 
 ## S11. Публикации · макет
 
@@ -180,4 +200,4 @@ MusicBrainz: enabled, public/self-hosted, base URL, приоритет, пров
 14. Recording из чужого альбома не переименовывает локальный сборник и не меняет его порядок.
 15. Артисты, все альбомы и все треки доступны как разные представления каталога.
 16. Смена темы не теряет черновик назначений, системный default работает без ручного выбора.
-17. Score объясняется evidence алгоритма, а не выдуманными frontend-весами; ручное назначение не равняется 100%.
+17. Confidence объясняется evidence алгоритма, а не выдуманными frontend-весами; ручное назначение не меняет рассчитанное значение кандидата.

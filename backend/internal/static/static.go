@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"strings"
 )
 
 // Files contains the Vite production build staged here by Task.
@@ -21,12 +22,20 @@ func Handler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Cache-Control", cacheControl(request.URL.Path))
 		if shouldServeIndex(request.URL.Path) {
 			request = request.Clone(request.Context())
 			request.URL.Path = "/"
 		}
 		fileServer.ServeHTTP(writer, request)
 	})
+}
+
+func cacheControl(requestPath string) string {
+	if strings.HasPrefix(requestPath, "/assets/") {
+		return "public, max-age=31536000, immutable"
+	}
+	return "no-cache"
 }
 
 // shouldServeIndex keeps client-side routes reloadable while allowing missing

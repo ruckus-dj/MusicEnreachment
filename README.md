@@ -1,6 +1,9 @@
 # MusicEnreachment
 
-Desktop-oriented web application for managing a personal music library.
+Server application for managing a personal music library, intended primarily
+for deployment on a NAS or another always-on local server. The application is
+operated through a desktop-first web UI; it is not a desktop executable, and a
+mobile-first interface is not a product goal.
 
 ## Supported platforms and external tools
 
@@ -41,6 +44,16 @@ URL.
 Compose persists downloaded tools at `/var/lib/music-enreachment/tools` in the
 `tools-data` volume. The image contains no bundled audio tools. The future Setup
 Manager will select this directory and download tools from the approved sources.
+
+The application API is an internal contract for the bundled web UI. Operational
+probes are available at `/health/live` and `/health/ready`; the image healthcheck
+uses readiness automatically. Runtime logs are structured JSON and every HTTP
+response includes `X-Request-ID` for correlation.
+
+The image currently runs with Docker's default user for straightforward NAS
+volume compatibility. A deployment that manages host permissions can override
+`user: "UID:GID"` in Compose after ensuring that the tools, work, output, and
+database-adjacent mounts required by the app are writable by that identity.
 
 To roll back the last application migration group, stop the application and run
 `task migrate:rollback` with `DATABASE_URL` pointing to the database. This uses

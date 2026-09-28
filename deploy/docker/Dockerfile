@@ -17,4 +17,5 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /music-enreachment /music-enreachment
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/music-enreachment", "-healthcheck"]
 ENTRYPOINT ["/music-enreachment"]

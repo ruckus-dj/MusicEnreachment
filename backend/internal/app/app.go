@@ -5,14 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
@@ -26,11 +24,16 @@ import (
 
 type Config struct {
 	DatabaseURL string
+	Logger      *slog.Logger
 }
 
 func Run(ctx context.Context, config Config) error {
 	if config.DatabaseURL == "" {
 		return errors.New("DATABASE_URL is required")
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	sqldb, err := sql.Open("pgx", config.DatabaseURL)
@@ -46,14 +49,14 @@ func Run(ctx context.Context, config Config) error {
 	if err := applyMigrations(ctx, db); err != nil {
 		return err
 	}
-	log.Print("application migrations complete")
+	logger.InfoContext(ctx, "application migrations complete")
 
 	riverClient, riverListenerPool, err := jobs.Start(ctx, config.DatabaseURL, sqldb)
 	if err != nil {
 		return err
 	}
 	defer riverListenerPool.Close()
-	log.Print("River started")
+	logger.InfoContext(ctx, "River started")
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -61,22 +64,41 @@ func Run(ctx context.Context, config Config) error {
 	}()
 
 	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(api.RequestIDHeader)
+	router.Use(api.RequestLogger(logger))
+	router.Use(api.RecoverPanics(logger))
+	router.Get("/health/live", api.Liveness)
+	router.Get("/health/ready", api.Readiness(sqldb))
 	router.Mount("/api", api.Handler())
 	router.Handle("/*", static.Handler())
-	server := &http.Server{Addr: ":8080", Handler: router}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(stop)
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	serverDone := make(chan struct{})
+	shutdownResult := make(chan error, 1)
 	go func() {
-		<-stop
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdown)
+		select {
+		case <-ctx.Done():
+			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			shutdownResult <- server.Shutdown(shutdown)
+		case <-serverDone:
+			shutdownResult <- nil
+		}
 	}()
 
-	log.Print("HTTP server starting on :8080")
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve HTTP: %w", err)
+	logger.InfoContext(ctx, "HTTP server starting", "address", server.Addr)
+	serveErr := server.ListenAndServe()
+	close(serverDone)
+	if shutdownErr := <-shutdownResult; shutdownErr != nil {
+		logger.Warn("HTTP server did not finish graceful shutdown", "error", shutdownErr)
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP: %w", serveErr)
 	}
 	return nil
 }

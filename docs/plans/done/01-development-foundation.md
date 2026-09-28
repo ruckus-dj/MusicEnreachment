@@ -2,7 +2,7 @@
 
 ## Статус документа
 
-Черновик плана. Этап содержит только утверждённые технические решения из
+Завершённый план. Этап содержит только утверждённые технические решения из
 `docs/design/`. Он не утверждает новые продуктовые сценарии, физическую
 предметную схему или API-контракты.
 
@@ -84,12 +84,15 @@ mocks в `frontend/src/api/generated/`. Конкретные endpoints появ�
 
 ### 2. Единый runtime и локальный запуск
 
-Подключить PostgreSQL, собрать startup lifecycle и отдачу встроенных Vite assets.
-Добавить Dockerfile и Docker Compose с PostgreSQL; сохранить возможность запуска
-с внешней PostgreSQL вне Docker.
+Подключить PostgreSQL, собрать context-driven startup/graceful shutdown lifecycle
+и отдачу встроенных Vite assets с корректными cache headers. Добавить request ID,
+structured request logs, panic recovery, live/ready probes и безопасные server
+timeouts, совместимые с SSE. Добавить Dockerfile с healthcheck и Docker Compose с
+PostgreSQL; сохранить возможность запуска с внешней PostgreSQL вне Docker.
 
 **Результат:** приложение запускается локально и через Compose, подключается к
-PostgreSQL и отдаёт frontend из одного Go-процесса.
+PostgreSQL, диагностируется healthcheck-ами и отдаёт frontend из одного
+Go-процесса. Docker user остаётся deployment choice ради NAS volume permissions.
 
 ### 3. Миграции и River bootstrap
 
@@ -140,6 +143,9 @@ lint и format обязательны для обеих частей проек�
 - Миграции embedded в Go-бинарник, применяются до River и не отмечаются
   применёнными при ошибке.
 - Go-процесс отдаёт production-сборку frontend.
+- HTTP runtime имеет graceful shutdown, structured request logs, request ID,
+  panic recovery, live/ready probes и Docker healthcheck.
+- Vite hashed assets кэшируются immutable, HTML и SPA routes — с `no-cache`.
 - OpenAPI → Orval generation запускается одной командой и проверяется CI.
 - CI и pre-commit используют один и тот же набор проверок.
 - Реализация не добавляет предметную SQL-схему, продуктовые endpoints или
@@ -153,9 +159,11 @@ lint и format обязательны для обеих частей проек�
    HTTP server.
 4. Убедиться, что приложение отдаёт встроенный frontend и frontend не зависит от
    несгенерированного контракта.
-5. Внести намеренное изменение Huma-контракта и подтвердить, что generation/CI
+5. Проверить live/ready, Docker health status, request ID, JSON request log,
+   recovery 500, cache headers и graceful SIGTERM при активном server.
+6. Внести намеренное изменение Huma-контракта и подтвердить, что generation/CI
    обнаруживают устаревшие файлы Orval.
-6. Запустить успешную и ошибочную технические миграции и проверить корректную
+7. Запустить успешную и ошибочную технические миграции и проверить корректную
    отметку применения.
 
 ## Вне области этапа

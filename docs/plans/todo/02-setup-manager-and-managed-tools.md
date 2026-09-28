@@ -34,6 +34,10 @@
   - выбранный режим публикации: исходный формат или MKA remux;
   - конфигурация MusicBrainz;
   - активные и успешно проверенные `ffmpeg`, `ffprobe` и `fpcalc`.
+- Проверка writable output-directory временными probe-файлами определяет
+  фактическую case sensitivity и Unicode normalization semantics файловой
+  системы. Результат сохраняется для будущего publication planner и повторно
+  определяется после изменения output-directory.
 - MusicBrainz public выбран по умолчанию. Для self-hosted режима требуется URL.
 - LRCLIB включён по умолчанию.
 - Режим публикации оператор выбирает явно; скрытого default нет.
@@ -213,6 +217,7 @@
 - LRCLIB enabled;
 - ID выбранной FFmpeg installation;
 - ID выбранной `fpcalc` installation;
+- определённые для output-directory case и Unicode normalization semantics;
 - момент завершения Setup.
 
 Точные строковые имена ключей объявляются централизованными Go-константами.
@@ -391,6 +396,8 @@ generated contract и сохранить прохождение общего `ta
 2. Каждый завершённый шаг восстанавливается после reload и рестарта процесса.
 3. Setup нельзя завершить без обеих активных package installations, валидных
    путей, явного publication format и валидной MusicBrainz configuration.
+   Проверка output-directory также должна успешно определить filesystem
+   semantics и удалить все probe-файлы.
 4. Каталог содержит только allowlisted и совместимые с текущей платформой
    releases; snapshots macOS и BtbN master builds не предлагаются.
 5. Выбранная не-latest compatible version устанавливается и активируется так же,
@@ -420,24 +427,26 @@ generated contract и сохранить прохождение общего `ta
    compatible versions.
 2. Перезапустить backend после каждого шага и подтвердить восстановление
    сохранённых значений и незавершённого состояния.
-3. Для каждого source adapter проверить fixtures: несколько версий, несовместимая
+3. Проверить filesystem probe на case-sensitive и case-insensitive test volumes,
+   отсутствие оставшихся probe-файлов и повторную проверку после смены output.
+4. Для каждого source adapter проверить fixtures: несколько версий, несовместимая
    архитектура, prerelease/snapshot/master, исчезнувший asset и network error.
-4. Проверить archive traversal, повреждённый архив, неверный upstream digest,
+5. Проверить archive traversal, повреждённый архив, неверный upstream digest,
    computed-only integrity и несовпадающий `--version`.
-5. Прервать backend на download/staging/verification и подтвердить безопасный
+6. Прервать backend на download/staging/verification и подтвердить безопасный
    River retry без дублирования active installation.
-6. Разорвать SSE, перечитать REST snapshot и продолжить отображение операции без
+7. Разорвать SSE, перечитать REST snapshot и продолжить отображение операции без
    потери корректности.
-7. Установить несколько версий, переключаться между ними, удалить неактивную и
+8. Установить несколько версий, переключаться между ними, удалить неактивную и
    подтвердить запрет удаления активной.
-8. Выполнить успешный и неуспешный перенос tools-directory; проверить оба решения
+9. Выполнить успешный и неуспешный перенос tools-directory; проверить оба решения
    о сохранении/удалении старых managed-файлов.
-9. Проверить ежедневный и ручной update check без автоматической установки.
-10. Запустить Compose с заданным host output path и проверить persistence после
+10. Проверить ежедневный и ручной update check без автоматической установки.
+11. Запустить Compose с заданным host output path и проверить persistence после
     пересоздания app container.
-11. Проверить keyboard navigation, focus restoration, loading/error states и
+12. Проверить keyboard navigation, focus restoration, loading/error states и
     отсутствие зависимости статуса только от цвета.
-12. Выполнить `task generate`, `task verify`, migration rollback и Compose smoke
+13. Выполнить `task generate`, `task verify`, migration rollback и Compose smoke
     run.
 
 ## Вне области этапа
@@ -445,7 +454,7 @@ generated contract и сохранить прохождение общего `ta
 - Сканирование source roots и анализ пользовательских аудиофайлов.
 - Вызов `ffprobe`/`fpcalc` для медиатеки после установки инструментов.
 - AcousticID, MusicBrainz catalog cache, LRCLIB requests и matching.
-- Формула score, evidence, группировка входящих и drafts.
+- Формула confidence, evidence, группировка входящих и drafts.
 - Физическая модель артистов, релизов, recordings и tracks.
 - Создание, remux, замена или удаление managed publications.
 - Реорганизация существующей медиатеки при смене output-directory.
