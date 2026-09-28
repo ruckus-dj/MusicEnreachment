@@ -14,6 +14,8 @@ import (
 type SetupState struct {
 	Completed           bool
 	ConfigurationHealth settings.ConfigurationHealth
+	Platform            settings.PlatformState
+	Runtime             settings.RuntimeSettings
 }
 type SetupService struct {
 	store             settings.Store
@@ -88,7 +90,11 @@ func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 			health.Problems = append(health.Problems, "active "+required.packageKind+" installation is not ready for this platform")
 		}
 	}
-	return SetupState{Completed: completed, ConfigurationHealth: health}, nil
+	runtimeSettings, err := s.registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		return SetupState{}, fmt.Errorf("read setup runtime settings: %w", err)
+	}
+	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings}, nil
 }
 func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
 	values := make(map[string]string)

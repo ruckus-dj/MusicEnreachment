@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -15,6 +16,31 @@ type SetupStateOutput struct {
 type SetupStateBody struct {
 	Completed           bool                        `json:"completed"`
 	ConfigurationHealth ConfigurationHealthResponse `json:"configuration_health"`
+	Platform            PlatformResponse            `json:"platform"`
+	Settings            RuntimeSettingsResponse     `json:"settings"`
+}
+
+type PlatformResponse struct {
+	GOOS       string `json:"goos"`
+	GOARCH     string `json:"goarch"`
+	Supported  bool   `json:"supported"`
+	Diagnostic bool   `json:"diagnostic"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+type RuntimeSettingsResponse struct {
+	ToolsDirectory             string     `json:"tools_directory"`
+	OutputDirectory            string     `json:"output_directory"`
+	PublicationFormat          string     `json:"publication_format"`
+	MusicBrainzMode            string     `json:"musicbrainz_mode"`
+	MusicBrainzBaseURL         string     `json:"musicbrainz_base_url"`
+	MusicBrainzVerifiedAt      *time.Time `json:"musicbrainz_verified_at,omitempty"`
+	LRCLIBEnabled              bool       `json:"lrclib_enabled"`
+	LogLevel                   string     `json:"log_level"`
+	ActiveFFmpegInstallationID string     `json:"active_ffmpeg_installation_id,omitempty"`
+	ActiveFPCalcInstallationID string     `json:"active_fpcalc_installation_id,omitempty"`
+	OutputCaseSensitive        *bool      `json:"output_case_sensitive,omitempty"`
+	OutputUnicodeNormalization string     `json:"output_unicode_normalization,omitempty"`
 }
 
 type ConfigurationHealthResponse struct {
@@ -63,6 +89,25 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 				ConfigurationHealth: ConfigurationHealthResponse{
 					Healthy:  state.ConfigurationHealth.Healthy,
 					Problems: state.ConfigurationHealth.Problems,
+				},
+				Platform: PlatformResponse{
+					GOOS: state.Platform.Platform.GOOS, GOARCH: state.Platform.Platform.GOARCH,
+					Supported: state.Platform.Platform.Supported(), Diagnostic: state.Platform.Diagnostic,
+					Reason: state.Platform.Reason,
+				},
+				Settings: RuntimeSettingsResponse{
+					ToolsDirectory:             state.Runtime.ToolsDirectory,
+					OutputDirectory:            state.Runtime.OutputDirectory,
+					PublicationFormat:          state.Runtime.PublicationFormat,
+					MusicBrainzMode:            state.Runtime.MusicBrainzMode,
+					MusicBrainzBaseURL:         state.Runtime.MusicBrainzBaseURL,
+					MusicBrainzVerifiedAt:      state.Runtime.MusicBrainzVerifiedAt,
+					LRCLIBEnabled:              state.Runtime.LRCLIBEnabled,
+					LogLevel:                   state.Runtime.LogLevel,
+					ActiveFFmpegInstallationID: state.Runtime.ActiveFFmpegInstallation,
+					ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,
+					OutputCaseSensitive:        state.Runtime.OutputCaseSensitive,
+					OutputUnicodeNormalization: state.Runtime.OutputUnicodeNormalization,
 				},
 			},
 		}, nil

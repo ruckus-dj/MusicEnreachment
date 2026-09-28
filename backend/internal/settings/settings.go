@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -56,6 +57,21 @@ type MusicBrainzConfig struct {
 type ConfigurationHealth struct {
 	Healthy  bool
 	Problems []string
+}
+
+type RuntimeSettings struct {
+	ToolsDirectory             string
+	OutputDirectory            string
+	PublicationFormat          string
+	MusicBrainzMode            string
+	MusicBrainzBaseURL         string
+	MusicBrainzVerifiedAt      *time.Time
+	LRCLIBEnabled              bool
+	LogLevel                   string
+	ActiveFFmpegInstallation   string
+	ActiveFPCalcInstallation   string
+	OutputCaseSensitive        *bool
+	OutputUnicodeNormalization string
 }
 
 type Registry struct {
@@ -248,8 +264,11 @@ func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL strin
 	if mode != "public" && mode != "self-hosted" {
 		return fmt.Errorf("musicbrainz mode must be 'public' or 'self-hosted'")
 	}
-	if mode == "self-hosted" && (baseURL == "" || (!strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://"))) {
-		return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
+	if mode == "self-hosted" {
+		parsed, err := url.Parse(baseURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
+		}
 	}
 	if mode == "public" {
 		baseURL = "" // Public mode ignores base URL
@@ -290,6 +309,75 @@ func (r *Registry) GetLRCLIBEnabled(ctx context.Context) (bool, error) {
 		return true, nil // Enabled by default
 	}
 	return value == "true", nil
+}
+
+func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
+	read := func(key string) (string, error) {
+		value, _, err := r.store.Get(ctx, key)
+		return value, err
+	}
+	tools, err := read(ToolsDirectoryKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	output, err := read(OutputDirectoryKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	format, err := read(PublicationFormatKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	musicBrainz, err := r.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	lrclib, err := r.GetLRCLIBEnabled(ctx)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	logLevel, exists, err := r.store.Get(ctx, LogLevelKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	if !exists {
+		logLevel = "info"
+	}
+	ffmpeg, err := read(ActiveFFmpegInstallationKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	fpcalc, err := read(ActiveFPCalcInstallationKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	caseSensitiveValue, caseExists, err := r.store.Get(ctx, OutputCaseSensitiveKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	var caseSensitive *bool
+	if caseExists {
+		value := caseSensitiveValue == "true"
+		caseSensitive = &value
+	}
+	unicodeNormalization, err := read(OutputUnicodeNormalizationKey)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	return RuntimeSettings{
+		ToolsDirectory:             tools,
+		OutputDirectory:            output,
+		PublicationFormat:          format,
+		MusicBrainzMode:            musicBrainz.Mode,
+		MusicBrainzBaseURL:         musicBrainz.BaseURL,
+		MusicBrainzVerifiedAt:      musicBrainz.VerifiedAt,
+		LRCLIBEnabled:              lrclib,
+		LogLevel:                   logLevel,
+		ActiveFFmpegInstallation:   ffmpeg,
+		ActiveFPCalcInstallation:   fpcalc,
+		OutputCaseSensitive:        caseSensitive,
+		OutputUnicodeNormalization: unicodeNormalization,
+	}, nil
 }
 
 // SetLRCLIBEnabled stores the LRCLIB integration flag.
