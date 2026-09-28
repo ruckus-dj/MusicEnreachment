@@ -104,9 +104,10 @@
 
 ## Внешние инструменты
 
-- Поставка `ffmpeg`, `ffprobe` и `fpcalc` внутри Docker-образа необязательна.
-  Если они включены, это неизменяемый fallback: обновления не заменяют бинарники
-  образа, а более новая скачанная и успешно проверенная версия имеет приоритет.
+- `ffmpeg`, `ffprobe` и `fpcalc` не включаются в Docker image и не берутся из
+  системного `PATH`; Setup Manager загружает их в persistent tools-directory.
+  Offline bootstrap и ручная загрузка собственных binaries в текущий этап не
+  входят.
 - UI должен позволять вручную проверить актуальность этих инструментов и
   обновить их; также требуется периодическая проверка обновлений.
 - Версия установленного инструмента определяется через `--version`.
@@ -115,13 +116,36 @@
 - Готовый `fpcalc` загружается из AcoustID Chromaprint GitHub Releases.
 - Утверждённые источники готовых бинарников:
   - `fpcalc`: https://github.com/acoustid/chromaprint/releases;
-  - `ffmpeg` и `ffprobe` для Windows/Linux: https://github.com/BtbN/FFmpeg-Builds/releases;
-  - `ffmpeg` и `ffprobe` для macOS: https://ffmpeg.martin-riedl.de/ — только
-    релизные билды, snapshots запрещены.
+  - GPL builds `ffmpeg` и `ffprobe` для Windows/Linux:
+    https://github.com/BtbN/FFmpeg-Builds/releases;
+  - GPL builds `ffmpeg` и `ffprobe` для macOS:
+    https://ffmpeg.martin-riedl.de/ — только релизные билды, snapshots запрещены.
+- Upstream-проект FFmpeg и его source code доступны на https://ffmpeg.org/ и
+  https://github.com/FFmpeg/FFmpeg. MusicEnreachment не распространяет FFmpeg,
+  а инициирует прямую загрузку выбранной сборки с утверждённого источника и
+  запускает отдельный executable.
+- Compatible release catalog не сохраняется в PostgreSQL. Backend получает его
+  с allowlisted source по запросу Setup/settings UI, а frontend держит результат
+  только в памяти. Проверка при открытии Setup/settings, периодическое обновление
+  активной UI-сессии и ручной refresh не изменяют установленные версии.
+- Artifact загружается только по HTTPS с allowlisted source. Если источник
+  публикует checksum/signature, она проверяется; отдельные уровни verification
+  не моделируются. Перед активацией обязательно проверяется `--version`.
+- Новая версия становится active только после полностью успешной установки.
+  Ошибка сохраняет прежнюю active version, а при первом Setup блокирует переход
+  дальше и предлагает обновить каталог/retry.
+- Установленные версии сохраняются до явного ручного удаления. Автоматический
+  integrity monitoring, требования к backup tools-directory и отслеживание
+  ручной замены файлов вне приложения не вводятся.
 - Setup Manager при первом запуске требует persistent tools-directory, который
   позднее можно изменить через UI.
 - После выбора каталога приложение автоматически получает и проверяет готовые
   бинарники инструментов; установка обновлений после этого выполняется из UI.
+- Setup Manager является одноразовым initial flow и после успешного завершения
+  больше не открывается как обычный экран. В нём выбирается и устанавливается
+  ровно одна версия FFmpeg package и одна версия `fpcalc`; update, rollback,
+  переключение между несколькими installations и удаление доступны только в
+  последующих настройках.
 
 ## Процессы и развёртывание
 

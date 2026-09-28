@@ -28,6 +28,9 @@
 ### Setup Manager
 
 - Этап включает backend, миграции, River jobs, REST/SSE API и production UI.
+- Setup Manager является одноразовым initial flow. После успешного завершения он
+  не используется для update/rollback: весь дальнейший lifecycle инструментов
+  находится в обычных настройках.
 - Для завершения Setup обязательны:
   - абсолютный доступный для записи tools-directory;
   - абсолютный доступный для записи output-directory;
@@ -76,11 +79,16 @@
 
 ### Версии инструментов
 
-- Доступные версии и локальные установки хранятся отдельно от EAV-настроек.
+- В PostgreSQL хранятся локальные установки, но не upstream release catalog.
+  Backend получает совместимые версии по запросу, а frontend хранит ответ только
+  в памяти текущей сессии.
 - UI показывает все обнаруженные совместимые stable/release builds для текущих
   OS и архитектуры.
 - При первом Setup последняя совместимая версия предвыбрана, но оператор может
   выбрать другую до установки.
+- Setup устанавливает ровно одну выбранную FFmpeg package version и одну
+  выбранную `fpcalc` version. Списки installed/active/available и управление
+  несколькими версиями относятся только к settings UI после Setup.
 - Любую доступную совместимую версию можно установить и затем сделать активной.
 - Все успешно установленные версии сохраняются без автоматического удаления.
 - UI позволяет удалить только неактивную версию, которая не используется
@@ -90,6 +98,7 @@
 - Уже установленная версия остаётся пригодной к переключению, даже если upstream
   позднее перестал предлагать её для скачивания.
 - Fallback из Docker image или системного `PATH` не используется.
+- Offline bootstrap и ручная загрузка собственного binary в этап не входят.
 
 ### Источники и варианты пакетов
 
@@ -98,7 +107,7 @@
   Releases; используется GPL static variant из нумерованной release-линии, не
   `master` build.
 - FFmpeg package для macOS загружается с `ffmpeg.martin-riedl.de`; используются
-  только release builds, snapshots запрещены.
+  только GPL release builds, snapshots запрещены.
 - FFmpeg package логически содержит `ffmpeg` и `ffprobe`. Они показываются и
   проверяются отдельно, но устанавливаются, активируются, переносятся и
   переключаются атомарно.
@@ -108,12 +117,10 @@
 
 - Архив сначала загружается в staging и безопасно распаковывается без возможности
   выхода за staging-directory.
-- Для каждого скачанного artifact всегда вычисляется SHA-256.
 - Если upstream публикует digest или проверяемую подпись, они проверяются до
   активации. Несовпадение блокирует установку.
-- Если upstream не публикует независимый digest или подпись, установка разрешена
-  для allowlisted HTTPS-источника. В БД и UI явно сохраняется статус, что доступна
-  только вычисленная локально SHA-256, без независимого upstream-подтверждения.
+- Если upstream не публикует digest или подпись, загрузка с allowlisted
+  HTTPS-источника разрешена без отдельного verification level в БД или UI.
 - До активации запускаются `ffmpeg --version`, `ffprobe --version` и
   `fpcalc --version`; результат должен соответствовать выбранному release.
 - Установки лежат в versioned directories. Активная установка выбирается через
@@ -123,8 +130,9 @@
 
 ### Фоновые операции и прогресс
 
-- Проверка каталога версий, установка и перенос tools-directory выполняются
-  River workers.
+- Catalog endpoint синхронно получает текущие compatible releases через source
+  adapters и возвращает их UI без сохранения в БД. Установка и перенос
+  tools-directory выполняются River workers.
 - REST создаёт операцию и остаётся источником истины для её текущего снимка.
 - SSE endpoint конкретной операции передаёт быстрые уведомления о смене стадии и
   доступном измеримом прогрессе. После reconnect клиент перечитывает REST snapshot;
@@ -133,9 +141,9 @@
   показывать полученные и ожидаемые bytes; иначе показывается только стадия.
 - Пользовательской отмены в этом этапе нет. Ошибочная операция сохраняет причину
   и допускает безопасный retry.
-- Проверка новых версий выполняется при старте, если предыдущая проверка старше
-  24 часов, и далее не чаще одного раза в сутки. Установка всегда остаётся явным
-  действием оператора.
+- Frontend получает каталог при открытии Setup/settings, может периодически
+  обновлять его в активной сессии и предоставляет ручной refresh. Установка
+  всегда остаётся явным действием оператора.
 
 ### Перенос tools-directory
 
@@ -171,13 +179,14 @@
    выбрать другие доступные версии.
 6. Подтверждение запускает фоновые установки. UI получает operation IDs, читает
    REST snapshots и подписывается на operation-specific SSE streams.
-7. Setup продолжается только после успешной проверки и выбора активных версий
-   обоих пакетов.
+7. Setup продолжается только после успешной установки и активации обеих
+   выбранных package versions.
 8. Оператор задаёт output-directory, явно выбирает исходный формат или MKA,
    подтверждает MusicBrainz public либо задаёт self-hosted URL и видит состояние
    LRCLIB.
 9. Итоговая серверная проверка фиксирует завершение Setup и открывает обычный
-   shell приложения.
+   shell приложения; дальнейшее управление инструментами выполняется только в
+   settings UI.
 
 ### 2. Неуспешная установка
 
@@ -200,16 +209,16 @@
 
 ### 4. Проверка обновлений
 
-1. Периодическая или ручная проверка обновляет текущий provider catalog.
+1. Периодическая или ручная проверка запрашивает свежий provider catalog и
+   сохраняет его только в памяти frontend.
 2. Если upstream содержит версию новее активной, UI показывает обновление.
 3. Никакой download или activation не происходит без явного действия оператора.
 
 ### 5. Перенос tools-directory
 
 1. Оператор вводит новый абсолютный серверный путь и запускает перенос.
-2. River worker копирует managed-версии, сверяет digests и повторяет version
-   checks в новом месте.
-3. Только полностью проверенный каталог становится текущим.
+2. River worker копирует managed-версии и повторяет version checks в новом месте.
+3. Только полностью проверенная директория становится текущей.
 4. После переключения оператор выбирает, удалить старые managed-файлы или
    оставить копию.
 
@@ -239,27 +248,12 @@
 Прямой доступ к таблице вне `internal/settings` запрещён. Отсутствие строки
 отличается от пустого значения и обрабатывается registry конкретного ключа.
 
-### Каталог релизов инструментов
-
-Отдельная таблица хранит текущий кэш обнаруженных package releases:
-
-- стабильный внутренний ID и package kind (`ffmpeg` или `fpcalc`);
-- allowlisted source и upstream release/asset identity;
-- версия, OS, architecture и время публикации;
-- artifact URL и ожидаемые имена исполняемых файлов;
-- upstream digest/signature metadata, если они доступны;
-- время обнаружения и признак доступности в последней успешной проверке.
-
-Повторная проверка обновляет текущий кэш, а не создаёт пользовательскую историю.
-Исчезновение release из свежего upstream-каталога не удаляет локальную установку.
-
 ### Установленные версии
 
 Отдельная таблица хранит каждую успешно установленную package version:
 
-- ID, ссылка на release и package kind;
+- ID, package kind, allowlisted source и upstream release/asset identity;
 - относительный versioned path внутри текущего tools-directory;
-- вычисленный SHA-256 и уровень integrity verification;
 - фактические результаты `--version` для входящих в пакет executables;
 - состояние установки и времена установки/последней проверки.
 
@@ -272,7 +266,7 @@ FFmpeg installation считается готовой только при усп
 Приложение хранит текущий snapshot фоновой операции, необходимый REST и SSE:
 
 - ID, kind, state и stage;
-- связанный package/release либо перенос каталога;
+- связанный package/release identity либо перенос каталога;
 - измеримые bytes, если размер известен;
 - безопасное описание ошибки;
 - River job ID;
@@ -290,7 +284,7 @@ Huma регистрирует типизированные операции сл
 - чтение текущего Setup state и сохранение каждого шага;
 - итоговая серверная проверка и завершение Setup;
 - чтение platform/tool status;
-- чтение и ручное обновление compatible release catalog;
+- получение compatible release catalog без сохранения на backend;
 - создание установки выбранного release;
 - активация уже проверенной установки;
 - удаление неактивной установки;
@@ -305,13 +299,15 @@ REST DTO не раскрывают EAV-пары. OpenAPI остаётся ист
 
 Service layer повторно проверяет права, совместимость release, текущий managed
 root и допустимость перехода непосредственно перед изменением состояния. UI не
-является границей безопасности.
+является границей безопасности. Installation request передаёт allowlisted source
+и release/asset identity, но не download URL; source adapter заново разрешает
+актуальный HTTPS URL перед загрузкой.
 
 ## Затронутые компоненты
 
 - `backend/internal/settings`: EAV registry, typed access, validation и repository.
-- `backend/internal/persistence`: модели и repositories настроек, tool catalog,
-  installations и operation snapshots.
+- `backend/internal/persistence`: модели и repositories настроек, installations
+  и operation snapshots.
 - `backend/internal/integrations/tools`: source adapters, downloader, безопасная
   распаковка, integrity/version verification и versioned layout.
 - `backend/internal/service`: Setup, installation, activation, deletion и directory
@@ -343,26 +339,29 @@ readiness.
 
 Реализовать source adapters для Chromaprint, BtbN и Martin Riedl, fixture-based
 HTTP tests и фильтрацию по текущей OS/architecture и утверждённому варианту
-пакета. Сохранять current catalog и отмечать исчезнувшие upstream releases без
-удаления installations.
+пакета. Catalog endpoint возвращает свежий список без сохранения на backend;
+frontend держит его только в памяти. Исчезновение upstream release не удаляет
+installation.
 
 **Результат:** backend возвращает воспроизводимый список совместимых версий и
 может определить наличие версии новее активной.
 
 ### 3. Безопасная установка и переключение
 
-Реализовать staging, download, archive extraction, digest/signature status,
-version checks, versioned directory layout и идемпотентную фиксацию установки.
-Активация и удаление выполняются отдельными use cases с проверкой инвариантов.
+Реализовать staging, download, archive extraction, проверку опубликованной
+upstream checksum/signature при наличии, version checks, versioned directory
+layout и идемпотентную фиксацию установки. Активация и удаление выполняются
+отдельными use cases с проверкой инвариантов.
 
 **Результат:** сбой на любой стадии не повреждает активный пакет; несколько
 версий могут безопасно сосуществовать.
 
 ### 4. River operations и SSE
 
-Добавить workers проверки каталога, установки и переноса. Сохранять operation
-snapshot, реализовать retry и SSE-уведомления без журнала событий. Добавить
-ежедневное планирование проверки обновлений.
+Добавить workers установки и переноса. Сохранять operation snapshot,
+реализовать retry и SSE-уведомления без журнала событий. Запросы каталога при
+открытии Setup/settings, периодическое обновление активной сессии и ручной
+refresh выполняет frontend.
 
 **Результат:** длительные операции не удерживают HTTP request, а UI
 восстанавливает состояние после reload или разрыва SSE.
@@ -413,6 +412,10 @@ Linux-only GitHub CI job и должен продолжить проходить
 Обновить generated contract и сохранить прохождение общего `task verify` и
 platform build/test matrix.
 
+Source adapters используют fixtures для успешного ответа, malformed metadata,
+rate limit, отсутствующего release/asset и повреждённой загрузки; реальные
+upstream requests в CI не выполняются.
+
 ## Критерии готовности
 
 1. Fresh database открывает Setup Manager и не открывает обычные product routes.
@@ -427,8 +430,8 @@ platform build/test matrix.
    как latest.
 6. FFmpeg package не становится готовым, если не проверен хотя бы один из
    `ffmpeg`/`ffprobe`.
-7. Upstream digest/signature проверяется, когда доступен; отсутствие независимой
-   проверки явно видно и не подменяется локально вычисленным digest.
+7. Upstream checksum/signature проверяется, когда доступна; её отсутствие не
+   блокирует загрузку с allowlisted HTTPS source и не создаёт отдельный статус.
 8. Неуспешная установка не меняет active installation и допускает retry.
 9. Все установленные версии сохраняются до явного удаления; активную или занятую
    операцией версию удалить нельзя.
@@ -458,8 +461,8 @@ platform build/test matrix.
    отсутствие оставшихся probe-файлов и повторную проверку после смены output.
 4. Для каждого source adapter проверить fixtures: несколько версий, несовместимая
    архитектура, prerelease/snapshot/master, исчезнувший asset и network error.
-5. Проверить archive traversal, повреждённый архив, неверный upstream digest,
-   computed-only integrity и несовпадающий `--version`.
+5. Проверить archive traversal, повреждённый архив, неверную доступную upstream
+   checksum/signature и несовпадающий `--version`.
 6. Прервать backend на download/staging/verification и подтвердить безопасный
    River retry без дублирования active installation.
 7. Разорвать SSE, перечитать REST snapshot и продолжить отображение операции без

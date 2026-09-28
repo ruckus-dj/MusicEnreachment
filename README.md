@@ -29,12 +29,16 @@ During initial setup, the application is intended to download tools into a
 persistent tools directory from these approved sources:
 
 - `fpcalc`: https://github.com/acoustid/chromaprint/releases
-- `ffmpeg` and `ffprobe`, Windows/Linux: https://github.com/BtbN/FFmpeg-Builds/releases
-- `ffmpeg` and `ffprobe`, macOS: https://ffmpeg.martin-riedl.de/ — release builds only, no snapshots.
+- GPL builds of `ffmpeg` and `ffprobe`, Windows/Linux:
+  https://github.com/BtbN/FFmpeg-Builds/releases
+- GPL builds of `ffmpeg` and `ffprobe`, macOS:
+  https://ffmpeg.martin-riedl.de/ — release builds only, no snapshots.
 
-Automatic download is not implemented yet. If tools are bundled in a Docker
-image, they are immutable fallbacks; a newer downloaded and successfully verified
-version takes precedence.
+FFmpeg is developed by the [FFmpeg project](https://ffmpeg.org/); its source code
+is available at https://github.com/FFmpeg/FFmpeg. MusicEnreachment does not bundle
+or redistribute FFmpeg: the future Setup Manager downloads the selected build
+directly from its approved third-party source and runs it as a separate
+executable. Automatic download is not implemented yet.
 
 ## Development
 
