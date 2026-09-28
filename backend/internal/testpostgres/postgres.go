@@ -1,4 +1,4 @@
-// Package testpostgres provides opt-in integration-test access to a dedicated PostgreSQL database.
+// Package testpostgres provides PostgreSQL integration-test access through Testcontainers.
 package testpostgres
 
 import (
@@ -6,8 +6,12 @@ import (
 	"database/sql"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
@@ -16,9 +20,29 @@ import (
 
 func Open(t *testing.T) *bun.DB {
 	t.Helper()
+	ctx := context.Background()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
-		t.Skip("TEST_DATABASE_URL is required for PostgreSQL integration tests")
+		container, err := postgres.Run(ctx, "postgres:17",
+			postgres.WithDatabase("melotrove_test"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30*time.Second),
+			),
+		)
+		if err != nil {
+			t.Fatalf("start PostgreSQL Testcontainer: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := container.Terminate(context.Background()); err != nil {
+				t.Errorf("terminate PostgreSQL Testcontainer: %v", err)
+			}
+		})
+		databaseURL, err = container.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			t.Fatalf("get PostgreSQL Testcontainer connection string: %v", err)
+		}
 	}
 	database := bun.NewDB(sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(databaseURL))), pgdialect.New())
 	if err := database.PingContext(context.Background()); err != nil {
@@ -43,7 +67,7 @@ func Open(t *testing.T) *bun.DB {
 	return database
 }
 
-// ResetAndMigrate replaces the public schema. TEST_DATABASE_URL must point to a dedicated database.
+// ResetAndMigrate replaces the public schema in the isolated Testcontainer or explicit test database.
 func ResetAndMigrate(t *testing.T, database *bun.DB) {
 	t.Helper()
 	ctx := context.Background()

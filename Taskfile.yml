@@ -75,7 +75,7 @@ tasks:
     internal: true
     dir: backend
     cmds:
-      - go test ./...
+      - go test -tags=integration ./...
 
   format:
     desc: Apply Go and frontend formatting
