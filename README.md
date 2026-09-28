@@ -5,6 +5,20 @@ for deployment on a NAS or another always-on local server. The application is
 operated through a desktop-first web UI; it is not a desktop executable, and a
 mobile-first interface is not a product goal.
 
+## Filesystem model
+
+MusicEnreachment treats configured source directories as external inputs, not as
+the managed library. Sources are read-only by default and remain separate from
+the writable output directory containing managed publications. Optional source
+deletion is allowed only when explicitly enabled and only after a successful
+publication.
+
+Each source root will support direct in-place analysis or staged processing. The
+staged mode uses an explicitly configured work directory, which should be a bind
+mount or volume rather than container overlay storage. An unavailable source or
+an interrupted scan must not erase the last successfully observed inventory or
+existing managed publications.
+
 ## Supported platforms and external tools
 
 Target platforms are Linux and macOS (`amd64`, `arm64`) and Windows (`amd64`).
@@ -50,6 +64,21 @@ probes are available at `/health/live` and `/health/ready`; the image healthchec
 uses readiness automatically. Runtime logs are structured JSON and every HTTP
 response includes `X-Request-ID` for correlation.
 
+## Security and network exposure
+
+MusicEnreachment intentionally has no built-in authentication or authorization:
+there are no users, sessions, API tokens, roles, or permissions. Every client
+that can reach the backend has full access to all application operations. The
+deployment operator is responsible for TLS, authentication, and network access,
+for example with Caddy and Authentik forward-auth or another reverse proxy.
+
+The bundled UI and API are expected to use the same origin; the application does
+not enable CORS or trust identity headers supplied by a proxy. The default
+Compose deployment publishes port 8080 only on `127.0.0.1`, which is suitable
+for a reverse proxy running on the host. The standalone binary listens on
+`:8080` on all interfaces, so do not expose it to an untrusted network without
+an appropriate external access boundary.
+
 The image currently runs with Docker's default user for straightforward NAS
 volume compatibility. A deployment that manages host permissions can override
 `user: "UID:GID"` in Compose after ensuring that the tools, work, output, and
@@ -66,3 +95,12 @@ Build output is always generated locally in `build/` and is never committed.
 Task stages the frontend only transiently for Go embedding; those assets are
 ignored as well. Commit source code, lockfiles, and generated API contracts
 only — never build artifacts.
+
+## Design documentation
+
+- [Requirements](docs/design/requirements.md) describe the product boundary.
+- [Decisions](docs/design/decisions.md) contain approved product and technical
+  decisions.
+- [Repository architecture](docs/design/repository-architecture.md) describes
+  component responsibilities and runtime structure.
+- [Plans](docs/plans/README.md) explain completed, executable, and future work.

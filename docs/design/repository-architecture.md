@@ -10,8 +10,9 @@
   документация, Docker Compose и конфигурация единого набора локальных и
   CI-проверок.
 - Go-приложение отдаёт Vite static assets, HTTP API и River workers работают в
-  одном процессе. Nginx допустим как необязательный reverse proxy конкретного
-  deployment.
+  одном процессе. Необязательный reverse proxy конкретного deployment отвечает
+  за TLS, authentication и внешнюю сетевую границу; backend не реализует
+  пользователей, tokens, permissions и обработку proxy identity headers.
 - Главный синхронный контракт между frontend и backend — REST API. Huma
   генерирует OpenAPI из Go-кода, и этот OpenAPI является источником истины.
   TypeScript-типы frontend генерируются из этой спецификации.
