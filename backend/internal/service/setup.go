@@ -27,6 +27,7 @@ type SetupService struct {
 
 type InstallationLookup interface {
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
+	ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error)
 }
 
 func NewSetup(store settings.Store, registry *settings.Registry, platform settings.PlatformState, installations InstallationLookup, checker musicbrainz.Checker) *SetupService {
@@ -113,6 +114,18 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 		}
 		if err := settings.ProbeWritable(normalized); err != nil {
 			return fmt.Errorf("tools directory: %w", err)
+		}
+		if hasTools && normalized != currentTools {
+			if s.installations == nil {
+				return fmt.Errorf("tools directory changes require the managed-tools move service")
+			}
+			installed, err := s.installations.ListInstallations(ctx, "", "", "")
+			if err != nil {
+				return fmt.Errorf("check managed installations: %w", err)
+			}
+			if len(installed) != 0 {
+				return fmt.Errorf("tools directory cannot change while installations exist; use the move operation")
+			}
 		}
 		currentTools, hasTools = normalized, true
 		values[settings.ToolsDirectoryKey] = normalized

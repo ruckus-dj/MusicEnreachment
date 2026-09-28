@@ -158,3 +158,11 @@ func (lookup testInstallationLookup) GetInstallation(_ context.Context, id uuid.
 	}
 	return installation, nil
 }
+
+func (lookup testInstallationLookup) ListInstallations(_ context.Context, _, _, _ string) ([]persistence.ToolInstallation, error) {
+	installations := make([]persistence.ToolInstallation, 0, len(lookup.items))
+	for _, installation := range lookup.items {
+		installations = append(installations, *installation)
+	}
+	return installations, nil
+}
