@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from "react";
 import { AppButton } from "../components/AppButton";
+import { SetupManager } from "../features/setup/SetupManager";
 
-type Route = "/" | "/settings";
+type Route = "/" | "/settings" | "/setup";
 
 function currentRoute(): Route {
-  return window.location.hash === "#/settings" ? "/settings" : "/";
+  if (window.location.hash === "#/settings") return "/settings";
+  if (window.location.hash === "#/setup") return "/setup";
+  return "/setup";
 }
 
 function subscribeToRouteChange(onStoreChange: () => void) {
@@ -34,9 +37,17 @@ export function AppShell() {
         </AppButton>
       </header>
       <section className="py-8">
-        {route === "/settings"
-          ? "Настройки будут доступны после Setup Manager."
-          : "Приложение готово к настройке."}
+        {route === "/setup" ? (
+          <SetupManager
+            onCompleted={() => {
+              window.location.hash = "/";
+            }}
+          />
+        ) : route === "/settings" ? (
+          "Настройки будут доступны после Setup Manager."
+        ) : (
+          "Приложение готово к настройке."
+        )}
       </section>
     </main>
   );
