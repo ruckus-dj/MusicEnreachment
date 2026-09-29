@@ -1,0 +1,75 @@
+.setup-shell {
+  --setup-canvas: #f2f3ef;
+  --setup-surface: #fff;
+  --setup-raised: #f7f8f5;
+  --setup-ink: #26332b;
+  --setup-muted: #59675d;
+  --setup-line: #d7ded5;
+  --setup-control: #7c8a7e;
+  --setup-accent: #226740;
+  --setup-accent-soft: #e5f1e7;
+  --setup-error: #a13535;
+  --setup-error-soft: #fde9e8;
+  background: var(--setup-canvas);
+  color: var(--setup-ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 12px;
+  min-height: 100dvh;
+}
+@media (prefers-color-scheme: dark) {
+  .setup-shell {
+    --setup-canvas: #111512;
+    --setup-surface: #191e1a;
+    --setup-raised: #222923;
+    --setup-ink: #e3eae3;
+    --setup-muted: #a7b5a9;
+    --setup-line: #354138;
+    --setup-control: #718376;
+    --setup-accent: #83dca0;
+    --setup-accent-soft: #233e2c;
+    --setup-error: #ffa09b;
+    --setup-error-soft: #3a2425;
+  }
+}
+.setup-shell header { background: var(--setup-surface); border-color: var(--setup-line); padding: 8px 12px; }
+.setup-shell h1 { font-size: 20px; line-height: 26px; font-weight: 650; }
+.setup-shell h2, .setup-shell h3 { font-size: 14px; line-height: 20px; font-weight: 600; }
+.setup-shell .setup-panel { background: var(--setup-surface); border: 1px solid var(--setup-line); border-radius: 5px; padding: 10px; }
+.setup-shell .setup-stepper { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.setup-shell .setup-stepper li { padding: 6px 10px; border-bottom: 2px solid var(--setup-line); color: var(--setup-muted); }
+.setup-shell .setup-stepper li[aria-current="step"] { border-color: var(--setup-accent); color: var(--setup-accent); font-weight: 600; }
+.setup-shell button { min-height: 28px; padding: 4px 8px; background: var(--setup-surface); color: var(--setup-ink); border: 1px solid var(--setup-control); border-radius: 4px; }
+.setup-shell button:hover { background: var(--setup-raised); border-color: var(--setup-accent); }
+.setup-shell button:disabled { background: var(--setup-raised); color: var(--setup-muted); border-color: var(--setup-line); }
+.setup-shell input:not([type="radio"]):not([type="checkbox"]), .setup-shell select { min-height: 30px; padding: 4px 8px; color: var(--setup-ink); background: var(--setup-raised); border: 1px solid var(--setup-control); border-radius: 4px; }
+.setup-shell input[type="radio"], .setup-shell input[type="checkbox"] { accent-color: var(--setup-accent); }
+.setup-shell .react-aria-TextField .react-aria-Label, .setup-shell .react-aria-RadioGroup > .react-aria-Label { display: block; font-weight: 600; }
+.setup-shell .react-aria-RadioField, .setup-shell .react-aria-CheckboxField { display: inline-block; }
+.setup-shell .react-aria-RadioButton, .setup-shell .react-aria-CheckboxButton { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; cursor: pointer; border-radius: 4px; margin-right: 8px; }
+.setup-shell .react-aria-RadioButton::before { content: "( )"; }
+.setup-shell .react-aria-CheckboxButton::before { content: "[ ]"; }
+.setup-shell .react-aria-RadioButton[data-selected], .setup-shell .react-aria-CheckboxButton[data-selected] { background: var(--setup-accent-soft); color: var(--setup-accent); }
+.setup-shell .react-aria-RadioButton[data-selected]::before { content: "(x)"; }
+.setup-shell .react-aria-CheckboxButton[data-selected]::before { content: "[x]"; }
+.setup-shell .react-aria-RadioButton[data-focus-visible], .setup-shell .react-aria-CheckboxButton[data-focus-visible] { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
+.setup-shell :focus-visible { outline: 2px solid var(--setup-accent); outline-offset: 2px; }
+.setup-shell [role="alert"] { background: var(--setup-error-soft); color: var(--setup-error); border-left: 3px solid var(--setup-error); padding: 8px 10px; margin: 8px 0; }
+.setup-shell .setup-tool { border: 1px solid var(--setup-line); background: var(--setup-raised); border-radius: 5px; padding: 8px; margin: 8px 0; }
+.setup-shell .setup-tool .react-aria-Label { display: block; }
+.setup-shell .setup-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 148px; margin: 4px 0; }
+.setup-select-popover { --select-surface: #fff; --select-ink: #26332b; --select-line: #d7ded5; --select-highlight: #e5f1e7; color: var(--select-ink); background: var(--select-surface); border: 1px solid var(--select-line); border-radius: 4px; padding: 4px; max-height: 240px; overflow: auto; }
+.setup-select-popover .react-aria-ListBoxItem { min-height: 28px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.setup-select-popover .react-aria-ListBoxItem[data-focused], .setup-select-popover .react-aria-ListBoxItem[data-selected] { background: var(--select-highlight); }
+.setup-select-popover .react-aria-ListBoxItem[data-focus-visible] { outline: 2px solid var(--select-ink); outline-offset: -2px; }
+@media (prefers-color-scheme: dark) { .setup-select-popover { --select-surface: #191e1a; --select-ink: #e3eae3; --select-line: #354138; --select-highlight: #233e2c; } }
+.setup-shell .setup-operation { overflow-wrap: anywhere; background: var(--setup-accent-soft); padding: 8px; margin: 8px 0; }
+@media (max-width: 599px) { .setup-shell button, .setup-shell select, .setup-shell input:not([type="radio"]):not([type="checkbox"]) { min-height: 40px; } }
+
+.setup-shell .setup-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 12px; }
+.setup-shell .setup-help { color: var(--setup-muted); }
+.setup-shell .setup-help h2 { color: var(--setup-ink); margin-bottom: 12px; }
+.setup-shell .setup-summary { margin: 12px 0; }
+.setup-shell .setup-summary > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; border-bottom: 1px solid var(--setup-line); padding: 6px 0; }
+.setup-shell .setup-summary dt { color: var(--setup-muted); }
+.setup-shell .setup-summary dd { overflow-wrap: anywhere; }
+@media (max-width: 699px) { .setup-shell .setup-layout { grid-template-columns: minmax(0, 1fr); } }

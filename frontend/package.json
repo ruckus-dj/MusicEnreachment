@@ -9,7 +9,8 @@
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "generate": "orval --config orval.config.ts"
+    "generate": "orval --config orval.config.ts",
+    "doctor": "react-doctor . --no-supply-chain --no-score --blocking error"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
@@ -24,12 +25,16 @@
     "@faker-js/faker": "^10.6.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
+    "@types/jsdom": "^30.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^30.1.1",
     "msw": "^2.15.0",
     "orval": "^8.38.0",
+    "react-doctor": "^0.9.14",
+    "react-grab": "^0.2.0",
+    "react-scan": "^0.5.7",
     "typescript": "^5.8.0",
     "vite": "^7.0.0",
     "vitest": "^4.1.11"
