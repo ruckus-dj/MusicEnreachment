@@ -41,8 +41,6 @@ jobs:
             runner: macos-15
           - name: Windows x64
             runner: windows-2025
-          - name: Windows arm64
-            runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -102,6 +100,25 @@ jobs:
           test -n "$asset"
           curl --fail --silent --show-error --head "http://127.0.0.1:18080$asset" |
             grep --ignore-case --fixed-strings 'cache-control: public, max-age=31536000, immutable'
+
+          settings_status=$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request PUT "http://127.0.0.1:${APP_PORT}/api/setup/runtime" \
+            --header 'content-type: application/json' \
+            --data '{"tools_directory":"/var/lib/melotrove/tools","output_directory":"/var/lib/melotrove/output","publication_format":"mka"}')
+          test "$settings_status" = "204"
+
+          "${compose[@]}" up --detach --force-recreate app
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "http://127.0.0.1:${APP_PORT}/health/ready" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = "1"
+          curl --fail --silent --show-error "http://127.0.0.1:${APP_PORT}/api/setup" |
+            grep --fixed-strings '"publication_format":"mka"'
 
           container=$("${compose[@]}" ps --quiet app)
           "${compose[@]}" stop --timeout 15 app

@@ -25,20 +25,19 @@ Target platforms are Linux and macOS (`amd64`, `arm64`) and Windows (`amd64`).
 Windows `arm64` is not supported yet: the approved Chromaprint releases do not
 provide a ready-made `fpcalc` binary for it.
 
-During initial setup, the application is intended to download tools into a
-persistent tools directory from these approved sources:
+During initial setup, the application downloads tools into a persistent tools
+directory from these approved sources:
 
 - `fpcalc`: https://github.com/acoustid/chromaprint/releases
-- GPL builds of `ffmpeg` and `ffprobe`, Windows/Linux:
+- Numbered GPL releases of `ffmpeg` and `ffprobe`, Windows/Linux:
   https://github.com/BtbN/FFmpeg-Builds/releases
 - GPL builds of `ffmpeg` and `ffprobe`, macOS:
   https://ffmpeg.martin-riedl.de/ — release builds only, no snapshots.
 
 FFmpeg is developed by the [FFmpeg project](https://ffmpeg.org/); its source code
-is available at https://github.com/FFmpeg/FFmpeg. MeloTrove does not bundle
-or redistribute FFmpeg: the future Setup Manager downloads the selected build
-directly from its approved third-party source and runs it as a separate
-executable. Automatic download is not implemented yet.
+is available at https://github.com/FFmpeg/FFmpeg. MeloTrove does not bundle or
+redistribute FFmpeg: Setup downloads a numbered release from its approved
+third-party source and runs it as a separate executable.
 
 ## Development
 
@@ -81,11 +80,12 @@ default `0.0.0.0`) and `HTTP_PORT` (an integer from `1` through `65535`, default
 the runtime UI and PostgreSQL rather than environment variables or config files.
 
 Compose persists downloaded tools at `/var/lib/melotrove/tools` in the
-`tools-data` volume. The image contains no bundled audio tools. The future Setup
-Manager will select this directory and download tools from the approved sources.
-Compose also bind-mounts `${MELOTROVE_OUTPUT_DIR:-./music}` from the host at
-`/var/lib/melotrove/output`; runtime settings use only this server/container
-path, never the host path.
+`tools-data` volume. The image contains no bundled audio tools. Setup installs
+selected tools there from the approved sources. Compose bind-mounts
+`${MELOTROVE_OUTPUT_DIR:-./music}` from the host at
+`/var/lib/melotrove/output`; runtime settings store and the backend use only
+this server/container path, never the host path. During Setup the output
+directory must be empty; an existing library is not imported.
 
 ## Initial setup and managed tools
 
@@ -94,21 +94,25 @@ current supported instance platform, requires an absolute writable tools path,
 an absolute **empty** writable output path, an explicit publication format and
 verified active FFmpeg and Chromaprint installations. Completing Setup is
 irreversible: a later configuration problem is shown as configuration health in
-Settings and does not reopen Setup.
+Settings and does not reopen Setup. Settings also edits runtime/provider/logging
+configuration and manages installed tool versions through explicit install,
+activation, deletion, and tools-root move operations.
 
-The tools root may contain unrelated files. MeloTrove manages only exact paths
-recorded for its installations (`ffmpeg/<version>/` and
-`fpcalc/<version>/`) and never scans or deletes other files. A pre-existing
-unknown target binary requires explicit overwrite confirmation. When moving a
-tools root, only those recorded paths are copied and verified before switching
-the setting.
+The tools root may contain unrelated files. MeloTrove writes and removes only
+exact paths for installations recorded in PostgreSQL (`ffmpeg/<version>/` and
+`fpcalc/<version>/`); it does not scan the tools root for unknown files or
+delete them. An unknown file
+at an exact installation target requires explicit overwrite confirmation. When
+moving a tools root, only recorded installation files are copied and verified
+before switching the setting.
 
 Platform is immutable for an instance. Moving a PostgreSQL database to a
 different OS/architecture leaves diagnostics and the UI available, but marks
-readiness unsuccessful and blocks Setup/product operations until the deployment
-uses the recorded platform again. macOS Intel uses the final compatible release
-build from the approved source; after that source stops Intel releases, newer
-updates may not be available.
+readiness unsuccessful and blocks Setup/product operations. There is no automatic
+platform migration: restore the recorded platform or initialize a separate
+instance database. macOS Intel (`darwin/amd64`) can use the final compatible
+release build offered by the approved source; if that source stops producing
+Intel builds, no newer compatible release will be available.
 
 The application API is an internal contract for the bundled web UI. Operational
 probes are available at `/health/live` and `/health/ready`; the image healthcheck

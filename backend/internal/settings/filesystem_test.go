@@ -56,3 +56,34 @@ func TestProbeFilesystemSemanticsReportsNoneWhenUnicodeNamesDiffer(t *testing.T)
 		t.Fatalf("distinct NFC/NFD names: normalization=%q, want none", semantics.UnicodeNormalization)
 	}
 }
+
+func TestProbeWritableEmptyAcceptsEmptyAndRejectsExistingEntries(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "empty")
+	if err := settings.ProbeWritableEmpty(empty); err != nil {
+		t.Fatalf("empty writable directory rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(empty, "existing.mka"), []byte("publication"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.ProbeWritableEmpty(empty); err == nil {
+		t.Fatal("non-empty output directory accepted")
+	}
+}
+
+func TestSetOutputDirectoryRejectsNonEmptyDirectoryWithoutSaving(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "output")
+	if err := os.Mkdir(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "existing.mka"), []byte("publication"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryStore()
+	err := settings.New(store, nil).SetOutputDirectory(context.Background(), output, "")
+	if err == nil {
+		t.Fatal("non-empty output directory accepted")
+	}
+	if _, exists := store.data[settings.OutputDirectoryKey]; exists {
+		t.Fatal("rejected output directory was saved")
+	}
+}

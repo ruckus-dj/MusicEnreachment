@@ -36,4 +36,8 @@ Three-layer design:
 - Mixing managed and system tools (always use managed path)
 
 ## NOTES
-Automatic download NOT yet implemented end-to-end (README notes manual install). Catalog and Lifecycle logic exists but integration with SetupService is incomplete.
+The approved release catalog, HTTPS downloads, checksum verification, extraction,
+and managed-path materialization are wired into the backend install operation
+flow. Setup and the post-Setup Settings UI call the backend catalog and install
+APIs; River workers perform the download/verify/materialize operation. Do not
+reintroduce the obsolete claim that automatic tool installation is unimplemented.

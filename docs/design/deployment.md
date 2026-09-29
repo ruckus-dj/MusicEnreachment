@@ -17,13 +17,16 @@ The persistent Compose volume at `/var/lib/melotrove/tools` is intentionally
 not part of the image. It may be a mixed directory containing administrator
 files. MeloTrove owns only installations recorded in PostgreSQL and stored in
 the versioned `ffmpeg/<version>/` and `fpcalc/<version>/` layout. Unknown files
-are retained; an unknown executable at an exact target path requires explicit
-overwrite confirmation.
+are never discovered by scanning the tools root or deleted; an unknown file at
+an exact managed executable
+target requires explicit overwrite confirmation. Only exact
+paths recorded for database-managed installations are written or removed.
 
 ## Platform recovery
 
 The first database-backed startup fixes `GOOS` and `GOARCH` for the instance.
 Do not move its database between platforms expecting automatic tool migration.
-A mismatch starts diagnostic/UI endpoints but readiness reports failure and
-blocks Setup and product operations. Restore the recorded platform or use a
-separately initialized database.
+A mismatch leaves diagnostic and UI endpoints available, but readiness reports
+failure and Setup/product operations are blocked. There is no automatic platform
+or tool migration. Restore the recorded platform or use a separately initialized
+database.

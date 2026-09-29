@@ -91,11 +91,14 @@
   прикладную работу workers запускают через `service`. River получает общий с
   Bun `*sql.DB` через `riverdatabasesql` и отдельный listener pool через
   `NewWithPgxListener`.
-- `integrations` инкапсулирует внешние HTTP API и запуск `ffprobe`/`fpcalc`;
+- `integrations` инкапсулирует внешние HTTP API, allowlisted release catalog и
+  lifecycle managed `ffmpeg`/`ffprobe`/`fpcalc`;
   provider-специфичные структуры не выходят за его границы.
 - `settings` владеет настройками, сохраняемыми в PostgreSQL, metadata
   чувствительности/маскирования secrets, динамическим log level и первичной
-  настройкой через Setup Manager.
+  настройкой через Setup Manager. `service`/`api` оркестрируют каталог и managed
+  tool installation lifecycle; `integrations/tools` не является UI или хранилищем
+  конфигурации.
 - `publication` владеет файловой системой управляемой публикации; исходные
   директории читаются через `service` и `integrations` и не изменяются без
   отдельной разрешённой настройки.

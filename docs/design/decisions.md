@@ -118,10 +118,12 @@
   системного `PATH`; Setup Manager загружает их в persistent tools-directory.
   Offline bootstrap и ручная загрузка собственных binaries в текущий этап не
   входят.
-- UI должен позволять вручную проверить актуальность этих инструментов и
-  обновить их. Автоматическая проверка после Setup выполняется frontend не чаще
-  одного раза за 24 часа по persistent client timestamp; ручной refresh не
-  ограничивается этим интервалом.
+- Settings UI выполняет автоматическую проверку каталога не чаще одного раза
+  за 24 часа по persistent client timestamp; manual refresh игнорирует этот
+  интервал и только обновляет каталог, не устанавливая и не активируя инструменты.
+- Post-Setup Settings управляет runtime-настройками и managed tool lifecycle:
+  install добавляет verified version без activation; activation/delete/move
+  запускаются отдельными действиями после серверной проверки.
 - Версия установленного инструмента определяется через `--version`.
 - Обновления получают только как готовые бинарники из утверждённых доверенных
   источников.
@@ -137,12 +139,15 @@
   а инициирует прямую загрузку выбранной сборки с утверждённого источника и
   запускает отдельный executable.
 - Compatible release catalog не сохраняется в PostgreSQL. Backend получает его
-  с allowlisted source по запросу Setup/settings UI, а frontend держит результат
-  только в памяти. Ручной refresh и ограниченная клиентом автоматическая
-  проверка не изменяют установленные версии.
+  с allowlisted source по запросу Setup/Settings UI, а frontend держит результат
+  только в памяти. Последний успешный client check timestamp сохраняется в
+  browser storage; автоматический запрос выполняется не чаще одного раза за 24
+  часа и не повторяется при reload в cooldown. Manual refresh всегда запрашивает
+  каталог независимо от cooldown и не запускает install/activation.
 - Artifact загружается только по HTTPS с allowlisted source. Если источник
-  публикует checksum/signature, она проверяется; отдельные уровни verification
-  не моделируются. Перед активацией обязательно проверяется `--version`.
+  публикует SHA-256 checksum, backend сверяет её идентичность и проверяет
+  загруженный archive; release signatures не проверяются. Перед активацией
+  обязательно проверяется `--version`.
 - В Setup выбранная версия становится active только после полностью успешной
   установки. После Setup install лишь добавляет проверенную версию, а activation
   выполняется отдельным явным действием. Ошибка сохраняет прежнюю active version,
@@ -234,15 +239,15 @@
 - Репозиторий размещается на GitHub.
 - GitHub CI выполняет полный `task verify` на Linux x64. Отдельная matrix
   запускает unit tests и production build на реальных GitHub-hosted runners для
-  Linux arm64, macOS x64/arm64 и Windows x64/arm64; Linux x64 уже покрыт полным
-  verify job.
+  Linux arm64, macOS x64/arm64 и Windows x64; Linux x64 уже покрыт полным
+  verify job. Windows arm64 не является поддерживаемой платформой и не входит
+  в build matrix.
 - Linux-only Compose smoke job собирает production image, запускает PostgreSQL и
   приложение, ждёт Docker health, проверяет live/ready, embedded UI и immutable
   asset cache, затем проверяет graceful SIGTERM с exit code `0`.
 - Для backend и frontend обязательны линтеры и форматтеры.
-- Нужны unit-тесты критичной функциональности. E2E-тесты основных
-  пользовательских сценариев запланированы, но отложены до прямой
-  необходимости.
+- Критичные backend-сценарии покрываются детерминированными unit/API-тестами.
+  Browser E2E-тесты Playwright в CI сейчас не выполняются.
 - Полный `task verify` остаётся единственным pre-commit hook. Разделение на
   быстрый pre-commit и полный pre-push откладывается до появления реальной
   проблемы со временем выполнения. Platform matrix и Compose smoke выполняются
