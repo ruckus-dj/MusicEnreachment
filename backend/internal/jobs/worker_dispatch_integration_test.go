@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1102,3 +1103,136 @@ func dispatchZipWithExecutable(t *testing.T, name string, contents []byte) []byt
 }
 
 var _ river.Worker[service.OperationJobArgs] = (*InstallationWorker)(nil)
+
+func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
+	database, databaseURL := openDispatchDatabase(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	repository := persistence.NewSetupManagerRepository(database)
+	settingsRepository := persistence.NewSettingsRepository(database)
+	oldRoot, err := settings.NormalizePath(filepath.Join(t.TempDir(), "old-tools"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := settings.NormalizePath(filepath.Join(t.TempDir(), "new-tools"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(oldRoot, "fpcalc", "1.6.1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldRoot, "fpcalc", "1.6.1", "fpcalc"), []byte("managed executable bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setRuntimeRoots(t, ctx, settingsRepository, oldRoot)
+	runtimeSettings := settings.New(settingsRepository, nil)
+	platform := tools.Platform{GOOS: "linux", GOARCH: "amd64"}
+	installation := &persistence.ToolInstallation{
+		ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: platform.GOOS, PlatformGOARCH: platform.GOARCH,
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "preparing",
+	}
+	if err := repository.CreateInstallation(ctx, installation); err != nil {
+		t.Fatalf("create managed installation: %v", err)
+	}
+	if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"fpcalc":"fpcalc version 1.6.1"}`), time.Now().UTC()); err != nil {
+		t.Fatalf("mark managed installation ready: %v", err)
+	}
+	if err := settingsRepository.Set(ctx, settings.ActiveFPCalcInstallationKey, installation.ID.String()); err != nil {
+		t.Fatalf("select active fpcalc installation: %v", err)
+	}
+	activeFFmpegBefore, hasActiveFFmpegBefore, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+	if err != nil {
+		t.Fatalf("read active FFmpeg ID before reconciliation: %q %v %v", activeFFmpegBefore, hasActiveFFmpegBefore, err)
+	}
+	activeFPCalcBefore, hasActiveFPCalcBefore, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+	if err != nil || !hasActiveFPCalcBefore {
+		t.Fatalf("read active fpcalc ID before reconciliation: %q %v %v", activeFPCalcBefore, hasActiveFPCalcBefore, err)
+	}
+
+	moveService := service.NewMoveTools(repository, runtimeSettings, platform, nil)
+	preflight, err := moveService.Preflight(ctx, newRoot, false)
+	if err != nil {
+		t.Fatalf("preflight tools-root move: %v", err)
+	}
+	operationID := uuid.New()
+	snapshot, err := json.Marshal(preflight.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRiverJobID := int64(987654321)
+	operation := &persistence.Operation{
+		ID: operationID, Kind: "move_tools_root", State: "running", Stage: "copy", InputSnapshot: snapshot,
+		RiverJobID: &staleRiverJobID,
+	}
+	if err := repository.CreateOperation(ctx, operation); err != nil {
+		t.Fatalf("create interrupted move operation: %v", err)
+	}
+	staging := filepath.Join(newRoot, ".staging", operationID.String())
+	partialPayload := filepath.Join(staging, "payload", "fpcalc", "1.6.1", "fpcalc")
+	if err := os.MkdirAll(filepath.Dir(partialPayload), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partialPayload, []byte("partial copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileInterruptedOperations(ctx, repository, service.NewOperations(repository),
+		func(_ context.Context, id *int64) (bool, error) {
+			if id == nil || *id != staleRiverJobID {
+				t.Fatalf("checked River job id %v; want %d", id, staleRiverJobID)
+			}
+			return false, nil
+		}, runtimeSettings); err != nil {
+		t.Fatalf("reconcile interrupted move: %v", err)
+	}
+	recovered, err := repository.GetOperation(ctx, operationID)
+	if err != nil || recovered.State != "failed" || recovered.SafeError == nil || !strings.Contains(*recovered.SafeError, "Retry") {
+		t.Fatalf("recovered move = %#v, %v; want failed with safe retry guidance", recovered, err)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("interrupted move staging remains: %v", err)
+	}
+	currentRoot, rootExists, err := runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !rootExists || currentRoot != oldRoot {
+		t.Fatalf("tools root after reconciliation = %q, %v, %v; want unchanged %q", currentRoot, rootExists, err, oldRoot)
+	}
+
+	workerOperations := service.NewOperations(repository)
+	worker := NewInstallationWorker(repository, workerOperations, &dispatchCatalog{}, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{}))
+	worker.SetMoveWorker(NewMoveWorker(repository, workerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
+	riverClient, listenerPool := startDispatchRiver(t, databaseURL, database, worker)
+	defer listenerPool.Close()
+	defer stopRiverClient(t, riverClient)
+	events, cancelEvents := riverClient.Subscribe(river.EventKindJobCompleted)
+	defer cancelEvents()
+	operations := service.NewOperationsWithRiver(repository, riverClient)
+	retried, err := operations.Retry(ctx, operationID)
+	if err != nil {
+		t.Fatalf("retry recovered move: %v", err)
+	}
+	if retried.TargetInstallationID != nil || retried.Attempt != 2 {
+		t.Fatalf("move retry changed target or attempt: %#v", retried)
+	}
+	awaitRiverCompletion(t, ctx, events, *retried.RiverJobID)
+	completed, err := repository.GetOperation(ctx, operationID)
+	if err != nil || completed.State != "succeeded" {
+		t.Fatalf("retried move = %#v, %v; want succeeded", completed, err)
+	}
+	installations, err := repository.ListInstallations(ctx, "fpcalc", platform.GOOS, platform.GOARCH)
+	if err != nil || len(installations) != 1 || installations[0].ID != installation.ID {
+		t.Fatalf("installations after move retry = %#v, %v; want exactly the original installation", installations, err)
+	}
+	activeFFmpegAfter, hasActiveFFmpegAfter, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+	if err != nil || hasActiveFFmpegAfter != hasActiveFFmpegBefore || activeFFmpegAfter != activeFFmpegBefore {
+		t.Fatalf("active FFmpeg ID changed from %q/%v to %q/%v: %v", activeFFmpegBefore, hasActiveFFmpegBefore, activeFFmpegAfter, hasActiveFFmpegAfter, err)
+	}
+	activeFPCalcAfter, hasActiveFPCalcAfter, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+	if err != nil || hasActiveFPCalcAfter != hasActiveFPCalcBefore || activeFPCalcAfter != activeFPCalcBefore {
+		t.Fatalf("active fpcalc ID changed from %q/%v to %q/%v: %v", activeFPCalcBefore, hasActiveFPCalcBefore, activeFPCalcAfter, hasActiveFPCalcAfter, err)
+	}
+	currentRoot, rootExists, err = runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !rootExists || currentRoot != newRoot {
+		t.Fatalf("tools root after successful retry = %q, %v, %v; want %q", currentRoot, rootExists, err, newRoot)
+	}
+}

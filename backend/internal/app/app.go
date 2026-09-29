@@ -104,6 +104,22 @@ func Run(ctx context.Context, config Config) error {
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil)))
 
+	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
+		func(ctx context.Context, jobID *int64) (bool, error) {
+			if jobID == nil {
+				return false, nil
+			}
+			var live bool
+			err := sqldb.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM river_job
+					WHERE id = $1 AND state IN ('available', 'pending', 'retryable', 'scheduled')
+				)`, *jobID).Scan(&live)
+			return live, err
+		}, registry); err != nil {
+		return fmt.Errorf("reconcile interrupted operations: %w", err)
+	}
+
 	riverClient, riverListenerPool, err := jobs.StartWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
