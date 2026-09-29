@@ -81,12 +81,20 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		}
 		return worker.fail(ctx, operation, fmt.Errorf("tools root move rolled back"))
 	}
-	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && operation.Stage == "rollback_pending" {
+	if exists && currentRoot == snapshot.NewRoot &&
+		(operation.State == "running" && operation.Stage == "rollback_pending" || operation.State == "queued" && operation.Stage == "retry:rollback_pending") {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 		if err != nil {
 			return err
 		}
 		return worker.rollbackSwitched(ctx, operation, snapshot, staging, fmt.Errorf("tools root move rollback resumed"))
+	}
+	if exists && currentRoot == snapshot.NewRoot && operation.State == "queued" && operation.Stage == "retry:switched" {
+		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
+		if err != nil {
+			return err
+		}
+		return worker.rollbackSwitched(ctx, operation, snapshot, staging, fmt.Errorf("tools root move was interrupted after switching roots"))
 	}
 	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && strings.TrimPrefix(operation.Stage, "retry:") == "switched" {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)

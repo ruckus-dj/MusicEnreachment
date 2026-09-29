@@ -261,6 +261,72 @@ func TestMoveWorkerFinishesInterruptedRollback(t *testing.T) {
 	}
 }
 
+func TestReconcilePostSwitchMovePreservesStagingAndRetryRollsBack(t *testing.T) {
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
+	repository := &moveWorkerRepository{
+		workerRepository: &workerRepository{operation: operation, installation: installation},
+		root:             oldRoot,
+		finishErr:        errors.New("simulated process interruption after root switch"),
+	}
+	operations := service.NewOperations(repository)
+	platform := tools.Platform{GOOS: "linux", GOARCH: "amd64"}
+	worker := jobs.NewMoveWorker(repository, operations, moveWorkerSettings{root: oldRoot}, platform, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err == nil {
+		t.Fatal("expected interruption after the atomic root switch")
+	}
+	if operation.State != "running" || operation.Stage != "switched" || repository.root != newRoot {
+		t.Fatalf("post-switch interruption = %s/%s root=%s; want running/switched at new root", operation.State, operation.Stage, repository.root)
+	}
+	staging := filepath.Join(newRoot, ".staging", operation.ID.String())
+	if _, err := os.Stat(filepath.Join(staging, "publication.json")); err != nil {
+		t.Fatalf("post-switch recovery publication missing before reconciliation: %v", err)
+	}
+
+	if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, operations,
+		func(context.Context, *int64) (bool, error) { return false, nil }, moveWorkerSettings{root: newRoot}); err != nil {
+		t.Fatalf("reconcile post-switch move: %v", err)
+	}
+	if operation.State != "failed" || operation.Stage != "switched" || operation.SafeError == nil || !strings.Contains(*operation.SafeError, "Retry") {
+		t.Fatalf("reconciled move = %s/%s safe error %v; want retryable failed/switched", operation.State, operation.Stage, operation.SafeError)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "publication.json")); err != nil {
+		t.Fatalf("reconciliation discarded rollback publication: %v", err)
+	}
+	if repository.root != newRoot {
+		t.Fatalf("reconciliation changed switched root to %q", repository.root)
+	}
+
+	retried, err := operations.Retry(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatalf("retry post-switch move: %v", err)
+	}
+	if retried.State != "queued" || retried.Stage != "retry:switched" {
+		t.Fatalf("retry stage/state = %s/%s; want queued/retry:switched", retried.State, retried.Stage)
+	}
+	worker = jobs.NewMoveWorker(repository, operations, moveWorkerSettings{root: newRoot}, platform, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), retried); err != nil {
+		t.Fatalf("rollback retry failed: %v", err)
+	}
+	if repository.root != oldRoot || retried.State != "failed" || retried.SafeError == nil ||
+		*retried.SafeError != "The tools directory move failed. The current tools directory is unchanged." {
+		t.Fatalf("rollback result root=%s operation=%s error=%v; want old root and truthful failed state", repository.root, retried.State, retried.SafeError)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("rollback staging remains: %v", err)
+	}
+	if repository.installation.ID != installation.ID {
+		t.Fatalf("rollback changed installation identity from %s to %s", installation.ID, repository.installation.ID)
+	}
+	for _, file := range snapshot.Files {
+		if digest, err := tools.SHA256File(file.SourcePath); err != nil || digest != file.SHA256 {
+			t.Errorf("old managed executable not restored: %s hash=%s err=%v", file.Executable, digest, err)
+		}
+		if _, err := os.Lstat(file.TargetPath); !os.IsNotExist(err) {
+			t.Errorf("new-root target survived rollback: %s error=%v", file.TargetPath, err)
+		}
+	}
+}
+
 func TestMoveWorkerResumesPendingRollbackBeforeFilesystemChanges(t *testing.T) {
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	operation.State, operation.Stage = "running", "rollback_pending"

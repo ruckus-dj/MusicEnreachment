@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -163,7 +164,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 		return nil, fmt.Errorf("only failed operations can be retried")
 	}
 	existing.State = "queued"
-	existing.Stage = "retry"
+	if !strings.HasPrefix(existing.Stage, "retry:") {
+		existing.Stage = "retry:" + existing.Stage
+	}
 	existing.SafeError = nil
 	existing.StartedAt = nil
 	existing.FinishedAt = nil

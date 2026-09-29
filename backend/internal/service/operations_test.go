@@ -59,10 +59,21 @@ func TestOperationTransitionsAndRetry(t *testing.T) {
 	if err := operations.Fail(ctx, operation.ID, "verify", "safe failure"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := operations.Retry(ctx, operation.ID); err != nil {
+	retried, err := operations.Retry(ctx, operation.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if operation.State != "queued" {
-		t.Fatalf("state = %s", operation.State)
+	if retried.State != "queued" || retried.Stage != "retry:verify" {
+		t.Fatalf("first retry state/stage = %s/%s; want queued/retry:verify", retried.State, retried.Stage)
+	}
+	if err := operations.Fail(ctx, operation.ID, retried.Stage, "safe failure"); err != nil {
+		t.Fatal(err)
+	}
+	retriedAgain, err := operations.Retry(ctx, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retriedAgain.Stage != "retry:verify" {
+		t.Fatalf("repeated retry stage = %s; want retry:verify without a duplicate prefix", retriedAgain.Stage)
 	}
 }

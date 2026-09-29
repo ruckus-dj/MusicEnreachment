@@ -1107,7 +1107,7 @@ var _ river.Worker[service.OperationJobArgs] = (*InstallationWorker)(nil)
 func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	repository := persistence.NewSetupManagerRepository(database)
@@ -1141,6 +1141,28 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	}
 	if err := settingsRepository.Set(ctx, settings.ActiveFPCalcInstallationKey, installation.ID.String()); err != nil {
 		t.Fatalf("select active fpcalc installation: %v", err)
+	}
+	ffmpegInstallation := &persistence.ToolInstallation{
+		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: platform.GOOS, PlatformGOARCH: platform.GOARCH,
+		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "preparing",
+	}
+	if err := os.MkdirAll(filepath.Join(oldRoot, ffmpegInstallation.RelativePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, executable := range []string{"ffmpeg", "ffprobe"} {
+		if err := os.WriteFile(filepath.Join(oldRoot, ffmpegInstallation.RelativePath, executable), []byte(executable+" version 8.0"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repository.CreateInstallation(ctx, ffmpegInstallation); err != nil {
+		t.Fatalf("create active FFmpeg installation: %v", err)
+	}
+	if err := repository.MarkInstallationReady(ctx, ffmpegInstallation.ID,
+		json.RawMessage(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`), time.Now().UTC()); err != nil {
+		t.Fatalf("mark active FFmpeg installation ready: %v", err)
+	}
+	if err := settingsRepository.Set(ctx, settings.ActiveFFmpegInstallationKey, ffmpegInstallation.ID.String()); err != nil {
+		t.Fatalf("select active FFmpeg installation: %v", err)
 	}
 	activeFFmpegBefore, hasActiveFFmpegBefore, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
 	if err != nil {
@@ -1201,9 +1223,8 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	workerOperations := service.NewOperations(repository)
 	worker := NewInstallationWorker(repository, workerOperations, &dispatchCatalog{}, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{}))
 	worker.SetMoveWorker(NewMoveWorker(repository, workerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
-	riverClient, listenerPool := startDispatchRiver(t, databaseURL, database, worker)
-	defer listenerPool.Close()
-	defer stopRiverClient(t, riverClient)
+	riverSession := newDispatchRiverSession(t, ctx, databaseURL, database, worker)
+	riverClient := riverSession.client
 	events, cancelEvents := riverClient.Subscribe(river.EventKindJobCompleted)
 	defer cancelEvents()
 	operations := service.NewOperationsWithRiver(repository, riverClient)
@@ -1223,6 +1244,10 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	if err != nil || len(installations) != 1 || installations[0].ID != installation.ID {
 		t.Fatalf("installations after move retry = %#v, %v; want exactly the original installation", installations, err)
 	}
+	ffmpegInstallations, err := repository.ListInstallations(ctx, "ffmpeg", platform.GOOS, platform.GOARCH)
+	if err != nil || len(ffmpegInstallations) != 1 || ffmpegInstallations[0].ID != ffmpegInstallation.ID {
+		t.Fatalf("FFmpeg installations after move retry = %#v, %v; want exactly the original installation", ffmpegInstallations, err)
+	}
 	activeFFmpegAfter, hasActiveFFmpegAfter, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
 	if err != nil || hasActiveFFmpegAfter != hasActiveFFmpegBefore || activeFFmpegAfter != activeFFmpegBefore {
 		t.Fatalf("active FFmpeg ID changed from %q/%v to %q/%v: %v", activeFFmpegBefore, hasActiveFFmpegBefore, activeFFmpegAfter, hasActiveFFmpegAfter, err)
@@ -1234,5 +1259,115 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	currentRoot, rootExists, err = runtimeSettings.GetToolsDirectory(ctx)
 	if err != nil || !rootExists || currentRoot != newRoot {
 		t.Fatalf("tools root after successful retry = %q, %v, %v; want %q", currentRoot, rootExists, err, newRoot)
+	}
+	riverSession.close(t)
+
+	postSwitchRoot, err := settings.NormalizePath(filepath.Join(t.TempDir(), "post-switch-tools"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	moveCommitBarrier := newDispatchBarrier()
+	boundaryRepository := &riverBoundaryRepository{SetupManagerRepository: repository, moveCommit: moveCommitBarrier}
+	boundaryOperations := service.NewOperations(boundaryRepository)
+	boundaryWorker := NewInstallationWorker(boundaryRepository, boundaryOperations, &dispatchCatalog{}, runtimeSettings,
+		platform, tools.NewLifecycle(&dispatchRunner{}))
+	boundaryWorker.SetMoveWorker(NewMoveWorker(boundaryRepository, boundaryOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
+	boundarySession := newDispatchRiverSession(t, ctx, databaseURL, database, boundaryWorker)
+	boundaryEvents, cancelBoundaryEvents := boundarySession.client.Subscribe(river.EventKindJobCompleted)
+	defer cancelBoundaryEvents()
+	postSwitchService := service.NewMoveTools(repository, runtimeSettings, platform, boundarySession.client)
+	postSwitchPreflight, err := postSwitchService.Preflight(ctx, postSwitchRoot, true)
+	if err != nil {
+		t.Fatalf("preflight post-switch rollback fixture: %v", err)
+	}
+	postSwitchMove, err := postSwitchService.Start(ctx, postSwitchPreflight, nil)
+	if err != nil {
+		t.Fatalf("start post-switch rollback fixture: %v", err)
+	}
+	awaitDispatchBarrier(t, ctx, moveCommitBarrier, boundaryEvents, *postSwitchMove.RiverJobID, repository, postSwitchMove.ID)
+	postSwitchSnapshot, err := repository.GetOperation(ctx, postSwitchMove.ID)
+	if err != nil || postSwitchSnapshot.State != "running" || postSwitchSnapshot.Stage != "switched" {
+		t.Fatalf("operation at post-switch barrier = %#v, %v; want running/switched", postSwitchSnapshot, err)
+	}
+	postSwitchStaging := filepath.Join(postSwitchRoot, ".staging", postSwitchMove.ID.String())
+	if _, err := os.Stat(filepath.Join(postSwitchStaging, "publication.json")); err != nil {
+		t.Fatalf("post-switch publication evidence missing: %v", err)
+	}
+	boundarySession.stopAndCancel(t, ctx)
+	postSwitchRootValue, rootExists, err := runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !rootExists || postSwitchRootValue != postSwitchRoot {
+		t.Fatalf("persisted tools root at post-switch barrier = %q, %v, %v; want %q", postSwitchRootValue, rootExists, err, postSwitchRoot)
+	}
+
+	if err := ReconcileInterruptedOperations(ctx, repository, service.NewOperations(repository),
+		func(context.Context, *int64) (bool, error) { return false, nil }, runtimeSettings); err != nil {
+		t.Fatalf("reconcile post-switch move: %v", err)
+	}
+	reconciledMove, err := repository.GetOperation(ctx, postSwitchMove.ID)
+	if err != nil || reconciledMove.State != "failed" || reconciledMove.Stage != "switched" ||
+		reconciledMove.SafeError == nil || !strings.Contains(*reconciledMove.SafeError, "Retry") {
+		t.Fatalf("post-switch reconciliation = %#v, %v; want retryable failed/switched", reconciledMove, err)
+	}
+	if _, err := os.Stat(filepath.Join(postSwitchStaging, "publication.json")); err != nil {
+		t.Fatalf("reconciliation discarded post-switch recovery evidence: %v", err)
+	}
+
+	rollbackWorkerOperations := service.NewOperations(repository)
+	rollbackWorker := NewInstallationWorker(repository, rollbackWorkerOperations, &dispatchCatalog{}, runtimeSettings,
+		platform, tools.NewLifecycle(&dispatchRunner{}))
+	rollbackWorker.SetMoveWorker(NewMoveWorker(repository, rollbackWorkerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
+	rollbackClient, rollbackListenerPool := startDispatchRiver(t, databaseURL, database, rollbackWorker)
+	defer rollbackListenerPool.Close()
+	defer stopRiverClient(t, rollbackClient)
+	rollbackEvents, cancelRollbackEvents := rollbackClient.Subscribe(river.EventKindJobCompleted)
+	defer cancelRollbackEvents()
+	rollbackOperations := service.NewOperationsWithRiver(repository, rollbackClient)
+	rollbackRetry, err := rollbackOperations.Retry(ctx, postSwitchMove.ID)
+	if err != nil {
+		t.Fatalf("retry post-switch move: %v", err)
+	}
+	if rollbackRetry.State != "queued" || rollbackRetry.Stage != "retry:switched" {
+		t.Fatalf("post-switch retry stage/state = %s/%s; want queued/retry:switched", rollbackRetry.State, rollbackRetry.Stage)
+	}
+	awaitRiverCompletion(t, ctx, rollbackEvents, *rollbackRetry.RiverJobID)
+	rolledBack, err := repository.GetOperation(ctx, postSwitchMove.ID)
+	if err != nil || rolledBack.State != "failed" || rolledBack.SafeError == nil ||
+		*rolledBack.SafeError != "The tools directory move failed. The current tools directory is unchanged." {
+		t.Fatalf("post-switch rollback result = %#v, %v; want failed with truthful safe error", rolledBack, err)
+	}
+	currentRoot, rootExists, err = runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !rootExists || currentRoot != newRoot {
+		t.Fatalf("persisted tools root after rollback = %q, %v, %v; want restored old root %q", currentRoot, rootExists, err, newRoot)
+	}
+	if _, err := os.Lstat(postSwitchStaging); !os.IsNotExist(err) {
+		t.Fatalf("post-switch staging remains after rollback: %v", err)
+	}
+	for _, file := range postSwitchPreflight.Snapshot.Files {
+		if digest, err := tools.SHA256File(file.SourcePath); err != nil || digest != file.SHA256 {
+			t.Errorf("previous-root executable not restored: %s hash=%s err=%v", file.SourcePath, digest, err)
+		}
+		if _, err := os.Lstat(file.TargetPath); !os.IsNotExist(err) {
+			t.Errorf("new-root executable remains after rollback: %s error=%v", file.TargetPath, err)
+		}
+	}
+	for _, test := range []struct {
+		kind string
+		id   uuid.UUID
+	}{
+		{kind: "fpcalc", id: installation.ID},
+		{kind: "ffmpeg", id: ffmpegInstallation.ID},
+	} {
+		remaining, err := repository.ListInstallations(ctx, test.kind, platform.GOOS, platform.GOARCH)
+		if err != nil || len(remaining) != 1 || remaining[0].ID != test.id {
+			t.Fatalf("%s installations after rollback = %#v, %v; want original only", test.kind, remaining, err)
+		}
+	}
+	activeFFmpegAfterRollback, hasActiveFFmpegAfterRollback, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+	if err != nil || !hasActiveFFmpegAfterRollback || activeFFmpegAfterRollback != activeFFmpegBefore {
+		t.Fatalf("active FFmpeg ID after rollback = %q/%v, %v; want unchanged %q", activeFFmpegAfterRollback, hasActiveFFmpegAfterRollback, err, activeFFmpegBefore)
+	}
+	activeFPCalcAfterRollback, hasActiveFPCalcAfterRollback, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+	if err != nil || !hasActiveFPCalcAfterRollback || activeFPCalcAfterRollback != activeFPCalcBefore {
+		t.Fatalf("active fpcalc ID after rollback = %q/%v, %v; want unchanged %q", activeFPCalcAfterRollback, hasActiveFPCalcAfterRollback, err, activeFPCalcBefore)
 	}
 }

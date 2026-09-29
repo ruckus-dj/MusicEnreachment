@@ -44,7 +44,7 @@ func TestOperationTransitionHTTPResponses(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID != failedID || snapshot.State != "queued" || snapshot.Stage != "retry" || snapshot.SafeError != nil {
+	if snapshot.ID != failedID || snapshot.State != "queued" || snapshot.Stage != "retry:verify" || snapshot.SafeError != nil {
 		t.Fatalf("retry response did not expose transitioned snapshot: %#v", snapshot)
 	}
 

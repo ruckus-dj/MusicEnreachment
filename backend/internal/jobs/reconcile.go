@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -44,11 +45,12 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			continue
 		}
 
+		preserveMoveStaging := operation.Kind == "move_tools_root" && moveNeedsRollbackOnRetry(operation.Stage)
 		root, err := interruptedOperationStagingRoot(ctx, operation, runtimeSettings)
 		if err != nil {
 			return fmt.Errorf("resolve staging root for operation %s: %w", operation.ID, err)
 		}
-		if root != "" {
+		if root != "" && !preserveMoveStaging {
 			if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
 				return fmt.Errorf("clean interrupted operation %s staging: %w", operation.ID, err)
 			}
@@ -58,11 +60,24 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 				return fmt.Errorf("mark interrupted installation failed: %w", err)
 			}
 		}
-		if err := operations.Fail(ctx, operation.ID, operation.Stage, "The operation was interrupted. Retry the operation."); err != nil {
+		safeError := "The operation was interrupted. Retry the operation."
+		if preserveMoveStaging {
+			safeError = "The tools directory move was interrupted after switching roots. Retry the move to restore the previous tools directory."
+		}
+		if err := operations.Fail(ctx, operation.ID, operation.Stage, safeError); err != nil {
 			return fmt.Errorf("mark interrupted operation failed: %w", err)
 		}
 	}
 	return nil
+}
+
+func moveNeedsRollbackOnRetry(stage string) bool {
+	switch strings.TrimPrefix(stage, "retry:") {
+	case "switched", "rollback_pending":
+		return true
+	default:
+		return false
+	}
 }
 
 func interruptedOperationStagingRoot(ctx context.Context, operation *persistence.Operation, runtimeSettings interruptedOperationSettings) (string, error) {
