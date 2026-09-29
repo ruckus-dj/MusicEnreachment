@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -340,6 +341,38 @@ func TestMaterializeRejectsTargetAddedAfterPreflight(t *testing.T) {
 	}
 }
 
+func TestVersionQueryUsesSingleDashOptionForEveryPackage(t *testing.T) {
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "fpcalc"), []byte("binary fpcalc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, versions, err := NewLifecycle(versionArgumentRunner{output: "fpcalc version 1.6.1 (FFmpeg Lavc62.11.100)"}).Materialize(
+		context.Background(), staging, t.TempDir(), PackageFPCalc, "v1.6.1", MaterializeOptions{GOOS: "linux", GOARCH: "amd64"},
+	)
+	if err != nil {
+		t.Fatalf("fpcalc materialization rejected the single-dash version query: %v", err)
+	}
+	if !strings.HasPrefix(versions["fpcalc"], "fpcalc version 1.6.1") {
+		t.Fatalf("verified versions = %#v", versions)
+	}
+}
+
+func TestVerifyInstallationAcceptsUpstreamExtraVersionSuffix(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "ffmpeg", "9.0.2")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutables(t, directory, "darwin")
+	lifecycle := NewLifecycle(fixedVersionRunner("ffmpeg version 9.0.2-https://www.martin-riedl.de Copyright (c) 2000-2026 the FFmpeg developers"))
+	if _, err := lifecycle.VerifyInstallation(context.Background(), root, "ffmpeg/9.0.2", PackageFFmpeg, "9.0.2", "darwin"); err != nil {
+		t.Fatalf("upstream extra version suffix was rejected: %v", err)
+	}
+	if _, err := NewLifecycle(fixedVersionRunner("ffmpeg version 9.0.3-https://www.martin-riedl.de")).VerifyInstallation(context.Background(), root, "ffmpeg/9.0.2", PackageFFmpeg, "9.0.2", "darwin"); err == nil {
+		t.Fatal("different upstream version passed activation verification")
+	}
+}
+
 func TestVerifyInstallationRechecksPackageExecutables(t *testing.T) {
 	root := t.TempDir()
 	relative, err := ManagedRelativePath(PackageFFmpeg, "8.0")
@@ -421,6 +454,17 @@ func TestVerifySHA256ChecksPublishedDigestWhenPresent(t *testing.T) {
 	if err := VerifySHA256(file, ""); err != nil {
 		t.Fatalf("missing optional checksum rejected: %v", err)
 	}
+}
+
+type versionArgumentRunner struct {
+	output string
+}
+
+func (runner versionArgumentRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if len(args) != 1 || args[0] != versionArgument {
+		return nil, fmt.Errorf("unexpected version argument %q", args)
+	}
+	return []byte(runner.output), nil
 }
 
 type failingVersionRunner struct {

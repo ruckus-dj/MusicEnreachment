@@ -746,7 +746,7 @@ type dispatchRunner struct {
 }
 
 func (runner *dispatchRunner) Run(ctx context.Context, executable string, args ...string) ([]byte, error) {
-	if len(args) != 1 || args[0] != "--version" {
+	if len(args) != 1 || args[0] != "-version" {
 		return nil, fmt.Errorf("unexpected command arguments")
 	}
 	runner.mu.Lock()

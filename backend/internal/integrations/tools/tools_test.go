@@ -15,7 +15,7 @@ type fakeRunner struct {
 
 func (r fakeRunner) Run(_ context.Context, path string, args ...string) ([]byte, error) {
 	r.t.Helper()
-	if path != r.path || len(args) != 1 || args[0] != "--version" {
+	if path != r.path || len(args) != 1 || args[0] != versionArgument {
 		r.t.Fatalf("unexpected command: %q %q", path, args)
 	}
 	return []byte("ffmpeg version test\n"), nil

@@ -160,7 +160,7 @@ func (settings workerSettings) SetupCompleted(context.Context) (bool, error) {
 type workerCommandRunner struct{}
 
 func (workerCommandRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
-	if len(args) != 1 || args[0] != "--version" {
+	if len(args) != 1 || args[0] != "-version" {
 		return nil, fmt.Errorf("unexpected command arguments")
 	}
 	if !strings.Contains(filepath.Base(executable), "fpcalc") {
@@ -347,7 +347,7 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 type ffmpegWorkerRunner struct{}
 
 func (ffmpegWorkerRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
-	if len(args) != 1 || args[0] != "--version" {
+	if len(args) != 1 || args[0] != "-version" {
 		return nil, errors.New("unexpected command arguments")
 	}
 	return []byte(filepath.Base(executable) + " version 8.0"), nil

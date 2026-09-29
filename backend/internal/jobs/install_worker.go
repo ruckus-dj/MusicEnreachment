@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,6 +269,7 @@ func (worker *InstallationWorker) fail(ctx context.Context, operation *persisten
 	if ctx.Err() != nil {
 		return cause
 	}
+	slog.Warn("tool operation failed", "operation", operation.ID.String(), "stage", stage, "cause", cause)
 	root, exists, err := worker.settings.GetToolsDirectory(ctx)
 	if err != nil {
 		return fmt.Errorf("read tools directory for staging cleanup: %w", err)

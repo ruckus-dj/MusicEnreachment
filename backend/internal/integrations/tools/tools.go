@@ -59,7 +59,7 @@ func (m *Manager) Check(ctx context.Context, name string) (Installation, error) 
 	if _, err := os.Stat(path); err != nil {
 		return Installation{}, fmt.Errorf("inspect %s: %w", name, err)
 	}
-	output, err := m.runner.Run(ctx, path, "--version")
+	output, err := m.runner.Run(ctx, path, versionArgument)
 	if err != nil {
 		return Installation{}, fmt.Errorf("check %s version: %w", name, err)
 	}
@@ -74,6 +74,12 @@ func isRequired(name string) bool {
 	}
 	return false
 }
+
+// versionArgument queries the version of a managed executable. It must stay the
+// single-dash form: Chromaprint's fpcalc rejects "--version", and the macOS
+// ffmpeg builds print their banner and then exit non-zero for the double-dash
+// spelling.
+const versionArgument = "-version"
 
 func executableName(name, goos string) string {
 	if goos == "windows" {

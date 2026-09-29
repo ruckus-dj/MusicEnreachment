@@ -435,9 +435,9 @@ func (l *Lifecycle) Materialize(ctx context.Context, staging, root string, kind 
 		if options.Progress != nil {
 			options.Progress(bytesCopied)
 		}
-		output, err := l.runner.Run(ctx, tempPath, "--version")
+		output, err := l.runner.Run(ctx, tempPath, versionArgument)
 		if err != nil {
-			return "", nil, fmt.Errorf("verify %s: %w", name, err)
+			return "", nil, versionFailure("verify "+name, output, err)
 		}
 		versions[name] = strings.TrimSpace(string(output))
 		if !matchesReleaseVersion(versions[name], version) {
@@ -542,9 +542,9 @@ func (l *Lifecycle) VerifyInstallation(ctx context.Context, root, relative strin
 		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("managed executable %s is not a regular file", name)
 		}
-		output, err := l.runner.Run(ctx, executable, "--version")
+		output, err := l.runner.Run(ctx, executable, versionArgument)
 		if err != nil {
-			return nil, fmt.Errorf("verify managed executable %s: %w", name, err)
+			return nil, versionFailure("verify managed executable "+name, output, err)
 		}
 		verified := strings.TrimSpace(string(output))
 		if !matchesReleaseVersion(verified, version) {
@@ -565,9 +565,34 @@ func matchesReleaseVersion(output, release string) bool {
 		}
 		actual := strings.ToLower(fields[index+1])
 		actual = strings.TrimPrefix(strings.TrimPrefix(actual, "n"), "v")
-		return actual == expected
+		return actual == expected || hasUpstreamExtraVersion(actual, expected)
 	}
 	return false
+}
+
+// hasUpstreamExtraVersion accepts a build that reports the release identity
+// followed by the upstream extra-version, for example the macOS builds print
+// "ffmpeg version 9.0.2-https://www.martin-riedl.de".
+func hasUpstreamExtraVersion(actual, expected string) bool {
+	rest, ok := strings.CutPrefix(actual, expected)
+	if !ok || rest == "" {
+		return false
+	}
+	return strings.HasPrefix(rest, "-") || strings.HasPrefix(rest, "+")
+}
+
+// versionFailure keeps a bounded first line of the runner output next to the
+// cause. The message is only logged server-side; the operation reports a safe
+// error instead.
+func versionFailure(label string, output []byte, err error) error {
+	line, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	if line == "" {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	return fmt.Errorf("%s: %w: %s", label, err, line)
 }
 
 func findExecutable(root, name string) (string, error) {

@@ -104,7 +104,7 @@ type moveCommandRunner struct {
 
 func (runner moveCommandRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
 	name := filepath.Base(executable)
-	if len(args) != 1 || args[0] != "--version" {
+	if len(args) != 1 || args[0] != "-version" {
 		return nil, errors.New("unexpected verification command")
 	}
 	if name == runner.failName {
