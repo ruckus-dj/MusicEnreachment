@@ -97,10 +97,14 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 **Prototype coexistence**: docs/app-design/index.html is a static HTML/JS design prototype, NOT part of the React app.
 
 ## COMMANDS
+
+**Local verification rule**: `task verify` is the only local test/build gate. Do not run additional local test suites, ad-hoc test selections, platform builds or cross-compilations for the platform matrix — those belong to GitHub CI. Reach for a narrower run only when `task verify` fails and the failure must be diagnosed.
+
 ```bash
 # Prerequisites: Go 1.27, Node 24 LTS, Task 3, golangci-lint 2.14, Docker Compose, pre-commit
 
 # Full development cycle
+```
 task verify              # Full gate: generate, lint, test, build
 
 # Build and run
@@ -121,14 +125,13 @@ task migrate:rollback    # Stop server first; rollback via backend/cmd/migrate
 npm --prefix frontend run dev
 
 # Backend only
-cd backend && go test -tags=integration ./...
 cd backend && golangci-lint run ./...
 ```
 
 ## NOTES
 **Legacy naming**: Go module path stays `github.com/ruckus/MusicEnreachment/backend` until prototype merge; product name is MeloTrove.
 
-**Automatic tool download NOT implemented**: README notes ffmpeg/fpcalc must be manually installed; managed download logic exists but is incomplete.
+**Managed tools are downloaded and verified, not installed**: Setup and the Settings screen download a selected release from an approved source into the managed tools directory, verify its checksum when the source publishes one and run every executable's version query before recording it. Do not describe this as installation; an installation is a package manager or an OS installer.
 
 **Windows arm64 unsupported**: Explicitly documented limitation.
 
