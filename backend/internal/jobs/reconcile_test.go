@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,11 +19,32 @@ import (
 
 type multipleOperationRepository struct {
 	*workerRepository
-	rows []persistence.Operation
+	rows []*persistence.Operation
 }
 
 func (repository *multipleOperationRepository) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
-	return repository.rows, nil
+	rows := make([]persistence.Operation, 0, len(repository.rows))
+	for _, operation := range repository.rows {
+		rows = append(rows, *operation)
+	}
+	return rows, nil
+}
+
+func (repository *multipleOperationRepository) GetOperation(_ context.Context, id uuid.UUID) (*persistence.Operation, error) {
+	for _, operation := range repository.rows {
+		if operation.ID == id {
+			return operation, nil
+		}
+	}
+	return nil, errors.New("missing operation")
+}
+
+func (repository *multipleOperationRepository) TransitionOperation(ctx context.Context, id uuid.UUID, transition func(*persistence.Operation) error) error {
+	operation, err := repository.GetOperation(ctx, id)
+	if err != nil {
+		return err
+	}
+	return transition(operation)
 }
 
 type recordedSetupActivation struct {
@@ -286,7 +306,7 @@ func (rejectedInstallRecoveryRunner) Run(context.Context, string, ...string) ([]
 	return nil, errors.New("executable rejected for recovery test")
 }
 
-func TestReconcileInvalidInstallPublicationAbortsPassAndPreservesEvidence(t *testing.T) {
+func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T) {
 	operationID, installationID, untouchedID := uuid.New(), uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
@@ -296,18 +316,18 @@ func TestReconcileInvalidInstallPublicationAbortsPassAndPreservesEvidence(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := persistence.Operation{
+	operation := &persistence.Operation{
 		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
-	untouched := persistence.Operation{ID: untouchedID, Kind: "install", State: "queued", Stage: "materialize"}
+	untouched := &persistence.Operation{ID: untouchedID, Kind: "install", State: "queued", Stage: "materialize"}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "preparing",
 	}
 	repository := &multipleOperationRepository{
-		workerRepository: &workerRepository{operation: &operation, installation: installation},
-		rows:             []persistence.Operation{operation, untouched},
+		workerRepository: &workerRepository{operation: operation, installation: installation},
+		rows:             []*persistence.Operation{operation, untouched},
 	}
 	staging, err := tools.EnsureOperationStaging(root, operationID)
 	if err != nil {
@@ -319,16 +339,25 @@ func TestReconcileInvalidInstallPublicationAbortsPassAndPreservesEvidence(t *tes
 		t.Fatal(err)
 	}
 
-	err = jobs.ReconcileInterruptedOperations(context.Background(), repository, service.NewOperations(repository),
-		func(context.Context, *int64) (bool, error) { return false, nil }, workerSettings{root: root})
-	if err == nil || !strings.Contains(err.Error(), "installation publication identity changed") {
-		t.Fatalf("invalid journal reconciliation error = %v; want startup-pass abort for invalid ownership evidence", err)
+	if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, service.NewOperations(repository),
+		func(context.Context, *int64) (bool, error) { return false, nil }, workerSettings{root: root}); err != nil {
+		t.Fatalf("reconcile operations with invalid publication evidence: %v", err)
 	}
-	if operation.State != "running" || installation.State != "preparing" {
-		t.Fatalf("invalid-journal operation/installation = %s/%s; want unchanged while recovery is blocked", operation.State, installation.State)
+	const invalidEvidenceError = "The interrupted tool operation has invalid publication evidence. Resolve the installation before retrying the operation."
+	if operation.State != "failed" || operation.Stage != "materialize" || operation.SafeError == nil || *operation.SafeError != invalidEvidenceError {
+		t.Fatalf("invalid-journal operation = %s/%s safe error %v; want failed at materialize with scoped guidance", operation.State, operation.Stage, operation.SafeError)
 	}
-	if untouched.State != "queued" {
-		t.Fatalf("later operation state = %s; want untouched because the pass aborts", untouched.State)
+	if installation.State != "failed" {
+		t.Fatalf("invalid-journal installation state = %s; want failed/deletable", installation.State)
+	}
+	if repository.activated {
+		t.Fatal("invalid publication recovery changed the active installation selection")
+	}
+	if untouched.State != "failed" || untouched.SafeError == nil || *untouched.SafeError != "The operation was interrupted. Retry the operation." {
+		t.Fatalf("later operation = %s safe error %v; want generic reconciliation to continue", untouched.State, untouched.SafeError)
+	}
+	if _, err := os.Stat(staging); err != nil {
+		t.Fatalf("invalid publication staging was removed: %v", err)
 	}
 	if contents, err := os.ReadFile(journalPath); err != nil || string(contents) != string(invalidJournal) {
 		t.Fatalf("invalid ownership evidence was not preserved: %q %v", contents, err)

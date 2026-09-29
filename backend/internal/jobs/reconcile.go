@@ -31,6 +31,8 @@ type interruptedOperationSettings interface {
 	SetupCompleted(context.Context) (bool, error)
 }
 
+var errInvalidInstallPublicationEvidence = errors.New("invalid installation publication evidence")
+
 type riverJobLiveness func(context.Context, *int64) (bool, error)
 
 // ReconcileInterruptedOperations marks queued/running operations whose River
@@ -60,11 +62,23 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		}
 		if operation.Kind == "install" {
 			publicationExists, err := hasInstallPublicationEvidence(ctx, operation, runtimeSettings)
+			if errors.Is(err, errInvalidInstallPublicationEvidence) {
+				if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
+					return fmt.Errorf("fail operation with invalid publication evidence: %w", err)
+				}
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("inspect installation publication for %s: %w", operation.ID, err)
 			}
 			if publicationExists || operationStageAfterRetries(operation.Stage) == "files_materialized" {
 				completed, err := reconcileMaterializedInstallation(ctx, repository, operations, operation, runtimeSettings, lifecycle)
+				if errors.Is(err, errInvalidInstallPublicationEvidence) {
+					if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
+						return fmt.Errorf("fail operation with invalid publication evidence: %w", err)
+					}
+					continue
+				}
 				if err != nil {
 					return fmt.Errorf("recover published installation %s: %w", operation.ID, err)
 				}
@@ -145,9 +159,25 @@ func hasInstallPublicationEvidence(ctx context.Context, operation *persistence.O
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", errInvalidInstallPublicationEvidence, err)
 	}
 	return true, nil
+}
+
+func failInvalidInstallPublication(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation) error {
+	if operation.TargetInstallationID != nil {
+		installation, err := repository.GetInstallation(ctx, *operation.TargetInstallationID)
+		if err != nil {
+			return err
+		}
+		if installation.State == "preparing" {
+			if err := repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return operations.Fail(ctx, operation.ID, operation.Stage,
+		"The interrupted tool operation has invalid publication evidence. Resolve the installation before retrying the operation.")
 }
 
 func reconcileMaterializedInstallation(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation, runtimeSettings interruptedOperationSettings, lifecycle *tools.Lifecycle) (bool, error) {
@@ -156,7 +186,7 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 		if !filesMaterialized {
 			return false, nil
 		}
-		return false, fmt.Errorf("materialized install operation has no target installation")
+		return false, fmt.Errorf("%w: materialized install operation has no target installation", errInvalidInstallPublicationEvidence)
 	}
 	installation, err := repository.GetInstallation(ctx, *operation.TargetInstallationID)
 	if err != nil {
@@ -174,22 +204,22 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 	}
 	var snapshot service.InstallInputSnapshot
 	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
-		return false, fmt.Errorf("decode installation snapshot: %w", err)
+		return false, fmt.Errorf("%w: decode installation snapshot: %w", errInvalidInstallPublicationEvidence, err)
 	}
 	if snapshot.SchemaVersion != 1 || snapshot.PackageKind != tools.PackageKind(installation.PackageKind) ||
 		snapshot.SourceName != installation.SourceName || snapshot.ReleaseIdentity != installation.ReleaseIdentity {
-		return false, fmt.Errorf("installation snapshot does not match target")
+		return false, fmt.Errorf("%w: installation snapshot does not match target", errInvalidInstallPublicationEvidence)
 	}
 	staging := filepath.Join(root, ".staging", operation.ID.String())
 	publication, err := loadInstallPublication(staging, operation, installation, snapshot, root, installation.PlatformGOOS)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", errInvalidInstallPublicationEvidence, err)
 	}
 	if publication == nil && !filesMaterialized {
 		return false, nil
 	}
 	if installation.State != "ready" && publication == nil {
-		return false, fmt.Errorf("materialized installation ownership journal is missing")
+		return false, fmt.Errorf("%w: materialized installation ownership journal is missing", errInvalidInstallPublicationEvidence)
 	}
 	worker := &InstallationWorker{
 		repository: repository, operations: operations, platform: tools.Platform{
