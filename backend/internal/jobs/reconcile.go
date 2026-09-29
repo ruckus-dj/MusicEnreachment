@@ -13,6 +13,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type interruptedOperationRepository interface {
@@ -26,6 +27,7 @@ type interruptedOperationRepository interface {
 
 type interruptedOperationSettings interface {
 	GetToolsDirectory(context.Context) (string, bool, error)
+	SetupCompleted(context.Context) (bool, error)
 }
 
 type riverJobLiveness func(context.Context, *int64) (bool, error)
@@ -193,6 +195,19 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 			return false, err
 		}
 		if err := repository.MarkInstallationReady(ctx, installation.ID, versionsJSON, time.Now().UTC()); err != nil {
+			return false, err
+		}
+	}
+	setupComplete, err := runtimeSettings.SetupCompleted(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !setupComplete {
+		activeSetting := settings.ActiveFFmpegInstallationKey
+		if snapshot.PackageKind == tools.PackageFPCalc {
+			activeSetting = settings.ActiveFPCalcInstallationKey
+		}
+		if _, err := repository.ActivateInstallationDuringSetup(ctx, installation.ID, string(snapshot.PackageKind), installation.PlatformGOOS, installation.PlatformGOARCH, activeSetting); err != nil {
 			return false, err
 		}
 	}

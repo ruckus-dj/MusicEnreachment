@@ -14,104 +14,143 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-func TestReconcilePublishedInstallBeforeReadyCompletesWithoutActivation(t *testing.T) {
-	operationID, installationID := uuid.New(), uuid.New()
-	root := t.TempDir()
-	const release = "1.6.1"
-	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:" + release + ":linux:amd64", SchemaVersion: 1,
-		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: release,
-		ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation := &persistence.Operation{
-		ID: operationID, Kind: "install", State: "running", Stage: "files_materialized",
-		InputSnapshot: snapshot, TargetInstallationID: &installationID,
-	}
-	installation := &persistence.ToolInstallation{
-		ID: installationID, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: "fpcalc/" + release, State: "preparing",
-	}
-	repository := &workerRepository{operation: operation, installation: installation}
-	staging, err := tools.EnsureOperationStaging(root, operationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate := filepath.Join(staging, "candidate", installation.RelativePath, "fpcalc")
-	if err := os.MkdirAll(filepath.Dir(candidate), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	contents := []byte("verified executable witness")
-	if err := os.WriteFile(candidate, contents, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	digest, err := tools.SHA256File(candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(root, installation.RelativePath, "fpcalc")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(candidate, target); err != nil {
-		t.Fatal(err)
-	}
-	publication := struct {
-		OperationID    uuid.UUID `json:"operation_id"`
-		InstallationID uuid.UUID `json:"installation_id"`
-		Root           string    `json:"root"`
-		PackageKind    string    `json:"package_kind"`
-		Release        string    `json:"release"`
-		Confirmed      []string  `json:"confirmed"`
-		Files          []struct {
-			Name   string `json:"name"`
-			SHA256 string `json:"sha256"`
-		} `json:"files"`
-	}{
-		OperationID: operationID, InstallationID: installationID, Root: root,
-		PackageKind: string(tools.PackageFPCalc), Release: release,
-		Files: []struct {
-			Name   string `json:"name"`
-			SHA256 string `json:"sha256"`
-		}{{Name: "fpcalc", SHA256: digest}},
-	}
-	journal, err := json.Marshal(publication)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staging, "publication.json"), journal, 0o600); err != nil {
-		t.Fatal(err)
-	}
+type recordedSetupActivation struct {
+	installationID uuid.UUID
+	packageKind    string
+	goos           string
+	goarch         string
+	setting        string
+}
 
-	operations := service.NewOperations(repository)
-	if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, operations,
-		func(context.Context, *int64) (bool, error) { return false, nil }, workerSettings{root: root}, tools.NewLifecycle(workerCommandRunner{})); err != nil {
-		t.Fatalf("reconcile published installation: %v", err)
-	}
-	if operation.State != "succeeded" || installation.State != "ready" {
-		t.Fatalf("reconciled operation/installation = %s/%s; want succeeded/ready", operation.State, installation.State)
-	}
-	if repository.activated {
-		t.Fatal("reconciliation changed the active installation selection")
-	}
-	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
-		t.Fatalf("completed install retained publication staging: %v", err)
-	}
-	if info, err := os.Stat(target); err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("verified managed executable was not retained: info=%v err=%v", info, err)
-	}
-	if repository.installation.ID != installationID {
-		t.Fatalf("reconciliation changed installation identity: %s", repository.installation.ID)
-	}
-	if _, err := operations.Retry(context.Background(), operationID); err == nil {
-		t.Fatal("completed published install remained retryable")
-	}
-	if repository.installation.ID != installationID {
-		t.Fatalf("retry changed installation identity: %s", repository.installation.ID)
+type setupActivationRepository struct {
+	*workerRepository
+	calls []recordedSetupActivation
+}
+
+func (repository *setupActivationRepository) ActivateInstallationDuringSetup(ctx context.Context, id uuid.UUID, kind, goos, goarch, setting string) (bool, error) {
+	repository.calls = append(repository.calls, recordedSetupActivation{
+		installationID: id, packageKind: kind, goos: goos, goarch: goarch, setting: setting,
+	})
+	return repository.workerRepository.ActivateInstallationDuringSetup(ctx, id, kind, goos, goarch, setting)
+}
+
+func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		setupComplete bool
+	}{
+		{name: "setup_incomplete_activates", setupComplete: false},
+		{name: "setup_complete_preserves_active_ids", setupComplete: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operationID, installationID := uuid.New(), uuid.New()
+			root := t.TempDir()
+			const release = "1.6.1"
+			snapshot, err := json.Marshal(service.InstallInputSnapshot{
+				TargetIdentity: "fpcalc:chromaprint:" + release + ":linux:amd64", SchemaVersion: 1,
+				PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: release,
+				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation := &persistence.Operation{
+				ID: operationID, Kind: "install", State: "running", Stage: "files_materialized",
+				InputSnapshot: snapshot, TargetInstallationID: &installationID,
+			}
+			installation := &persistence.ToolInstallation{
+				ID: installationID, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+				SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: "fpcalc/" + release, State: "preparing",
+			}
+			repository := &setupActivationRepository{workerRepository: &workerRepository{operation: operation, installation: installation}}
+			staging, err := tools.EnsureOperationStaging(root, operationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate := filepath.Join(staging, "candidate", installation.RelativePath, "fpcalc")
+			if err := os.MkdirAll(filepath.Dir(candidate), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(candidate, []byte("verified executable witness"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			digest, err := tools.SHA256File(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root, installation.RelativePath, "fpcalc")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(candidate, target); err != nil {
+				t.Fatal(err)
+			}
+			journal, err := json.Marshal(struct {
+				OperationID    uuid.UUID `json:"operation_id"`
+				InstallationID uuid.UUID `json:"installation_id"`
+				Root           string    `json:"root"`
+				PackageKind    string    `json:"package_kind"`
+				Release        string    `json:"release"`
+				Confirmed      []string  `json:"confirmed"`
+				Files          []struct {
+					Name   string `json:"name"`
+					SHA256 string `json:"sha256"`
+				} `json:"files"`
+			}{
+				OperationID: operationID, InstallationID: installationID, Root: root,
+				PackageKind: string(tools.PackageFPCalc), Release: release,
+				Files: []struct {
+					Name   string `json:"name"`
+					SHA256 string `json:"sha256"`
+				}{{Name: "fpcalc", SHA256: digest}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(staging, "publication.json"), journal, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, service.NewOperations(repository),
+				func(context.Context, *int64) (bool, error) { return false, nil }, workerSettings{root: root, completed: test.setupComplete}, tools.NewLifecycle(workerCommandRunner{})); err != nil {
+				t.Fatalf("reconcile published installation: %v", err)
+			}
+			if operation.State != "succeeded" || installation.State != "ready" {
+				t.Fatalf("reconciled operation/installation = %s/%s; want succeeded/ready", operation.State, installation.State)
+			}
+			if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+				t.Fatalf("completed install retained publication staging: %v", err)
+			}
+			if info, err := os.Stat(target); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("verified managed executable was not retained: info=%v err=%v", info, err)
+			}
+			if test.setupComplete {
+				if len(repository.calls) != 0 {
+					t.Fatalf("completed Setup unexpectedly activated an installation: %#v", repository.calls)
+				}
+			} else {
+				if len(repository.calls) != 1 {
+					t.Fatalf("incomplete Setup activation calls = %#v; want exactly one", repository.calls)
+				}
+				call := repository.calls[0]
+				if call.installationID != installationID || call.packageKind != string(tools.PackageFPCalc) ||
+					call.goos != "linux" || call.goarch != "amd64" || call.setting != settings.ActiveFPCalcInstallationKey {
+					t.Fatalf("setup activation call = %#v; want installation/package/platform/fpcalc-setting match", call)
+				}
+			}
+			if repository.activated != !test.setupComplete {
+				t.Fatalf("active-selection mutation = %v; setup complete=%v", repository.activated, test.setupComplete)
+			}
+			if _, err := service.NewOperations(repository).Retry(context.Background(), operationID); err == nil {
+				t.Fatal("completed published install remained retryable")
+			}
+			if repository.installation.ID != installationID {
+				t.Fatalf("reconciliation changed installation identity: %s", repository.installation.ID)
+			}
+		})
 	}
 }
 
