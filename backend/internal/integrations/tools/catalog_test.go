@@ -11,39 +11,110 @@ import (
 	"testing"
 )
 
-func TestGitHubAdapterFiltersPrereleaseMasterAndIncompatibleAssets(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"tag_name":"master-latest","assets":[{"name":"ffmpeg-master-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/master"}]},{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/8"}]},{"tag_name":"latest","assets":[{"name":"ffmpeg-latest-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/latest"}]},{"tag_name":"9.0-rc","prerelease":true,"assets":[{"name":"ffmpeg-9-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/9"}]}]`))
-	}))
+func TestBtbNCatalogUsesLatestAssetsAndStableVersionIdentities(t *testing.T) {
+	server, adapter := newBtbNTestServer(t, recordedBtbNPayload)
 	defer server.Close()
-	client := server.Client()
-	adapter := NewBtbNAdapter(client, "https://api.github.com/releases")
-	adapter.client = &http.Client{Transport: rewriteTransport{server: server, base: client.Transport}}
+	for _, test := range []struct {
+		platform Platform
+		want9    string
+	}{
+		{Platform{"linux", "amd64"}, "ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz"},
+		{Platform{"linux", "arm64"}, "ffmpeg-n9.0-latest-linuxarm64-gpl-9.0.tar.xz"},
+		{Platform{"windows", "amd64"}, "ffmpeg-n9.0-latest-win64-gpl-9.0.zip"},
+	} {
+		releases, err := adapter.List(context.Background(), test.platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(releases) != 2 || releases[0].Identity != "9.0" || releases[1].Identity != "8.1" {
+			t.Fatalf("releases for %v = %#v; want 9.0 then 8.1", test.platform, releases)
+		}
+		if len(releases[0].Artifacts) != 1 || releases[0].Artifacts[0].Name != test.want9 {
+			t.Fatalf("selected asset for %v = %#v; want %q", test.platform, releases[0].Artifacts, test.want9)
+		}
+		for _, release := range releases {
+			for _, artifact := range release.Artifacts {
+				if strings.Contains(artifact.Name, "master") || strings.Contains(artifact.Name, "shared") || strings.Contains(artifact.Name, "lgpl") {
+					t.Errorf("excluded asset offered: %q", artifact.Name)
+				}
+			}
+		}
+	}
+}
+
+func TestBtbNCatalogReturnsEmptyForLatestWithoutVersionedAssets(t *testing.T) {
+	server, adapter := newBtbNTestServer(t, `[{"tag_name":"latest","assets":[{"name":"ffmpeg-master-latest-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/master"},{"name":"ffmpeg-n9.0-latest-linux64-gpl-shared-9.0.tar.xz","browser_download_url":"https://github.com/BtbN/shared"}]}]`)
+	defer server.Close()
 	releases, err := adapter.List(context.Background(), Platform{"linux", "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(releases) != 1 || releases[0].Identity != "8.0" {
-		t.Fatalf("releases = %#v", releases)
+	if releases == nil || len(releases) != 0 {
+		t.Fatalf("catalog = %#v; want explicit empty list", releases)
 	}
 }
 
-func TestGitHubAdapterResolveReloadsAndRejectsUnlistedRelease(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/8"}]}]`))
+func TestBtbNIdentityRoundTripsResolveDownloadAndChecksum(t *testing.T) {
+	archive := []byte("fixture archive")
+	checksum := strings.Repeat("c", 64)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases" {
+			_, _ = w.Write([]byte(recordedBtbNPayload))
+			return
+		}
+		if strings.Contains(r.URL.Path, "checksums") {
+			_, _ = w.Write([]byte(checksum + "  ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz\n"))
+			return
+		}
+		_, _ = w.Write(archive)
 	}))
 	defer server.Close()
+	adapter := btbNTestAdapter(server)
+	catalog := NewCatalog(adapter)
+	platform := Platform{"linux", "amd64"}
+
+	release, err := catalog.Resolve(context.Background(), PackageFFmpeg, platform, "9.0")
+	if err != nil || release.Identity != "9.0" || len(release.Artifacts) != 1 {
+		t.Fatalf("resolve = %#v, %v", release, err)
+	}
+	artifactName := release.Artifacts[0].Name
+	resolvedChecksum, err := catalog.Checksum(context.Background(), PackageFFmpeg, platform, "9.0", artifactName)
+	if err != nil || resolvedChecksum != checksum {
+		t.Fatalf("checksum = %q, %v", resolvedChecksum, err)
+	}
+	var destination bytes.Buffer
+	downloaded, count, err := catalog.Download(context.Background(), PackageFFmpeg, platform, "9.0", artifactName, &destination, nil)
+	if err != nil || downloaded.Name != artifactName || count != int64(len(archive)) || !bytes.Equal(destination.Bytes(), archive) {
+		t.Fatalf("download = %#v, %d, %q, %v", downloaded, count, destination.Bytes(), err)
+	}
+}
+
+const recordedBtbNPayload = `[{"tag_name":"latest","assets":[
+ {"name":"ffmpeg-master-latest-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/master"},
+ {"name":"ffmpeg-n9.0-latest-linux64-lgpl-9.0.tar.xz","browser_download_url":"https://github.com/BtbN/lgpl"},
+ {"name":"ffmpeg-n9.0-latest-linux64-gpl-shared-9.0.tar.xz","browser_download_url":"https://github.com/BtbN/shared"},
+ {"name":"ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz","browser_download_url":"https://github.com/BtbN/n9-linux64"},
+ {"name":"ffmpeg-n9.0-latest-linuxarm64-gpl-9.0.tar.xz","browser_download_url":"https://github.com/BtbN/n9-linuxarm64"},
+ {"name":"ffmpeg-n9.0-latest-win64-gpl-9.0.zip","browser_download_url":"https://github.com/BtbN/n9-win64"},
+ {"name":"ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz","browser_download_url":"https://github.com/BtbN/n8-linux64"},
+ {"name":"ffmpeg-n8.1-latest-linuxarm64-gpl-8.1.tar.xz","browser_download_url":"https://github.com/BtbN/n8-linuxarm64"},
+ {"name":"ffmpeg-n8.1-latest-win64-gpl-8.1.zip","browser_download_url":"https://github.com/BtbN/n8-win64"},
+ {"name":"checksums.sha256","browser_download_url":"https://github.com/BtbN/checksums"}
+]},{"tag_name":"latest","prerelease":true,"assets":[{"name":"ffmpeg-n10.0-latest-linux64-gpl-10.0.tar.xz","browser_download_url":"https://github.com/BtbN/prerelease"}]}]`
+
+func newBtbNTestServer(t *testing.T, payload string) (*httptest.Server, *GitHubAdapter) {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	return server, btbNTestAdapter(server)
+}
+
+func btbNTestAdapter(server *httptest.Server) *GitHubAdapter {
 	client := server.Client()
 	adapter := NewBtbNAdapter(client, "https://api.github.com/releases")
-	adapter.client = &http.Client{Transport: rewriteTransport{server: server, base: client.Transport}}
-
-	release, err := adapter.Resolve(context.Background(), Platform{"linux", "amd64"}, "8.0")
-	if err != nil || len(release.Artifacts) != 1 {
-		t.Fatalf("resolve release = %#v, %v", release, err)
-	}
-	if _, err := adapter.Resolve(context.Background(), Platform{"linux", "amd64"}, "7.0"); err == nil {
-		t.Fatal("resolve accepted an unavailable release")
-	}
+	adapter.client.Transport = rewriteTransport{server: server, base: client.Transport}
+	return adapter
 }
 
 func TestMacOSAdapterGroupsFFmpegPackageArtifacts(t *testing.T) {
@@ -91,30 +162,6 @@ func TestAllowedHTTPSRejectsCredentialAndPortOverrides(t *testing.T) {
 	for _, raw := range []string{"https://user@github.com/releases", "https://github.com:8443/releases", "http://github.com/releases"} {
 		if err := allowedHTTPS(raw, "github.com"); err == nil {
 			t.Errorf("allowed unsafe source URL %q", raw)
-		}
-	}
-}
-
-func TestBtbNAssetsMatchSupportedPlatformArchives(t *testing.T) {
-	assets := []githubAsset{
-		{Name: "ffmpeg-n8.1-linux64-lgpl-8.1.tar.xz", URL: "https://github.com/BtbN/lgpl"},
-		{Name: "ffmpeg-n8.1-linux64-gpl-8.1.tar.xz", URL: "https://github.com/BtbN/linux64", Digest: "sha256:aaaaaaaa"},
-		{Name: "ffmpeg-n8.1-linuxarm64-gpl-8.1.tar.xz", URL: "https://github.com/BtbN/linuxarm64", Digest: "sha256:bbbbbbbb"},
-		{Name: "ffmpeg-n8.1-win64-gpl-8.1.zip", URL: "https://github.com/BtbN/win64", Digest: "sha256:cccccccc"},
-		{Name: "ffmpeg-n8.1-win64-gpl-shared.zip", URL: "https://github.com/BtbN/shared"},
-	}
-	tests := []struct {
-		platform Platform
-		want     string
-	}{
-		{Platform{"linux", "amd64"}, "linux64"},
-		{Platform{"linux", "arm64"}, "linuxarm64"},
-		{Platform{"windows", "amd64"}, "win64"},
-	}
-	for _, test := range tests {
-		artifacts := btbnAssets(assets, test.platform)
-		if len(artifacts) != 1 || !strings.Contains(artifacts[0].Name, test.want) || artifacts[0].ChecksumSHA256 == "" {
-			t.Errorf("btbnAssets(%#v) = %#v", test.platform, artifacts)
 		}
 	}
 }
@@ -210,7 +257,7 @@ func TestCatalogDownloadResolvesArtifactAndReportsMeasuredProgress(t *testing.T)
 	archive := []byte("fixture archive")
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/releases" {
-			_, _ = w.Write([]byte(`[{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/ffmpeg-8.0-linux64-gpl.tar.xz","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]`))
+			_, _ = w.Write([]byte(recordedBtbNPayload))
 			return
 		}
 		_, _ = w.Write(archive)
@@ -223,13 +270,13 @@ func TestCatalogDownloadResolvesArtifactAndReportsMeasuredProgress(t *testing.T)
 
 	var destination bytes.Buffer
 	var progress []int64
-	artifact, count, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "8.0", "ffmpeg-8.0-linux64-gpl.tar.xz", &destination, func(completed int64) {
+	artifact, count, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "9.0", "ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz", &destination, func(completed int64) {
 		progress = append(progress, completed)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(destination.Bytes(), archive) || count != int64(len(archive)) || artifact.ChecksumSHA256 == "" {
+	if !bytes.Equal(destination.Bytes(), archive) || count != int64(len(archive)) || artifact.ChecksumURL == "" {
 		t.Fatalf("download result = %q, %d, %#v", destination.Bytes(), count, artifact)
 	}
 	if len(progress) == 0 || progress[len(progress)-1] != int64(len(archive)) {
@@ -240,7 +287,7 @@ func TestCatalogDownloadResolvesArtifactAndReportsMeasuredProgress(t *testing.T)
 func TestCatalogDownloadRejectsRedirectOutsideSourceAllowlist(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/releases" {
-			_, _ = w.Write([]byte(`[{"tag_name":"8.0","assets":[{"name":"ffmpeg-8.0-linux64-gpl.tar.xz","browser_download_url":"https://github.com/BtbN/ffmpeg-8.0-linux64-gpl.tar.xz"}]}]`))
+			_, _ = w.Write([]byte(recordedBtbNPayload))
 			return
 		}
 		http.Redirect(w, r, "https://evil.example/archive", http.StatusFound)
@@ -251,7 +298,7 @@ func TestCatalogDownloadRejectsRedirectOutsideSourceAllowlist(t *testing.T) {
 	adapter.client.Transport = rewriteTransport{server: server, base: client.Transport}
 	catalog := NewCatalog(adapter)
 
-	if _, _, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "8.0", "ffmpeg-8.0-linux64-gpl.tar.xz", io.Discard, nil); err == nil {
+	if _, _, err := catalog.Download(context.Background(), PackageFFmpeg, Platform{"linux", "amd64"}, "9.0", "ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz", io.Discard, nil); err == nil {
 		t.Fatal("redirect to an unallowlisted host was followed")
 	}
 }

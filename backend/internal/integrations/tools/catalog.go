@@ -243,13 +243,29 @@ func (a *GitHubAdapter) List(ctx context.Context, platform Platform) ([]Release,
 	}
 	result := make([]Release, 0, len(releases))
 	for _, release := range releases {
-		if release.Prerelease || !numberedRelease.MatchString(release.Tag) {
+		if release.Prerelease {
+			continue
+		}
+		if a.kind == PackageFFmpeg && release.Tag == "latest" {
+			identities := btbnAssetIdentities(release.Assets)
+			for _, identity := range identities {
+				assets := assetsForBtbNIdentity(release.Assets, identity)
+				artifacts := a.selectAssets(assets, platform)
+				artifacts = validateArtifacts(artifacts, "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
+				artifacts = attachGitHubChecksums(artifacts, release.Assets)
+				if len(artifacts) > 0 {
+					result = append(result, Release{Identity: identity, Artifacts: artifacts})
+				}
+			}
+			continue
+		}
+		if !numberedRelease.MatchString(release.Tag) {
 			continue
 		}
 		artifacts := a.selectAssets(release.Assets, platform)
 		artifacts = validateArtifacts(artifacts, "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
 		artifacts = attachGitHubChecksums(artifacts, release.Assets)
-		if len(artifacts) > 0 && release.Tag != "" {
+		if len(artifacts) > 0 {
 			result = append(result, Release{Identity: release.Tag, Artifacts: artifacts})
 		}
 	}
@@ -258,6 +274,32 @@ func (a *GitHubAdapter) List(ctx context.Context, platform Platform) ([]Release,
 }
 
 var numberedRelease = regexp.MustCompile(`^v?\d+(?:\.\d+){1,3}$`)
+var btbnAssetVersion = regexp.MustCompile(`(?i)^ffmpeg-n(\d+(?:\.\d+){1,3})-latest-`)
+
+func btbnAssetIdentities(assets []githubAsset) []string {
+	seen := make(map[string]bool)
+	identities := make([]string, 0)
+	for _, asset := range assets {
+		match := btbnAssetVersion.FindStringSubmatch(asset.Name)
+		if len(match) != 2 || seen[match[1]] {
+			continue
+		}
+		seen[match[1]] = true
+		identities = append(identities, match[1])
+	}
+	return identities
+}
+
+func assetsForBtbNIdentity(assets []githubAsset, identity string) []githubAsset {
+	selected := make([]githubAsset, 0)
+	for _, asset := range assets {
+		match := btbnAssetVersion.FindStringSubmatch(asset.Name)
+		if len(match) == 2 && match[1] == identity {
+			selected = append(selected, asset)
+		}
+	}
+	return selected
+}
 
 func attachGitHubChecksums(artifacts []Artifact, assets []githubAsset) []Artifact {
 	for index := range artifacts {
