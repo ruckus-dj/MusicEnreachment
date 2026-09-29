@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
   activateToolInstallation,
@@ -110,6 +116,9 @@ export function SettingsScreen() {
   const firstLoad = useRef(true);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
+  const installDialogRef = useRef<HTMLDialogElement>(null);
+  const moveDialogRef = useRef<HTMLDialogElement>(null);
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const syncForm = useCallback((fresh: SetupStateBody) => {
     setState(fresh);
@@ -175,6 +184,12 @@ export function SettingsScreen() {
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
+  useLayoutEffect(() => {
+    if (installDialog) showSettingsDialog(installDialogRef.current);
+  }, [installDialog]);
+  useLayoutEffect(() => {
+    if (moveDialog) showSettingsDialog(moveDialogRef.current);
+  }, [moveDialog]);
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
@@ -259,6 +274,40 @@ export function SettingsScreen() {
     }
   }
 
+  function restoreDialogFocus() {
+    const trigger = dialogReturnFocusRef.current;
+    dialogReturnFocusRef.current = null;
+    trigger?.focus();
+  }
+  function closeInstallDialog() {
+    const dialog = installDialogRef.current;
+    if (dialog?.open) dialog.close();
+    else {
+      setInstallDialog(undefined);
+      restoreDialogFocus();
+    }
+  }
+  function closeMoveDialog() {
+    const dialog = moveDialogRef.current;
+    if (dialog?.open) dialog.close();
+    else {
+      setMoveDialog(false);
+      restoreDialogFocus();
+    }
+  }
+  function onDialogClose(setClosed: () => void) {
+    setClosed();
+    restoreDialogFocus();
+  }
+  function onDialogKeyDown(
+    event: React.KeyboardEvent<HTMLDialogElement>,
+    close: () => void,
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  }
   const loadCatalogNow = () => {
     void requestCatalog();
   };
@@ -295,7 +344,7 @@ export function SettingsScreen() {
       }),
       200,
     );
-    setInstallDialog(undefined);
+    closeInstallDialog();
     setOperations((previous) => [
       ...previous.filter((item) => item.id !== started.data.id),
       started.data,
@@ -396,7 +445,7 @@ export function SettingsScreen() {
         response.data,
       ]);
       setMovePlan(undefined);
-      setMoveDialog(false);
+      closeMoveDialog();
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -612,7 +661,8 @@ export function SettingsScreen() {
               </p>
               <AppButton
                 isDisabled={!platformReady || busy}
-                onPress={() => {
+                onPress={(event) => {
+                  dialogReturnFocusRef.current = event.target as HTMLElement;
                   setMovePlan(undefined);
                   setMoveDialog(true);
                 }}
@@ -734,7 +784,11 @@ export function SettingsScreen() {
                           isDisabled={
                             !platformReady || busy || !selectedRelease[kind]
                           }
-                          onPress={() => void preflightInstall(kind)}
+                          onPress={(event) => {
+                            dialogReturnFocusRef.current =
+                              event.target as HTMLElement;
+                            void preflightInstall(kind);
+                          }}
                         >
                           Установить без активации
                         </AppButton>
@@ -795,10 +849,16 @@ export function SettingsScreen() {
       )}
       {installDialog && (
         <dialog
-          open
+          ref={installDialogRef}
           aria-modal="true"
           aria-labelledby="install-dialog-title"
           className="settings-dialog"
+          onClose={() => onDialogClose(() => setInstallDialog(undefined))}
+          onKeyDown={(event) => onDialogKeyDown(event, closeInstallDialog)}
+          onCancel={(event) => {
+            event.preventDefault();
+            closeInstallDialog();
+          }}
         >
           <h2 id="install-dialog-title">
             Подтверждение установки {installDialog.release}
@@ -811,20 +871,23 @@ export function SettingsScreen() {
           <AppButton isDisabled={busy} onPress={() => void confirmInstall()}>
             Подтвердить перечисленные конфликты
           </AppButton>
-          <AppButton
-            isDisabled={busy}
-            onPress={() => setInstallDialog(undefined)}
-          >
+          <AppButton isDisabled={busy} onPress={closeInstallDialog}>
             Отмена
           </AppButton>
         </dialog>
       )}
       {moveDialog && (
         <dialog
-          open
+          ref={moveDialogRef}
           aria-modal="true"
           aria-labelledby="move-dialog-title"
           className="settings-dialog"
+          onClose={() => onDialogClose(() => setMoveDialog(false))}
+          onKeyDown={(event) => onDialogKeyDown(event, closeMoveDialog)}
+          onCancel={(event) => {
+            event.preventDefault();
+            closeMoveDialog();
+          }}
         >
           <h2 id="move-dialog-title">Перенос Tools directory</h2>
           <label>
@@ -858,8 +921,8 @@ export function SettingsScreen() {
           <AppButton
             isDisabled={busy}
             onPress={() => {
-              setMoveDialog(false);
               setMovePlan(undefined);
+              closeMoveDialog();
             }}
           >
             Отмена
@@ -868,6 +931,15 @@ export function SettingsScreen() {
       )}
     </section>
   );
+}
+
+function showSettingsDialog(dialog: HTMLDialogElement | null) {
+  if (!dialog || dialog.open) return;
+  dialog.showModal();
+  const firstControl = dialog.querySelector<HTMLElement>(
+    "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
+  );
+  firstControl?.focus();
 }
 
 function ConflictList({

@@ -160,6 +160,22 @@ function common({
 }
 
 beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+      this.querySelector<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
+      )?.focus();
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+      this.dispatchEvent(new Event("close"));
+    },
+  });
   vi.stubGlobal(
     "localStorage",
     new JSDOM("", { url: "http://localhost" }).window.localStorage,
@@ -175,7 +191,86 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function pressEnter(target: HTMLElement) {
+  target.focus();
+  fireEvent.keyDown(target, { key: "Enter", code: "Enter" });
+  fireEvent.keyUp(target, { key: "Enter", code: "Enter" });
+}
+
 describe("SettingsScreen", () => {
+  it("moves focus into each dialog when opened with Enter", async () => {
+    render(<SettingsScreen />);
+    const moveTrigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(moveTrigger).not.toBeDisabled());
+    await pressEnter(moveTrigger);
+    const moveDialog = await screen.findByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    expect(
+      within(moveDialog).getByLabelText("Новый Tools directory"),
+    ).toHaveFocus();
+    fireEvent.click(within(moveDialog).getByRole("button", { name: "Отмена" }));
+
+    server.use(
+      http.post("/api/tools/installations/preflight", () =>
+        HttpResponse.json({
+          preflight_token: "focus-token",
+          targets: ["/srv/tools/ffmpeg/new/ffmpeg"],
+          conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+        }),
+      ),
+    );
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    const installTrigger = within(
+      screen.getByRole("region", { name: "FFmpeg package" }),
+    ).getByRole("button", { name: "Установить без активации" });
+    await waitFor(() => expect(installTrigger).not.toBeDisabled());
+    await pressEnter(installTrigger);
+    const installDialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    expect(
+      within(installDialog).getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      }),
+    ).toHaveFocus();
+  });
+
+  it("closes the move dialog on Escape and restores focus to its trigger", async () => {
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    await pressEnter(trigger);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes the move dialog on Cancel and restores focus to its trigger", async () => {
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    await pressEnter(trigger);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it("loads typed settings, health, and separate package inventories without redirecting", async () => {
     render(<SettingsScreen />);
     expect(await screen.findByText("/srv/tools")).toBeTruthy();
