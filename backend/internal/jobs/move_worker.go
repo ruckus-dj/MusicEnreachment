@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -82,21 +81,21 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		return worker.fail(ctx, operation, fmt.Errorf("tools root move rolled back"))
 	}
 	if exists && currentRoot == snapshot.NewRoot &&
-		(operation.State == "running" && operation.Stage == "rollback_pending" || operation.State == "queued" && operation.Stage == "retry:rollback_pending") {
+		(operation.State == "running" && operation.Stage == "rollback_pending" || operation.State == "queued" && operationStageAfterRetries(operation.Stage) == "rollback_pending") {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 		if err != nil {
 			return err
 		}
 		return worker.rollbackSwitched(ctx, operation, snapshot, staging, fmt.Errorf("tools root move rollback resumed"))
 	}
-	if exists && currentRoot == snapshot.NewRoot && operation.State == "queued" && operation.Stage == "retry:switched" {
+	if exists && currentRoot == snapshot.NewRoot && operation.State == "queued" && operationStageAfterRetries(operation.Stage) == "switched" {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 		if err != nil {
 			return err
 		}
 		return worker.rollbackSwitched(ctx, operation, snapshot, staging, fmt.Errorf("tools root move was interrupted after switching roots"))
 	}
-	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && strings.TrimPrefix(operation.Stage, "retry:") == "switched" {
+	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && operationStageAfterRetries(operation.Stage) == "switched" {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 		if err != nil {
 			return err
@@ -185,6 +184,9 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		if err != nil {
 			return err
 		}
+	}
+	if operation.State == "queued" && publication != nil && moveNeedsPreSwitchRollbackOnRetry(operation.Stage) {
+		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, fmt.Errorf("tools root move was interrupted before switching roots"))
 	}
 	if err := worker.operations.Running(ctx, operation.ID, "copy"); err != nil {
 		return err

@@ -252,6 +252,58 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 			catalog.clearBarriers()
 			runner.gate = nil
 
+			if interruption.name == "publication_before_ready_commit" {
+				activeFFmpegBefore, hasActiveFFmpegBefore, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+				if err != nil {
+					t.Fatal(err)
+				}
+				activeFPCalcBefore, hasActiveFPCalcBefore, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := ReconcileInterruptedOperations(ctx, boundaryRepository, service.NewOperations(boundaryRepository),
+					func(context.Context, *int64) (bool, error) { return false, nil }, runtimeSettings, tools.NewLifecycle(runner)); err != nil {
+					t.Fatalf("reconcile verified publication before ready commit: %v", err)
+				}
+				completed, err := repository.GetOperation(ctx, operation.ID)
+				if err != nil || completed.State != "succeeded" {
+					t.Fatalf("reconciled published operation = %#v, %v; want succeeded", completed, err)
+				}
+				ready, err := repository.GetInstallation(ctx, *operation.TargetInstallationID)
+				if err != nil || ready.State != "ready" {
+					t.Fatalf("reconciled published installation = %#v, %v; want ready", ready, err)
+				}
+				if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+					t.Fatalf("reconciled published install staging remains: %v", err)
+				}
+				installations, err := repository.ListInstallations(ctx, "fpcalc", platform.GOOS, platform.GOARCH)
+				if err != nil {
+					t.Fatalf("list fpcalc installations after publication reconciliation: %v", err)
+				}
+				targetCount := 0
+				for _, existing := range installations {
+					if existing.ID == *operation.TargetInstallationID {
+						targetCount++
+					}
+				}
+				if targetCount != 1 {
+					t.Fatalf("target installation rows after publication reconciliation = %d; want exactly 1", targetCount)
+				}
+				activeFFmpegAfter, hasActiveFFmpegAfter, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+				if err != nil || hasActiveFFmpegAfter != hasActiveFFmpegBefore || activeFFmpegAfter != activeFFmpegBefore {
+					t.Fatalf("active FFmpeg ID changed during publication reconciliation: %q/%v -> %q/%v (%v)", activeFFmpegBefore, hasActiveFFmpegBefore, activeFFmpegAfter, hasActiveFFmpegAfter, err)
+				}
+				activeFPCalcAfter, hasActiveFPCalcAfter, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+				if err != nil || hasActiveFPCalcAfter != hasActiveFPCalcBefore || activeFPCalcAfter != activeFPCalcBefore {
+					t.Fatalf("active fpcalc ID changed during publication reconciliation: %q/%v -> %q/%v (%v)", activeFPCalcBefore, hasActiveFPCalcBefore, activeFPCalcAfter, hasActiveFPCalcAfter, err)
+				}
+				if _, err := operations.Retry(ctx, operation.ID); err == nil {
+					t.Fatal("verified publication was not terminal after reconciliation")
+				}
+				session.close(t)
+				return
+			}
+
 			recoveryOperations := service.NewOperations(boundaryRepository)
 			recoveryWorker := NewInstallationWorker(boundaryRepository, recoveryOperations, catalog, runtimeSettings, platform, tools.NewLifecycle(runner))
 			recovery := newDispatchRiverSession(t, ctx, databaseURL, database, recoveryWorker)
@@ -1316,9 +1368,8 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	rollbackWorker := NewInstallationWorker(repository, rollbackWorkerOperations, &dispatchCatalog{}, runtimeSettings,
 		platform, tools.NewLifecycle(&dispatchRunner{}))
 	rollbackWorker.SetMoveWorker(NewMoveWorker(repository, rollbackWorkerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
-	rollbackClient, rollbackListenerPool := startDispatchRiver(t, databaseURL, database, rollbackWorker)
-	defer rollbackListenerPool.Close()
-	defer stopRiverClient(t, rollbackClient)
+	rollbackSession := newDispatchRiverSession(t, ctx, databaseURL, database, rollbackWorker)
+	rollbackClient := rollbackSession.client
 	rollbackEvents, cancelRollbackEvents := rollbackClient.Subscribe(river.EventKindJobCompleted)
 	defer cancelRollbackEvents()
 	rollbackOperations := service.NewOperationsWithRiver(repository, rollbackClient)
@@ -1369,5 +1420,149 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	activeFPCalcAfterRollback, hasActiveFPCalcAfterRollback, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
 	if err != nil || !hasActiveFPCalcAfterRollback || activeFPCalcAfterRollback != activeFPCalcBefore {
 		t.Fatalf("active fpcalc ID after rollback = %q/%v, %v; want unchanged %q", activeFPCalcAfterRollback, hasActiveFPCalcAfterRollback, err, activeFPCalcBefore)
+	}
+	rollbackSession.close(t)
+
+	partialRoot, err := settings.NormalizePath(filepath.Join(t.TempDir(), "partial-publication-tools"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictTarget := filepath.Join(partialRoot, installation.RelativePath, "fpcalc")
+	if err := os.MkdirAll(filepath.Dir(conflictTarget), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	operatorContents := []byte("operator-owned previous executable")
+	if err := os.WriteFile(conflictTarget, operatorContents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	partialMoveService := service.NewMoveTools(repository, runtimeSettings, platform, nil)
+	partialPreflight, err := partialMoveService.Preflight(ctx, partialRoot, false)
+	if err != nil {
+		t.Fatalf("preflight confirmed-conflict move: %v", err)
+	}
+	if len(partialPreflight.Conflicts) != 1 || partialPreflight.Conflicts[0] != conflictTarget {
+		t.Fatalf("confirmed-conflict preflight = %v; want %q", partialPreflight.Conflicts, conflictTarget)
+	}
+	partialPreflight.Snapshot.ConfirmedConflicts = append([]string(nil), partialPreflight.Conflicts...)
+	partialOperationID := uuid.New()
+	partialSnapshot, err := json.Marshal(partialPreflight.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partialOperation := &persistence.Operation{
+		ID: partialOperationID, Kind: "move_tools_root", State: "running", Stage: "commit_targets", InputSnapshot: partialSnapshot,
+	}
+	if err := repository.CreateOperation(ctx, partialOperation); err != nil {
+		t.Fatalf("create partially published move operation: %v", err)
+	}
+	partialStaging, err := tools.EnsureOperationStaging(partialRoot, partialOperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partialPublication, err := newMovePublication(partialStaging, partialOperationID, partialPreflight.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictIndex := -1
+	for index, file := range partialPreflight.Snapshot.Files {
+		payload, err := os.ReadFile(file.SourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := filepath.Join(partialStaging, "payload", file.RelativePath, file.Executable)
+		if err := os.MkdirAll(filepath.Dir(candidate), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(candidate, payload, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Clean(file.TargetPath) == filepath.Clean(conflictTarget) {
+			conflictIndex = index
+		}
+	}
+	if conflictIndex < 0 {
+		t.Fatal("confirmed conflict is absent from move snapshot")
+	}
+	if partialPublication.Files[conflictIndex].Owned {
+		t.Fatal("partial publication fixture already records the target as owned")
+	}
+	backup := filepath.Join(partialStaging, "target-backups", fmt.Sprintf("%d", conflictIndex))
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(conflictTarget, backup); err != nil {
+		t.Fatal(err)
+	}
+	conflictFile := partialPreflight.Snapshot.Files[conflictIndex]
+	candidate := filepath.Join(partialStaging, "payload", conflictFile.RelativePath, conflictFile.Executable)
+	if err := os.Link(candidate, conflictTarget); err != nil {
+		t.Fatal(err)
+	}
+	backupContents, err := os.ReadFile(backup)
+	if err != nil || !bytes.Equal(backupContents, operatorContents) {
+		t.Fatalf("pre-reconciliation conflict backup = %q, %v", backupContents, err)
+	}
+	if err := ReconcileInterruptedOperations(ctx, repository, service.NewOperations(repository),
+		func(context.Context, *int64) (bool, error) { return false, nil }, runtimeSettings); err != nil {
+		t.Fatalf("reconcile partially published move: %v", err)
+	}
+	partialFailed, err := repository.GetOperation(ctx, partialOperationID)
+	if err != nil || partialFailed.State != "failed" || partialFailed.Stage != "commit_targets" {
+		t.Fatalf("partially published operation = %#v, %v; want retryable failed/commit_targets", partialFailed, err)
+	}
+	if afterReconcileBackup, err := os.ReadFile(backup); err != nil || !bytes.Equal(afterReconcileBackup, operatorContents) {
+		t.Fatalf("reconciliation discarded operator backup: %q, %v", afterReconcileBackup, err)
+	}
+
+	partialWorkerOperations := service.NewOperations(repository)
+	partialWorker := NewInstallationWorker(repository, partialWorkerOperations, &dispatchCatalog{}, runtimeSettings,
+		platform, tools.NewLifecycle(&dispatchRunner{}))
+	partialWorker.SetMoveWorker(NewMoveWorker(repository, partialWorkerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
+	partialSession := newDispatchRiverSession(t, ctx, databaseURL, database, partialWorker)
+	partialEvents, cancelPartialEvents := partialSession.client.Subscribe(river.EventKindJobCompleted)
+	defer cancelPartialEvents()
+	partialOperations := service.NewOperationsWithRiver(repository, partialSession.client)
+	partialRetry, err := partialOperations.Retry(ctx, partialOperationID)
+	if err != nil {
+		t.Fatalf("retry partially published move: %v", err)
+	}
+	if partialRetry.Stage != "retry:commit_targets" {
+		t.Fatalf("partial publication retry stage = %s; want retry:commit_targets", partialRetry.Stage)
+	}
+	awaitRiverCompletion(t, ctx, partialEvents, *partialRetry.RiverJobID)
+	partialFinished, err := repository.GetOperation(ctx, partialOperationID)
+	if err != nil || partialFinished.State != "failed" || partialFinished.SafeError == nil ||
+		*partialFinished.SafeError != "The tools directory move failed. The current tools directory is unchanged." {
+		t.Fatalf("partial publication rollback = %#v, %v; want truthful failed state", partialFinished, err)
+	}
+	partialRootValue, rootExists, err := runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !rootExists || partialRootValue != newRoot {
+		t.Fatalf("tools root after partial rollback = %q, %v, %v; want unchanged %q", partialRootValue, rootExists, err, newRoot)
+	}
+	if restored, err := os.ReadFile(conflictTarget); err != nil || !bytes.Equal(restored, operatorContents) {
+		t.Fatalf("operator target was not restored after retry: %q, %v", restored, err)
+	}
+	if _, err := os.Lstat(partialStaging); !os.IsNotExist(err) {
+		t.Fatalf("partial publication staging remains after retry: %v", err)
+	}
+	for _, test := range []struct {
+		kind string
+		id   uuid.UUID
+	}{
+		{kind: "fpcalc", id: installation.ID},
+		{kind: "ffmpeg", id: ffmpegInstallation.ID},
+	} {
+		remaining, err := repository.ListInstallations(ctx, test.kind, platform.GOOS, platform.GOARCH)
+		if err != nil || len(remaining) != 1 || remaining[0].ID != test.id {
+			t.Fatalf("%s installations after partial rollback = %#v, %v; want original only", test.kind, remaining, err)
+		}
+	}
+	activeFFmpegAfterPartial, hasActiveFFmpegAfterPartial, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
+	if err != nil || !hasActiveFFmpegAfterPartial || activeFFmpegAfterPartial != activeFFmpegBefore {
+		t.Fatalf("active FFmpeg ID after partial rollback = %q/%v, %v; want unchanged", activeFFmpegAfterPartial, hasActiveFFmpegAfterPartial, err)
+	}
+	activeFPCalcAfterPartial, hasActiveFPCalcAfterPartial, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
+	if err != nil || !hasActiveFPCalcAfterPartial || activeFPCalcAfterPartial != activeFPCalcBefore {
+		t.Fatalf("active fpcalc ID after partial rollback = %q/%v, %v; want unchanged", activeFPCalcAfterPartial, hasActiveFPCalcAfterPartial, err)
 	}
 }

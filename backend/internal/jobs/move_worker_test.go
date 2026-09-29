@@ -261,6 +261,107 @@ func TestMoveWorkerFinishesInterruptedRollback(t *testing.T) {
 	}
 }
 
+func TestReconcilePartialMovePublicationRestoresConfirmedTargetOnRetry(t *testing.T) {
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
+	operation.State, operation.Stage = "running", "commit_targets"
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
+	staging, err := tools.EnsureOperationStaging(newRoot, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := struct {
+		OperationID uuid.UUID `json:"operation_id"`
+		NewRoot     string    `json:"new_root"`
+		Files       []struct {
+			Target string `json:"target"`
+			SHA256 string `json:"sha256"`
+			Owned  bool   `json:"owned"`
+		} `json:"files"`
+	}{OperationID: operation.ID, NewRoot: newRoot}
+	for _, file := range snapshot.Files {
+		contents, err := os.ReadFile(file.SourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := filepath.Join(staging, "payload", file.RelativePath, file.Executable)
+		if err := os.MkdirAll(filepath.Dir(payload), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(payload, contents, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		digest, err := tools.SHA256File(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		publication.Files = append(publication.Files, struct {
+			Target string `json:"target"`
+			SHA256 string `json:"sha256"`
+			Owned  bool   `json:"owned"`
+		}{Target: filepath.Clean(file.TargetPath), SHA256: digest})
+	}
+	journal, err := json.Marshal(publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "publication.json"), journal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conflict := snapshot.Files[0]
+	backup := filepath.Join(staging, "target-backups", "0")
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(conflict.TargetPath, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(staging, "payload", conflict.RelativePath, conflict.Executable), conflict.TargetPath); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	operations := service.NewOperations(repository)
+	if err := jobs.ReconcileInterruptedOperations(context.Background(), repository, operations,
+		func(context.Context, *int64) (bool, error) { return false, nil }, moveWorkerSettings{root: oldRoot}); err != nil {
+		t.Fatalf("reconcile partial move publication: %v", err)
+	}
+	if operation.State != "failed" || operation.Stage != "commit_targets" {
+		t.Fatalf("reconciled move = %s/%s; want retryable failed/commit_targets", operation.State, operation.Stage)
+	}
+	if restoredBackup, err := os.ReadFile(backup); err != nil || !bytes.Equal(restoredBackup, original) {
+		t.Fatalf("reconciliation lost confirmed-target backup: %q %v", restoredBackup, err)
+	}
+
+	retried, err := operations.Retry(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatalf("retry partially published move: %v", err)
+	}
+	if retried.Stage != "retry:commit_targets" {
+		t.Fatalf("retry stage = %s; want retry:commit_targets", retried.Stage)
+	}
+	worker := jobs.NewMoveWorker(repository, operations, moveWorkerSettings{root: oldRoot},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), retried); err != nil {
+		t.Fatalf("rollback partial publication on retry: %v", err)
+	}
+	if repository.root != oldRoot || retried.State != "failed" || retried.SafeError == nil ||
+		*retried.SafeError != "The tools directory move failed. The current tools directory is unchanged." {
+		t.Fatalf("partial publication rollback root=%s state=%s error=%v; want old root and truthful failure", repository.root, retried.State, retried.SafeError)
+	}
+	if restored, err := os.ReadFile(conflict.TargetPath); err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("confirmed operator target was not restored: %q %v", restored, err)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("partial publication staging remains after rollback: %v", err)
+	}
+	if repository.installation.ID != installation.ID {
+		t.Fatalf("rollback changed installation identity from %s to %s", installation.ID, repository.installation.ID)
+	}
+}
+
 func TestReconcilePostSwitchMovePreservesStagingAndRetryRollsBack(t *testing.T) {
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	repository := &moveWorkerRepository{
