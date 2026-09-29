@@ -15,6 +15,24 @@
 Поэтому файл возвращён в `todo/`. Осталось подтвердить перечисленные live-ветки; локально они больше
 не воспроизводятся — проверка принадлежит CI (Compose smoke) и deploy-smoke на целевом сервере.
 
+### Найдено остаточным ручным прогоном (2026-09-29), вне пунктов 11-12
+
+- **D1: каталог FFmpeg пуст для Linux и Windows.** Адаптер BtbN
+  (`backend/internal/integrations/tools/catalog.go:246`) отбирает релизы по тегу GitHub
+  (`^v?\d+(?:\.\d+){1,3}$`), но у BtbN теги только `latest` и `autobuild-*`, а номерные стабильные сборки лежат
+  внутри `latest` как ассеты (`ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz`, `-linuxarm64-`, `-win64-`). Живое
+  подтверждение: в linux/arm64-контейнере `GET /api/tools/catalog?package_kind=ffmpeg` отдаёт `releases: []`, а
+  preflight отвечает 409 `release cannot be installed`; fpcalc в том же контейнере скачивается и проверяется.
+  Следствие: Setup не завершается на Linux и Windows — платформенные критерии 6/7/18 выполняются только на macOS.
+  Тесты каталога кодируют выдуманную форму API (`tag_name: "8.0"`, ассеты `ffmpeg-8.0-linux64-gpl.tar.xz`).
+- **D2: прерванная операция остаётся `running` и не повторяется.** После SIGKILL на стадии copy операция и её
+  `river_job` остались в `running`; `POST /api/operations/{id}/retry` не принимает её (не `failed`), в целевом
+  каталоге остался один частично скопированный файл. План требует распознавать прерванную попытку и безопасно
+  повторять её со очисткой staging.
+
+Детали и артефакты — `.omo/evidence/setup-manager/item-11-12/manual-verification-record.md` (раздел «Residual manual
+run»).
+
 ## Статус документа
 
 Текущий исполняемый план, частично реализованный. Ревизия 2026-09-28 отделила
