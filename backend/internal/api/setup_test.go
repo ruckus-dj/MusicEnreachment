@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -23,6 +26,27 @@ import (
 )
 
 type apiSettingsStore map[string]string
+
+type failingSettingsStore struct {
+	apiSettingsStore
+}
+
+func (failingSettingsStore) SetMany(context.Context, map[string]string) error {
+	return fmt.Errorf("database secret: private-credential")
+}
+
+func (store failingSettingsStore) Set(ctx context.Context, key, value string) error {
+	if key == settings.MusicBrainzVerifiedAtKey {
+		return fmt.Errorf("database secret: private-credential")
+	}
+	return store.apiSettingsStore.Set(ctx, key, value)
+}
+
+type successfulMusicBrainzChecker struct{}
+
+func (successfulMusicBrainzChecker) CheckConnectivity(context.Context, string, string) musicbrainz.CheckResult {
+	return musicbrainz.CheckResult{Success: true}
+}
 
 func (store apiSettingsStore) Get(_ context.Context, key string) (string, bool, error) {
 	value, exists := store[key]
@@ -49,6 +73,20 @@ func (store apiSettingsStore) SetIfAbsent(_ context.Context, key, value string) 
 	return value, nil
 }
 
+func (store apiSettingsStore) InitializePlatform(_ context.Context, goos, goarch string) (string, string, bool, error) {
+	persistedOS, hasOS := store[settings.PlatformGOOSKey]
+	persistedArch, hasArch := store[settings.PlatformGOARCHKey]
+	if hasOS != hasArch {
+		return persistedOS, persistedArch, false, nil
+	}
+	if !hasOS {
+		store[settings.PlatformGOOSKey] = goos
+		store[settings.PlatformGOARCHKey] = goarch
+		return goos, goarch, true, nil
+	}
+	return persistedOS, persistedArch, true, nil
+}
+
 func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)
@@ -66,12 +104,107 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	if err := registry.CompleteSetup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	response = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodPut, "/setup/runtime", strings.NewReader(`{}`))
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPut, "/setup/runtime"},
+		{http.MethodPost, "/setup/paths/check"},
+	} {
+		response = httptest.NewRecorder()
+		request = httptest.NewRequest(test.method, test.path, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("post-completion %s %s status=%d, want %d: %s", test.method, test.path, response.Code, http.StatusNotFound, response.Body.String())
+		}
+	}
+}
+
+func TestCheckSetupPathsValidatesWithoutSaving(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	handler := api.HandlerWithSetup(setup)
+	root := t.TempDir()
+	toolsRoot := filepath.Join(root, "tools")
+	outputRoot := filepath.Join(root, "output")
+	for _, test := range []struct {
+		name   string
+		output string
+		want   int
+	}{
+		{"valid", outputRoot, http.StatusOK},
+		{"overlap", filepath.Join(toolsRoot, "music"), http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]string{
+				"tools_directory": toolsRoot, "output_directory": test.output,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/setup/paths/check", strings.NewReader(string(body)))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if response.Code == http.StatusOK && (!strings.Contains(response.Body.String(), toolsRoot) || !strings.Contains(response.Body.String(), outputRoot)) {
+				t.Fatalf("normalized checked paths absent: %s", response.Body.String())
+			}
+			if response.Code == http.StatusOK {
+				var checked api.CheckPathsBody
+				if err := json.Unmarshal(response.Body.Bytes(), &checked); err != nil {
+					t.Fatal(err)
+				}
+				if checked.OutputUnicodeNormalization == "" {
+					t.Fatalf("output filesystem semantics absent: %s", response.Body.String())
+				}
+			}
+			if len(store) != 0 {
+				t.Fatalf("path check persisted settings: %v", store)
+			}
+			for _, path := range []string{toolsRoot, test.output} {
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatalf("path check created directory %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSetupMutationDoesNotExposeStorageError(t *testing.T) {
+	store := failingSettingsStore{apiSettingsStore{}}
+	registry := settings.New(store, nil)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/setup/musicbrainz", strings.NewReader(`{"mode":"public","base_url":""}`))
 	request.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("post-completion setup mutation status = %d, want %d: %s", response.Code, http.StatusNotFound, response.Body.String())
+	api.HandlerWithSetup(setup).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "private-credential") {
+		t.Fatalf("storage error leaked into API response: %s", response.Body.String())
+	}
+}
+
+func TestMusicBrainzCheckDoesNotExposeStorageError(t *testing.T) {
+	store := failingSettingsStore{apiSettingsStore{}}
+	registry := settings.New(store, nil)
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, successfulMusicBrainzChecker{})
+	handler := api.HandlerWithSetup(setup)
+	for _, path := range []string{"/setup/check-musicbrainz", "/settings/musicbrainz/check"} {
+		response := httptest.NewRecorder()
+		if path == "/settings/musicbrainz/check" {
+			store.apiSettingsStore[settings.SetupCompletedAtKey] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "private-credential") {
+			t.Errorf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -132,12 +265,14 @@ func TestPlatformDiagnosticBlocksSetupMutations(t *testing.T) {
 		Platform:   settings.Platform{GOOS: "linux", GOARCH: "amd64"},
 		Diagnostic: true, Reason: "instance platform mismatch",
 	}, nil, nil)
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/setup/complete", strings.NewReader(`{}`))
-	request.Header.Set("Content-Type", "application/json")
-	api.HandlerWithSetup(setup).ServeHTTP(response, request)
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("diagnostic mutation status = %d, want %d: %s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	for _, path := range []string{"/setup/complete", "/setup/paths/check"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		api.HandlerWithSetup(setup).ServeHTTP(response, request)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Errorf("diagnostic %s status=%d, want %d: %s", path, response.Code, http.StatusServiceUnavailable, response.Body.String())
+		}
 	}
 }
 
@@ -162,7 +297,16 @@ func TestSettingsMutationAppliesDynamicLogLevel(t *testing.T) {
 
 type apiCatalogFixture struct{}
 
-func (apiCatalogFixture) List(context.Context, tools.PackageKind, tools.Platform) ([]tools.Release, error) {
+func (apiCatalogFixture) List(_ context.Context, kind tools.PackageKind, _ tools.Platform) ([]tools.Release, error) {
+	if kind == tools.PackageFFmpeg {
+		return []tools.Release{{
+			Identity: "8.0",
+			Artifacts: []tools.Artifact{
+				{Name: "ffmpeg.zip", URL: "https://ffmpeg.martin-riedl.de/ffmpeg.zip"},
+				{Name: "ffprobe.zip", URL: "https://ffmpeg.martin-riedl.de/ffprobe.zip"},
+			},
+		}}, nil
+	}
 	return []tools.Release{{
 		Identity: "1.6.1",
 		Artifacts: []tools.Artifact{{
@@ -191,6 +335,27 @@ func TestCatalogResponseDoesNotExposeArtifactURLs(t *testing.T) {
 	}
 }
 
+func TestCatalogResponseIncludesMacOSIntelNotice(t *testing.T) {
+	store := apiSettingsStore{}
+	platform := tools.Platform{GOOS: "darwin", GOARCH: "amd64"}
+	setup := service.NewSetup(store, settings.New(store, nil),
+		settings.PlatformState{Platform: settings.Platform{GOOS: "darwin", GOARCH: "amd64"}}, nil, nil)
+	catalog := service.NewCatalogService(apiCatalogFixture{}, platform)
+	response := httptest.NewRecorder()
+	api.HandlerWithDependencies(api.Dependencies{Setup: setup, Catalog: catalog}).
+		ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/tools/catalog?package_kind=ffmpeg", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("macOS Intel catalog status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var body api.CatalogBody
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Platform.GOOS != platform.GOOS || body.Platform.GOARCH != platform.GOARCH || body.Notice == "" {
+		t.Fatalf("macOS Intel catalog platform = %s/%s, notice present = %t", body.Platform.GOOS, body.Platform.GOARCH, body.Notice != "")
+	}
+}
+
 func TestOpenAPIGeneratorRegistrationContainsProductionOperations(t *testing.T) {
 	humaAPI := api.New(chi.NewRouter())
 	api.RegisterAll(humaAPI, api.Dependencies{})
@@ -200,7 +365,7 @@ func TestOpenAPIGeneratorRegistrationContainsProductionOperations(t *testing.T) 
 	}
 	spec := string(encoded)
 	for _, operationID := range []string{
-		"get-setup-state", "save-setup-runtime", "complete-setup",
+		"get-setup-state", "save-setup-runtime", "check-setup-paths", "complete-setup",
 		"list-tool-catalog", "preflight-tool-install", "start-tool-install",
 		"list-installations", "activate-tool-installation", "delete-tool-installation",
 		"preflight-tools-root-move", "start-tools-root-move",

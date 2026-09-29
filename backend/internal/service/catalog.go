@@ -23,6 +23,11 @@ type ReleaseOption struct {
 	Artifacts []ArtifactOption
 }
 
+type CatalogResult struct {
+	Releases []ReleaseOption
+	Notice   string
+}
+
 type ArtifactOption struct {
 	Name             string
 	ChecksumProvided bool
@@ -53,6 +58,18 @@ func (s *CatalogService) List(ctx context.Context, packageKind tools.PackageKind
 		options = append(options, option)
 	}
 	return options, nil
+}
+
+func (s *CatalogService) ListWithNotice(ctx context.Context, packageKind tools.PackageKind) (CatalogResult, error) {
+	releases, err := s.List(ctx, packageKind)
+	if err != nil {
+		return CatalogResult{}, err
+	}
+	result := CatalogResult{Releases: releases}
+	if packageKind == tools.PackageFFmpeg && s.platform.GOOS == "darwin" && s.platform.GOARCH == "amd64" {
+		result.Notice = "New macOS Intel builds may not be available after January 2027; select the latest compatible release if listed."
+	}
+	return result, nil
 }
 
 func (s *CatalogService) Resolve(ctx context.Context, packageKind tools.PackageKind, identity string) (tools.Release, error) {

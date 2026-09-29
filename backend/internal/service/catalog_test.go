@@ -59,3 +59,24 @@ func TestCatalogServiceRejectsUnsupportedInstancePlatform(t *testing.T) {
 		t.Fatal("unsupported platform accepted")
 	}
 }
+
+func TestCatalogServiceReportsIntelMacLimitEvenWithoutReleases(t *testing.T) {
+	for _, test := range []struct {
+		platform tools.Platform
+		kind     tools.PackageKind
+		notice   bool
+	}{
+		{platform: tools.Platform{GOOS: "darwin", GOARCH: "amd64"}, kind: tools.PackageFFmpeg, notice: true},
+		{platform: tools.Platform{GOOS: "darwin", GOARCH: "arm64"}, kind: tools.PackageFFmpeg},
+		{platform: tools.Platform{GOOS: "darwin", GOARCH: "amd64"}, kind: tools.PackageFPCalc},
+		{platform: tools.Platform{GOOS: "linux", GOARCH: "amd64"}, kind: tools.PackageFFmpeg},
+	} {
+		result, err := service.NewCatalogService(&catalogFixture{}, test.platform).ListWithNotice(context.Background(), test.kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (result.Notice != "") != test.notice || len(result.Releases) != 0 {
+			t.Errorf("catalog result for %s/%s %s = %#v", test.platform.GOOS, test.platform.GOARCH, test.kind, result)
+		}
+	}
+}

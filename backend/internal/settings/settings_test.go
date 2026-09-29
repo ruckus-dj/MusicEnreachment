@@ -15,6 +15,16 @@ type memoryStore struct {
 	data map[string]string
 }
 
+type recordingStore struct {
+	*memoryStore
+	setManyCalls int
+}
+
+func (store *recordingStore) SetMany(ctx context.Context, values map[string]string) error {
+	store.setManyCalls++
+	return store.memoryStore.SetMany(ctx, values)
+}
+
 func (m *memoryStore) Get(_ context.Context, key string) (string, bool, error) {
 	value, ok := m.data[key]
 	return value, ok, nil
@@ -38,6 +48,20 @@ func (m *memoryStore) SetIfAbsent(_ context.Context, key, value string) (string,
 	}
 	m.data[key] = value
 	return value, nil
+}
+
+func (m *memoryStore) InitializePlatform(_ context.Context, goos, goarch string) (string, string, bool, error) {
+	persistedOS, hasOS := m.data[settings.PlatformGOOSKey]
+	persistedArch, hasArch := m.data[settings.PlatformGOARCHKey]
+	if hasOS != hasArch {
+		return persistedOS, persistedArch, false, nil
+	}
+	if !hasOS {
+		m.data[settings.PlatformGOOSKey] = goos
+		m.data[settings.PlatformGOARCHKey] = goarch
+		return goos, goarch, true, nil
+	}
+	return persistedOS, persistedArch, true, nil
 }
 
 func newMemoryStore() *memoryStore {
@@ -88,6 +112,8 @@ func TestPathOverlapDetection(t *testing.T) {
 		overlaps bool
 	}{
 		{"identical", "/var/lib/tools", "/var/lib/tools", true},
+		{"root contains descendant", string(filepath.Separator), filepath.Join(string(filepath.Separator), "var", "lib"), true},
+		{"descendant contained by root", filepath.Join(string(filepath.Separator), "var", "lib"), string(filepath.Separator), true},
 		{"first contains second", "/var/lib", "/var/lib/tools", true},
 		{"second contains first", "/var/lib/tools", "/var/lib", true},
 		{"siblings", "/var/lib/tools", "/var/lib/output", false},
@@ -251,6 +277,77 @@ func TestPublicationFormatValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateRuntimeValidatesEveryFieldBeforeWriting(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		update settings.RuntimeUpdate
+	}{
+		{"relative tools path", settings.RuntimeUpdate{ToolsDirectory: pointer("relative"), PublicationFormat: pointer("mka")}},
+		{"whitespace tools path", settings.RuntimeUpdate{ToolsDirectory: pointer("   ")}},
+		{"relative output path", settings.RuntimeUpdate{OutputDirectory: pointer("relative"), PublicationFormat: pointer("mka")}},
+		{"invalid Unicode semantics", settings.RuntimeUpdate{ToolsDirectory: pointer("/tools"), OutputUnicodeNormalization: pointer("invalid")}},
+		{"invalid format", settings.RuntimeUpdate{ToolsDirectory: pointer("/tools"), PublicationFormat: pointer("invalid")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &recordingStore{memoryStore: newMemoryStore()}
+			store.data[settings.PublicationFormatKey] = "source"
+			err := settings.New(store, nil).UpdateRuntime(context.Background(), test.update)
+			if err == nil || store.setManyCalls != 0 || store.data[settings.PublicationFormatKey] != "source" {
+				t.Fatalf("invalid update: err=%v, writes=%d, settings=%v", err, store.setManyCalls, store.data)
+			}
+		})
+	}
+}
+
+func TestUpdateRuntimeWritesSuppliedFieldsTogetherAndLeavesNilFields(t *testing.T) {
+	store := &recordingStore{memoryStore: newMemoryStore()}
+	registry := settings.New(store, nil)
+	tools := filepath.Join(t.TempDir(), "tools")
+	output := filepath.Join(t.TempDir(), "output")
+	canonicalTools, err := settings.NormalizePath(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalOutput, err := settings.NormalizePath(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caseSensitive := false
+	unicodeNormalization := "none"
+	format := "mka"
+	uncleanTools := tools + "/../tools"
+	uncleanOutput := output + "/../output"
+	err = registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{
+		ToolsDirectory: &uncleanTools, OutputDirectory: &uncleanOutput,
+		OutputCaseSensitive: &caseSensitive, OutputUnicodeNormalization: &unicodeNormalization,
+		PublicationFormat: &format,
+	})
+	if err != nil || store.setManyCalls != 1 {
+		t.Fatalf("update runtime: err=%v, SetMany calls=%d", err, store.setManyCalls)
+	}
+	for key, want := range map[string]string{
+		settings.ToolsDirectoryKey: canonicalTools, settings.OutputDirectoryKey: canonicalOutput,
+		settings.OutputCaseSensitiveKey: "false", settings.OutputUnicodeNormalizationKey: "none",
+		settings.PublicationFormatKey: "mka",
+	} {
+		if got := store.data[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	format = "source"
+	if err := registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{PublicationFormat: &format}); err != nil {
+		t.Fatal(err)
+	}
+	if store.setManyCalls != 2 || store.data[settings.OutputDirectoryKey] != canonicalOutput || store.data[settings.PublicationFormatKey] != "source" {
+		t.Fatalf("nil fields were changed: calls=%d, settings=%v", store.setManyCalls, store.data)
+	}
+	if err := registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{}); err != nil || store.setManyCalls != 2 {
+		t.Fatalf("empty update wrote settings: err=%v, calls=%d", err, store.setManyCalls)
+	}
+}
+
+func pointer[T any](value T) *T { return &value }
 
 func TestConfigurationHealthChecksAllRequirements(t *testing.T) {
 	store := newMemoryStore()

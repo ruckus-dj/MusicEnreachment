@@ -19,6 +19,7 @@ import type {
 import type {
   CatalogBody,
   CheckMusicBrainzBody,
+  CheckPathsBody,
   InstallPreflightBody,
   InstallationsBody,
   MovePreflightBody,
@@ -44,7 +45,9 @@ export const getCheckMusicbrainzResponseMock = (overrideResponse: Partial<Extrac
 
 export const getGetConfigurationHealthResponseMock = (overrideResponse: Partial<Extract<SetupStateBody, object>> = {}): SetupStateBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), completed: faker.datatype.boolean(), configuration_health: {healthy: faker.datatype.boolean(), problems: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null])}, platform: {diagnostic: faker.datatype.boolean(), goarch: faker.string.alpha({length: {min: 10, max: 20}}), goos: faker.string.alpha({length: {min: 10, max: 20}}), reason: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), supported: faker.datatype.boolean()}, settings: {active_ffmpeg_installation_id: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), active_fpcalc_installation_id: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), log_level: faker.string.alpha({length: {min: 10, max: 20}}), lrclib_enabled: faker.datatype.boolean(), musicbrainz_base_url: faker.string.alpha({length: {min: 10, max: 20}}), musicbrainz_mode: faker.string.alpha({length: {min: 10, max: 20}}), musicbrainz_verified_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), output_case_sensitive: faker.helpers.arrayElement([faker.datatype.boolean(), undefined]), output_directory: faker.string.alpha({length: {min: 10, max: 20}}), output_unicode_normalization: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), publication_format: faker.string.alpha({length: {min: 10, max: 20}}), tools_directory: faker.string.alpha({length: {min: 10, max: 20}})}, ...overrideResponse})
 
-export const getListToolCatalogResponseMock = (overrideResponse: Partial<Extract<CatalogBody, object>> = {}): CatalogBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), package_kind: faker.string.alpha({length: {min: 10, max: 20}}), platform: {diagnostic: faker.datatype.boolean(), goarch: faker.string.alpha({length: {min: 10, max: 20}}), goos: faker.string.alpha({length: {min: 10, max: 20}}), reason: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), supported: faker.datatype.boolean()}, releases: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({artifacts: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({checksum_provided: faker.datatype.boolean(), name: faker.string.alpha({length: {min: 10, max: 20}})})), null]), identity: faker.string.alpha({length: {min: 10, max: 20}}), source: faker.string.alpha({length: {min: 10, max: 20}})})), null]), ...overrideResponse})
+export const getCheckSetupPathsResponseMock = (overrideResponse: Partial<Extract<CheckPathsBody, object>> = {}): CheckPathsBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), output_case_sensitive: faker.datatype.boolean(), output_directory: faker.string.alpha({length: {min: 10, max: 20}}), output_unicode_normalization: faker.string.alpha({length: {min: 10, max: 20}}), tools_directory: faker.string.alpha({length: {min: 10, max: 20}}), ...overrideResponse})
+
+export const getListToolCatalogResponseMock = (overrideResponse: Partial<Extract<CatalogBody, object>> = {}): CatalogBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), notice: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), package_kind: faker.string.alpha({length: {min: 10, max: 20}}), platform: {diagnostic: faker.datatype.boolean(), goarch: faker.string.alpha({length: {min: 10, max: 20}}), goos: faker.string.alpha({length: {min: 10, max: 20}}), reason: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), supported: faker.datatype.boolean()}, releases: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({artifacts: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({checksum_provided: faker.datatype.boolean(), name: faker.string.alpha({length: {min: 10, max: 20}})})), null]), identity: faker.string.alpha({length: {min: 10, max: 20}}), source: faker.string.alpha({length: {min: 10, max: 20}})})), null]), ...overrideResponse})
 
 export const getListInstallationsResponseMock = (overrideResponse: Partial<Extract<InstallationsBody, object>> = {}): InstallationsBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), installations: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({active: faker.datatype.boolean(), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', executable_versions: {
         [faker.string.alphanumeric(5)]: faker.string.alpha({length: {min: 10, max: 20}})
@@ -235,6 +238,18 @@ export const getSaveSetupMusicbrainzMockHandler = (overrideResponse?: void | ((i
   }, options)
 }
 
+export const getCheckSetupPathsMockHandler = (overrideResponse?: CheckPathsBody | ((info: Parameters<Parameters<typeof http.post>[1]>[0]) => Promise<CheckPathsBody> | CheckPathsBody), options?: RequestHandlerOptions) => {
+  return http.post('*/setup/paths/check', async (info: Parameters<Parameters<typeof http.post>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getCheckSetupPathsResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
 export const getSaveSetupRuntimeMockHandler = (overrideResponse?: void | ((info: Parameters<Parameters<typeof http.put>[1]>[0]) => Promise<void> | void), options?: RequestHandlerOptions) => {
   return http.put('*/setup/runtime', async (info: Parameters<Parameters<typeof http.put>[1]>[0]) => {
   if (typeof overrideResponse === 'function') {await overrideResponse(info); }
@@ -353,6 +368,7 @@ export const getMeloTroveAPIMock = () => [
   getGetConfigurationHealthMockHandler(),
   getSaveSetupLrclibMockHandler(),
   getSaveSetupMusicbrainzMockHandler(),
+  getCheckSetupPathsMockHandler(),
   getSaveSetupRuntimeMockHandler(),
   getListToolCatalogMockHandler(),
   getListInstallationsMockHandler(),

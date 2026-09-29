@@ -31,7 +31,7 @@ func ManagedRelativePath(kind PackageKind, version string) (string, error) {
 	if kind != PackageFFmpeg && kind != PackageFPCalc {
 		return "", fmt.Errorf("unsupported package %q", kind)
 	}
-	if version == "" || version != filepath.Base(version) || strings.ContainsAny(version, `\\/:`) || version == "." {
+	if version == "" || version != filepath.Base(version) || strings.ContainsAny(version, `\\/:`) || version == "." || version == ".." {
 		return "", fmt.Errorf("unsafe release identity %q", version)
 	}
 	return filepath.Join(string(kind), version), nil
@@ -440,7 +440,7 @@ func (l *Lifecycle) Materialize(ctx context.Context, staging, root string, kind 
 			return "", nil, fmt.Errorf("verify %s: %w", name, err)
 		}
 		versions[name] = strings.TrimSpace(string(output))
-		if versions[name] == "" || !strings.Contains(strings.ToLower(versions[name]), strings.ToLower(strings.TrimPrefix(version, "v"))) {
+		if !matchesReleaseVersion(versions[name], version) {
 			return "", nil, fmt.Errorf("%s version does not match release %q", name, version)
 		}
 		stagedFiles[target] = tempPath
@@ -547,12 +547,27 @@ func (l *Lifecycle) VerifyInstallation(ctx context.Context, root, relative strin
 			return nil, fmt.Errorf("verify managed executable %s: %w", name, err)
 		}
 		verified := strings.TrimSpace(string(output))
-		if verified == "" || !strings.Contains(strings.ToLower(verified), strings.ToLower(strings.TrimPrefix(version, "v"))) {
+		if !matchesReleaseVersion(verified, version) {
 			return nil, fmt.Errorf("managed executable %s does not match release %q", name, version)
 		}
 		versions[name] = verified
 	}
 	return versions, nil
+}
+
+func matchesReleaseVersion(output, release string) bool {
+	firstLine, _, _ := strings.Cut(output, "\n")
+	fields := strings.Fields(firstLine)
+	expected := strings.TrimPrefix(strings.ToLower(release), "v")
+	for index := 0; index+1 < len(fields); index++ {
+		if !strings.EqualFold(fields[index], "version") {
+			continue
+		}
+		actual := strings.ToLower(fields[index+1])
+		actual = strings.TrimPrefix(strings.TrimPrefix(actual, "n"), "v")
+		return actual == expected
+	}
+	return false
 }
 
 func findExecutable(root, name string) (string, error) {

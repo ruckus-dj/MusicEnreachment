@@ -120,6 +120,9 @@ func (s *Installations) Delete(ctx context.Context, packageKind string, id uuid.
 		return fmt.Errorf("tools directory is not configured")
 	}
 	return s.repository.DeleteInstallation(ctx, id, packageKind, s.platform.GOOS, s.platform.GOARCH, setting, func(installation *persistence.ToolInstallation) error {
+		if installation.State != "ready" {
+			return nil
+		}
 		return tools.Delete(root, installation.RelativePath, s.platform.GOOS, map[string]string{}, kind, id.String())
 	})
 }

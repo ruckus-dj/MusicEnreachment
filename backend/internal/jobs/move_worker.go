@@ -23,6 +23,7 @@ type moveRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error)
 	CommitToolsRootMove(context.Context, uuid.UUID, string, string) error
+	RollbackToolsRootMove(context.Context, uuid.UUID, string, string) error
 	FinishToolsRootMove(context.Context, uuid.UUID) error
 }
 
@@ -49,10 +50,13 @@ func NewMoveWorker(repository moveRepository, operations *service.Operations, ru
 func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Operation) error {
 	if operation.State == "succeeded" {
 		var completed service.MoveSnapshot
-		if json.Unmarshal(operation.InputSnapshot, &completed) == nil && completed.NewRoot != "" {
-			_ = tools.CleanupOperationStaging(completed.NewRoot, operation.ID)
+		if err := json.Unmarshal(operation.InputSnapshot, &completed); err != nil || completed.NewRoot == "" {
+			return fmt.Errorf("invalid succeeded move snapshot")
 		}
-		return nil
+		if err := cleanupOldSourceRestoreStaging(completed, operation.ID); err != nil {
+			return err
+		}
+		return tools.CleanupOperationStaging(completed.NewRoot, operation.ID)
 	}
 	if operation.State == "failed" {
 		return nil
@@ -68,27 +72,43 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	if err != nil {
 		return err
 	}
+	if exists && currentRoot == snapshot.OldRoot && operation.State == "running" && operation.Stage == "rolled_back" {
+		if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+			return err
+		}
+		if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
+			return err
+		}
+		return worker.fail(ctx, operation, fmt.Errorf("tools root move rolled back"))
+	}
+	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && operation.Stage == "rollback_pending" {
+		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
+		if err != nil {
+			return err
+		}
+		return worker.rollbackSwitched(ctx, operation, snapshot, staging, fmt.Errorf("tools root move rollback resumed"))
+	}
 	if exists && currentRoot == snapshot.NewRoot && operation.State == "running" && strings.TrimPrefix(operation.Stage, "retry:") == "switched" {
 		staging, err := tools.EnsureOperationStaging(snapshot.NewRoot, operation.ID)
 		if err != nil {
 			return err
 		}
 		if err := worker.verifyTargets(ctx, snapshot); err != nil {
-			return err
+			return worker.rollbackSwitched(ctx, operation, snapshot, staging, err)
 		}
 		if snapshot.RemoveOldFiles {
 			if err := worker.removeOldSources(snapshot, staging); err != nil {
-				return err
+				return worker.rollbackSwitched(ctx, operation, snapshot, staging, err)
 			}
-		}
-		if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
-			return err
 		}
 		if err := worker.repository.FinishToolsRootMove(ctx, operation.ID); err != nil {
 			return err
 		}
 		worker.operations.Notify(operation.ID)
-		return nil
+		if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+			return err
+		}
+		return tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID)
 	}
 	if !exists || currentRoot != snapshot.OldRoot {
 		return worker.fail(ctx, operation, fmt.Errorf("current tools root does not match move snapshot"))
@@ -103,11 +123,6 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	}
 	if hasOutput && settings.PathsOverlap(outputRoot, snapshot.NewRoot) {
 		return worker.fail(ctx, operation, fmt.Errorf("new tools root overlaps output root"))
-	}
-	resumingTargetCommit := strings.Contains(operation.Stage, "commit_targets") || strings.Contains(operation.Stage, "switch")
-	if strings.HasPrefix(operation.Stage, "retry:") {
-		retryStage := strings.TrimPrefix(operation.Stage, "retry:")
-		resumingTargetCommit = strings.Contains(retryStage, "commit_targets") || strings.Contains(retryStage, "switch")
 	}
 	for _, file := range snapshot.Files {
 		if err := validateMoveFile(file, snapshot, worker.platform.GOOS); err != nil {
@@ -152,8 +167,16 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	if err != nil {
 		return worker.fail(ctx, operation, err)
 	}
-	if err := worker.restoreOldSources(ctx, staging, snapshot); err != nil {
+	publication, err := loadMovePublication(staging, operation.ID, snapshot)
+	if err != nil {
 		return err
+	}
+	var ownedTargets []string
+	if publication != nil {
+		ownedTargets, err = ownedMoveTargets(snapshot, staging, publication)
+		if err != nil {
+			return err
+		}
 	}
 	if err := worker.operations.Running(ctx, operation.ID, "copy"); err != nil {
 		return err
@@ -167,15 +190,15 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	for _, file := range snapshot.Files {
 		bytesTotal += file.Size
 	}
-	for index, file := range snapshot.Files {
+	for _, file := range snapshot.Files {
 		payloadPath := filepath.Join(payloadRoot, file.RelativePath, file.Executable)
-		if err := copyMovePayload(file, payloadPath, staging, index, func(copied int64) {
+		if err := copyMovePayload(file, payloadPath, func(copied int64) {
 			_ = worker.operations.Progress(ctx, operation.ID, "copy", bytesCopied+copied, &bytesTotal)
 		}); err != nil {
 			if ctx.Err() != nil {
 				return err
 			}
-			return worker.rollbackTargets(ctx, operation, snapshot, staging, nil, err)
+			return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 		}
 		bytesCopied += file.Size
 		if err := worker.operations.Progress(ctx, operation.ID, "copy", bytesCopied, &bytesTotal); err != nil {
@@ -191,7 +214,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 			continue
 		}
 		if _, err := worker.lifecycle.VerifyInstallation(ctx, payloadRoot, file.RelativePath, file.PackageKind, file.ReleaseIdentity, worker.platform.GOOS); err != nil {
-			return worker.rollbackTargets(ctx, operation, snapshot, staging, nil, err)
+			return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 		}
 		verified[file.InstallationID] = struct{}{}
 	}
@@ -199,9 +222,15 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		if ctx.Err() != nil {
 			return err
 		}
-		return worker.rollbackTargets(ctx, operation, snapshot, staging, nil, err)
+		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 	}
-	ownedTargets, err := worker.commitTargets(ctx, snapshot, staging, resumingTargetCommit)
+	if publication == nil {
+		publication, err = newMovePublication(staging, operation.ID, snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	ownedTargets, err = worker.commitTargets(ctx, snapshot, staging, publication)
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -209,6 +238,15 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 	}
 	if err := worker.verifyTargets(ctx, snapshot); err != nil {
+		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
+	}
+	if err := worker.operations.Running(ctx, operation.ID, "prepare_restore"); err != nil {
+		return err
+	}
+	if err := recordMoveSources(snapshot, staging); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
 		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, err)
 	}
 	if err := worker.operations.Running(ctx, operation.ID, "switch"); err != nil {
@@ -226,17 +264,17 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	worker.operations.Notify(operation.ID)
 	if snapshot.RemoveOldFiles {
 		if err := worker.removeOldSources(snapshot, staging); err != nil {
-			return err
+			return worker.rollbackSwitched(ctx, operation, snapshot, staging, err)
 		}
-	}
-	if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
-		return err
 	}
 	if err := worker.repository.FinishToolsRootMove(ctx, operation.ID); err != nil {
 		return err
 	}
 	worker.operations.Notify(operation.ID)
-	return nil
+	if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+		return err
+	}
+	return tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID)
 }
 
 func validateMoveFile(file service.MoveFileIdentity, snapshot service.MoveSnapshot, goos string) error {
@@ -264,7 +302,7 @@ func validateMoveFile(file service.MoveFileIdentity, snapshot service.MoveSnapsh
 	return nil
 }
 
-func copyMovePayload(file service.MoveFileIdentity, destination, staging string, index int, progress func(int64)) error {
+func copyMovePayload(file service.MoveFileIdentity, destination string, progress func(int64)) error {
 	if info, err := os.Lstat(destination); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return fmt.Errorf("move staging executable has an unsupported file type")
@@ -279,15 +317,6 @@ func copyMovePayload(file service.MoveFileIdentity, destination, staging string,
 		return err
 	}
 	source := file.SourcePath
-	if _, err := os.Stat(source); os.IsNotExist(err) {
-		backup := filepath.Join(staging, "old-backups", strconv.Itoa(index))
-		if _, backupErr := os.Stat(backup); backupErr != nil {
-			return fmt.Errorf("move source and recovery copy are unavailable")
-		}
-		source = backup
-	} else if err != nil {
-		return err
-	}
 	if err := tools.HasSymlinkAncestors(filepath.Dir(source), source); err != nil {
 		return err
 	}
@@ -339,9 +368,14 @@ func (writer *moveProgressWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
-func (worker *MoveWorker) commitTargets(ctx context.Context, snapshot service.MoveSnapshot, staging string, resumingTargetCommit bool) ([]string, error) {
-	ownedTargets := make([]string, 0, len(snapshot.Files))
-	fail := func(err error) ([]string, error) { return ownedTargets, err }
+func (worker *MoveWorker) commitTargets(ctx context.Context, snapshot service.MoveSnapshot, staging string, publication *movePublication) ([]string, error) {
+	fail := func(err error) ([]string, error) {
+		ownedTargets, ownershipErr := ownedMoveTargets(snapshot, staging, publication)
+		if ownershipErr != nil {
+			return ownedTargets, fmt.Errorf("%v; inspect move publication ownership: %w", err, ownershipErr)
+		}
+		return ownedTargets, err
+	}
 	confirmed := make(map[string]struct{}, len(snapshot.ConfirmedConflicts))
 	for _, path := range snapshot.ConfirmedConflicts {
 		confirmed[filepath.Clean(path)] = struct{}{}
@@ -354,68 +388,56 @@ func (worker *MoveWorker) commitTargets(ctx context.Context, snapshot service.Mo
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fail(err)
 		}
-		digest, hashErr := tools.SHA256File(target)
-		if hashErr == nil && digest == file.SHA256 {
-			if _, isConflict := confirmed[target]; isConflict {
-				if err := worker.ensureTargetBackup(target, filepath.Join(staging, "target-backups", strconv.Itoa(index))); err != nil {
-					return fail(err)
-				}
-			} else if !resumingTargetCommit {
-				return fail(fmt.Errorf("move target appeared after preflight"))
-			} else {
-				ownedTargets = append(ownedTargets, target)
-			}
-			continue
-		}
-		info, statErr := os.Lstat(target)
-		if statErr == nil {
-			if _, isConflict := confirmed[target]; !isConflict {
-				return fail(fmt.Errorf("unconfirmed target appeared after move preflight"))
-			}
-			if err := worker.ensureTargetBackup(target, filepath.Join(staging, "target-backups", strconv.Itoa(index))); err != nil {
-				return fail(err)
-			}
-		} else if !os.IsNotExist(statErr) {
-			return fail(statErr)
-		} else if _, isConflict := confirmed[target]; isConflict {
-			backup := filepath.Join(staging, "target-backups", strconv.Itoa(index))
-			if _, backupErr := os.Lstat(backup); backupErr != nil {
-				return fail(fmt.Errorf("move conflict changed after confirmation"))
-			}
-		}
-		if info != nil && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			return fail(fmt.Errorf("move target has an unsupported file type"))
-		}
 		payload := filepath.Join(staging, "payload", file.RelativePath, file.Executable)
-		temporary, err := os.CreateTemp(filepath.Dir(target), ".melotrove-move-")
+		if err := tools.VerifySHA256(payload, file.SHA256); err != nil {
+			return fail(fmt.Errorf("verified move executable changed before publication: %w", err))
+		}
+		published, err := moveFileWasPublished(file, staging, index)
 		if err != nil {
 			return fail(err)
 		}
-		tempPath := temporary.Name()
-		if err := temporary.Close(); err != nil {
-			_ = os.Remove(tempPath)
-			return fail(err)
-		}
-		if err := os.Remove(tempPath); err != nil {
-			return fail(err)
-		}
-		if err := copyFile(payload, tempPath); err != nil {
-			return fail(err)
-		}
-		if _, err := os.Lstat(target); err == nil {
-			if err := os.Remove(target); err != nil {
-				_ = os.Remove(tempPath)
-				return fail(err)
+		if published {
+			if !publication.Files[index].Owned {
+				publication.Files[index].Owned = true
+				if err := saveMovePublication(staging, publication); err != nil {
+					return fail(err)
+				}
 			}
-		} else if !os.IsNotExist(err) {
-			_ = os.Remove(tempPath)
+			continue
+		}
+		backup := filepath.Join(staging, "target-backups", strconv.Itoa(index))
+		if _, isConflict := confirmed[target]; isConflict {
+			if _, backupErr := os.Lstat(backup); os.IsNotExist(backupErr) {
+				if _, targetErr := os.Lstat(target); os.IsNotExist(targetErr) {
+					return fail(fmt.Errorf("move conflict changed after confirmation"))
+				} else if targetErr != nil {
+					return fail(targetErr)
+				}
+				if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+					return fail(err)
+				}
+				if err := os.Rename(target, backup); err != nil {
+					return fail(err)
+				}
+			} else if backupErr != nil {
+				return fail(backupErr)
+			} else if _, targetErr := os.Lstat(target); targetErr == nil {
+				return fail(fmt.Errorf("another file appeared at confirmed move target"))
+			} else if !os.IsNotExist(targetErr) {
+				return fail(targetErr)
+			}
+		} else if _, targetErr := os.Lstat(target); targetErr == nil {
+			return fail(fmt.Errorf("unconfirmed target appeared after move preflight"))
+		} else if !os.IsNotExist(targetErr) {
+			return fail(targetErr)
+		}
+		if err := os.Link(payload, target); err != nil {
+			return fail(fmt.Errorf("publish move target without overwrite: %w", err))
+		}
+		publication.Files[index].Owned = true
+		if err := saveMovePublication(staging, publication); err != nil {
 			return fail(err)
 		}
-		if err := os.Rename(tempPath, target); err != nil {
-			_ = os.Remove(tempPath)
-			return fail(err)
-		}
-		ownedTargets = append(ownedTargets, target)
 		if err := tools.VerifySHA256(target, file.SHA256); err != nil {
 			return fail(err)
 		}
@@ -423,103 +445,342 @@ func (worker *MoveWorker) commitTargets(ctx context.Context, snapshot service.Mo
 			return fail(ctx.Err())
 		}
 	}
-	return ownedTargets, nil
+	return ownedMoveTargets(snapshot, staging, publication)
 }
 
-func (worker *MoveWorker) ensureTargetBackup(target, backup string) error {
-	if _, err := os.Lstat(backup); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
-		return err
-	}
-	info, err := os.Lstat(target)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		link, err := os.Readlink(target)
+func oldSourceRestorePaths(target string, token uuid.UUID) (string, string) {
+	base := filepath.Join(filepath.Dir(target), ".melotrove-restore-"+token.String())
+	return base + ".source", base + ".staging"
+}
+
+type moveRestoreIdentity struct {
+	Volume  uint64 `json:"volume"`
+	File    uint64 `json:"file"`
+	Created int64  `json:"created"`
+}
+
+type moveRestoreRecord struct {
+	Token    uuid.UUID            `json:"token"`
+	SHA256   string               `json:"sha256"`
+	Source   *moveRestoreIdentity `json:"source,omitempty"`
+	Identity *moveRestoreIdentity `json:"identity,omitempty"`
+	Ready    bool                 `json:"ready"`
+}
+
+func oldSourceRestoreJournal(staging string, index int) string {
+	return filepath.Join(staging, fmt.Sprintf("old-source-restore-%d.json", index))
+}
+
+func recordMoveSources(snapshot service.MoveSnapshot, staging string) error {
+	for index, file := range snapshot.Files {
+		if err := tools.VerifySHA256(file.SourcePath, file.SHA256); err != nil {
+			return err
+		}
+		identity, err := inspectMoveRestoreIdentity(file.SourcePath)
 		if err != nil {
 			return err
 		}
-		return os.Symlink(link, backup)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("move conflict has an unsupported file type")
-	}
-	return copyFile(target, backup)
-}
-
-func copyFile(source, destination string) error {
-	input, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = input.Close() }()
-	info, err := input.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("move copy source is not a regular file")
-	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(output, input)
-	closeErr := output.Close()
-	if copyErr != nil {
-		_ = os.Remove(destination)
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(destination)
-		return closeErr
+		journal := oldSourceRestoreJournal(staging, index)
+		record, err := loadOldSourceRestoreRecord(journal)
+		if err != nil {
+			return err
+		}
+		if record != nil {
+			if record.Token == uuid.Nil || record.Source == nil || *record.Source != identity || record.SHA256 != file.SHA256 {
+				return fmt.Errorf("managed source ownership changed before root switch")
+			}
+		} else {
+			record = &moveRestoreRecord{Token: uuid.New(), Source: &identity, SHA256: file.SHA256}
+			if err := saveOldSourceRestoreRecord(journal, record); err != nil {
+				return err
+			}
+		}
+		_, backup := oldSourceRestorePaths(file.SourcePath, record.Token)
+		if _, err := prepareOldSourceRestore(file.SourcePath, backup, journal); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func restoreTargetBackup(backup, target string) error {
-	info, err := os.Lstat(backup)
+func loadOldSourceRestoreRecord(journal string) (*moveRestoreRecord, error) {
+	info, err := os.Lstat(journal)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1024 {
+		return nil, fmt.Errorf("invalid old source restore journal")
+	}
+	raw, err := os.ReadFile(journal)
+	if err != nil {
+		return nil, err
+	}
+	var record moveRestoreRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func saveOldSourceRestoreRecord(journal string, record *moveRestoreRecord) error {
+	file, err := os.CreateTemp(filepath.Dir(journal), ".old-source-restore-")
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(target), ".melotrove-restore-")
+	defer func() { _ = os.Remove(file.Name()) }()
+	writeErr := json.NewEncoder(file).Encode(record)
+	syncErr := file.Sync()
+	if err := errors.Join(writeErr, syncErr, file.Close()); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), journal)
+}
+
+func inspectMoveRestoreIdentity(path string) (moveRestoreIdentity, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return moveRestoreIdentity{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return moveRestoreIdentity{}, fmt.Errorf("old source restore file is not regular")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return moveRestoreIdentity{}, err
+	}
+	identity, _, inspectErr := moveRestoreFileIdentity(file)
+	return identity, errors.Join(inspectErr, file.Close())
+}
+
+func prepareOldSourceRestore(target, temp, journal string) (*moveRestoreRecord, error) {
+	record, err := loadOldSourceRestoreRecord(journal)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.Source == nil || record.Token == uuid.Nil {
+		return nil, fmt.Errorf("old source restoration preparation has no source proof")
+	}
+	original, backup := oldSourceRestorePaths(target, record.Token)
+	if temp != backup {
+		return nil, fmt.Errorf("old source restoration witness path changed")
+	}
+	sourceIdentity, err := inspectMoveRestoreIdentity(target)
+	if err != nil {
+		return nil, err
+	}
+	if sourceIdentity != *record.Source {
+		return nil, fmt.Errorf("old source changed during restoration preparation")
+	}
+	// This witness keeps the original inode alive through source unlink and
+	// redelivery. Preparation never changes the still-active managed source.
+	if err := os.Link(target, original); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	originalIdentity, err := inspectMoveRestoreIdentity(original)
+	if err != nil {
+		return nil, err
+	}
+	if originalIdentity != *record.Source {
+		return nil, fmt.Errorf("unknown original source witness")
+	}
+	flags := os.O_RDWR
+	if record.Identity == nil {
+		flags |= os.O_CREATE | os.O_EXCL
+	} else {
+		identity, err := inspectMoveRestoreIdentity(backup)
+		if err != nil {
+			return nil, err
+		}
+		if identity != *record.Identity {
+			return nil, fmt.Errorf("unknown old source recovery copy")
+		}
+		if err := tools.VerifySHA256(backup, record.SHA256); err == nil {
+			record.Ready = true
+			return record, saveOldSourceRestoreRecord(journal, record)
+		}
+	}
+	output, err := os.OpenFile(backup, flags, 0o700)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = output.Close() }()
+	identity, links, err := moveRestoreFileIdentity(output)
+	if err != nil {
+		return nil, err
+	}
+	if record.Identity != nil && identity != *record.Identity {
+		return nil, fmt.Errorf("old source recovery copy changed")
+	}
+	if links != 1 {
+		return nil, fmt.Errorf("old source recovery copy has unknown hardlink aliases")
+	}
+	// A crash before this journal write leaves only an unproven sibling file.
+	// The old root and source are intact, so redelivery can fail terminally.
+	record.Identity, record.Ready = &identity, false
+	if err := saveOldSourceRestoreRecord(journal, record); err != nil {
+		return nil, err
+	}
+	input, err := os.Open(target)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = input.Close() }()
+	info, err := input.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("move recovery source is not regular")
+	}
+	if err := output.Truncate(0); err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		return nil, err
+	}
+	if err := output.Chmod(info.Mode().Perm()); err != nil {
+		return nil, err
+	}
+	if err := output.Sync(); err != nil {
+		return nil, err
+	}
+	if err := output.Close(); err != nil {
+		return nil, err
+	}
+	if err := tools.VerifySHA256(backup, record.SHA256); err != nil {
+		return nil, err
+	}
+	record.Ready = true
+	return record, saveOldSourceRestoreRecord(journal, record)
+}
+
+func restoreMoveSource(file service.MoveFileIdentity, staging string, index int) error {
+	record, err := loadOldSourceRestoreRecord(oldSourceRestoreJournal(staging, index))
 	if err != nil {
 		return err
 	}
-	temp := temporary.Name()
-	if err := temporary.Close(); err != nil {
-		_ = os.Remove(temp)
+	if record == nil || !record.Ready || record.Source == nil || record.Identity == nil || record.Token == uuid.Nil || record.SHA256 != file.SHA256 {
+		return fmt.Errorf("old source restoration witnesses were not prepared before switch")
+	}
+	sourceIdentity, err := inspectMoveRestoreIdentity(file.SourcePath)
+	sourceExists := err == nil
+	if sourceExists {
+		if sourceIdentity != *record.Source && sourceIdentity != *record.Identity {
+			return fmt.Errorf("unknown old source blocks restoration")
+		}
+		if err := tools.VerifySHA256(file.SourcePath, file.SHA256); err == nil {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Remove(temp); err != nil {
-		return err
+	original, backup := oldSourceRestorePaths(file.SourcePath, record.Token)
+	recovery := ""
+	for _, candidate := range []struct {
+		path     string
+		identity moveRestoreIdentity
+	}{{backup, *record.Identity}, {original, *record.Source}} {
+		identity, err := inspectMoveRestoreIdentity(candidate.path)
+		if err != nil || identity != candidate.identity {
+			continue
+		}
+		if err := tools.VerifySHA256(candidate.path, file.SHA256); err == nil {
+			recovery = candidate.path
+			break
+		}
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		link, err := os.Readlink(backup)
+	if recovery == "" {
+		return fmt.Errorf("no owned old source restoration witness remains valid")
+	}
+	if sourceExists {
+		current, err := inspectMoveRestoreIdentity(file.SourcePath)
 		if err != nil {
 			return err
 		}
-		if err := os.Symlink(link, temp); err != nil {
+		if current != sourceIdentity {
+			return fmt.Errorf("old source changed before restoration")
+		}
+		if err := os.Remove(file.SourcePath); err != nil {
 			return err
 		}
-	} else if info.Mode().IsRegular() {
-		if err := copyFile(backup, temp); err != nil {
-			return err
-		}
-	} else {
-		return fmt.Errorf("move backup has an unsupported file type")
 	}
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-		_ = os.Remove(temp)
-		return err
+	// No allocation, truncation, copy, or journal publication after switch.
+	// This same-volume link is atomic and cannot overwrite an operator file.
+	return os.Link(recovery, file.SourcePath)
+}
+
+func cleanupOldSourceRestoreStaging(snapshot service.MoveSnapshot, operationID uuid.UUID) error {
+	staging := filepath.Join(snapshot.NewRoot, ".staging", operationID.String())
+	for index, file := range snapshot.Files {
+		record, err := loadOldSourceRestoreRecord(oldSourceRestoreJournal(staging, index))
+		if err != nil {
+			return err
+		}
+		if record == nil || record.Token == uuid.Nil {
+			continue
+		}
+		original, backup := oldSourceRestorePaths(file.SourcePath, record.Token)
+		for _, witness := range []struct {
+			path     string
+			identity *moveRestoreIdentity
+		}{{original, record.Source}, {backup, record.Identity}} {
+			if witness.identity == nil {
+				continue
+			}
+			info, err := os.Lstat(witness.path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			identity, err := inspectMoveRestoreIdentity(witness.path)
+			if err != nil {
+				return err
+			}
+			if identity != *witness.identity {
+				continue
+			}
+			if err := os.Remove(witness.path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func moveConflictRestoreTemporary(target string, operationID uuid.UUID, index int) string {
+	return filepath.Join(filepath.Dir(target), fmt.Sprintf(".melotrove-restore-%s-%d", operationID, index))
+}
+
+func restoreMoveConflictBackup(backup, target string, operationID uuid.UUID, index int) error {
+	temp := moveConflictRestoreTemporary(target, operationID, index)
+	if err := os.Link(backup, temp); err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+		backupInfo, backupErr := os.Lstat(backup)
+		if backupErr != nil {
+			return backupErr
+		}
+		tempInfo, tempErr := os.Lstat(temp)
+		if tempErr != nil {
+			return tempErr
+		}
+		if !os.SameFile(backupInfo, tempInfo) {
+			return fmt.Errorf("unknown restore temporary blocks restoration")
+		}
 	}
 	if err := os.Rename(temp, target); err != nil {
-		_ = os.Remove(temp)
+		if cleanupErr := os.Remove(temp); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+			return errors.Join(err, cleanupErr)
+		}
 		return err
 	}
 	return nil
@@ -541,46 +802,40 @@ func (worker *MoveWorker) verifyTargets(ctx context.Context, snapshot service.Mo
 
 func (worker *MoveWorker) removeOldSources(snapshot service.MoveSnapshot, staging string) error {
 	for index, file := range snapshot.Files {
-		backup := filepath.Join(staging, "old-backups", strconv.Itoa(index))
-		if _, err := os.Lstat(backup); os.IsNotExist(err) {
-			if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
-				return err
-			}
-			sourceInfo, err := os.Lstat(file.SourcePath)
-			if err != nil {
-				return err
-			}
-			if !sourceInfo.Mode().IsRegular() {
-				return fmt.Errorf("old managed executable changed file type")
-			}
-			sourceDigest, err := tools.SHA256File(file.SourcePath)
-			if err != nil || sourceDigest != file.SHA256 {
-				return fmt.Errorf("old managed executable changed after move preflight")
-			}
-			if err := copyFile(file.SourcePath, backup); err != nil {
-				return err
-			}
-			if err := tools.VerifySHA256(backup, file.SHA256); err != nil {
-				return err
-			}
-		} else if err != nil {
+		record, err := loadOldSourceRestoreRecord(oldSourceRestoreJournal(staging, index))
+		if err != nil {
 			return err
-		} else if err := tools.VerifySHA256(backup, file.SHA256); err != nil {
-			return fmt.Errorf("old managed recovery copy is invalid: %w", err)
 		}
-		sourceInfo, err := os.Lstat(file.SourcePath)
+		if record == nil || !record.Ready || record.Source == nil || record.Identity == nil || record.Token == uuid.Nil {
+			return fmt.Errorf("old source restoration witnesses were not prepared before cleanup")
+		}
+		original, backup := oldSourceRestorePaths(file.SourcePath, record.Token)
+		originalIdentity, err := inspectMoveRestoreIdentity(original)
+		if err != nil {
+			return err
+		}
+		backupIdentity, err := inspectMoveRestoreIdentity(backup)
+		if err != nil {
+			return err
+		}
+		if originalIdentity != *record.Source || backupIdentity != *record.Identity {
+			return fmt.Errorf("old source restoration witness ownership changed")
+		}
+		if err := tools.VerifySHA256(backup, file.SHA256); err != nil {
+			return err
+		}
+		sourceIdentity, err := inspectMoveRestoreIdentity(file.SourcePath)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		if !sourceInfo.Mode().IsRegular() {
-			return fmt.Errorf("old managed executable changed file type")
+		if sourceIdentity != originalIdentity {
+			return fmt.Errorf("unknown old managed source blocks cleanup")
 		}
-		sourceDigest, err := tools.SHA256File(file.SourcePath)
-		if err != nil || sourceDigest != file.SHA256 {
-			return fmt.Errorf("old managed executable changed after move preflight")
+		if err := tools.VerifySHA256(file.SourcePath, file.SHA256); err != nil {
+			return err
 		}
 		if err := os.Remove(file.SourcePath); err != nil && !os.IsNotExist(err) {
 			return err
@@ -589,58 +844,48 @@ func (worker *MoveWorker) removeOldSources(snapshot service.MoveSnapshot, stagin
 	return nil
 }
 
-func (worker *MoveWorker) restoreOldSources(ctx context.Context, staging string, snapshot service.MoveSnapshot) error {
-	if !snapshot.RemoveOldFiles {
-		return nil
-	}
-	for index, file := range snapshot.Files {
-		backup := filepath.Join(staging, "old-backups", strconv.Itoa(index))
-		backupInfo, err := os.Lstat(backup)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if backupInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("move recovery backup is a symlink")
-		}
-		if err := tools.VerifySHA256(backup, file.SHA256); err != nil {
-			return fmt.Errorf("move recovery backup is invalid: %w", err)
-		}
-		if _, err := os.Lstat(file.SourcePath); err == nil {
-			digest, digestErr := tools.SHA256File(file.SourcePath)
-			if digestErr != nil {
-				return digestErr
-			}
-			if digest == file.SHA256 {
-				continue
-			}
-			return fmt.Errorf("old managed source changed during move recovery")
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(file.SourcePath), 0o755); err != nil {
-			return err
-		}
-		if err := copyFile(backup, file.SourcePath); err != nil {
-			return err
-		}
-		if err := tools.VerifySHA256(file.SourcePath, file.SHA256); err != nil {
-			_ = os.Remove(file.SourcePath)
-			return err
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-	return nil
-}
-
-func (worker *MoveWorker) rollbackTargets(ctx context.Context, operation *persistence.Operation, snapshot service.MoveSnapshot, staging string, ownedTargets []string, cause error) error {
+func (worker *MoveWorker) rollbackSwitched(ctx context.Context, operation *persistence.Operation, snapshot service.MoveSnapshot, staging string, cause error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if operation.Stage != "rollback_pending" {
+		if err := worker.operations.Running(ctx, operation.ID, "rollback_pending"); err != nil {
+			return err
+		}
+	}
+	for index, file := range snapshot.Files {
+		if err := restoreMoveSource(file, staging, index); err != nil {
+			return err
+		}
+	}
+	publication, err := loadMovePublication(staging, operation.ID, snapshot)
+	if err != nil {
+		return err
+	}
+	ownedTargets := []string(nil)
+	if publication != nil {
+		ownedTargets, err = ownedMoveTargets(snapshot, staging, publication)
+		if err != nil {
+			return err
+		}
+	}
+	if err := restoreMoveTargets(snapshot, staging, operation.ID, ownedTargets); err != nil {
+		return err
+	}
+	if err := worker.repository.RollbackToolsRootMove(ctx, operation.ID, snapshot.OldRoot, snapshot.NewRoot); err != nil {
+		return err
+	}
+	worker.operations.Notify(operation.ID)
+	if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+		return err
+	}
+	if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
+		return err
+	}
+	return worker.fail(ctx, operation, cause)
+}
+
+func restoreMoveTargets(snapshot service.MoveSnapshot, staging string, operationID uuid.UUID, ownedTargets []string) error {
 	var rollbackErrors []error
 	owned := make(map[string]struct{}, len(ownedTargets))
 	for _, path := range ownedTargets {
@@ -650,34 +895,67 @@ func (worker *MoveWorker) rollbackTargets(ctx context.Context, operation *persis
 		file := snapshot.Files[index]
 		backup := filepath.Join(staging, "target-backups", strconv.Itoa(index))
 		if _, err := os.Lstat(backup); err == nil {
-			if err := restoreTargetBackup(backup, file.TargetPath); err != nil {
+			published, publishErr := moveFileWasPublished(file, staging, index)
+			if publishErr != nil {
+				rollbackErrors = append(rollbackErrors, publishErr)
+				continue
+			}
+			targetInfo, targetErr := os.Lstat(file.TargetPath)
+			if targetErr == nil && !published {
+				backupInfo, backupErr := os.Lstat(backup)
+				if backupErr != nil {
+					rollbackErrors = append(rollbackErrors, backupErr)
+					continue
+				}
+				if !os.SameFile(targetInfo, backupInfo) {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("unknown target blocks restoration of confirmed move conflict"))
+					continue
+				}
+				continue
+			}
+			if targetErr != nil && !os.IsNotExist(targetErr) {
+				rollbackErrors = append(rollbackErrors, targetErr)
+				continue
+			}
+			if published {
+				if err := os.Remove(file.TargetPath); err != nil {
+					rollbackErrors = append(rollbackErrors, err)
+					continue
+				}
+			}
+			if err := restoreMoveConflictBackup(backup, file.TargetPath, operationID, index); err != nil {
 				rollbackErrors = append(rollbackErrors, err)
 			}
 			continue
 		}
 		if _, wasOwned := owned[filepath.Clean(file.TargetPath)]; wasOwned {
-			digest, err := tools.SHA256File(file.TargetPath)
+			published, err := moveFileWasPublished(file, staging, index)
 			if err != nil {
-				if !os.IsNotExist(err) {
+				rollbackErrors = append(rollbackErrors, err)
+				continue
+			}
+			if published {
+				if err := os.Remove(file.TargetPath); err != nil {
 					rollbackErrors = append(rollbackErrors, err)
 				}
-				continue
 			}
-			if digest != file.SHA256 {
-				continue
-			}
-			if err := os.Remove(file.TargetPath); err != nil {
-				rollbackErrors = append(rollbackErrors, err)
-			}
-		}
-	}
-	if snapshot.RemoveOldFiles {
-		if err := worker.restoreOldSources(context.Background(), staging, snapshot); err != nil {
-			rollbackErrors = append(rollbackErrors, err)
 		}
 	}
 	if len(rollbackErrors) > 0 {
-		return fmt.Errorf("move rollback incomplete: %w", errors.Join(rollbackErrors...))
+		return fmt.Errorf("move target rollback incomplete: %w", errors.Join(rollbackErrors...))
+	}
+	return nil
+}
+
+func (worker *MoveWorker) rollbackTargets(ctx context.Context, operation *persistence.Operation, snapshot service.MoveSnapshot, staging string, ownedTargets []string, cause error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err := restoreMoveTargets(snapshot, staging, operation.ID, ownedTargets); err != nil {
+		return err
+	}
+	if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+		return fmt.Errorf("move rollback cleanup failed: %w", err)
 	}
 	if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
 		return fmt.Errorf("move rollback cleanup failed: %w", err)

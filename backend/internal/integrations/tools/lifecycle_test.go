@@ -20,6 +20,43 @@ type versionRunner struct{}
 func (versionRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
 	return []byte("ffmpeg version 8.0"), nil
 }
+
+type fixedVersionRunner string
+
+func (runner fixedVersionRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	return []byte(runner), nil
+}
+
+func TestMaterializeRejectsSubstringVersionBeforeWritingTargets(t *testing.T) {
+	staging, root := t.TempDir(), t.TempDir()
+	writeExecutables(t, staging, "linux")
+	_, _, err := NewLifecycle(fixedVersionRunner("ffmpeg version 18.0 built with 8.0")).Materialize(
+		context.Background(), staging, root, PackageFFmpeg, "8.0", MaterializeOptions{GOOS: "linux", GOARCH: "amd64"},
+	)
+	if err == nil {
+		t.Fatal("different version with matching substring was installed")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "ffmpeg", "8.0", "ffmpeg")); !os.IsNotExist(err) {
+		t.Fatalf("failed version check wrote target: %v", err)
+	}
+}
+
+func TestVerifyInstallationRequiresExactVersionToken(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "ffmpeg", "8.0")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutables(t, directory, "linux")
+	lifecycle := NewLifecycle(fixedVersionRunner("ffmpeg version 18.0 built with 8.0"))
+	if _, err := lifecycle.VerifyInstallation(context.Background(), root, "ffmpeg/8.0", PackageFFmpeg, "8.0", "linux"); err == nil {
+		t.Fatal("different installed version passed activation verification")
+	}
+	lifecycle = NewLifecycle(fixedVersionRunner("ffmpeg version n8.0 Copyright FFmpeg"))
+	if _, err := lifecycle.VerifyInstallation(context.Background(), root, "ffmpeg/8.0", PackageFFmpeg, "8.0", "linux"); err != nil {
+		t.Fatalf("numbered release token was rejected: %v", err)
+	}
+}
 func TestPreflightDoesNotClaimUnrelatedFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), nil, 0o644); err != nil {
@@ -28,6 +65,11 @@ func TestPreflightDoesNotClaimUnrelatedFiles(t *testing.T) {
 	preflight, err := PreflightTargets(root, PackageFFmpeg, "8.0", "linux", map[string]struct{}{})
 	if err != nil || len(preflight.Conflicts) != 0 {
 		t.Fatalf("%#v, %v", preflight, err)
+	}
+}
+func TestManagedRelativePathRejectsParentDirectory(t *testing.T) {
+	if _, err := ManagedRelativePath(PackageFFmpeg, ".."); err == nil {
+		t.Fatal("parent directory accepted as a release identity")
 	}
 }
 func TestMaterializeRequiresEveryFFmpegExecutable(t *testing.T) {

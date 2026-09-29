@@ -23,9 +23,11 @@ import (
 )
 
 type workerRepository struct {
-	operation    *persistence.Operation
-	installation *persistence.ToolInstallation
-	activated    bool
+	operation           *persistence.Operation
+	installation        *persistence.ToolInstallation
+	activated           bool
+	readyError          error
+	readyCommittedError error
 }
 
 func (repository *workerRepository) CreateOperation(context.Context, *persistence.Operation) error {
@@ -70,6 +72,9 @@ func (repository *workerRepository) GetInstallation(_ context.Context, id uuid.U
 }
 
 func (repository *workerRepository) MarkInstallationReady(_ context.Context, id uuid.UUID, versions json.RawMessage, verifiedAt time.Time) error {
+	if repository.readyError != nil {
+		return repository.readyError
+	}
 	installation, err := repository.GetInstallation(context.Background(), id)
 	if err != nil {
 		return err
@@ -77,7 +82,7 @@ func (repository *workerRepository) MarkInstallationReady(_ context.Context, id 
 	installation.State = "ready"
 	installation.ExecutableVersions = versions
 	installation.VerifiedAt = &verifiedAt
-	return nil
+	return repository.readyCommittedError
 }
 
 func (repository *workerRepository) MarkInstallationFailed(_ context.Context, id uuid.UUID) error {
@@ -206,6 +211,68 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	}
 }
 
+func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		stage     string
+		confirmed bool
+		want      string
+		content   string
+	}{
+		{"unconfirmed", "queued", false, "failed", "operator file"},
+		{"confirmed", "queued", true, "succeeded", "fpcalc"},
+		{"interrupted_before_publish", "materialize", false, "failed", "operator file"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, installationID := uuid.New(), uuid.New()
+			root := t.TempDir()
+			target := filepath.Join(root, "fpcalc", "v1.6.1", "fpcalc")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("operator file"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := service.InstallInputSnapshot{
+				SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+				ReleaseIdentity:    "v1.6.1",
+				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+			}
+			if test.confirmed {
+				snapshot.ConfirmedConflicts = []string{target}
+			}
+			raw, err := json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := "queued"
+			if test.stage == "materialize" {
+				state = "running"
+			}
+			operation := &persistence.Operation{ID: id, Kind: "install", State: state, Stage: test.stage, InputSnapshot: raw, TargetInstallationID: &installationID}
+			installation := &persistence.ToolInstallation{
+				ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+				SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
+			}
+			repository := &workerRepository{operation: operation, installation: installation}
+			release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}
+			worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+				workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
+				workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+				t.Fatal(err)
+			}
+			if operation.State != test.want {
+				t.Fatalf("operation state=%s, want %s", operation.State, test.want)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || string(got) != test.content {
+				t.Fatalf("target=%q, want %q: %v", got, test.content, err)
+			}
+		})
+	}
+}
+
 func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T) {
 	ctx := context.Background()
 	operationID := uuid.New()
@@ -238,6 +305,278 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 	if strings.Contains(*operation.SafeError, "000000") || strings.Contains(*operation.SafeError, "sha256") {
 		t.Fatalf("raw verification detail leaked: %s", *operation.SafeError)
 	}
+}
+
+func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T) {
+	id, installationID := uuid.New(), uuid.New()
+	root := t.TempDir()
+	staging := filepath.Join(root, ".staging", id.String())
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "partial-download"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "running", Stage: "download", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
+	}
+	repository := &workerRepository{operation: operation, installation: installation}
+	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{release: tools.Release{Identity: "v1.6.1"}},
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != "failed" {
+		t.Fatalf("operation state=%s, want failed", operation.State)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("interrupted staging remains: %v", err)
+	}
+}
+
+type ffmpegWorkerRunner struct{}
+
+func (ffmpegWorkerRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
+	if len(args) != 1 || args[0] != "--version" {
+		return nil, errors.New("unexpected command arguments")
+	}
+	return []byte(filepath.Base(executable) + " version 8.0"), nil
+}
+
+func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
+	id, installationID := uuid.New(), uuid.New()
+	root := t.TempDir()
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		SchemaVersion: 1, PackageKind: tools.PackageFFmpeg, SourceName: "btbn",
+		ReleaseIdentity: "8.0", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "ffmpeg.zip"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "preparing",
+	}
+	repository := &workerRepository{operation: operation, installation: installation, readyError: errors.New("ready write unavailable")}
+	release := tools.Release{Identity: "8.0", Artifacts: []tools.Artifact{{Name: "ffmpeg.zip"}}}
+	archive := zipWithExecutables(t, "ffmpeg", "ffprobe")
+	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{release: release, archive: archive},
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(ffmpegWorkerRunner{}))
+	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	if err := worker.Work(context.Background(), job); err == nil {
+		t.Fatal("ready write should fail after both executables are published")
+	}
+	first := filepath.Join(root, installation.RelativePath, "ffmpeg")
+	second := filepath.Join(root, installation.RelativePath, "ffprobe")
+	candidate := filepath.Join(root, ".staging", id.String(), "candidate", installation.RelativePath, "ffmpeg")
+	firstInfo, err := os.Lstat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateInfo, err := os.Lstat(candidate)
+	if err != nil || !os.SameFile(firstInfo, candidateInfo) {
+		t.Fatalf("first publication lacks a retained ownership witness: %v", err)
+	}
+	if err := os.Remove(second); err != nil {
+		t.Fatal(err)
+	}
+	repository.readyError = nil
+	worker = jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{}, workerSettings{root: root},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(ffmpegWorkerRunner{}))
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatalf("resume without upstream catalog failed: %v", err)
+	}
+	if operation.State != "succeeded" || installation.State != "ready" || !repository.activated {
+		t.Fatalf("resumed state=%s installation=%s activated=%v", operation.State, installation.State, repository.activated)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Fatalf("second executable was not republished: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".staging", id.String())); !os.IsNotExist(err) {
+		t.Fatalf("publication evidence remains after success: %v", err)
+	}
+}
+
+func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T) {
+	id, installationID := uuid.New(), uuid.New()
+	root := t.TempDir()
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
+	}
+	repository := &workerRepository{
+		operation: operation, installation: installation,
+		readyCommittedError: errors.New("ready response lost"),
+	}
+	release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}
+	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	if err := worker.Work(context.Background(), job); err == nil {
+		t.Fatal("expected lost ready response")
+	}
+	if installation.State != "ready" || operation.State != "running" {
+		t.Fatalf("ambiguous ready result installation=%s operation=%s", installation.State, operation.State)
+	}
+	repository.readyCommittedError = nil
+	worker = jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{}, workerSettings{root: root},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatalf("ready recovery tried to reinstall: %v", err)
+	}
+	if operation.State != "succeeded" || !repository.activated {
+		t.Fatalf("recovered operation=%s activated=%v", operation.State, repository.activated)
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".staging", id.String())); !os.IsNotExist(err) {
+		t.Fatalf("publication journal remains after success: %v", err)
+	}
+}
+
+func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T) {
+	id, installationID := uuid.New(), uuid.New()
+	root := t.TempDir()
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
+	}
+	repository := &workerRepository{operation: operation, installation: installation, readyError: errors.New("ready write unavailable")}
+	release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}
+	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	if err := worker.Work(context.Background(), job); err == nil {
+		t.Fatal("ready write should fail after publication")
+	}
+	target := filepath.Join(root, installation.RelativePath, "fpcalc")
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repository.readyError = nil
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != "failed" || installation.State != "failed" {
+		t.Fatalf("unknown target was not rejected: operation=%s installation=%s", operation.State, installation.State)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("unknown target changed: %q %v", got, err)
+	}
+}
+
+func TestInstallationWorkerResumesConfirmedBackupBeforeLink(t *testing.T) {
+	id, installationID := uuid.New(), uuid.New()
+	root := t.TempDir()
+	target := filepath.Join(root, "fpcalc", "v1.6.1", "fpcalc")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("confirmed original"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+		ConfirmedConflicts: []string{target},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
+	}
+	repository := &workerRepository{operation: operation, installation: installation, readyError: errors.New("ready write unavailable")}
+	release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}
+	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	if err := worker.Work(context.Background(), job); err == nil {
+		t.Fatal("ready write should fail after confirmed publication")
+	}
+	backup := filepath.Join(root, ".staging", id.String(), "backups", "fpcalc")
+	if content, err := os.ReadFile(backup); err != nil || string(content) != "confirmed original" {
+		t.Fatalf("confirmed original was not retained: %q %v", content, err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	repository.readyError = nil
+	worker = jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+		workerCatalog{}, workerSettings{root: root},
+		tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatalf("resume after original-to-backup boundary failed: %v", err)
+	}
+	if operation.State != "succeeded" || installation.State != "ready" {
+		t.Fatalf("resumed operation=%s installation=%s", operation.State, installation.State)
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "fpcalc" {
+		t.Fatalf("confirmed target was not published: %q %v", content, err)
+	}
+	if _, err := os.Lstat(backup); !os.IsNotExist(err) {
+		t.Fatalf("confirmed backup remains after success: %v", err)
+	}
+}
+
+func zipWithExecutables(t *testing.T, names ...string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, name := range names {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }
 
 func zipWithExecutable(t *testing.T, name string, contents []byte) []byte {

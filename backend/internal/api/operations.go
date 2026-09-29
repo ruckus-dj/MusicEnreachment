@@ -60,7 +60,7 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		}
 		snapshots, err := operations.ListSnapshots(ctx, states...)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to list operations", err)
+			return nil, huma.Error500InternalServerError("failed to list operations")
 		}
 		result := make([]OperationResponse, 0, len(snapshots))
 		for _, snapshot := range snapshots {
@@ -94,11 +94,11 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 			return nil, err
 		}
 		if _, err := operations.Retry(ctx, input.ID); err != nil {
-			return nil, huma.Error409Conflict("operation could not be retried", err)
+			return nil, huma.Error409Conflict("operation could not be retried")
 		}
 		snapshot, err := operations.Snapshot(ctx, input.ID)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read retried operation", err)
+			return nil, huma.Error500InternalServerError("failed to read retried operation")
 		}
 		return operationOutput(snapshot), nil
 	})
@@ -114,7 +114,7 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 			return nil, err
 		}
 		if err := operations.Dismiss(ctx, input.ID); err != nil {
-			return nil, huma.Error409Conflict("only a failed operation can be dismissed", err)
+			return nil, huma.Error409Conflict("only a failed operation can be dismissed")
 		}
 		return nil, nil
 	})

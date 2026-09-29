@@ -27,6 +27,7 @@ export interface ReleaseResponse {
 export interface CatalogBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  notice?: string;
   package_kind: string;
   platform: PlatformResponse;
   /** @nullable */
@@ -38,6 +39,24 @@ export interface CheckMusicBrainzBody {
   readonly $schema?: string;
   error?: string;
   success: boolean;
+}
+
+export interface CheckPathsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  output_case_sensitive: boolean;
+  output_directory: string;
+  output_unicode_normalization: string;
+  tools_directory: string;
+}
+
+export interface CheckPathsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 4096 */
+  output_directory?: string;
+  /** @maxLength 4096 */
+  tools_directory?: string;
 }
 
 export interface ConfigurationHealthResponse {

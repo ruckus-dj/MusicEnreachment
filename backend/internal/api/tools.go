@@ -22,6 +22,7 @@ type CatalogBody struct {
 	PackageKind tools.PackageKind `json:"package_kind"`
 	Platform    PlatformResponse  `json:"platform"`
 	Releases    []ReleaseResponse `json:"releases"`
+	Notice      string            `json:"notice,omitempty"`
 }
 
 type ReleaseResponse struct {
@@ -131,14 +132,14 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		state, err := dependencies.Setup.State(ctx)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read instance state", err)
+			return nil, huma.Error500InternalServerError("failed to read instance state")
 		}
-		releases, err := dependencies.Catalog.List(ctx, input.PackageKind)
+		result, err := dependencies.Catalog.ListWithNotice(ctx, input.PackageKind)
 		if err != nil {
 			return nil, huma.Error502BadGateway("upstream tool catalog is unavailable")
 		}
-		response := make([]ReleaseResponse, 0, len(releases))
-		for _, release := range releases {
+		response := make([]ReleaseResponse, 0, len(result.Releases))
+		for _, release := range result.Releases {
 			artifacts := make([]ArtifactResponse, 0, len(release.Artifacts))
 			for _, artifact := range release.Artifacts {
 				artifacts = append(artifacts, ArtifactResponse{Name: artifact.Name, ChecksumProvided: artifact.ChecksumProvided})
@@ -152,7 +153,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 				Supported: state.Platform.Platform.Supported(), Diagnostic: state.Platform.Diagnostic,
 				Reason: state.Platform.Reason,
 			},
-			Releases: response,
+			Releases: response, Notice: result.Notice,
 		}}, nil
 	})
 
@@ -168,7 +169,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		plan, err := dependencies.InstallOperations.Preflight(ctx, input.Body.PackageKind, input.Body.ReleaseIdentity)
 		if err != nil {
-			return nil, huma.Error409Conflict("release cannot be installed", err)
+			return nil, huma.Error409Conflict("release cannot be installed")
 		}
 		token := tokens.issueInstall(plan)
 		return &InstallPreflightOutput{Body: InstallPreflightBody{Token: token, Targets: plan.Targets, Conflicts: plan.Conflicts}}, nil
@@ -190,14 +191,14 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		operation, err := dependencies.InstallOperations.StartFromPreflight(ctx, *entry.install, input.Body.ConfirmedConflicts)
 		if err != nil {
-			return nil, huma.Error409Conflict("installation could not be started", err)
+			return nil, huma.Error409Conflict("installation could not be started")
 		}
 		if dependencies.Operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
 		snapshot, err := dependencies.Operations.Snapshot(ctx, operation.ID)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read started operation", err)
+			return nil, huma.Error500InternalServerError("failed to read started operation")
 		}
 		return operationOutput(snapshot), nil
 	})
@@ -211,7 +212,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		installations, err := dependencies.Installations.List(ctx, string(input.PackageKind))
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to list installations", err)
+			return nil, huma.Error500InternalServerError("failed to list installations")
 		}
 		response := make([]InstallationResponse, 0, len(installations))
 		for _, installation := range installations {
@@ -236,7 +237,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 			return nil, huma.Error503ServiceUnavailable("installation service is unavailable")
 		}
 		if err := dependencies.Installations.Activate(ctx, input.Body.PackageKind, input.ID); err != nil {
-			return nil, huma.Error409Conflict("installation could not be activated", err)
+			return nil, huma.Error409Conflict("installation could not be activated")
 		}
 		return nil, nil
 	})
@@ -255,7 +256,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 			return nil, huma.Error503ServiceUnavailable("installation service is unavailable")
 		}
 		if err := dependencies.Installations.Delete(ctx, input.Body.PackageKind, input.ID); err != nil {
-			return nil, huma.Error409Conflict("installation could not be deleted", err)
+			return nil, huma.Error409Conflict("installation could not be deleted")
 		}
 		return nil, nil
 	})
@@ -275,7 +276,7 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		plan, err := dependencies.MoveTools.Preflight(ctx, input.Body.NewRoot, input.Body.RemoveOldFiles)
 		if err != nil {
-			return nil, huma.Error400BadRequest("tools directory preflight failed", err)
+			return nil, huma.Error400BadRequest("tools directory preflight failed")
 		}
 		token := tokens.issueMove(plan)
 		return &MovePreflightOutput{Body: MovePreflightBody{Token: token, Conflicts: plan.Conflicts, FileCount: len(plan.Snapshot.Files)}}, nil
@@ -300,14 +301,14 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		}
 		operation, err := dependencies.MoveTools.Start(ctx, *entry.move, input.Body.ConfirmedConflicts)
 		if err != nil {
-			return nil, huma.Error409Conflict("tools directory move could not be started", err)
+			return nil, huma.Error409Conflict("tools directory move could not be started")
 		}
 		if dependencies.Operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
 		snapshot, err := dependencies.Operations.Snapshot(ctx, operation.ID)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read started move", err)
+			return nil, huma.Error500InternalServerError("failed to read started move")
 		}
 		return operationOutput(snapshot), nil
 	})

@@ -68,14 +68,19 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if err != nil {
 		return err
 	}
-	if operation.State == "succeeded" || operation.State == "failed" {
-		return nil
-	}
 	if operation.Kind == "move_tools_root" {
 		if worker.moveWorker == nil {
 			return fmt.Errorf("tools root move worker is unavailable")
 		}
 		return worker.moveWorker.Work(ctx, operation)
+	}
+	if operation.State == "succeeded" || operation.State == "failed" {
+		if operation.State == "failed" && operation.Kind == "install" {
+			if root, exists, err := worker.settings.GetToolsDirectory(ctx); err == nil && exists {
+				return tools.CleanupOperationStaging(root, operation.ID)
+			}
+		}
+		return nil
 	}
 	if operation.Kind != "install" || operation.TargetInstallationID == nil {
 		return fmt.Errorf("operation is not an installation")
@@ -83,9 +88,6 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	installation, err := worker.repository.GetInstallation(ctx, *operation.TargetInstallationID)
 	if err != nil {
 		return err
-	}
-	if installation.State == "failed" && operation.State == "running" {
-		return worker.operations.Fail(ctx, operation.ID, operation.Stage, safeInstallationError(operation.Stage))
 	}
 	var snapshot service.InstallInputSnapshot
 	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
@@ -110,6 +112,23 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		}
 		return worker.finish(ctx, operation, installation, root, snapshot)
 	}
+	staging, err := tools.EnsureOperationStaging(root, operation.ID)
+	if err != nil {
+		return err
+	}
+	publication, err := loadInstallPublication(staging, operation, installation, snapshot, root, worker.platform.GOOS)
+	if err != nil {
+		return err
+	}
+	if publication != nil {
+		return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
+	}
+	if installation.State == "failed" && operation.State == "running" {
+		if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
+			return err
+		}
+		return worker.operations.Fail(ctx, operation.ID, operation.Stage, safeInstallationError(operation.Stage))
+	}
 	if err := worker.operations.Running(ctx, operation.ID, "resolve"); err != nil {
 		return err
 	}
@@ -121,7 +140,7 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		return worker.fail(ctx, operation, installation, "resolve", fmt.Errorf("upstream artifact identity changed"))
 	}
 
-	staging, err := tools.ResetOperationStaging(root, operation.ID)
+	staging, err = tools.ResetOperationStaging(root, operation.ID)
 	if err != nil {
 		return worker.fail(ctx, operation, installation, "download", err)
 	}
@@ -204,17 +223,9 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if err := worker.operations.Running(ctx, operation.ID, "materialize"); err != nil {
 		return err
 	}
-	knownPaths := []string(nil)
-	if strings.Contains(operation.Stage, "materialize") {
-		preflight, err := tools.PreflightTargets(root, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS, map[string]struct{}{})
-		if err != nil {
-			return worker.fail(ctx, operation, installation, "materialize", err)
-		}
-		knownPaths = preflight.Targets
-	}
-	_, versions, err := worker.lifecycle.Materialize(ctx, extracted, root, snapshot.PackageKind, snapshot.ReleaseIdentity, tools.MaterializeOptions{
+	candidateRoot := filepath.Join(staging, "candidate")
+	_, _, err = worker.lifecycle.Materialize(ctx, extracted, candidateRoot, snapshot.PackageKind, snapshot.ReleaseIdentity, tools.MaterializeOptions{
 		GOOS: worker.platform.GOOS, GOARCH: worker.platform.GOARCH,
-		ManagedPaths: knownPaths, ConfirmedConflicts: snapshot.ConfirmedConflicts,
 		Progress: func(copied int64) {
 			_ = worker.operations.Progress(ctx, operation.ID, "materialize", downloadedBytes+copied, nil)
 		},
@@ -222,22 +233,12 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if err != nil {
 		return worker.fail(ctx, operation, installation, "materialize", err)
 	}
-	if err := worker.operations.Running(ctx, operation.ID, "files_materialized"); err != nil {
-		return err
-	}
-	versionsJSON, err := json.Marshal(versions)
+	publication, err = prepareInstallPublication(staging, operation, installation, snapshot, root, worker.platform.GOOS)
 	if err != nil {
-		return err
-	}
-	if err := worker.repository.MarkInstallationReady(ctx, installation.ID, versionsJSON, time.Now().UTC()); err != nil {
-		return err
-	}
-	installation.State = "ready"
-	if err := worker.finish(ctx, operation, installation, root, snapshot); err != nil {
-		return err
+		return worker.fail(ctx, operation, installation, "materialize", err)
 	}
 	cleanupOnFailure = false
-	return nil
+	return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
 }
 
 func (worker *InstallationWorker) finish(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, root string, snapshot service.InstallInputSnapshot) error {
@@ -266,6 +267,15 @@ func (worker *InstallationWorker) finish(ctx context.Context, operation *persist
 func (worker *InstallationWorker) fail(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, stage string, cause error) error {
 	if ctx.Err() != nil {
 		return cause
+	}
+	root, exists, err := worker.settings.GetToolsDirectory(ctx)
+	if err != nil {
+		return fmt.Errorf("read tools directory for staging cleanup: %w", err)
+	}
+	if exists && root != "" {
+		if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
+			return fmt.Errorf("clean operation staging: %w", err)
+		}
 	}
 	if installation.State == "preparing" {
 		if err := worker.repository.MarkInstallationFailed(ctx, installation.ID); err != nil {

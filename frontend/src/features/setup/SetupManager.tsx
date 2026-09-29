@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { completeSetup, saveSetupRuntime } from "../../api/generated/client";
+import type { SaveRuntimeBodyPublicationFormat } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 
 type Step = "Каталоги" | "Инструменты" | "Публикация" | "Итог";
@@ -8,7 +10,7 @@ export function SetupManager({ onCompleted }: { onCompleted: () => void }) {
   const [step, setStep] = useState(0);
   const [toolsDirectory, setToolsDirectory] = useState("");
   const [outputDirectory, setOutputDirectory] = useState("");
-  const [format, setFormat] = useState("mka");
+  const [format, setFormat] = useState<SaveRuntimeBodyPublicationFormat>("mka");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -24,20 +26,17 @@ export function SetupManager({ onCompleted }: { onCompleted: () => void }) {
     setPending(true);
     try {
       if (step === 0 || step === 2) {
-        const response = await fetch("/api/setup/runtime", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tools_directory: toolsDirectory,
-            output_directory: outputDirectory,
-            publication_format: format,
-          }),
+        const response = await saveSetupRuntime({
+          tools_directory: toolsDirectory,
+          output_directory: outputDirectory,
+          publication_format: format,
         });
-        if (!response.ok) throw new Error("Не удалось сохранить настройки.");
+        if (response.status !== 204)
+          throw new Error("Не удалось сохранить настройки.");
       }
       if (step === steps.length - 1) {
-        const response = await fetch("/api/setup/complete", { method: "POST" });
-        if (!response.ok)
+        const response = await completeSetup();
+        if (response.status !== 204)
           throw new Error("Проверьте обязательные условия Setup.");
         onCompleted();
       } else setStep((value) => value + 1);

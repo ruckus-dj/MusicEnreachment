@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +66,9 @@ func (repository *SetupManagerRepository) CreateInstallation(ctx context.Context
 }
 
 func (repository *SetupManagerRepository) CreateInstallationWith(ctx context.Context, database bun.IDB, installation *ToolInstallation) error {
+	if !validInstallationRelativePath(installation) {
+		return fmt.Errorf("create tool installation: relative path must match its package and release identity")
+	}
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
 		return fmt.Errorf("create tool installation: %w", err)
 	}
@@ -72,12 +76,19 @@ func (repository *SetupManagerRepository) CreateInstallationWith(ctx context.Con
 }
 
 func (repository *SetupManagerRepository) CreateOperation(ctx context.Context, operation *Operation) error {
-	return repository.CreateOperationWith(ctx, repository.db, operation)
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repository.CreateOperationWith(ctx, tx, operation)
+	})
 }
 
 func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Context, database bun.IDB, operation *Operation) error {
 	if operation.Attempt == 0 {
 		operation.Attempt = 1
+	}
+	if operation.Kind == "move_tools_root" && operation.State == "queued" {
+		if _, err := database.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "setup-operation-exclusivity").Exec(ctx); err != nil {
+			return fmt.Errorf("lock operation exclusivity: %w", err)
+		}
 	}
 	if _, err := database.NewInsert().Model(operation).Exec(ctx); err != nil {
 		return fmt.Errorf("create operation: %w", err)
@@ -180,6 +191,9 @@ func (repository *SetupManagerRepository) ListInstallations(ctx context.Context,
 }
 
 func (repository *SetupManagerRepository) UpdateInstallation(ctx context.Context, installation *ToolInstallation) error {
+	if !validInstallationRelativePath(installation) {
+		return fmt.Errorf("update tool installation: relative path must match its package and release identity")
+	}
 	_, err := repository.db.NewUpdate().Model(installation).
 		Column("relative_path", "artifact_identities", "updated_at").WherePK().Exec(ctx)
 	if err != nil {
@@ -216,6 +230,17 @@ func (repository *SetupManagerRepository) MarkInstallationFailed(ctx context.Con
 // platform and updates its package's active setting in the same transaction.
 func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "setup-operation-exclusivity").Exec(ctx); err != nil {
+			return fmt.Errorf("lock operation exclusivity: %w", err)
+		}
+		var moveID uuid.UUID
+		err := tx.NewRaw("SELECT id FROM operation WHERE kind = 'move_tools_root' AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE").Scan(ctx, &moveID)
+		if err == nil {
+			return fmt.Errorf("cannot activate installation during an active tools root move")
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("check active tools root move: %w", err)
+		}
 		return repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting)
 	})
 }
@@ -296,14 +321,6 @@ func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context
 		if len(conflicts) != 0 {
 			return fmt.Errorf("cannot delete installation with an active operation")
 		}
-		var operationID uuid.UUID
-		err = tx.NewRaw("SELECT id FROM operation WHERE target_installation_id = ? LIMIT 1", id).Scan(ctx, &operationID)
-		if err == nil {
-			return fmt.Errorf("cannot delete installation referenced by an operation snapshot")
-		}
-		if err != sql.ErrNoRows {
-			return fmt.Errorf("check installation operation snapshots: %w", err)
-		}
 		if err := removeFiles(installation); err != nil {
 			return fmt.Errorf("remove managed installation files: %w", err)
 		}
@@ -312,6 +329,20 @@ func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context
 		}
 		return nil
 	})
+}
+
+func validInstallationRelativePath(installation *ToolInstallation) bool {
+	if installation == nil || (installation.PackageKind != "ffmpeg" && installation.PackageKind != "fpcalc") {
+		return false
+	}
+	release := installation.ReleaseIdentity
+	separator := "/"
+	if installation.PlatformGOOS == "windows" {
+		separator = `\`
+	}
+	return release != "" && release != "." && release != ".." &&
+		!strings.ContainsAny(release, `/\:`) &&
+		installation.RelativePath == installation.PackageKind+separator+release
 }
 
 func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
@@ -339,6 +370,36 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 		operation.UpdatedAt = now
 		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("record tools root switch: %w", err)
+		}
+		return nil
+	})
+}
+
+func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "move_tools_root" || operation.State != "running" ||
+			(operation.Stage != "switched" && operation.Stage != "rollback_pending") {
+			return fmt.Errorf("tools root move is not ready for rollback")
+		}
+		var currentRoot string
+		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ? FOR UPDATE", "tools_directory").Scan(ctx, &currentRoot); err != nil {
+			return fmt.Errorf("read current tools directory: %w", err)
+		}
+		if currentRoot != newRoot {
+			return fmt.Errorf("tools directory changed since move was switched")
+		}
+		if _, err := tx.NewInsert().Model(&AppSetting{Name: "tools_directory", Value: oldRoot}).
+			On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+			return fmt.Errorf("restore tools directory: %w", err)
+		}
+		operation.Stage = "rolled_back"
+		operation.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("record tools root rollback: %w", err)
 		}
 		return nil
 	})
@@ -438,6 +499,9 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 	}
 	var operation *Operation
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "setup-operation-exclusivity").Exec(ctx); err != nil {
+			return fmt.Errorf("lock operation exclusivity: %w", err)
+		}
 		locked, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err

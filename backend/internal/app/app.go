@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/riverqueue/river"
 
@@ -28,6 +29,22 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/migrate"
 )
+
+type operationRepository interface {
+	service.OperationRepository
+	CreateOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	RetryOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+}
+
+type riverClientSlot struct {
+	persistence.RiverInserter
+}
+
+func newOperationServices(repository operationRepository) (*service.Operations, *service.Operations, *riverClientSlot) {
+	client := &riverClientSlot{}
+	operations := service.NewOperationsWithRiver(repository, client)
+	return operations, operations, client
+}
 
 type Config struct {
 	DatabaseURL string
@@ -78,7 +95,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient())
-	operationService := service.NewOperations(setupManagerRepository)
+	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
@@ -103,7 +120,7 @@ func Run(ctx context.Context, config Config) error {
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
 	}()
-	apiOperations := service.NewOperationsWithRiver(setupManagerRepository, riverClient)
+	riverSlot.RiverInserter = riverClient
 	toolCatalog := service.NewCatalogService(catalog, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	})

@@ -94,6 +94,18 @@ func TestCheckConnectivity_MissingID(t *testing.T) {
 	}
 }
 
+func TestCheckConnectivity_RejectsUnrelatedArtist(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "00000000-0000-0000-0000-000000000000"})
+	}))
+	defer server.Close()
+
+	result := musicbrainz.NewClient().CheckConnectivity(context.Background(), "self-hosted", server.URL)
+	if result.Success {
+		t.Fatal("unrelated MusicBrainz artist was accepted")
+	}
+}
+
 func TestCheckConnectivity_OversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

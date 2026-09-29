@@ -26,6 +26,8 @@ import type {
 import type {
   CatalogBody,
   CheckMusicBrainzBody,
+  CheckPathsBody,
+  CheckPathsInputBody,
   ErrorModel,
   InstallPreflightBody,
   InstallPreflightInputBody,
@@ -1925,6 +1927,120 @@ export const useSaveSetupMusicbrainz = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSaveSetupMusicbrainzMutationOptions(options), queryClient);
+    }
+
+export type checkSetupPathsResponse200 = {
+  data: CheckPathsBody
+  status: 200
+}
+
+export type checkSetupPathsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type checkSetupPathsResponseSuccess = (checkSetupPathsResponse200) & {
+  headers: Headers;
+};
+export type checkSetupPathsResponseError = (checkSetupPathsResponseDefault) & {
+  headers: Headers;
+};
+
+export type checkSetupPathsResponse = (checkSetupPathsResponseSuccess | checkSetupPathsResponseError)
+
+export const getCheckSetupPathsUrl = () => {
+
+
+
+
+  return `/api/setup/paths/check`
+}
+
+/**
+ * @summary Validate setup directories without saving them
+ */
+export const checkSetupPaths = async (checkPathsInputBody: NonReadonly<CheckPathsInputBody>, options?: RequestInit): Promise<checkSetupPathsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCheckSetupPathsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(checkPathsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: checkSetupPathsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as checkSetupPathsResponse
+}
+
+
+
+
+
+export const getCheckSetupPathsMutationKey = () => ['checkSetupPaths'] as const;
+
+export const getCheckSetupPathsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSetupPaths>>, TError,CheckSetupPathsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof checkSetupPaths>>, TError,CheckSetupPathsMutationVariables, TContext> => {
+
+const mutationKey = getCheckSetupPathsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkSetupPaths>>, CheckSetupPathsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  checkSetupPaths(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckSetupPathsMutationResult = NonNullable<Awaited<ReturnType<typeof checkSetupPaths>>>
+    export type CheckSetupPathsMutationBody = NonReadonly<CheckPathsInputBody>
+    export type CheckSetupPathsMutationError = ErrorModel
+    export type CheckSetupPathsMutationVariables = {data: NonReadonly<CheckPathsInputBody>}
+
+    /**
+ * @summary Validate setup directories without saving them
+ */
+export const useCheckSetupPaths = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkSetupPaths>>, TError,CheckSetupPathsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof checkSetupPaths>>,
+        TError,
+        CheckSetupPathsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCheckSetupPathsMutationOptions(options), queryClient);
     }
 
 export type saveSetupRuntimeResponse204 = {

@@ -237,6 +237,99 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 		t.Fatalf("finished move operation = %#v, %v", finished, err)
 	}
 
+	rollback := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
+		InputSnapshot: json.RawMessage(`{"old_root":"/new-tools","new_root":"/rollback-tools"}`),
+	}
+	if err := repository.CreateOperation(ctx, rollback); err != nil {
+		t.Fatalf("create rollback move: %v", err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, rollback.ID, "/new-tools", "/rollback-tools"); err != nil {
+		t.Fatalf("switch rollback move: %v", err)
+	}
+	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, "/new-tools", "/wrong-root"); err == nil {
+		t.Fatal("rollback accepted a root that was not current")
+	}
+	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || current != "/rollback-tools" {
+		t.Fatalf("rejected rollback changed tools directory = %q, %v", current, err)
+	}
+	switchedAgain, err := repository.GetOperation(ctx, rollback.ID)
+	if err != nil || switchedAgain.State != "running" || switchedAgain.Stage != "switched" {
+		t.Fatalf("rejected rollback changed operation = %#v, %v", switchedAgain, err)
+	}
+	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, "/new-tools", "/rollback-tools"); err != nil {
+		t.Fatalf("rollback switched tools root: %v", err)
+	}
+	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || current != "/new-tools" {
+		t.Fatalf("rolled-back tools directory = %q, %v", current, err)
+	}
+	rolledBack, err := repository.GetOperation(ctx, rollback.ID)
+	if err != nil || rolledBack.State != "running" || rolledBack.Stage != "rolled_back" {
+		t.Fatalf("rolled-back operation = %#v, %v; want running/rolled_back", rolledBack, err)
+	}
+	target := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "rollback-target")
+	blocked := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
+		InputSnapshot: json.RawMessage(`{"target_identity":"ffmpeg:rollback-target"}`), TargetInstallationID: &target.ID,
+	}
+	if err := repository.CreateOperation(ctx, blocked); err == nil {
+		t.Fatal("operation was admitted while the rolled-back move remained active")
+	}
+	if err := repository.TransitionOperation(ctx, rollback.ID, func(operation *persistence.Operation) error {
+		now := time.Now().UTC()
+		safeError := "move rolled back"
+		operation.State = "failed"
+		operation.SafeError = &safeError
+		operation.FinishedAt = &now
+		return nil
+	}); err != nil {
+		t.Fatalf("finish rolled-back move: %v", err)
+	}
+	if err := repository.CreateOperation(ctx, blocked); err != nil {
+		t.Fatalf("operation remained blocked after move became terminal: %v", err)
+	}
+	finishOperation(t, ctx, repository, blocked.ID)
+
+	pendingRollback := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
+		InputSnapshot: json.RawMessage(`{"old_root":"/new-tools","new_root":"/pending-tools"}`),
+	}
+	if err := repository.CreateOperation(ctx, pendingRollback); err != nil {
+		t.Fatalf("create pending rollback move: %v", err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, pendingRollback.ID, "/new-tools", "/pending-tools"); err != nil {
+		t.Fatalf("switch pending rollback move: %v", err)
+	}
+	if err := repository.TransitionOperation(ctx, pendingRollback.ID, func(operation *persistence.Operation) error {
+		operation.Stage = "rollback_pending"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark rollback pending: %v", err)
+	}
+	if err := repository.RollbackToolsRootMove(ctx, pendingRollback.ID, "/new-tools", "/pending-tools"); err != nil {
+		t.Fatalf("rollback pending tools root move: %v", err)
+	}
+	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || current != "/new-tools" {
+		t.Fatalf("pending rollback tools directory = %q, %v", current, err)
+	}
+	pendingRolledBack, err := repository.GetOperation(ctx, pendingRollback.ID)
+	if err != nil || pendingRolledBack.State != "running" || pendingRolledBack.Stage != "rolled_back" {
+		t.Fatalf("pending rollback operation = %#v, %v; want running/rolled_back", pendingRolledBack, err)
+	}
+	if err := repository.TransitionOperation(ctx, pendingRollback.ID, func(operation *persistence.Operation) error {
+		now := time.Now().UTC()
+		safeError := "move rolled back"
+		operation.State = "failed"
+		operation.SafeError = &safeError
+		operation.FinishedAt = &now
+		return nil
+	}); err != nil {
+		t.Fatalf("finish pending rollback move: %v", err)
+	}
+
 	stale := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
 		InputSnapshot: json.RawMessage(`{"old_root":"/old-tools","new_root":"/other-tools"}`),
@@ -305,6 +398,16 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	historical := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "succeeded", Stage: "complete",
+		InputSnapshot:        json.RawMessage(`{"target_identity":"ffmpeg:test:7.1:linux:amd64"}`),
+		TargetInstallationID: &ready.ID,
+	}
+	finishedAt := time.Now().UTC()
+	historical.FinishedAt = &finishedAt
+	if err := repository.CreateOperation(ctx, historical); err != nil {
+		t.Fatalf("create historical operation: %v", err)
+	}
 	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, func(installation *persistence.ToolInstallation) error {
 		called = true
 		return tools.Delete(root, installation.RelativePath, "linux", nil, tools.PackageFFmpeg, installation.ID.String())
@@ -317,8 +420,63 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	if _, err := repository.GetInstallation(ctx, ready.ID); err == nil {
 		t.Fatal("deleted installation remains in database")
 	}
+	preserved, err := repository.GetOperation(ctx, historical.ID)
+	if err != nil || preserved.TargetInstallationID != nil {
+		t.Fatalf("historical operation = %#v, %v; want preserved without deleted target", preserved, err)
+	}
 	if _, err := os.Stat(filepath.Join(directory, "operator-note.txt")); err != nil {
 		t.Fatalf("unknown file was deleted: %v", err)
+	}
+}
+
+func TestActivateInstallationConflictsWithActiveMoveWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	move := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "preflight",
+		InputSnapshot: json.RawMessage(`{"old_root":"/tools","new_root":"/new-tools"}`),
+	}
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatalf("create active move: %v", err)
+	}
+	if err := repository.ActivateInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err == nil {
+		t.Fatal("activation concurrent with active move succeeded")
+	}
+	var activeValue string
+	if err := database.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", settings.ActiveFFmpegInstallationKey).Scan(ctx, &activeValue); err == nil {
+		t.Fatalf("active installation changed to %q during move", activeValue)
+	}
+}
+
+func TestInstallationRelativePathMustMatchVersionIdentityWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	unsafe := &persistence.ToolInstallation{
+		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "test", ReleaseIdentity: "7.1", RelativePath: "../outside", State: "preparing",
+	}
+	if err := repository.CreateInstallation(ctx, unsafe); err == nil {
+		t.Fatal("unsafe installation path was accepted")
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO tool_installation
+		(id, package_kind, platform_goos, platform_goarch, source_name, release_identity, relative_path, state)
+		VALUES (?, 'ffmpeg', 'linux', 'amd64', 'test', '7.1', '../outside', 'preparing')`, uuid.New()); err == nil {
+		t.Fatal("database accepted a traversing installation path")
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO tool_installation
+		(id, package_kind, platform_goos, platform_goarch, source_name, release_identity, relative_path, state)
+		VALUES (?, 'ffmpeg', 'linux', 'amd64', 'test', '7.1', ?, 'preparing')`, uuid.New(), `ffmpeg\7.1`); err == nil {
+		t.Fatal("database accepted a Windows separator for a Linux installation")
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO tool_installation
+		(id, package_kind, platform_goos, platform_goarch, source_name, release_identity, relative_path, state)
+		VALUES (?, 'ffmpeg', 'windows', 'amd64', 'test', '7.1', 'ffmpeg/7.1', 'preparing')`, uuid.New()); err == nil {
+		t.Fatal("database accepted a POSIX separator for a Windows installation")
 	}
 }
 
@@ -376,10 +534,11 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create installation: %v", err)
 	}
-	installation.RelativePath = "fpcalc/1.0-updated"
-	if err := repository.UpdateInstallation(ctx, installation); err != nil {
-		t.Fatalf("update installation: %v", err)
+	installation.RelativePath = "../outside"
+	if err := repository.UpdateInstallation(ctx, installation); err == nil {
+		t.Fatal("update accepted an unsafe installation path")
 	}
+	installation.RelativePath = "fpcalc/1.0"
 	if err := repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
 		t.Fatalf("mark installation failed: %v", err)
 	}

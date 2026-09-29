@@ -35,7 +35,36 @@ func PathsOverlap(first, second string) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	return first == second || strings.HasPrefix(second, first+string(filepath.Separator)) || strings.HasPrefix(first, second+string(filepath.Separator))
+	firstPrefix, secondPrefix := first+string(filepath.Separator), second+string(filepath.Separator)
+	if filepath.Dir(first) == first {
+		firstPrefix = first
+	}
+	if filepath.Dir(second) == second {
+		secondPrefix = second
+	}
+	if first == second || strings.HasPrefix(second, firstPrefix) || strings.HasPrefix(first, secondPrefix) {
+		return true
+	}
+	if firstInfo, err := os.Stat(first); err == nil {
+		if secondInfo, err := os.Stat(second); err == nil && os.SameFile(firstInfo, secondInfo) {
+			return true
+		}
+	}
+	if !strings.EqualFold(first, second) &&
+		!strings.HasPrefix(strings.ToLower(second), strings.ToLower(firstPrefix)) &&
+		!strings.HasPrefix(strings.ToLower(first), strings.ToLower(secondPrefix)) {
+		return false
+	}
+	for ancestor := first; ; ancestor = filepath.Dir(ancestor) {
+		if info, err := os.Stat(ancestor); err == nil && info.IsDir() {
+			if semantics, err := ProbeFilesystemSemantics(ancestor); err == nil {
+				return !semantics.CaseSensitive
+			}
+		}
+		if ancestor == filepath.Dir(ancestor) {
+			return false
+		}
+	}
 }
 
 type FilesystemSemantics struct {
@@ -145,30 +174,41 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 	if err := os.WriteFile(nfcProbe, []byte("nfc"), 0o644); err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("write unicode probe: %w", err)
 	}
-
+	nfcInfo, err := os.Stat(nfcProbe)
+	if err != nil {
+		return FilesystemSemantics{}, fmt.Errorf("stat unicode probe: %w", err)
+	}
+	nfdInfo, err := os.Stat(nfdProbe)
+	aliases := false
+	if err == nil {
+		aliases = os.SameFile(nfcInfo, nfdInfo)
+	} else if !os.IsNotExist(err) {
+		return FilesystemSemantics{}, fmt.Errorf("stat unicode probe: %w", err)
+	}
 	entries, err := os.ReadDir(probeRoot)
 	if err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("read unicode probe: %w", err)
 	}
-	unicodeNorm := "unknown"
+	storedName := ""
 	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, unicodePrefix) {
-			switch strings.TrimPrefix(name, unicodePrefix) {
-			case "\u00e9":
-				unicodeNorm = "nfc"
-			case "e\u0301":
-				unicodeNorm = "nfd"
-			}
+		if strings.HasPrefix(entry.Name(), unicodePrefix) {
+			storedName = strings.TrimPrefix(entry.Name(), unicodePrefix)
+			break
 		}
 	}
-	if unicodeNorm == "unknown" {
-		if _, err := os.Stat(nfdProbe); err == nil {
-			unicodeNorm = "nfc"
-		} else if !os.IsNotExist(err) {
-			return FilesystemSemantics{}, fmt.Errorf("stat unicode probe: %w", err)
-		}
-	}
+	return FilesystemSemantics{CaseSensitive: caseSensitive, UnicodeNormalization: classifyUnicodeNormalization(aliases, storedName)}, nil
+}
 
-	return FilesystemSemantics{CaseSensitive: caseSensitive, UnicodeNormalization: unicodeNorm}, nil
+func classifyUnicodeNormalization(aliases bool, storedName string) string {
+	if !aliases {
+		return "none"
+	}
+	switch storedName {
+	case "\u00e9":
+		return "nfc"
+	case "e\u0301":
+		return "nfd"
+	default:
+		return "unknown"
+	}
 }

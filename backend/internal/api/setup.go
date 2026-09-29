@@ -58,6 +58,24 @@ type SaveRuntimeBody struct {
 	PublicationFormat string `json:"publication_format,omitempty" enum:"source,mka"`
 }
 
+type CheckPathsInput struct {
+	Body struct {
+		ToolsDirectory  string `json:"tools_directory,omitempty" maxLength:"4096"`
+		OutputDirectory string `json:"output_directory,omitempty" maxLength:"4096"`
+	}
+}
+
+type CheckPathsOutput struct {
+	Body CheckPathsBody `json:"body"`
+}
+
+type CheckPathsBody struct {
+	ToolsDirectory             string `json:"tools_directory"`
+	OutputDirectory            string `json:"output_directory"`
+	OutputCaseSensitive        bool   `json:"output_case_sensitive"`
+	OutputUnicodeNormalization string `json:"output_unicode_normalization"`
+}
+
 type CheckMusicBrainzInput struct{}
 
 type CheckMusicBrainzOutput struct {
@@ -84,7 +102,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		}
 		state, err := setup.State(ctx)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to load setup state", err)
+			return nil, huma.Error500InternalServerError("failed to load setup state")
 		}
 		return setupStateOutput(state), nil
 	})
@@ -103,9 +121,33 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SaveRuntime(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
-			return nil, huma.Error400BadRequest("invalid runtime settings", err)
+			return nil, huma.Error400BadRequest("invalid runtime settings")
 		}
 		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "check-setup-paths",
+		Method:      http.MethodPost,
+		Path:        "/setup/paths/check",
+		Summary:     "Validate setup directories without saving them",
+		Tags:        []string{"Setup"},
+	}, func(ctx context.Context, input *CheckPathsInput) (*CheckPathsOutput, error) {
+		if err := requireSetupIncomplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		paths, err := setup.ValidatePaths(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory)
+		if err != nil {
+			return nil, huma.Error400BadRequest("setup directories are invalid")
+		}
+		return &CheckPathsOutput{Body: CheckPathsBody{
+			ToolsDirectory: paths.ToolsDirectory, OutputDirectory: paths.OutputDirectory,
+			OutputCaseSensitive:        paths.OutputCaseSensitive,
+			OutputUnicodeNormalization: paths.OutputUnicodeNormalization,
+		}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -128,7 +170,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return &CheckMusicBrainzOutput{
 				Body: CheckMusicBrainzBody{
 					Success: false,
-					Error:   err.Error(),
+					Error:   "MusicBrainz connectivity check failed. Retry the check.",
 				},
 			}, nil
 		}
@@ -153,7 +195,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.Complete(ctx); err != nil {
-			return nil, huma.Error409Conflict("setup requirements are not met", err)
+			return nil, huma.Error409Conflict("setup requirements are not met")
 		}
 		return nil, nil
 	})
@@ -170,7 +212,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		}
 		state, err := setup.State(ctx)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to compute health", err)
+			return nil, huma.Error500InternalServerError("failed to compute health")
 		}
 		return setupStateOutput(state), nil
 	})
@@ -186,7 +228,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
-			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid", err)
+			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
 		}
 		return nil, nil
 	})
@@ -202,7 +244,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
-			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved", err)
+			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved")
 		}
 		return nil, nil
 	})
@@ -245,7 +287,7 @@ func requireSetupIncomplete(ctx context.Context, setup *service.SetupService) er
 	}
 	state, err := setup.State(ctx)
 	if err != nil {
-		return huma.Error500InternalServerError("failed to read setup state", err)
+		return huma.Error500InternalServerError("failed to read setup state")
 	}
 	if state.Completed {
 		return huma.Error404NotFound("setup route is closed after completion")
@@ -259,7 +301,7 @@ func requireSetupComplete(ctx context.Context, setup *service.SetupService) erro
 	}
 	state, err := setup.State(ctx)
 	if err != nil {
-		return huma.Error500InternalServerError("failed to read setup state", err)
+		return huma.Error500InternalServerError("failed to read setup state")
 	}
 	if !state.Completed {
 		return huma.Error409Conflict("setup is not complete")
@@ -273,7 +315,7 @@ func requireSupportedPlatform(ctx context.Context, setup *service.SetupService) 
 	}
 	state, err := setup.State(ctx)
 	if err != nil {
-		return huma.Error500InternalServerError("failed to read platform state", err)
+		return huma.Error500InternalServerError("failed to read platform state")
 	}
 	if state.Platform.Diagnostic || !state.Platform.Platform.Supported() {
 		return huma.Error503ServiceUnavailable("product operations are unavailable for this instance platform")

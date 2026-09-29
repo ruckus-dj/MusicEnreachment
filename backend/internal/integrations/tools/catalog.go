@@ -400,7 +400,7 @@ func btbnAssets(assets []githubAsset, platform Platform) []Artifact {
 	}
 	for _, asset := range assets {
 		name := strings.ToLower(asset.Name)
-		if !strings.HasSuffix(name, archiveSuffix) || strings.Contains(name, "shared") || !strings.Contains(name, "gpl") {
+		if !strings.HasSuffix(name, archiveSuffix) || strings.Contains(name, "shared") || !strings.Contains(name, "-gpl") {
 			continue
 		}
 		matches := true
@@ -581,7 +581,7 @@ func (a *MacOSAdapter) List(ctx context.Context, platform Platform) ([]Release, 
 	for identity, artifacts := range artifactsByIdentity {
 		ffmpeg, hasFFmpeg := artifacts["ffmpeg"]
 		ffprobe, hasFFprobe := artifacts["ffprobe"]
-		if hasFFmpeg && hasFFprobe {
+		if hasFFmpeg && hasFFprobe && ffmpeg.URL != "" && ffprobe.URL != "" {
 			releases = append(releases, Release{Identity: identity, Artifacts: []Artifact{ffmpeg, ffprobe}})
 		}
 	}

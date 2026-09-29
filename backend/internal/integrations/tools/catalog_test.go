@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +69,24 @@ func TestMacOSAdapterGroupsFFmpegPackageArtifacts(t *testing.T) {
 	}
 }
 
+func TestMacOSAdapterRequiresBothDownloadLinks(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<a href="/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip">ffmpeg</a><a href="/download/macos/arm64/1789931890_9.0.2/ffprobe.zip.sha256">checksum only</a>`))
+	}))
+	defer server.Close()
+	client := server.Client()
+	adapter := NewMacOSAdapter(client, "https://ffmpeg.martin-riedl.de/releases")
+	adapter.client.Transport = rewriteTransport{server: server, base: client.Transport}
+
+	releases, err := adapter.List(context.Background(), Platform{"darwin", "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 0 {
+		t.Fatalf("incomplete package offered: %#v", releases)
+	}
+}
+
 func TestAllowedHTTPSRejectsCredentialAndPortOverrides(t *testing.T) {
 	for _, raw := range []string{"https://user@github.com/releases", "https://github.com:8443/releases", "http://github.com/releases"} {
 		if err := allowedHTTPS(raw, "github.com"); err == nil {
@@ -78,6 +97,7 @@ func TestAllowedHTTPSRejectsCredentialAndPortOverrides(t *testing.T) {
 
 func TestBtbNAssetsMatchSupportedPlatformArchives(t *testing.T) {
 	assets := []githubAsset{
+		{Name: "ffmpeg-n8.1-linux64-lgpl-8.1.tar.xz", URL: "https://github.com/BtbN/lgpl"},
 		{Name: "ffmpeg-n8.1-linux64-gpl-8.1.tar.xz", URL: "https://github.com/BtbN/linux64", Digest: "sha256:aaaaaaaa"},
 		{Name: "ffmpeg-n8.1-linuxarm64-gpl-8.1.tar.xz", URL: "https://github.com/BtbN/linuxarm64", Digest: "sha256:bbbbbbbb"},
 		{Name: "ffmpeg-n8.1-win64-gpl-8.1.zip", URL: "https://github.com/BtbN/win64", Digest: "sha256:cccccccc"},
@@ -96,6 +116,60 @@ func TestBtbNAssetsMatchSupportedPlatformArchives(t *testing.T) {
 		if len(artifacts) != 1 || !strings.Contains(artifacts[0].Name, test.want) || artifacts[0].ChecksumSHA256 == "" {
 			t.Errorf("btbnAssets(%#v) = %#v", test.platform, artifacts)
 		}
+	}
+}
+
+func TestChromaprintAdapterSelectsEachSupportedPlatform(t *testing.T) {
+	names := []string{
+		"chromaprint-fpcalc-1.5.1-linux-x86_64.tar.gz",
+		"chromaprint-fpcalc-1.5.1-linux-arm64.tar.gz",
+		"chromaprint-fpcalc-1.5.1-macos-x86_64.tar.gz",
+		"chromaprint-fpcalc-1.5.1-macos-arm64.tar.gz",
+		"chromaprint-fpcalc-1.5.1-windows-x86_64.zip",
+	}
+	assets := make([]githubAsset, 0, len(names))
+	for _, name := range names {
+		assets = append(assets, githubAsset{
+			Name: name, URL: "https://github.com/acoustid/chromaprint/releases/download/v1.5.1/" + name,
+			Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		})
+	}
+	body, err := json.Marshal([]githubRelease{{Tag: "v1.5.1", Assets: assets}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	client := server.Client()
+	adapter := NewChromaprintAdapter(client, "https://api.github.com/releases")
+	adapter.client = &http.Client{Transport: rewriteTransport{server: server, base: client.Transport}}
+	catalog := NewCatalog(adapter)
+	for _, test := range []struct {
+		platform Platform
+		name     string
+	}{
+		{Platform{"linux", "amd64"}, names[0]},
+		{Platform{"linux", "arm64"}, names[1]},
+		{Platform{"darwin", "amd64"}, names[2]},
+		{Platform{"darwin", "arm64"}, names[3]},
+		{Platform{"windows", "amd64"}, names[4]},
+	} {
+		t.Run(test.platform.GOOS+"/"+test.platform.GOARCH, func(t *testing.T) {
+			releases, err := catalog.List(context.Background(), PackageFPCalc, test.platform)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(releases) != 1 || releases[0].Identity != "v1.5.1" || len(releases[0].Artifacts) != 1 ||
+				releases[0].Artifacts[0].Name != test.name ||
+				releases[0].Artifacts[0].ChecksumSHA256 != strings.Repeat("a", 64) {
+				t.Fatalf("Chromaprint releases for %v = %#v", test.platform, releases)
+			}
+		})
+	}
+	if _, err := catalog.List(context.Background(), PackageFPCalc, Platform{"windows", "arm64"}); err == nil {
+		t.Fatal("unsupported Chromaprint platform accepted")
 	}
 }
 

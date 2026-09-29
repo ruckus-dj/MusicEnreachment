@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { updateSettings } from "../../api/generated/client";
+import type { UpdateSettingsBodyPublicationFormat } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 
 const catalogCheckedKey = "melotrove.catalog-checked-at";
@@ -6,22 +8,32 @@ const catalogCheckedKey = "melotrove.catalog-checked-at";
 export function SettingsScreen() {
   const [toolsDirectory, setToolsDirectory] = useState("");
   const [outputDirectory, setOutputDirectory] = useState("");
-  const [format, setFormat] = useState("mka");
+  const [format, setFormat] =
+    useState<UpdateSettingsBodyPublicationFormat>("mka");
   const [catalogMessage, setCatalogMessage] = useState(() => catalogStatus());
   const [notice, setNotice] = useState("");
   async function save() {
-    const response = await fetch("/api/setup/runtime", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tools_directory: toolsDirectory,
+    if (toolsDirectory) {
+      setNotice("Смена Tools directory требует отдельной операции переноса.");
+      return;
+    }
+    try {
+      const response = await updateSettings({
         output_directory: outputDirectory,
         publication_format: format,
-      }),
-    });
-    setNotice(
-      response.ok ? "Настройки сохранены." : "Не удалось сохранить настройки.",
-    );
+      });
+      setNotice(
+        response.status === 204
+          ? "Настройки сохранены."
+          : "Не удалось сохранить настройки.",
+      );
+    } catch (reason) {
+      setNotice(
+        reason instanceof Error
+          ? reason.message
+          : "Не удалось сохранить настройки.",
+      );
+    }
   }
   function refreshCatalog() {
     globalThis.localStorage?.setItem(
@@ -64,7 +76,9 @@ export function SettingsScreen() {
             Publication format
             <select
               value={format}
-              onChange={(event) => setFormat(event.target.value)}
+              onChange={(event) =>
+                setFormat(event.target.value === "source" ? "source" : "mka")
+              }
               className="mt-1 block rounded border p-2"
             >
               <option value="mka">MKA remux</option>

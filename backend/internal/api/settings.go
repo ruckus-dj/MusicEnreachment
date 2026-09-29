@@ -56,7 +56,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		state, err := setup.State(ctx)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to read settings", err)
+			return nil, huma.Error500InternalServerError("failed to read settings")
 		}
 		return setupStateOutput(state), nil
 	})
@@ -72,7 +72,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SaveRuntime(ctx, "", input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
-			return nil, huma.Error400BadRequest("settings could not be saved", err)
+			return nil, huma.Error400BadRequest("settings could not be saved")
 		}
 		return nil, nil
 	})
@@ -88,7 +88,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
-			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid", err)
+			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
 		}
 		return nil, nil
 	})
@@ -104,7 +104,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.CheckMusicBrainz(ctx); err != nil {
-			return &CheckSettingsMusicBrainzOutput{Body: CheckMusicBrainzBody{Success: false, Error: err.Error()}}, nil
+			return &CheckSettingsMusicBrainzOutput{Body: CheckMusicBrainzBody{Success: false, Error: "MusicBrainz connectivity check failed. Retry the check."}}, nil
 		}
 		return &CheckSettingsMusicBrainzOutput{Body: CheckMusicBrainzBody{Success: true}}, nil
 	})
@@ -120,7 +120,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
-			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved", err)
+			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved")
 		}
 		return nil, nil
 	})
@@ -136,7 +136,7 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 			return nil, err
 		}
 		if err := setup.SetLogLevel(ctx, input.Body.Level); err != nil {
-			return nil, huma.Error400BadRequest("log level could not be saved", err)
+			return nil, huma.Error400BadRequest("log level could not be saved")
 		}
 		return nil, nil
 	})

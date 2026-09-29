@@ -96,7 +96,7 @@ func (c *Client) CheckConnectivity(ctx context.Context, mode, baseURL string) Ch
 		return CheckResult{Success: false, Error: "invalid response format"}
 	}
 
-	if response.ID == "" {
+	if response.ID != "5b11f4ce-a62d-471e-81fc-a69a8278c7da" {
 		return CheckResult{Success: false, Error: "response missing expected fields"}
 	}
 

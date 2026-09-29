@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -17,6 +21,14 @@ type SetupState struct {
 	Platform            settings.PlatformState
 	Runtime             settings.RuntimeSettings
 }
+
+type PathValidation struct {
+	ToolsDirectory             string
+	OutputDirectory            string
+	OutputCaseSensitive        bool
+	OutputUnicodeNormalization string
+}
+
 type SetupService struct {
 	store             settings.Store
 	registry          *settings.Registry
@@ -43,13 +55,35 @@ func NewSetup(store settings.Store, registry *settings.Registry, platform settin
 	}
 }
 func (s *SetupService) State(ctx context.Context) (SetupState, error) {
+	return s.state(ctx, false)
+}
+
+func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, error) {
 	completed, err := s.registry.SetupCompleted(ctx)
 	if err != nil {
 		return SetupState{}, err
 	}
-	health, err := s.registry.ComputeConfigurationHealth(ctx, s.platform)
+	runtimeSettings, err := s.registry.ReadRuntimeSettings(ctx)
 	if err != nil {
-		return SetupState{}, err
+		return SetupState{}, fmt.Errorf("read setup runtime settings: %w", err)
+	}
+	// Validate the same values that Complete later compares under database locks.
+	health := settings.ConfigurationHealth{Healthy: true}
+	if s.platform.Diagnostic {
+		health.Healthy = false
+		health.Problems = append(health.Problems, s.platform.Reason)
+	}
+	for _, required := range []struct{ key, value string }{
+		{settings.ToolsDirectoryKey, runtimeSettings.ToolsDirectory},
+		{settings.OutputDirectoryKey, runtimeSettings.OutputDirectory},
+		{settings.PublicationFormatKey, runtimeSettings.PublicationFormat},
+		{settings.ActiveFFmpegInstallationKey, runtimeSettings.ActiveFFmpegInstallation},
+		{settings.ActiveFPCalcInstallationKey, runtimeSettings.ActiveFPCalcInstallation},
+	} {
+		if required.value == "" {
+			health.Healthy = false
+			health.Problems = append(health.Problems, "missing or invalid "+required.key)
+		}
 	}
 	if !s.platform.Platform.Supported() {
 		health.Healthy = false
@@ -57,22 +91,18 @@ func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 	}
 	for _, required := range []struct {
 		packageKind string
-		setting     string
+		id          string
 	}{
-		{packageKind: "ffmpeg", setting: settings.ActiveFFmpegInstallationKey},
-		{packageKind: "fpcalc", setting: settings.ActiveFPCalcInstallationKey},
+		{packageKind: "ffmpeg", id: runtimeSettings.ActiveFFmpegInstallation},
+		{packageKind: "fpcalc", id: runtimeSettings.ActiveFPCalcInstallation},
 	} {
 		if s.installations == nil {
 			health.Healthy = false
 			health.Problems = append(health.Problems, required.packageKind+" installation validation unavailable")
 			continue
 		}
-		idValue, exists, err := s.store.Get(ctx, required.setting)
-		if err != nil {
-			return SetupState{}, fmt.Errorf("read active %s installation: %w", required.packageKind, err)
-		}
-		id, parseErr := uuid.Parse(idValue)
-		if !exists || parseErr != nil {
+		id, parseErr := uuid.Parse(required.id)
+		if parseErr != nil {
 			health.Healthy = false
 			health.Problems = append(health.Problems, "active "+required.packageKind+" installation is invalid")
 			continue
@@ -89,16 +119,69 @@ func (s *SetupService) State(ctx context.Context) (SetupState, error) {
 			installation.State != "ready" {
 			health.Healthy = false
 			health.Problems = append(health.Problems, "active "+required.packageKind+" installation is not ready for this platform")
+			continue
+		}
+		var versions map[string]string
+		if installation.VerifiedAt == nil || json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
+			health.Healthy = false
+			health.Problems = append(health.Problems, "active "+required.packageKind+" installation has no verified executables")
+			continue
+		}
+		for _, name := range tools.ExpectedExecutables(tools.PackageKind(required.packageKind), s.platform.Platform.GOOS) {
+			if strings.TrimSpace(versions[name]) == "" {
+				health.Healthy = false
+				health.Problems = append(health.Problems, "active "+required.packageKind+" installation has no verified "+name)
+			}
 		}
 	}
-	runtimeSettings, err := s.registry.ReadRuntimeSettings(ctx)
-	if err != nil {
-		return SetupState{}, fmt.Errorf("read setup runtime settings: %w", err)
+	if !completing && runtimeSettings.MusicBrainzVerifiedAt == nil {
+		health.Healthy = false
+		health.Problems = append(health.Problems, "musicbrainz not verified")
+	}
+	if runtimeSettings.ToolsDirectory != "" && runtimeSettings.OutputDirectory != "" &&
+		settings.PathsOverlap(runtimeSettings.ToolsDirectory, runtimeSettings.OutputDirectory) {
+		health.Healthy = false
+		health.Problems = append(health.Problems, "tools directory overlaps output directory")
+	}
+	if runtimeSettings.ToolsDirectory != "" {
+		info, err := os.Stat(runtimeSettings.ToolsDirectory)
+		if err != nil || !info.IsDir() || settings.ProbeWritable(runtimeSettings.ToolsDirectory) != nil {
+			health.Healthy = false
+			health.Problems = append(health.Problems, "tools directory is unavailable or not writable")
+		}
+	}
+	if runtimeSettings.OutputDirectory != "" {
+		info, err := os.Stat(runtimeSettings.OutputDirectory)
+		if err != nil || !info.IsDir() {
+			health.Healthy = false
+			health.Problems = append(health.Problems, "output directory is unavailable")
+		} else {
+			var probeErr error
+			if completed {
+				probeErr = settings.ProbeWritable(runtimeSettings.OutputDirectory)
+			} else {
+				probeErr = settings.ProbeWritableEmpty(runtimeSettings.OutputDirectory)
+			}
+			if probeErr != nil {
+				health.Healthy = false
+				health.Problems = append(health.Problems, "output directory is not ready")
+			} else if runtimeSettings.OutputCaseSensitive == nil || runtimeSettings.OutputUnicodeNormalization == "" {
+				health.Healthy = false
+				health.Problems = append(health.Problems, "output filesystem semantics are missing")
+			} else {
+				current, err := settings.ProbeFilesystemSemantics(runtimeSettings.OutputDirectory)
+				if err != nil || current.CaseSensitive != *runtimeSettings.OutputCaseSensitive ||
+					current.UnicodeNormalization != runtimeSettings.OutputUnicodeNormalization {
+					health.Healthy = false
+					health.Problems = append(health.Problems, "output filesystem semantics changed")
+				}
+			}
+		}
 	}
 	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings}, nil
 }
 func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
-	values := make(map[string]string)
+	update := settings.RuntimeUpdate{}
 	currentTools, hasTools, err := s.registry.GetToolsDirectory(ctx)
 	if err != nil {
 		return fmt.Errorf("get tools directory: %w", err)
@@ -107,7 +190,7 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 	if err != nil {
 		return fmt.Errorf("get output directory: %w", err)
 	}
-	if strings.TrimSpace(toolsDirectory) != "" {
+	if toolsDirectory != "" {
 		normalized, err := settings.NormalizePath(toolsDirectory)
 		if err != nil {
 			return fmt.Errorf("tools directory: %w", err)
@@ -128,9 +211,9 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 			}
 		}
 		currentTools, hasTools = normalized, true
-		values[settings.ToolsDirectoryKey] = normalized
+		update.ToolsDirectory = &normalized
 	}
-	if strings.TrimSpace(outputDirectory) != "" {
+	if outputDirectory != "" {
 		normalized, err := settings.NormalizePath(outputDirectory)
 		if err != nil {
 			return fmt.Errorf("output directory: %w", err)
@@ -143,20 +226,101 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 			return fmt.Errorf("output directory semantics: %w", err)
 		}
 		currentOutput, hasOutput = normalized, true
-		values[settings.OutputDirectoryKey] = normalized
-		values[settings.OutputCaseSensitiveKey] = fmt.Sprintf("%t", semantics.CaseSensitive)
-		values[settings.OutputUnicodeNormalizationKey] = semantics.UnicodeNormalization
+		update.OutputDirectory = &normalized
+		update.OutputCaseSensitive = &semantics.CaseSensitive
+		update.OutputUnicodeNormalization = &semantics.UnicodeNormalization
 	}
 	if hasTools && hasOutput && settings.PathsOverlap(currentTools, currentOutput) {
 		return fmt.Errorf("tools directory overlaps with output directory")
 	}
 	if publicationFormat != "" {
-		if publicationFormat != "source" && publicationFormat != "mka" {
-			return fmt.Errorf("invalid publication format")
-		}
-		values[settings.PublicationFormatKey] = publicationFormat
+		update.PublicationFormat = &publicationFormat
 	}
-	return s.store.SetMany(ctx, values)
+	return s.registry.UpdateRuntime(ctx, update)
+}
+
+// ValidatePaths checks proposed paths without changing runtime settings or
+// creating missing directories. Empty arguments use the saved paths.
+func (s *SetupService) ValidatePaths(ctx context.Context, toolsDir, outputDir string) (PathValidation, error) {
+	savedTools, _, err := s.registry.GetToolsDirectory(ctx)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("read tools directory: %w", err)
+	}
+	savedOutput, _, err := s.registry.GetOutputDirectory(ctx)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("read output directory: %w", err)
+	}
+	completed, err := s.registry.SetupCompleted(ctx)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("read setup completion: %w", err)
+	}
+	if toolsDir == "" {
+		toolsDir = savedTools
+	}
+	if outputDir == "" {
+		outputDir = savedOutput
+	}
+	if toolsDir == "" {
+		return PathValidation{}, fmt.Errorf("tools directory is required")
+	}
+	if outputDir == "" {
+		return PathValidation{}, fmt.Errorf("output directory is required")
+	}
+	toolsPath, err := settings.NormalizePath(toolsDir)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("tools directory: %w", err)
+	}
+	outputPath, err := settings.NormalizePath(outputDir)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("output directory: %w", err)
+	}
+	if settings.PathsOverlap(toolsPath, outputPath) {
+		return PathValidation{}, fmt.Errorf("tools directory overlaps output directory")
+	}
+	toolsProbe, _, err := existingProbeDirectory(toolsPath)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("tools directory: %w", err)
+	}
+	if err := settings.ProbeWritable(toolsProbe); err != nil {
+		return PathValidation{}, fmt.Errorf("tools directory is not writable or creatable: %w", err)
+	}
+	outputProbe, exists, err := existingProbeDirectory(outputPath)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("output directory: %w", err)
+	}
+	if exists && (!completed || outputPath != savedOutput) {
+		err = settings.ProbeWritableEmpty(outputProbe)
+	} else {
+		err = settings.ProbeWritable(outputProbe)
+	}
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("output directory is not writable or empty: %w", err)
+	}
+	semantics, err := settings.ProbeFilesystemSemantics(outputProbe)
+	if err != nil {
+		return PathValidation{}, fmt.Errorf("probe output filesystem semantics: %w", err)
+	}
+	return PathValidation{
+		ToolsDirectory:             toolsPath,
+		OutputDirectory:            outputPath,
+		OutputCaseSensitive:        semantics.CaseSensitive,
+		OutputUnicodeNormalization: semantics.UnicodeNormalization,
+	}, nil
+}
+
+func existingProbeDirectory(path string) (string, bool, error) {
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Stat(current)
+		if err == nil {
+			if !info.IsDir() {
+				return "", false, fmt.Errorf("path is not a directory")
+			}
+			return current, current == path, nil
+		}
+		if !os.IsNotExist(err) || current == filepath.Dir(current) {
+			return "", false, fmt.Errorf("inspect directory: %w", err)
+		}
+	}
 }
 
 // CheckMusicBrainz verifies connectivity to the configured MusicBrainz endpoint
@@ -204,32 +368,36 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	if s.platform.Diagnostic || !s.platform.Platform.Supported() {
 		return fmt.Errorf("setup is unavailable for the current platform")
 	}
-	state, err := s.State(ctx)
+	state, err := s.state(ctx, true)
 	if err != nil {
 		return err
 	}
 	if !state.ConfigurationHealth.Healthy {
 		return fmt.Errorf("setup requirements are not met: %s", strings.Join(state.ConfigurationHealth.Problems, ", "))
 	}
-	toolsDirectory, hasTools, err := s.registry.GetToolsDirectory(ctx)
+	config, err := s.registry.GetMusicBrainzConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("read tools directory: %w", err)
+		return fmt.Errorf("read MusicBrainz configuration: %w", err)
 	}
-	outputDirectory, hasOutput, err := s.registry.GetOutputDirectory(ctx)
-	if err != nil {
-		return fmt.Errorf("read output directory: %w", err)
+	result := s.musicbrainzClient.CheckConnectivity(ctx, config.Mode, config.BaseURL)
+	if !result.Success {
+		return fmt.Errorf("MusicBrainz connectivity check failed: %s", result.Error)
 	}
-	if !hasTools || !hasOutput || settings.PathsOverlap(toolsDirectory, outputDirectory) {
-		return fmt.Errorf("setup directories are missing or overlap")
-	}
-	if err := settings.ProbeWritable(toolsDirectory); err != nil {
+	// Re-probe after the potentially slow request, against the exact paths
+	// whose saved values the commit will lock and compare.
+	if err := settings.ProbeWritable(state.Runtime.ToolsDirectory); err != nil {
 		return fmt.Errorf("tools directory is not writable: %w", err)
 	}
-	if err := settings.ProbeWritableEmpty(outputDirectory); err != nil {
+	if err := settings.ProbeWritableEmpty(state.Runtime.OutputDirectory); err != nil {
 		return fmt.Errorf("output directory is not ready: %w", err)
 	}
-	if _, err := s.registry.GetOutputFilesystemSemantics(ctx); err != nil {
-		return fmt.Errorf("output filesystem semantics are not available: %w", err)
+	semantics, err := settings.ProbeFilesystemSemantics(state.Runtime.OutputDirectory)
+	if err != nil {
+		return fmt.Errorf("probe output filesystem semantics: %w", err)
 	}
-	return s.registry.CompleteSetup(ctx)
+	if state.Runtime.OutputCaseSensitive == nil || semantics.CaseSensitive != *state.Runtime.OutputCaseSensitive ||
+		semantics.UnicodeNormalization != state.Runtime.OutputUnicodeNormalization {
+		return fmt.Errorf("output filesystem semantics changed")
+	}
+	return s.registry.CompleteSetupIfCurrent(ctx, s.platform.Platform, state.Runtime, config)
 }

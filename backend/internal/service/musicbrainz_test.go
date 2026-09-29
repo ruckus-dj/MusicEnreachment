@@ -3,6 +3,8 @@ package service_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -50,6 +52,31 @@ func (m *mockSettingsStore) SetIfAbsent(_ context.Context, key, value string) (s
 		return value, nil
 	}
 	return m.data[key], nil
+}
+
+func (m *mockSettingsStore) CompleteSetupIfCurrent(ctx context.Context, expected map[string]string, value string) error {
+	for key, checked := range expected {
+		if m.data[key] != checked {
+			return errors.New("setup configuration changed during final check")
+		}
+	}
+	m.data[settings.MusicBrainzVerifiedAtKey] = value
+	_, err := m.SetIfAbsent(ctx, settings.SetupCompletedAtKey, value)
+	return err
+}
+
+func (m *mockSettingsStore) InitializePlatform(_ context.Context, goos, goarch string) (string, string, bool, error) {
+	persistedOS, hasOS := m.data[settings.PlatformGOOSKey]
+	persistedArch, hasArch := m.data[settings.PlatformGOARCHKey]
+	if hasOS != hasArch {
+		return persistedOS, persistedArch, false, nil
+	}
+	if !hasOS {
+		m.data[settings.PlatformGOOSKey] = goos
+		m.data[settings.PlatformGOARCHKey] = goarch
+		return goos, goarch, true, nil
+	}
+	return persistedOS, persistedArch, true, nil
 }
 
 func TestCheckMusicBrainz_PublicMode_Success(t *testing.T) {
@@ -113,13 +140,16 @@ func TestComplete_RequiresMusicBrainzVerification(t *testing.T) {
 
 func TestComplete_Success(t *testing.T) {
 	store := newMockStore()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer upstream.Close()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_ = store.Set(context.Background(), settings.PlatformGOOSKey, "linux")
 	_ = store.Set(context.Background(), settings.PlatformGOARCHKey, "amd64")
 	_ = store.Set(context.Background(), settings.ToolsDirectoryKey, t.TempDir())
-	_ = store.Set(context.Background(), settings.OutputDirectoryKey, t.TempDir())
-	_ = store.Set(context.Background(), settings.OutputCaseSensitiveKey, "true")
-	_ = store.Set(context.Background(), settings.OutputUnicodeNormalizationKey, "nfc")
 	_ = store.Set(context.Background(), settings.PublicationFormatKey, "source")
 	_ = store.Set(context.Background(), settings.MusicBrainzModeKey, "public")
 	_ = store.Set(context.Background(), settings.MusicBrainzVerifiedAtKey, now)
@@ -129,9 +159,18 @@ func TestComplete_Success(t *testing.T) {
 	_ = store.Set(context.Background(), settings.ActiveFPCalcInstallationKey, fpcalcID.String())
 
 	registry := settings.NewRegistryWithClock(store, func() time.Time { return time.Now() })
+	if err := registry.SetMusicBrainzConfig(t.Context(), "self-hosted", upstream.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetToolsDirectory(t.Context(), t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetOutputDirectory(context.Background(), t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
 	installations := testInstallationLookup{items: map[uuid.UUID]*persistence.ToolInstallation{
-		ffmpegID: {ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"},
-		fpcalcID: {ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready"},
+		ffmpegID: {ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVersions: []byte(`{"ffmpeg":"ffmpeg version 8.0","ffprobe":"ffprobe version 8.0"}`)},
+		fpcalcID: {ID: fpcalcID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", State: "ready", VerifiedAt: new(time.Time), ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
 	}}
 	setupService := service.NewSetup(store, registry, settings.PlatformState{
 		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"},

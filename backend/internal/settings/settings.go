@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 	PublicationFormatKey          = "publication_format"
 	MusicBrainzModeKey            = "musicbrainz_mode"
 	MusicBrainzBaseURLKey         = "musicbrainz_base_url"
+	MusicBrainzConfigIdentityKey  = "musicbrainz_config_identity"
 	MusicBrainzVerifiedAtKey      = "musicbrainz_verified_at"
 	LRCLIBEnabledKey              = "lrclib_enabled"
 	LogLevelKey                   = "log_level"
@@ -34,10 +37,19 @@ type Store interface {
 	Set(context.Context, string, string) error
 	SetMany(context.Context, map[string]string) error
 	SetIfAbsent(context.Context, string, string) (string, error)
+	InitializePlatform(context.Context, string, string) (string, string, bool, error)
 }
 
 type SetupCompletionStore interface {
 	CompleteSetupOnce(context.Context, string) error
+}
+
+type verifiedSetupCompletionStore interface {
+	CompleteSetupIfCurrent(context.Context, map[string]string, string) error
+}
+
+type musicBrainzVerificationStore interface {
+	SetMusicBrainzVerifiedIfCurrent(context.Context, string, string, string, string) (bool, error)
 }
 
 type Platform struct{ GOOS, GOARCH string }
@@ -55,6 +67,7 @@ type PlatformState struct {
 type MusicBrainzConfig struct {
 	Mode       string // "public" or "self-hosted"
 	BaseURL    string // empty for public, HTTP(S) URL for self-hosted
+	Identity   string // changes on every configuration update
 	VerifiedAt *time.Time
 }
 
@@ -76,6 +89,16 @@ type RuntimeSettings struct {
 	ActiveFPCalcInstallation   string
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization string
+}
+
+// RuntimeUpdate selects the validated runtime values to change in one write.
+// A nil field leaves its setting unchanged.
+type RuntimeUpdate struct {
+	ToolsDirectory             *string
+	OutputDirectory            *string
+	OutputCaseSensitive        *bool
+	OutputUnicodeNormalization *string
+	PublicationFormat          *string
 }
 
 type Registry struct {
@@ -100,15 +123,14 @@ func (r *Registry) InitializePlatform(ctx context.Context, current Platform) (Pl
 	if !current.Supported() {
 		return PlatformState{Platform: current, Diagnostic: true, Reason: "unsupported platform"}, nil
 	}
-	goos, err := r.store.SetIfAbsent(ctx, PlatformGOOSKey, current.GOOS)
-	if err != nil {
-		return PlatformState{}, err
-	}
-	arch, err := r.store.SetIfAbsent(ctx, PlatformGOARCHKey, current.GOARCH)
+	goos, arch, complete, err := r.store.InitializePlatform(ctx, current.GOOS, current.GOARCH)
 	if err != nil {
 		return PlatformState{}, err
 	}
 	persisted := Platform{GOOS: goos, GOARCH: arch}
+	if !complete {
+		return PlatformState{Platform: persisted, Diagnostic: true, Reason: "instance platform is incomplete"}, nil
+	}
 	if persisted != current {
 		return PlatformState{Platform: persisted, Diagnostic: true, Reason: "instance platform differs from current process"}, nil
 	}
@@ -118,6 +140,9 @@ func (r *Registry) InitializePlatform(ctx context.Context, current Platform) (Pl
 func CurrentPlatform() Platform { return Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH} }
 
 func (r *Registry) SetLogLevel(ctx context.Context, value string) error {
+	if _, err := serializeSetting(logSetting, value); err != nil {
+		return err
+	}
 	level, ok := parseLogLevel(value)
 	if !ok {
 		return fmt.Errorf("invalid log level %q", value)
@@ -130,7 +155,7 @@ func (r *Registry) SetLogLevel(ctx context.Context, value string) error {
 }
 
 func (r *Registry) LoadLogLevel(ctx context.Context) error {
-	value, exists, err := r.store.Get(ctx, LogLevelKey)
+	value, exists, err := readSetting(ctx, r.store, logSetting)
 	if err != nil || !exists {
 		return err
 	}
@@ -143,13 +168,47 @@ func (r *Registry) LoadLogLevel(ctx context.Context) error {
 }
 
 func (r *Registry) CompleteSetup(ctx context.Context) error {
-	value := r.now().UTC().Format(time.RFC3339Nano)
+	value, err := serializeSetting(setupCompletedSetting, r.now().UTC())
+	if err != nil {
+		return err
+	}
 	if store, ok := r.store.(SetupCompletionStore); ok {
 		return store.CompleteSetupOnce(ctx, value)
 	}
-	_, err := r.store.SetIfAbsent(ctx, SetupCompletedAtKey, value)
+	_, err = r.store.SetIfAbsent(ctx, SetupCompletedAtKey, value)
 	return err
 }
+
+// CompleteSetupIfCurrent binds the final successful connectivity check to the
+// validated runtime settings. The store must compare and complete atomically.
+func (r *Registry) CompleteSetupIfCurrent(ctx context.Context, platform Platform, runtime RuntimeSettings, checked MusicBrainzConfig) error {
+	store, ok := r.store.(verifiedSetupCompletionStore)
+	if !ok {
+		return fmt.Errorf("atomic setup completion is unavailable")
+	}
+	value, err := serializeSetting(setupCompletedSetting, r.now().UTC())
+	if err != nil {
+		return err
+	}
+	if runtime.OutputCaseSensitive == nil {
+		return fmt.Errorf("output filesystem semantics are missing")
+	}
+	return store.CompleteSetupIfCurrent(ctx, map[string]string{
+		PlatformGOOSKey:               platform.GOOS,
+		PlatformGOARCHKey:             platform.GOARCH,
+		ToolsDirectoryKey:             runtime.ToolsDirectory,
+		OutputDirectoryKey:            runtime.OutputDirectory,
+		OutputCaseSensitiveKey:        strconv.FormatBool(*runtime.OutputCaseSensitive),
+		OutputUnicodeNormalizationKey: runtime.OutputUnicodeNormalization,
+		PublicationFormatKey:          runtime.PublicationFormat,
+		ActiveFFmpegInstallationKey:   runtime.ActiveFFmpegInstallation,
+		ActiveFPCalcInstallationKey:   runtime.ActiveFPCalcInstallation,
+		MusicBrainzModeKey:            checked.Mode,
+		MusicBrainzBaseURLKey:         checked.BaseURL,
+		MusicBrainzConfigIdentityKey:  checked.Identity,
+	}, value)
+}
+
 func (r *Registry) SetupCompleted(ctx context.Context) (bool, error) {
 	_, ok, err := r.store.Get(ctx, SetupCompletedAtKey)
 	return ok, err
@@ -157,7 +216,7 @@ func (r *Registry) SetupCompleted(ctx context.Context) (bool, error) {
 
 // GetToolsDirectory returns the normalized tools directory path.
 func (r *Registry) GetToolsDirectory(ctx context.Context) (string, bool, error) {
-	return r.store.Get(ctx, ToolsDirectoryKey)
+	return readSetting(ctx, r.store, toolsRootSetting)
 }
 
 // SetToolsDirectory validates and stores the normalized tools directory path.
@@ -172,12 +231,16 @@ func (r *Registry) SetToolsDirectory(ctx context.Context, path string, outputDir
 	if err := ProbeWritable(normalized); err != nil {
 		return fmt.Errorf("tools directory: %w", err)
 	}
-	return r.store.Set(ctx, ToolsDirectoryKey, normalized)
+	value, err := serializeSetting(toolsRootSetting, normalized)
+	if err != nil {
+		return err
+	}
+	return r.store.Set(ctx, ToolsDirectoryKey, value)
 }
 
 // GetOutputDirectory returns the normalized output directory path.
 func (r *Registry) GetOutputDirectory(ctx context.Context) (string, bool, error) {
-	return r.store.Get(ctx, OutputDirectoryKey)
+	return readSetting(ctx, r.store, outputRootSetting)
 }
 
 // SetOutputDirectory validates, probes filesystem semantics, and stores the output directory.
@@ -198,22 +261,85 @@ func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDir
 	if err != nil {
 		return fmt.Errorf("probe filesystem semantics: %w", err)
 	}
+	normalized, err = serializeSetting(outputRootSetting, normalized)
+	if err != nil {
+		return err
+	}
+	caseSensitive, err := serializeSetting(outputCaseSetting, semantics.CaseSensitive)
+	if err != nil {
+		return err
+	}
+	unicodeNormalization, err := serializeSetting(outputUnicodeSetting, semantics.UnicodeNormalization)
+	if err != nil {
+		return err
+	}
 
 	// Store all three values atomically by validating first, then setting
 	return r.store.SetMany(ctx, map[string]string{
 		OutputDirectoryKey:            normalized,
-		OutputCaseSensitiveKey:        fmt.Sprintf("%t", semantics.CaseSensitive),
-		OutputUnicodeNormalizationKey: semantics.UnicodeNormalization,
+		OutputCaseSensitiveKey:        caseSensitive,
+		OutputUnicodeNormalizationKey: unicodeNormalization,
 	})
+}
+
+func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {
+	values := make(map[string]string)
+	if update.ToolsDirectory != nil {
+		normalized, err := NormalizePath(*update.ToolsDirectory)
+		if err != nil {
+			return fmt.Errorf("tools directory: %w", err)
+		}
+		value, err := serializeSetting(toolsRootSetting, normalized)
+		if err != nil {
+			return fmt.Errorf("tools directory: %w", err)
+		}
+		values[ToolsDirectoryKey] = value
+	}
+	if update.OutputDirectory != nil {
+		normalized, err := NormalizePath(*update.OutputDirectory)
+		if err != nil {
+			return fmt.Errorf("output directory: %w", err)
+		}
+		value, err := serializeSetting(outputRootSetting, normalized)
+		if err != nil {
+			return fmt.Errorf("output directory: %w", err)
+		}
+		values[OutputDirectoryKey] = value
+	}
+	if update.OutputCaseSensitive != nil {
+		value, err := serializeSetting(outputCaseSetting, *update.OutputCaseSensitive)
+		if err != nil {
+			return fmt.Errorf("output case sensitivity: %w", err)
+		}
+		values[OutputCaseSensitiveKey] = value
+	}
+	if update.OutputUnicodeNormalization != nil {
+		value, err := serializeSetting(outputUnicodeSetting, *update.OutputUnicodeNormalization)
+		if err != nil {
+			return fmt.Errorf("output Unicode normalization: %w", err)
+		}
+		values[OutputUnicodeNormalizationKey] = value
+	}
+	if update.PublicationFormat != nil {
+		value, err := serializeSetting(publicationSetting, *update.PublicationFormat)
+		if err != nil {
+			return fmt.Errorf("publication format: %w", err)
+		}
+		values[PublicationFormatKey] = value
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return r.store.SetMany(ctx, values)
 }
 
 // GetOutputFilesystemSemantics returns the probed filesystem characteristics.
 func (r *Registry) GetOutputFilesystemSemantics(ctx context.Context) (FilesystemSemantics, error) {
-	caseSensitive, csExists, err := r.store.Get(ctx, OutputCaseSensitiveKey)
+	caseSensitive, csExists, err := readSetting(ctx, r.store, outputCaseSetting)
 	if err != nil {
 		return FilesystemSemantics{}, err
 	}
-	unicodeNorm, unExists, err := r.store.Get(ctx, OutputUnicodeNormalizationKey)
+	unicodeNorm, unExists, err := readSetting(ctx, r.store, outputUnicodeSetting)
 	if err != nil {
 		return FilesystemSemantics{}, err
 	}
@@ -221,35 +347,36 @@ func (r *Registry) GetOutputFilesystemSemantics(ctx context.Context) (Filesystem
 		return FilesystemSemantics{}, fmt.Errorf("filesystem semantics not probed")
 	}
 	return FilesystemSemantics{
-		CaseSensitive:        caseSensitive == "true",
+		CaseSensitive:        caseSensitive,
 		UnicodeNormalization: unicodeNorm,
 	}, nil
 }
 
 // GetPublicationFormat returns "source" or "mka".
 func (r *Registry) GetPublicationFormat(ctx context.Context) (string, bool, error) {
-	return r.store.Get(ctx, PublicationFormatKey)
+	return readSetting(ctx, r.store, publicationSetting)
 }
 
 // SetPublicationFormat validates and stores the publication format.
 func (r *Registry) SetPublicationFormat(ctx context.Context, format string) error {
-	if format != "source" && format != "mka" {
-		return fmt.Errorf("publication format must be 'source' or 'mka'")
+	value, err := serializeSetting(publicationSetting, format)
+	if err != nil {
+		return err
 	}
-	return r.store.Set(ctx, PublicationFormatKey, format)
+	return r.store.Set(ctx, PublicationFormatKey, value)
 }
 
 // GetMusicBrainzConfig returns the current MusicBrainz configuration.
 func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig, error) {
-	mode, _, err := r.store.Get(ctx, MusicBrainzModeKey)
+	mode, _, err := readSetting(ctx, r.store, musicBrainzModeSetting)
 	if err != nil {
 		return MusicBrainzConfig{}, err
 	}
-	if mode == "" {
-		mode = "public"
+	baseURL, _, err := readSetting(ctx, r.store, musicBrainzURLSetting)
+	if err != nil {
+		return MusicBrainzConfig{}, err
 	}
-
-	baseURL, _, err := r.store.Get(ctx, MusicBrainzBaseURLKey)
+	identity, _, err := readSetting(ctx, r.store, musicBrainzIdentitySetting)
 	if err != nil {
 		return MusicBrainzConfig{}, err
 	}
@@ -258,34 +385,41 @@ func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig,
 	if verifiedStr, exists, err := r.store.Get(ctx, MusicBrainzVerifiedAtKey); err != nil {
 		return MusicBrainzConfig{}, err
 	} else if exists && verifiedStr != "" {
-		if parsed, parseErr := time.Parse(time.RFC3339Nano, verifiedStr); parseErr == nil {
-			verifiedAt = &parsed
+		parsed, parseErr := musicBrainzVerifiedSetting.parse(verifiedStr)
+		if parseErr != nil {
+			return MusicBrainzConfig{}, fmt.Errorf("invalid stored MusicBrainz verification: %w", parseErr)
 		}
+		verifiedAt = &parsed
 	}
 
-	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, VerifiedAt: verifiedAt}, nil
+	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
 }
 
 // SetMusicBrainzConfig validates and stores MusicBrainz configuration.
 // Changing the configuration invalidates the previous verification.
 func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL string) error {
-	if mode != "public" && mode != "self-hosted" {
-		return fmt.Errorf("musicbrainz mode must be 'public' or 'self-hosted'")
+	mode, err := serializeSetting(musicBrainzModeSetting, mode)
+	if err != nil {
+		return err
 	}
 	if mode == "self-hosted" {
-		parsed, err := url.Parse(baseURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		if baseURL == "" {
 			return fmt.Errorf("self-hosted mode requires valid HTTP(S) base URL")
 		}
 	}
 	if mode == "public" {
 		baseURL = "" // Public mode ignores base URL
 	}
+	baseURL, err = serializeSetting(musicBrainzURLSetting, baseURL)
+	if err != nil {
+		return err
+	}
 
 	return r.store.SetMany(ctx, map[string]string{
-		MusicBrainzModeKey:       mode,
-		MusicBrainzBaseURLKey:    baseURL,
-		MusicBrainzVerifiedAtKey: "",
+		MusicBrainzModeKey:           mode,
+		MusicBrainzBaseURLKey:        baseURL,
+		MusicBrainzConfigIdentityKey: uuid.NewString(),
+		MusicBrainzVerifiedAtKey:     "",
 	})
 }
 
@@ -297,42 +431,47 @@ func (r *Registry) MarkMusicBrainzVerified(ctx context.Context) error {
 // SetMusicBrainzVerified records successful connectivity check for the given configuration.
 // This method should be called after a successful CheckMusicBrainz call.
 func (r *Registry) SetMusicBrainzVerified(ctx context.Context, config MusicBrainzConfig) error {
+	verifiedAt, err := serializeSetting(musicBrainzVerifiedSetting, r.now().UTC())
+	if err != nil {
+		return err
+	}
+	if store, ok := r.store.(musicBrainzVerificationStore); ok {
+		matched, err := store.SetMusicBrainzVerifiedIfCurrent(ctx, config.Mode, config.BaseURL, config.Identity, verifiedAt)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			return fmt.Errorf("configuration changed since check was initiated")
+		}
+		return nil
+	}
+	// In-memory stores used by isolated service tests have no DB transaction.
 	current, err := r.GetMusicBrainzConfig(ctx)
 	if err != nil {
 		return err
 	}
-	if current.Mode != config.Mode || current.BaseURL != config.BaseURL {
+	if current.Mode != config.Mode || current.BaseURL != config.BaseURL || current.Identity != config.Identity {
 		return fmt.Errorf("configuration changed since check was initiated")
 	}
-	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, r.now().UTC().Format(time.RFC3339Nano))
+	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, verifiedAt)
 }
 
 // GetLRCLIBEnabled returns whether LRCLIB integration is enabled.
 func (r *Registry) GetLRCLIBEnabled(ctx context.Context) (bool, error) {
-	value, exists, err := r.store.Get(ctx, LRCLIBEnabledKey)
-	if err != nil {
-		return false, err
-	}
-	if !exists {
-		return true, nil // Enabled by default
-	}
-	return value == "true", nil
+	value, _, err := readSetting(ctx, r.store, lrclibSetting)
+	return value, err
 }
 
 func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
-	read := func(key string) (string, error) {
-		value, _, err := r.store.Get(ctx, key)
-		return value, err
-	}
-	tools, err := read(ToolsDirectoryKey)
+	tools, _, err := readSetting(ctx, r.store, toolsRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	output, err := read(OutputDirectoryKey)
+	output, _, err := readSetting(ctx, r.store, outputRootSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	format, err := read(PublicationFormatKey)
+	format, _, err := readSetting(ctx, r.store, publicationSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
@@ -344,31 +483,34 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	logLevel, exists, err := r.store.Get(ctx, LogLevelKey)
+	logLevel, _, err := readSetting(ctx, r.store, logSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	if !exists {
-		logLevel = "info"
-	}
-	ffmpeg, err := read(ActiveFFmpegInstallationKey)
+	ffmpegID, ffmpegExists, err := readSetting(ctx, r.store, activeFFmpegSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	fpcalc, err := read(ActiveFPCalcInstallationKey)
+	fpcalcID, fpcalcExists, err := readSetting(ctx, r.store, activeFPCalcSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
-	caseSensitiveValue, caseExists, err := r.store.Get(ctx, OutputCaseSensitiveKey)
+	ffmpeg, fpcalc := "", ""
+	if ffmpegExists {
+		ffmpeg = ffmpegID.String()
+	}
+	if fpcalcExists {
+		fpcalc = fpcalcID.String()
+	}
+	caseSensitiveValue, caseExists, err := readSetting(ctx, r.store, outputCaseSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
 	var caseSensitive *bool
 	if caseExists {
-		value := caseSensitiveValue == "true"
-		caseSensitive = &value
+		caseSensitive = &caseSensitiveValue
 	}
-	unicodeNormalization, err := read(OutputUnicodeNormalizationKey)
+	unicodeNormalization, _, err := readSetting(ctx, r.store, outputUnicodeSetting)
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
@@ -390,7 +532,11 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 
 // SetLRCLIBEnabled stores the LRCLIB integration flag.
 func (r *Registry) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
-	return r.store.Set(ctx, LRCLIBEnabledKey, fmt.Sprintf("%t", enabled))
+	value, err := serializeSetting(lrclibSetting, enabled)
+	if err != nil {
+		return err
+	}
+	return r.store.Set(ctx, LRCLIBEnabledKey, value)
 }
 
 // ComputeConfigurationHealth checks all required settings and returns health status.
