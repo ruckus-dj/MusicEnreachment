@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -57,13 +58,19 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		if live {
 			continue
 		}
-		if operation.Kind == "install" && operationStageAfterRetries(operation.Stage) == "files_materialized" {
-			completed, err := reconcileMaterializedInstallation(ctx, repository, operations, operation, runtimeSettings, lifecycle)
+		if operation.Kind == "install" {
+			publicationExists, err := hasInstallPublicationEvidence(ctx, operation, runtimeSettings)
 			if err != nil {
-				return fmt.Errorf("recover published installation %s: %w", operation.ID, err)
+				return fmt.Errorf("inspect installation publication for %s: %w", operation.ID, err)
 			}
-			if completed {
-				continue
+			if publicationExists || operationStageAfterRetries(operation.Stage) == "files_materialized" {
+				completed, err := reconcileMaterializedInstallation(ctx, repository, operations, operation, runtimeSettings, lifecycle)
+				if err != nil {
+					return fmt.Errorf("recover published installation %s: %w", operation.ID, err)
+				}
+				if completed {
+					continue
+				}
 			}
 		}
 
@@ -127,8 +134,28 @@ func moveNeedsPreSwitchRollbackOnRetry(stage string) bool {
 	}
 }
 
+func hasInstallPublicationEvidence(ctx context.Context, operation *persistence.Operation, runtimeSettings interruptedOperationSettings) (bool, error) {
+	root, exists, err := runtimeSettings.GetToolsDirectory(ctx)
+	if err != nil || !exists || root == "" {
+		return false, err
+	}
+	path := filepath.Join(root, ".staging", operation.ID.String(), "publication.json")
+	_, err = os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func reconcileMaterializedInstallation(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation, runtimeSettings interruptedOperationSettings, lifecycle *tools.Lifecycle) (bool, error) {
+	filesMaterialized := operationStageAfterRetries(operation.Stage) == "files_materialized"
 	if operation.TargetInstallationID == nil {
+		if !filesMaterialized {
+			return false, nil
+		}
 		return false, fmt.Errorf("materialized install operation has no target installation")
 	}
 	installation, err := repository.GetInstallation(ctx, *operation.TargetInstallationID)
@@ -140,6 +167,9 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 		return false, err
 	}
 	if !exists || root == "" {
+		if !filesMaterialized {
+			return false, nil
+		}
 		return false, fmt.Errorf("tools directory is not configured")
 	}
 	var snapshot service.InstallInputSnapshot
@@ -154,6 +184,9 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 	publication, err := loadInstallPublication(staging, operation, installation, snapshot, root, installation.PlatformGOOS)
 	if err != nil {
 		return false, err
+	}
+	if publication == nil && !filesMaterialized {
+		return false, nil
 	}
 	if installation.State != "ready" && publication == nil {
 		return false, fmt.Errorf("materialized installation ownership journal is missing")

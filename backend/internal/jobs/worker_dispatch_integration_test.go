@@ -252,7 +252,7 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 			catalog.clearBarriers()
 			runner.gate = nil
 
-			if interruption.name == "publication_before_ready_commit" {
+			if interruption.name == "publication_before_ready_commit" || interruption.name == "verify_published_executable" {
 				activeFFmpegBefore, hasActiveFFmpegBefore, err := settingsRepository.Get(ctx, settings.ActiveFFmpegInstallationKey)
 				if err != nil {
 					t.Fatal(err)
@@ -294,8 +294,19 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 					t.Fatalf("active FFmpeg ID changed during publication reconciliation: %q/%v -> %q/%v (%v)", activeFFmpegBefore, hasActiveFFmpegBefore, activeFFmpegAfter, hasActiveFFmpegAfter, err)
 				}
 				activeFPCalcAfter, hasActiveFPCalcAfter, err := settingsRepository.Get(ctx, settings.ActiveFPCalcInstallationKey)
-				if err != nil || hasActiveFPCalcAfter != hasActiveFPCalcBefore || activeFPCalcAfter != activeFPCalcBefore {
-					t.Fatalf("active fpcalc ID changed during publication reconciliation: %q/%v -> %q/%v (%v)", activeFPCalcBefore, hasActiveFPCalcBefore, activeFPCalcAfter, hasActiveFPCalcAfter, err)
+				if err != nil {
+					t.Fatal(err)
+				}
+				setupComplete, err := runtimeSettings.SetupCompleted(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if setupComplete {
+					if hasActiveFPCalcAfter != hasActiveFPCalcBefore || activeFPCalcAfter != activeFPCalcBefore {
+						t.Fatalf("completed Setup changed active fpcalc ID: %q/%v -> %q/%v", activeFPCalcBefore, hasActiveFPCalcBefore, activeFPCalcAfter, hasActiveFPCalcAfter)
+					}
+				} else if !hasActiveFPCalcAfter || activeFPCalcAfter != operation.TargetInstallationID.String() {
+					t.Fatalf("incomplete Setup active fpcalc ID = %q/%v; want recovered installation %s", activeFPCalcAfter, hasActiveFPCalcAfter, *operation.TargetInstallationID)
 				}
 				if _, err := operations.Retry(ctx, operation.ID); err == nil {
 					t.Fatal("verified publication was not terminal after reconciliation")

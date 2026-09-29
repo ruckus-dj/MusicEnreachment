@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,6 +17,15 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+type multipleOperationRepository struct {
+	*workerRepository
+	rows []persistence.Operation
+}
+
+func (repository *multipleOperationRepository) ListOperations(context.Context, ...string) ([]persistence.Operation, error) {
+	return repository.rows, nil
+}
 
 type recordedSetupActivation struct {
 	installationID uuid.UUID
@@ -58,7 +68,7 @@ func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T)
 				t.Fatal(err)
 			}
 			operation := &persistence.Operation{
-				ID: operationID, Kind: "install", State: "running", Stage: "files_materialized",
+				ID: operationID, Kind: "install", State: "running", Stage: "materialize",
 				InputSnapshot: snapshot, TargetInstallationID: &installationID,
 			}
 			installation := &persistence.ToolInstallation{
@@ -158,16 +168,24 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 	operationID, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	const releaseIdentity = "1.6.1"
+	target := filepath.Join(root, "fpcalc", releaseIdentity, "fpcalc")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	operatorContents := []byte("confirmed original executable")
+	if err := os.WriteFile(target, operatorContents, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
 		TargetIdentity: "fpcalc:chromaprint:" + releaseIdentity + ":linux:amd64", SchemaVersion: 1,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: releaseIdentity,
-		ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+		ConfirmedConflicts: []string{target}, ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
-		ID: operationID, Kind: "install", State: "running", Stage: "files_materialized",
+		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
 	installation := &persistence.ToolInstallation{
@@ -190,8 +208,11 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(root, installation.RelativePath, "fpcalc")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	backup := filepath.Join(staging, "backups", "fpcalc")
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(target, backup); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Link(candidate, target); err != nil {
@@ -210,7 +231,7 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 		} `json:"files"`
 	}{
 		OperationID: operationID, InstallationID: installationID, Root: root,
-		PackageKind: string(tools.PackageFPCalc), Release: releaseIdentity,
+		PackageKind: string(tools.PackageFPCalc), Release: releaseIdentity, Confirmed: []string{target},
 		Files: []struct {
 			Name   string `json:"name"`
 			SHA256 string `json:"sha256"`
@@ -231,8 +252,8 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 	if operation.State != "failed" || installation.State != "failed" || operation.SafeError == nil {
 		t.Fatalf("unverified publication result = operation %s, installation %s, error %v; want safe failure", operation.State, installation.State, operation.SafeError)
 	}
-	if _, err := os.Lstat(target); !os.IsNotExist(err) {
-		t.Fatalf("unverified owned managed target remains: %v", err)
+	if restored, err := os.ReadFile(target); err != nil || string(restored) != string(operatorContents) {
+		t.Fatalf("confirmed original target was not restored: %q %v", restored, err)
 	}
 	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
 		t.Fatalf("rollback retained completed publication staging: %v", err)
@@ -263,6 +284,55 @@ type rejectedInstallRecoveryRunner struct{}
 
 func (rejectedInstallRecoveryRunner) Run(context.Context, string, ...string) ([]byte, error) {
 	return nil, errors.New("executable rejected for recovery test")
+}
+
+func TestReconcileInvalidInstallPublicationAbortsPassAndPreservesEvidence(t *testing.T) {
+	operationID, installationID, untouchedID := uuid.New(), uuid.New(), uuid.New()
+	root := t.TempDir()
+	snapshot, err := json.Marshal(service.InstallInputSnapshot{
+		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 1,
+		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := persistence.Operation{
+		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
+		InputSnapshot: snapshot, TargetInstallationID: &installationID,
+	}
+	untouched := persistence.Operation{ID: untouchedID, Kind: "install", State: "queued", Stage: "materialize"}
+	installation := &persistence.ToolInstallation{
+		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "preparing",
+	}
+	repository := &multipleOperationRepository{
+		workerRepository: &workerRepository{operation: &operation, installation: installation},
+		rows:             []persistence.Operation{operation, untouched},
+	}
+	staging, err := tools.EnsureOperationStaging(root, operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidJournal := []byte(`{"operation_id":"` + uuid.NewString() + `"}`)
+	journalPath := filepath.Join(staging, "publication.json")
+	if err := os.WriteFile(journalPath, invalidJournal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = jobs.ReconcileInterruptedOperations(context.Background(), repository, service.NewOperations(repository),
+		func(context.Context, *int64) (bool, error) { return false, nil }, workerSettings{root: root})
+	if err == nil || !strings.Contains(err.Error(), "installation publication identity changed") {
+		t.Fatalf("invalid journal reconciliation error = %v; want startup-pass abort for invalid ownership evidence", err)
+	}
+	if operation.State != "running" || installation.State != "preparing" {
+		t.Fatalf("invalid-journal operation/installation = %s/%s; want unchanged while recovery is blocked", operation.State, installation.State)
+	}
+	if untouched.State != "queued" {
+		t.Fatalf("later operation state = %s; want untouched because the pass aborts", untouched.State)
+	}
+	if contents, err := os.ReadFile(journalPath); err != nil || string(contents) != string(invalidJournal) {
+		t.Fatalf("invalid ownership evidence was not preserved: %q %v", contents, err)
+	}
 }
 
 func TestReconcileInterruptedInstallMarksPreparingTargetFailed(t *testing.T) {
