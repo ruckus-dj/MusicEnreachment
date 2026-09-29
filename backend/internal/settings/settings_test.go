@@ -2,6 +2,8 @@ package settings_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,5 +414,43 @@ func TestCompleteSetupPreservesOriginalTimestamp(t *testing.T) {
 	}
 	if second != first {
 		t.Fatalf("completion timestamp changed from %q to %q", first, second)
+	}
+}
+
+func TestSetLogLevelAppliesToTheInjectedLevelVarWithoutRestart(t *testing.T) {
+	ctx := context.Background()
+	level := new(slog.LevelVar)
+	level.Set(slog.LevelInfo)
+	store := newMemoryStore()
+	registry := settings.New(store, level)
+	// The logger is built before the level changes: it must follow the LevelVar
+	// without being rebuilt or the process restarted.
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: level}))
+
+	if err := registry.SetLogLevel(ctx, "error"); err != nil {
+		t.Fatalf("set error level: %v", err)
+	}
+	if level.Level() != slog.LevelError {
+		t.Fatalf("runtime level = %v, want error without a restart", level.Level())
+	}
+	if logger.Enabled(ctx, slog.LevelInfo) {
+		t.Fatal("informational logging stayed enabled after switching the runtime level to error")
+	}
+	if value, exists, err := store.Get(ctx, settings.LogLevelKey); err != nil || !exists || value != "error" {
+		t.Fatalf("stored level = %q, exists=%t, err=%v", value, exists, err)
+	}
+
+	if err := registry.SetLogLevel(ctx, "debug"); err != nil {
+		t.Fatalf("set debug level: %v", err)
+	}
+	if !logger.Enabled(ctx, slog.LevelDebug) {
+		t.Fatal("debug logging stayed disabled after switching the runtime level to debug")
+	}
+
+	if err := registry.SetLogLevel(ctx, "verbose"); err == nil {
+		t.Fatal("invalid log level was accepted")
+	}
+	if level.Level() != slog.LevelDebug {
+		t.Fatalf("rejected level changed the runtime level to %v", level.Level())
 	}
 }
