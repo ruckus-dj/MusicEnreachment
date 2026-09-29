@@ -1,92 +1,846 @@
+import { JSDOM } from "jsdom";
+import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OperationResponse } from "../../api/generated/client.schemas";
 import { nextResponse, server } from "../../test/server";
 import { SettingsScreen } from "./SettingsScreen";
 
-afterEach(cleanup);
+const settings = {
+  completed: true,
+  configuration_health: { healthy: true, problems: [] as string[] },
+  platform: {
+    diagnostic: false,
+    goos: "linux",
+    goarch: "amd64",
+    supported: true,
+  },
+  settings: {
+    tools_directory: "/srv/tools",
+    output_directory: "/srv/music",
+    publication_format: "mka",
+    musicbrainz_mode: "public",
+    musicbrainz_base_url: "",
+    musicbrainz_verified_at: "2026-09-01T00:00:00Z",
+    lrclib_enabled: true,
+    log_level: "info",
+    active_ffmpeg_installation_id: "ff-active",
+    active_fpcalc_installation_id: "fp-active",
+    output_case_sensitive: true,
+    output_unicode_normalization: "none",
+  },
+};
+const activeFF = {
+  id: "ff-active",
+  package_kind: "ffmpeg",
+  release_identity: "ff-1",
+  source_name: "fixture",
+  state: "ready",
+  active: true,
+  executable_versions: {},
+  created_at: "2026-01-01T00:00:00Z",
+};
+const inactiveFF = {
+  ...activeFF,
+  id: "ff-old",
+  release_identity: "ff-0",
+  active: false,
+};
+const failedFF = {
+  ...inactiveFF,
+  id: "ff-failed",
+  release_identity: "ff-failed",
+  state: "failed",
+};
+const activeFP = {
+  ...activeFF,
+  id: "fp-active",
+  package_kind: "fpcalc",
+  release_identity: "fp-1",
+};
+const operation = {
+  id: "op-1",
+  kind: "move",
+  state: "queued",
+  stage: "copy",
+  bytes_completed: 0,
+  bytes_total: 10,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const json = (body: unknown) => HttpResponse.json(body as never);
+function nextResponseFor(path: string, method?: string) {
+  return new Promise<void>((resolve) => {
+    const listener = ({ request }: { request: Request }) => {
+      if (
+        new URL(request.url).pathname !== path ||
+        (method && request.method !== method)
+      )
+        return;
+      server.events.removeListener("response:mocked", listener);
+      resolve();
+    };
+    server.events.on("response:mocked", listener);
+  });
+}
+function nextResponsesFor(
+  expected: Array<{ path: string; method: string; packageKind?: string }>,
+) {
+  return new Promise<void>((resolve) => {
+    const remaining = [...expected];
+    const listener = ({ request }: { request: Request }) => {
+      const url = new URL(request.url);
+      const index = remaining.findIndex(
+        (item) =>
+          url.pathname === item.path &&
+          request.method === item.method &&
+          (item.packageKind === undefined ||
+            url.searchParams.get("package_kind") === item.packageKind),
+      );
+      if (index < 0) return;
+      remaining.splice(index, 1);
+      if (remaining.length === 0) {
+        server.events.removeListener("response:mocked", listener);
+        resolve();
+      }
+    };
+    server.events.on("response:mocked", listener);
+  });
+}
+class TestEventSource extends EventTarget {
+  static instances: TestEventSource[] = [];
+  close = vi.fn();
+  constructor(public url: string) {
+    super();
+    TestEventSource.instances.push(this);
+  }
+}
+function common({
+  installed = [activeFF, inactiveFF, activeFP],
+  operations = [] as unknown[],
+  healthy = true,
+} = {}) {
+  server.use(
+    http.get("/api/settings", () =>
+      json({
+        ...settings,
+        configuration_health: {
+          healthy,
+          problems: healthy ? [] : ["FFmpeg недоступен"],
+        },
+      }),
+    ),
+    http.get("/api/tools/installations", ({ request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        installations: installed.filter((item) => item.package_kind === kind),
+      });
+    }),
+    http.get("/api/operations", () => json({ operations })),
+    http.get("/api/tools/catalog", ({ request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        package_kind: kind,
+        releases: [
+          { identity: `${kind}-release`, source: "fixture", artifacts: [] },
+        ],
+      });
+    }),
+    http.get("/api/operations/:id", () => json(operation)),
+  );
+}
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "localStorage",
+    new JSDOM("", { url: "http://localhost" }).window.localStorage,
+  );
+  localStorage.clear();
+  TestEventSource.instances = [];
+  vi.stubGlobal("EventSource", TestEventSource);
+  common();
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("SettingsScreen", () => {
-  it("allows a manual catalog refresh", () => {
+  it("loads typed settings, health, and separate package inventories without redirecting", async () => {
     render(<SettingsScreen />);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
-    expect(screen.getByText(/обновлён вручную/)).toBeTruthy();
+    expect(await screen.findByText("/srv/tools")).toBeTruthy();
+    expect(screen.getByLabelText("Output directory")).toHaveProperty(
+      "value",
+      "/srv/music",
+    );
+    expect(screen.getByText("FFmpeg package")).toBeTruthy();
+    expect(screen.getByText("fpcalc", { selector: "h3" })).toBeTruthy();
+    expect(screen.getByText("Конфигурация исправна.")).toBeTruthy();
+    expect(window.location.hash).not.toBe("#/setup");
   });
 
-  it("saves runtime settings after the setup mutation route closes", async () => {
+  it("saves settings and rereads server state, while showing validation errors", async () => {
+    const calls: string[] = [];
     server.use(
-      http.put("/api/setup/runtime", () =>
-        HttpResponse.json({ status: 404 }, { status: 404 }),
-      ),
-      http.put(
-        "/api/settings/runtime",
-        () => new HttpResponse(null, { status: 204 }),
-      ),
+      http.put("/api/settings/runtime", async ({ request }) => {
+        calls.push("put");
+        expect(await request.json()).toEqual({
+          output_directory: "/new",
+          publication_format: "source",
+        });
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () => {
+        calls.push("get");
+        return json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            output_directory: calls.includes("put")
+              ? "/new"
+              : settings.settings.output_directory,
+          },
+        });
+      }),
     );
     render(<SettingsScreen />);
-    fireEvent.change(screen.getByLabelText("Output directory"), {
-      target: { value: "/srv/output" },
+    fireEvent.change(await screen.findByLabelText("Output directory"), {
+      target: { value: "/new" },
     });
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
     fireEvent.change(screen.getByLabelText("Publication format"), {
       target: { value: "source" },
     });
-    const response = nextResponse();
-
+    const response = nextResponseFor("/api/settings/runtime", "PUT");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Сохранить публикацию" }),
+      );
       await response;
     });
-
-    const { request, response: result } = await response;
-    expect(new URL(request.url).pathname).toBe("/api/settings/runtime");
-    expect(await request.json()).toEqual({
-      output_directory: "/srv/output",
-      publication_format: "source",
-    });
-    expect(result.status).toBe(204);
-    expect(screen.getByRole("status").textContent).toBe("Настройки сохранены.");
-  });
-
-  it("reports rejected settings without claiming success", async () => {
+    await waitFor(() => expect(calls).toContain("get"));
+    expect(calls.indexOf("put")).toBeLessThan(calls.lastIndexOf("get"));
+    expect(screen.getByLabelText("Output directory")).toHaveProperty(
+      "value",
+      "/new",
+    );
     server.use(
       http.put("/api/settings/runtime", () =>
-        HttpResponse.json({ status: 400 }, { status: 400 }),
+        HttpResponse.json({ detail: "Каталог недоступен" }, { status: 400 }),
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить публикацию" }),
+    );
+    const validation = await screen.findByRole("alert");
+    expect(validation).toHaveTextContent("Каталог недоступен");
+    expect(validation).toHaveFocus();
+  });
+
+  it("saves MusicBrainz and LRCLIB changes through typed APIs", async () => {
+    const mb = vi.fn();
+    const lyrics = vi.fn();
+    server.use(
+      http.put("/api/settings/musicbrainz", async ({ request }) => {
+        mb(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post("/api/settings/musicbrainz/check", () =>
+        json({ success: true }),
+      ),
+      http.put("/api/settings/lrclib", async ({ request }) => {
+        lyrics(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("MusicBrainz mode"), {
+      target: { value: "self-hosted" },
+    });
+    fireEvent.change(screen.getByLabelText("MusicBrainz base URL"), {
+      target: { value: "https://music.example" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить и проверить MusicBrainz" }),
+    );
+    await waitFor(() =>
+      expect(mb).toHaveBeenCalledWith({
+        mode: "self-hosted",
+        base_url: "https://music.example",
+      }),
+    );
+    expect(await screen.findByText("MusicBrainz проверен.")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("LRCLIB включён"));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить LRCLIB" }));
+    await waitFor(() =>
+      expect(lyrics).toHaveBeenCalledWith({ enabled: false }),
+    );
+  });
+
+  it("sends log-level change to backend and rereads it", async () => {
+    const saved = vi.fn();
+    let rereads = 0;
+    server.use(
+      http.put("/api/settings/log-level", async ({ request }) => {
+        saved(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () => {
+        rereads++;
+        return json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            log_level: rereads > 1 ? "debug" : "info",
+          },
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("Log level"), {
+      target: { value: "debug" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Применить уровень" }));
+    await waitFor(() => expect(saved).toHaveBeenCalledWith({ level: "debug" }));
+    expect(await screen.findByText("Уровень журнала применён.")).toBeTruthy();
+    expect(rereads).toBeGreaterThan(1);
+    expect(screen.getByLabelText("Log level")).toHaveProperty("value", "debug");
+  });
+
+  it("observes 24-hour catalog cooldown on reload and always requests manual refresh", async () => {
+    const timestamp = new Date(Date.now() - 60_000).toISOString();
+    localStorage.setItem("melotrove.catalog-checked-at", timestamp);
+    const catalogRequest = vi.fn(({ request }: { request: Request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        package_kind: kind,
+        releases: [
+          { identity: `${kind}-manual`, source: "fixture", artifacts: [] },
+        ],
+      });
+    });
+    server.use(http.get("/api/tools/catalog", catalogRequest));
+    render(<SettingsScreen />);
+    expect(
+      await screen.findByText(/Последняя успешная проверка каталога/),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      ).not.toBeDisabled(),
+    );
+    const refreshed = nextResponse();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Обновить каталог" }));
+      await refreshed;
+    });
+    await screen.findByRole("option", { name: /ffmpeg-manual/ });
+    expect(catalogRequest).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("melotrove.catalog-checked-at")).not.toBe(
+      timestamp,
+    );
+  });
+
+  it("makes one automatic check after cooldown and does not repeat on later state refresh", async () => {
+    localStorage.setItem(
+      "melotrove.catalog-checked-at",
+      new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+    );
+    const catalogRequest = vi.fn(({ request }: { request: Request }) => {
+      const kind = new URL(request.url).searchParams.get("package_kind");
+      return json({
+        package_kind: kind,
+        releases: [
+          { identity: `${kind}-automatic`, source: "fixture", artifacts: [] },
+        ],
+      });
+    });
+    server.use(http.get("/api/tools/catalog", catalogRequest));
+    render(<SettingsScreen />);
+    await screen.findByText(/Последняя успешная проверка каталога/);
+    await screen.findByRole("option", { name: /ffmpeg-automatic/ });
+    expect(catalogRequest).toHaveBeenCalledTimes(2);
+    const stateReload = nextResponseFor("/api/settings", "GET");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      );
+      await stateReload;
+    });
+    expect(catalogRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("installs without activating and confirms exactly the preflight conflict list", async () => {
+    const installOperation = { ...operation, kind: "install" };
+    const install = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({
+        preflight_token: "token",
+        confirmed_conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+      });
+      return json(installOperation);
+    });
+    server.use(
+      http.get("/api/operations/:id", () => json(installOperation)),
+      http.post("/api/tools/installations/preflight", () =>
+        json({
+          preflight_token: "token",
+          targets: ["/srv/tools/ffmpeg/new/ffmpeg"],
+          conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+        }),
+      ),
+      http.post("/api/tools/installations", install),
+    );
+    render(<SettingsScreen />);
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "FFmpeg package" })).getByRole(
+        "button",
+        { name: "Установить без активации" },
+      ),
+    );
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "/srv/tools/ffmpeg/new/ffmpeg",
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      }),
+    );
+    await waitFor(() => expect(install).toHaveBeenCalled());
+    expect(await screen.findByText(/install: queued/)).toBeTruthy();
+    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+  });
+
+  it("rolls back activation UI when the server rejects re-verification", async () => {
+    server.use(
+      http.post("/api/tools/installations/ff-old/activate", () =>
+        HttpResponse.json(
+          { detail: "Проверка версии не прошла" },
+          { status: 422 },
+        ),
       ),
     );
     render(<SettingsScreen />);
-    const response = nextResponse();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-      await response;
+    const activateButton = await screen.findByRole("button", {
+      name: "Активировать ff-0",
     });
+    await waitFor(() => expect(activateButton).not.toBeDisabled());
+    fireEvent.click(activateButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Проверка версии не прошла",
+    );
+    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+  });
 
-    expect(screen.getByRole("status").textContent).toBe(
-      "Не удалось сохранить настройки.",
+  it("rejects active and operation-busy deletion", async () => {
+    const occupiedOperation = {
+      ...operation,
+      target_installation_id: "ff-old",
+    };
+    common({ operations: [occupiedOperation] });
+    const remove = vi.fn();
+    server.use(
+      http.delete("/api/tools/installations/:id", remove),
+      http.get("/api/operations/:id", () => json(occupiedOperation)),
+    );
+    render(<SettingsScreen />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      ).not.toBeDisabled(),
+    );
+    const activeDelete = screen.getByRole("button", { name: "Удалить ff-1" });
+    expect(activeDelete).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Активировать ff-1" }),
+    ).toBeDisabled();
+    await screen.findByRole("group", { name: "Операция op-1" });
+    expect(screen.getByRole("button", { name: "Удалить ff-0" })).toBeDisabled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("allows deleting a failed, inactive, unoccupied installation", async () => {
+    common({ installed: [activeFF, failedFF, activeFP] });
+    const deleted = vi.fn();
+    server.use(
+      http.delete("/api/tools/installations/ff-failed", async ({ request }) => {
+        deleted(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    render(<SettingsScreen />);
+    const remove = await screen.findByRole("button", {
+      name: "Удалить ff-failed",
+    });
+    await waitFor(() => expect(remove).not.toBeDisabled());
+    fireEvent.click(remove);
+    await waitFor(() =>
+      expect(deleted).toHaveBeenCalledWith({ package_kind: "ffmpeg" }),
     );
   });
 
-  it("does not silently discard a tools-directory edit", async () => {
-    const save = vi.fn(() => new HttpResponse(null, { status: 204 }));
-    server.use(http.put("/api/settings/runtime", save));
+  it.each([
+    "queued",
+    "running",
+    "failed",
+  ] as const)("keeps deleting a failed installation disabled while operation is %s", async (state) => {
+    const occupied = {
+      ...operation,
+      state,
+      target_installation_id: failedFF.id,
+    };
+    common({
+      installed: [activeFF, failedFF, activeFP],
+      operations: [occupied],
+    });
+    server.use(http.get("/api/operations/:id", () => json(occupied)));
     render(<SettingsScreen />);
-    fireEvent.change(screen.getByLabelText("Tools directory"), {
+    await screen.findByRole("group", { name: "Операция op-1" });
+    expect(
+      screen.getByRole("button", { name: "Удалить ff-failed" }),
+    ).toBeDisabled();
+  });
+
+  it("submits a move and surfaces a rejected start request", async () => {
+    const starts = vi
+      .fn()
+      .mockResolvedValueOnce(json(operation))
+      .mockResolvedValueOnce(
+        HttpResponse.json({ detail: "Перенос отклонён" }, { status: 409 }),
+      );
+    server.use(
+      http.post("/api/tools/move/preflight", () =>
+        json({
+          preflight_token: "move-token",
+          conflicts: [],
+          managed_file_count: 2,
+        }),
+      ),
+      http.post("/api/tools/move", starts),
+    );
+    render(<SettingsScreen />);
+    const moveButton = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(moveButton).not.toBeDisabled());
+    fireEvent.click(moveButton);
+    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
       target: { value: "/srv/new-tools" },
     });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await screen.findByText("Управляемых файлов: 2");
+    const confirmMoveButton = screen.getByRole("button", {
+      name: "Подтвердить перенос",
     });
-
-    expect(save).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain(
-      "операции переноса",
+    await waitFor(() => expect(confirmMoveButton).not.toBeDisabled());
+    fireEvent.click(confirmMoveButton);
+    await screen.findByRole("group", { name: "Операция op-1" });
+    expect(
+      screen.getByText("Текущий Tools directory:").parentElement,
+    ).toHaveTextContent("/srv/tools");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Перенести каталог" }),
+      ).not.toBeDisabled(),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Перенести каталог" }));
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await screen.findByText("Управляемых файлов: 2");
+    const failedMoveConfirm = screen.getByRole("button", {
+      name: "Подтвердить перенос",
+    });
+    await waitFor(() => expect(failedMoveConfirm).not.toBeDisabled());
+    fireEvent.click(failedMoveConfirm);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Перенос отклонён",
+    );
+    expect(
+      screen.getByText("Текущий Tools directory:").parentElement,
+    ).toHaveTextContent("/srv/tools");
+  });
+
+  it("refreshes Settings and inventories after a move operation succeeds", async () => {
+    const queued = { ...operation, id: "move-success" };
+    let snapshot = queued;
+    let moveStarted = false;
+    let toolsDirectory = "/srv/tools";
+    let settingsReads = 0;
+    const installationReads = { ffmpeg: 0, fpcalc: 0 };
+    let operationReads = 0;
+    server.use(
+      http.get("/api/settings", () => {
+        settingsReads++;
+        return json({
+          ...settings,
+          settings: { ...settings.settings, tools_directory: toolsDirectory },
+        });
+      }),
+      http.get("/api/tools/installations", ({ request }) => {
+        const kind = new URL(request.url).searchParams.get("package_kind") as
+          | "ffmpeg"
+          | "fpcalc";
+        installationReads[kind]++;
+        return json({
+          installations: kind === "ffmpeg" ? [activeFF] : [activeFP],
+        });
+      }),
+      http.get("/api/operations", () => {
+        operationReads++;
+        return json({ operations: moveStarted ? [snapshot] : [] });
+      }),
+      http.get("/api/operations/move-success", () => json(snapshot)),
+      http.post("/api/tools/move/preflight", () =>
+        json({
+          preflight_token: "success-token",
+          conflicts: [],
+          managed_file_count: 2,
+        }),
+      ),
+      http.post("/api/tools/move", () => {
+        moveStarted = true;
+        return json(queued);
+      }),
+    );
+    render(<SettingsScreen />);
+    const moveButton = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(moveButton).not.toBeDisabled());
+    fireEvent.click(moveButton);
+    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
+      target: { value: "/srv/new-tools" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await screen.findByText("Управляемых файлов: 2");
+    const confirm = screen.getByRole("button", { name: "Подтвердить перенос" });
+    await waitFor(() => expect(confirm).not.toBeDisabled());
+    fireEvent.click(confirm);
+    expect(await screen.findByText(/move: queued/)).toBeTruthy();
+    expect(
+      screen.getByText("Текущий Tools directory:").parentElement,
+    ).toHaveTextContent("/srv/tools");
+    const stream = TestEventSource.instances.find((item) =>
+      item.url.includes("move-success"),
+    );
+    expect(stream).toBeTruthy();
+
+    toolsDirectory = "/srv/new-tools";
+    snapshot = {
+      ...queued,
+      state: "succeeded",
+      stage: "complete",
+      bytes_completed: 10,
+    };
+    const rereads = nextResponsesFor([
+      { path: "/api/operations/move-success", method: "GET" },
+      { path: "/api/settings", method: "GET" },
+      {
+        path: "/api/tools/installations",
+        method: "GET",
+        packageKind: "ffmpeg",
+      },
+      {
+        path: "/api/tools/installations",
+        method: "GET",
+        packageKind: "fpcalc",
+      },
+      { path: "/api/operations", method: "GET" },
+    ]);
+    await act(async () => {
+      stream?.dispatchEvent(new Event("open"));
+      await rereads;
+    });
+    const updatedRoot = await screen.findByText("Текущий Tools directory:");
+    expect(updatedRoot.parentElement).toHaveTextContent("/srv/new-tools");
+    expect(settingsReads).toBe(2);
+    expect(installationReads).toEqual({ ffmpeg: 2, fpcalc: 2 });
+    expect(operationReads).toBe(2);
+    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+    expect(screen.getByText("fp-1 — активна")).toBeTruthy();
+  });
+
+  it("preserves tools root and active installations after a move worker failure", async () => {
+    const queued = { ...operation, id: "move-failure" };
+    let snapshot: OperationResponse = queued;
+    server.use(
+      http.post("/api/tools/move/preflight", () =>
+        json({
+          preflight_token: "failure-token",
+          conflicts: [],
+          managed_file_count: 2,
+        }),
+      ),
+      http.post("/api/tools/move", () => json(queued)),
+      http.get("/api/operations/move-failure", () => json(snapshot)),
+    );
+    render(<SettingsScreen />);
+    const moveButton = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(moveButton).not.toBeDisabled());
+    fireEvent.click(moveButton);
+    fireEvent.change(screen.getByLabelText("Новый Tools directory"), {
+      target: { value: "/srv/new-tools" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await screen.findByText("Управляемых файлов: 2");
+    const confirm = screen.getByRole("button", { name: "Подтвердить перенос" });
+    await waitFor(() => expect(confirm).not.toBeDisabled());
+    fireEvent.click(confirm);
+    expect(await screen.findByText(/move: queued/)).toBeTruthy();
+    const stream = TestEventSource.instances.find((item) =>
+      item.url.includes("move-failure"),
+    );
+    expect(stream).toBeTruthy();
+
+    snapshot = {
+      ...queued,
+      state: "failed",
+      safe_error: "Worker could not verify copied files",
+    };
+    const failureRead = nextResponseFor("/api/operations/move-failure", "GET");
+    await act(async () => {
+      stream?.dispatchEvent(new Event("open"));
+      await failureRead;
+    });
+    expect(
+      await screen.findByText(
+        /move: failed.*Worker could not verify copied files/,
+      ),
+    ).toBeTruthy();
+    const operationGroup = screen.getByRole("group", {
+      name: "Операция move-failure",
+    });
+    expect(within(operationGroup).getByRole("status")).toHaveTextContent(
+      "Worker could not verify copied files",
+    );
+    expect(
+      within(operationGroup).getByRole("button", {
+        name: "Повторить операцию move-failure",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(operationGroup).getByRole("button", {
+        name: "Закрыть ошибку move-failure",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Текущий Tools directory:").parentElement,
+    ).toHaveTextContent("/srv/tools");
+    expect(screen.getByText("ff-1 — активна")).toBeTruthy();
+    expect(screen.getByText("fp-1 — активна")).toBeTruthy();
+  });
+
+  it("recovers operation snapshots on SSE wake-up and exposes Retry and Dismiss", async () => {
+    const failed = { ...operation, state: "failed", safe_error: "disk full" };
+    common({ operations: [failed] });
+    let reads = 0;
+    const retry = vi.fn();
+    const dismiss = vi.fn();
+    server.use(
+      http.get("/api/operations/:id", () => {
+        reads++;
+        return json(failed);
+      }),
+      http.post("/api/operations/:id/retry", () => {
+        retry();
+        return json(failed);
+      }),
+      http.delete("/api/operations/:id", () => {
+        dismiss();
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    render(<SettingsScreen />);
+    await screen.findByRole("button", { name: "Повторить операцию op-1" });
+    const stream = TestEventSource.instances.find((item) =>
+      item.url.includes("op-1"),
+    );
+    expect(stream).toBeTruthy();
+    const woke = nextResponseFor("/api/operations/op-1", "GET");
+    await act(async () => {
+      stream?.dispatchEvent(new Event("open"));
+      await woke;
+    });
+    expect(reads).toBeGreaterThan(1);
+    const readsBeforeError = reads;
+    const reconnected = nextResponseFor("/api/operations/op-1", "GET");
+    await act(async () => {
+      stream?.dispatchEvent(new Event("error"));
+      await reconnected;
+    });
+    expect(reads).toBeGreaterThan(readsBeforeError);
+    const retried = nextResponseFor("/api/operations/op-1/retry", "POST");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Повторить операцию op-1" }),
+      );
+      await retried;
+    });
+    expect(retry).toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Закрыть ошибку op-1" }),
+    );
+    await waitFor(() => expect(dismiss).toHaveBeenCalled());
+  });
+
+  it("shows health degradation without redirect and leaves unrelated settings operable", async () => {
+    common({ healthy: false });
+    render(<SettingsScreen />);
+    expect(await screen.findByText("FFmpeg недоступен")).toBeTruthy();
+    expect(window.location.hash).not.toBe("#/setup");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Сохранить публикацию" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
+  it("exposes accessible section names, loading, errors and disabled platform actions", async () => {
+    common();
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          platform: {
+            ...settings.platform,
+            supported: false,
+            reason: "unsupported",
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    expect(
+      await screen.findByRole("heading", { name: "Настройки" }),
+    ).toHaveFocus();
+    expect(
+      screen.getByRole("region", { name: "Состояние конфигурации" }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      ).not.toBeDisabled(),
+    );
+    const toolsRoot = screen.getByRole("region", {
+      name: "Каталог инструментов",
+    });
+    expect(
+      within(toolsRoot).getByRole("button", { name: "Перенести каталог" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Платформа недоступна");
   });
 });

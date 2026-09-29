@@ -103,6 +103,13 @@ describe("AppShell gates", () => {
       http.get("/api/setup", () =>
         HttpResponse.json({ ...state, completed: true }),
       ),
+      http.get("/api/settings", () =>
+        HttpResponse.json({ ...state, completed: true }),
+      ),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
     );
     render(<AppShell />);
     await waitFor(() => expect(window.location.hash).toBe("#/"));
