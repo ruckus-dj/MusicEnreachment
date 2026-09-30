@@ -46,6 +46,14 @@ type operationEnqueuingRepository interface {
 	RetryOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 }
 
+// sourceScanRetryEnqueuer is the scan-specific half of a retry. A scan is
+// delivered under its own River kind, so the generic operation retry would hand
+// its job to the install/move dispatcher; the repository that owns the operation
+// table implements this, and NewOperationsWithRiver discovers it once.
+type sourceScanRetryEnqueuer interface {
+	RetrySourceScanOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+}
+
 // operationArgs carries only the durable operation ID. Workers always reload
 // their immutable inputs from the operation snapshot.
 type OperationJobArgs struct {
@@ -59,6 +67,7 @@ func (OperationJobArgs) Kind() string { return "operation_v1" }
 type Operations struct {
 	repository OperationRepository
 	enqueuer   operationEnqueuingRepository
+	scanRetry  sourceScanRetryEnqueuer
 	river      persistence.RiverInserter
 	mu         sync.Mutex
 	watchers   map[uuid.UUID]map[chan struct{}]struct{}
@@ -76,6 +85,9 @@ func NewOperationsWithRiver(repository operationEnqueuingRepository, client pers
 	operations := NewOperations(repository)
 	operations.enqueuer = repository
 	operations.river = client
+	if scans, ok := repository.(sourceScanRetryEnqueuer); ok {
+		operations.scanRetry = scans
+	}
 	return operations
 }
 
@@ -149,12 +161,7 @@ func (s *Operations) Fail(ctx context.Context, id uuid.UUID, stage, safe string)
 }
 func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
 	if s.enqueuer != nil {
-		operation, err := s.enqueuer.RetryOperationAndEnqueue(ctx, id, s.river, OperationJobArgs{OperationID: id}, nil)
-		if err != nil {
-			return nil, err
-		}
-		s.notify(id)
-		return operation, nil
+		return s.retryEnqueued(ctx, id)
 	}
 	existing, err := s.Get(ctx, id)
 	if err != nil {
@@ -176,6 +183,37 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	}
 	s.notify(id)
 	return existing, nil
+}
+
+// retryEnqueued re-queues one failed operation with a new River job. The kind of
+// an operation never changes, so reading it here routes the retry; whether a
+// retry is allowed at all is decided again inside the transaction that does the
+// work.
+func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persistence.Operation, error) {
+	existing, err := s.repository.GetOperation(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	operation, err := s.enqueueRetry(ctx, existing)
+	if err != nil {
+		return nil, err
+	}
+	s.notify(id)
+	return operation, nil
+}
+
+// enqueueRetry keeps the generic retry for every kind but a scan. A scan retry
+// is a new complete traversal of its root, which only the scan repository can
+// enqueue: a repository that cannot do it fails the retry instead of sending a
+// scan to a worker that does not know the kind.
+func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
+	if existing.Kind != SourceScanOperationKind {
+		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, OperationJobArgs{OperationID: existing.ID}, nil)
+	}
+	if s.scanRetry == nil {
+		return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source scan")
+	}
+	return s.scanRetry.RetrySourceScanOperationAndEnqueue(ctx, existing.ID, s.river, ScanSourceJobArgs{OperationID: existing.ID}, nil)
 }
 func (s *Operations) Dismiss(ctx context.Context, id uuid.UUID) error {
 	return s.repository.DismissOperation(ctx, id)

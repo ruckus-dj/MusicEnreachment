@@ -35,10 +35,23 @@ var errInvalidInstallPublicationEvidence = errors.New("invalid installation publ
 
 type riverJobLiveness func(context.Context, *int64) (bool, error)
 
+// interruptedSourceScanRecovery is the scan-specific half of startup recovery:
+// it reports whether the generation of an interrupted scan was already applied
+// to its root and drops the private candidates of one that was not. The
+// repository the composition root passes implements it; the recovery of an
+// install or a tools-root move never asks for it.
+type interruptedSourceScanRecovery interface {
+	RecoverInterruptedSourceScan(context.Context, uuid.UUID) (bool, error)
+}
+
 // ReconcileInterruptedOperations marks queued/running operations whose River
 // delivery is not live as retryable failures and removes their private staging.
-// The caller runs this before starting River workers, so persisted running jobs
-// belong to a previous process and are not mistaken for live work.
+// An interrupted scan is resolved against its root first: a generation the root
+// already records as applied is finished as succeeded without being applied
+// again, and a scan that never applied drops its private candidates and stays
+// retryable, while both leave the previous inventory untouched. The caller runs
+// this before starting River workers, so persisted running jobs belong to a
+// previous process and are not mistaken for live work.
 func ReconcileInterruptedOperations(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, isLive riverJobLiveness, runtimeSettings interruptedOperationSettings, lifecycles ...*tools.Lifecycle) error {
 	lifecycle := tools.NewLifecycle(nil)
 	if len(lifecycles) > 0 && lifecycles[0] != nil {
@@ -58,6 +71,12 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			}
 		}
 		if live {
+			continue
+		}
+		if operation.Kind == service.SourceScanOperationKind {
+			if err := recoverInterruptedSourceScan(ctx, repository, operations, operation); err != nil {
+				return err
+			}
 			continue
 		}
 		if operation.Kind == "install" {
@@ -112,6 +131,26 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		}
 	}
 	return nil
+}
+
+// recoverInterruptedSourceScan finishes one orphaned scan. A generation that the
+// durable root already records as applied is marked succeeded without applying
+// it again and without touching its locations; a scan that never applied is
+// failed with a retryable reason after its private candidates were dropped. The
+// previous inventory is untouched by either outcome.
+func recoverInterruptedSourceScan(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation) error {
+	recovery, ok := repository.(interruptedSourceScanRecovery)
+	if !ok {
+		return fmt.Errorf("recover source scan %s: the repository does not support source scan recovery", operation.ID)
+	}
+	applied, err := recovery.RecoverInterruptedSourceScan(ctx, operation.ID)
+	if err != nil {
+		return fmt.Errorf("recover source scan %s: %w", operation.ID, err)
+	}
+	if applied {
+		return operations.Succeed(ctx, operation.ID, scanSucceededStage)
+	}
+	return operations.Fail(ctx, operation.ID, operation.Stage, scanSafeInterrupted)
 }
 
 func operationStageAfterRetries(stage string) string {

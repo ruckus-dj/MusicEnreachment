@@ -185,7 +185,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if _, err := roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &disabled}); err != nil {
 		t.Fatalf("disable the source root: %v", err)
 	}
-	queued := createScanDispatchOperation(t, ctx, setupManager, root.ID, source)
+	queued := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
 	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, queued.ID))
 
 	// Then the worker re-checks the flag it reloaded and refuses the scan, and the

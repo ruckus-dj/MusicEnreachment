@@ -30,7 +30,16 @@ const (
 	scanSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the scan."
 	scanSafeTraversal    = "The source directory could not be read completely. The previous inventory is unchanged."
 	scanSafeApply        = "The verified scan could not be applied. The previous inventory is unchanged."
+	// scanSafeInterrupted is the reason startup recovery records for a scan whose
+	// process stopped before its generation was applied: the operation stays
+	// retryable and the previous inventory is unchanged.
+	scanSafeInterrupted = "The source scan was interrupted. Retry the scan."
 )
+
+// scanSucceededStage is the terminal stage of a scan whose generation is
+// installed. The worker and startup recovery both report it, so a finished scan
+// reads the same whether the process that applied it survived to say so.
+const scanSucceededStage = "succeeded"
 
 // ffprobeExecutableName is the managed executable a scan probes files with. The
 // name is matched without the platform suffix the managed package adds.
@@ -82,10 +91,11 @@ func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Op
 
 // Work revalidates every precondition, walks the root, applies the verified
 // snapshot in one transaction and marks the operation succeeded only after that
-// commit. A failure before the traversal and a failed traversal or apply both
-// leave the previous inventory untouched and fail the operation with a safe
-// reason; the candidates of the failed attempt are dropped, so no partial
-// snapshot survives it.
+// commit. A delivery of an operation whose generation a previous delivery already
+// applied finishes the operation without walking or applying it again. A failure
+// before the traversal and a failed traversal or apply both leave the previous
+// inventory untouched and fail the operation with a safe reason; the candidates
+// of the failed attempt are dropped, so no partial snapshot survives it.
 func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service.ScanSourceJobArgs]) error {
 	operation, err := worker.repository.GetOperation(ctx, job.Args.OperationID)
 	if err != nil {
@@ -110,6 +120,14 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 			return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeRootGone)
 		}
 		return err
+	}
+	// The apply of this operation committed before the process stopped: the root
+	// records it as the generation it last applied, so the inventory is already
+	// installed and the operation only needs to be finished, whatever state the
+	// root is in now. Walking or applying again would re-probe the tree and
+	// advance the generation of a snapshot that is already published.
+	if root.LastAppliedOperationID != nil && *root.LastAppliedOperationID == operation.ID {
+		return worker.operations.Succeed(ctx, operation.ID, scanSucceededStage)
 	}
 	if !root.Enabled {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeDisabled)
@@ -153,7 +171,7 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		slog.Warn("source scan apply failed", "operation", operation.ID.String(), "cause", err)
 		return worker.fail(ctx, operation, service.SourceScanStageApplying, scanSafeApply)
 	}
-	return worker.operations.Succeed(ctx, operation.ID, "succeeded")
+	return worker.operations.Succeed(ctx, operation.ID, scanSucceededStage)
 }
 
 // scanSourceSnapshot decodes the durable snapshot and confirms it describes the
