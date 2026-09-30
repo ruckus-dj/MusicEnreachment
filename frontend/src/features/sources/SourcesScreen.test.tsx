@@ -9,7 +9,10 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { SourceRootResponse } from "../../api/generated/client.schemas";
+import type {
+  SourceLocationResponse,
+  SourceRootResponse,
+} from "../../api/generated/client.schemas";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
 
@@ -77,8 +80,32 @@ const conflict = () =>
     { status: 409 },
   );
 
+function location(
+  overrides: Partial<SourceLocationResponse> = {},
+): SourceLocationResponse {
+  return {
+    id: "loc-1",
+    relative_path: "Альбом/01 Открытие.flac",
+    size_bytes: 1536,
+    mtime: "2026-09-26T10:20:00Z",
+    probe_status: "audio",
+    ...overrides,
+  };
+}
+
+// The detail page lists the published inventory below the root metadata, so
+// every detail fixture answers the locations request as well.
+function locationsHandler(published: SourceLocationResponse[] = [location()]) {
+  return http.get("/api/sources/:sourceId/locations", () =>
+    HttpResponse.json({ locations: published }),
+  );
+}
+
 beforeEach(() => {
   window.location.hash = "";
+  server.use(
+    http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+  );
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value(this: HTMLDialogElement) {
@@ -101,9 +128,13 @@ afterEach(() => {
   window.location.hash = "";
 });
 
-async function renderDetail(fixture: SourceRootResponse) {
+async function renderDetail(
+  fixture: SourceRootResponse,
+  published: SourceLocationResponse[] = [location()],
+) {
   server.use(
     http.get("/api/sources/:sourceId", () => HttpResponse.json(fixture)),
+    locationsHandler(published),
   );
   window.location.hash = `/sources/${fixture.id}`;
   render(<SourcesScreen />);
@@ -219,6 +250,7 @@ describe("source root list", () => {
     server.use(
       http.get("/api/sources", () => json([root()])),
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
     );
     window.location.hash = "/sources";
     render(<SourcesScreen />);
@@ -328,17 +360,21 @@ describe("source root detail", () => {
     await renderDetail(staleRoot);
 
     expect(screen.getByText("/srv/new-home")).toBeVisible();
-    expect(screen.getByText("/srv/old-home")).toBeVisible();
+    expect(screen.getByText("12 файлов")).toBeVisible();
     expect(
       screen.getByText(
         "Это прежний путь: инвентарь заменится после успешного сканирования текущего пути.",
       ),
     ).toBeVisible();
+    // The published listing names the old path as well: its own scope note
+    // states which path the shown locations belong to.
     expect(
-      screen.getByText(
-        "В инвентаре последнего успешного сканирования 12 файлов.",
+      await screen.findByText(
+        "Инвентарь относится к прежнему пути /srv/old-home.",
       ),
     ).toBeVisible();
+    expect(screen.getAllByText("/srv/old-home")).toHaveLength(2);
+    await screen.findByRole("row", { name: /01 Открытие/ });
     expect(
       screen.getByRole("button", { name: "Изменить каталог" }),
     ).toBeVisible();
@@ -348,22 +384,20 @@ describe("source root detail", () => {
   });
 
   it("reports a root that was never scanned", async () => {
-    await renderDetail(neverScanned);
+    await renderDetail(neverScanned, []);
 
-    expect(
-      screen.getByText(
-        "Инвентаря нет: каталог ещё ни разу не сканировался успешно.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/Инвентаря нет/)).toHaveTextContent(
+      "Инвентаря нет: каталог ещё ни разу не сканировался успешно. Список файлов появится после успешного сканирования.",
+    );
     expect(screen.getByText("Не выполнялось")).toBeVisible();
   });
 
   it("reports an empty successful scan", async () => {
-    await renderDetail(scannedEmpty);
+    await renderDetail(scannedEmpty, []);
 
     expect(
-      screen.getByText(
-        "Последнее успешное сканирование не нашло ни одного файла с поддерживаемым аудиорасширением.",
+      await screen.findByText(
+        "Последнее успешное сканирование не нашло файлов с поддерживаемым аудиорасширением.",
       ),
     ).toBeVisible();
     expect(screen.getByText("0 файлов")).toBeVisible();
@@ -420,6 +454,7 @@ describe("source root detail", () => {
     let patched: unknown;
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
       http.patch("/api/sources/:sourceId", async ({ request }) => {
         patched = await request.json();
         return HttpResponse.json(saved);
@@ -459,6 +494,7 @@ describe("source root detail", () => {
     let patched: unknown;
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
       http.patch("/api/sources/:sourceId", async ({ request }) => {
         patched = await request.json();
         return HttpResponse.json(saved);
@@ -486,6 +522,7 @@ describe("source root detail", () => {
   it("refuses an edit of a root that is being scanned", async () => {
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
       http.patch("/api/sources/:sourceId", () => conflict()),
     );
     window.location.hash = "/sources/root-1";
@@ -511,6 +548,7 @@ describe("source root deletion", () => {
   it("closes the dialog on cancel without a request and returns focus to its trigger", async () => {
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
     );
     window.location.hash = "/sources/root-1";
     render(<SourcesScreen />);
@@ -541,6 +579,7 @@ describe("source root deletion", () => {
   it("closes the dialog on Escape and keeps the root", async () => {
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
     );
     window.location.hash = "/sources/root-1";
     render(<SourcesScreen />);
@@ -560,6 +599,7 @@ describe("source root deletion", () => {
     const confirmed: unknown[] = [];
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
       http.get("/api/sources", () => json(sources)),
       http.delete("/api/sources/:sourceId", async ({ request, params }) => {
         expect(params.sourceId).toBe("root-1");
@@ -595,6 +635,7 @@ describe("source root deletion", () => {
   it("keeps the dialog open when the server refuses the deletion", async () => {
     server.use(
       http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      locationsHandler(),
       http.delete("/api/sources/:sourceId", () => conflict()),
     );
     window.location.hash = "/sources/root-1";

@@ -36,6 +36,7 @@ type OperationResponse struct {
 	State                string     `json:"state"`
 	Stage                string     `json:"stage"`
 	TargetInstallationID *uuid.UUID `json:"target_installation_id,omitempty"`
+	TargetSourceRootID   *uuid.UUID `json:"target_source_root_id,omitempty"`
 	TargetIdentity       string     `json:"target_identity,omitempty"`
 	BytesCompleted       int64      `json:"bytes_completed"`
 	BytesTotal           *int64     `json:"bytes_total,omitempty"`
@@ -123,7 +124,8 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 func operationResponse(snapshot service.OperationSnapshot) OperationResponse {
 	return OperationResponse{
 		ID: snapshot.ID, Kind: snapshot.Kind, State: snapshot.State, Stage: snapshot.Stage,
-		TargetInstallationID: snapshot.TargetInstallationID, TargetIdentity: snapshot.TargetIdentity,
+		TargetInstallationID: snapshot.TargetInstallationID, TargetSourceRootID: snapshot.TargetSourceRootID,
+		TargetIdentity: snapshot.TargetIdentity,
 		BytesCompleted: snapshot.BytesCompleted, BytesTotal: snapshot.BytesTotal,
 		SafeError: snapshot.SafeError, CreatedAt: snapshot.CreatedAt,
 		StartedAt: snapshot.StartedAt, FinishedAt: snapshot.FinishedAt, UpdatedAt: snapshot.UpdatedAt,

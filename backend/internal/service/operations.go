@@ -30,6 +30,7 @@ type OperationSnapshot struct {
 	State                string
 	Stage                string
 	TargetInstallationID *uuid.UUID
+	TargetSourceRootID   *uuid.UUID
 	TargetIdentity       string
 	BytesCompleted       int64
 	BytesTotal           *int64
@@ -139,7 +140,8 @@ func operationSnapshot(operation *persistence.Operation) OperationSnapshot {
 	_ = json.Unmarshal(operation.InputSnapshot, &inputs)
 	return OperationSnapshot{
 		ID: operation.ID, Kind: operation.Kind, State: operation.State, Stage: operation.Stage,
-		TargetInstallationID: operation.TargetInstallationID, TargetIdentity: inputs.TargetIdentity,
+		TargetInstallationID: operation.TargetInstallationID, TargetSourceRootID: operation.TargetSourceRootID,
+		TargetIdentity: inputs.TargetIdentity,
 		BytesCompleted: operation.BytesCompleted, BytesTotal: operation.BytesTotal, SafeError: operation.SafeError,
 		CreatedAt: operation.CreatedAt, StartedAt: operation.StartedAt, FinishedAt: operation.FinishedAt, UpdatedAt: operation.UpdatedAt,
 	}

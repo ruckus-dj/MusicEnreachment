@@ -13,21 +13,6 @@
   color: var(--sources-ink);
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  .sources-screen {
-    --sources-surface: #191e1a;
-    --sources-raised: #222923;
-    --sources-ink: #e3eae3;
-    --sources-muted: #a7b5a9;
-    --sources-line: #354138;
-    --sources-control: #718376;
-    --sources-accent: #83dca0;
-    --sources-accent-soft: #233e2c;
-    --sources-warning: #edc474;
-    --sources-error: #ffa09b;
-    --sources-error-soft: #3a2425;
-  }
-}
 .sources-screen h1 {
   font-size: 20px;
   line-height: 26px;
@@ -159,6 +144,18 @@
   background: var(--sources-accent-soft);
 }
 .sources-chip[data-status="unavailable"] {
+  color: var(--sources-error);
+  background: var(--sources-error-soft);
+}
+.sources-chip[data-status="audio"] {
+  color: var(--sources-accent);
+  background: var(--sources-accent-soft);
+}
+.sources-chip[data-status="no_audio"] {
+  color: var(--sources-warning);
+  background: var(--sources-raised);
+}
+.sources-chip[data-status="probe_error"] {
   color: var(--sources-error);
   background: var(--sources-error-soft);
 }

@@ -77,3 +77,60 @@ func TestOperationTransitionsAndRetry(t *testing.T) {
 		t.Fatalf("repeated retry stage = %s; want retry:verify without a duplicate prefix", retriedAgain.Stage)
 	}
 }
+
+// TestOperationSnapshotExposesTheScanTargetSourceRootID pins the correlation
+// contract a root page needs: a scan exposes the source root it traverses, so a
+// page opened for one root can tell its scan apart from a scan of another root,
+// while an install or move operation, which has no source root, reports none.
+func TestOperationSnapshotExposesTheScanTargetSourceRootID(t *testing.T) {
+	ctx := context.Background()
+	rootID := uuid.New()
+	scanID, installID := uuid.New(), uuid.New()
+	repository := &memoryOperations{values: map[uuid.UUID]*persistence.Operation{
+		scanID: {
+			ID: scanID, Kind: SourceScanOperationKind, State: "running", Stage: SourceScanStageTraversing,
+			InputSnapshot:      []byte(`{"source_root_id":"` + rootID.String() + `"}`),
+			TargetSourceRootID: &rootID,
+		},
+		installID: {ID: installID, Kind: "install", State: "running", Stage: "download"},
+	}}
+	operations := NewOperations(repository)
+
+	scan, err := operations.Snapshot(ctx, scanID)
+	if err != nil {
+		t.Fatalf("read the scan snapshot: %v", err)
+	}
+	if scan.TargetSourceRootID == nil || *scan.TargetSourceRootID != rootID {
+		t.Fatalf("scan snapshot target source root = %v, want %s", scan.TargetSourceRootID, rootID)
+	}
+
+	install, err := operations.Snapshot(ctx, installID)
+	if err != nil {
+		t.Fatalf("read the install snapshot: %v", err)
+	}
+	if install.TargetSourceRootID != nil {
+		t.Fatalf("install snapshot target source root = %v, want none", install.TargetSourceRootID)
+	}
+
+	listed, err := operations.ListSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("list the operation snapshots: %v", err)
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, snapshot := range listed {
+		seen[snapshot.ID] = true
+		switch snapshot.ID {
+		case scanID:
+			if snapshot.TargetSourceRootID == nil || *snapshot.TargetSourceRootID != rootID {
+				t.Fatalf("listed scan target source root = %v, want %s", snapshot.TargetSourceRootID, rootID)
+			}
+		case installID:
+			if snapshot.TargetSourceRootID != nil {
+				t.Fatalf("listed install target source root = %v, want none", snapshot.TargetSourceRootID)
+			}
+		}
+	}
+	if !seen[scanID] || !seen[installID] {
+		t.Fatalf("listed operations omit the fixtures: %v", seen)
+	}
+}

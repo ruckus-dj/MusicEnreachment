@@ -12,10 +12,10 @@ import {
 } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { SourceLocations } from "./SourceLocations";
+import { SourceScanControl } from "./SourceScanControl";
 import {
   fileCount,
-  filesSummary,
-  inventoryAvailabilityNote,
   inventoryLabel,
   lastScanLabel,
   message,
@@ -28,6 +28,10 @@ type EditForm = { displayName: string; path: string; enabled: boolean };
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const [root, setRoot] = useState<SourceRootResponse>();
+  // Every authoritative root update also re-reads the published inventory: a
+  // successful scan publishes a new generation, and a path edit changes what
+  // the listed paths are relative to. This token is that re-read trigger.
+  const [refresh, setRefresh] = useState(0);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<EditForm>({
     displayName: "",
@@ -47,19 +51,24 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const dialogTrigger = useRef<HTMLElement | null>(null);
 
+  const applyRoot = useCallback((next: SourceRootResponse) => {
+    setRoot(next);
+    setRefresh((value) => value + 1);
+  }, []);
+
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
       const response = await getSource(sourceId, { cache: "no-store" });
       if (response.status !== 200) throw sourceFailure("read", response);
-      setRoot(response.data);
+      applyRoot(response.data);
     } catch (reason) {
       setError(message(reason));
     } finally {
       setBusy(false);
     }
-  }, [sourceId]);
+  }, [sourceId, applyRoot]);
 
   useEffect(() => {
     heading.current?.focus();
@@ -109,7 +118,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
         enabled: form.enabled,
       });
       if (response.status !== 200) throw sourceFailure("edit", response);
-      setRoot(response.data);
+      applyRoot(response.data);
       setEditing(false);
       setNotice(
         response.data.stale && response.data.inventory_path
@@ -157,8 +166,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       setBusy(false);
     }
   }
-
-  const availability = root ? inventoryAvailabilityNote(root) : "";
 
   return (
     <section
@@ -241,14 +248,12 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
               чтения и ничего в него не записывает.
             </p>
           </section>
-          <section
-            aria-labelledby="source-files-title"
-            className="sources-panel"
-          >
-            <h2 id="source-files-title">Файлы инвентаря</h2>
-            <p>{filesSummary(root)}</p>
-            {availability && <p className="sources-note">{availability}</p>}
-          </section>
+          <SourceScanControl root={root} onScanCompleted={load} />
+          <SourceLocations
+            sourceId={sourceId}
+            root={root}
+            refreshToken={refresh}
+          />
           <section
             aria-labelledby="source-edit-title"
             className="sources-panel"

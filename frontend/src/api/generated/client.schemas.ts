@@ -220,6 +220,7 @@ export interface OperationResponse {
   state: string;
   target_identity?: string;
   target_installation_id?: string;
+  target_source_root_id?: string;
   updated_at: string;
 }
 

@@ -87,12 +87,24 @@ describe("AppShell gates", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Загрузка");
     expect(screen.queryByText("Managed tools")).not.toBeInTheDocument();
     await request;
+    const redirected = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener("hashchange", onChange);
+        reject(new Error("Setup route did not replace the settings route"));
+      }, 4000);
+      function onChange() {
+        if (window.location.hash !== "#/setup") return;
+        clearTimeout(timeout);
+        window.removeEventListener("hashchange", onChange);
+        resolve();
+      }
+      window.addEventListener("hashchange", onChange);
+    });
     respond(HttpResponse.json(state));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Первый запуск" }),
-      ).toBeVisible(),
-    );
+    await redirected;
+    expect(
+      screen.getByRole("heading", { name: "Первый запуск" }),
+    ).toBeVisible();
     expect(window.location.hash).toBe("#/setup");
   });
   it("provides error and retry before selecting route", async () => {
