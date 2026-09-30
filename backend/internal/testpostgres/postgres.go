@@ -67,6 +67,15 @@ func Open(t *testing.T) *bun.DB {
 	return database
 }
 
+// Reset replaces the public schema without applying migrations.
+func Reset(t *testing.T, database *bun.DB) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
+		t.Fatalf("reset PostgreSQL integration schema: %v", err)
+	}
+}
+
 // ResetAndMigrate replaces the public schema in the isolated Testcontainer or explicit test database.
 func ResetAndMigrate(t *testing.T, database *bun.DB) {
 	t.Helper()

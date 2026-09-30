@@ -42,6 +42,7 @@ type Operation struct {
 	Stage                string          `bun:"stage"`
 	InputSnapshot        json.RawMessage `bun:"input_snapshot,type:jsonb"`
 	TargetInstallationID *uuid.UUID      `bun:"target_installation_id,type:uuid,nullzero"`
+	TargetSourceRootID   *uuid.UUID      `bun:"target_source_root_id,type:uuid,nullzero"`
 	Attempt              int             `bun:"attempt"`
 	BytesCompleted       int64           `bun:"bytes_completed"`
 	BytesTotal           *int64          `bun:"bytes_total,nullzero"`
