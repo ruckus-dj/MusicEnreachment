@@ -28,6 +28,8 @@ import type {
   CheckMusicBrainzBody,
   CheckPathsBody,
   CheckPathsInputBody,
+  CreateSourceBody,
+  DeleteSourceBody,
   ErrorModel,
   InstallPreflightBody,
   InstallPreflightInputBody,
@@ -35,6 +37,7 @@ import type {
   InstallationsBody,
   ListInstallationsParams,
   ListOperationsParams,
+  ListSourceLocationsParams,
   ListToolCatalogParams,
   MovePreflightBody,
   MovePreflightInputBody,
@@ -42,12 +45,16 @@ import type {
   OperationsBody,
   SaveRuntimeBody,
   SetupStateBody,
+  SourceLocationsBody,
+  SourceRootResponse,
+  SourcesBody,
   StartInstallBody,
   StartMoveBody,
   UpdateLRCLIBBody,
   UpdateLogLevelBody,
   UpdateMusicBrainzBody,
-  UpdateSettingsBody
+  UpdateSettingsBody,
+  UpdateSourceBody
 } from './client.schemas';
 
 
@@ -2155,6 +2162,846 @@ export const useSaveSetupRuntime = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSaveSetupRuntimeMutationOptions(options), queryClient);
+    }
+
+export type listSourcesResponse200 = {
+  data: SourcesBody
+  status: 200
+}
+
+export type listSourcesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listSourcesResponseSuccess = (listSourcesResponse200) & {
+  headers: Headers;
+};
+export type listSourcesResponseError = (listSourcesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listSourcesResponse = (listSourcesResponseSuccess | listSourcesResponseError)
+
+export const getListSourcesUrl = () => {
+
+
+
+
+  return `/api/sources`
+}
+
+/**
+ * @summary List registered source roots
+ */
+export const listSources = async ( options?: RequestInit): Promise<listSourcesResponse> => {
+
+  const res = await fetch(getListSourcesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listSourcesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listSourcesResponse
+}
+
+
+
+
+
+export const getListSourcesQueryKey = () => {
+    return [
+    `/api/sources`
+    ] as const;
+    }
+
+
+export const getListSourcesQueryOptions = <TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSourcesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSources>>> = ({ signal }) => listSources({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSourcesQueryResult = NonNullable<Awaited<ReturnType<typeof listSources>>>
+export type ListSourcesQueryError = ErrorModel
+
+
+export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSources>>,
+          TError,
+          Awaited<ReturnType<typeof listSources>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSources>>,
+          TError,
+          Awaited<ReturnType<typeof listSources>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List registered source roots
+ */
+
+export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSourcesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type createSourceResponse200 = {
+  data: SourceRootResponse
+  status: 200
+}
+
+export type createSourceResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type createSourceResponseSuccess = (createSourceResponse200) & {
+  headers: Headers;
+};
+export type createSourceResponseError = (createSourceResponseDefault) & {
+  headers: Headers;
+};
+
+export type createSourceResponse = (createSourceResponseSuccess | createSourceResponseError)
+
+export const getCreateSourceUrl = () => {
+
+
+
+
+  return `/api/sources`
+}
+
+/**
+ * @summary Register a source root
+ */
+export const createSource = async (createSourceBody: NonReadonly<CreateSourceBody>, options?: RequestInit): Promise<createSourceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCreateSourceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createSourceBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createSourceResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createSourceResponse
+}
+
+
+
+
+
+export const getCreateSourceMutationKey = () => ['createSource'] as const;
+
+export const getCreateSourceMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,CreateSourceMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,CreateSourceMutationVariables, TContext> => {
+
+const mutationKey = getCreateSourceMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createSource>>, CreateSourceMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createSource(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateSourceMutationResult = NonNullable<Awaited<ReturnType<typeof createSource>>>
+    export type CreateSourceMutationBody = NonReadonly<CreateSourceBody>
+    export type CreateSourceMutationError = ErrorModel
+    export type CreateSourceMutationVariables = {data: NonReadonly<CreateSourceBody>}
+
+    /**
+ * @summary Register a source root
+ */
+export const useCreateSource = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,CreateSourceMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createSource>>,
+        TError,
+        CreateSourceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateSourceMutationOptions(options), queryClient);
+    }
+
+export type deleteSourceResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteSourceResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteSourceResponseSuccess = (deleteSourceResponse204) & {
+  headers: Headers;
+};
+export type deleteSourceResponseError = (deleteSourceResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteSourceResponse = (deleteSourceResponseSuccess | deleteSourceResponseError)
+
+export const getDeleteSourceUrl = (sourceId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}`
+}
+
+/**
+ * @summary Delete a source root and its inventory
+ */
+export const deleteSource = async (sourceId: string,
+    deleteSourceBody: NonReadonly<DeleteSourceBody>, options?: RequestInit): Promise<deleteSourceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getDeleteSourceUrl(sourceId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(deleteSourceBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteSourceResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteSourceResponse
+}
+
+
+
+
+
+export const getDeleteSourceMutationKey = () => ['deleteSource'] as const;
+
+export const getDeleteSourceMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,DeleteSourceMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,DeleteSourceMutationVariables, TContext> => {
+
+const mutationKey = getDeleteSourceMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSource>>, DeleteSourceMutationVariables> = (props) => {
+          const {sourceId,data} = props ?? {};
+
+          return  deleteSource(sourceId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSourceMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSource>>>
+    export type DeleteSourceMutationBody = NonReadonly<DeleteSourceBody>
+    export type DeleteSourceMutationError = ErrorModel
+    export type DeleteSourceMutationVariables = {sourceId: string;data: NonReadonly<DeleteSourceBody>}
+
+    /**
+ * @summary Delete a source root and its inventory
+ */
+export const useDeleteSource = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,DeleteSourceMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSource>>,
+        TError,
+        DeleteSourceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteSourceMutationOptions(options), queryClient);
+    }
+
+export type getSourceResponse200 = {
+  data: SourceRootResponse
+  status: 200
+}
+
+export type getSourceResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getSourceResponseSuccess = (getSourceResponse200) & {
+  headers: Headers;
+};
+export type getSourceResponseError = (getSourceResponseDefault) & {
+  headers: Headers;
+};
+
+export type getSourceResponse = (getSourceResponseSuccess | getSourceResponseError)
+
+export const getGetSourceUrl = (sourceId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}`
+}
+
+/**
+ * @summary Read a source root
+ */
+export const getSource = async (sourceId: string, options?: RequestInit): Promise<getSourceResponse> => {
+
+  const res = await fetch(getGetSourceUrl(sourceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getSourceResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getSourceResponse
+}
+
+
+
+
+
+export const getGetSourceQueryKey = (sourceId: string,) => {
+    return [
+    `/api/sources/${sourceId}`
+    ] as const;
+    }
+
+
+export const getGetSourceQueryOptions = <TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorModel>(sourceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSourceQueryKey(sourceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSource>>> = ({ signal }) => getSource(sourceId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: sourceId !== null && sourceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSourceQueryResult = NonNullable<Awaited<ReturnType<typeof getSource>>>
+export type GetSourceQueryError = ErrorModel
+
+
+export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorModel>(
+ sourceId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSource>>,
+          TError,
+          Awaited<ReturnType<typeof getSource>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorModel>(
+ sourceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSource>>,
+          TError,
+          Awaited<ReturnType<typeof getSource>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorModel>(
+ sourceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read a source root
+ */
+
+export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorModel>(
+ sourceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSourceQueryOptions(sourceId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type updateSourceResponse200 = {
+  data: SourceRootResponse
+  status: 200
+}
+
+export type updateSourceResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateSourceResponseSuccess = (updateSourceResponse200) & {
+  headers: Headers;
+};
+export type updateSourceResponseError = (updateSourceResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateSourceResponse = (updateSourceResponseSuccess | updateSourceResponseError)
+
+export const getUpdateSourceUrl = (sourceId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}`
+}
+
+/**
+ * @summary Edit a source root
+ */
+export const updateSource = async (sourceId: string,
+    updateSourceBody: NonReadonly<UpdateSourceBody>, options?: RequestInit): Promise<updateSourceResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateSourceUrl(sourceId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateSourceBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateSourceResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateSourceResponse
+}
+
+
+
+
+
+export const getUpdateSourceMutationKey = () => ['updateSource'] as const;
+
+export const getUpdateSourceMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,UpdateSourceMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,UpdateSourceMutationVariables, TContext> => {
+
+const mutationKey = getUpdateSourceMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSource>>, UpdateSourceMutationVariables> = (props) => {
+          const {sourceId,data} = props ?? {};
+
+          return  updateSource(sourceId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSourceMutationResult = NonNullable<Awaited<ReturnType<typeof updateSource>>>
+    export type UpdateSourceMutationBody = NonReadonly<UpdateSourceBody>
+    export type UpdateSourceMutationError = ErrorModel
+    export type UpdateSourceMutationVariables = {sourceId: string;data: NonReadonly<UpdateSourceBody>}
+
+    /**
+ * @summary Edit a source root
+ */
+export const useUpdateSource = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,UpdateSourceMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateSource>>,
+        TError,
+        UpdateSourceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateSourceMutationOptions(options), queryClient);
+    }
+
+export type listSourceLocationsResponse200 = {
+  data: SourceLocationsBody
+  status: 200
+}
+
+export type listSourceLocationsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listSourceLocationsResponseSuccess = (listSourceLocationsResponse200) & {
+  headers: Headers;
+};
+export type listSourceLocationsResponseError = (listSourceLocationsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listSourceLocationsResponse = (listSourceLocationsResponseSuccess | listSourceLocationsResponseError)
+
+export const getListSourceLocationsUrl = (sourceId: string,
+    params?: ListSourceLocationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/sources/${sourceId}/locations?${stringifiedParams}` : `/api/sources/${sourceId}/locations`
+}
+
+/**
+ * @summary List the last successful inventory of a source root
+ */
+export const listSourceLocations = async (sourceId: string,
+    params?: ListSourceLocationsParams, options?: RequestInit): Promise<listSourceLocationsResponse> => {
+
+  const res = await fetch(getListSourceLocationsUrl(sourceId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listSourceLocationsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listSourceLocationsResponse
+}
+
+
+
+
+
+export const getListSourceLocationsQueryKey = (sourceId: string,
+    params?: ListSourceLocationsParams,) => {
+    return [
+    `/api/sources/${sourceId}/locations`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSourceLocationsQueryOptions = <TData = Awaited<ReturnType<typeof listSourceLocations>>, TError = ErrorModel>(sourceId: string,
+    params?: ListSourceLocationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSourceLocationsQueryKey(sourceId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSourceLocations>>> = ({ signal }) => listSourceLocations(sourceId,params, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: sourceId !== null && sourceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSourceLocationsQueryResult = NonNullable<Awaited<ReturnType<typeof listSourceLocations>>>
+export type ListSourceLocationsQueryError = ErrorModel
+
+
+export function useListSourceLocations<TData = Awaited<ReturnType<typeof listSourceLocations>>, TError = ErrorModel>(
+ sourceId: string,
+    params: undefined |  ListSourceLocationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSourceLocations>>,
+          TError,
+          Awaited<ReturnType<typeof listSourceLocations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSourceLocations<TData = Awaited<ReturnType<typeof listSourceLocations>>, TError = ErrorModel>(
+ sourceId: string,
+    params?: ListSourceLocationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSourceLocations>>,
+          TError,
+          Awaited<ReturnType<typeof listSourceLocations>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSourceLocations<TData = Awaited<ReturnType<typeof listSourceLocations>>, TError = ErrorModel>(
+ sourceId: string,
+    params?: ListSourceLocationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List the last successful inventory of a source root
+ */
+
+export function useListSourceLocations<TData = Awaited<ReturnType<typeof listSourceLocations>>, TError = ErrorModel>(
+ sourceId: string,
+    params?: ListSourceLocationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceLocations>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSourceLocationsQueryOptions(sourceId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type startSourceScanResponse200 = {
+  data: OperationResponse
+  status: 200
+}
+
+export type startSourceScanResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type startSourceScanResponseSuccess = (startSourceScanResponse200) & {
+  headers: Headers;
+};
+export type startSourceScanResponseError = (startSourceScanResponseDefault) & {
+  headers: Headers;
+};
+
+export type startSourceScanResponse = (startSourceScanResponseSuccess | startSourceScanResponseError)
+
+export const getStartSourceScanUrl = (sourceId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}/scan`
+}
+
+/**
+ * @summary Start a scan of a source root
+ */
+export const startSourceScan = async (sourceId: string, options?: RequestInit): Promise<startSourceScanResponse> => {
+
+  const res = await fetch(getStartSourceScanUrl(sourceId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startSourceScanResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startSourceScanResponse
+}
+
+
+
+
+
+export const getStartSourceScanMutationKey = () => ['startSourceScan'] as const;
+
+export const getStartSourceScanMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSourceScan>>, TError,StartSourceScanMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startSourceScan>>, TError,StartSourceScanMutationVariables, TContext> => {
+
+const mutationKey = getStartSourceScanMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startSourceScan>>, StartSourceScanMutationVariables> = (props) => {
+          const {sourceId} = props ?? {};
+
+          return  startSourceScan(sourceId,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartSourceScanMutationResult = NonNullable<Awaited<ReturnType<typeof startSourceScan>>>
+
+    export type StartSourceScanMutationError = ErrorModel
+    export type StartSourceScanMutationVariables = {sourceId: string}
+
+    /**
+ * @summary Start a scan of a source root
+ */
+export const useStartSourceScan = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startSourceScan>>, TError,StartSourceScanMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startSourceScan>>,
+        TError,
+        StartSourceScanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartSourceScanMutationOptions(options), queryClient);
     }
 
 export type listToolCatalogResponse200 = {

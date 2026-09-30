@@ -25,7 +25,10 @@ import type {
   MovePreflightBody,
   OperationResponse,
   OperationsBody,
-  SetupStateBody
+  SetupStateBody,
+  SourceLocationsBody,
+  SourceRootResponse,
+  SourcesBody
 } from './client.schemas';
 
 
@@ -46,6 +49,18 @@ export const getCheckMusicbrainzResponseMock = (overrideResponse: Partial<Extrac
 export const getGetConfigurationHealthResponseMock = (overrideResponse: Partial<Extract<SetupStateBody, object>> = {}): SetupStateBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), completed: faker.datatype.boolean(), configuration_health: {healthy: faker.datatype.boolean(), problems: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null])}, platform: {diagnostic: faker.datatype.boolean(), goarch: faker.string.alpha({length: {min: 10, max: 20}}), goos: faker.string.alpha({length: {min: 10, max: 20}}), reason: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), supported: faker.datatype.boolean()}, settings: {active_ffmpeg_installation_id: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), active_fpcalc_installation_id: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), log_level: faker.string.alpha({length: {min: 10, max: 20}}), lrclib_enabled: faker.datatype.boolean(), musicbrainz_base_url: faker.string.alpha({length: {min: 10, max: 20}}), musicbrainz_mode: faker.string.alpha({length: {min: 10, max: 20}}), musicbrainz_verified_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), output_case_sensitive: faker.helpers.arrayElement([faker.datatype.boolean(), undefined]), output_directory: faker.string.alpha({length: {min: 10, max: 20}}), output_unicode_normalization: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), publication_format: faker.string.alpha({length: {min: 10, max: 20}}), tools_directory: faker.string.alpha({length: {min: 10, max: 20}})}, ...overrideResponse})
 
 export const getCheckSetupPathsResponseMock = (overrideResponse: Partial<Extract<CheckPathsBody, object>> = {}): CheckPathsBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), output_case_sensitive: faker.datatype.boolean(), output_directory: faker.string.alpha({length: {min: 10, max: 20}}), output_unicode_normalization: faker.string.alpha({length: {min: 10, max: 20}}), tools_directory: faker.string.alpha({length: {min: 10, max: 20}}), ...overrideResponse})
+
+export const getListSourcesResponseMock = (overrideResponse: Partial<Extract<SourcesBody, object>> = {}): SourcesBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), sources: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), configured_path: faker.string.alpha({length: {min: 10, max: 20}}), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', display_name: faker.string.alpha({length: {min: 10, max: 20}}), enabled: faker.datatype.boolean(), id: faker.string.alpha({length: {min: 10, max: 20}}), inventory_path: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), last_successful_scan_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), location_count: faker.number.int(), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), scan_generation: faker.number.int(), stale: faker.datatype.boolean(), status: faker.helpers.arrayElement(['unknown','available','unavailable'] as const), updated_at: faker.date.past().toISOString().slice(0, 19) + 'Z'})), null]), ...overrideResponse})
+
+export const getCreateSourceResponseMock = (overrideResponse: Partial<Extract<SourceRootResponse, object>> = {}): SourceRootResponse => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), configured_path: faker.string.alpha({length: {min: 10, max: 20}}), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', display_name: faker.string.alpha({length: {min: 10, max: 20}}), enabled: faker.datatype.boolean(), id: faker.string.alpha({length: {min: 10, max: 20}}), inventory_path: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), last_successful_scan_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), location_count: faker.number.int(), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), scan_generation: faker.number.int(), stale: faker.datatype.boolean(), status: faker.helpers.arrayElement(['unknown','available','unavailable'] as const), updated_at: faker.date.past().toISOString().slice(0, 19) + 'Z', ...overrideResponse})
+
+export const getGetSourceResponseMock = (overrideResponse: Partial<Extract<SourceRootResponse, object>> = {}): SourceRootResponse => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), configured_path: faker.string.alpha({length: {min: 10, max: 20}}), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', display_name: faker.string.alpha({length: {min: 10, max: 20}}), enabled: faker.datatype.boolean(), id: faker.string.alpha({length: {min: 10, max: 20}}), inventory_path: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), last_successful_scan_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), location_count: faker.number.int(), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), scan_generation: faker.number.int(), stale: faker.datatype.boolean(), status: faker.helpers.arrayElement(['unknown','available','unavailable'] as const), updated_at: faker.date.past().toISOString().slice(0, 19) + 'Z', ...overrideResponse})
+
+export const getUpdateSourceResponseMock = (overrideResponse: Partial<Extract<SourceRootResponse, object>> = {}): SourceRootResponse => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), configured_path: faker.string.alpha({length: {min: 10, max: 20}}), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', display_name: faker.string.alpha({length: {min: 10, max: 20}}), enabled: faker.datatype.boolean(), id: faker.string.alpha({length: {min: 10, max: 20}}), inventory_path: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), last_successful_scan_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), location_count: faker.number.int(), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), scan_generation: faker.number.int(), stale: faker.datatype.boolean(), status: faker.helpers.arrayElement(['unknown','available','unavailable'] as const), updated_at: faker.date.past().toISOString().slice(0, 19) + 'Z', ...overrideResponse})
+
+export const getListSourceLocationsResponseMock = (overrideResponse: Partial<Extract<SourceLocationsBody, object>> = {}): SourceLocationsBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), locations: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({id: faker.string.alpha({length: {min: 10, max: 20}}), mtime: faker.date.past().toISOString().slice(0, 19) + 'Z', probe_status: faker.helpers.arrayElement(['audio','no_audio','probe_error'] as const), relative_path: faker.string.alpha({length: {min: 10, max: 20}}), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), size_bytes: faker.number.int()})), null]), next_cursor: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), ...overrideResponse})
+
+export const getStartSourceScanResponseMock = (overrideResponse: Partial<Extract<OperationResponse, object>> = {}): OperationResponse => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), bytes_completed: faker.number.int(), bytes_total: faker.helpers.arrayElement([faker.number.int(), undefined]), created_at: faker.date.past().toISOString().slice(0, 19) + 'Z', finished_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), id: faker.string.alpha({length: {min: 10, max: 20}}), kind: faker.string.alpha({length: {min: 10, max: 20}}), safe_error: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), stage: faker.string.alpha({length: {min: 10, max: 20}}), started_at: faker.helpers.arrayElement([faker.date.past().toISOString().slice(0, 19) + 'Z', undefined]), state: faker.string.alpha({length: {min: 10, max: 20}}), target_identity: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), target_installation_id: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), updated_at: faker.date.past().toISOString().slice(0, 19) + 'Z', ...overrideResponse})
 
 export const getListToolCatalogResponseMock = (overrideResponse: Partial<Extract<CatalogBody, object>> = {}): CatalogBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), notice: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), package_kind: faker.string.alpha({length: {min: 10, max: 20}}), platform: {diagnostic: faker.datatype.boolean(), goarch: faker.string.alpha({length: {min: 10, max: 20}}), goos: faker.string.alpha({length: {min: 10, max: 20}}), reason: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), supported: faker.datatype.boolean()}, releases: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({artifacts: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({checksum_provided: faker.datatype.boolean(), name: faker.string.alpha({length: {min: 10, max: 20}})})), null]), identity: faker.string.alpha({length: {min: 10, max: 20}}), source: faker.string.alpha({length: {min: 10, max: 20}})})), null]), ...overrideResponse})
 
@@ -260,6 +275,88 @@ export const getSaveSetupRuntimeMockHandler = (overrideResponse?: void | ((info:
   }, options)
 }
 
+export const getListSourcesMockHandler = (overrideResponse?: SourcesBody | ((info: Parameters<Parameters<typeof http.get>[1]>[0]) => Promise<SourcesBody> | SourcesBody), options?: RequestHandlerOptions) => {
+  return http.get('*/sources', async (info: Parameters<Parameters<typeof http.get>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getListSourcesResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getCreateSourceMockHandler = (overrideResponse?: SourceRootResponse | ((info: Parameters<Parameters<typeof http.post>[1]>[0]) => Promise<SourceRootResponse> | SourceRootResponse), options?: RequestHandlerOptions) => {
+  return http.post('*/sources', async (info: Parameters<Parameters<typeof http.post>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getCreateSourceResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getDeleteSourceMockHandler = (overrideResponse?: void | ((info: Parameters<Parameters<typeof http.delete>[1]>[0]) => Promise<void> | void), options?: RequestHandlerOptions) => {
+  return http.delete('*/sources/:sourceId', async (info: Parameters<Parameters<typeof http.delete>[1]>[0]) => {
+  if (typeof overrideResponse === 'function') {await overrideResponse(info); }
+
+    return new HttpResponse(null,
+      { status: 204
+      })
+  }, options)
+}
+
+export const getGetSourceMockHandler = (overrideResponse?: SourceRootResponse | ((info: Parameters<Parameters<typeof http.get>[1]>[0]) => Promise<SourceRootResponse> | SourceRootResponse), options?: RequestHandlerOptions) => {
+  return http.get('*/sources/:sourceId', async (info: Parameters<Parameters<typeof http.get>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getGetSourceResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getUpdateSourceMockHandler = (overrideResponse?: SourceRootResponse | ((info: Parameters<Parameters<typeof http.patch>[1]>[0]) => Promise<SourceRootResponse> | SourceRootResponse), options?: RequestHandlerOptions) => {
+  return http.patch('*/sources/:sourceId', async (info: Parameters<Parameters<typeof http.patch>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getUpdateSourceResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getListSourceLocationsMockHandler = (overrideResponse?: SourceLocationsBody | ((info: Parameters<Parameters<typeof http.get>[1]>[0]) => Promise<SourceLocationsBody> | SourceLocationsBody), options?: RequestHandlerOptions) => {
+  return http.get('*/sources/:sourceId/locations', async (info: Parameters<Parameters<typeof http.get>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getListSourceLocationsResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getStartSourceScanMockHandler = (overrideResponse?: OperationResponse | ((info: Parameters<Parameters<typeof http.post>[1]>[0]) => Promise<OperationResponse> | OperationResponse), options?: RequestHandlerOptions) => {
+  return http.post('*/sources/:sourceId/scan', async (info: Parameters<Parameters<typeof http.post>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getStartSourceScanResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
 export const getListToolCatalogMockHandler = (overrideResponse?: CatalogBody | ((info: Parameters<Parameters<typeof http.get>[1]>[0]) => Promise<CatalogBody> | CatalogBody), options?: RequestHandlerOptions) => {
   return http.get('*/tools/catalog', async (info: Parameters<Parameters<typeof http.get>[1]>[0]) => {
 
@@ -370,6 +467,13 @@ export const getMeloTroveAPIMock = () => [
   getSaveSetupMusicbrainzMockHandler(),
   getCheckSetupPathsMockHandler(),
   getSaveSetupRuntimeMockHandler(),
+  getListSourcesMockHandler(),
+  getCreateSourceMockHandler(),
+  getDeleteSourceMockHandler(),
+  getGetSourceMockHandler(),
+  getUpdateSourceMockHandler(),
+  getListSourceLocationsMockHandler(),
+  getStartSourceScanMockHandler(),
   getListToolCatalogMockHandler(),
   getListInstallationsMockHandler(),
   getStartToolInstallMockHandler(),

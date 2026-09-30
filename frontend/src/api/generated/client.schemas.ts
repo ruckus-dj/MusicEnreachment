@@ -65,6 +65,33 @@ export interface ConfigurationHealthResponse {
   problems: string[] | null;
 }
 
+export interface CreateSourceBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  configured_path: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  display_name: string;
+}
+
+export interface DeleteSourceBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  confirmed_location_count: number;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  confirmed_path: string;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -245,6 +272,66 @@ export interface SetupStateBody {
   settings: RuntimeSettingsResponse;
 }
 
+export type SourceLocationResponseProbeStatus = typeof SourceLocationResponseProbeStatus[keyof typeof SourceLocationResponseProbeStatus];
+
+
+export const SourceLocationResponseProbeStatus = {
+  audio: 'audio',
+  no_audio: 'no_audio',
+  probe_error: 'probe_error',
+} as const;
+
+export interface SourceLocationResponse {
+  id: string;
+  mtime: string;
+  probe_status: SourceLocationResponseProbeStatus;
+  relative_path: string;
+  safe_error?: string;
+  size_bytes: number;
+}
+
+export interface SourceLocationsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  locations: SourceLocationResponse[] | null;
+  next_cursor?: string;
+}
+
+export type SourceRootResponseStatus = typeof SourceRootResponseStatus[keyof typeof SourceRootResponseStatus];
+
+
+export const SourceRootResponseStatus = {
+  unknown: 'unknown',
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export interface SourceRootResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  configured_path: string;
+  created_at: string;
+  display_name: string;
+  enabled: boolean;
+  id: string;
+  inventory_path?: string;
+  last_successful_scan_at?: string;
+  location_count: number;
+  safe_error?: string;
+  scan_generation: number;
+  stale: boolean;
+  status: SourceRootResponseStatus;
+  updated_at: string;
+}
+
+export interface SourcesBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  sources: SourceRootResponse[] | null;
+}
+
 export interface StartInstallBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -317,6 +404,22 @@ export interface UpdateSettingsBody {
   publication_format?: UpdateSettingsBodyPublicationFormat;
 }
 
+export interface UpdateSourceBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  configured_path?: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  display_name?: string;
+  enabled?: boolean;
+}
+
 export type ListOperationsParams = {
 state?: ListOperationsState;
 };
@@ -329,6 +432,18 @@ export const ListOperationsState = {
   running: 'running',
   failed: 'failed',
 } as const;
+
+export type ListSourceLocationsParams = {
+/**
+ * @maxLength 512
+ */
+cursor?: string;
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+};
 
 export type ListToolCatalogParams = {
 package_kind: ListToolCatalogPackageKind;

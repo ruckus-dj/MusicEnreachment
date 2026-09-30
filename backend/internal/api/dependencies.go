@@ -15,6 +15,9 @@ type Dependencies struct {
 	Installations     *service.Installations
 	MoveTools         *service.MoveTools
 	Operations        *service.Operations
+	SourceRoots       *service.SourceRoots
+	SourceLocations   *service.SourceLocations
+	SourceScan        *service.SourceScanOperations
 }
 
 type preflightEntry struct {

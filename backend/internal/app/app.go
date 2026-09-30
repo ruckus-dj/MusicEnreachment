@@ -112,9 +112,10 @@ func Run(ctx context.Context, config Config) error {
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil)))
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
+	sourceRoots := service.NewSourceRoots(sourceInventory, registry)
 	scanWorker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
-		operationService, service.NewSourceRoots(sourceInventory, registry), registry, platform, tools.NewLifecycle(nil),
+		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
 	)
 
 	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
@@ -164,6 +165,8 @@ func Run(ctx context.Context, config Config) error {
 	moveTools := service.NewMoveTools(setupManagerRepository, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, riverClient)
+	sourceLocations := service.NewSourceLocations(sourceInventory)
+	sourceScan := service.NewSourceScanOperations(sourceInventory, sourceRoots, registry, platform, riverClient)
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -175,6 +178,7 @@ func Run(ctx context.Context, config Config) error {
 	router.Mount("/api", api.HandlerWithDependencies(api.Dependencies{
 		Setup: setup, Catalog: toolCatalog, InstallOperations: installOperations,
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
+		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{
