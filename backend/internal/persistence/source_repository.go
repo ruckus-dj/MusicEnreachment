@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,6 +17,11 @@ const (
 	SourceRootStatusAvailable   = "available"
 	SourceRootStatusUnavailable = "unavailable"
 )
+
+// ErrSourceRootActiveScan reports an edit or a deletion refused because a scan
+// of the root is queued or running. The state is read under the same lock the
+// write takes, so a scan cannot slip in between the check and the write.
+var ErrSourceRootActiveScan = errors.New("source root has an active scan")
 
 // Probe statuses written into source_location by a scan apply.
 const (
@@ -112,8 +118,19 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // and locations alone: the previous inventory stays readable but reports Stale()
 // until a successful scan of the new path replaces it, which is what keeps the
 // old files from being attributed to the new path.
+//
+// A configured_path or enabled change is refused with ErrSourceRootActiveScan
+// while a scan of the root is queued or running: the path the running scan
+// carries is the one it would publish, and a disabled root must not keep a scan
+// it no longer owns. A display name change is always accepted. The operation
+// table lock makes the check atomic against a scan starting, exactly like the
+// deletion guard, because the source_root row lock alone does not stop a new
+// operation row.
 func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("update source root: lock operations: %w", err)
+		}
 		current := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", cas.ID).Scan(ctx, current); err != nil {
 			if err == sql.ErrNoRows {
@@ -123,6 +140,15 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 		}
 		if current.ScanGeneration != cas.ScanGeneration {
 			return fmt.Errorf("update source root: root changed since it was read")
+		}
+		if cas.ConfiguredPath != current.ConfiguredPath || cas.Enabled != current.Enabled {
+			active, err := activeSourceScan(ctx, tx, cas.ID)
+			if err != nil {
+				return fmt.Errorf("update source root: check active scan: %w", err)
+			}
+			if active {
+				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
+			}
 		}
 		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
 			Set("display_name = ?", cas.DisplayName).
@@ -150,13 +176,12 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		if err := tx.NewRaw("SELECT id FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, &rootID); err != nil {
 			return fmt.Errorf("lock source root: %w", err)
 		}
-		var active uuid.UUID
-		err := tx.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE", id).Scan(ctx, &active)
-		if err == nil {
-			return fmt.Errorf("delete source root: an active scan is running for this root")
-		}
-		if err != sql.ErrNoRows {
+		active, err := activeSourceScan(ctx, tx, id)
+		if err != nil {
 			return fmt.Errorf("check active source scan: %w", err)
+		}
+		if active {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
 		}
 		removed, err := tx.NewDelete().Model((*SourceRoot)(nil)).Where("id = ?", id).Exec(ctx)
 		if err != nil {
@@ -167,6 +192,21 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		}
 		return nil
 	})
+}
+
+// activeSourceScan reports whether a scan of the root is still queued or
+// running. Callers hold LOCK TABLE operation so the answer cannot change under
+// them before they write.
+func activeSourceScan(ctx context.Context, database bun.IDB, rootID uuid.UUID) (bool, error) {
+	var active uuid.UUID
+	err := database.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE", rootID).Scan(ctx, &active)
+	if err == nil {
+		return true, nil
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	return false, nil
 }
 
 // CountSourceLocations counts the last successful inventory of a root. It never

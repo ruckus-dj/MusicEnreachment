@@ -77,6 +77,11 @@ func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 	applySourceScan(t, ctx, inventory, operation, root.ConfiguredPath, unchanged)
 	unchangedID := locationID(t, ctx, database, root.ID, "album/track.flac")
 
+	// The path edit is an operator action on an idle root: a scan of the old path
+	// that is still running is refused by the guard in UpdateSourceRoot, so the
+	// scan has to finish first.
+	setOperationState(t, ctx, database, operation.ID, "succeeded")
+
 	read, err := inventory.GetSourceRoot(ctx, root.ID)
 	if err != nil {
 		t.Fatalf("read root before the edit: %v", err)
