@@ -334,11 +334,32 @@ describe("SettingsScreen", () => {
         HttpResponse.json({ detail: "Каталог недоступен" }, { status: 400 }),
       ),
     );
+    const alertFocused = new Promise<HTMLElement>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        document.removeEventListener("focusin", onFocus);
+        reject(new Error("validation alert was not focused"));
+      }, 5000);
+      function onFocus(event: FocusEvent) {
+        const target = event.target;
+        if (
+          !(target instanceof HTMLElement) ||
+          target.getAttribute("role") !== "alert" ||
+          !target.textContent?.includes("Каталог недоступен")
+        )
+          return;
+        clearTimeout(timeout);
+        document.removeEventListener("focusin", onFocus);
+        resolve(target);
+      }
+      document.addEventListener("focusin", onFocus);
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Сохранить публикацию" }),
     );
+    const focusedAlert = await alertFocused;
     const validation = await screen.findByRole("alert");
     expect(validation).toHaveTextContent("Каталог недоступен");
+    expect(validation).toBe(focusedAlert);
     expect(validation).toHaveFocus();
   });
 

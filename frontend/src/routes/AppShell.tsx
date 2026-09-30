@@ -10,11 +10,18 @@ import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
+import { SourcesScreen } from "../features/sources/SourcesScreen";
 
-type Route = "/" | "/settings" | "/setup";
+type Route = "/" | "/settings" | "/setup" | "/sources";
+
+// The inventory screen owns its own #/sources/{id} address, so any string
+// under #/sources maps to the same shell route.
+const sourcesRoute = /^#\/sources(\/[^/]+)?$/;
 function currentRoute(): Route {
-  if (window.location.hash === "#/settings") return "/settings";
-  if (window.location.hash === "#/setup") return "/setup";
+  const hash = window.location.hash;
+  if (hash === "#/settings") return "/settings";
+  if (hash === "#/setup") return "/setup";
+  if (sourcesRoute.test(hash)) return "/sources";
   return "/";
 }
 function subscribe(onChange: () => void) {
@@ -89,13 +96,22 @@ export function AppShell() {
         {state?.completed &&
           !state.platform.diagnostic &&
           state.platform.supported && (
-            <AppButton
-              onPress={() => {
-                window.location.hash = "/settings";
-              }}
-            >
-              Настройки
-            </AppButton>
+            <nav className="flex gap-2">
+              <AppButton
+                onPress={() => {
+                  window.location.hash = "/sources";
+                }}
+              >
+                Источники
+              </AppButton>
+              <AppButton
+                onPress={() => {
+                  window.location.hash = "/settings";
+                }}
+              >
+                Настройки
+              </AppButton>
+            </nav>
           )}
       </header>
       <section className="py-8">
@@ -128,6 +144,8 @@ export function AppShell() {
           />
         ) : state && route === "/settings" ? (
           <SettingsScreen />
+        ) : state && route === "/sources" ? (
+          <SourcesScreen />
         ) : state ? (
           "Приложение готово к настройке."
         ) : null}

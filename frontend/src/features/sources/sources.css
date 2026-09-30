@@ -1,0 +1,240 @@
+.sources-screen {
+  --sources-surface: #fff;
+  --sources-raised: #f7f8f5;
+  --sources-ink: #26332b;
+  --sources-muted: #59675d;
+  --sources-line: #d7ded5;
+  --sources-control: #7c8a7e;
+  --sources-accent: #226740;
+  --sources-accent-soft: #e5f1e7;
+  --sources-warning: #845a12;
+  --sources-error: #a13535;
+  --sources-error-soft: #fde9e8;
+  color: var(--sources-ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  .sources-screen {
+    --sources-surface: #191e1a;
+    --sources-raised: #222923;
+    --sources-ink: #e3eae3;
+    --sources-muted: #a7b5a9;
+    --sources-line: #354138;
+    --sources-control: #718376;
+    --sources-accent: #83dca0;
+    --sources-accent-soft: #233e2c;
+    --sources-warning: #edc474;
+    --sources-error: #ffa09b;
+    --sources-error-soft: #3a2425;
+  }
+}
+.sources-screen h1 {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 650;
+}
+.sources-screen h2 {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.sources-screen .sources-panel {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--sources-line);
+  border-radius: 5px;
+  background: var(--sources-surface);
+}
+.sources-screen .sources-danger {
+  border-color: var(--sources-warning);
+}
+.sources-screen .sources-help,
+.sources-screen .sources-note {
+  color: var(--sources-muted);
+}
+.sources-screen .sources-note {
+  display: block;
+  margin-top: 2px;
+}
+.sources-screen code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sources-screen :focus-visible {
+  outline: 2px solid var(--sources-accent);
+  outline-offset: 2px;
+}
+.sources-screen [role="alert"] {
+  padding: 8px 10px;
+  margin: 8px 0;
+  color: var(--sources-error);
+  background: var(--sources-error-soft);
+  border: 1px solid var(--sources-error);
+  border-radius: 4px;
+}
+.sources-screen button {
+  min-height: 28px;
+  margin: 4px 5px 4px 0;
+  padding: 4px 8px;
+  color: var(--sources-ink);
+  background: var(--sources-surface);
+  border: 1px solid var(--sources-control);
+  border-radius: 4px;
+}
+.sources-screen button:hover {
+  background: var(--sources-raised);
+  border-color: var(--sources-accent);
+}
+.sources-screen button:disabled {
+  color: var(--sources-muted);
+  background: var(--sources-raised);
+  border-color: var(--sources-line);
+}
+.sources-screen input:not([type="checkbox"]) {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--sources-ink);
+  background: var(--sources-raised);
+  border: 1px solid var(--sources-control);
+  border-radius: 4px;
+}
+.sources-screen input[type="checkbox"] {
+  accent-color: var(--sources-accent);
+}
+.sources-screen form label:not(.sources-inline) {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  font-weight: 600;
+}
+.sources-screen .sources-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.sources-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sources-table-wrap {
+  overflow-x: auto;
+}
+.sources-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.sources-table th,
+.sources-table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--sources-line);
+}
+.sources-table thead th {
+  color: var(--sources-muted);
+  font-weight: 600;
+  background: var(--sources-raised);
+}
+.sources-table tbody tr:last-child th,
+.sources-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.sources-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--sources-muted);
+  background: var(--sources-raised);
+}
+.sources-chip[data-status="available"] {
+  color: var(--sources-accent);
+  background: var(--sources-accent-soft);
+}
+.sources-chip[data-status="unavailable"] {
+  color: var(--sources-error);
+  background: var(--sources-error-soft);
+}
+.sources-summary > div {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sources-line);
+}
+.sources-summary dt {
+  color: var(--sources-muted);
+}
+.sources-summary dd {
+  overflow-wrap: anywhere;
+}
+.sources-dialog {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: min(92vw, 560px);
+  max-height: 85dvh;
+  overflow: auto;
+  padding: 16px;
+  color: var(--sources-ink);
+  background: var(--sources-surface);
+  border: 1px solid var(--sources-line);
+  border-radius: 5px;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 50%);
+}
+@media (max-width: 599px) {
+  .sources-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .sources-table,
+  .sources-table tbody,
+  .sources-table tr,
+  .sources-table th,
+  .sources-table td {
+    display: block;
+    width: auto;
+  }
+  .sources-table tr {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--sources-line);
+  }
+  .sources-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .sources-table th,
+  .sources-table td {
+    display: grid;
+    grid-template-columns: minmax(96px, 1fr) minmax(0, 2fr);
+    gap: 8px;
+    padding: 3px 8px;
+    border-bottom: 0;
+  }
+  .sources-table th::before,
+  .sources-table td::before {
+    content: attr(data-label);
+    color: var(--sources-muted);
+    font-weight: 400;
+  }
+  .sources-summary > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .sources-screen button,
+  .sources-screen input:not([type="checkbox"]) {
+    min-height: 40px;
+  }
+}

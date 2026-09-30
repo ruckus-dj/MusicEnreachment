@@ -9,7 +9,10 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SetupStateBody } from "../api/generated/client.schemas";
+import type {
+  SetupStateBody,
+  SourceRootResponse,
+} from "../api/generated/client.schemas";
 import { server } from "../test/server";
 import { AppShell } from "./AppShell";
 
@@ -31,6 +34,27 @@ const state: SetupStateBody = {
     log_level: "info",
   },
   configuration_health: { healthy: false, problems: ["setup incomplete"] },
+};
+
+const completedState: SetupStateBody = {
+  ...state,
+  completed: true,
+  configuration_health: { healthy: true, problems: [] },
+};
+
+const sourceRoot: SourceRootResponse = {
+  id: "root-1",
+  display_name: "Входящие",
+  configured_path: "/srv/inbox",
+  enabled: true,
+  status: "available",
+  stale: false,
+  scan_generation: 4,
+  location_count: 12,
+  inventory_path: "/srv/inbox",
+  last_successful_scan_at: "2026-09-26T10:20:00Z",
+  created_at: "2026-09-01T00:00:00Z",
+  updated_at: "2026-09-26T10:20:00Z",
 };
 beforeEach(() => {
   window.location.hash = "";
@@ -141,5 +165,79 @@ describe("AppShell gates", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("platform mismatch");
     expect(screen.queryByText("Managed tools")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("#/settings");
+  });
+});
+describe("AppShell sources routing", () => {
+  it("keeps an incomplete Setup redirecting away from #/sources", async () => {
+    server.use(http.get("/api/setup", () => HttpResponse.json(state)));
+    window.location.hash = "/sources";
+    render(<AppShell />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Первый запуск" }),
+      ).toBeVisible(),
+    );
+    expect(window.location.hash).toBe("#/setup");
+    expect(screen.queryByText(/Входящие/)).not.toBeInTheDocument();
+  });
+  it("lists source roots at #/sources once Setup is complete", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () =>
+        HttpResponse.json({ sources: [sourceRoot] }),
+      ),
+    );
+    window.location.hash = "/sources";
+    render(<AppShell />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Источники" }),
+    ).toBeVisible();
+    expect(await screen.findByText("/srv/inbox")).toBeVisible();
+  });
+  it("opens one root detail at #/sources/{id}", async () => {
+    const requested: unknown[] = [];
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources/:sourceId", ({ params }) => {
+        requested.push(params.sourceId);
+        return HttpResponse.json(sourceRoot);
+      }),
+    );
+    window.location.hash = "/sources/root-1";
+    render(<AppShell />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Входящие" }),
+    ).toBeVisible();
+    expect(requested).toEqual(["root-1"]);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#/sources/root-1");
+  });
+  it("keeps the default landing and navigates the header to Sources and Settings", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+      http.get("/api/settings", () => HttpResponse.json(completedState)),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+    );
+    render(<AppShell />);
+    expect(
+      await screen.findByText("Приложение готово к настройке."),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Источники" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/sources"));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Источники" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Ни один каталог не зарегистрирован."),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/settings"));
+    expect(await screen.findByText("Managed tools")).toBeVisible();
   });
 });
