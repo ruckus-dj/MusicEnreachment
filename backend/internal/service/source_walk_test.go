@@ -1,0 +1,358 @@
+package service_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
+)
+
+// sourceWalkTestExtensions lists the 13 approved audio extensions the walk must
+// accept, spelled independently of the service so a typo there fails here.
+var sourceWalkTestExtensions = []string{
+	"flac", "wav", "aif", "aiff", "ape", "wv", "mp3", "m4a", "aac", "ogg", "opus", "wma", "mka",
+}
+
+var errStopSourceWalk = errors.New("stop the walk")
+
+func TestWalkSourceTreeVisitsApprovedExtensionsIgnoringCase(t *testing.T) {
+	root := t.TempDir()
+	expected := map[string]string{}
+	for index, extension := range sourceWalkTestExtensions {
+		lower := fmt.Sprintf("%02d-lower.%s", index, extension)
+		upper := filepath.Join("disc", fmt.Sprintf("%02d-upper.%s", index, strings.ToUpper(extension)))
+		mixedExtension := strings.ToUpper(extension[:1]) + extension[1:]
+		mixed := filepath.Join("disc", "nested", fmt.Sprintf("%02d-mixed.%s", index, mixedExtension))
+		for _, relative := range []string{lower, upper, mixed} {
+			content := "audio bytes of " + relative
+			expected[relative] = content
+			writeSourceWalkFile(t, filepath.Join(root, relative), content)
+		}
+	}
+	// Files the inventory must never record: another format, an extensionless
+	// file, a misleading double extension and a directory named like an approved
+	// file.
+	for _, relative := range []string{"cover.jpg", "notes.txt", "README", "album.flac.bak", filepath.Join("disc", "notes.flac.txt")} {
+		writeSourceWalkFile(t, filepath.Join(root, relative), "not audio")
+	}
+	writeSourceWalkFile(t, filepath.Join(root, "disc", "nested", "album.flac", "inside.txt"), "not audio")
+	if err := os.MkdirAll(filepath.Join(root, "disc", "empty"), 0o755); err != nil {
+		t.Fatalf("create an empty directory: %v", err)
+	}
+
+	before := sourceWalkFingerprint(t, root)
+	entries, err := collectSourceWalk(t, context.Background(), root)
+	if err != nil {
+		t.Fatalf("walk the source tree: %v", err)
+	}
+	if len(entries) != len(expected) {
+		t.Fatalf("walked %d files, want %d approved files: %v", len(entries), len(expected), sourceWalkRelativePaths(entries))
+	}
+	visited := map[string]struct{}{}
+	for _, entry := range entries {
+		visited[entry.RelativePath] = struct{}{}
+		content, approved := expected[entry.RelativePath]
+		if !approved {
+			t.Errorf("walked %q, which is not an approved audio file with its exact path", entry.RelativePath)
+			continue
+		}
+		absolute := filepath.Join(root, entry.RelativePath)
+		if entry.AbsolutePath != absolute {
+			t.Errorf("absolute path of %q = %q, want %q", entry.RelativePath, entry.AbsolutePath, absolute)
+		}
+		if entry.SizeBytes != int64(len(content)) {
+			t.Errorf("size of %q = %d, want %d", entry.RelativePath, entry.SizeBytes, len(content))
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
+			t.Fatalf("stat %q: %v", absolute, err)
+		}
+		if !entry.Mtime.Equal(info.ModTime()) {
+			t.Errorf("mtime of %q = %v, want the stat mtime %v", entry.RelativePath, entry.Mtime, info.ModTime())
+		}
+	}
+	for relative := range expected {
+		if _, ok := visited[relative]; !ok {
+			t.Errorf("approved file %q was not visited", relative)
+		}
+	}
+	if after := sourceWalkFingerprint(t, root); after != before {
+		t.Errorf("the walk changed the source tree:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestWalkSourceTreePreservesExactPathCase(t *testing.T) {
+	root := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "Album", "Track.FLAC"), "audio bytes")
+
+	entries, err := collectSourceWalk(t, context.Background(), root)
+	if err != nil {
+		t.Fatalf("walk the source tree: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("walked %v, want the single file Album/Track.FLAC", sourceWalkRelativePaths(entries))
+	}
+	want := service.SourceWalkEntry{
+		AbsolutePath: filepath.Join(root, "Album", "Track.FLAC"),
+		RelativePath: filepath.Join("Album", "Track.FLAC"),
+		SizeBytes:    int64(len("audio bytes")),
+	}
+	if entries[0].RelativePath != want.RelativePath || entries[0].AbsolutePath != want.AbsolutePath || entries[0].SizeBytes != want.SizeBytes {
+		t.Errorf("walked %+v, want the exact case-preserving path %+v", entries[0], want)
+	}
+}
+
+func TestWalkSourceTreeKeepsCaseDistinctPathsOnCaseSensitiveFilesystems(t *testing.T) {
+	if !sourceWalkFilesystemIsCaseSensitive(t, t.TempDir()) {
+		t.Skip("the filesystem folds case, so paths differing only in case cannot coexist")
+	}
+	root := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "Album", "track.flac"), "upper album")
+	writeSourceWalkFile(t, filepath.Join(root, "album", "track.flac"), "lower album")
+
+	entries, err := collectSourceWalk(t, context.Background(), root)
+	if err != nil {
+		t.Fatalf("walk the source tree: %v", err)
+	}
+	want := []string{filepath.Join("Album", "track.flac"), filepath.Join("album", "track.flac")}
+	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
+		t.Errorf("walked %v, want the two case-distinct paths %v", got, want)
+	}
+}
+
+func TestWalkSourceTreeSkipsSymlinksAndCannotLeaveTheRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "Music", "track.flac"), "inside")
+	writeSourceWalkFile(t, filepath.Join(outside, "escaped.flac"), "outside")
+	sourceWalkSymlink(t, filepath.Join(outside, "escaped.flac"), filepath.Join(root, "escape.flac"))
+	sourceWalkSymlink(t, outside, filepath.Join(root, "escape-dir"))
+	sourceWalkSymlink(t, root, filepath.Join(root, "loop"))
+	sourceWalkSymlink(t, filepath.Join(root, "Music"), filepath.Join(root, "Music-link"))
+	sourceWalkSymlink(t, filepath.Join(root, "missing.flac"), filepath.Join(root, "dangling.flac"))
+
+	entries, err := collectSourceWalk(t, context.Background(), root)
+	if err != nil {
+		t.Fatalf("walk the source tree: %v", err)
+	}
+	want := []string{filepath.Join("Music", "track.flac")}
+	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
+		t.Errorf("walked %v, want only the file reachable without following a link: %v", got, want)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.AbsolutePath, root+string(filepath.Separator)) {
+			t.Errorf("absolute path %q of %q left the root %q", entry.AbsolutePath, entry.RelativePath, root)
+		}
+	}
+}
+
+func TestWalkSourceTreeFailsOnUnreadableSubtree(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	root := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "aaa.flac"), "visited before the failure")
+	writeSourceWalkFile(t, filepath.Join(root, "locked", "hidden.flac"), "behind an unreadable directory")
+	locked := filepath.Join(root, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("lock the subdirectory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	entries, err := collectSourceWalk(t, context.Background(), root)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("walk error = %v, want an unreadable subtree failure", err)
+	}
+	for _, entry := range entries {
+		if entry.RelativePath == filepath.Join("locked", "hidden.flac") {
+			t.Errorf("walked %q inside an unreadable directory", entry.RelativePath)
+		}
+	}
+}
+
+func TestWalkSourceTreeFailsOnCancellation(t *testing.T) {
+	root := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "a.flac"), "first")
+	writeSourceWalkFile(t, filepath.Join(root, "b.flac"), "second")
+
+	t.Run("before the first entry", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		entries, err := collectSourceWalk(t, ctx, root)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("walk error = %v, want a cancellation", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("walked %v with a canceled context, want nothing", sourceWalkRelativePaths(entries))
+		}
+	})
+
+	t.Run("when the visitor cancels", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var visited []string
+		err := service.WalkSourceTree(ctx, root, func(entry service.SourceWalkEntry) error {
+			visited = append(visited, entry.RelativePath)
+			cancel()
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("walk error = %v, want a cancellation after the first visit", err)
+		}
+		if want := []string{"a.flac"}; !slices.Equal(visited, want) {
+			t.Errorf("visited %v, want the walk to stop after %v", visited, want)
+		}
+	})
+}
+
+func TestWalkSourceTreeStopsOnVisitorError(t *testing.T) {
+	root := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(root, "a.flac"), "first")
+	writeSourceWalkFile(t, filepath.Join(root, "b.flac"), "second")
+
+	var visited []string
+	err := service.WalkSourceTree(context.Background(), root, func(entry service.SourceWalkEntry) error {
+		visited = append(visited, entry.RelativePath)
+		return errStopSourceWalk
+	})
+	if !errors.Is(err, errStopSourceWalk) {
+		t.Fatalf("walk error = %v, want the visitor error", err)
+	}
+	if want := []string{"a.flac"}; !slices.Equal(visited, want) {
+		t.Errorf("visited %v, want the walk to stop after %v", visited, want)
+	}
+}
+
+func TestWalkSourceTreeRejectsRootsThatAreNotDirectories(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a missing root", func(t *testing.T) {
+		_, err := collectSourceWalk(t, ctx, filepath.Join(t.TempDir(), "missing"))
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("walk error = %v, want a missing root failure", err)
+		}
+	})
+	t.Run("a regular file", func(t *testing.T) {
+		root := t.TempDir()
+		writeSourceWalkFile(t, filepath.Join(root, "track.flac"), "audio")
+		if _, err := collectSourceWalk(t, ctx, filepath.Join(root, "track.flac")); err == nil {
+			t.Fatalf("a regular file was accepted as a source root")
+		}
+	})
+	t.Run("a relative root", func(t *testing.T) {
+		if _, err := collectSourceWalk(t, ctx, filepath.Join("relative", "root")); err == nil {
+			t.Fatalf("a relative path was accepted as a source root")
+		}
+	})
+	t.Run("an empty directory", func(t *testing.T) {
+		entries, err := collectSourceWalk(t, ctx, t.TempDir())
+		if err != nil {
+			t.Fatalf("walk an empty source tree: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("walked %v from an empty tree", sourceWalkRelativePaths(entries))
+		}
+	})
+}
+
+func collectSourceWalk(t *testing.T, ctx context.Context, root string) ([]service.SourceWalkEntry, error) {
+	t.Helper()
+	var entries []service.SourceWalkEntry
+	err := service.WalkSourceTree(ctx, root, func(entry service.SourceWalkEntry) error {
+		entries = append(entries, entry)
+		return nil
+	})
+	return entries, err
+}
+
+func sourceWalkRelativePaths(entries []service.SourceWalkEntry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.RelativePath)
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+// sourceWalkFingerprint records everything about the tree that a read-only walk
+// must leave alone: the set of entries, their type, size, mtime, symlink targets
+// and contents.
+func sourceWalkFingerprint(t *testing.T, root string) string {
+	t.Helper()
+	var records []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil {
+			return relativeErr
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		record := fmt.Sprintf("%s|%d|%s", info.Mode(), info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano))
+		switch {
+		case info.Mode()&fs.ModeSymlink != 0:
+			target, linkErr := os.Readlink(path)
+			if linkErr != nil {
+				return linkErr
+			}
+			record += "|->" + target
+		case info.Mode().IsRegular():
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			record += "|" + string(content)
+		}
+		records = append(records, relative+"="+record)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("fingerprint the source tree %q: %v", root, err)
+	}
+	slices.Sort(records)
+	return strings.Join(records, "\n")
+}
+
+func sourceWalkFilesystemIsCaseSensitive(t *testing.T, probe string) bool {
+	t.Helper()
+	lower := filepath.Join(probe, "case-probe-lower")
+	if err := os.WriteFile(lower, []byte("probe"), 0o644); err != nil {
+		t.Fatalf("write the case probe: %v", err)
+	}
+	_, err := os.Stat(filepath.Join(probe, "CASE-PROBE-LOWER"))
+	if err == nil {
+		return false
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stat the case probe: %v", err)
+	}
+	return true
+}
+
+func writeSourceWalkFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create %q: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %q: %v", path, err)
+	}
+}
+
+func sourceWalkSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("create the symlink %q -> %q: %v", link, target, err)
+	}
+}
