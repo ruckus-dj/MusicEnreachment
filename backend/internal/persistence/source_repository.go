@@ -1,0 +1,305 @@
+package persistence
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+// SourceRootStatusAvailable marks a root whose configured path was readable at
+// the last completed attempt. The other two values come from the schema check.
+const (
+	SourceRootStatusAvailable   = "available"
+	SourceRootStatusUnavailable = "unavailable"
+)
+
+// Probe statuses written into source_location by a scan apply.
+const (
+	SourceProbeStatusAudio      = "audio"
+	SourceProbeStatusNoAudio    = "no_audio"
+	SourceProbeStatusProbeError = "probe_error"
+)
+
+// SourceScanCandidateInput is one traversed file a scan wants to apply. It
+// carries no identity: identity belongs to the location row the apply reuses.
+type SourceScanCandidateInput struct {
+	RelativePath string
+	SizeBytes    int64
+	Mtime        time.Time
+	ProbeStatus  string
+	SafeError    *string
+}
+
+// SourceLocationCursor is the stable pagination key of the location list. It
+// holds both ordering columns so a page boundary is exact when two rows share a
+// path (a path differing only by case, or a re-created file).
+type SourceLocationCursor struct {
+	RelativePath string
+	ID           uuid.UUID
+}
+
+// SourceScanApply names one successful scan generation. The candidate rows of
+// the operation are already durable, so the apply reads them inside its own
+// transaction instead of trusting a slice another writer could have replaced
+// after traversal. It accepts the generation only while the root still carries
+// ExpectedConfiguredPath: a path change between traversal and apply discards
+// the whole generation instead of attributing old files to a new path.
+type SourceScanApply struct {
+	OperationID            uuid.UUID
+	ExpectedConfiguredPath string
+}
+
+type SourceInventoryRepository struct {
+	db bun.IDB
+}
+
+func NewSourceInventoryRepository(db *bun.DB) *SourceInventoryRepository {
+	return &SourceInventoryRepository{db: db}
+}
+
+// Stale reports whether the last successful inventory describes a configured
+// path other than the current one. A stale root must not present its old
+// locations as files of the new path.
+func (root *SourceRoot) Stale() bool {
+	return root.InventoryPath != nil && *root.InventoryPath != root.ConfiguredPath
+}
+
+// CreateSourceRoot creates a root with generation 0 and no inventory. A root
+// with a duplicate normalized configured path is rejected by the schema.
+func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Context, root *SourceRoot) error {
+	if root.ID == uuid.Nil {
+		root.ID = uuid.New()
+	}
+	if root.Status == "" {
+		root.Status = "unknown"
+	}
+	if _, err := repository.db.NewInsert().Model(root).Exec(ctx); err != nil {
+		return fmt.Errorf("create source root: %w", err)
+	}
+	return nil
+}
+
+func (repository *SourceInventoryRepository) GetSourceRoot(ctx context.Context, id uuid.UUID) (*SourceRoot, error) {
+	root := new(SourceRoot)
+	if err := repository.db.NewSelect().Model(root).Where("id = ?", id).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("get source root: %w", err)
+	}
+	return root, nil
+}
+
+func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context) ([]SourceRoot, error) {
+	roots := make([]SourceRoot, 0)
+	if err := repository.db.NewSelect().Model(&roots).
+		Order("configured_path ASC").Order("id ASC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("list source roots: %w", err)
+	}
+	return roots, nil
+}
+
+// UpdateSourceRoot edits the operator-owned fields of a root: its display name,
+// its enabled flag and its configured path. The caller passes the values it read;
+// the edit is refused when another writer advanced the root's generation between
+// that read and this call, which is the value every scan apply moves. The row is
+// locked for the read, the comparison and the write, so an edit racing a scan
+// apply loses instead of resurrecting a generation the apply already advanced;
+// a competing path is rejected by the schema's unique constraint.
+//
+// Changing configured_path deliberately leaves inventory_path, scan_generation
+// and locations alone: the previous inventory stays readable but reports Stale()
+// until a successful scan of the new path replaces it, which is what keeps the
+// old files from being attributed to the new path.
+func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		current := new(SourceRoot)
+		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", cas.ID).Scan(ctx, current); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("update source root: root does not exist")
+			}
+			return fmt.Errorf("update source root: lock source root: %w", err)
+		}
+		if current.ScanGeneration != cas.ScanGeneration {
+			return fmt.Errorf("update source root: root changed since it was read")
+		}
+		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
+			Set("display_name = ?", cas.DisplayName).
+			Set("configured_path = ?", cas.ConfiguredPath).
+			Set("enabled = ?", cas.Enabled).
+			Set("updated_at = now()").
+			Where("id = ?", cas.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("update source root: %w", err)
+		}
+		return nil
+	})
+}
+
+// DeleteSourceRoot removes a root and every one of its locations in one
+// transaction. It never touches source files or the managed output directory.
+// Deletion is refused while a scan of the root is queued or running, and the
+// LOCK TABLE makes that check and the delete atomic against a concurrent scan
+// insert.
+func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("lock operations for source root deletion: %w", err)
+		}
+		var rootID uuid.UUID
+		if err := tx.NewRaw("SELECT id FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, &rootID); err != nil {
+			return fmt.Errorf("lock source root: %w", err)
+		}
+		var active uuid.UUID
+		err := tx.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE", id).Scan(ctx, &active)
+		if err == nil {
+			return fmt.Errorf("delete source root: an active scan is running for this root")
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("check active source scan: %w", err)
+		}
+		removed, err := tx.NewDelete().Model((*SourceRoot)(nil)).Where("id = ?", id).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("delete source root: %w", err)
+		}
+		if count, _ := removed.RowsAffected(); count != 1 {
+			return fmt.Errorf("delete source root: root does not exist")
+		}
+		return nil
+	})
+}
+
+// CountSourceLocations counts the last successful inventory of a root. It never
+// counts candidates of an unfinished scan.
+func (repository *SourceInventoryRepository) CountSourceLocations(ctx context.Context, rootID uuid.UUID) (int64, error) {
+	count, err := repository.db.NewSelect().Model((*SourceLocation)(nil)).Where("source_root_id = ?", rootID).Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count source locations: %w", err)
+	}
+	return int64(count), nil
+}
+
+// ListSourceLocationsPage returns one page ordered by (relative_path, id). A nil
+// cursor starts at the first page; the returned next cursor is nil when the page
+// is the last one.
+func (repository *SourceInventoryRepository) ListSourceLocationsPage(ctx context.Context, rootID uuid.UUID, cursor *SourceLocationCursor, limit int) ([]SourceLocation, *SourceLocationCursor, error) {
+	locations := make([]SourceLocation, 0, limit)
+	query := repository.db.NewSelect().Model(&locations).Where("source_root_id = ?", rootID)
+	if cursor != nil {
+		query.Where("(relative_path, id) > (?, ?)", cursor.RelativePath, cursor.ID)
+	}
+	if err := query.Order("relative_path ASC").Order("id ASC").Limit(limit).Scan(ctx); err != nil {
+		return nil, nil, fmt.Errorf("list source locations: %w", err)
+	}
+	if len(locations) < limit {
+		return locations, nil, nil
+	}
+	last := locations[len(locations)-1]
+	return locations, &SourceLocationCursor{RelativePath: last.RelativePath, ID: last.ID}, nil
+}
+
+// ReplaceSourceScanCandidates stores candidates of one operation as a whole
+// batch. A retry re-runs the batch of the same operation, so the previous
+// candidates of that operation are dropped in the same transaction.
+func (repository *SourceInventoryRepository) ReplaceSourceScanCandidates(ctx context.Context, operationID uuid.UUID, candidates []SourceScanCandidateInput) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := deleteSourceScanCandidates(ctx, tx, operationID); err != nil {
+			return err
+		}
+		return storeSourceScanCandidates(ctx, tx, operationID, candidates)
+	})
+}
+
+// AppendSourceScanCandidates adds one batch of candidates to an operation
+// without touching the batches already stored, so a traversal can persist
+// results as it goes.
+func (repository *SourceInventoryRepository) AppendSourceScanCandidates(ctx context.Context, operationID uuid.UUID, batch []SourceScanCandidateInput) error {
+	return storeSourceScanCandidates(ctx, repository.db, operationID, batch)
+}
+
+// DeleteSourceScanCandidates drops the candidates of one operation. An empty
+// candidate set is a normal outcome of a run that started after the previous
+// one, so a missing operation is not an error.
+func (repository *SourceInventoryRepository) DeleteSourceScanCandidates(ctx context.Context, operationID uuid.UUID) error {
+	return deleteSourceScanCandidates(ctx, repository.db, operationID)
+}
+
+// ApplySourceScan installs the candidate batch as the next generation of the
+// root. Everything in this method is one transaction: when the root is gone, the
+// operation does not target it, the configured path moved, or the commit fails,
+// the previous generation, its locations and inventory_path stay untouched. The
+// generation advances and the pruning of unseen locations happen only after
+// every candidate was written.
+func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context, apply SourceScanApply) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		rootID, err := operationTargetSourceRoot(ctx, tx, apply.OperationID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("apply source scan: operation must be a scan of a source root")
+			}
+			return fmt.Errorf("apply source scan: read operation target: %w", err)
+		}
+		if rootID == nil {
+			return fmt.Errorf("apply source scan: operation does not target a source root")
+		}
+		var root SourceRoot
+		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", *rootID).Scan(ctx, &root); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("apply source scan: source root no longer exists")
+			}
+			return fmt.Errorf("apply source scan: lock source root: %w", err)
+		}
+		if root.ConfiguredPath != apply.ExpectedConfiguredPath {
+			return fmt.Errorf("apply source scan: configured path changed since the scan started")
+		}
+		// The candidates of the generation are read from their durable rows inside
+		// this transaction. The caller's slice is not consulted, so a traversal that
+		// persisted nothing applies nothing, and rows another writer replaced after
+		// traversal cannot be silently swapped for a different inventory.
+		stored, err := loadSourceScanCandidates(ctx, tx, apply.OperationID)
+		if err != nil {
+			return fmt.Errorf("apply source scan: %w", err)
+		}
+		generation := root.ScanGeneration + 1
+		if err := applySourceScanCandidates(ctx, tx, root, generation, stored); err != nil {
+			return fmt.Errorf("apply source scan: %w", err)
+		}
+		// Candidates are removed only now, after the generation was written in
+		// full. A failed apply rolls the whole transaction back and leaves them
+		// durable for the retry.
+		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", apply.OperationID).Exec(ctx); err != nil {
+			return fmt.Errorf("apply source scan: remove applied candidates: %w", err)
+		}
+		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
+			Set("scan_generation = ?", generation).
+			Set("inventory_path = ?", root.ConfiguredPath).
+			Set("last_successful_scan_at = now()").
+			Set("last_applied_operation_id = ?", apply.OperationID).
+			Set("status = ?", SourceRootStatusAvailable).
+			Set("safe_error = NULL").
+			Set("updated_at = now()").
+			Where("id = ?", root.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("apply source scan: record successful scan: %w", err)
+		}
+		return nil
+	})
+}
+
+// operationTargetSourceRoot reads the root an operation targets, distinguishing
+// a missing operation from a non-scan one without decoding the snapshot, whose
+// shape belongs to the service layer.
+func operationTargetSourceRoot(ctx context.Context, database bun.IDB, operationID uuid.UUID) (*uuid.UUID, error) {
+	var target *uuid.UUID
+	if err := database.NewRaw("SELECT target_source_root_id FROM operation WHERE id = ?", operationID).Scan(ctx, &target); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// deleteSourceScanCandidates drops the candidate rows of one operation.
+func deleteSourceScanCandidates(ctx context.Context, database bun.IDB, operationID uuid.UUID) error {
+	if _, err := database.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", operationID).Exec(ctx); err != nil {
+		return fmt.Errorf("delete scan candidates: %w", err)
+	}
+	return nil
+}
