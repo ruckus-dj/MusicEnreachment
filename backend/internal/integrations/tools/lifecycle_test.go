@@ -373,6 +373,29 @@ func TestVerifyInstallationAcceptsUpstreamExtraVersionSuffix(t *testing.T) {
 	}
 }
 
+func TestMatchesReleaseVersionAcceptsOnlyStablePatchBuilds(t *testing.T) {
+	tests := []struct {
+		output  string
+		release string
+		want    bool
+	}{
+		{"ffmpeg version n9.0.1-6-g9d4ca21220", "9.0", true},
+		{"ffprobe version n8.1.2-44-g7c533d0f86", "8.1", true},
+		{"ffmpeg version n9.0.1", "9.0", true},
+		{"ffmpeg version n9.1.1-6-g9d4ca21220", "9.0", false},
+		{"ffmpeg version n9.0.1.1-6-g9d4ca21220", "9.0", false},
+		{"ffmpeg version n9.0.1beta", "9.0", false},
+		{"ffmpeg version N-126242-geb0bfa852e", "9.0", false},
+		{"ffmpeg version n9.0.3-https://www.martin-riedl.de", "9.0.2", false},
+		{"fpcalc version 1.6.2", "v1.6.1", false},
+	}
+	for _, test := range tests {
+		if got := matchesReleaseVersion(test.output, test.release); got != test.want {
+			t.Errorf("matchesReleaseVersion(%q, %q) = %t, want %t", test.output, test.release, got, test.want)
+		}
+	}
+}
+
 func TestVerifyInstallationRechecksPackageExecutables(t *testing.T) {
 	root := t.TempDir()
 	relative, err := ManagedRelativePath(PackageFFmpeg, "8.0")

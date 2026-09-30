@@ -565,7 +565,31 @@ func matchesReleaseVersion(output, release string) bool {
 		}
 		actual := strings.ToLower(fields[index+1])
 		actual = strings.TrimPrefix(strings.TrimPrefix(actual, "n"), "v")
-		return actual == expected || hasUpstreamExtraVersion(actual, expected)
+		if actual == expected || hasUpstreamExtraVersion(actual, expected) {
+			return true
+		}
+		// BtbN names a stable release by major.minor, while its executables
+		// report the patch build (for example, 9.0 -> n9.0.1-6-g...).
+		if strings.Count(expected, ".") != 1 {
+			return false
+		}
+		patch, ok := strings.CutPrefix(actual, expected+".")
+		if !ok {
+			return false
+		}
+		suffixIndex := strings.IndexAny(patch, "-+")
+		if suffixIndex >= 0 {
+			patch = patch[:suffixIndex]
+		}
+		if patch == "" {
+			return false
+		}
+		for _, digit := range patch {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+		return suffixIndex < 0 || hasUpstreamExtraVersion(actual, expected+"."+patch)
 	}
 	return false
 }
