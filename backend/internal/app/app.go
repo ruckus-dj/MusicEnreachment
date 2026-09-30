@@ -40,6 +40,14 @@ type riverClientSlot struct {
 	persistence.RiverInserter
 }
 
+// scanWorkerRepository joins the two repositories a scan worker reads: the
+// operation and managed installation records, and the source inventory the
+// traversal and the atomic apply write to.
+type scanWorkerRepository struct {
+	*persistence.SetupManagerRepository
+	*persistence.SourceInventoryRepository
+}
+
 func newOperationServices(repository operationRepository) (*service.Operations, *service.Operations, *riverClientSlot) {
 	client := &riverClientSlot{}
 	operations := service.NewOperationsWithRiver(repository, client)
@@ -103,6 +111,11 @@ func Run(ctx context.Context, config Config) error {
 	installWorker.SetMoveWorker(jobs.NewMoveWorker(setupManagerRepository, operationService, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil)))
+	sourceInventory := persistence.NewSourceInventoryRepository(db)
+	scanWorker := jobs.NewSourceScanWorker(
+		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
+		operationService, service.NewSourceRoots(sourceInventory, registry), registry, platform, tools.NewLifecycle(nil),
+	)
 
 	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
 		func(ctx context.Context, jobID *int64) (bool, error) {
@@ -124,6 +137,10 @@ func Run(ctx context.Context, config Config) error {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
 		}
+		// A queued scan is always registered: the worker re-checks the platform,
+		// the Setup, the root and the managed tools itself, so a scan that can no
+		// longer run fails with a safe reason instead of staying queued forever.
+		river.AddWorker(workers, scanWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}, jobs.NewCleanupPeriodicJob())
 	if err != nil {

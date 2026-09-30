@@ -18,9 +18,10 @@ const (
 	SourceRootStatusUnavailable = "unavailable"
 )
 
-// ErrSourceRootActiveScan reports an edit or a deletion refused because a scan
-// of the root is queued or running. The state is read under the same lock the
-// write takes, so a scan cannot slip in between the check and the write.
+// ErrSourceRootActiveScan reports an edit, a deletion or a scan start refused
+// because a scan of the root is queued or running. The state is read under the
+// same lock the write takes, so a scan cannot slip in between the check and the
+// write.
 var ErrSourceRootActiveScan = errors.New("source root has an active scan")
 
 // Probe statuses written into source_location by a scan apply.

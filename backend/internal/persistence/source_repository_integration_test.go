@@ -4,13 +4,19 @@ package persistence_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivermigrate"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
@@ -854,4 +860,127 @@ func containsPath(paths []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL fails the operation
+// insert of an enqueue whose River job was already inserted: the transaction
+// must take the job with it, so no River job is left for an operation that does
+// not exist, and the root must stay usable for the next start.
+func TestSourceScanEnqueueRollsBackTheOrphanJobWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enqueue")
+
+	offset := time.Now().UTC().Truncate(time.Microsecond)
+	occupied := uuid.New()
+	if _, err := database.NewRaw(`INSERT INTO operation (id, kind, state, stage, input_snapshot, target_source_root_id, finished_at, updated_at)
+		VALUES (?, 'scan_source', 'succeeded', 'applied', '{}', ?, ?, ?)`, occupied, root.ID, offset, offset).Exec(ctx); err != nil {
+		t.Fatalf("seed the finished scan operation: %v", err)
+	}
+	collision := scanEnqueueOperation(root, occupied)
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, collision, client, service.ScanSourceJobArgs{OperationID: occupied}, nil); err == nil {
+		t.Fatal("an enqueue that reuses the id of an existing operation was accepted")
+	}
+
+	jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
+	operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
+	t.Logf("after the rolled-back enqueue: scan_source river jobs=%d scan operations=%d", jobs, operations)
+	if jobs != 0 {
+		t.Fatalf("River jobs after the rolled-back enqueue = %d, want no orphan job", jobs)
+	}
+	if operations != 1 {
+		t.Fatalf("scan operations after the rolled-back enqueue = %d, want the seeded one alone", operations)
+	}
+
+	fresh := scanEnqueueOperation(root, uuid.New())
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, fresh, client, service.ScanSourceJobArgs{OperationID: fresh.ID}, nil); err != nil {
+		t.Fatalf("enqueue after the rolled-back transaction: %v", err)
+	}
+	if fresh.RiverJobID == nil {
+		t.Fatalf("enqueued operation %+v has no River job", fresh)
+	}
+	recovered := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
+	t.Logf("after the recovered enqueue: operation %s river job %d, scan_source river jobs=%d", fresh.ID, *fresh.RiverJobID, recovered)
+	if recovered != 1 {
+		t.Fatalf("River jobs after the recovered enqueue = %d, want 1", recovered)
+	}
+}
+
+// TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL pins the two
+// refusals the enqueue decides under the root lock: neither may store an
+// operation and neither may insert a River job.
+func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/refusals")
+
+	active := newSourceScanOperation(t, ctx, database, root, "queued")
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
+		service.ScanSourceJobArgs{OperationID: active.ID}, nil); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+		t.Fatalf("enqueue on a root with a queued scan = %v, want ErrSourceRootActiveScan", err)
+	}
+
+	if err := persistOperationState(t, ctx, database, active.ID, "succeeded"); err != nil {
+		t.Fatalf("finish the active scan: %v", err)
+	}
+	if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
+		Set("enabled = false").Where("id = ?", root.ID).Exec(ctx); err != nil {
+		t.Fatalf("disable the source root: %v", err)
+	}
+	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
+		service.ScanSourceJobArgs{OperationID: uuid.New()}, nil); !errors.Is(err, persistence.ErrSourceRootDisabled) {
+		t.Fatalf("enqueue on a disabled root = %v, want ErrSourceRootDisabled", err)
+	}
+
+	operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
+	jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
+	t.Logf("after the refused enqueues: scan operations=%d scan_source river jobs=%d", operations, jobs)
+	if operations != 1 {
+		t.Fatalf("scan operations after the refusals = %d, want the terminal one alone", operations)
+	}
+	if jobs != 0 {
+		t.Fatalf("River jobs after the refusals = %d, want 0", jobs)
+	}
+}
+
+func scanEnqueueOperation(root *persistence.SourceRoot, id uuid.UUID) *persistence.Operation {
+	return &persistence.Operation{
+		ID: id, Kind: "scan_source", State: "queued", Stage: "queued",
+		InputSnapshot:      []byte(`{"source_root_id":"` + root.ID.String() + `","configured_path":"` + root.ConfiguredPath + `"}`),
+		TargetSourceRootID: &root.ID,
+	}
+}
+
+func countScanEnqueueRows(t *testing.T, ctx context.Context, database *bun.DB, query string, args ...any) int {
+	t.Helper()
+	var count int
+	if err := database.NewRaw(query, args...).Scan(ctx, &count); err != nil {
+		t.Fatalf("count rows (%s): %v", query, err)
+	}
+	return count
+}
+
+// openScanEnqueueRiver applies River's own schema and returns an insert-only
+// client: the enqueue transaction is proven against the real river_job table.
+func openScanEnqueueRiver(t *testing.T, database *bun.DB) *river.Client[*sql.Tx] {
+	t.Helper()
+	driver := riverdatabasesql.New(database.DB)
+	migrator, err := rivermigrate.New(driver, nil)
+	if err != nil {
+		t.Fatalf("create River migrator: %v", err)
+	}
+	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
+		t.Fatalf("apply River migrations: %v", err)
+	}
+	client, err := river.NewClient(driver, &river.Config{})
+	if err != nil {
+		t.Fatalf("create insert-only River client: %v", err)
+	}
+	return client
 }
