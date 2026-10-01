@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -162,10 +164,7 @@ func TestWalkSourceTreeFailsOnUnreadableSubtree(t *testing.T) {
 	writeSourceWalkFile(t, filepath.Join(root, "aaa.flac"), "visited before the failure")
 	writeSourceWalkFile(t, filepath.Join(root, "locked", "hidden.flac"), "behind an unreadable directory")
 	locked := filepath.Join(root, "locked")
-	if err := os.Chmod(locked, 0o000); err != nil {
-		t.Fatalf("lock the subdirectory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	lockSourceWalkDirectory(t, locked)
 
 	entries, err := collectSourceWalk(t, context.Background(), root)
 	if !errors.Is(err, fs.ErrPermission) {
@@ -299,7 +298,15 @@ func sourceWalkFingerprint(t *testing.T, root string) string {
 		if infoErr != nil {
 			return infoErr
 		}
-		record := fmt.Sprintf("%s|%d|%s", info.Mode(), info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano))
+		// A directory's mtime is deliberately left out: Windows updates it
+		// lazily, so the value a directory reports before the walk can differ
+		// from the one it reports after it even though the walk only read. A
+		// directory the walk mutated still shows up as a changed entry set,
+		// which every record pins exactly.
+		record := fmt.Sprintf("%s|%d", info.Mode(), info.Size())
+		if !info.IsDir() {
+			record += "|" + info.ModTime().UTC().Format(time.RFC3339Nano)
+		}
 		switch {
 		case info.Mode()&fs.ModeSymlink != 0:
 			target, linkErr := os.Readlink(path)
@@ -350,6 +357,30 @@ func writeSourceWalkFile(t *testing.T, path, content string) {
 	}
 }
 
+func lockSourceWalkDirectory(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// Mode bits do not restrict enumeration on Windows. Deny only directory
+		// listing to Everyone, then remove the ACE before TempDir cleanup.
+		if output, err := exec.Command("icacls", path, "/deny", "*S-1-1-0:(RD)").CombinedOutput(); err != nil {
+			t.Fatalf("deny directory listing: %v: %s", err, output)
+		}
+		t.Cleanup(func() {
+			if output, err := exec.Command("icacls", path, "/remove:d", "*S-1-1-0").CombinedOutput(); err != nil {
+				t.Errorf("restore directory listing: %v: %s", err, output)
+			}
+		})
+	} else {
+		if err := os.Chmod(path, 0o000); err != nil {
+			t.Fatalf("lock the subdirectory: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
+	}
+	if _, err := os.ReadDir(path); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("locked directory read = %v, want a permission failure", err)
+	}
+}
+
 func sourceWalkSymlink(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
@@ -372,10 +403,7 @@ func TestWalkSourceTreeMarksOnlyAnInaccessibleRoot(t *testing.T) {
 			t.Fatalf("create the subtree: %v", err)
 		}
 		writeSourceWalkFile(t, filepath.Join(locked, "hidden.flac"), "audio bytes")
-		if err := os.Chmod(locked, 0o000); err != nil {
-			t.Fatalf("lock the subtree: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		lockSourceWalkDirectory(t, locked)
 
 		err := service.WalkSourceTree(context.Background(), root, func(service.SourceWalkEntry) error { return nil })
 

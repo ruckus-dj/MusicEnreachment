@@ -207,6 +207,11 @@ func (fixture *sourceScanFixture) write(t *testing.T, relativePath, content stri
 // PostgreSQL keeps them in.
 func (fixture *sourceScanFixture) storeLocation(t *testing.T, relativePath, status string) {
 	t.Helper()
+	// The inventory keeps the path the walk produced, which uses the host
+	// separator. The tests spell relative paths with slashes, so map the one
+	// into the other or a stored location never matches the walked file on
+	// Windows.
+	relativePath = filepath.FromSlash(relativePath)
 	info, err := os.Stat(filepath.Join(fixture.tree, relativePath))
 	if err != nil {
 		t.Fatalf("stat %q: %v", relativePath, err)
@@ -255,7 +260,7 @@ func sourceScanCandidatePaths(candidates []persistence.SourceScanCandidateInput)
 
 func requireSourceScanStatus(t *testing.T, stored map[string]persistence.SourceScanCandidateInput, relativePath, status string) {
 	t.Helper()
-	candidate, known := stored[relativePath]
+	candidate, known := stored[filepath.FromSlash(relativePath)]
 	if !known {
 		t.Fatalf("no candidate for %q, stored %v", relativePath, stored)
 	}
@@ -343,7 +348,7 @@ func TestSourceScanRecordsAProbeFailureAsAProbeErrorAndKeepsScanning(t *testing.
 		t.Fatalf("a failed probe of one file must not fail the whole scan: %v", err)
 	}
 	stored := fixture.statuses(t)
-	broken, known := stored["album/broken.wav"]
+	broken, known := stored[filepath.Join("album", "broken.wav")]
 	if !known {
 		t.Fatalf("no candidate for the unprobeable file, stored %v", stored)
 	}
@@ -464,10 +469,7 @@ func TestSourceScanFailsWhenTheTreeCannotBeRead(t *testing.T) {
 	fixture.storeLocation(t, "album/track.flac", persistence.SourceProbeStatusAudio)
 	fixture.write(t, "locked/hidden.flac", "behind an unreadable directory")
 	locked := filepath.Join(fixture.tree, "locked")
-	if err := os.Chmod(locked, 0o000); err != nil {
-		t.Fatalf("lock the subdirectory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	lockSourceWalkDirectory(t, locked)
 	before := slices.Clone(fixture.repository.locations)
 
 	err := fixture.run(t)
@@ -587,7 +589,7 @@ func TestSourceScanReplacesTheCandidatesOfAnEarlierAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if stored := fixture.candidates(t); len(stored) != 1 || stored[0].RelativePath != "album/track.flac" {
+	if stored := fixture.candidates(t); len(stored) != 1 || stored[0].RelativePath != filepath.Join("album", "track.flac") {
 		t.Fatalf("candidates after the retry = %v, want the new traversal alone", sourceScanCandidatePaths(stored))
 	}
 	want := []string{"delete " + fixture.operationID.String(), "append " + fixture.operationID.String() + " 1"}
