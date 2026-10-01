@@ -298,13 +298,11 @@ func sourceWalkFingerprint(t *testing.T, root string) string {
 		if infoErr != nil {
 			return infoErr
 		}
-		// A directory's mtime is deliberately left out: Windows updates it
-		// lazily, so the value a directory reports before the walk can differ
-		// from the one it reports after it even though the walk only read. A
-		// directory the walk mutated still shows up as a changed entry set,
-		// which every record pins exactly.
+		// Windows updates directory mtimes lazily, so reading a directory
+		// can make its reported timestamp change without modifying the tree.
+		// Keep checking directory mtimes on Unix and every file on all hosts.
 		record := fmt.Sprintf("%s|%d", info.Mode(), info.Size())
-		if !info.IsDir() {
+		if !info.IsDir() || runtime.GOOS != "windows" {
 			record += "|" + info.ModTime().UTC().Format(time.RFC3339Nano)
 		}
 		switch {
