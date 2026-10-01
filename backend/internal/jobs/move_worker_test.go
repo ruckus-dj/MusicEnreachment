@@ -1667,12 +1667,12 @@ func TestInstallationWorkerSurfacesAndRecoversSucceededMoveCleanupFailure(t *tes
 		moveWorkerSettings{root: newRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, nil)
 	installationWorker.SetMoveWorker(moveWorker)
 
-	stagingRoot := filepath.Join(newRoot, ".staging")
-	savedStagingRoot := filepath.Join(newRoot, ".staging-saved")
-	if err := os.Rename(stagingRoot, savedStagingRoot); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(stagingRoot, []byte("not a directory"), 0o600); err != nil {
+	// A restore journal that is not a regular file fails cleanup on every
+	// platform. Replacing the staging root with a regular file does not: Windows
+	// reports a path buried under a file as not existing, so the dispatcher would
+	// silently treat the missing journal as nothing to clean.
+	fault := filepath.Join(staging, "old-source-restore-0.json")
+	if err := os.Mkdir(fault, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err = installationWorker.Work(context.Background(), &river.Job[service.OperationJobArgs]{
@@ -1681,10 +1681,7 @@ func TestInstallationWorkerSurfacesAndRecoversSucceededMoveCleanupFailure(t *tes
 	if err == nil {
 		t.Fatal("dispatcher hid succeeded move staging cleanup failure")
 	}
-	if err := os.Remove(stagingRoot); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(savedStagingRoot, stagingRoot); err != nil {
+	if err := os.Remove(fault); err != nil {
 		t.Fatal(err)
 	}
 
