@@ -6,7 +6,6 @@ import (
 	"context"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -139,56 +138,38 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 	}
 }
 
-// TestSourceRootUnavailableRefusedForOperationFailingAfterNewerSuccessWithPostgreSQL
-// pins the ordering key of the guard against a late failure. An older scan that
-// never starts its traversal stays queued while a newer scan installs a
-// generation; only then is the older operation transitioned to failed, which
-// moves its updated_at past the newer success but leaves started_at NULL. Its
-// report must still be refused, because the attempt began before the generation
-// it would overwrite: the failure's updated_at must not be read as the attempt
-// origin.
-//
-// The schema gives a root a single active scan, so the superseding generation is
-// installed by an operation that is already terminal when the older scan is
-// still queued; the timestamps are exactly the ones a completed newer scan would
-// leave behind.
-func TestSourceRootUnavailableRefusedForOperationFailingAfterNewerSuccessWithPostgreSQL(t *testing.T) {
+// TestSourceRootUnavailableRefusedForOperationThatAlreadyAppliedWithPostgreSQL
+// pins the ordering key against a late duplicate of the scan that installed the
+// current generation. A source scan never records a started_at: the worker
+// applies the generation from its queued operation and only then records
+// success, which moves updated_at past last_successful_scan_at. A duplicate
+// delivery that reports the root unavailable after that apply must still be
+// refused, because its attempt began before the generation it would overwrite
+// and a terminal operation's updated_at must not be read as the attempt origin.
+func TestSourceRootUnavailableRefusedForOperationThatAlreadyAppliedWithPostgreSQL(t *testing.T) {
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/late-failure")
+	root := createInventoryRoot(t, ctx, inventory, "/srv/late-duplicate")
 
-	older := newSourceScanOperation(t, ctx, database, root, "queued")
-
-	finished := time.Now().UTC()
-	success := &persistence.Operation{
-		ID: uuid.New(), Kind: "scan_source", State: "succeeded", Stage: "applying",
-		InputSnapshot:      []byte(`{"source_root_id":"` + root.ID.String() + `","configured_path":"` + root.ConfiguredPath + `"}`),
-		TargetSourceRootID: &root.ID, FinishedAt: &finished,
-	}
-	if err := persistence.NewSetupManagerRepository(database).CreateOperation(ctx, success); err != nil {
-		t.Fatalf("create the newer successful scan operation: %v", err)
-	}
-	applySourceScan(t, ctx, inventory, success, root.ConfiguredPath,
+	operation := newSourceScanOperation(t, ctx, database, root, "queued")
+	applySourceScan(t, ctx, inventory, operation, root.ConfiguredPath,
 		sourceCandidate("album/track.flac", 1024, probeMtime()))
+	setOperationState(t, ctx, database, operation.ID, "succeeded")
 	baseline := snapshotInventory(t, ctx, database, root.ID)
 	applied, err := inventory.GetSourceRoot(ctx, root.ID)
 	if err != nil {
-		t.Fatalf("read the root after the newer success: %v", err)
+		t.Fatalf("read the root after the success: %v", err)
 	}
 
-	// The older delivery fails after the newer generation was installed, without
-	// ever starting: started_at stays NULL and the failure moves updated_at past
-	// last_successful_scan_at.
-	failScanOperation(t, ctx, database, older.ID, "The scan failed after the newer generation.")
 	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
-		OperationID: older.ID, SafeError: unavailableSafeReason,
+		OperationID: operation.ID, SafeError: unavailableSafeReason,
 	}); err != nil {
-		t.Fatalf("mark with the operation that failed after the newer success: %v", err)
+		t.Fatalf("mark with the operation that already applied: %v", err)
 	}
 	if current := snapshotInventory(t, ctx, database, root.ID); current != baseline {
-		t.Fatalf("root after the late failure = %q, want the newer success %q", current, baseline)
+		t.Fatalf("root after the duplicate report = %q, want the applied generation %q", current, baseline)
 	}
 	current, err := inventory.GetSourceRoot(ctx, root.ID)
 	if err != nil {

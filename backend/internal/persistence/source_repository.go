@@ -348,9 +348,11 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 // operation later reaches a terminal state. A running attempt began at
 // started_at. An attempt that never started began when it was enqueued: the
 // first attempt at created_at, which no later transition can move, and a retry at
-// updated_at, which the retry writes while it increments attempt. Reading the
-// failure's updated_at for a first attempt would let an old queued scan that is
-// only failed after a newer success overwrite that success. A retry cannot
+// updated_at, which the retry writes while it increments attempt. Reading a
+// terminal operation's updated_at for a first attempt would let a late duplicate
+// report from the scan that already installed the generation overwrite its own
+// success, because applying sets last_successful_scan_at before the success
+// transition moves updated_at. A retry cannot
 // mistake a success that way: a queued or running retry holds the root's single
 // active scan slot until it is terminal, so no other scan of the root can install
 // a generation in between. The root row is locked for the check and the write, so
