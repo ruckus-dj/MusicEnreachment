@@ -344,13 +344,18 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 // The write is refused as a no-op when the operation's current attempt began
 // before the last successful scan of the root: a late or duplicate report from a
 // scan a newer generation already superseded must not overwrite the availability
-// that generation established. The attempt start is the operation's started_at,
-// or its updated_at while it has not started running yet; a retry clears
-// started_at and moves updated_at, so a genuinely newer attempt is newer than an
-// earlier success while a report from an attempt that predates the success stays
-// older. The root row is locked for the check and the write, so this mark and a
-// successful apply serialize on the row and the later writer decides the final
-// state.
+// that generation established. The attempt origin must not move when the
+// operation later reaches a terminal state. A running attempt began at
+// started_at. An attempt that never started began when it was enqueued: the
+// first attempt at created_at, which no later transition can move, and a retry at
+// updated_at, which the retry writes while it increments attempt. Reading the
+// failure's updated_at for a first attempt would let an old queued scan that is
+// only failed after a newer success overwrite that success. A retry cannot
+// mistake a success that way: a queued or running retry holds the root's single
+// active scan slot until it is terminal, so no other scan of the root can install
+// a generation in between. The root row is locked for the check and the write, so
+// this mark and a successful apply serialize on the row and the later writer
+// decides the final state.
 func (repository *SourceInventoryRepository) MarkSourceRootUnavailable(ctx context.Context, unavailable SourceScanUnavailable) error {
 	if unavailable.SafeError == "" {
 		return fmt.Errorf("mark source root unavailable: a safe error is required")
@@ -367,7 +372,10 @@ func (repository *SourceInventoryRepository) MarkSourceRootUnavailable(ctx conte
 		if operation.TargetSourceRootID == nil {
 			return fmt.Errorf("mark source root unavailable: operation does not target a source root")
 		}
-		attemptStartedAt := operation.UpdatedAt
+		attemptStartedAt := operation.CreatedAt
+		if operation.Attempt > 1 {
+			attemptStartedAt = operation.UpdatedAt
+		}
 		if operation.StartedAt != nil {
 			attemptStartedAt = *operation.StartedAt
 		}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -135,6 +136,125 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 		if current := snapshotInventory(t, ctx, database, root.ID); current != baseline {
 			t.Fatalf("root after the superseded report of %s = %q, want the newer success %q", stale.OperationID, current, baseline)
 		}
+	}
+}
+
+// TestSourceRootUnavailableRefusedForOperationFailingAfterNewerSuccessWithPostgreSQL
+// pins the ordering key of the guard against a late failure. An older scan that
+// never starts its traversal stays queued while a newer scan installs a
+// generation; only then is the older operation transitioned to failed, which
+// moves its updated_at past the newer success but leaves started_at NULL. Its
+// report must still be refused, because the attempt began before the generation
+// it would overwrite: the failure's updated_at must not be read as the attempt
+// origin.
+//
+// The schema gives a root a single active scan, so the superseding generation is
+// installed by an operation that is already terminal when the older scan is
+// still queued; the timestamps are exactly the ones a completed newer scan would
+// leave behind.
+func TestSourceRootUnavailableRefusedForOperationFailingAfterNewerSuccessWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/late-failure")
+
+	older := newSourceScanOperation(t, ctx, database, root, "queued")
+
+	finished := time.Now().UTC()
+	success := &persistence.Operation{
+		ID: uuid.New(), Kind: "scan_source", State: "succeeded", Stage: "applying",
+		InputSnapshot:      []byte(`{"source_root_id":"` + root.ID.String() + `","configured_path":"` + root.ConfiguredPath + `"}`),
+		TargetSourceRootID: &root.ID, FinishedAt: &finished,
+	}
+	if err := persistence.NewSetupManagerRepository(database).CreateOperation(ctx, success); err != nil {
+		t.Fatalf("create the newer successful scan operation: %v", err)
+	}
+	applySourceScan(t, ctx, inventory, success, root.ConfiguredPath,
+		sourceCandidate("album/track.flac", 1024, probeMtime()))
+	baseline := snapshotInventory(t, ctx, database, root.ID)
+	applied, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the newer success: %v", err)
+	}
+
+	// The older delivery fails after the newer generation was installed, without
+	// ever starting: started_at stays NULL and the failure moves updated_at past
+	// last_successful_scan_at.
+	failScanOperation(t, ctx, database, older.ID, "The scan failed after the newer generation.")
+	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
+		OperationID: older.ID, SafeError: unavailableSafeReason,
+	}); err != nil {
+		t.Fatalf("mark with the operation that failed after the newer success: %v", err)
+	}
+	if current := snapshotInventory(t, ctx, database, root.ID); current != baseline {
+		t.Fatalf("root after the late failure = %q, want the newer success %q", current, baseline)
+	}
+	current, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the refused report: %v", err)
+	}
+	if current.LastSuccessfulScanAt == nil || !current.LastSuccessfulScanAt.Equal(*applied.LastSuccessfulScanAt) {
+		t.Fatalf("last successful timestamp after the refused report = %v, want %v", current.LastSuccessfulScanAt, applied.LastSuccessfulScanAt)
+	}
+}
+
+// TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL
+// pins the other half of the ordering key: a retry enqueued after a successful
+// scan is a fresh attempt, so its report must still take effect, and its failure
+// must not be mistaken for the older attempt's late report. The retry is driven
+// through the real retry transaction, then fails before it starts its traversal,
+// which is how an unreadable root is reported.
+func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	repository := persistence.NewSetupManagerRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/retry-unavailable")
+
+	applied := newSourceScanOperation(t, ctx, database, root, "running")
+	applySourceScan(t, ctx, inventory, applied, root.ConfiguredPath,
+		sourceCandidate("album/track.flac", 1024, probeMtime()))
+	setOperationState(t, ctx, database, applied.ID, "succeeded")
+	appliedRoot, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the success: %v", err)
+	}
+
+	// A scan of the same root fails and is retried: the retry is a fresh attempt
+	// enqueued after the success.
+	failed := failedSourceScanRetryOperation(t, ctx, repository, root, "queued", unavailableSafeReason)
+	retried, err := retrySourceScan(t, ctx, repository, failed.ID, client)
+	if err != nil {
+		t.Fatalf("retry the failed scan: %v", err)
+	}
+	if retried.Attempt != 2 || retried.State != "queued" {
+		t.Fatalf("retried operation = attempt %d state %q, want a queued attempt 2", retried.Attempt, retried.State)
+	}
+
+	// The retry fails before it starts its traversal: started_at stays NULL and
+	// the failure moves updated_at past the success.
+	failScanOperation(t, ctx, database, retried.ID, unavailableSafeReason)
+	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
+		OperationID: retried.ID, SafeError: unavailableSafeReason,
+	}); err != nil {
+		t.Fatalf("mark with the fresh retry: %v", err)
+	}
+	current, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the retry report: %v", err)
+	}
+	if current.Status != persistence.SourceRootStatusUnavailable || current.SafeError == nil || *current.SafeError != unavailableSafeReason {
+		t.Fatalf("root after the fresh retry report = %s/%v, want unavailable with the safe reason", current.Status, current.SafeError)
+	}
+	if current.ScanGeneration != appliedRoot.ScanGeneration || current.InventoryPath == nil || *current.InventoryPath != *appliedRoot.InventoryPath {
+		t.Fatalf("inventory after the fresh retry report = generation %d path %v, want generation %d path %v",
+			current.ScanGeneration, current.InventoryPath, appliedRoot.ScanGeneration, appliedRoot.InventoryPath)
+	}
+	if current.LastSuccessfulScanAt == nil || !current.LastSuccessfulScanAt.Equal(*appliedRoot.LastSuccessfulScanAt) {
+		t.Fatalf("last successful timestamp after the fresh retry report = %v, want %v", current.LastSuccessfulScanAt, appliedRoot.LastSuccessfulScanAt)
 	}
 }
 
