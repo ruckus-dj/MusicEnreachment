@@ -124,7 +124,11 @@
 - Post-Setup Settings управляет runtime-настройками и managed tool lifecycle:
   install добавляет verified version без activation; activation/delete/move
   запускаются отдельными действиями после серверной проверки.
-- Версия установленного инструмента определяется через `--version`.
+- Версия управляемого executable проверяется аргументом `-version` для
+  `ffmpeg`, `ffprobe` и `fpcalc`. Одиночный дефис нужен для совместимости:
+  `fpcalc` из утверждённых Chromaprint releases отвергает `--version`, а
+  утверждённые macOS-сборки FFmpeg выводят banner, но завершаются с ошибкой на
+  `--version`.
 - Обновления получают только как готовые бинарники из утверждённых доверенных
   источников.
 - Готовый `fpcalc` загружается из AcoustID Chromaprint GitHub Releases.
@@ -147,7 +151,10 @@
 - Artifact загружается только по HTTPS с allowlisted source. Если источник
   публикует SHA-256 checksum, backend сверяет её идентичность и проверяет
   загруженный archive; release signatures не проверяются. Перед активацией
-  обязательно проверяется `--version`.
+  обязательно проверяется `-version` для каждого executable. Этот вариант
+  совместим с готовыми binaries из утверждённых источников; `--version` не
+  используется, поскольку утверждённый `fpcalc` его отвергает, а macOS-сборки
+  FFmpeg завершаются с ошибкой после вывода banner.
 - В Setup выбранная версия становится active только после полностью успешной
   установки. После Setup install лишь добавляет проверенную версию, а activation
   выполняется отдельным явным действием. Ошибка сохраняет прежнюю active version,
