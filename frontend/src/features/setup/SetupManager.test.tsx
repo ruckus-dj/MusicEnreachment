@@ -78,10 +78,12 @@ const operation: OperationResponse = {
 };
 class TestEventSource extends EventTarget {
   static instances: TestEventSource[] = [];
+  static onCreated: (() => void) | undefined;
   close = vi.fn();
   constructor(public url: string) {
     super();
     TestEventSource.instances.push(this);
+    TestEventSource.onCreated?.();
   }
 }
 beforeEach(() => {
@@ -90,6 +92,7 @@ beforeEach(() => {
     new JSDOM("", { url: "http://localhost" }).window.localStorage,
   );
   TestEventSource.instances = [];
+  TestEventSource.onCreated = undefined;
   vi.stubGlobal("EventSource", TestEventSource);
   server.use(
     http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
@@ -1021,10 +1024,19 @@ describe("SetupManager", () => {
       http.post(`/api/operations/${ffmpeg.id}/retry`, ffmpegRetry),
       http.post(`/api/operations/${fpcalc.id}/retry`, fpcalcRetry),
     );
+    const subscribed = new Promise<void>((resolve) => {
+      TestEventSource.onCreated = () => {
+        if (TestEventSource.instances.length === 2) {
+          TestEventSource.onCreated = undefined;
+          resolve();
+        }
+      };
+    });
     renderSetup(state(paths));
     await screen.findByText(/Операция 26092c63.*failed/);
     expect(screen.getByText(/Операция 36092c63.*running/)).toBeVisible();
     expect(listed).toHaveBeenCalledExactlyOnceWith("");
+    await subscribed;
     expect(TestEventSource.instances).toHaveLength(2);
     expect(
       localStorage.getItem("melotrove.setup.operations")?.split(","),
