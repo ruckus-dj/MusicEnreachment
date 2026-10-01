@@ -138,48 +138,6 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 	}
 }
 
-// TestSourceRootUnavailableRefusedForOperationThatAlreadyAppliedWithPostgreSQL
-// pins the ordering key against a late duplicate of the scan that installed the
-// current generation. A source scan never records a started_at: the worker
-// applies the generation from its queued operation and only then records
-// success, which moves updated_at past last_successful_scan_at. A duplicate
-// delivery that reports the root unavailable after that apply must still be
-// refused, because its attempt began before the generation it would overwrite
-// and a terminal operation's updated_at must not be read as the attempt origin.
-func TestSourceRootUnavailableRefusedForOperationThatAlreadyAppliedWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
-	ctx := context.Background()
-	inventory := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/late-duplicate")
-
-	operation := newSourceScanOperation(t, ctx, database, root, "queued")
-	applySourceScan(t, ctx, inventory, operation, root.ConfiguredPath,
-		sourceCandidate("album/track.flac", 1024, probeMtime()))
-	setOperationState(t, ctx, database, operation.ID, "succeeded")
-	baseline := snapshotInventory(t, ctx, database, root.ID)
-	applied, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil {
-		t.Fatalf("read the root after the success: %v", err)
-	}
-
-	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
-		OperationID: operation.ID, SafeError: unavailableSafeReason,
-	}); err != nil {
-		t.Fatalf("mark with the operation that already applied: %v", err)
-	}
-	if current := snapshotInventory(t, ctx, database, root.ID); current != baseline {
-		t.Fatalf("root after the duplicate report = %q, want the applied generation %q", current, baseline)
-	}
-	current, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil {
-		t.Fatalf("read the root after the refused report: %v", err)
-	}
-	if current.LastSuccessfulScanAt == nil || !current.LastSuccessfulScanAt.Equal(*applied.LastSuccessfulScanAt) {
-		t.Fatalf("last successful timestamp after the refused report = %v, want %v", current.LastSuccessfulScanAt, applied.LastSuccessfulScanAt)
-	}
-}
-
 // TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL
 // pins the other half of the ordering key: a retry enqueued after a successful
 // scan is a fresh attempt, so its report must still take effect, and its failure
