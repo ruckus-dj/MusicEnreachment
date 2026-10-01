@@ -72,6 +72,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: Linux amd64
+            runner: ubuntu-24.04
           - name: Linux arm64
             runner: ubuntu-24.04-arm
           - name: macOS x64
