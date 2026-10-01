@@ -1,32 +1,94 @@
-# Deployment and first setup
+# Развёртывание и первая настройка
 
-## Server paths
+## Серверные пути
 
-Browser-selected values always refer to the machine running MeloTrove, never to
-the browser workstation. In the base Compose deployment the host output path
-`${MELOTROVE_OUTPUT_DIR:-./music}` is mounted at
-`/var/lib/melotrove/output`; configure this container path in Setup.
+Значения, выбранные в браузере, всегда относятся к машине, на которой работает
+MeloTrove, а не к рабочей станции с браузером. В базовом Compose-развёртывании
+хостовый путь вывода `${MELOTROVE_OUTPUT_DIR:-./music}` смонтирован в
+`/var/lib/melotrove/output`; в Setup указывается именно этот путь контейнера.
 
-The output directory must be new or empty. MeloTrove does not import an
-existing publication library during initial setup. The configured tools and
-output roots must be absolute, writable and non-overlapping.
+Каталог вывода должен быть новым или пустым. При первой настройке MeloTrove не
+импортирует существующую библиотеку публикаций. Настроенные корни tools и
+output должны быть абсолютными, доступными для записи и непересекающимися.
 
-## Managed tools directory
+## Каталог управляемых инструментов
 
-The persistent Compose volume at `/var/lib/melotrove/tools` is intentionally
-not part of the image. It may be a mixed directory containing administrator
-files. MeloTrove owns only installations recorded in PostgreSQL and stored in
-the versioned `ffmpeg/<version>/` and `fpcalc/<version>/` layout. Unknown files
-are never discovered by scanning the tools root or deleted; an unknown file at
-an exact managed executable
-target requires explicit overwrite confirmation. Only exact
-paths recorded for database-managed installations are written or removed.
+Постоянный Compose-том `/var/lib/melotrove/tools` намеренно не входит в образ.
+Это может быть смешанный каталог с файлами администратора. MeloTrove записывает
+в PostgreSQL скачанные и проверенные версии управляемых инструментов, а их файлы
+хранит в версионированной раскладке `ffmpeg/<version>/` и `fpcalc/<version>/`.
+Неизвестные файлы никогда не обнаруживаются сканированием корня tools и не
+удаляются; неизвестный файл в точном пути управляемого исполняемого файла
+требует явного подтверждения перезаписи. Записываются и удаляются только точные
+пути, записанные в БД для управляемых инструментов.
 
-## Platform recovery
+## Инвентарь источников
 
-The first database-backed startup fixes `GOOS` and `GOARCH` for the instance.
-Do not move its database between platforms expecting automatic tool migration.
-A mismatch leaves diagnostic and UI endpoints available, but readiness reports
-failure and Setup/product operations are blocked. There is no automatic platform
-or tool migration. Restore the recorded platform or use a separately initialized
-database.
+Корни источников — это серверные каталоги, из которых MeloTrove читает файлы.
+Путь указывается на сервере, где работает MeloTrove, а не на рабочей станции с
+браузером, и должен быть абсолютным путём существующего читаемого каталога,
+который не пересекается ни с корнем управляемых инструментов, ни с каталогом
+output. Внутри корня источника MeloTrove ничего не создаёт, не изменяет и не
+удаляет: это входные данные, а не управляемая медиатека.
+
+Хостовый каталог монтируется в контейнер только для чтения, при этом абсолютный
+путь на хосте и абсолютный путь в контейнере совпадают, поэтому оператор
+указывает в UI тот же путь, который видит на хосте. Базовый
+`deploy/compose/docker-compose.yml` такого монтирования не содержит: добавьте
+его к сервису `app` самостоятельно.
+
+```yaml
+    volumes:
+      - tools-data:/var/lib/melotrove/tools
+      - ${MELOTROVE_OUTPUT_DIR:-./music}:/var/lib/melotrove/output
+      - /srv/music/sources:/srv/music/sources:ro
+```
+
+Переменной окружения для корней источников нет: список корней — это
+runtime-настройка в PostgreSQL, редактируемая в UI. Регистрация корня не
+запускает сканирование.
+
+Scan запускается только вручную кнопкой на экране источников, выполняется
+фоновой операцией и показывает этапы сервера (`queued`, `traversing`,
+`applying`), а не проценты. Обход читает дерево напрямую под указанным корнем,
+не следует символьным ссылкам и не может выйти за корень. Проверка аудиопотока
+через управляемый `ffprobe` выполняется для обычных файлов, у которых
+расширение совпадает с одним из 13 утверждённых расширений без учёта регистра.
+Сохранённый относительный путь сохраняет точный регистр имени файла на диске:
+`.flac`, `.wav`, `.aif`, `.aiff`, `.ape`,
+`.wv`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.wma`, `.mka`.
+
+`ffprobe` отвечает ровно на один вопрос — есть ли в файле хотя бы одна
+аудиодорожка. Файлы без аудиодорожки остаются в инвентаре с отдельным статусом.
+Успешно проверенный файл не проверяется повторно, пока он не изменился;
+`probe_error` показывается как проблема конкретного файла, не останавливает
+проверку остальных файлов и перепроверяется при следующем scan. В этом срезе не
+сохраняются и не показываются fingerprint (`fpcalc`), SHA-256, теги, кодек,
+длительность и результаты публикации: подтверждение аудиопотока — не полный
+технический анализ.
+
+Инвентарь заменяется только полностью успешным обходом. Недоступный корень,
+сбой, отмена сканирования или ошибка чтения оставляют видимым инвентарь
+последнего успешного сканирования вместе с ошибкой, а не пустой результат.
+Изменение пути корня помечает прежний инвентарь устаревшим: UI продолжает
+показывать файлы, найденные по прежнему пути (`inventory_path`), пока успешный
+scan нового пути не заменит их. Выключение корня сохраняет записи и запрещает
+новые сканирования. Удаление корня после явного подтверждения пути и числа
+записей удаляет из БД только записи инвентаря этого корня: файлы источника на
+диске и управляемая медиатека в output остаются на месте. Удаление самих
+файлов источника в этом срезе не поставляется: по требованиям оно появится
+только как отдельная явно включаемая настройка и только после успешной
+публикации.
+
+Режим `staged` с настраиваемым рабочим каталогом в этот срез не входит: scan
+читает источник напрямую. Рабочий каталог и его scratch-том определит отдельный
+следующий план; сейчас их и соответствующих переменных окружения нет.
+
+## Восстановление платформы
+
+При первом запуске с БД фиксируются `GOOS` и `GOARCH` экземпляра. Не переносите
+его БД между платформами в расчёте на автоматическую миграцию инструментов.
+Несовпадение оставляет доступными диагностику и UI, но readiness сообщает об
+ошибке, а Setup и продуктовые операции блокируются. Автоматической миграции
+платформы или инструментов нет. Восстановите записанную платформу или
+используйте отдельно инициализированную БД.
