@@ -197,3 +197,100 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatalf("deleted root still listed: %+v", listed.Sources)
 	}
 }
+
+// TestDiagnosticPlatformRootMutationsAgainstPostgreSQL proves the platform gate
+// the fake cannot: a persisted root is created on the supported platform, the
+// process restarts with a mismatched instance platform, and the read endpoints
+// keep serving the stored root while every mutation and a scan are refused with
+// the existing 503 before they reach the repository, so the rows stay identical.
+func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
+	database, _ := openAPTransitionDatabase(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+
+	store := persistence.NewSettingsRepository(database)
+	registry := settings.New(store, nil)
+	if _, err := registry.InitializePlatform(ctx, settings.Platform{GOOS: "linux", GOARCH: "amd64"}); err != nil {
+		t.Fatal(err)
+	}
+	toolsRoot, outputRoot := t.TempDir(), t.TempDir()
+	if err := registry.SetToolsDirectory(ctx, toolsRoot, outputRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetOutputDirectory(ctx, outputRoot, toolsRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.CompleteSetup(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	setupManager := persistence.NewSetupManagerRepository(database)
+	inventory := persistence.NewSourceInventoryRepository(database)
+	supported := api.HandlerWithDependencies(api.Dependencies{
+		Setup:           service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, setupManager, nil),
+		SourceRoots:     service.NewSourceRoots(inventory, registry),
+		SourceLocations: service.NewSourceLocations(inventory),
+		Operations:      service.NewOperations(setupManager),
+	})
+
+	source := t.TempDir()
+	body := fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, source)
+	response := sourceRequest(t, supported, http.MethodPost, "/sources", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create source root status=%d: %s", response.Code, response.Body.String())
+	}
+	root := decodeSourceRoot(t, response)
+	location := &persistence.SourceLocation{
+		ID: uuid.New(), SourceRootID: root.ID, RelativePath: "disc/track.flac", SizeBytes: 64,
+		Mtime: time.Now().UTC(), LastSeenScanGeneration: 1, ProbeStatus: persistence.SourceProbeStatusAudio,
+	}
+	if _, err := database.NewInsert().Model(location).Exec(ctx); err != nil {
+		t.Fatalf("store a source location: %v", err)
+	}
+
+	diagnostic := api.HandlerWithDependencies(api.Dependencies{
+		Setup:           service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}, Diagnostic: true, Reason: "instance platform mismatch"}, setupManager, nil),
+		SourceRoots:     service.NewSourceRoots(inventory, registry),
+		SourceLocations: service.NewSourceLocations(inventory),
+		SourceScan:      service.NewSourceScanOperations(inventory, service.NewSourceRoots(inventory, registry), registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}, Diagnostic: true, Reason: "instance platform mismatch"}, nil),
+		Operations:      service.NewOperations(setupManager),
+	})
+
+	// The read surface keeps serving the persisted root and its inventory.
+	listed := decodeSourceRoot(t, sourceRequest(t, diagnostic, http.MethodGet, "/sources/"+root.ID.String(), ""))
+	if listed.ID != root.ID || listed.ConfiguredPath != root.ConfiguredPath || listed.LocationCount != 1 {
+		t.Fatalf("diagnostic read of the stored root = %+v", listed)
+	}
+	page := decodeSourceLocations(t, sourceRequest(t, diagnostic, http.MethodGet, "/sources/"+root.ID.String()+"/locations", ""))
+	if len(page.Locations) != 1 || page.Locations[0].RelativePath != location.RelativePath {
+		t.Fatalf("diagnostic read of the inventory = %+v", page.Locations)
+	}
+
+	confirmation := fmt.Sprintf(`{"confirmed_path":%q,"confirmed_location_count":1}`, root.ConfiguredPath)
+	for _, mutation := range []struct{ method, path, body string }{
+		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, t.TempDir())},
+		{http.MethodPatch, "/sources/" + root.ID.String(), `{"display_name":"Renamed"}`},
+		{http.MethodDelete, "/sources/" + root.ID.String(), confirmation},
+		{http.MethodPost, "/sources/" + root.ID.String() + "/scan", ""},
+	} {
+		response := sourceRequest(t, diagnostic, mutation.method, mutation.path, mutation.body)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s status=%d, want 503: %s", mutation.method, mutation.path, response.Code, response.Body.String())
+		}
+	}
+
+	stored, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("a refused mutation removed the root: %v", err)
+	}
+	if stored.DisplayName != root.DisplayName || stored.ConfiguredPath != root.ConfiguredPath || !stored.Enabled {
+		t.Fatalf("a refused mutation changed the stored root: %+v", stored)
+	}
+	if count, err := inventory.CountSourceLocations(ctx, root.ID); err != nil || count != 1 {
+		t.Fatalf("a refused mutation changed the stored inventory: %d, %v", count, err)
+	}
+	if roots, err := inventory.ListSourceRoots(ctx); err != nil || len(roots) != 1 {
+		t.Fatalf("a refused mutation changed the stored roots: %d, %v", len(roots), err)
+	}
+}

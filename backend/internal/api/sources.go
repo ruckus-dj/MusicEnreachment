@@ -145,6 +145,9 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
+		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+			return nil, err
+		}
 		if dependencies.SourceRoots == nil {
 			return nil, huma.Error503ServiceUnavailable("source service is unavailable")
 		}
@@ -182,6 +185,9 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
+		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
+			return nil, err
+		}
 		if dependencies.SourceRoots == nil {
 			return nil, huma.Error503ServiceUnavailable("source service is unavailable")
 		}
@@ -207,6 +213,9 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		Summary: "Delete a source root and its inventory", Tags: []string{"Sources"},
 	}, func(ctx context.Context, input *DeleteSourceInput) (*struct{}, error) {
 		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}
 		if dependencies.SourceRoots == nil {

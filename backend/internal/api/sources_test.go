@@ -478,6 +478,62 @@ func TestDeleteSourceRootRequiresConfirmationAndKeepsSourceFiles(t *testing.T) {
 	}
 }
 
+func TestDiagnosticPlatformBlocksRootMutationsAndScan(t *testing.T) {
+	platform := settings.PlatformState{
+		Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}, Diagnostic: true, Reason: "instance platform mismatch",
+	}
+	fixture := newSourcesAPIFixture(t, platform, true)
+	source := t.TempDir()
+	root := &persistence.SourceRoot{
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, source),
+		Enabled: true, Status: persistence.SourceRootStatusAvailable,
+	}
+	fixture.seedRoot(t, root, []persistence.SourceLocation{
+		{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "a.flac", ProbeStatus: persistence.SourceProbeStatusAudio},
+	})
+
+	// Reading the roots stays available so the operator can inspect the mismatch.
+	reads := []struct{ method, path string }{
+		{http.MethodGet, "/sources"},
+		{http.MethodGet, "/sources/" + root.ID.String()},
+		{http.MethodGet, "/sources/" + root.ID.String() + "/locations"},
+	}
+	for _, read := range reads {
+		response := sourceRequest(t, fixture.handler, read.method, read.path, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s %s status=%d, want 200: %s", read.method, read.path, response.Code, response.Body.String())
+		}
+	}
+
+	mutations := []struct{ method, path, body string }{
+		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, t.TempDir())},
+		{http.MethodPatch, "/sources/" + root.ID.String(), `{"display_name":"Renamed"}`},
+		{http.MethodDelete, "/sources/" + root.ID.String(),
+			fmt.Sprintf(`{"confirmed_path":%q,"confirmed_location_count":1}`, root.ConfiguredPath)},
+		{http.MethodPost, "/sources/" + root.ID.String() + "/scan", ""},
+	}
+	for _, mutation := range mutations {
+		response := sourceRequest(t, fixture.handler, mutation.method, mutation.path, mutation.body)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s status=%d, want 503: %s", mutation.method, mutation.path, response.Code, response.Body.String())
+		}
+	}
+
+	if len(fixture.repository.roots) != 1 || fixture.repository.roots[0].ID != root.ID {
+		t.Fatalf("a refused mutation changed the stored roots: %+v", fixture.repository.roots)
+	}
+	stored := fixture.repository.roots[0]
+	if stored.DisplayName != "Music" || stored.ConfiguredPath != root.ConfiguredPath || !stored.Enabled {
+		t.Fatalf("a refused mutation changed the stored root: %+v", stored)
+	}
+	if len(fixture.repository.locations[root.ID]) != 1 {
+		t.Fatalf("a refused mutation changed the stored inventory: %d locations", len(fixture.repository.locations[root.ID]))
+	}
+	if len(fixture.operations.operations) != 0 {
+		t.Fatal("a refused mutation created an operation")
+	}
+}
+
 func TestListSourceLocationsPaginatesThePublishedInventory(t *testing.T) {
 	fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 	root := &persistence.SourceRoot{
