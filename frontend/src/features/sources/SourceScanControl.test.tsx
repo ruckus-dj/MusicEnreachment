@@ -38,6 +38,7 @@ const reconnectText = /потоку событий прерваны/;
 // real Orval client and intercepted HTTP.
 class TestEventSource extends EventTarget {
   static instances: TestEventSource[] = [];
+  static onCreated: ((stream: TestEventSource) => void) | undefined;
   readonly url: string;
   close = vi.fn();
 
@@ -45,7 +46,17 @@ class TestEventSource extends EventTarget {
     super();
     this.url = url;
     TestEventSource.instances.push(this);
+    TestEventSource.onCreated?.(this);
   }
+}
+
+function nextStream() {
+  return new Promise<TestEventSource>((resolve) => {
+    TestEventSource.onCreated = (stream) => {
+      TestEventSource.onCreated = undefined;
+      resolve(stream);
+    };
+  });
 }
 
 function root(overrides: Partial<SourceRootResponse> = {}): SourceRootResponse {
@@ -117,6 +128,7 @@ function nextOperationLists(count = 1) {
 
 beforeEach(() => {
   TestEventSource.instances = [];
+  TestEventSource.onCreated = undefined;
   vi.stubGlobal("EventSource", TestEventSource);
   // No scan is active unless a test says otherwise.
   server.use(
@@ -170,12 +182,13 @@ describe("source scan lifecycle", () => {
     expect(TestEventSource.instances).toHaveLength(0);
     expect(scans).not.toHaveBeenCalled();
 
+    const created = nextStream();
     fireEvent.click(startButton());
 
     expect(await screen.findByText(queuedText)).toBeVisible();
     expect(scans).toHaveBeenCalledTimes(1);
+    const stream = await created;
     expect(TestEventSource.instances).toHaveLength(1);
-    const stream = TestEventSource.instances[0];
     expect(stream.url).toBe(`/api/operations/${current.id}/events`);
 
     current = scan({ state: "running", stage: "traversing" });
@@ -203,9 +216,10 @@ describe("source scan lifecycle", () => {
       ),
     );
     await renderControl({ onScanCompleted });
+    const created = nextStream();
     fireEvent.click(startButton());
     await screen.findByText(traversingText);
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
 
     current = scan({ state: "succeeded", stage: "succeeded" });
     const finished = nextOperationRead(current.id);
@@ -333,9 +347,10 @@ describe("source scan lifecycle", () => {
       }),
     );
     await renderControl();
+    const created = nextStream();
     fireEvent.click(startButton());
     await screen.findByText(traversingText);
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
 
     current = scan({
       state: "failed",
@@ -378,15 +393,18 @@ describe("source scan lifecycle", () => {
       ),
     );
     await renderControl();
+    const created = nextStream();
     fireEvent.click(startButton());
     await screen.findByText(doneText);
-    const first = TestEventSource.instances[0];
+    const first = await created;
 
     current = scan({ id: "scan-op-2", state: "queued", stage: "queued" });
+    const next = nextStream();
     fireEvent.click(startButton());
 
     expect(await screen.findByText(queuedText)).toBeVisible();
-    await waitFor(() => expect(TestEventSource.instances).toHaveLength(2));
+    await next;
+    expect(TestEventSource.instances).toHaveLength(2);
     expect(first.close).toHaveBeenCalled();
     expect(TestEventSource.instances[1].url).toBe(
       "/api/operations/scan-op-2/events",
@@ -410,9 +428,10 @@ describe("source scan lifecycle", () => {
     expect(TestEventSource.instances).toHaveLength(0);
     expect(screen.queryByText(reconnectText)).toBeNull();
 
+    const created = nextStream();
     fireEvent.click(startButton());
     await screen.findByText(traversingText);
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
     const readsBeforeError = reads.mock.calls.length;
 
     current = scan({ state: "running", stage: "applying" });
@@ -445,9 +464,10 @@ describe("source scan lifecycle", () => {
       ),
     );
     const view = await renderControl();
+    const created = nextStream();
     fireEvent.click(startButton());
     await screen.findByText(traversingText);
-    const first = TestEventSource.instances[0];
+    const first = await created;
 
     const relisted = nextOperationLists();
     view.rerender(
@@ -487,9 +507,10 @@ describe("source scan lifecycle", () => {
     );
 
     const view = await renderControl();
+    const created = nextStream();
     fireEvent.click(startButton());
     const request = await started;
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
     expect(stream.url).toBe(`/api/operations/${current.id}/events`);
     const aborted = new Promise<void>((resolve) => {
       request.signal.addEventListener("abort", () => resolve(), { once: true });
@@ -517,11 +538,13 @@ describe("source scan lifecycle", () => {
         return HttpResponse.json(current);
       }),
     );
+    const created = nextStream();
     await renderControl();
 
     expect(await screen.findByText(traversingText)).toBeVisible();
     expect(startButton()).toBeDisabled();
     expect(scans).not.toHaveBeenCalled();
+    await created;
     expect(TestEventSource.instances).toHaveLength(1);
     expect(TestEventSource.instances[0].url).toBe(
       `/api/operations/${current.id}/events`,
@@ -630,9 +653,10 @@ describe("source scan lifecycle", () => {
         return HttpResponse.json(current);
       }),
     );
+    const created = nextStream();
     await renderControl({ onScanCompleted });
     await screen.findByText(traversingText);
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
 
     current = scan({ state: "succeeded", stage: "succeeded" });
     const finished = nextOperationRead(current.id);
@@ -662,9 +686,10 @@ describe("source scan lifecycle", () => {
         return HttpResponse.json(current);
       }),
     );
+    const created = nextStream();
     await renderControl();
     await screen.findByText(traversingText);
-    const stream = TestEventSource.instances[0];
+    const stream = await created;
 
     current = scan({
       state: "failed",

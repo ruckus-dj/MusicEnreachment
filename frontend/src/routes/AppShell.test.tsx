@@ -189,7 +189,7 @@ describe("AppShell sources routing", () => {
         screen.getByRole("heading", { name: "Первый запуск" }),
       ).toBeVisible(),
     );
-    expect(window.location.hash).toBe("#/setup");
+    await waitFor(() => expect(window.location.hash).toBe("#/setup"));
     expect(screen.queryByText(/Входящие/)).not.toBeInTheDocument();
   });
   it("lists source roots at #/sources once Setup is complete", async () => {
