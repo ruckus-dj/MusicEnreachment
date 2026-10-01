@@ -83,7 +83,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
   const [discoveryError, setDiscoveryError] = useState("");
   const startInFlight = useRef(false);
   const retryInFlight = useRef(false);
-  const reportedSuccess = useRef("");
+  const reportedCompletion = useRef("");
   const completed = useRef(onScanCompleted);
   useEffect(() => {
     completed.current = onScanCompleted;
@@ -91,13 +91,15 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
 
   const applySnapshot = useCallback((snapshot: OperationResponse) => {
     setOperation(snapshot);
-    if (
-      snapshot.state === "succeeded" &&
-      reportedSuccess.current !== snapshot.id
-    ) {
-      reportedSuccess.current = snapshot.id;
-      void completed.current();
-    }
+    const completion =
+      snapshot.state === "succeeded" || snapshot.state === "failed"
+        ? `${snapshot.id}:${snapshot.state}`
+        : "";
+    const changed = completion !== reportedCompletion.current;
+    // Pending snapshots re-arm the same operation after a retry; repeated
+    // terminal snapshots must not repeatedly reload the parent inventory.
+    reportedCompletion.current = completion;
+    if (completion && changed) void completed.current();
   }, []);
 
   // Discovery owns the window between opening the page and knowing whether a
@@ -190,7 +192,12 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
     setDiscoveryError("");
     try {
       const response = await startSourceScan(root.id);
-      if (response.status !== 200) throw scanFailure(response);
+      if (response.status !== 200) {
+        // Path validation can mark the root unavailable without an operation,
+        // so no stream will arrive to refresh the authoritative root state.
+        void completed.current();
+        throw scanFailure(response);
+      }
       applySnapshot(response.data);
     } catch (reason) {
       setActionError(message(reason));

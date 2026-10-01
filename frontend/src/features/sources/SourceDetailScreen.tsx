@@ -207,7 +207,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                   <span className="sources-chip" data-status={root.status}>
                     {statusLabel(root.status)}
                   </span>
-                  {root.safe_error && (
+                  {root.status === "unavailable" && root.safe_error && (
                     <span className="sources-note">{root.safe_error}</span>
                   )}
                 </dd>

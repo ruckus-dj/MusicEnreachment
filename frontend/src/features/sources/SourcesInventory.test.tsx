@@ -16,6 +16,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { server } from "../../test/server";
 import { SourcesScreen } from "./SourcesScreen";
+import { nextResponse } from "./sourceScanRefreshTestSupport";
 
 const rootId = "root-1";
 const scanUrl = `/api/sources/${rootId}/scan`;
@@ -265,23 +266,31 @@ describe("source page scan lifecycle with the published inventory", () => {
       safe_error: "The source tree could not be read. Retry the scan.",
     });
     const failed = nextOperationRead(current.id);
+    const refreshedRoot = nextResponse(`/api/sources/${rootId}`);
+    const refreshedLocations = nextResponse(`/api/sources/${rootId}/locations`);
     await act(async () => {
       stream.dispatchEvent(new Event("operation-changed"));
       await failed;
     });
+    await act(async () => refreshedRoot);
+    await act(async () => refreshedLocations);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The source tree could not be read. Retry the scan.",
     );
     expect(screen.getByRole("row", { name: /01 Открытие/ })).toBeVisible();
-    expect(rootReads).toHaveLength(1);
+    expect(rootReads).toHaveLength(2);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Повторить сканирование" }),
-    );
+    const retried = nextResponse(`/api/operations/${current.id}/retry`, "POST");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Повторить сканирование" }),
+      );
+      await retried;
+    });
 
-    await waitFor(() => expect(retries).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText(queuedText)).toBeVisible();
+    expect(retries).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(queuedText)).toBeVisible();
     expect(scans).toHaveBeenCalledTimes(1);
     expect(TestEventSource.instances).toHaveLength(1);
 
@@ -298,7 +307,7 @@ describe("source page scan lifecycle with the published inventory", () => {
 
     expect(await screen.findByText(doneText)).toBeVisible();
     expect(await screen.findByRole("row", { name: /02 Новый/ })).toBeVisible();
-    expect(rootReads).toHaveLength(2);
+    expect(rootReads).toHaveLength(3);
   });
 
   it("resets the listing to its first page when a scan publishes a new generation", async () => {
