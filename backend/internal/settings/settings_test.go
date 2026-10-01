@@ -106,20 +106,31 @@ func TestUnsupportedPlatformReturnsImmediate(t *testing.T) {
 	}
 }
 
+// testAbsolutePath builds a host-absolute path so overlap semantics can be
+// exercised identically on Windows (drive or UNC volume) and Unix (root).
+func testAbsolutePath(parts ...string) string {
+	root := string(filepath.Separator)
+	if volume := filepath.VolumeName(os.TempDir()); volume != "" {
+		root = volume + string(filepath.Separator)
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
+}
+
 func TestPathOverlapDetection(t *testing.T) {
+	tools := testAbsolutePath("var", "lib", "tools")
 	tests := []struct {
 		name     string
 		first    string
 		second   string
 		overlaps bool
 	}{
-		{"identical", "/var/lib/tools", "/var/lib/tools", true},
-		{"root contains descendant", string(filepath.Separator), filepath.Join(string(filepath.Separator), "var", "lib"), true},
-		{"descendant contained by root", filepath.Join(string(filepath.Separator), "var", "lib"), string(filepath.Separator), true},
-		{"first contains second", "/var/lib", "/var/lib/tools", true},
-		{"second contains first", "/var/lib/tools", "/var/lib", true},
-		{"siblings", "/var/lib/tools", "/var/lib/output", false},
-		{"different roots", "/opt/tools", "/var/output", false},
+		{"identical", tools, testAbsolutePath("var", "lib", "tools"), true},
+		{"root contains descendant", testAbsolutePath(), testAbsolutePath("var", "lib"), true},
+		{"descendant contained by root", testAbsolutePath("var", "lib"), testAbsolutePath(), true},
+		{"first contains second", testAbsolutePath("var", "lib"), tools, true},
+		{"second contains first", tools, testAbsolutePath("var", "lib"), true},
+		{"siblings", tools, testAbsolutePath("var", "lib", "output"), false},
+		{"disjoint trees", testAbsolutePath("opt", "tools"), testAbsolutePath("var", "output"), false},
 	}
 
 	for _, tt := range tests {
@@ -154,23 +165,36 @@ func TestOutputDirectoryProbesFilesystemSemantics(t *testing.T) {
 	}
 }
 
-func TestProbeFilesystemCleansUpOnError(t *testing.T) {
+func TestProbeFilesystemCleansUp(t *testing.T) {
 	tempDir := t.TempDir()
-	readOnlyDir := filepath.Join(tempDir, "readonly")
-	if err := os.MkdirAll(readOnlyDir, 0o555); err != nil {
+	if _, err := settings.ProbeFilesystemSemantics(tempDir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		_ = os.Chmod(readOnlyDir, 0o755)
-	}()
-
-	targetPath := filepath.Join(readOnlyDir, "probe-target")
-	_, err := settings.ProbeFilesystemSemantics(targetPath)
-	if err == nil {
-		t.Fatal("expected error for read-only parent, got nil")
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("successful probe left artifacts: %v", entries)
 	}
 
-	entries, _ := os.ReadDir(tempDir)
+	// A regular file standing in for a directory fails on every platform;
+	// POSIX permission bits do not restrict writes on Windows.
+	blocker := filepath.Join(tempDir, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPath := filepath.Join(blocker, "probe-target")
+	_, err = settings.ProbeFilesystemSemantics(targetPath)
+	if err == nil {
+		t.Fatal("expected error for a non-directory parent, got nil")
+	}
+
+	entries, err = os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".melotrove-") {
 			t.Errorf("probe file leaked: %s", entry.Name())
