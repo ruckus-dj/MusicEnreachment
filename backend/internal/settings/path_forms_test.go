@@ -59,6 +59,24 @@ func TestNormalizePathPlatformForms(t *testing.T) {
 	}
 }
 
+// TestNormalizePathWindowsDrivePath pins the Windows half of the source-root
+// path contract on the real platform: a drive-absolute path such as C:\Music is
+// accepted and returned cleaned. The source_root migration stores the same
+// string, and this test runs in the Windows CI matrix where the check is real.
+func TestNormalizePathWindowsDrivePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-absolute normalization only holds on Windows")
+	}
+	const path = `C:\Music`
+	got, err := settings.NormalizePath(path)
+	if err != nil {
+		t.Fatalf("NormalizePath(%q): %v", path, err)
+	}
+	if got != path {
+		t.Errorf("NormalizePath(%q) = %q; want %q", path, got, path)
+	}
+}
+
 func TestPathsOverlapAtWindowsVolumeAndShareRoots(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows volume and share-root overlap semantics")
