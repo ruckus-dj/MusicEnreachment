@@ -268,8 +268,9 @@ func TestSourceScanStartRecordsAProvenInaccessibleRootWithoutAnOperation(t *test
 
 // TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure proves
 // the start converts only a proven directory access failure into the unavailable
-// state: a managed-path overlap, a duplicate configured path and a failed
-// database read all refuse the scan without touching the root's availability.
+// state: a managed-path overlap, a duplicate configured path, a failed database
+// read and the active-scan conflict of the enqueue all refuse the scan without
+// touching the root's availability.
 func TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure(t *testing.T) {
 	ctx := context.Background()
 	t.Run("managed path overlap", func(t *testing.T) {
@@ -315,6 +316,22 @@ func TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure(t *te
 		}
 		if len(fixture.repository.unavailable) != 0 {
 			t.Fatalf("the database failure recorded %+v, want the root untouched", fixture.repository.unavailable)
+		}
+	})
+	t.Run("root with an active scan", func(t *testing.T) {
+		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+		fixture.repository.enqueueErr = fmt.Errorf("enqueue source scan: %w", persistence.ErrSourceRootActiveScan)
+
+		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
+
+		if !errors.Is(err, service.ErrSourceRootBusy) {
+			t.Fatalf("start on a root with an active scan = %+v, %v; want ErrSourceRootBusy", operation, err)
+		}
+		if errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("the active-scan conflict = %v, want no access marker", err)
+		}
+		if len(fixture.repository.unavailable) != 0 {
+			t.Fatalf("the active-scan conflict recorded %+v, want the root untouched", fixture.repository.unavailable)
 		}
 	})
 }

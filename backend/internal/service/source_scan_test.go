@@ -496,6 +496,9 @@ func TestSourceScanFailsWhenCanceledDuringAProbe(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("scan error = %v, want the cancellation the probe died of", err)
 	}
+	if errors.Is(err, service.ErrSourceRootInaccessible) {
+		t.Fatalf("a canceled scan = %v, want no root access marker", err)
+	}
 	if stored := fixture.candidates(t); len(stored) != 0 {
 		t.Fatalf("a canceled scan recorded the candidates %v", sourceScanCandidatePaths(stored))
 	}
@@ -513,6 +516,9 @@ func TestSourceScanFailsWhenCanceledDuringTraversal(t *testing.T) {
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("scan error = %v, want a cancellation", err)
+	}
+	if errors.Is(err, service.ErrSourceRootInaccessible) {
+		t.Fatalf("a canceled scan = %v, want no root access marker", err)
 	}
 	if stored := fixture.candidates(t); len(stored) != 0 {
 		t.Fatalf("a canceled scan recorded the candidates %v", sourceScanCandidatePaths(stored))
