@@ -269,3 +269,103 @@ func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, ope
 		t.Fatalf("start scan operation %s: %v", operationID, err)
 	}
 }
+
+// TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL pins the
+// guard of a scan start refused before its operation existed. The start records
+// the inaccessibility it proved, but a successful scan that landed after its
+// observation and an edit that moved the root to another path each supersede
+// that observation and are never overwritten by it.
+func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/start-unavailable")
+
+	// A start that observed the fresh, never-scanned root records the
+	// inaccessibility it proved.
+	if err := inventory.MarkSourceRootUnavailableForRoot(ctx, persistence.SourceRootUnavailable{
+		RootID: root.ID, SafeError: unavailableSafeReason, ExpectedConfiguredPath: root.ConfiguredPath,
+	}); err != nil {
+		t.Fatalf("mark the fresh root unavailable: %v", err)
+	}
+	marked, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the start report: %v", err)
+	}
+	if marked.Status != persistence.SourceRootStatusUnavailable || marked.SafeError == nil || *marked.SafeError != unavailableSafeReason {
+		t.Fatalf("root after the start report = %s/%v, want unavailable with the safe reason", marked.Status, marked.SafeError)
+	}
+
+	// A successful scan of the restored directory supersedes the observation.
+	success := newSourceScanOperation(t, ctx, database, root, "running")
+	applySourceScan(t, ctx, inventory, success, root.ConfiguredPath,
+		sourceCandidate("album/track.flac", 1024, probeMtime()))
+	setOperationState(t, ctx, database, success.ID, "succeeded")
+	available, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the success: %v", err)
+	}
+	if available.Status != persistence.SourceRootStatusAvailable || available.SafeError != nil {
+		t.Fatalf("root after the success = %s/%v, want available without a safe error", available.Status, available.SafeError)
+	}
+
+	// The late report of the start that observed the pre-success root is a no-op.
+	if err := inventory.MarkSourceRootUnavailableForRoot(ctx, persistence.SourceRootUnavailable{
+		RootID: root.ID, SafeError: unavailableSafeReason, ExpectedConfiguredPath: root.ConfiguredPath,
+	}); err != nil {
+		t.Fatalf("mark with the superseded observation: %v", err)
+	}
+	current, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the superseded report: %v", err)
+	}
+	if current.Status != persistence.SourceRootStatusAvailable || current.ScanGeneration != available.ScanGeneration {
+		t.Fatalf("root after the superseded report = %s/%d, want the newer available generation %d", current.Status, current.ScanGeneration, available.ScanGeneration)
+	}
+
+	// An edit that moved the root to another path is not overwritten by the
+	// observation of the old path either.
+	moved := "/srv/start-unavailable-moved"
+	if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
+		Set("configured_path = ?", moved).Where("id = ?", root.ID).Exec(ctx); err != nil {
+		t.Fatalf("move the root to another path: %v", err)
+	}
+	if err := inventory.MarkSourceRootUnavailableForRoot(ctx, persistence.SourceRootUnavailable{
+		RootID: root.ID, SafeError: unavailableSafeReason, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedLastSuccess: available.LastSuccessfulScanAt,
+	}); err != nil {
+		t.Fatalf("mark with the observation of the old path: %v", err)
+	}
+	relocated, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the moved-path report: %v", err)
+	}
+	if relocated.Status != persistence.SourceRootStatusAvailable || relocated.ConfiguredPath != moved {
+		t.Fatalf("root after the moved-path report = %s at %q, want available at %q", relocated.Status, relocated.ConfiguredPath, moved)
+	}
+}
+
+// TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL pins the
+// boundary the start path relies on: an empty reason and a missing root id are
+// refused before any write.
+func TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/start-boundary")
+	before := snapshotInventory(t, ctx, database, root.ID)
+
+	for _, unavailable := range []persistence.SourceRootUnavailable{
+		{RootID: root.ID, ExpectedConfiguredPath: root.ConfiguredPath},
+		{SafeError: unavailableSafeReason, ExpectedConfiguredPath: root.ConfiguredPath},
+	} {
+		if err := inventory.MarkSourceRootUnavailableForRoot(ctx, unavailable); err == nil {
+			t.Fatalf("mark %+v was accepted, want a refusal", unavailable)
+		}
+	}
+	if current := snapshotInventory(t, ctx, database, root.ID); current != before {
+		t.Fatalf("root after the refused reports = %q, want %q", current, before)
+	}
+}

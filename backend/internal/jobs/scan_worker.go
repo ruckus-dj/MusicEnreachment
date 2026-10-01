@@ -26,7 +26,7 @@ const (
 	scanSafeRootGone     = "The source root no longer exists."
 	scanSafeDisabled     = "The source root is disabled. Enable it before scanning it again."
 	scanSafeNotReady     = "The source scan requires a completed setup on a supported server platform."
-	scanSafePath         = "The configured source directory is unavailable or no longer readable. The previous inventory is unchanged."
+	scanSafePath         = service.SourceScanDirectoryUnavailableReason
 	scanSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the scan."
 	scanSafeTraversal    = "The source directory could not be read completely. The previous inventory is unchanged."
 	scanSafeApply        = "The verified scan could not be applied. The previous inventory is unchanged."
@@ -53,6 +53,7 @@ type scanWorkerRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
 	ApplySourceScan(context.Context, persistence.SourceScanApply) error
+	MarkSourceRootUnavailable(context.Context, persistence.SourceScanUnavailable) error
 }
 
 // scanWorkerSettings is the runtime state a scan reloads before it walks: the
@@ -140,8 +141,20 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	// operator changed after the enqueue must not publish files of the new path
 	// as the inventory of the old one.
 	path, err := worker.paths.ValidateSourcePath(ctx, root.ConfiguredPath, &root.ID)
-	if err != nil || path != snapshot.ConfiguredPath {
+	if err != nil {
 		slog.Warn("source scan path failed revalidation", "operation", operation.ID.String(), "cause", err)
+		// A managed-path overlap, a duplicate configured path and a failed
+		// database read say nothing about the directory, so only a proven
+		// inaccessible root is recorded before the operation fails.
+		if errors.Is(err, service.ErrSourceRootInaccessible) {
+			if markErr := worker.recordUnavailableRoot(ctx, operation); markErr != nil {
+				return markErr
+			}
+		}
+		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
+	}
+	if path != snapshot.ConfiguredPath {
+		slog.Warn("source scan path changed after the enqueue", "operation", operation.ID.String())
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
 	}
 	probe, err := worker.managedProbe(ctx)
@@ -155,6 +168,15 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 			return err
 		}
 		slog.Warn("source scan traversal failed", "operation", operation.ID.String(), "cause", err)
+		// A traversal that failed because the root directory itself cannot be
+		// read proves the root inaccessible. A subtree that could not be read, a
+		// file that changed under the scan and a canceled scan carry no marker
+		// and leave the root exactly as it was.
+		if errors.Is(err, service.ErrSourceRootInaccessible) {
+			if markErr := worker.recordUnavailableRoot(ctx, operation); markErr != nil {
+				return markErr
+			}
+		}
 		return worker.fail(ctx, operation, service.SourceScanStageTraversing, scanSafeTraversal)
 	}
 	// The apply is one transaction that installs the verified generation. It is
@@ -218,6 +240,19 @@ func (worker *SourceScanWorker) fail(ctx context.Context, operation *persistence
 		return fmt.Errorf("drop the candidates of the failed scan: %w", err)
 	}
 	return worker.operations.Fail(ctx, operation.ID, stage, safe)
+}
+
+// recordUnavailableRoot marks the scan's root unavailable before the operation
+// is failed. The repository refuses the write when a successful scan of the root
+// superseded this attempt, so a late failure never overwrites a newer success;
+// that refusal is a no-op, not an error.
+func (worker *SourceScanWorker) recordUnavailableRoot(ctx context.Context, operation *persistence.Operation) error {
+	if err := worker.repository.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
+		OperationID: operation.ID, SafeError: service.SourceScanDirectoryUnavailableReason,
+	}); err != nil {
+		return fmt.Errorf("record the unavailable source root: %w", err)
+	}
+	return nil
 }
 
 // managedProbe resolves the active managed ffprobe a scan probes files with and

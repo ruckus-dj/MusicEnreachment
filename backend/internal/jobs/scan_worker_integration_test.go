@@ -41,7 +41,9 @@ type scanDispatchLocation struct {
 // real River dispatcher and real PostgreSQL: a delivery scans, applies and
 // succeeds; a duplicate delivery does not walk the tree again; a traversal that
 // fails, a missing managed ffprobe and a disabled root each fail the operation
-// with a safe reason while the previous inventory stays exactly as it was.
+// with a safe reason while the previous inventory stays exactly as it was; and
+// only a root directory the worker cannot access is recorded as unavailable,
+// which the next successful scan restores.
 func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
@@ -101,6 +103,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if count := scanDispatchProbeCount(t, probes); count != 3 {
 		t.Fatalf("probes after the first scan = %d, want one per approved file", count)
 	}
+	// A probe_error of one file never marks the root unavailable.
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
 	// Given the same job delivered a second time...
 	duplicate := deliverScanDispatchJob(t, ctx, database, riverClient, first.ID)
@@ -135,6 +139,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 1)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 	requireScanDispatchCandidates(t, ctx, database, second.ID, 0)
+	// An unreadable subtree is not the root's inaccessibility.
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
 	// Given the subtree is readable again...
 	beforeRecovery := scanDispatchProbeCount(t, probes)
@@ -157,6 +163,41 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if delta := scanDispatchProbeCount(t, probes) - beforeRecovery; delta != 1 {
 		t.Fatalf("probes during the recovery scan = %d, want the probe_error file rechecked alone", delta)
 	}
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
+
+	// Given the registered directory itself has disappeared...
+	if err := os.RemoveAll(source); err != nil {
+		t.Fatalf("remove the source directory: %v", err)
+	}
+	missing := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, missing.ID))
+
+	// Then the worker's own revalidation proves the root inaccessible: the
+	// operation fails with the path reason, the root records the safe
+	// unavailability and the previous inventory is exactly what the success left.
+	assertOperationStage(t, ctx, setupManager, missing.ID, "failed", service.SourceScanStageQueued)
+	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, missing.ID), scanSafePath)
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusUnavailable)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
+	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
+	requireScanDispatchCandidates(t, ctx, database, missing.ID, 0)
+
+	// Given the directory is restored...
+	writeScanDispatchFile(t, filepath.Join(source, "album", "track.flac"), "audio bytes")
+	writeScanDispatchFile(t, filepath.Join(source, "album", "silent.mka"), "video only bytes")
+	writeScanDispatchFile(t, filepath.Join(source, "album", "broken.wav"), "unreadable bytes")
+	restored, err := scans.Start(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("start the scan after the directory was restored: %v", err)
+	}
+	awaitRiverCompletion(t, ctx, events, *restored.RiverJobID)
+
+	// Then the next successful scan restores the availability and the previous
+	// inventory keeps the identity of every unchanged path.
+	assertOperationStage(t, ctx, setupManager, restored.ID, "succeeded", "succeeded")
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
+	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 
 	// Given the managed ffprobe is gone...
 	beforeToolFailure := scanDispatchProbeCount(t, probes)
@@ -173,12 +214,14 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// every traversed file into a probe_error.
 	assertOperationStage(t, ctx, setupManager, fourth.ID, "failed", service.SourceScanStageQueued)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, fourth.ID), scanSafeTool)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 	requireScanDispatchCandidates(t, ctx, database, fourth.ID, 0)
 	if delta := scanDispatchProbeCount(t, probes) - beforeToolFailure; delta != 0 {
 		t.Fatalf("probes during the tool failure = %d, want none without a working tool", delta)
 	}
+	// A missing managed tool never marks the root unavailable.
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
 	// Given a root the operator disabled while a scan of it was already queued...
 	disabled := false
@@ -192,8 +235,10 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// inventory of the disabled root stays visible.
 	assertOperationStage(t, ctx, setupManager, queued.ID, "failed", service.SourceScanStageQueued)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, queued.ID), scanSafeDisabled)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
+	// Disabling a root reports no directory problem.
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 }
 
 // writeScanDispatchFFmpeg materializes a fake managed ffmpeg whose ffprobe
@@ -353,6 +398,17 @@ func requireScanDispatchGeneration(t *testing.T, ctx context.Context, inventory 
 	}
 	if root.ScanGeneration != generation {
 		t.Fatalf("scan generation = %d, want %d", root.ScanGeneration, generation)
+	}
+}
+
+func requireScanDispatchAvailability(t *testing.T, ctx context.Context, inventory *persistence.SourceInventoryRepository, rootID uuid.UUID, want string) {
+	t.Helper()
+	root, err := inventory.GetSourceRoot(ctx, rootID)
+	if err != nil {
+		t.Fatalf("read the source root: %v", err)
+	}
+	if root.Status != want {
+		t.Fatalf("source root status = %q (safe error %v), want %q", root.Status, root.SafeError, want)
 	}
 }
 

@@ -41,6 +41,13 @@ const (
 // internal detail, and it is what an operator reads on such a file.
 const sourceScanProbeErrorText = "ffprobe could not confirm an audio stream in this file. The next scan will check it again."
 
+// SourceScanDirectoryUnavailableReason is the safe UI text recorded on a root
+// whose configured directory is proven inaccessible, whether the scan was
+// refused before it started or its traversal failed on the root itself. It
+// carries no path and no raw diagnostic, and the operation keeps its own
+// separate safe error.
+const SourceScanDirectoryUnavailableReason = "The configured source directory is unavailable or no longer readable. The previous inventory is unchanged."
+
 // SourceScanRepository is the persistence contract of a source scan. A scan only
 // ever stores candidates of its own operation: it writes no location, so the
 // previous inventory stays untouched until a later step applies the candidates

@@ -152,6 +152,24 @@ func (repository *sourceAPIRepository) CreateSourceScanOperationAndEnqueue(ctx c
 	return repository.operations.CreateOperation(ctx, operation)
 }
 
+func (repository *sourceAPIRepository) MarkSourceRootUnavailableForRoot(_ context.Context, unavailable persistence.SourceRootUnavailable) error {
+	if unavailable.SafeError == "" || unavailable.RootID == uuid.Nil {
+		return fmt.Errorf("mark source root unavailable: a safe error and a source root are required")
+	}
+	for _, root := range repository.roots {
+		if root.ID != unavailable.RootID {
+			continue
+		}
+		if root.ConfiguredPath == unavailable.ExpectedConfiguredPath {
+			safe := unavailable.SafeError
+			root.Status = persistence.SourceRootStatusUnavailable
+			root.SafeError = &safe
+		}
+		return nil
+	}
+	return fmt.Errorf("mark source root unavailable: source root no longer exists")
+}
+
 func sourceAPILocationOrder(locations []persistence.SourceLocation) []persistence.SourceLocation {
 	ordered := slices.Clone(locations)
 	slices.SortFunc(ordered, func(first, second persistence.SourceLocation) int {

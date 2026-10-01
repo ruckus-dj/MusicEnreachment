@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -52,15 +55,33 @@ func (fixture *riverInserterFixture) InsertTx(context.Context, *sql.Tx, river.Jo
 type sourceScanStartRepositoryFixture struct {
 	*sourceRootRepositoryFixture
 
-	reads      int
-	operations []*persistence.Operation
-	args       []river.JobArgs
-	enqueueErr error
+	reads          int
+	operations     []*persistence.Operation
+	args           []river.JobArgs
+	enqueueErr     error
+	unavailable    []persistence.SourceRootUnavailable
+	unavailableErr error
+	listErr        error
 }
 
 func (fixture *sourceScanStartRepositoryFixture) GetSourceRoot(ctx context.Context, id uuid.UUID) (*persistence.SourceRoot, error) {
 	fixture.reads++
 	return fixture.sourceRootRepositoryFixture.GetSourceRoot(ctx, id)
+}
+
+func (fixture *sourceScanStartRepositoryFixture) ListSourceRoots(ctx context.Context) ([]persistence.SourceRoot, error) {
+	if fixture.listErr != nil {
+		return nil, fixture.listErr
+	}
+	return fixture.sourceRootRepositoryFixture.ListSourceRoots(ctx)
+}
+
+func (fixture *sourceScanStartRepositoryFixture) MarkSourceRootUnavailableForRoot(_ context.Context, unavailable persistence.SourceRootUnavailable) error {
+	if fixture.unavailableErr != nil {
+		return fixture.unavailableErr
+	}
+	fixture.unavailable = append(fixture.unavailable, unavailable)
+	return nil
 }
 
 func (fixture *sourceScanStartRepositoryFixture) CreateSourceScanOperationAndEnqueue(_ context.Context, operation *persistence.Operation, _ persistence.RiverInserter, args river.JobArgs, _ *river.InsertOpts) error {
@@ -77,6 +98,7 @@ type sourceScanStartFixture struct {
 	repository *sourceScanStartRepositoryFixture
 	river      *riverInserterFixture
 	root       service.SourceRoot
+	tools      string
 }
 
 func newSourceScanStartFixture(t *testing.T, setup service.SourceScanSetup, platform settings.PlatformState) sourceScanStartFixture {
@@ -96,6 +118,7 @@ func newSourceScanStartFixture(t *testing.T, setup service.SourceScanSetup, plat
 		repository: repository,
 		river:      inserter,
 		root:       root,
+		tools:      tools,
 	}
 }
 
@@ -208,4 +231,90 @@ func TestSourceScanStartRefusesADisabledRootThroughTheRepository(t *testing.T) {
 	if operation != nil {
 		t.Fatalf("refused start returned the operation %+v, want none", operation)
 	}
+}
+
+// TestSourceScanStartRecordsAProvenInaccessibleRootWithoutAnOperation pins the
+// start half of the unavailable state: a registered directory the validator
+// proves inaccessible is recorded on the root with a nonempty safe reason, and
+// the refusal still creates neither an operation nor a River job.
+func TestSourceScanStartRecordsAProvenInaccessibleRootWithoutAnOperation(t *testing.T) {
+	fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+	if err := os.RemoveAll(fixture.root.ConfiguredPath); err != nil {
+		t.Fatalf("remove the source directory: %v", err)
+	}
+
+	operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
+
+	if !errors.Is(err, service.ErrSourceRootInaccessible) {
+		t.Fatalf("start on a missing directory = %+v, %v; want ErrSourceRootInaccessible", operation, err)
+	}
+	if operation != nil || len(fixture.repository.operations) != 0 {
+		t.Fatalf("refused start returned %+v and stored %+v, want no operation", operation, fixture.repository.operations)
+	}
+	if len(fixture.repository.unavailable) != 1 {
+		t.Fatalf("unavailable reports = %+v, want exactly one", fixture.repository.unavailable)
+	}
+	report := fixture.repository.unavailable[0]
+	if report.RootID != fixture.root.ID || report.SafeError != service.SourceScanDirectoryUnavailableReason {
+		t.Fatalf("unavailable report = %+v, want root %s with the safe reason", report, fixture.root.ID)
+	}
+	if report.ExpectedConfiguredPath != fixture.root.ConfiguredPath || report.ExpectedLastSuccess != nil {
+		t.Fatalf("unavailable guard = path %q success %v, want the root the attempt observed", report.ExpectedConfiguredPath, report.ExpectedLastSuccess)
+	}
+	if strings.Contains(report.SafeError, fixture.root.ConfiguredPath) {
+		t.Fatalf("safe reason %q leaks the configured path", report.SafeError)
+	}
+}
+
+// TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure proves
+// the start converts only a proven directory access failure into the unavailable
+// state: a managed-path overlap, a duplicate configured path and a failed
+// database read all refuse the scan without touching the root's availability.
+func TestSourceScanStartDoesNotBlameTheRootForAnUnrelatedValidationFailure(t *testing.T) {
+	ctx := context.Background()
+	t.Run("managed path overlap", func(t *testing.T) {
+		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+		overlap := filepath.Join(fixture.tools, "inner")
+		if err := os.MkdirAll(overlap, 0o755); err != nil {
+			t.Fatalf("create the overlapping directory: %v", err)
+		}
+		fixture.repository.roots[0].ConfiguredPath = overlap
+
+		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
+
+		if err == nil || errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("start on a managed overlap = %+v, %v; want a refusal without the access marker", operation, err)
+		}
+		if len(fixture.repository.unavailable) != 0 {
+			t.Fatalf("the managed overlap recorded %+v, want the root untouched", fixture.repository.unavailable)
+		}
+	})
+	t.Run("duplicate configured path", func(t *testing.T) {
+		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+		fixture.repository.roots = append(fixture.repository.roots, &persistence.SourceRoot{
+			ID: uuid.New(), DisplayName: "Duplicate", ConfiguredPath: fixture.root.ConfiguredPath, Enabled: true,
+		})
+
+		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
+
+		if err == nil || errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("start on a duplicate path = %+v, %v; want a refusal without the access marker", operation, err)
+		}
+		if len(fixture.repository.unavailable) != 0 {
+			t.Fatalf("the duplicate path recorded %+v, want the root untouched", fixture.repository.unavailable)
+		}
+	})
+	t.Run("database read failure", func(t *testing.T) {
+		fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+		fixture.repository.listErr = errors.New("the source roots could not be read")
+
+		operation, err := fixture.scans.Start(ctx, fixture.root.ID)
+
+		if err == nil || errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("start with a failed root read = %+v, %v; want a refusal without the access marker", operation, err)
+		}
+		if len(fixture.repository.unavailable) != 0 {
+			t.Fatalf("the database failure recorded %+v, want the root untouched", fixture.repository.unavailable)
+		}
+	})
 }

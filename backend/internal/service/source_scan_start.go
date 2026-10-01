@@ -63,6 +63,7 @@ func (ScanSourceJobArgs) Kind() string { return SourceScanJobKind }
 type SourceScanStartRepository interface {
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
 	CreateSourceScanOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	MarkSourceRootUnavailableForRoot(context.Context, persistence.SourceRootUnavailable) error
 }
 
 // SourceScanPathValidator re-validates a configured source path at start time.
@@ -114,6 +115,14 @@ func (s *SourceScanOperations) Start(ctx context.Context, rootID uuid.UUID) (*pe
 	}
 	path, err := s.paths.ValidateSourcePath(ctx, root.ConfiguredPath, &root.ID)
 	if err != nil {
+		// Only a directory the validator proved inaccessible is recorded on the
+		// root: a managed-path overlap, a duplicate configured path and a failed
+		// database read are refusals that say nothing about the directory.
+		if errors.Is(err, ErrSourceRootInaccessible) {
+			if markErr := s.recordUnavailableRoot(ctx, root); markErr != nil {
+				return nil, fmt.Errorf("scan source root: %w", markErr)
+			}
+		}
 		return nil, fmt.Errorf("scan source root: %w", err)
 	}
 	snapshot, err := json.Marshal(ScanSourceSnapshot{
@@ -138,6 +147,23 @@ func (s *SourceScanOperations) Start(ctx context.Context, rootID uuid.UUID) (*pe
 // ready refuses a start the instance cannot fulfil: an unusable platform has no
 // managed tools to read a source with, and an unfinished Setup has not verified
 // them yet.
+// recordUnavailableRoot stores the proven inaccessibility of a root whose scan
+// start was refused before its operation existed. The repository refuses the
+// write when the root moved to another path or a newer success landed since this
+// attempt read it, so a rejected start never overwrites a newer result and never
+// invents an unavailable state for a path the operator already replaced.
+func (s *SourceScanOperations) recordUnavailableRoot(ctx context.Context, root *persistence.SourceRoot) error {
+	if err := s.repository.MarkSourceRootUnavailableForRoot(ctx, persistence.SourceRootUnavailable{
+		RootID:                 root.ID,
+		SafeError:              SourceScanDirectoryUnavailableReason,
+		ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedLastSuccess:    root.LastSuccessfulScanAt,
+	}); err != nil {
+		return fmt.Errorf("record the unavailable source root: %w", err)
+	}
+	return nil
+}
+
 func (s *SourceScanOperations) ready(ctx context.Context) error {
 	if s.platform.Diagnostic {
 		return fmt.Errorf("scan source root: the instance platform is not usable (%s): %w", s.platform.Reason, ErrSourceScanNotReady)

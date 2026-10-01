@@ -66,6 +66,12 @@ func walkSourceDirectory(ctx context.Context, root, relative string, visit Sourc
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil {
+		// Only the root directory itself failing to read proves the registered
+		// directory inaccessible; an unreadable subtree is not the root's
+		// inaccessibility and must not carry the marker.
+		if relative == "" {
+			return fmt.Errorf("read source directory %q: %w: %w", directory, ErrSourceRootInaccessible, err)
+		}
 		return fmt.Errorf("read source directory %q: %w", directory, err)
 	}
 	for _, entry := range entries {

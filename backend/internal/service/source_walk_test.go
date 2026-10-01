@@ -356,3 +356,65 @@ func sourceWalkSymlink(t *testing.T, target, link string) {
 		t.Fatalf("create the symlink %q -> %q: %v", link, target, err)
 	}
 }
+
+// TestWalkSourceTreeMarksOnlyAnInaccessibleRoot proves the marker the scan
+// treats as an unavailable root is set by the registered directory alone: an
+// unreadable subtree and a canceled walk fail without it, while the root
+// directory itself failing to read carries it.
+func TestWalkSourceTreeMarksOnlyAnInaccessibleRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	t.Run("unreadable subtree", func(t *testing.T) {
+		root := t.TempDir()
+		locked := filepath.Join(root, "locked")
+		if err := os.MkdirAll(locked, 0o755); err != nil {
+			t.Fatalf("create the subtree: %v", err)
+		}
+		writeSourceWalkFile(t, filepath.Join(locked, "hidden.flac"), "audio bytes")
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatalf("lock the subtree: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+		err := service.WalkSourceTree(context.Background(), root, func(service.SourceWalkEntry) error { return nil })
+
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("walk error = %v, want a permission failure", err)
+		}
+		if errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("walk error = %v, want an unreadable subtree to leave the root accessible", err)
+		}
+	})
+	t.Run("canceled walk", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := service.WalkSourceTree(ctx, t.TempDir(), func(service.SourceWalkEntry) error { return nil })
+
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("walk error = %v, want the cancellation", err)
+		}
+		if errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("walk error = %v, want a canceled walk to leave the root accessible", err)
+		}
+	})
+	t.Run("missing root", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "gone")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatalf("create the root: %v", err)
+		}
+		if err := os.Remove(root); err != nil {
+			t.Fatalf("remove the root: %v", err)
+		}
+
+		err := service.WalkSourceTree(context.Background(), root, func(service.SourceWalkEntry) error { return nil })
+
+		if !errors.Is(err, service.ErrSourceRootInaccessible) {
+			t.Fatalf("walk error = %v, want the root access marker", err)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("walk error = %v, want the underlying not-exist failure", err)
+		}
+	})
+}

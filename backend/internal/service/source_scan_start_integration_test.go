@@ -335,6 +335,14 @@ func TestSourceScanStartRefusesDisabledRootUnfinishedSetupAndAnUnusableInstance(
 		errors.Is(err, service.ErrSourceScanNotReady) {
 		t.Fatalf("start on a missing source directory = %v, want the path failure itself", err)
 	}
+	unavailable, err := fixture.inventory.GetSourceRoot(ctx, fixture.root.ID)
+	if err != nil {
+		t.Fatalf("read the root after the path refusal: %v", err)
+	}
+	if unavailable.Status != persistence.SourceRootStatusUnavailable || unavailable.SafeError == nil ||
+		*unavailable.SafeError != service.SourceScanDirectoryUnavailableReason {
+		t.Fatalf("root after the path refusal = %s/%v, want unavailable with the safe reason", unavailable.Status, unavailable.SafeError)
+	}
 
 	if operations := scanOperationsOfRoot(t, ctx, fixture.database, fixture.root.ID); operations != 0 {
 		t.Fatalf("scan operations after the refusals = %d, want 0", operations)
@@ -343,8 +351,9 @@ func TestSourceScanStartRefusesDisabledRootUnfinishedSetupAndAnUnusableInstance(
 		t.Fatalf("scan River jobs after the refusals = %d, want 0", jobs)
 	}
 	stored, err := fixture.inventory.GetSourceRoot(ctx, fixture.root.ID)
-	if err != nil || stored.Enabled || stored.ScanGeneration != 0 || stored.InventoryPath != nil {
-		t.Fatalf("root after the refusals = %+v, %v; want only the operator's disabled flag", stored, err)
+	if err != nil || stored.Enabled || stored.ScanGeneration != 0 || stored.InventoryPath != nil ||
+		stored.Status != persistence.SourceRootStatusUnavailable || stored.SafeError == nil {
+		t.Fatalf("root after the refusals = %+v, %v; want only the disabled flag and the proven unavailability", stored, err)
 	}
 	logScanStartState(t, ctx, fixture.database, fixture.root.ID)
 }

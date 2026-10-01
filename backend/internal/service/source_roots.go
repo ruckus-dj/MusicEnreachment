@@ -22,6 +22,13 @@ var ErrSourceRootBusy = errors.New("source root has an active scan")
 // or location count does not describe the root as it is now.
 var ErrSourceRootConfirmation = errors.New("source root deletion confirmation does not match")
 
+// ErrSourceRootInaccessible reports a configured source directory that cannot be
+// used at all: it is gone, it is no longer a directory, or it cannot be opened
+// and read. A managed-path overlap, a duplicate configured path and a failed
+// database read are refusals too, but none of them proves the registered
+// directory inaccessible and none carries this marker.
+var ErrSourceRootInaccessible = errors.New("the source root directory is inaccessible")
+
 // SourceRootRepository is the persistence contract of the source root service.
 type SourceRootRepository interface {
 	CreateSourceRoot(context.Context, *persistence.SourceRoot) error
@@ -202,18 +209,18 @@ func (s *SourceRoots) ValidateSourcePath(ctx context.Context, configuredPath str
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("source directory must exist and be readable: %w", err)
+		return "", fmt.Errorf("source directory must exist and be readable: %w: %w", ErrSourceRootInaccessible, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("source directory is not a directory")
+		return "", fmt.Errorf("source directory is not a directory: %w", ErrSourceRootInaccessible)
 	}
 	directory, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("source directory is not readable: %w", err)
+		return "", fmt.Errorf("source directory is not readable: %w: %w", ErrSourceRootInaccessible, err)
 	}
 	defer func() { _ = directory.Close() }()
 	if _, err := directory.ReadDir(1); err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("source directory is not readable: %w", err)
+		return "", fmt.Errorf("source directory is not readable: %w: %w", ErrSourceRootInaccessible, err)
 	}
 	if err := s.checkManagedOverlap(ctx, path); err != nil {
 		return "", err
