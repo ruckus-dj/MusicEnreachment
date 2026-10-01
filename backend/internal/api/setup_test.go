@@ -151,13 +151,21 @@ func TestCheckSetupPathsValidatesWithoutSaving(t *testing.T) {
 			if response.Code != test.want {
 				t.Fatalf("status=%d, want %d: %s", response.Code, test.want, response.Body.String())
 			}
-			if response.Code == http.StatusOK && (!strings.Contains(response.Body.String(), toolsRoot) || !strings.Contains(response.Body.String(), outputRoot)) {
-				t.Fatalf("normalized checked paths absent: %s", response.Body.String())
-			}
 			if response.Code == http.StatusOK {
 				var checked api.CheckPathsBody
 				if err := json.Unmarshal(response.Body.Bytes(), &checked); err != nil {
 					t.Fatal(err)
+				}
+				wantTools, err := settings.NormalizePath(toolsRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantOutput, err := settings.NormalizePath(test.output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if checked.ToolsDirectory != wantTools || checked.OutputDirectory != wantOutput {
+					t.Fatalf("normalized checked paths absent: %s", response.Body.String())
 				}
 				if checked.OutputUnicodeNormalization == "" {
 					t.Fatalf("output filesystem semantics absent: %s", response.Body.String())

@@ -72,7 +72,7 @@ func TestInstallStartStoresIdentitiesAndQueuesOperationOnlyArgs(t *testing.T) {
 	if enqueuer.installation == nil || enqueuer.operation == nil {
 		t.Fatal("installation and operation were not enqueued")
 	}
-	if enqueuer.installation.State != "preparing" || enqueuer.installation.RelativePath != "fpcalc/v1.6.1" {
+	if enqueuer.installation.State != "preparing" || filepath.ToSlash(enqueuer.installation.RelativePath) != "fpcalc/v1.6.1" {
 		t.Fatalf("installation target = %#v", enqueuer.installation)
 	}
 	args, ok := enqueuer.args.(service.OperationJobArgs)
