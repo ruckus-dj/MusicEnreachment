@@ -135,6 +135,63 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 	})
 }
 
+// CreateToolsMoveOperationAndEnqueue records a tools root move and its River job
+// in one transaction, under the same operation table lock a scan or analysis
+// start takes. Holding that lock, it refuses the move while any active analysis
+// holds a managed installation: the move rewrites the global tools directory
+// every analysis's pinned executable lives under, so every such hold blocks it,
+// not only the installations a preflight happened to list. An installation hold
+// is a read hold, so several analyses of different roots may hold the same
+// installation and this check never consumes the mutation target the install
+// constraint uses.
+func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx context.Context, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
+	if client == nil {
+		return fmt.Errorf("enqueue tools move: River client is required")
+	}
+	if operation == nil || operation.Kind != "move_tools_root" {
+		return fmt.Errorf("enqueue tools move: operation must be a tools root move")
+	}
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("enqueue tools move: lock operations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-operation-exclusivity"); err != nil {
+			return fmt.Errorf("enqueue tools move: lock operation exclusivity: %w", err)
+		}
+		held, err := activeAnalysisInstallationHold(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("enqueue tools move: check active analysis holds: %w", err)
+		}
+		if held {
+			return fmt.Errorf("enqueue tools move: %w", ErrToolsInstallationHeldByAnalysis)
+		}
+		result, err := client.InsertTx(ctx, tx.Tx, args, options)
+		if err != nil {
+			return fmt.Errorf("enqueue tools move: insert River job: %w", err)
+		}
+		operation.RiverJobID = &result.Job.ID
+		if err := repository.CreateOperationWith(ctx, tx, operation); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// activeAnalysisInstallationHold reports whether any queued or running analysis
+// holds a managed installation. Callers hold LOCK TABLE operation, so a
+// concurrent analysis start cannot insert a hold under them.
+func activeAnalysisInstallationHold(ctx context.Context, tx bun.Tx) (bool, error) {
+	var held uuid.UUID
+	err := tx.NewRaw("SELECT id FROM operation WHERE kind = 'analyze_source' AND state IN ('queued', 'running') AND analysis_installation_id IS NOT NULL LIMIT 1 FOR UPDATE").Scan(ctx, &held)
+	if err == nil {
+		return true, nil
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	return false, nil
+}
+
 func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(ctx context.Context, installation *ToolInstallation, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
 	if client == nil {
 		return fmt.Errorf("enqueue installation: River client is required")
@@ -469,7 +526,7 @@ func (repository *SetupManagerRepository) ListOperations(ctx context.Context, st
 func (repository *SetupManagerRepository) ListActiveOperationConflictsForUpdate(ctx context.Context, tx bun.Tx, targetInstallationID uuid.UUID) ([]Operation, error) {
 	operations := make([]Operation, 0)
 	if err := tx.NewSelect().Model(&operations).Where("state IN ('queued', 'running')").
-		Where("kind = 'move_tools_root' OR target_installation_id = ?", targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
+		Where("(kind = 'move_tools_root' OR target_installation_id = ? OR analysis_installation_id = ?)", targetInstallationID, targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list active operation conflicts: %w", err)
 	}
 	return operations, nil

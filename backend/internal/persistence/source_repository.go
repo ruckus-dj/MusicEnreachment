@@ -208,9 +208,12 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 	})
 }
 
-// activeSourceScan reports whether a scan of the root is still queued or
-// running. Callers hold LOCK TABLE operation so the answer cannot change under
-// them before they write.
+// activeSourceScan reports whether a scan or an analysis of the root is still
+// queued or running. Both kinds target the root, and the root exclusivity rule
+// makes them mutually exclusive, so a root edit that changes its path or enabled
+// state, a root deletion and a scan start all refuse while either is active.
+// Callers hold LOCK TABLE operation so the answer cannot change under them
+// before they write.
 func activeSourceScan(ctx context.Context, database bun.IDB, rootID uuid.UUID) (bool, error) {
 	var active uuid.UUID
 	err := database.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE", rootID).Scan(ctx, &active)

@@ -19,7 +19,7 @@ import (
 
 type MoveRepository interface {
 	ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error)
-	CreateOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	CreateToolsMoveOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
 }
 
 type MoveFileIdentity struct {
@@ -176,7 +176,10 @@ func (service *MoveTools) Start(ctx context.Context, preflight MovePreflight, co
 	if service.river == nil {
 		return nil, fmt.Errorf("river client is required for tools directory move")
 	}
-	if err := service.repository.CreateOperationAndEnqueue(ctx, operation, service.river, OperationJobArgs{OperationID: operation.ID}, nil); err != nil {
+	// The enqueue refuses the move under the operation table lock while any
+	// active analysis holds a managed installation, because the move rewrites
+	// the global tools directory those analyses pinned executables live under.
+	if err := service.repository.CreateToolsMoveOperationAndEnqueue(ctx, operation, service.river, OperationJobArgs{OperationID: operation.ID}, nil); err != nil {
 		return nil, fmt.Errorf("start tools directory move: %w", err)
 	}
 	return operation, nil

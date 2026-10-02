@@ -27,7 +27,7 @@ func (repository *moveRepositoryFixture) ListInstallations(context.Context, stri
 	return repository.installations, nil
 }
 
-func (repository *moveRepositoryFixture) CreateOperationAndEnqueue(_ context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
+func (repository *moveRepositoryFixture) CreateToolsMoveOperationAndEnqueue(_ context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
 	repository.operation = operation
 	return nil
 }
