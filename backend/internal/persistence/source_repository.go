@@ -199,6 +199,11 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		if count, _ := removed.RowsAffected(); count != 1 {
 			return fmt.Errorf("delete source root: root does not exist")
 		}
+		// The locations of the root went with it; a variant their links kept
+		// alive is now unreferenced and is removed in the same transaction.
+		if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
+			return fmt.Errorf("delete source root: %w", err)
+		}
 		return nil
 	})
 }

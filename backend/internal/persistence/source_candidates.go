@@ -90,6 +90,17 @@ func loadSourceScanCandidates(ctx context.Context, database bun.IDB, operationID
 // only has its file facts confirmed; a location the batch does not contain is
 // removed, so the pruning is scoped to the root and never to another root's rows.
 func applySourceScanCandidates(ctx context.Context, tx bun.Tx, root SourceRoot, generation int64, candidates []SourceScanCandidateInput) error {
+	// A root whose configured path changed describes an inventory of another
+	// directory: every link of the previous path is invalidated before the new
+	// generation is written, even when a file keeps its relative path, size and
+	// mtime, because it is a different file at a different location.
+	if root.Stale() {
+		if _, err := tx.NewUpdate().Model((*SourceLocation)(nil)).
+			Set("media_variant_id = NULL").Set("updated_at = now()").
+			Where("source_root_id = ?", root.ID).Where("media_variant_id IS NOT NULL").Exec(ctx); err != nil {
+			return fmt.Errorf("unlink the variants of the previous inventory path: %w", err)
+		}
+	}
 	if len(candidates) > 0 {
 		if err := insertSourceLocations(ctx, tx, root, generation, candidates); err != nil {
 			return err
@@ -115,6 +126,12 @@ func applySourceScanCandidates(ctx context.Context, tx bun.Tx, root SourceRoot, 
 	if remaining != len(candidates) {
 		return fmt.Errorf("applied generation has %d locations of %d candidates", remaining, len(candidates))
 	}
+	// Unseen, changed and path-invalidated locations have released their
+	// variants; a variant nothing links and no operation holds is removed here,
+	// inside the same transaction, so reconciliation never leaves an orphan.
+	if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -130,6 +147,12 @@ func insertSourceLocations(ctx context.Context, tx bun.Tx, root SourceRoot, gene
 		Set("probe_status = EXCLUDED.probe_status").
 		Set("safe_error = EXCLUDED.safe_error").
 		Set("last_seen_scan_generation = EXCLUDED.last_seen_scan_generation").
+		// An unchanged file that is still audio keeps the variant of its last
+		// successful analysis; a file whose size or mtime moved, or that is no
+		// longer audio, loses the link and starts from no result. The link is
+		// dropped explicitly here; it is never nulled implicitly by the variant
+		// cleanup.
+		Set("media_variant_id = CASE WHEN source_location.size_bytes = EXCLUDED.size_bytes AND source_location.mtime = EXCLUDED.mtime AND EXCLUDED.probe_status = 'audio' THEN source_location.media_variant_id ELSE NULL END").
 		Set("updated_at = now()").
 		Exec(ctx); err != nil {
 		return fmt.Errorf("write source locations: %w", err)
