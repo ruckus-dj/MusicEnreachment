@@ -35,8 +35,13 @@ type SourceLocation struct {
 	LastSeenScanGeneration int64     `bun:"last_seen_scan_generation"`
 	ProbeStatus            string    `bun:"probe_status"`
 	SafeError              *string   `bun:"safe_error,nullzero"`
-	CreatedAt              time.Time `bun:"created_at,nullzero"`
-	UpdatedAt              time.Time `bun:"updated_at,nullzero"`
+	// MediaVariantID is the saved technical result of the last successful
+	// analysis of this path, or nil when the file was never analyzed or changed
+	// since. It is never backfilled: an existing location keeps its NULL until a
+	// successful analysis replaces it.
+	MediaVariantID *uuid.UUID `bun:"media_variant_id,type:uuid,nullzero"`
+	CreatedAt      time.Time  `bun:"created_at,nullzero"`
+	UpdatedAt      time.Time  `bun:"updated_at,nullzero"`
 }
 
 type SourceScanCandidate struct {

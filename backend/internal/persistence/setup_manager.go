@@ -43,15 +43,27 @@ type Operation struct {
 	InputSnapshot        json.RawMessage `bun:"input_snapshot,type:jsonb"`
 	TargetInstallationID *uuid.UUID      `bun:"target_installation_id,type:uuid,nullzero"`
 	TargetSourceRootID   *uuid.UUID      `bun:"target_source_root_id,type:uuid,nullzero"`
-	Attempt              int             `bun:"attempt"`
-	BytesCompleted       int64           `bun:"bytes_completed"`
-	BytesTotal           *int64          `bun:"bytes_total,nullzero"`
-	SafeError            *string         `bun:"safe_error,nullzero"`
-	RiverJobID           *int64          `bun:"river_job_id,nullzero"`
-	CreatedAt            time.Time       `bun:"created_at,nullzero"`
-	StartedAt            *time.Time      `bun:"started_at,nullzero"`
-	FinishedAt           *time.Time      `bun:"finished_at,nullzero"`
-	UpdatedAt            time.Time       `bun:"updated_at,nullzero"`
+	// TargetSourceLocationID is the source location an analyze_source operation
+	// names. It is required while the operation is active and may become NULL
+	// after a terminal state if the location was deleted.
+	TargetSourceLocationID *uuid.UUID `bun:"target_source_location_id,type:uuid,nullzero"`
+	// AnalysisInstallationID is the read hold on the managed FFmpeg installation
+	// an analysis uses. It is not a mutation target and is cleared at the
+	// terminal transition.
+	AnalysisInstallationID *uuid.UUID `bun:"analysis_installation_id,type:uuid,nullzero"`
+	// AnalysisMediaVariantID is the read hold on the variant an analysis keeps
+	// alive so a failed re-analysis never loses the previous result. It is
+	// cleared at the terminal transition.
+	AnalysisMediaVariantID *uuid.UUID `bun:"analysis_media_variant_id,type:uuid,nullzero"`
+	Attempt                int        `bun:"attempt"`
+	BytesCompleted         int64      `bun:"bytes_completed"`
+	BytesTotal             *int64     `bun:"bytes_total,nullzero"`
+	SafeError              *string    `bun:"safe_error,nullzero"`
+	RiverJobID             *int64     `bun:"river_job_id,nullzero"`
+	CreatedAt              time.Time  `bun:"created_at,nullzero"`
+	StartedAt              *time.Time `bun:"started_at,nullzero"`
+	FinishedAt             *time.Time `bun:"finished_at,nullzero"`
+	UpdatedAt              time.Time  `bun:"updated_at,nullzero"`
 }
 
 type SetupManagerRepository struct {
