@@ -55,6 +55,15 @@ type sourceScanRetryEnqueuer interface {
 	RetrySourceScanOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 }
 
+// sourceAnalysisRetryEnqueuer is the analysis-specific half of a retry. An
+// analysis is delivered under its own River kind on its dedicated queue, so the
+// generic operation retry would hand its job to the install/move dispatcher; the
+// repository that owns the operation table implements this, and
+// NewOperationsWithRiver discovers it once.
+type sourceAnalysisRetryEnqueuer interface {
+	RetrySourceAnalysisOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+}
+
 // operationArgs carries only the durable operation ID. Workers always reload
 // their immutable inputs from the operation snapshot.
 type OperationJobArgs struct {
@@ -66,13 +75,14 @@ func (OperationJobArgs) Kind() string { return "operation_v1" }
 // Operations provides the REST source of truth; Subscribe is only a wake-up
 // signal, so reconnecting clients must re-read the operation snapshot.
 type Operations struct {
-	repository OperationRepository
-	enqueuer   operationEnqueuingRepository
-	scanRetry  sourceScanRetryEnqueuer
-	river      persistence.RiverInserter
-	mu         sync.Mutex
-	watchers   map[uuid.UUID]map[chan struct{}]struct{}
-	now        func() time.Time
+	repository    OperationRepository
+	enqueuer      operationEnqueuingRepository
+	scanRetry     sourceScanRetryEnqueuer
+	analysisRetry sourceAnalysisRetryEnqueuer
+	river         persistence.RiverInserter
+	mu            sync.Mutex
+	watchers      map[uuid.UUID]map[chan struct{}]struct{}
+	now           func() time.Time
 }
 
 func NewOperations(repository OperationRepository) *Operations {
@@ -88,6 +98,9 @@ func NewOperationsWithRiver(repository operationEnqueuingRepository, client pers
 	operations.river = client
 	if scans, ok := repository.(sourceScanRetryEnqueuer); ok {
 		operations.scanRetry = scans
+	}
+	if analyses, ok := repository.(sourceAnalysisRetryEnqueuer); ok {
+		operations.analysisRetry = analyses
 	}
 	return operations
 }
@@ -204,18 +217,27 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 	return operation, nil
 }
 
-// enqueueRetry keeps the generic retry for every kind but a scan. A scan retry
-// is a new complete traversal of its root, which only the scan repository can
-// enqueue: a repository that cannot do it fails the retry instead of sending a
-// scan to a worker that does not know the kind.
+// enqueueRetry keeps the generic retry for every kind but a scan and an
+// analysis. A scan retry is a new complete traversal of its root, and an
+// analysis retry re-runs the pinned snapshot on its dedicated queue: only the
+// owning repository can enqueue either, so a repository that cannot do it fails
+// the retry instead of sending the operation to a worker that does not know the
+// kind.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
-	if existing.Kind != SourceScanOperationKind {
+	switch existing.Kind {
+	case SourceScanOperationKind:
+		if s.scanRetry == nil {
+			return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source scan")
+		}
+		return s.scanRetry.RetrySourceScanOperationAndEnqueue(ctx, existing.ID, s.river, ScanSourceJobArgs{OperationID: existing.ID}, nil)
+	case SourceAnalysisOperationKind:
+		if s.analysisRetry == nil {
+			return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source analysis")
+		}
+		return s.analysisRetry.RetrySourceAnalysisOperationAndEnqueue(ctx, existing.ID, s.river, SourceAnalysisJobArgs{OperationID: existing.ID}, &river.InsertOpts{Queue: SourceAnalysisQueue})
+	default:
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, OperationJobArgs{OperationID: existing.ID}, nil)
 	}
-	if s.scanRetry == nil {
-		return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source scan")
-	}
-	return s.scanRetry.RetrySourceScanOperationAndEnqueue(ctx, existing.ID, s.river, ScanSourceJobArgs{OperationID: existing.ID}, nil)
 }
 func (s *Operations) Dismiss(ctx context.Context, id uuid.UUID) error {
 	return s.repository.DismissOperation(ctx, id)

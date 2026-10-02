@@ -178,6 +178,14 @@ func (repository *SourceInventoryRepository) ApplyAnalysisResult(ctx context.Con
 	}
 	var committed *Operation
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// The operation table lock comes first, the order an analysis start, a
+		// root edit, a root deletion and a scan/analysis retry use. An apply that
+		// took its operation row lock before this would hold the row while waiting
+		// for the source root, while a root mutation holds the root and then waits
+		// for the active operation row: a deadlock the shared table lock prevents.
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("apply analysis result: lock operations: %w", err)
+		}
 		operation := new(Operation)
 		if err := tx.NewRaw("SELECT * FROM operation WHERE id = ? FOR UPDATE", apply.OperationID).Scan(ctx, operation); err != nil {
 			if err == sql.ErrNoRows {

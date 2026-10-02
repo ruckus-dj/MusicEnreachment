@@ -44,6 +44,15 @@ type interruptedSourceScanRecovery interface {
 	RecoverInterruptedSourceScan(context.Context, uuid.UUID) (bool, error)
 }
 
+// interruptedSourceAnalysisRecovery is the analysis-specific half of startup
+// recovery: the successful apply commits the variant, the location link and the
+// succeeded state in one transaction, so an analysis still queued or running
+// when its delivery is gone never published a result. Recovery fails it with the
+// caller's safe reason while releasing both read holds in the same transaction.
+type interruptedSourceAnalysisRecovery interface {
+	RecoverInterruptedSourceAnalysis(context.Context, uuid.UUID, string) error
+}
+
 // ReconcileInterruptedOperations marks queued/running operations whose River
 // delivery is not live as retryable failures and removes their private staging.
 // An interrupted scan is resolved against its root first: a generation the root
@@ -75,6 +84,12 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		}
 		if operation.Kind == service.SourceScanOperationKind {
 			if err := recoverInterruptedSourceScan(ctx, repository, operations, operation); err != nil {
+				return err
+			}
+			continue
+		}
+		if operation.Kind == service.SourceAnalysisOperationKind {
+			if err := recoverInterruptedSourceAnalysis(ctx, repository, operation); err != nil {
 				return err
 			}
 			continue
@@ -151,6 +166,22 @@ func recoverInterruptedSourceScan(ctx context.Context, repository interruptedOpe
 		return operations.Succeed(ctx, operation.ID, scanSucceededStage)
 	}
 	return operations.Fail(ctx, operation.ID, operation.Stage, scanSafeInterrupted)
+}
+
+// recoverInterruptedSourceAnalysis resolves one orphaned analysis. The terminal
+// failure and the release of both read holds happen inside the persistence
+// method, so recovery cannot leave a failed analysis holding a variant or an
+// installation; an operation that already succeeded is not in the reconcile set
+// and is left untouched.
+func recoverInterruptedSourceAnalysis(ctx context.Context, repository interruptedOperationRepository, operation *persistence.Operation) error {
+	recovery, ok := repository.(interruptedSourceAnalysisRecovery)
+	if !ok {
+		return fmt.Errorf("recover source analysis %s: the repository does not support source analysis recovery", operation.ID)
+	}
+	if err := recovery.RecoverInterruptedSourceAnalysis(ctx, operation.ID, analysisSafeInterrupted); err != nil {
+		return fmt.Errorf("recover source analysis %s: %w", operation.ID, err)
+	}
+	return nil
 }
 
 func operationStageAfterRetries(stage string) string {

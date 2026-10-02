@@ -543,9 +543,23 @@ func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, o
 
 // TransitionOperation serializes read-modify-write operation state changes.
 // The callback runs while the row is locked and is never invoked for a missing
-// operation.
+// operation. An analysis transition takes the shared operation table lock before
+// it locks the row, the order the analysis apply, fail/recovery, start and retry
+// and every root/tool mutation use: locking the row first would make the
+// terminal UPDATE wait for the table ROW EXCLUSIVE it needs while a root
+// mutation holds SHARE ROW EXCLUSIVE and waits for the same row. Other kinds keep
+// their existing lock footprint.
 func (repository *SetupManagerRepository) TransitionOperation(ctx context.Context, id uuid.UUID, transition func(*Operation) error) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var kind string
+		if err := tx.NewRaw("SELECT kind FROM operation WHERE id = ?", id).Scan(ctx, &kind); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("transition operation: read the operation kind: %w", err)
+		}
+		if kind == analysisSourceOperationKind {
+			if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+				return fmt.Errorf("transition operation: lock operations: %w", err)
+			}
+		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err

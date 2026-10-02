@@ -9,6 +9,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
 // BootstrapArgs keeps River startable before application jobs are introduced.
@@ -55,8 +56,13 @@ func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB,
 		register(workers)
 	}
 	client, err := river.NewClient(driver, &river.Config{
-		Workers:      workers,
-		Queues:       map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+		Workers: workers,
+		// The analysis queue runs one worker: the first slice analyzes one file
+		// at a time, a fixed technical limit with no runtime setting.
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault:          {MaxWorkers: 1},
+			service.SourceAnalysisQueue: {MaxWorkers: 1},
+		},
 		PeriodicJobs: periodicJobs,
 	})
 	if err != nil {

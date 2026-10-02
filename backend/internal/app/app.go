@@ -48,6 +48,14 @@ type scanWorkerRepository struct {
 	*persistence.SourceInventoryRepository
 }
 
+// analysisWorkerRepository joins the two repositories an analysis worker reads:
+// the operation and managed installation records, and the source inventory whose
+// apply commits the result and both read holds.
+type analysisWorkerRepository struct {
+	*persistence.SetupManagerRepository
+	*persistence.SourceInventoryRepository
+}
+
 func newOperationServices(repository operationRepository) (*service.Operations, *service.Operations, *riverClientSlot) {
 	client := &riverClientSlot{}
 	operations := service.NewOperationsWithRiver(repository, client)
@@ -117,20 +125,13 @@ func Run(ctx context.Context, config Config) error {
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
 	)
+	analysisWorker := jobs.NewSourceAnalysisWorker(
+		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
+		operationService, registry, registry, platform,
+	)
 
 	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
-		func(ctx context.Context, jobID *int64) (bool, error) {
-			if jobID == nil {
-				return false, nil
-			}
-			var live bool
-			err := sqldb.QueryRowContext(ctx, `
-				SELECT EXISTS (
-					SELECT 1 FROM river_job
-					WHERE id = $1 AND state IN ('available', 'pending', 'retryable', 'scheduled')
-				)`, *jobID).Scan(&live)
-			return live, err
-		}, registry); err != nil {
+		setupManagerRepository.RiverJobLiveness, registry); err != nil {
 		return fmt.Errorf("reconcile interrupted operations: %w", err)
 	}
 
@@ -142,6 +143,9 @@ func Run(ctx context.Context, config Config) error {
 		// the Setup, the root and the managed tools itself, so a scan that can no
 		// longer run fails with a safe reason instead of staying queued forever.
 		river.AddWorker(workers, scanWorker)
+		// A queued analysis is registered for the same reason; it is served by
+		// its own single-worker queue.
+		river.AddWorker(workers, analysisWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}, jobs.NewCleanupPeriodicJob())
 	if err != nil {

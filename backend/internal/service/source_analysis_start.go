@@ -24,9 +24,19 @@ const (
 	// SourceAnalysisJobKind is the River job kind that runs an analysis
 	// operation. The worker that serves it is registered with the queue.
 	SourceAnalysisJobKind = "analyze_source_v1"
+	// SourceAnalysisQueue is the dedicated River queue an analysis job is
+	// inserted into. The queue runs one worker: this is a fixed technical limit
+	// of the first slice, with no runtime setting and no automatic schedule.
+	SourceAnalysisQueue = "source_analysis"
 	// SourceAnalysisStageQueued is the stage of an analysis operation that was
 	// created but not yet picked up by its worker.
 	SourceAnalysisStageQueued = "queued"
+	// SourceAnalysisStageProbing is the stage of an analysis reading the pinned
+	// source file with the managed ffprobe.
+	SourceAnalysisStageProbing = "probing"
+	// SourceAnalysisStageApplying is the stage of an analysis committing its
+	// prepared result and both of its read holds in one transaction.
+	SourceAnalysisStageApplying = "applying"
 )
 
 var (
@@ -178,7 +188,7 @@ func (s *SourceAnalysisOperations) Start(ctx context.Context, request SourceAnal
 		AnalysisInstallationID: &installation.ID,
 		AnalysisMediaVariantID: location.MediaVariantID,
 	}
-	if err := s.repository.CreateSourceAnalysisOperationAndEnqueue(ctx, operation, s.platform.Platform.GOOS, s.platform.Platform.GOARCH, settings.ActiveFFmpegInstallationKey, s.river, SourceAnalysisJobArgs{OperationID: operation.ID}, nil); err != nil {
+	if err := s.repository.CreateSourceAnalysisOperationAndEnqueue(ctx, operation, s.platform.Platform.GOOS, s.platform.Platform.GOARCH, settings.ActiveFFmpegInstallationKey, s.river, SourceAnalysisJobArgs{OperationID: operation.ID}, &river.InsertOpts{Queue: SourceAnalysisQueue}); err != nil {
 		return nil, sourceAnalysisStartRefusal(err)
 	}
 	return operation, nil
