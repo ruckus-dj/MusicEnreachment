@@ -24,7 +24,10 @@ export function SourceTechnicalResult({
         <h2 id="technical-title">Сохранённый технический результат</h2>
         <p className="sources-note">
           Анализ от {new Date(result.inspected_at).toLocaleString()} ·{" "}
-          {result.ffprobe_version} · Политика {result.analysis_policy_version}
+          <span title={result.ffprobe_version}>
+            {result.ffprobe_version.split("\n")[0]}
+          </span>{" "}
+          · Политика {result.analysis_policy_version}
         </p>
         <dl className="sources-summary">
           <div>

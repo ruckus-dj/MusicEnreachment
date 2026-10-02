@@ -134,19 +134,29 @@ describe("source inspector reads", () => {
   });
   it("shows every stream, untouched tags and accessible raw JSON when analysis succeeded", async () => {
     // Given
+    const fullVersion =
+      "ffprobe 8.0\nbuilt with clang\nconfiguration: --enable-gpl";
     server.use(
       http.get(detailPath, () =>
-        HttpResponse.json(detail({ result, analysis_state: "analyzed" })),
+        HttpResponse.json(
+          detail({
+            result: { ...result, ffprobe_version: fullVersion },
+            analysis_state: "analyzed",
+          }),
+        ),
       ),
     );
     // When
     await openInspector();
     // Then
-    expect(
-      screen.getByText(
-        `Анализ от ${new Date(stamp).toLocaleString()} · ffprobe 8.0 · Политика 1`,
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/Анализ от/)).toHaveTextContent(
+      `Анализ от ${new Date(stamp).toLocaleString()} · ffprobe 8.0 · Политика 1`,
+    );
+    expect(screen.getByText("ffprobe 8.0")).toHaveAttribute(
+      "title",
+      fullVersion,
+    );
+    expect(screen.queryByText(/configuration:/)).not.toBeInTheDocument();
     expect(screen.getByText("3:00:30")).toBeVisible();
     expect(
       within(screen.getByRole("region", { name: "Аудиопоток 0" })).getByText(

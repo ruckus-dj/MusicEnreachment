@@ -166,10 +166,38 @@ disk. A file without an audio
 stream stays in the inventory with its own status. A failed probe becomes a
 problem of that file with a safe reason, does not stop the rest of the scan, and
 is checked again on the next scan, while a file that a successful probe already
-answered is not probed again until it changes. This slice records nothing else:
-no fingerprint (`fpcalc`), no SHA-256, no tags, codec or duration, and no
-publication. Confirming an audio stream is not a full technical analysis; that is
-later work.
+answered is not probed again until it changes. The scan itself records only that
+status: no fingerprint (`fpcalc`), no SHA-256, no tags, codec or duration, and no
+publication.
+
+A separate, explicit **Analyze** action on one `audio` location reads that file
+directly through the managed `ffprobe` and stores a technical result on the
+location. The result contains the container format and duration, every audio
+stream in stream-index order with its codec, profile, sample rate, sample format,
+bits per sample, channels, channel layout, bit rate and duration, the tags
+observed in the source (names uppercased, every value kept as its own entry and
+never split on `;` or `/`), and the unmodified `ffprobe` JSON. Non-audio streams
+such as an attached picture stay in that raw JSON. The result also records the
+analysis policy version, the `ffprobe` version that produced it, and the time of
+the analysis; an unknown technical value is shown as unknown, never as zero.
+
+Analysis is read-only and in place. This slice has no staged mode, no work
+directory, and no SHA-256 setting, and it never runs automatically: registering a
+root or scanning it does not start an analysis. It is started only for a single
+file that has an `audio` status, on an enabled root with a current inventory,
+after Setup is complete and a managed FFmpeg package is ready, through the same
+explicit action. Repeating the analysis re-reads the source file and replaces the
+stored result; the source bytes are never created, changed or deleted. A failure
+(for example, the file became unreadable between the read that provided its
+identity and the analysis) leaves the previous valid result and its timestamp in
+place, reports a safe reason on the operation, and changes neither the inventory
+nor the availability of the root. After the file changes on disk and a successful
+scan observes the new size or mtime, the stored result no longer describes the
+location and is unlinked from it until a new analysis is requested. Deleting a
+root removes only that root's inventory rows; source files on disk and the
+managed output library stay untouched. Fingerprint (`fpcalc`), SHA-256 exact
+deduplication, staged mode, automatic analysis of new files, incoming grouping
+and publication remain later work.
 
 Only a fully successful traversal replaces the inventory. A new, changed or
 deleted path appears after such a scan, while an unavailable root, a failed,
