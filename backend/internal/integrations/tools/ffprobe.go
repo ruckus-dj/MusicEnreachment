@@ -26,13 +26,19 @@ type FFProbe struct {
 	executable string
 	timeout    time.Duration
 	start      probeStarter
+	technical  technicalStarter
 }
 
 func NewFFProbe(executable string) (*FFProbe, error) {
 	if !filepath.IsAbs(executable) {
 		return nil, fmt.Errorf("ffprobe executable must be an absolute path")
 	}
-	return &FFProbe{executable: executable, timeout: probeTimeout, start: startExecProcess}, nil
+	return &FFProbe{
+		executable: executable,
+		timeout:    probeTimeout,
+		start:      startExecProcess,
+		technical:  startTechnicalProcess,
+	}, nil
 }
 
 // Probe reports whether the file at absoluteServerPath carries at least one
