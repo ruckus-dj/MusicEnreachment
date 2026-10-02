@@ -1,0 +1,66 @@
+{
+  "streams": [
+    {
+      "index": 3,
+      "codec_name": "aaaa_unknown_codec",
+      "codec_long_name": "A codec this build has never heard of",
+      "codec_type": "audio",
+      "sample_fmt": "fltp",
+      "sample_rate": "99999999999999999999",
+      "channels": 6,
+      "channel_layout": "5.1",
+      "bits_per_sample": -8,
+      "bit_rate": -128000,
+      "duration": "26000.75",
+      "tags": {
+        "LANGUAGE": "jpn",
+        "title": "Main"
+      }
+    },
+    {
+      "index": 1,
+      "codec_name": "opus",
+      "codec_long_name": "Opus (Opus Interactive Audio Codec)",
+      "profile": "unknown",
+      "codec_type": "audio",
+      "sample_fmt": "s16",
+      "sample_rate": 48000,
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bit_rate": "N/A",
+      "duration": "7200.25",
+      "tags": {
+        "TITLE": "Alt",
+        "GENRE": "ambient/drone"
+      }
+    },
+    {
+      "index": 2,
+      "codec_name": "ac3",
+      "codec_long_name": "ATSC A/52A (AC-3)",
+      "codec_type": "audio",
+      "sample_fmt": "fltp",
+      "sample_rate": "not-a-number",
+      "channels": 0,
+      "bit_rate": "192000",
+      "tags": {
+        "comment": "third",
+        "title": "Alt"
+      }
+    }
+  ],
+  "format": {
+    "filename": "fixture.mka",
+    "nb_streams": 3,
+    "format_name": "matroska,webm",
+    "format_long_name": "Matroska / WebM",
+    "start_time": "0.000000",
+    "duration": "2147483.75",
+    "size": "987654321",
+    "bit_rate": "1411200",
+    "probe_score": 91,
+    "tags": {
+      "ENCODER": "libebml"
+    }
+  }
+}

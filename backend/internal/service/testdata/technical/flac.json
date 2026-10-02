@@ -1,0 +1,76 @@
+{
+  "streams": [
+    {
+      "index": 2,
+      "codec_name": "flac",
+      "codec_long_name": "Free Lossless Audio Codec",
+      "profile": "unknown",
+      "codec_type": "audio",
+      "codec_tag_string": "[0][0][0][0]",
+      "sample_fmt": "s16",
+      "sample_rate": "96000",
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bits_per_sample": 0,
+      "bits_per_raw_sample": 16,
+      "bit_rate": "N/A",
+      "duration": "1234.5674",
+      "tags": {
+        "artist": "Second Artist",
+        "album": "Shared Album",
+        "GENRE": "Jazz",
+        "ARTIST": "Primary Artist"
+      }
+    },
+    {
+      "index": 1,
+      "codec_name": "mjpeg",
+      "codec_long_name": "Motion JPEG",
+      "codec_type": "video",
+      "disposition": {
+        "attached_pic": 1
+      },
+      "tags": {
+        "comment": "cover art of the fixture"
+      }
+    },
+    {
+      "index": 0,
+      "codec_name": "flac",
+      "profile": "unknown",
+      "codec_type": "audio",
+      "sample_fmt": "s32",
+      "sample_rate": 44100,
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bits_per_sample": 0,
+      "bits_per_raw_sample": "24",
+      "bit_rate": "1411200",
+      "duration": "3600.0004",
+      "tags": {
+        "ARTIST": "Primary Artist",
+        "album": "Shared Album",
+        "TITLE": "First / Second; Third",
+        "COMMENT": "dup"
+      }
+    }
+  ],
+  "format": {
+    "filename": "fixture.flac",
+    "nb_streams": 3,
+    "format_name": "flac",
+    "format_long_name": "raw FLAC",
+    "start_time": "0.000000",
+    "duration": "3600.0006",
+    "size": "12345678",
+    "bit_rate": "1411200",
+    "probe_score": 100,
+    "tags": {
+      "ARTIST": "Primary Artist",
+      "artist": "Second Artist",
+      "album": "Shared Album",
+      "GENRE": "Rock",
+      "COMMENT": "dup"
+    }
+  }
+}

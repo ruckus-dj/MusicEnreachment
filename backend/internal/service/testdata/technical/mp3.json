@@ -1,0 +1,39 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "mp3",
+      "codec_long_name": "MP3 (MPEG audio layer 3)",
+      "profile": "CBR",
+      "codec_type": "audio",
+      "codec_tag_string": "mp3 ",
+      "sample_fmt": "s16p",
+      "sample_rate": "44100",
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bits_per_sample": 0,
+      "bit_rate": "320000",
+      "duration": 187.5,
+      "tags": {
+        "title": "song",
+        "ARTIST": "Artist"
+      }
+    }
+  ],
+  "format": {
+    "filename": "fixture.mp3",
+    "nb_streams": 1,
+    "format_name": "mp3",
+    "format_long_name": "MP2/3 (MPEG audio layer 2/3)",
+    "start_time": "0.000000",
+    "duration": 187.494,
+    "size": "7500000",
+    "bit_rate": "320121",
+    "probe_score": 51,
+    "tags": {
+      "TITLE": "Song",
+      "artist": "Artist",
+      "album": "Album"
+    }
+  }
+}
