@@ -24,6 +24,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AnalyzeSourceLocationBody,
   CatalogBody,
   CheckMusicBrainzBody,
   CheckPathsBody,
@@ -45,6 +46,7 @@ import type {
   OperationsBody,
   SaveRuntimeBody,
   SetupStateBody,
+  SourceLocationDetailResponse,
   SourceLocationsBody,
   SourceRootResponse,
   SourcesBody,
@@ -2903,6 +2905,258 @@ export function useListSourceLocations<TData = Awaited<ReturnType<typeof listSou
 
 
 
+
+export type getSourceLocationResponse200 = {
+  data: SourceLocationDetailResponse
+  status: 200
+}
+
+export type getSourceLocationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getSourceLocationResponseSuccess = (getSourceLocationResponse200) & {
+  headers: Headers;
+};
+export type getSourceLocationResponseError = (getSourceLocationResponseDefault) & {
+  headers: Headers;
+};
+
+export type getSourceLocationResponse = (getSourceLocationResponseSuccess | getSourceLocationResponseError)
+
+export const getGetSourceLocationUrl = (sourceId: string,
+    locationId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}/locations/${locationId}`
+}
+
+/**
+ * @summary Inspect one source location
+ */
+export const getSourceLocation = async (sourceId: string,
+    locationId: string, options?: RequestInit): Promise<getSourceLocationResponse> => {
+
+  const res = await fetch(getGetSourceLocationUrl(sourceId,locationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getSourceLocationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getSourceLocationResponse
+}
+
+
+
+
+
+export const getGetSourceLocationQueryKey = (sourceId: string,
+    locationId: string,) => {
+    return [
+    `/api/sources/${sourceId}/locations/${locationId}`
+    ] as const;
+    }
+
+
+export const getGetSourceLocationQueryOptions = <TData = Awaited<ReturnType<typeof getSourceLocation>>, TError = ErrorModel>(sourceId: string,
+    locationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSourceLocationQueryKey(sourceId,locationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSourceLocation>>> = ({ signal }) => getSourceLocation(sourceId,locationId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: sourceId !== null && sourceId !== undefined && locationId !== null && locationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSourceLocationQueryResult = NonNullable<Awaited<ReturnType<typeof getSourceLocation>>>
+export type GetSourceLocationQueryError = ErrorModel
+
+
+export function useGetSourceLocation<TData = Awaited<ReturnType<typeof getSourceLocation>>, TError = ErrorModel>(
+ sourceId: string,
+    locationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSourceLocation>>,
+          TError,
+          Awaited<ReturnType<typeof getSourceLocation>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSourceLocation<TData = Awaited<ReturnType<typeof getSourceLocation>>, TError = ErrorModel>(
+ sourceId: string,
+    locationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSourceLocation>>,
+          TError,
+          Awaited<ReturnType<typeof getSourceLocation>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSourceLocation<TData = Awaited<ReturnType<typeof getSourceLocation>>, TError = ErrorModel>(
+ sourceId: string,
+    locationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Inspect one source location
+ */
+
+export function useGetSourceLocation<TData = Awaited<ReturnType<typeof getSourceLocation>>, TError = ErrorModel>(
+ sourceId: string,
+    locationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSourceLocation>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSourceLocationQueryOptions(sourceId,locationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type analyzeSourceLocationResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type analyzeSourceLocationResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type analyzeSourceLocationResponseSuccess = (analyzeSourceLocationResponse202) & {
+  headers: Headers;
+};
+export type analyzeSourceLocationResponseError = (analyzeSourceLocationResponseDefault) & {
+  headers: Headers;
+};
+
+export type analyzeSourceLocationResponse = (analyzeSourceLocationResponseSuccess | analyzeSourceLocationResponseError)
+
+export const getAnalyzeSourceLocationUrl = (sourceId: string,
+    locationId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}/locations/${locationId}/analyze`
+}
+
+/**
+ * @summary Analyze one source location
+ */
+export const analyzeSourceLocation = async (sourceId: string,
+    locationId: string,
+    analyzeSourceLocationBody: NonReadonly<AnalyzeSourceLocationBody>, options?: RequestInit): Promise<analyzeSourceLocationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getAnalyzeSourceLocationUrl(sourceId,locationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(analyzeSourceLocationBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: analyzeSourceLocationResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as analyzeSourceLocationResponse
+}
+
+
+
+
+
+export const getAnalyzeSourceLocationMutationKey = () => ['analyzeSourceLocation'] as const;
+
+export const getAnalyzeSourceLocationMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext> => {
+
+const mutationKey = getAnalyzeSourceLocationMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof analyzeSourceLocation>>, AnalyzeSourceLocationMutationVariables> = (props) => {
+          const {sourceId,locationId,data} = props ?? {};
+
+          return  analyzeSourceLocation(sourceId,locationId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AnalyzeSourceLocationMutationResult = NonNullable<Awaited<ReturnType<typeof analyzeSourceLocation>>>
+    export type AnalyzeSourceLocationMutationBody = NonReadonly<AnalyzeSourceLocationBody>
+    export type AnalyzeSourceLocationMutationError = ErrorModel
+    export type AnalyzeSourceLocationMutationVariables = {sourceId: string;locationId: string;data: NonReadonly<AnalyzeSourceLocationBody>}
+
+    /**
+ * @summary Analyze one source location
+ */
+export const useAnalyzeSourceLocation = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof analyzeSourceLocation>>,
+        TError,
+        AnalyzeSourceLocationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAnalyzeSourceLocationMutationOptions(options), queryClient);
+    }
 
 export type startSourceScanResponse200 = {
   data: OperationResponse

@@ -4,6 +4,14 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
+export interface AnalyzeSourceLocationBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_mtime: string;
+  /** @minimum 0 */
+  expected_size_bytes: number;
+}
+
 export interface ArtifactResponse {
   checksum_provided: boolean;
   name: string;
@@ -220,6 +228,7 @@ export interface OperationResponse {
   state: string;
   target_identity?: string;
   target_installation_id?: string;
+  target_source_location_id?: string;
   target_source_root_id?: string;
   updated_at: string;
 }
@@ -273,6 +282,93 @@ export interface SetupStateBody {
   settings: RuntimeSettingsResponse;
 }
 
+export type SourceLocationDetailResponseAnalysisState = typeof SourceLocationDetailResponseAnalysisState[keyof typeof SourceLocationDetailResponseAnalysisState];
+
+
+export const SourceLocationDetailResponseAnalysisState = {
+  not_analyzed: 'not_analyzed',
+  analyzed: 'analyzed',
+} as const;
+
+export type SourceLocationDetailResponseProbeStatus = typeof SourceLocationDetailResponseProbeStatus[keyof typeof SourceLocationDetailResponseProbeStatus];
+
+
+export const SourceLocationDetailResponseProbeStatus = {
+  audio: 'audio',
+  no_audio: 'no_audio',
+  probe_error: 'probe_error',
+} as const;
+
+export interface SourceTechnicalContainerResponse {
+  bit_rate?: number;
+  duration_ms?: number;
+  long_name?: string;
+  name?: string;
+}
+
+export interface SourceTechnicalAudioStreamResponse {
+  bit_rate?: number;
+  bits_per_sample?: number;
+  channel_layout?: string;
+  channels?: number;
+  codec_name?: string;
+  duration_ms?: number;
+  index?: number;
+  profile?: string;
+  sample_format?: string;
+  sample_rate_hz?: number;
+}
+
+export type SourceTechnicalResultResponseRawJson = {[key: string]: unknown};
+
+export type SourceTechnicalResultResponseTags = {[key: string]: string[] | null};
+
+export interface SourceTechnicalResultResponse {
+  analysis_policy_version: number;
+  applied_operation_id: string;
+  container: SourceTechnicalContainerResponse;
+  ffprobe_version: string;
+  inspected_at: string;
+  raw_json: SourceTechnicalResultResponseRawJson;
+  /** @nullable */
+  streams: SourceTechnicalAudioStreamResponse[] | null;
+  tags: SourceTechnicalResultResponseTags;
+}
+
+export type SourceLocationRootStateResponseStatus = typeof SourceLocationRootStateResponseStatus[keyof typeof SourceLocationRootStateResponseStatus];
+
+
+export const SourceLocationRootStateResponseStatus = {
+  unknown: 'unknown',
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export interface SourceLocationRootStateResponse {
+  enabled: boolean;
+  inventory_path?: string;
+  safe_error?: string;
+  stale: boolean;
+  status: SourceLocationRootStateResponseStatus;
+}
+
+export interface SourceLocationDetailResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active_analysis_operation_id?: string;
+  analysis_state: SourceLocationDetailResponseAnalysisState;
+  location_id: string;
+  media_variant_id?: string;
+  mtime: string;
+  probe_status: SourceLocationDetailResponseProbeStatus;
+  relative_path: string;
+  result?: SourceTechnicalResultResponse;
+  root: SourceLocationRootStateResponse;
+  root_id: string;
+  safe_error?: string;
+  size_bytes: number;
+}
+
 export type SourceLocationResponseProbeStatus = typeof SourceLocationResponseProbeStatus[keyof typeof SourceLocationResponseProbeStatus];
 
 
@@ -283,7 +379,9 @@ export const SourceLocationResponseProbeStatus = {
 } as const;
 
 export interface SourceLocationResponse {
+  has_result: boolean;
   id: string;
+  media_variant_id?: string;
   mtime: string;
   probe_status: SourceLocationResponseProbeStatus;
   relative_path: string;

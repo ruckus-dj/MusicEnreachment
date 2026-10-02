@@ -31,20 +31,21 @@ type OperationOutput struct {
 }
 
 type OperationResponse struct {
-	ID                   uuid.UUID  `json:"id"`
-	Kind                 string     `json:"kind"`
-	State                string     `json:"state"`
-	Stage                string     `json:"stage"`
-	TargetInstallationID *uuid.UUID `json:"target_installation_id,omitempty"`
-	TargetSourceRootID   *uuid.UUID `json:"target_source_root_id,omitempty"`
-	TargetIdentity       string     `json:"target_identity,omitempty"`
-	BytesCompleted       int64      `json:"bytes_completed"`
-	BytesTotal           *int64     `json:"bytes_total,omitempty"`
-	SafeError            *string    `json:"safe_error,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	StartedAt            *time.Time `json:"started_at,omitempty"`
-	FinishedAt           *time.Time `json:"finished_at,omitempty"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                     uuid.UUID  `json:"id"`
+	Kind                   string     `json:"kind"`
+	State                  string     `json:"state"`
+	Stage                  string     `json:"stage"`
+	TargetInstallationID   *uuid.UUID `json:"target_installation_id,omitempty"`
+	TargetSourceRootID     *uuid.UUID `json:"target_source_root_id,omitempty"`
+	TargetSourceLocationID *uuid.UUID `json:"target_source_location_id,omitempty"`
+	TargetIdentity         string     `json:"target_identity,omitempty"`
+	BytesCompleted         int64      `json:"bytes_completed"`
+	BytesTotal             *int64     `json:"bytes_total,omitempty"`
+	SafeError              *string    `json:"safe_error,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	StartedAt              *time.Time `json:"started_at,omitempty"`
+	FinishedAt             *time.Time `json:"finished_at,omitempty"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 func registerOperations(api huma.API, operations *service.Operations, setup *service.SetupService) {
@@ -125,8 +126,9 @@ func operationResponse(snapshot service.OperationSnapshot) OperationResponse {
 	return OperationResponse{
 		ID: snapshot.ID, Kind: snapshot.Kind, State: snapshot.State, Stage: snapshot.Stage,
 		TargetInstallationID: snapshot.TargetInstallationID, TargetSourceRootID: snapshot.TargetSourceRootID,
-		TargetIdentity: snapshot.TargetIdentity,
-		BytesCompleted: snapshot.BytesCompleted, BytesTotal: snapshot.BytesTotal,
+		TargetSourceLocationID: snapshot.TargetSourceLocationID,
+		TargetIdentity:         snapshot.TargetIdentity,
+		BytesCompleted:         snapshot.BytesCompleted, BytesTotal: snapshot.BytesTotal,
 		SafeError: snapshot.SafeError, CreatedAt: snapshot.CreatedAt,
 		StartedAt: snapshot.StartedAt, FinishedAt: snapshot.FinishedAt, UpdatedAt: snapshot.UpdatedAt,
 	}

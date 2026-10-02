@@ -111,6 +111,13 @@ type SourceLocationResponse struct {
 	Mtime        time.Time `json:"mtime"`
 	ProbeStatus  string    `json:"probe_status" enum:"audio,no_audio,probe_error"`
 	SafeError    *string   `json:"safe_error,omitempty"`
+	// MediaVariantID is the stored technical result of this file, or absent when
+	// it was never analyzed. The list never carries the result itself: an
+	// inspector reads it from the location detail endpoint.
+	MediaVariantID *uuid.UUID `json:"media_variant_id,omitempty"`
+	// HasResult is the availability of a stored result, exposed separately so a
+	// client does not have to treat the variant identifier as a boolean.
+	HasResult bool `json:"has_result"`
 }
 
 // registerSources binds the source root inventory endpoints. Every handler
@@ -262,6 +269,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 			body.Locations = append(body.Locations, SourceLocationResponse{
 				ID: location.ID, RelativePath: location.RelativePath, SizeBytes: location.SizeBytes,
 				Mtime: location.Mtime, ProbeStatus: location.ProbeStatus, SafeError: location.SafeError,
+				MediaVariantID: location.MediaVariantID, HasResult: location.MediaVariantID != nil,
 			})
 		}
 		if page.NextCursor != "" {

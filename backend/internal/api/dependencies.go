@@ -18,6 +18,13 @@ type Dependencies struct {
 	SourceRoots       *service.SourceRoots
 	SourceLocations   *service.SourceLocations
 	SourceScan        *service.SourceScanOperations
+	// SourceAnalysis starts one technical analysis of a source location. A
+	// mutation: it is refused on a diagnostic platform.
+	SourceAnalysis *service.SourceAnalysisOperations
+	// SourceLocationDetails serves the read-only inspector of one location. It
+	// never probes the source, so it stays available while the platform is
+	// diagnostic or Setup is unfinished.
+	SourceLocationDetails *service.SourceLocationDetails
 }
 
 type preflightEntry struct {

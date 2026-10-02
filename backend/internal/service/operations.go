@@ -25,20 +25,21 @@ type OperationRepository interface {
 }
 
 type OperationSnapshot struct {
-	ID                   uuid.UUID
-	Kind                 string
-	State                string
-	Stage                string
-	TargetInstallationID *uuid.UUID
-	TargetSourceRootID   *uuid.UUID
-	TargetIdentity       string
-	BytesCompleted       int64
-	BytesTotal           *int64
-	SafeError            *string
-	CreatedAt            time.Time
-	StartedAt            *time.Time
-	FinishedAt           *time.Time
-	UpdatedAt            time.Time
+	ID                     uuid.UUID
+	Kind                   string
+	State                  string
+	Stage                  string
+	TargetInstallationID   *uuid.UUID
+	TargetSourceRootID     *uuid.UUID
+	TargetSourceLocationID *uuid.UUID
+	TargetIdentity         string
+	BytesCompleted         int64
+	BytesTotal             *int64
+	SafeError              *string
+	CreatedAt              time.Time
+	StartedAt              *time.Time
+	FinishedAt             *time.Time
+	UpdatedAt              time.Time
 }
 
 type operationEnqueuingRepository interface {
@@ -154,8 +155,9 @@ func operationSnapshot(operation *persistence.Operation) OperationSnapshot {
 	return OperationSnapshot{
 		ID: operation.ID, Kind: operation.Kind, State: operation.State, Stage: operation.Stage,
 		TargetInstallationID: operation.TargetInstallationID, TargetSourceRootID: operation.TargetSourceRootID,
-		TargetIdentity: inputs.TargetIdentity,
-		BytesCompleted: operation.BytesCompleted, BytesTotal: operation.BytesTotal, SafeError: operation.SafeError,
+		TargetSourceLocationID: operation.TargetSourceLocationID,
+		TargetIdentity:         inputs.TargetIdentity,
+		BytesCompleted:         operation.BytesCompleted, BytesTotal: operation.BytesTotal, SafeError: operation.SafeError,
 		CreatedAt: operation.CreatedAt, StartedAt: operation.StartedAt, FinishedAt: operation.FinishedAt, UpdatedAt: operation.UpdatedAt,
 	}
 }

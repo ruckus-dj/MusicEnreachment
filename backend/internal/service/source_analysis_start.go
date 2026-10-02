@@ -61,6 +61,15 @@ var (
 	// ErrSourceAnalysisMoveActive reports an analysis start refused because a
 	// managed tools root move is queued or running.
 	ErrSourceAnalysisMoveActive = errors.New("a managed tools root move is active")
+	// ErrSourceAnalysisStale is the service view of a refused analysis whose
+	// file, inventory path or held variant no longer matches the snapshot. It is
+	// the persistence sentinel re-exported so the HTTP layer classifies it
+	// without importing the persistence package.
+	ErrSourceAnalysisStale = persistence.ErrSourceAnalysisStale
+	// ErrSourceLocationNotFound is the service view of a location read that
+	// names no location of the addressed root. A foreign location and a missing
+	// one are the same answer.
+	ErrSourceLocationNotFound = persistence.ErrSourceLocationNotFound
 )
 
 // SourceAnalysisJobArgs carries only the durable operation ID. The worker

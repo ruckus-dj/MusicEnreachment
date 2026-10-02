@@ -89,6 +89,7 @@ function location(
     size_bytes: 1536,
     mtime: "2026-09-26T10:20:00Z",
     probe_status: "audio",
+    has_result: false,
     ...overrides,
   };
 }

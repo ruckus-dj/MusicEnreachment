@@ -17,6 +17,8 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerTools(api, dependencies, tokens)
 	registerOperations(api, dependencies.Operations, dependencies.Setup)
 	registerSources(api, dependencies)
+	registerSourceLocationDetail(api, dependencies)
+	registerSourceAnalysis(api, dependencies)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

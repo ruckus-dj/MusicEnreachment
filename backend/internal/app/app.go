@@ -171,6 +171,8 @@ func Run(ctx context.Context, config Config) error {
 	}, riverClient)
 	sourceLocations := service.NewSourceLocations(sourceInventory)
 	sourceScan := service.NewSourceScanOperations(sourceInventory, sourceRoots, registry, platform, riverClient)
+	sourceAnalysis := service.NewSourceAnalysisOperations(persistence.NewSourceAnalysisStartStore(db), registry, registry, platform, riverClient)
+	sourceLocationDetails := service.NewSourceLocationDetails(sourceInventory)
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -183,6 +185,7 @@ func Run(ctx context.Context, config Config) error {
 		Setup: setup, Catalog: toolCatalog, InstallOperations: installOperations,
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
+		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

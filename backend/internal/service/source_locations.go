@@ -54,6 +54,11 @@ type SourceLocation struct {
 	Mtime        time.Time
 	ProbeStatus  string
 	SafeError    *string
+	// MediaVariantID is the stored result of the last successful analysis of
+	// this file, or nil when it was never analyzed or its inventory changed
+	// since. The list carries the identifier alone; the technical result itself
+	// is only served by the location detail endpoint.
+	MediaVariantID *uuid.UUID
 }
 
 // SourceLocationPage is one page of the last successful inventory of a root. An
@@ -105,6 +110,7 @@ func (s *SourceLocations) List(ctx context.Context, rootID uuid.UUID, cursor str
 			ID: locations[index].ID, RelativePath: locations[index].RelativePath,
 			SizeBytes: locations[index].SizeBytes, Mtime: locations[index].Mtime,
 			ProbeStatus: locations[index].ProbeStatus, SafeError: locations[index].SafeError,
+			MediaVariantID: locations[index].MediaVariantID,
 		})
 	}
 	if next != nil {
