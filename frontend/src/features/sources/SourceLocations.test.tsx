@@ -88,6 +88,9 @@ describe("published inventory listing", () => {
     );
 
     const audio = await screen.findByRole("row", { name: /01 Открытие/ });
+    expect(
+      within(audio).getByRole("link", { name: "Альбом/01 Открытие.flac" }),
+    ).toHaveAttribute("href", "#/sources/root-1/locations/loc-1");
     expect(within(audio).getByText("Аудио")).toBeVisible();
     expect(within(audio).getByText("1,5 КБ")).toBeVisible();
     expect(

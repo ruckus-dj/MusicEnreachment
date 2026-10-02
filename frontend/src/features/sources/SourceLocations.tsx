@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-aria-components";
 import { listSourceLocations } from "../../api/generated/client";
 import type {
   SourceLocationResponse,
@@ -213,7 +214,11 @@ export function SourceLocations({
                     {locations.map((location) => (
                       <tr key={location.id}>
                         <th scope="row" data-label="Путь">
-                          <code>{location.relative_path}</code>
+                          <Link
+                            href={`#/sources/${encodeURIComponent(sourceId)}/locations/${encodeURIComponent(location.id)}`}
+                          >
+                            <code>{location.relative_path}</code>
+                          </Link>
                         </th>
                         <td data-label="Размер">
                           {sizeLabel(location.size_bytes)}

@@ -9,6 +9,7 @@ import { createSource, listSources } from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { SourceDetailScreen } from "./SourceDetailScreen";
+import { SourceInspectorScreen } from "./SourceInspectorScreen";
 import {
   inventoryAvailabilityNote,
   inventoryEmptyNote,
@@ -23,7 +24,10 @@ import "./sources.css";
 
 // This screen owns both addresses of the source inventory: the list of
 // registered roots at #/sources and one root at #/sources/{id}.
-type SourcesRoute = { view: "list" } | { view: "detail"; id: string };
+type SourcesRoute =
+  | { view: "list" }
+  | { view: "detail"; id: string }
+  | { view: "location"; id: string; locationId: string };
 
 const listRoute: SourcesRoute = { view: "list" };
 let cachedHash: string | undefined;
@@ -34,10 +38,17 @@ function routeFor(hash: string): SourcesRoute {
   if (hash === cachedHash) return cachedRoute;
   const path = hash.startsWith("#") ? hash.slice(1) : hash;
   const detail = /^\/sources\/([^/]+)$/.exec(path);
+  const location = /^\/sources\/([^/]+)\/locations\/([^/]+)$/.exec(path);
   cachedHash = hash;
-  cachedRoute = detail
-    ? { view: "detail", id: decodeURIComponent(detail[1]) }
-    : listRoute;
+  cachedRoute = location
+    ? {
+        view: "location",
+        id: decodeURIComponent(location[1]),
+        locationId: decodeURIComponent(location[2]),
+      }
+    : detail
+      ? { view: "detail", id: decodeURIComponent(detail[1]) }
+      : listRoute;
   return cachedRoute;
 }
 
@@ -52,11 +63,20 @@ export function SourcesScreen() {
     () => routeFor(window.location.hash),
     () => listRoute,
   );
-  return route.view === "detail" ? (
-    <SourceDetailScreen key={route.id} sourceId={route.id} />
-  ) : (
-    <SourceListScreen />
-  );
+  switch (route.view) {
+    case "location":
+      return (
+        <SourceInspectorScreen
+          key={`${route.id}/${route.locationId}`}
+          sourceId={route.id}
+          locationId={route.locationId}
+        />
+      );
+    case "detail":
+      return <SourceDetailScreen key={route.id} sourceId={route.id} />;
+    case "list":
+      return <SourceListScreen />;
+  }
 }
 
 function InventoryCell({ root }: { root: SourceRootResponse }) {

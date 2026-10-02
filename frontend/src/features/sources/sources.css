@@ -1,5 +1,6 @@
 .sources-screen {
   --sources-surface: #fff;
+  --sources-canvas: #f2f3ef;
   --sources-raised: #f7f8f5;
   --sources-ink: #26332b;
   --sources-muted: #59675d;
@@ -12,6 +13,9 @@
   --sources-error-soft: #fde9e8;
   color: var(--sources-ink);
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.sources-shell {
+  background: var(--sources-canvas);
 }
 .sources-screen h1 {
   font-size: 20px;
@@ -54,7 +58,7 @@
   margin: 8px 0;
   color: var(--sources-error);
   background: var(--sources-error-soft);
-  border: 1px solid var(--sources-error);
+  border: 1px solid var(--sources-line);
   border-radius: 4px;
 }
 .sources-screen button {
@@ -68,7 +72,7 @@
 }
 .sources-screen button:hover {
   background: var(--sources-raised);
-  border-color: var(--sources-accent);
+  border-color: var(--sources-control);
 }
 .sources-screen button:disabled {
   color: var(--sources-muted);
@@ -171,6 +175,52 @@
 }
 .sources-summary dd {
   overflow-wrap: anywhere;
+}
+.sources-screen a {
+  color: var(--sources-accent);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.sources-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sources-inspector,
+.sources-inspector > *,
+.sources-stream {
+  min-width: 0;
+}
+.sources-stream + .sources-stream {
+  margin-top: 12px;
+}
+.sources-stream h3 {
+  font-weight: 600;
+}
+.sources-raw pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  color: var(--sources-ink);
+  background: var(--sources-raised);
+  font-size: 11px;
+}
+@media (prefers-color-scheme: dark) {
+  .sources-screen {
+    --sources-surface: #191e1a;
+    --sources-canvas: #111512;
+    --sources-raised: #222923;
+    --sources-ink: #e3eae3;
+    --sources-muted: #a7b5a9;
+    --sources-line: #354138;
+    --sources-control: #718376;
+    --sources-accent: #83dca0;
+    --sources-accent-soft: #233e2c;
+    --sources-warning: #edc474;
+    --sources-error: #ffa09b;
+    --sources-error-soft: #3a2425;
+  }
 }
 .sources-dialog {
   position: fixed;

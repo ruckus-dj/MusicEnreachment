@@ -180,6 +180,30 @@ describe("AppShell gates", () => {
   });
 });
 describe("AppShell sources routing", () => {
+  it("renders a direct nested file URL instead of the landing when Setup is complete", async () => {
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources/root-1/locations/file-1", () =>
+        HttpResponse.json({
+          root_id: "root-1",
+          location_id: "file-1",
+          relative_path: "direct.flac",
+          size_bytes: 1024,
+          mtime: "2026-10-01T10:20:00Z",
+          probe_status: "audio",
+          analysis_state: "not_analyzed",
+          root: { enabled: true, stale: false, status: "available" },
+        }),
+      ),
+    );
+    window.location.hash = "/sources/root-1/locations/file-1";
+    render(<AppShell />);
+    expect(await screen.findByText("direct.flac")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Инспектор файла" }),
+    ).toBeVisible();
+    expect(window.location.hash).toBe("#/sources/root-1/locations/file-1");
+  });
   it("keeps an incomplete Setup redirecting away from #/sources", async () => {
     server.use(http.get("/api/setup", () => HttpResponse.json(state)));
     window.location.hash = "/sources";

@@ -16,7 +16,7 @@ type Route = "/" | "/settings" | "/setup" | "/sources";
 
 // The inventory screen owns its own #/sources/{id} address, so any string
 // under #/sources maps to the same shell route.
-const sourcesRoute = /^#\/sources(\/[^/]+)?$/;
+const sourcesRoute = /^#\/sources(\/[^/]+(\/locations\/[^/]+)?)?$/;
 function currentRoute(): Route {
   const hash = window.location.hash;
   if (hash === "#/settings") return "/settings";
@@ -85,7 +85,9 @@ export function AppShell() {
         state.platform.diagnostic ||
         !state.platform.supported
           ? "setup-shell"
-          : "min-h-screen bg-stone-100 p-3 text-stone-900"
+          : route === "/sources"
+            ? "sources-screen sources-shell min-h-screen p-3"
+            : "min-h-screen bg-stone-100 p-3 text-stone-900"
       }
     >
       <header className="flex items-center justify-between border-b border-stone-300 pb-3">
