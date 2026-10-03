@@ -32,6 +32,9 @@ func TestDeleteFailedInstallationPreservesUnownedTargetsWithPostgreSQL(t *testin
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", settings.ToolsDirectoryKey, root); err != nil {
+		t.Fatal(err)
+	}
 	directory := filepath.Join(root, installation.RelativePath)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
@@ -78,6 +81,9 @@ func TestDeleteReadyInstallationRemovesOnlyManagedTargetsWithPostgreSQL(t *testi
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", settings.ToolsDirectoryKey, root); err != nil {
+		t.Fatal(err)
+	}
 	directory := filepath.Join(root, installation.RelativePath)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)

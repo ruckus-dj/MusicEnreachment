@@ -33,7 +33,7 @@ func (fixture *installationRepositoryFixture) ListInstallations(context.Context,
 	return []persistence.ToolInstallation{*fixture.installation}, nil
 }
 
-func (*installationRepositoryFixture) DeleteInstallation(context.Context, uuid.UUID, string, string, string, string, func(*persistence.ToolInstallation) error) error {
+func (*installationRepositoryFixture) DeleteInstallation(context.Context, uuid.UUID, string, string, string, string, func(*persistence.ToolInstallation, string) error) error {
 	return nil
 }
 

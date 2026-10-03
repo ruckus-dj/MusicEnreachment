@@ -144,7 +144,7 @@ func TestSourceAnalysisEnqueueSharesInstallationAcrossRootsWithPostgreSQL(t *tes
 	// holds can prevent its deletion.
 	removed := false
 	err := setup.DeleteInstallation(ctx, shared, "ffmpeg", analysisTestGOOS, analysisTestGOARCH, settings.ActiveFFmpegInstallationKey,
-		func(*persistence.ToolInstallation) error { removed = true; return nil })
+		func(*persistence.ToolInstallation, string) error { removed = true; return nil })
 	if err == nil || removed {
 		t.Fatalf("delete of a non-active held installation = %v, removed files = %v; want a refusal before file removal", err, removed)
 	}

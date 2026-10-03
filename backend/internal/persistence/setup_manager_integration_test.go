@@ -4,10 +4,14 @@ package persistence_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -367,7 +372,7 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	removeFiles := func(*persistence.ToolInstallation) error {
+	removeFiles := func(*persistence.ToolInstallation, string) error {
 		called = true
 		return nil
 	}
@@ -408,9 +413,9 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	if err := repository.CreateOperation(ctx, historical); err != nil {
 		t.Fatalf("create historical operation: %v", err)
 	}
-	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, func(installation *persistence.ToolInstallation) error {
+	if err := repository.DeleteInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey, func(installation *persistence.ToolInstallation, currentRoot string) error {
 		called = true
-		return tools.Delete(root, installation.RelativePath, "linux", nil, tools.PackageFFmpeg, installation.ID.String())
+		return tools.Delete(currentRoot, installation.RelativePath, "linux", nil, tools.PackageFFmpeg, installation.ID.String())
 	}); err != nil {
 		t.Fatalf("delete inactive installation: %v", err)
 	}
@@ -427,6 +432,342 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(directory, "operator-note.txt")); err != nil {
 		t.Fatalf("unknown file was deleted: %v", err)
 	}
+}
+
+func TestDeleteInstallationUsesToolsRootAfterCompletedMove(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	for _, root := range []string{oldRoot, newRoot} {
+		directory := filepath.Join(root, installation.RelativePath)
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"ffmpeg", "ffprobe", "operator-note.txt"} {
+			if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", oldRoot); err != nil {
+		t.Fatal(err)
+	}
+	move := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
+		InputSnapshot: json.RawMessage(`{"old_root":"` + oldRoot + `","new_root":"` + newRoot + `"}`),
+	}
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatalf("create move operation: %v", err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, move.ID, oldRoot, newRoot); err != nil {
+		t.Fatalf("switch tools root: %v", err)
+	}
+	if err := repository.FinishToolsRootMove(ctx, move.ID); err != nil {
+		t.Fatalf("finish tools root move: %v", err)
+	}
+
+	callbackRoot := ""
+	if err := repository.DeleteInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey,
+		func(current *persistence.ToolInstallation, root string) error {
+			callbackRoot = root
+			return tools.Delete(root, current.RelativePath, "linux", nil, tools.PackageFFmpeg, current.ID.String())
+		}); err != nil {
+		t.Fatalf("delete installation after move: %v", err)
+	}
+	if callbackRoot != newRoot {
+		t.Fatalf("delete callback root = %q, want current root %q", callbackRoot, newRoot)
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := os.Stat(filepath.Join(newRoot, installation.RelativePath, name)); !os.IsNotExist(err) {
+			t.Fatalf("managed executable in current root %s still exists (stat error %v)", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(oldRoot, installation.RelativePath, name)); err != nil {
+			t.Fatalf("managed executable in preserved old root %s was removed: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(newRoot, installation.RelativePath, "operator-note.txt")); err != nil {
+		t.Fatalf("unmanaged file in current root was removed: %v", err)
+	}
+	if _, err := repository.GetInstallation(ctx, installation.ID); err == nil {
+		t.Fatal("installation row remains after successful file removal")
+	}
+}
+
+func TestDeleteInstallationAfterMoveWithoutPreservingOldFiles(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	for _, root := range []string{oldRoot, newRoot} {
+		directory := filepath.Join(root, installation.RelativePath)
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"ffmpeg", "ffprobe", "operator-note.txt"} {
+			if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", settings.ToolsDirectoryKey, oldRoot); err != nil {
+		t.Fatal(err)
+	}
+	move := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
+		InputSnapshot: json.RawMessage(`{"old_root":"` + oldRoot + `","new_root":"` + newRoot + `","remove_old_files":true}`),
+	}
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatalf("create move operation: %v", err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, move.ID, oldRoot, newRoot); err != nil {
+		t.Fatalf("switch tools root: %v", err)
+	}
+	if err := tools.Delete(oldRoot, installation.RelativePath, "linux", nil, tools.PackageFFmpeg, installation.ID.String()); err != nil {
+		t.Fatalf("remove old managed files as requested by move: %v", err)
+	}
+	if err := repository.FinishToolsRootMove(ctx, move.ID); err != nil {
+		t.Fatalf("finish tools root move: %v", err)
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := os.Stat(filepath.Join(oldRoot, installation.RelativePath, name)); !os.IsNotExist(err) {
+			t.Fatalf("old managed executable %s remains after move cleanup: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(oldRoot, installation.RelativePath, "operator-note.txt")); err != nil {
+		t.Fatalf("move removed unowned old-root file: %v", err)
+	}
+
+	if err := repository.DeleteInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey,
+		func(current *persistence.ToolInstallation, root string) error {
+			if root != newRoot {
+				return fmt.Errorf("callback root = %q, want %q", root, newRoot)
+			}
+			return tools.Delete(root, current.RelativePath, "linux", nil, tools.PackageFFmpeg, current.ID.String())
+		}); err != nil {
+		t.Fatalf("delete installation after move without old copy: %v", err)
+	}
+	for _, name := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := os.Stat(filepath.Join(newRoot, installation.RelativePath, name)); !os.IsNotExist(err) {
+			t.Fatalf("managed executable in current root %s remains: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(newRoot, installation.RelativePath, "operator-note.txt")); err != nil {
+		t.Fatalf("delete removed unowned current-root file: %v", err)
+	}
+	if _, err := repository.GetInstallation(ctx, installation.ID); err == nil {
+		t.Fatal("installation row remains after delete")
+	}
+}
+
+func TestDeleteInstallationBeforeMoveDoesNotRestoreDeletedInstallation(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	root := t.TempDir()
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", root); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey,
+		func(*persistence.ToolInstallation, string) error { return nil }); err != nil {
+		t.Fatalf("delete installation before move: %v", err)
+	}
+	move := &persistence.Operation{
+		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
+		InputSnapshot: json.RawMessage(`{"old_root":"` + root + `","new_root":"` + filepath.Join(t.TempDir(), "new") + `"}`),
+	}
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		NewRoot string `json:"new_root"`
+	}
+	if err := json.Unmarshal(move.InputSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, move.ID, root, snapshot.NewRoot); err != nil {
+		t.Fatalf("move root after deletion: %v", err)
+	}
+	if _, err := repository.GetInstallation(ctx, installation.ID); err == nil {
+		t.Fatal("move recreated the deleted installation")
+	}
+}
+
+func TestCommitToolsRootMoveWithoutSavedRootReturnsError(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying", InputSnapshot: json.RawMessage(`{}`)}
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CommitToolsRootMove(ctx, move.ID, "", t.TempDir()); err == nil {
+		t.Fatal("move succeeded without a previously saved tools root")
+	}
+	var count int
+	if err := database.NewRaw("SELECT count(*) FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &count); err != nil || count != 0 {
+		t.Fatalf("missing tools root was changed: rows=%d err=%v", count, err)
+	}
+}
+
+func TestDeleteInstallationCallbackFailureRollsBackRow(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	repository := persistence.NewSetupManagerRepository(database)
+	installation := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.5.1")
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("filesystem removal failed")
+	err := repository.DeleteInstallation(ctx, installation.ID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey,
+		func(*persistence.ToolInstallation, string) error { return wantErr })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("delete error = %v, want callback error", err)
+	}
+	if _, err := repository.GetInstallation(ctx, installation.ID); err != nil {
+		t.Fatalf("installation row was deleted after callback failure: %v", err)
+	}
+}
+
+func TestDeleteInstallationAndRetryUseConsistentOperationLockOrder(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	repository := persistence.NewSetupManagerRepository(database)
+	driver := riverdatabasesql.New(database.DB)
+	migrator, err := rivermigrate.New(driver, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		t.Fatal(err)
+	}
+	client, err := river.NewClient(driver, &river.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "7.1")
+	if _, err := database.ExecContext(ctx, "UPDATE tool_installation SET state = 'failed' WHERE id = ?", installation.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now().UTC()
+	safeError := "previous attempt failed"
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "delete", State: "failed", Stage: "preflight",
+		InputSnapshot:        json.RawMessage(`{"target_identity":"ffmpeg:test:7.1:linux:amd64"}`),
+		TargetInstallationID: &installation.ID, FinishedAt: &finished, SafeError: &safeError,
+	}
+	if err := repository.CreateOperation(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	inserter := riverInsertPause{RiverInserter: client, entered: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(inserter.release) }) }
+	retryDone := make(chan error, 1)
+	deleteDone := make(chan error, 1)
+	deleteStarted := false
+	retryJoined := false
+	deleteJoined := false
+	defer func() {
+		release()
+		if !retryJoined {
+			<-retryDone
+		}
+		if deleteStarted && !deleteJoined {
+			<-deleteDone
+		}
+	}()
+	// pause after retry holds the operation and common locks, before the job insert
+	// and final UPDATE, to create a deterministic contention point.
+	go func() {
+		_, retryErr := repository.RetryOperationAndEnqueue(ctx, operation.ID, inserter,
+			service.OperationJobArgs{OperationID: operation.ID}, nil)
+		retryDone <- retryErr
+	}()
+	select {
+	case <-inserter.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retry did not reach River insert barrier")
+	}
+
+	deleteCallbackCalled := make(chan struct{}, 1)
+	deleteStarted = true
+	go func() {
+		deleteDone <- repository.DeleteInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey,
+			func(*persistence.ToolInstallation, string) error {
+				deleteCallbackCalled <- struct{}{}
+				return nil
+			})
+	}()
+	waitForOperationTableLockWait(t, ctx, database)
+	release()
+	retryErr := <-retryDone
+	retryJoined = true
+	if retryErr != nil {
+		t.Fatalf("retry failed while delete waited for the common table lock: %v", retryErr)
+	}
+	deleteErr := <-deleteDone
+	deleteJoined = true
+	if deleteErr == nil {
+		t.Fatal("delete succeeded after retry queued an active installation operation")
+	}
+	select {
+	case <-deleteCallbackCalled:
+		t.Fatal("delete callback ran despite the active retried operation")
+	default:
+	}
+	if _, err := repository.GetInstallation(ctx, installation.ID); err != nil {
+		t.Fatalf("installation disappeared during retry/delete contention: %v", err)
+	}
+}
+
+type riverInsertPause struct {
+	persistence.RiverInserter
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (inserter riverInsertPause) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	close(inserter.entered)
+	select {
+	case <-inserter.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return inserter.RiverInserter.InsertTx(ctx, tx, args, options)
+}
+
+func waitForOperationTableLockWait(t *testing.T, ctx context.Context, database *bun.DB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting bool
+		if err := database.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock'
+			AND query LIKE 'LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE%'
+		)`).Scan(ctx, &waiting); err != nil {
+			t.Fatalf("observe operation-table lock waiter: %v", err)
+		}
+		if waiting {
+			return
+		}
+		runtime.Gosched()
+	}
+	t.Fatal("delete did not block on the operation-table lock")
 }
 
 func TestActivateInstallationConflictsWithActiveMoveWithPostgreSQL(t *testing.T) {

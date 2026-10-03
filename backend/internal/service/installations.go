@@ -16,7 +16,7 @@ type InstallationRepository interface {
 	ActivateInstallation(context.Context, uuid.UUID, string, string, string, string) error
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
 	ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error)
-	DeleteInstallation(context.Context, uuid.UUID, string, string, string, string, func(*persistence.ToolInstallation) error) error
+	DeleteInstallation(context.Context, uuid.UUID, string, string, string, string, func(*persistence.ToolInstallation, string) error) error
 }
 
 type InstallationVerifier interface {
@@ -109,17 +109,10 @@ func (s *Installations) Delete(ctx context.Context, packageKind string, id uuid.
 	default:
 		return fmt.Errorf("unsupported package %q", packageKind)
 	}
-	if s.toolsDirectory == nil {
-		return fmt.Errorf("tools directory is not configured")
-	}
-	root, exists, err := s.toolsDirectory.GetToolsDirectory(ctx)
-	if err != nil {
-		return fmt.Errorf("read tools directory: %w", err)
-	}
-	if !exists || root == "" {
-		return fmt.Errorf("tools directory is not configured")
-	}
-	return s.repository.DeleteInstallation(ctx, id, packageKind, s.platform.GOOS, s.platform.GOARCH, setting, func(installation *persistence.ToolInstallation) error {
+	return s.repository.DeleteInstallation(ctx, id, packageKind, s.platform.GOOS, s.platform.GOARCH, setting, func(installation *persistence.ToolInstallation, root string) error {
+		if root == "" {
+			return fmt.Errorf("tools directory is not configured")
+		}
 		if installation.State != "ready" {
 			return nil
 		}

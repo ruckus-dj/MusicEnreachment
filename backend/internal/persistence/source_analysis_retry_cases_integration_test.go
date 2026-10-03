@@ -266,7 +266,7 @@ func TestSourceAnalysisRetryRefusesDeleteWhenHoldCommittedFirstWithPostgreSQL(t 
 		},
 		func(ctx context.Context) error {
 			return fixture.setup.DeleteInstallation(ctx, fixture.installationID, "ffmpeg", analysisTestGOOS, analysisTestGOARCH,
-				settings.ActiveFFmpegInstallationKey, func(*persistence.ToolInstallation) error { removed = true; return nil })
+				settings.ActiveFFmpegInstallationKey, func(*persistence.ToolInstallation, string) error { removed = true; return nil })
 		})
 	if err == nil || removed {
 		t.Fatalf("deleting a held non-active installation after a committed retry hold = %v, removed = %v; want a refusal before file removal", err, removed)
