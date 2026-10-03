@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -22,6 +23,7 @@ const (
 	analysisSafeRootGone     = "The source root no longer exists."
 	analysisSafeDisabled     = "The source root is disabled. Enable it before analyzing it again."
 	analysisSafeNotReady     = "The source analysis requires a completed setup on a supported server platform."
+	analysisSafeUnsupported  = "Windows UNC source roots are not supported yet. Configure a local drive path."
 	analysisSafeStale        = "The source file or its inventory changed since the analysis was queued. Start a new analysis."
 	analysisSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the analysis."
 	analysisSafeProbe        = "The source file could not be analyzed. The previous result is unchanged."
@@ -116,6 +118,9 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 		root.InventoryPath == nil || *root.InventoryPath != snapshot.InventoryPath {
 		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeStale)
 	}
+	if errors.Is(sourcefs.ValidateRootPathSupport(root.ConfiguredPath), service.ErrUnsupportedSourceRoot) {
+		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeUnsupported)
+	}
 	if err := worker.ready(ctx); err != nil {
 		slog.Warn("source analysis cannot start", "operation", operation.ID.String(), "cause", err)
 		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeNotReady)
@@ -188,6 +193,8 @@ func (worker *SourceAnalysisWorker) fail(ctx context.Context, operation *persist
 // reads, without leaking a path, an ffprobe diagnostic or a tool error.
 func analysisRunSafe(err error) string {
 	switch {
+	case errors.Is(err, service.ErrUnsupportedSourceRoot):
+		return analysisSafeUnsupported
 	case errors.Is(err, service.ErrSourceAnalysisToolUnavailable):
 		return analysisSafeTool
 	case errors.Is(err, persistence.ErrSourceAnalysisStale):

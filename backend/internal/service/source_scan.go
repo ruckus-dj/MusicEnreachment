@@ -129,6 +129,9 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	if request.ExpectedConfiguredPath != "" && request.ExpectedConfiguredPath != root.ConfiguredPath {
 		return fmt.Errorf("scan source root: configured path changed since the scan was queued")
 	}
+	if err := sourcefs.ValidateRootPathSupport(root.ConfiguredPath); err != nil {
+		return fmt.Errorf("scan source root: %w", err)
+	}
 	if err := s.probe.CheckFileTransport(ctx); err != nil {
 		return fmt.Errorf("scan source root: verify managed ffprobe file transport: %w", err)
 	}

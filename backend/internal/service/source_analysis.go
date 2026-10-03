@@ -135,6 +135,9 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 		root.InventoryPath == nil || *root.InventoryPath != snapshot.InventoryPath {
 		return empty, fmt.Errorf("analyze source location: the source root no longer matches the snapshot: %w", persistence.ErrSourceAnalysisStale)
 	}
+	if err := sourcefs.ValidateRootPathSupport(root.ConfiguredPath); err != nil {
+		return empty, fmt.Errorf("analyze source location: %w", err)
+	}
 	location, err := s.repository.GetSourceLocation(ctx, root.ID, snapshot.SourceLocationID)
 	if err != nil {
 		if errors.Is(err, persistence.ErrSourceLocationNotFound) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -28,6 +29,10 @@ var ErrSourceRootConfirmation = persistence.ErrSourceRootConfirmation
 // database read are refusals too, but none of them proves the registered
 // directory inaccessible and none carries this marker.
 var ErrSourceRootInaccessible = errors.New("the source root directory is inaccessible")
+
+// ErrUnsupportedSourceRoot identifies a source-root path syntax this build
+// deliberately refuses before touching the filesystem.
+var ErrUnsupportedSourceRoot = sourcefs.ErrUnsupportedNetworkRoot
 
 // SourceRootRepository is the persistence contract of the source root service.
 type SourceRootRepository interface {
@@ -206,6 +211,9 @@ func (s *SourceRoots) Delete(ctx context.Context, id uuid.UUID, confirmedPath st
 // or a scan start re-validates its own path. The directory is never created, and
 // neither a write probe nor any other file is ever put inside it.
 func (s *SourceRoots) ValidateSourcePath(ctx context.Context, configuredPath string, excludeRootID *uuid.UUID) (string, error) {
+	if err := sourcefs.ValidateRootPathSupport(configuredPath); err != nil {
+		return "", err
+	}
 	path, err := settings.NormalizePath(configuredPath)
 	if err != nil {
 		return "", fmt.Errorf("source directory: %w", err)

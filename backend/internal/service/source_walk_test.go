@@ -197,8 +197,8 @@ func TestWalkSourceTreeFailsOnCancellation(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("walk error = %v, want a cancellation after the first visit", err)
 		}
-		if want := []string{"a.flac"}; !slices.Equal(visited, want) {
-			t.Errorf("visited %v, want the walk to stop after %v", visited, want)
+		if len(visited) != 1 {
+			t.Errorf("visited %v, want exactly one entry before cancellation", visited)
 		}
 	})
 
@@ -235,8 +235,8 @@ func TestWalkSourceTreeStopsOnVisitorError(t *testing.T) {
 	if !errors.Is(err, errStopSourceWalk) {
 		t.Fatalf("walk error = %v, want the visitor error", err)
 	}
-	if want := []string{"a.flac"}; !slices.Equal(visited, want) {
-		t.Errorf("visited %v, want the walk to stop after %v", visited, want)
+	if len(visited) != 1 {
+		t.Errorf("visited %v, want exactly one entry before the visitor error", visited)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,6 +39,8 @@ type sourceRootRepositoryFixture struct {
 	locations map[uuid.UUID]int64
 	busy      bool
 	created   int
+	updated   int
+	listCalls int
 	deleted   []uuid.UUID
 }
 
@@ -60,6 +63,7 @@ func (fixture *sourceRootRepositoryFixture) GetSourceRoot(_ context.Context, id 
 }
 
 func (fixture *sourceRootRepositoryFixture) ListSourceRoots(context.Context) ([]persistence.SourceRoot, error) {
+	fixture.listCalls++
 	roots := make([]persistence.SourceRoot, 0, len(fixture.roots))
 	for _, root := range fixture.roots {
 		roots = append(roots, *root)
@@ -73,6 +77,7 @@ func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, 
 	}
 	for index, stored := range fixture.roots {
 		if stored.ID == root.ID {
+			fixture.updated++
 			fixture.roots[index] = root
 			return nil
 		}
@@ -148,6 +153,51 @@ func TestCreateSourceRootRejectsEmptyDisplayName(t *testing.T) {
 	}
 	if fixture.repository.created != 0 {
 		t.Fatalf("roots created by a rejected name: %d, want 0", fixture.repository.created)
+	}
+}
+
+func TestWindowsUNCSourcePathsAreRefusedWithoutMutation(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows UNC source-path contract")
+	}
+	fixture := newSourceRootsFixture(t)
+	stored := &persistence.SourceRoot{
+		ID: uuid.New(), DisplayName: "legacy UNC", ConfiguredPath: `\\server\share`, Enabled: true,
+	}
+	fixture.repository.roots = append(fixture.repository.roots, stored)
+
+	unsupported := []string{
+		`\\?\UNC\server\share`, `\\?\unc\server\share`, `//?/UNC/server/share`,
+		`\\?/uNc/server\share`, `\??\UNC\server\share`, `/??/unc/server/share`,
+		`\\.\UNC\server\share`, `\\.\unc\server\share`, `//./UNC/server/share`,
+		`\\./uNc/server\share`,
+	}
+	for _, path := range unsupported {
+		if _, err := fixture.roots.Create(context.Background(), "new UNC", path); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
+			t.Errorf("Create(%q) error = %v, want unsupported network root", path, err)
+		}
+		if _, err := fixture.roots.Edit(context.Background(), stored.ID, service.SourceRootEdit{ConfiguredPath: stringPointer(path)}); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
+			t.Errorf("Edit(%q) error = %v, want unsupported network root", path, err)
+		}
+		if _, err := fixture.roots.ValidateSourcePath(context.Background(), path, &stored.ID); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
+			t.Errorf("revalidation(%q) error = %v, want unsupported network root", path, err)
+		}
+	}
+	if fixture.repository.created != 0 {
+		t.Fatalf("Create wrote %d roots for unsupported UNC paths", fixture.repository.created)
+	}
+	if fixture.repository.updated != 0 || fixture.repository.roots[0] != stored {
+		t.Fatalf("unsupported paths mutated the stored root: updates=%d, root=%+v", fixture.repository.updated, fixture.repository.roots[0])
+	}
+	if fixture.repository.listCalls != 0 {
+		t.Fatalf("unsupported paths reached the source-root repository %d times, want 0", fixture.repository.listCalls)
+	}
+	if stored.ConfiguredPath != `\\server\share` {
+		t.Fatalf("Edit mutated stored UNC path to %q", stored.ConfiguredPath)
+	}
+	view, err := fixture.roots.Get(context.Background(), stored.ID)
+	if err != nil || view.ConfiguredPath != stored.ConfiguredPath {
+		t.Fatalf("legacy UNC GET = %#v, %v; want readable stored path", view, err)
 	}
 }
 

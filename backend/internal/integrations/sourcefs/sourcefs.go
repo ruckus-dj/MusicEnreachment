@@ -54,9 +54,57 @@ var (
 	ErrNotRegular = errors.New("sourcefs: not a regular file")
 	// ErrUnsupported indicates no safe adapter is available for this operation.
 	ErrUnsupported = errors.New("sourcefs: safe filesystem access is unsupported")
+	// ErrUnsupportedNetworkRoot indicates that Windows UNC roots are not supported.
+	ErrUnsupportedNetworkRoot = errors.New("windows UNC source roots are not supported yet; use a local drive path")
 	// ErrInvalidBorrow indicates a nil file-borrow callback.
 	ErrInvalidBorrow = errors.New("sourcefs: invalid file borrow callback")
 )
+
+// ValidateRootPathSupport rejects Windows UNC roots before callers perform any
+// filesystem access.
+func ValidateRootPathSupport(path string) error {
+	return validateRootPathSupport(path, runtime.GOOS == "windows")
+}
+
+func validateRootPathSupport(path string, windows bool) error {
+	if !windows {
+		return nil
+	}
+	// Extended-length and NT device namespace paths can still name a network
+	// share. Reject those UNC forms, but leave other device paths to their
+	// existing validation contract.
+	if isDeviceUNCPath(path) {
+		return ErrUnsupportedNetworkRoot
+	}
+	if len(path) < 3 || !isPathSeparator(path[0]) || !isPathSeparator(path[1]) {
+		return nil
+	}
+	if path[2] == '?' || path[2] == '.' {
+		return nil
+	}
+	return ErrUnsupportedNetworkRoot
+}
+
+func isDeviceUNCPath(path string) bool {
+	// Both the extended-length (`?`) and Win32 device (`.`) namespaces can name a
+	// network share; match either, and leave other device paths to the opener's
+	// existing invalid-path contract.
+	if len(path) >= 8 && isPathSeparator(path[0]) && isPathSeparator(path[1]) &&
+		(path[2] == '?' || path[2] == '.') && isPathSeparator(path[3]) &&
+		strings.EqualFold(path[4:7], "UNC") && isPathSeparator(path[7]) {
+		return true
+	}
+	if len(path) >= 8 && isPathSeparator(path[0]) && path[1] == '?' &&
+		path[2] == '?' && isPathSeparator(path[3]) &&
+		strings.EqualFold(path[4:7], "UNC") && isPathSeparator(path[7]) {
+		return true
+	}
+	return len(path) >= 9 && isPathSeparator(path[0]) && isPathSeparator(path[1]) &&
+		path[2] == '?' && path[3] == '?' && isPathSeparator(path[4]) &&
+		strings.EqualFold(path[5:8], "UNC") && isPathSeparator(path[8])
+}
+
+func isPathSeparator(value byte) bool { return value == '/' || value == '\\' }
 
 // Kind is an advisory classification returned by directory enumeration.
 type Kind uint8
@@ -123,6 +171,9 @@ func (unsupportedOpener) OpenRoot(_ context.Context, absolute string) (Directory
 // calls, then resolves each component from the current directory handle. The
 // caller retains ownership of root; all intermediate handles are closed.
 func OpenRegularAt(ctx context.Context, root Directory, relativePath string) (RegularFile, error) {
+	if runtime.GOOS == "windows" {
+		relativePath = filepath.ToSlash(relativePath)
+	}
 	components, err := validateRelativePath(relativePath, runtime.GOOS == "windows")
 	if err != nil {
 		return nil, err

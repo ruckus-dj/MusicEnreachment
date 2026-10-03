@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -369,6 +370,42 @@ func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
 	}
 	assertAppliedGeneration(t, ctx, database, root, 1, 2, first.ID)
 	assertCandidateCount(t, ctx, database, second.ID, 2)
+}
+
+func TestSourceScanApplyPreservesNativeRelativePathIdentityAndVariantWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/native-relative-path")
+	relativePath := filepath.Join("album", "track.flac")
+	mtime := probeMtime()
+	first := newSourceScanOperation(t, ctx, database, root, "queued")
+	setOperationState(t, ctx, database, first.ID, "running")
+	defer setOperationState(t, ctx, database, first.ID, "succeeded")
+	applySourceScan(t, ctx, inventory, first, root.ConfiguredPath,
+		sourceCandidate(relativePath, 1024, mtime))
+	locationID := locationID(t, ctx, database, root.ID, relativePath)
+	variantID := insertMediaVariantRow(t, ctx, database, 1024, first.ID)
+	linkLocationVariant(t, ctx, database, locationID, variantID)
+	setOperationState(t, ctx, database, first.ID, "succeeded")
+
+	second := newSourceScanOperation(t, ctx, database, root, "queued")
+	setOperationState(t, ctx, database, second.ID, "running")
+	defer setOperationState(t, ctx, database, second.ID, "succeeded")
+	applySourceScan(t, ctx, inventory, second, root.ConfiguredPath,
+		sourceCandidate(relativePath, 1024, mtime))
+
+	stored := readLocationByID(t, ctx, database, locationID)
+	if stored.RelativePath != relativePath {
+		t.Fatalf("stored relative path = %q, want its exact native string %q", stored.RelativePath, relativePath)
+	}
+	if stored.ID != locationID || stored.MediaVariantID == nil || *stored.MediaVariantID != variantID {
+		t.Fatalf("location after unchanged native-path rescan = %+v, want id %s and variant %s preserved", stored, locationID, variantID)
+	}
+	if stored.ProbeStatus != persistence.SourceProbeStatusAudio {
+		t.Fatalf("probe status after unchanged native-path rescan = %q, want audio", stored.ProbeStatus)
+	}
 }
 
 func TestSourceScanApplyHonoursConfiguredPathWithPostgreSQL(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -27,6 +28,7 @@ const (
 	scanSafeDisabled     = "The source root is disabled. Enable it before scanning it again."
 	scanSafeNotReady     = "The source scan requires a completed setup on a supported server platform."
 	scanSafePath         = service.SourceScanDirectoryUnavailableReason
+	scanSafeUnsupported  = "Windows UNC source roots are not supported yet. Configure a local drive path."
 	scanSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the scan."
 	scanSafeTraversal    = "The source directory could not be read completely. The previous inventory is unchanged."
 	scanSafeApply        = "The verified scan could not be applied. The previous inventory is unchanged."
@@ -135,6 +137,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if root.ConfiguredPath != snapshot.ConfiguredPath {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
 	}
+	if errors.Is(sourcefs.ValidateRootPathSupport(root.ConfiguredPath), service.ErrUnsupportedSourceRoot) {
+		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeUnsupported)
+	}
 	if !root.Enabled {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeDisabled)
 	}
@@ -159,6 +164,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	path, err := worker.paths.ValidateSourcePath(ctx, root.ConfiguredPath, &root.ID)
 	if err != nil {
 		slog.Warn("source scan path failed revalidation", "operation", operation.ID.String(), "cause", err)
+		if errors.Is(err, service.ErrUnsupportedSourceRoot) {
+			return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeUnsupported)
+		}
 		// A managed-path overlap, a duplicate configured path and a failed
 		// database read say nothing about the directory, so only a proven
 		// inaccessible root is recorded before the operation fails.
@@ -189,6 +197,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 			if markErr := worker.recordUnavailableRoot(ctx, operation); markErr != nil {
 				return markErr
 			}
+		}
+		if errors.Is(err, service.ErrUnsupportedSourceRoot) {
+			return worker.fail(ctx, operation, service.SourceScanStageTraversing, scanSafeUnsupported)
 		}
 		return worker.fail(ctx, operation, service.SourceScanStageTraversing, scanSafeTraversal)
 	}

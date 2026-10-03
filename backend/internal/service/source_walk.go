@@ -87,7 +87,7 @@ func walkSourceDirectory(ctx context.Context, directory sourcefs.Directory, rela
 			}
 			child := item.Name
 			if relative != "" {
-				child = relative + "/" + item.Name
+				child = filepath.Join(relative, item.Name)
 			}
 			if item.Kind == sourcefs.KindExcluded {
 				continue

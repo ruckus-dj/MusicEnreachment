@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -161,6 +162,32 @@ func TestWindowsRelativePathGrammarFailsClosed(t *testing.T) {
 	}
 	if _, err := validateRelativePath("folder/file.flac", true); err != nil {
 		t.Fatalf("valid Windows relative path rejected: %v", err)
+	}
+}
+
+func TestOpenRegularAtAcceptsNativeWindowsRelativePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native Windows paths are only accepted by the Windows adapter")
+	}
+	root := &directoryFixture{next: &directoryFixture{file: &directoryFixtureFile{}}}
+	if _, err := OpenRegularAt(context.Background(), root, filepath.Join("album", "track.flac")); err != nil {
+		t.Fatalf("OpenRegularAt(native path) error = %v", err)
+	}
+	if !reflect.DeepEqual(root.openedDirs, []string{"album"}) || !reflect.DeepEqual(root.next.openedFile, []string{"track.flac"}) {
+		t.Fatalf("native Windows path was not split into components: dirs=%q files=%q", root.openedDirs, root.next.openedFile)
+	}
+}
+
+func TestOpenRegularAtPreservesUnixBackslashFilename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is a path separator on Windows")
+	}
+	root := &directoryFixture{next: &directoryFixture{file: &directoryFixtureFile{}}}
+	if _, err := OpenRegularAt(context.Background(), root, `album\name/track.flac`); err != nil {
+		t.Fatalf("OpenRegularAt(Unix backslash filename) error = %v", err)
+	}
+	if !reflect.DeepEqual(root.openedDirs, []string{`album\name`}) || !reflect.DeepEqual(root.next.openedFile, []string{"track.flac"}) {
+		t.Fatalf("Unix backslash filename was normalized: dirs=%q files=%q", root.openedDirs, root.next.openedFile)
 	}
 }
 

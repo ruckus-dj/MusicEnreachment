@@ -146,6 +146,10 @@ func openNativeWithClose(parent windows.Handle, name string, directory bool, clo
 				return windows.InvalidHandle, errors.Join(ErrNotDirectory, status)
 			case windows.STATUS_FILE_IS_A_DIRECTORY:
 				return windows.InvalidHandle, errors.Join(ErrNotRegular, status)
+			case windows.STATUS_ACCESS_DENIED:
+				return windows.InvalidHandle, errors.Join(fs.ErrPermission, status)
+			case windows.STATUS_OBJECT_NAME_NOT_FOUND, windows.STATUS_OBJECT_PATH_NOT_FOUND, windows.STATUS_NO_SUCH_FILE:
+				return windows.InvalidHandle, errors.Join(fs.ErrNotExist, status)
 			}
 		}
 		return windows.InvalidHandle, status

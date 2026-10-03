@@ -580,17 +580,12 @@ func (fixture *sourceScanFixture) write(t *testing.T, relativePath, content stri
 // PostgreSQL keeps them in.
 func (fixture *sourceScanFixture) storeLocation(t *testing.T, relativePath, status string) {
 	t.Helper()
-	// The inventory keeps the path the walk produced, which uses the host
-	// separator. The tests spell relative paths with slashes, so map the one
-	// into the other or a stored location never matches the walked file on
-	// Windows.
-	relativePath = filepath.FromSlash(relativePath)
-	info, err := os.Stat(filepath.Join(fixture.tree, relativePath))
+	info, err := os.Stat(filepath.Join(fixture.tree, filepath.FromSlash(relativePath)))
 	if err != nil {
 		t.Fatalf("stat %q: %v", relativePath, err)
 	}
 	fixture.repository.locations = append(fixture.repository.locations, persistence.SourceLocation{
-		ID: uuid.New(), SourceRootID: fixture.root.ID, RelativePath: relativePath,
+		ID: uuid.New(), SourceRootID: fixture.root.ID, RelativePath: filepath.FromSlash(relativePath),
 		SizeBytes: info.Size(), Mtime: info.ModTime().Truncate(time.Microsecond), ProbeStatus: status,
 	})
 }
@@ -668,6 +663,11 @@ func TestSourceScanKeepsTheStoredStatusOfUnchangedFilesAndRechecksAFailedOne(t *
 		t.Errorf("probed %v, want only %v: an unchanged audio or no_audio file is not probed again", got, want)
 	}
 	stored := fixture.statuses(t)
+	if got, want := sourceScanCandidatePaths(fixture.candidates(t)), []string{
+		filepath.Join("album", "broken.wav"), filepath.Join("album", "silent.mka"), filepath.Join("album", "track.flac"),
+	}; !slices.Equal(got, want) {
+		t.Fatalf("candidate relative paths = %q, want native stored paths %q", got, want)
+	}
 	requireSourceScanStatus(t, stored, "album/track.flac", persistence.SourceProbeStatusAudio)
 	requireSourceScanStatus(t, stored, "album/silent.mka", persistence.SourceProbeStatusNoAudio)
 	requireSourceScanStatus(t, stored, "album/broken.wav", persistence.SourceProbeStatusNoAudio)
