@@ -9,19 +9,20 @@ DROP INDEX operation_one_active_source_root_scan;
 DROP INDEX operation_active_source_root_idx;
 DROP INDEX operation_target_source_root_idx;
 
+-- The restored checks do not admit scan_source rows (production snapshots have
+-- no target_identity), so remove scan history before restoring those checks.
+-- Its indexes and exclusion constraint were dropped above; the column itself is
+-- dropped only after the now-unreferenced scan rows are gone.
+DELETE FROM operation WHERE kind = 'scan_source';
+
 ALTER TABLE operation DROP COLUMN target_source_root_id;
 
--- Restore the pre-scan target identity rule before re-adding it, and only then
--- delete the surviving scan rows: the restored CHECK would reject a scan row
--- that no longer has a target_source_root_id to derive its target from.
 ALTER TABLE operation
     DROP CONSTRAINT operation_target_identity,
     ADD CONSTRAINT operation_target_identity CHECK (
         kind = 'move_tools_root'
         OR COALESCE(input_snapshot ->> 'target_identity', '') <> ''
     );
-
-DELETE FROM operation WHERE kind = 'scan_source';
 
 ALTER TABLE operation
     DROP CONSTRAINT operation_kind_check,
