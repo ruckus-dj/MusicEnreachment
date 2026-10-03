@@ -124,6 +124,145 @@ func TestSourceAnalysisRefusesAFileChangedDuringTheProbe(t *testing.T) {
 	}
 }
 
+func TestSourceAnalysisUsesTheBorrowedFileDuringTransientSymlinkSwaps(t *testing.T) {
+	for _, swap := range []string{"file", "ancestor"} {
+		t.Run(swap, func(t *testing.T) {
+			fixture := newSourceAnalysisFixture(t, sourceAnalysisRaw(t))
+			originalBytes, err := os.ReadFile(fixture.filePath)
+			if err != nil {
+				t.Fatalf("read original source: %v", err)
+			}
+			originalInfo, err := os.Stat(fixture.filePath)
+			if err != nil {
+				t.Fatalf("stat original source: %v", err)
+			}
+			externalDir := t.TempDir()
+			externalAlbum := filepath.Join(externalDir, "album")
+			if err := os.Mkdir(externalAlbum, 0o755); err != nil {
+				t.Fatalf("create external album: %v", err)
+			}
+			externalPath := filepath.Join(externalAlbum, "track.flac")
+			externalBytes := make([]byte, len(originalBytes))
+			copy(externalBytes, "EXTERNAL")
+			for i := len("EXTERNAL"); i < len(externalBytes); i++ {
+				externalBytes[i] = '!'
+			}
+			if err := os.WriteFile(externalPath, externalBytes, 0o644); err != nil {
+				t.Fatalf("write external source: %v", err)
+			}
+			if err := os.Chtimes(externalPath, originalInfo.ModTime(), originalInfo.ModTime()); err != nil {
+				t.Fatalf("set external source mtime: %v", err)
+			}
+
+			fixture.probe.beforeRead = func(_ context.Context, _ *os.File) func() {
+				var restore func()
+				switch swap {
+				case "file":
+					held := fixture.filePath + ".held"
+					if err := os.Rename(fixture.filePath, held); err != nil {
+						t.Errorf("hold original file: %v", err)
+						return nil
+					}
+					if err := os.Symlink(externalPath, fixture.filePath); err != nil {
+						_ = os.Rename(held, fixture.filePath)
+						t.Errorf("swap file path to external symlink: %v", err)
+						return nil
+					}
+					restore = func() {
+						if err := os.Remove(fixture.filePath); err != nil {
+							t.Errorf("remove temporary file symlink: %v", err)
+							return
+						}
+						if err := os.Rename(held, fixture.filePath); err != nil {
+							t.Errorf("restore original file: %v", err)
+							return
+						}
+					}
+				case "ancestor":
+					held := filepath.Join(fixture.rootDir, "album.held")
+					if err := os.Rename(filepath.Dir(fixture.filePath), held); err != nil {
+						t.Errorf("hold original ancestor: %v", err)
+						return nil
+					}
+					if err := os.Symlink(externalAlbum, filepath.Dir(fixture.filePath)); err != nil {
+						_ = os.Rename(held, filepath.Dir(fixture.filePath))
+						t.Errorf("swap ancestor to external symlink: %v", err)
+						return nil
+					}
+					restore = func() {
+						if err := os.Remove(filepath.Dir(fixture.filePath)); err != nil {
+							t.Errorf("remove temporary ancestor symlink: %v", err)
+							return
+						}
+						if err := os.Rename(held, filepath.Dir(fixture.filePath)); err != nil {
+							t.Errorf("restore original ancestor: %v", err)
+							return
+						}
+					}
+				}
+				if restore == nil {
+					return nil
+				}
+				visibleBytes, err := os.ReadFile(fixture.filePath)
+				if err != nil {
+					t.Errorf("read source path during borrowed-file read: %v", err)
+				} else if string(visibleBytes) != string(externalBytes) {
+					t.Errorf("source path during borrowed-file read = %q, want external marker %q", visibleBytes, externalBytes)
+				}
+				return restore
+			}
+			fixture.probe.onProbe = func(string) {
+				if string(fixture.probe.read) == string(originalBytes) {
+					fixture.probe.raw = sourceAnalysisRaw(t)
+				} else {
+					fixture.probe.raw = []byte(`{"format":{"format_name":"flac","tags":{"ARTIST":"EXTERNAL"}},"streams":[{"codec_type":"audio","codec_name":"flac"}]}`)
+				}
+			}
+
+			apply, err := fixture.run()
+			if err != nil {
+				t.Fatalf("analyze source with transient %s swap: %v", swap, err)
+			}
+			if got := string(fixture.probe.read); got != string(originalBytes) {
+				t.Fatalf("borrowed bytes = %q, want original %q", got, originalBytes)
+			}
+			if got := string(apply.ObservedTags); got != `{"ALBUM":["Example Album"],"ARTIST":["Example"],"TITLE":["Track"]}` {
+				t.Fatalf("observed tags = %s, want tags from original borrowed bytes", got)
+			}
+		})
+	}
+}
+
+func TestSourceAnalysisRefusesSameIdentityMetadataNamespaceReplacement(t *testing.T) {
+	fixture := newSourceAnalysisFixture(t, sourceAnalysisRaw(t))
+	fixture.probe.onProbe = func(string) {
+		info, err := os.Stat(fixture.filePath)
+		if err != nil {
+			t.Errorf("stat source before replacement: %v", err)
+			return
+		}
+		if err := os.Remove(fixture.filePath); err != nil {
+			t.Errorf("remove source before replacement: %v", err)
+			return
+		}
+		replacement := make([]byte, info.Size())
+		copy(replacement, "replacement marker")
+		for i := len("replacement marker"); i < len(replacement); i++ {
+			replacement[i] = '!'
+		}
+		if err := os.WriteFile(fixture.filePath, replacement, 0o644); err != nil {
+			t.Errorf("write same-size replacement: %v", err)
+			return
+		}
+		if err := os.Chtimes(fixture.filePath, info.ModTime(), info.ModTime()); err != nil {
+			t.Errorf("match replacement mtime: %v", err)
+		}
+	}
+	if _, err := fixture.run(); !errors.Is(err, persistence.ErrSourceAnalysisStale) {
+		t.Fatalf("analysis error = %v, want stale namespace replacement", err)
+	}
+}
+
 // TestSourceAnalysisRefusesSymlinkReplacement covers a file or a directory
 // swapped for a symlink, before and during the probe: the replacement is never
 // read as the inventoried file.

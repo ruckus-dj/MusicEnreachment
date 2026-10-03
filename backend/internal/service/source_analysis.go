@@ -191,6 +191,20 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 		}
 		return empty, fmt.Errorf("analyze source location: probe the source file: %w", err)
 	}
+	// Confirm the descriptor that the probe actually borrowed is still the
+	// inventoried object before trusting any pathname-based confirmation. This
+	// catches in-place changes even when the path was transiently redirected.
+	afterProbe, err := file.Stat(ctx)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
+		}
+		return empty, fmt.Errorf("analyze source location: stat pinned source file after probe: %w", err)
+	}
+	if !afterProbe.Mode().IsRegular() || !os.SameFile(before, afterProbe) ||
+		afterProbe.Size() != before.Size() || !afterProbe.ModTime().Equal(before.ModTime()) {
+		return empty, fmt.Errorf("analyze source location: the file changed while it was being analyzed: %w", persistence.ErrSourceAnalysisStale)
+	}
 	// Re-open below the still-pinned root after probing to detect a path swap,
 	// link, or change to the inventoried file's identity without pathname IO.
 	afterFile, err := sourcefs.OpenRegularAt(ctx, pinnedRoot, snapshot.RelativePath)
@@ -211,7 +225,8 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 	if closeErr != nil {
 		return empty, fmt.Errorf("analyze source location: close source path after probe: %w", closeErr)
 	}
-	if !os.SameFile(before, after) || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+	if !os.SameFile(before, after) || !os.SameFile(before, afterProbe) ||
+		after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return empty, fmt.Errorf("analyze source location: the file changed while it was being analyzed: %w", persistence.ErrSourceAnalysisStale)
 	}
 	analysis, err := ParseSourceTechnicalAnalysis(raw)

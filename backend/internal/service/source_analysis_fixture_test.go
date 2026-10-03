@@ -95,14 +95,15 @@ func (f sourceAnalysisToolsFixture) GetToolsDirectory(context.Context) (string, 
 	return f.directory, f.exists, f.err
 }
 
-// sourceAnalysisProbeFixture stands in for the managed ffprobe. onProbe runs at
-// the exact moment the file is probed, which is the deterministic barrier for a
-// file that changes or is replaced under the analysis.
+// sourceAnalysisProbeFixture stands in for the managed ffprobe. beforeRead runs
+// while the borrowed descriptor is active and immediately before it is read;
+// onProbe runs after the read for mutations that remain in place afterward.
 type sourceAnalysisProbeFixture struct {
 	raw          []byte
 	err          error
 	executable   string
 	probed       []string
+	beforeRead   func(ctx context.Context, handle *os.File) (afterRead func())
 	onProbe      func(absolutePath string)
 	ignoreCancel bool
 	path         string
@@ -113,23 +114,32 @@ func (f *sourceAnalysisProbeFixture) CheckFileTransport(context.Context) error {
 
 func (f *sourceAnalysisProbeFixture) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
 	f.probed = append(f.probed, f.path)
-	if f.onProbe != nil {
-		f.onProbe(f.path)
-	}
-	if err := ctx.Err(); err != nil && !f.ignoreCancel {
-		return nil, err
-	}
 	if f.err != nil {
 		return nil, f.err
 	}
-	if ctx.Err() != nil && f.ignoreCancel {
-		return f.raw, nil
-	}
 	if err := file.Borrow(ctx, func(handle *os.File) error {
+		var afterRead func()
+		if f.beforeRead != nil {
+			afterRead = f.beforeRead(ctx, handle)
+		}
 		var err error
 		f.read, err = io.ReadAll(handle)
-		return err
+		if afterRead != nil {
+			afterRead()
+		}
+		if err != nil {
+			return err
+		}
+		// Preserve post-read mutations for tests that verify service checks detect
+		// changes that remain in place after the descriptor loan returns.
+		if f.onProbe != nil {
+			f.onProbe(f.path)
+		}
+		return nil
 	}); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil && !f.ignoreCancel {
 		return nil, err
 	}
 	return f.raw, nil
