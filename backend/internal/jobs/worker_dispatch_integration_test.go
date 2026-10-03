@@ -67,7 +67,7 @@ func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	defer cancelEvents()
 	operations := service.NewOperationsWithRiver(repository, riverClient)
 
-	succeeded := enqueueInstall(t, ctx, repository, riverClient, "1.6.1")
+	succeeded := enqueueInstall(t, ctx, repository, riverClient, root, "1.6.1")
 	awaitRiverCompletion(t, ctx, events, *succeeded.RiverJobID)
 	assertOperationState(t, ctx, repository, succeeded.ID, "succeeded")
 	ready, err := repository.GetInstallation(ctx, *succeeded.TargetInstallationID)
@@ -92,7 +92,7 @@ func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 	catalog.setReleaseIdentity("1.6.2")
 	catalog.setResolveError(errors.New("private upstream diagnostic"))
-	failed := enqueueInstall(t, ctx, repository, riverClient, "1.6.2")
+	failed := enqueueInstall(t, ctx, repository, riverClient, root, "1.6.2")
 	awaitRiverCompletion(t, ctx, events, *failed.RiverJobID)
 	failedSnapshot, err := repository.GetOperation(ctx, failed.ID)
 	if err != nil || failedSnapshot.State != "failed" || failedSnapshot.SafeError == nil {
@@ -207,7 +207,7 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 			session := newDispatchRiverSession(t, ctx, databaseURL, database, worker)
 			events, cancelEvents := session.client.Subscribe(river.EventKindJobCompleted)
 			defer cancelEvents()
-			operation := enqueueInstall(t, ctx, repository, session.client, release)
+			operation := enqueueInstall(t, ctx, repository, session.client, root, release)
 
 			awaitDispatchBarrier(t, ctx, gate, events, *operation.RiverJobID, repository, operation.ID)
 			current, err := repository.GetOperation(ctx, operation.ID)
@@ -1049,7 +1049,7 @@ func stopRiverClient(t *testing.T, client *river.Client[*sql.Tx]) {
 }
 
 func enqueueInstall(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository,
-	client *river.Client[*sql.Tx], release string) *persistence.Operation {
+	client *river.Client[*sql.Tx], toolsRoot, release string) *persistence.Operation {
 	t.Helper()
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
@@ -1076,7 +1076,7 @@ func enqueueInstall(t *testing.T, ctx context.Context, repository *persistence.S
 		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
 		InputSnapshot: snapshot, TargetInstallationID: &installation.ID,
 	}
-	if err := repository.CreateInstallationOperationAndEnqueue(ctx, installation, operation, client,
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, toolsRoot, installation, operation, client,
 		service.OperationJobArgs{OperationID: operation.ID}, nil); err != nil {
 		t.Fatalf("atomically enqueue installation: %v", err)
 	}

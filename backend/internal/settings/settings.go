@@ -52,6 +52,10 @@ type musicBrainzVerificationStore interface {
 	SetMusicBrainzVerifiedIfCurrent(context.Context, string, string, string, string) (bool, error)
 }
 
+type runtimeUpdateStore interface {
+	UpdateRuntime(context.Context, string, map[string]string) error
+}
+
 type Platform struct{ GOOS, GOARCH string }
 
 func (p Platform) Supported() bool {
@@ -95,6 +99,7 @@ type RuntimeSettings struct {
 // A nil field leaves its setting unchanged.
 type RuntimeUpdate struct {
 	ToolsDirectory             *string
+	ExpectedToolsDirectory     *string
 	OutputDirectory            *string
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization *string
@@ -329,6 +334,16 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 	}
 	if len(values) == 0 {
 		return nil
+	}
+	if update.ToolsDirectory != nil {
+		if update.ExpectedToolsDirectory == nil {
+			return fmt.Errorf("tools directory update requires an expected current root")
+		}
+		store, ok := r.store.(runtimeUpdateStore)
+		if !ok {
+			return fmt.Errorf("tools directory updates require transactional runtime settings storage")
+		}
+		return store.UpdateRuntime(ctx, *update.ExpectedToolsDirectory, values)
 	}
 	return r.store.SetMany(ctx, values)
 }

@@ -74,6 +74,73 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 	})
 }
 
+// UpdateRuntime serializes a direct tools-root change with every tools
+// mutation. expectedToolsRoot is empty when no root is currently configured.
+func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoot string, values map[string]string) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsOperations(ctx, tx); err != nil {
+			return fmt.Errorf("lock tools operations: %w", err)
+		}
+		var currentRoot string
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentRoot)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read tools directory: %w", err)
+		}
+		if currentRoot != expectedToolsRoot {
+			return fmt.Errorf("tools directory changed since runtime update was prepared")
+		}
+		nextRoot := values["tools_directory"]
+		if nextRoot != currentRoot {
+			var installationID string
+			err := tx.NewRaw("SELECT id FROM tool_installation LIMIT 1 FOR UPDATE").Scan(ctx, &installationID)
+			if err == nil {
+				return fmt.Errorf("tools directory cannot change while installations exist; use the move operation")
+			}
+			if err != sql.ErrNoRows {
+				return fmt.Errorf("check tool installations: %w", err)
+			}
+			var operationID string
+			err = tx.NewRaw("SELECT id FROM operation WHERE kind IN ('install', 'move_tools_root') AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE").Scan(ctx, &operationID)
+			if err == nil {
+				return fmt.Errorf("tools directory cannot change while tools operations are active")
+			}
+			if err != sql.ErrNoRows {
+				return fmt.Errorf("check active tools operations: %w", err)
+			}
+		}
+		return setManyTx(ctx, tx, values)
+	})
+}
+
+func setManyTx(ctx context.Context, tx bun.Tx, values map[string]string) error {
+	for _, name := range []string{
+		"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity", "musicbrainz_verified_at",
+	} {
+		if _, present := values[name]; present {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+				return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+			}
+			break
+		}
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		value := values[name]
+		_, err := tx.NewInsert().Model(&AppSetting{Name: name, Value: value}).
+			On("CONFLICT (setting_name) DO UPDATE").
+			Set("setting_value = EXCLUDED.setting_value").
+			Set("updated_at = now()").Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("set setting %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // SetMusicBrainzVerifiedIfCurrent commits a successful check only for the same
 // configuration generation that was checked. Config writes share its DB lock.
 func (r *SettingsRepository) SetMusicBrainzVerifiedIfCurrent(ctx context.Context, mode, baseURL, identity, verifiedAt string) (bool, error) {

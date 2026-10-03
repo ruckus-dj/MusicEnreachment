@@ -1116,7 +1116,7 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 		InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.7.0:linux:amd64"}`),
 		TargetInstallationID: &preparing.ID,
 	}
-	if err := repository.CreateInstallationOperationAndEnqueue(ctx, preparing, installOperation, client, transactionTestArgs{}, nil); err != nil {
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, "", preparing, installOperation, client, transactionTestArgs{}, nil); err != nil {
 		t.Fatalf("atomically create installation, operation, and job: %v", err)
 	}
 	if _, err := repository.GetInstallation(ctx, preparing.ID); err != nil {
@@ -1136,7 +1136,7 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
 		InputSnapshot: installOperation.InputSnapshot, TargetInstallationID: &duplicateTarget.ID,
 	}
-	if err := repository.CreateInstallationOperationAndEnqueue(ctx, &duplicateTarget, duplicateOperation, client, transactionTestArgs{}, nil); err == nil {
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, "", &duplicateTarget, duplicateOperation, client, transactionTestArgs{}, nil); err == nil {
 		t.Fatal("duplicate installation identity was enqueued")
 	}
 	var rolledBackInstallRows int

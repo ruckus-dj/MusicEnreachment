@@ -99,7 +99,7 @@ func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Contex
 		operation.Attempt = 1
 	}
 	if operation.Kind == "move_tools_root" && operation.State == "queued" {
-		if err := lockToolsOperationExclusivity(ctx, database); err != nil {
+		if err := lockToolsOperations(ctx, database); err != nil {
 			return fmt.Errorf("lock operation exclusivity: %w", err)
 		}
 	}
@@ -109,9 +109,9 @@ func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Contex
 	return nil
 }
 
-// lockToolsOperationExclusivity establishes the common lock order used by
+// lockToolsOperations establishes the common lock order used by
 // transactions that coordinate installation mutations with tools-root moves.
-func lockToolsOperationExclusivity(ctx context.Context, database bun.IDB) error {
+func lockToolsOperations(ctx context.Context, database bun.IDB) error {
 	if _, err := database.NewRaw("LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE").Exec(ctx); err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		return fmt.Errorf("enqueue tools move: operation must be a tools root move")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue tools move: lock operation exclusivity: %w", err)
 		}
 		held, err := activeAnalysisInstallationHold(ctx, tx)
@@ -201,7 +201,7 @@ func activeAnalysisInstallationHold(ctx context.Context, tx bun.Tx) (bool, error
 	return false, nil
 }
 
-func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(ctx context.Context, installation *ToolInstallation, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
+func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(ctx context.Context, expectedToolsRoot string, installation *ToolInstallation, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
 	if client == nil {
 		return fmt.Errorf("enqueue installation: River client is required")
 	}
@@ -209,6 +209,17 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 		return fmt.Errorf("enqueue installation: operation target must match installation")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsOperations(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue installation: lock tools operations: %w", err)
+		}
+		var currentToolsRoot string
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentToolsRoot)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("enqueue installation: read tools directory: %w", err)
+		}
+		if currentToolsRoot != expectedToolsRoot {
+			return fmt.Errorf("enqueue installation: tools directory changed since preflight")
+		}
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
 			return fmt.Errorf("insert River job: %w", err)
@@ -309,7 +320,7 @@ func (repository *SetupManagerRepository) MarkInstallationFailed(ctx context.Con
 // platform and updates its package's active setting in the same transaction.
 func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("lock operation exclusivity: %w", err)
 		}
 		var moveID uuid.UUID
@@ -370,7 +381,7 @@ func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context
 		return fmt.Errorf("delete installation: filesystem remover is required")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations for installation deletion: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
@@ -431,7 +442,7 @@ func validInstallationRelativePath(installation *ToolInstallation) bool {
 
 func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("commit tools root move: lock operation exclusivity: %w", err)
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -464,7 +475,7 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 
 func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("rollback tools root move: lock operation exclusivity: %w", err)
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -497,7 +508,7 @@ func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Cont
 
 func (repository *SetupManagerRepository) FinishToolsRootMove(ctx context.Context, operationID uuid.UUID) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("finish tools root move: lock operation exclusivity: %w", err)
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -579,7 +590,7 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 			return fmt.Errorf("transition operation: read the operation kind: %w", err)
 		}
 		if kind == analysisSourceOperationKind || kind == "install" || kind == "move_tools_root" {
-			if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+			if err := lockToolsOperations(ctx, tx); err != nil {
 				return fmt.Errorf("transition operation: lock operations: %w", err)
 			}
 		}
@@ -606,7 +617,7 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 	}
 	var operation *Operation
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperationExclusivity(ctx, tx); err != nil {
+		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("lock operation exclusivity: %w", err)
 		}
 		locked, err := repository.GetOperationForUpdate(ctx, tx, id)

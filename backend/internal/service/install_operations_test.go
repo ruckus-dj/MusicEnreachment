@@ -37,7 +37,7 @@ type installEnqueuerFixture struct {
 	args         river.JobArgs
 }
 
-func (fixture *installEnqueuerFixture) CreateInstallationOperationAndEnqueue(_ context.Context, installation *persistence.ToolInstallation, operation *persistence.Operation, _ persistence.RiverInserter, args river.JobArgs, _ *river.InsertOpts) error {
+func (fixture *installEnqueuerFixture) CreateInstallationOperationAndEnqueue(_ context.Context, _ string, installation *persistence.ToolInstallation, operation *persistence.Operation, _ persistence.RiverInserter, args river.JobArgs, _ *river.InsertOpts) error {
 	fixture.installation = installation
 	fixture.operation = operation
 	fixture.args = args

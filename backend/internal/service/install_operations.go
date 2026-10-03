@@ -16,7 +16,7 @@ import (
 )
 
 type InstallationOperationEnqueuer interface {
-	CreateInstallationOperationAndEnqueue(context.Context, *persistence.ToolInstallation, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	CreateInstallationOperationAndEnqueue(context.Context, string, *persistence.ToolInstallation, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
 	ListInstallations(context.Context, string, string, string) ([]persistence.ToolInstallation, error)
 }
 
@@ -233,7 +233,7 @@ func (s *InstallOperations) StartFromPreflight(ctx context.Context, preflight In
 		return nil, fmt.Errorf("river client is required for installation")
 	}
 	if err := s.repository.CreateInstallationOperationAndEnqueue(
-		ctx, installation, operation, s.river, OperationJobArgs{OperationID: operation.ID}, nil,
+		ctx, current.Root, installation, operation, s.river, OperationJobArgs{OperationID: operation.ID}, nil,
 	); err != nil {
 		return nil, fmt.Errorf("start installation operation: %w", err)
 	}
