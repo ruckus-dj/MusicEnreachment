@@ -105,6 +105,9 @@ func TestSourceAnalysisEnqueueSharesInstallationAcrossRootsWithPostgreSQL(t *tes
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+		t.Fatal(err)
+	}
 	client := openScanEnqueueRiver(t, database)
 
 	shared := insertAnalysisInstallation(t, ctx, database, "shared")
@@ -129,7 +132,7 @@ func TestSourceAnalysisEnqueueSharesInstallationAcrossRootsWithPostgreSQL(t *tes
 
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{}`),
+		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
 	}
 	if err := setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client,
 		serviceOperationArgs{OperationID: move.ID}, nil); !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {

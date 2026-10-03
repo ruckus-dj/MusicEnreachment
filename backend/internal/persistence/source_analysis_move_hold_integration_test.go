@@ -24,6 +24,9 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+		t.Fatal(err)
+	}
 	client := openScanEnqueueRiver(t, database)
 
 	root := createInventoryRoot(t, ctx, inventory, "/srv/move-hold")
@@ -38,7 +41,7 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	// The move snapshot lists no files at all; the global hold must still refuse.
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{"files":[]}`),
+		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after","files":[]}`),
 	}
 	if err := setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client,
 		serviceOperationArgs{OperationID: move.ID}, nil); !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {

@@ -64,6 +64,9 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+		t.Fatal(err)
+	}
 	client := openScanEnqueueRiver(t, database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/move-analysis-barrier")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
@@ -73,7 +76,7 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{}`),
+		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
 	}
 	err := runOperationLockRace(t, ctx, database,
 		func(ctx context.Context, tx bun.Tx) error {

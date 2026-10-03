@@ -80,7 +80,7 @@ func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T)
 			root := t.TempDir()
 			const release = "1.6.1"
 			snapshot, err := json.Marshal(service.InstallInputSnapshot{
-				TargetIdentity: "fpcalc:chromaprint:" + release + ":linux:amd64", SchemaVersion: 1,
+				TargetIdentity: "fpcalc:chromaprint:" + release + ":linux:amd64", SchemaVersion: 2, ToolsRoot: root,
 				PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: release,
 				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 			})
@@ -197,7 +197,7 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 		t.Fatal(err)
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:" + releaseIdentity + ":linux:amd64", SchemaVersion: 1,
+		TargetIdentity: "fpcalc:chromaprint:" + releaseIdentity + ":linux:amd64", SchemaVersion: 2, ToolsRoot: root,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: releaseIdentity,
 		ConfirmedConflicts: []string{target}, ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
@@ -310,7 +310,7 @@ func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T
 	operationID, installationID, untouchedID := uuid.New(), uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 1,
+		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: root,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
 	})
 	if err != nil {
@@ -353,7 +353,7 @@ func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T
 	if repository.activated {
 		t.Fatal("invalid publication recovery changed the active installation selection")
 	}
-	if untouched.State != "failed" || untouched.SafeError == nil || *untouched.SafeError != "The operation was interrupted. Retry the operation." {
+	if untouched.State != "failed" || untouched.SafeError == nil || *untouched.SafeError != "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation." {
 		t.Fatalf("later operation = %s safe error %v; want generic reconciliation to continue", untouched.State, untouched.SafeError)
 	}
 	if _, err := os.Stat(staging); err != nil {
@@ -368,7 +368,7 @@ func TestReconcileInterruptedInstallMarksPreparingTargetFailed(t *testing.T) {
 	operationID, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
 	})
 	if err != nil {
 		t.Fatal(err)

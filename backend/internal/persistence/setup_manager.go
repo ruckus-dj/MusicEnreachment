@@ -167,6 +167,21 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		if err := lockToolsOperations(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue tools move: lock operation exclusivity: %w", err)
 		}
+		var snapshot struct {
+			SchemaVersion int    `json:"schema_version"`
+			OldRoot       string `json:"old_root"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 1 || snapshot.OldRoot == "" {
+			return fmt.Errorf("enqueue tools move: invalid root-pinned snapshot")
+		}
+		var currentRoot string
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentRoot)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("enqueue tools move: read tools directory: %w", err)
+		}
+		if currentRoot != snapshot.OldRoot {
+			return fmt.Errorf("enqueue tools move: tools directory changed since preflight")
+		}
 		held, err := activeAnalysisInstallationHold(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("enqueue tools move: check active analysis holds: %w", err)
@@ -627,6 +642,11 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		if locked.State != "failed" {
 			return fmt.Errorf("only failed operations can be retried")
 		}
+		if locked.Kind == "install" || locked.Kind == "move_tools_root" {
+			if err := verifyToolsOperationRootForRetry(ctx, tx, locked); err != nil {
+				return err
+			}
+		}
 		previousStage := locked.Stage
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
@@ -659,6 +679,40 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		return nil, err
 	}
 	return operation, nil
+}
+
+func verifyToolsOperationRootForRetry(ctx context.Context, tx bun.Tx, operation *Operation) error {
+	var currentRoot string
+	err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentRoot)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("retry operation: read tools directory: %w", err)
+	}
+	switch operation.Kind {
+	case "install":
+		var snapshot struct {
+			SchemaVersion int    `json:"schema_version"`
+			ToolsRoot     string `json:"tools_root"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 2 || snapshot.ToolsRoot == "" {
+			return fmt.Errorf("retry operation: installation snapshot has no historically pinned tools directory")
+		}
+		if currentRoot != snapshot.ToolsRoot {
+			return fmt.Errorf("retry operation: tools directory changed since installation was queued")
+		}
+	case "move_tools_root":
+		var snapshot struct {
+			SchemaVersion int    `json:"schema_version"`
+			OldRoot       string `json:"old_root"`
+			NewRoot       string `json:"new_root"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 1 || snapshot.OldRoot == "" || snapshot.NewRoot == "" {
+			return fmt.Errorf("retry operation: tools-root move snapshot is invalid")
+		}
+		if currentRoot != snapshot.OldRoot && currentRoot != snapshot.NewRoot {
+			return fmt.Errorf("retry operation: tools directory no longer matches the move snapshot")
+		}
+	}
+	return nil
 }
 
 func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, id uuid.UUID) error {

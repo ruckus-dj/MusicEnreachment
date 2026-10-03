@@ -95,6 +95,33 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			continue
 		}
 		if operation.Kind == "install" {
+			var snapshot service.InstallInputSnapshot
+			if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 2 || snapshot.ToolsRoot == "" {
+				if operation.TargetInstallationID != nil {
+					if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
+						return fmt.Errorf("mark legacy installation failed: %w", err)
+					}
+				}
+				if err := operations.Fail(ctx, operation.ID, operation.Stage, "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation."); err != nil {
+					return fmt.Errorf("fail installation without a pinned tools directory: %w", err)
+				}
+				continue
+			}
+			currentRoot, exists, err := runtimeSettings.GetToolsDirectory(ctx)
+			if err != nil {
+				return fmt.Errorf("read tools directory while recovering installation %s: %w", operation.ID, err)
+			}
+			if !exists || currentRoot != snapshot.ToolsRoot {
+				if operation.TargetInstallationID != nil {
+					if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
+						return fmt.Errorf("mark stale-root installation failed: %w", err)
+					}
+				}
+				if err := operations.Fail(ctx, operation.ID, operation.Stage, "The tools directory changed since this installation was queued. Start a new installation."); err != nil {
+					return fmt.Errorf("fail installation with a stale tools directory: %w", err)
+				}
+				continue
+			}
 			publicationExists, err := hasInstallPublicationEvidence(ctx, operation, runtimeSettings)
 			if errors.Is(err, errInvalidInstallPublicationEvidence) {
 				if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
@@ -133,7 +160,7 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			}
 		}
 		if operation.TargetInstallationID != nil {
-			if err := repository.MarkInstallationFailed(ctx, *operation.TargetInstallationID); err != nil {
+			if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
 				return fmt.Errorf("mark interrupted installation failed: %w", err)
 			}
 		}
@@ -146,6 +173,17 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		}
 	}
 	return nil
+}
+
+func markPreparingInstallationFailed(ctx context.Context, repository interruptedOperationRepository, id uuid.UUID) error {
+	installation, err := repository.GetInstallation(ctx, id)
+	if err != nil {
+		return err
+	}
+	if installation.State != "preparing" {
+		return nil
+	}
+	return repository.MarkInstallationFailed(ctx, id)
 }
 
 // recoverInterruptedSourceScan finishes one orphaned scan. A generation that the
@@ -276,7 +314,7 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 		return false, fmt.Errorf("%w: decode installation snapshot: %w", errInvalidInstallPublicationEvidence, err)
 	}
-	if snapshot.SchemaVersion != 1 || snapshot.PackageKind != tools.PackageKind(installation.PackageKind) ||
+	if snapshot.SchemaVersion != 2 || snapshot.ToolsRoot == "" || snapshot.ToolsRoot != root || snapshot.PackageKind != tools.PackageKind(installation.PackageKind) ||
 		snapshot.SourceName != installation.SourceName || snapshot.ReleaseIdentity != installation.ReleaseIdentity {
 		return false, fmt.Errorf("%w: installation snapshot does not match target", errInvalidInstallPublicationEvidence)
 	}

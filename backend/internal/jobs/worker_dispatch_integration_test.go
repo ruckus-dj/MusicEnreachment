@@ -44,7 +44,10 @@ func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
-	root := t.TempDir()
+	root, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	setRuntimeRoots(t, ctx, settingsRepository, root)
 	runtimeSettings := settings.New(settingsRepository, nil)
 
@@ -146,7 +149,10 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
-	root := t.TempDir()
+	root, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	setRuntimeRoots(t, ctx, settingsRepository, root)
 	runtimeSettings := settings.New(settingsRepository, nil)
 	platform := tools.Platform{GOOS: "linux", GOARCH: "amd64"}
@@ -1058,7 +1064,8 @@ func enqueueInstall(t *testing.T, ctx context.Context, repository *persistence.S
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
 		TargetIdentity:     "fpcalc:chromaprint:" + release + ":linux:amd64",
-		SchemaVersion:      1,
+		SchemaVersion:      2,
+		ToolsRoot:          toolsRoot,
 		PackageKind:        tools.PackageFPCalc,
 		SourceName:         "chromaprint",
 		ReleaseIdentity:    release,

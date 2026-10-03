@@ -157,6 +157,21 @@ func (settings workerSettings) SetupCompleted(context.Context) (bool, error) {
 	return settings.completed, nil
 }
 
+type rootReadFlipSettings struct {
+	root      string
+	afterRead func()
+}
+
+func (settings *rootReadFlipSettings) GetToolsDirectory(context.Context) (string, bool, error) {
+	root := settings.root
+	if settings.afterRead != nil {
+		settings.afterRead()
+	}
+	return root, true, nil
+}
+
+func (settings *rootReadFlipSettings) SetupCompleted(context.Context) (bool, error) { return true, nil }
+
 type workerCommandRunner struct{}
 
 func (workerCommandRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
@@ -173,9 +188,10 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	ctx := context.Background()
 	operationID := uuid.New()
 	installationID := uuid.New()
+	root := t.TempDir()
 	release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip", URL: "https://github.com/acoustid/fpcalc.zip"}}}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:v1.6.1:linux:amd64", SchemaVersion: 1,
+		TargetIdentity: "fpcalc:chromaprint:v1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: root,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "v1.6.1",
 		ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
@@ -189,7 +205,6 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	}
 	repository := &workerRepository{operation: operation, installation: installation}
 	operations := service.NewOperations(repository)
-	root := t.TempDir()
 	worker := jobs.NewInstallationWorker(repository, operations, workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
 	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}
@@ -208,6 +223,62 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	}
 	if _, err := os.Lstat(filepath.Join(root, ".staging", operationID.String())); !os.IsNotExist(err) {
 		t.Fatalf("operation staging remains: %v", err)
+	}
+}
+
+func TestInstallationWorkerPinsWritesToSnapshotRootAcrossRootRead(t *testing.T) {
+	for _, changeBeforeRead := range []bool{true, false} {
+		name := "root_changes_after_read"
+		if changeBeforeRead {
+			name = "root_changed_before_read"
+		}
+		t.Run(name, func(t *testing.T) {
+			oldRoot, newRoot := t.TempDir(), t.TempDir()
+			id, installationID := uuid.New(), uuid.New()
+			raw, err := json.Marshal(service.InstallInputSnapshot{
+				TargetIdentity: "fpcalc:chromaprint:v1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: oldRoot,
+				PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "v1.6.1",
+				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: raw, TargetInstallationID: &installationID}
+			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing"}
+			repository := &workerRepository{operation: operation, installation: installation}
+			runtime := &rootReadFlipSettings{root: oldRoot}
+			if changeBeforeRead {
+				runtime.root = newRoot
+			} else {
+				runtime.afterRead = func() { runtime.root = newRoot }
+			}
+			worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
+				workerCatalog{release: tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
+				runtime, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+				t.Fatal(err)
+			}
+			if changeBeforeRead {
+				if operation.State != "failed" {
+					t.Fatalf("mismatched root operation state=%s", operation.State)
+				}
+				for _, root := range []string{oldRoot, newRoot} {
+					if _, err := os.Lstat(filepath.Join(root, installation.RelativePath)); !os.IsNotExist(err) {
+						t.Fatalf("worker wrote under %s before rejecting stale root: %v", root, err)
+					}
+				}
+				return
+			}
+			if operation.State != "succeeded" {
+				t.Fatalf("operation state=%s", operation.State)
+			}
+			if _, err := os.Stat(filepath.Join(oldRoot, installation.RelativePath, "fpcalc")); err != nil {
+				t.Fatalf("pinned root missing executable: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(newRoot, installation.RelativePath)); !os.IsNotExist(err) {
+				t.Fatalf("worker wrote under post-read root: %v", err)
+			}
+		})
 	}
 }
 
@@ -234,7 +305,7 @@ func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
 				t.Fatal(err)
 			}
 			snapshot := service.InstallInputSnapshot{
-				SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+				SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
 				ReleaseIdentity:    "v1.6.1",
 				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 			}
@@ -277,9 +348,10 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 	ctx := context.Background()
 	operationID := uuid.New()
 	installationID := uuid.New()
+	root := t.TempDir()
 	release := tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:v1.6.1:linux:amd64", SchemaVersion: 1,
+		TargetIdentity: "fpcalc:chromaprint:v1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: root,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: release.Identity,
 		ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip", ChecksumAvailable: true}},
 	})
@@ -294,7 +366,7 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 	repository := &workerRepository{operation: operation, installation: installation}
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc")), checksum: strings.Repeat("0", 64)},
-		workerSettings{root: t.TempDir()}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
 
 	if err := worker.Work(ctx, &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}); err != nil {
 		t.Fatal(err)
@@ -318,7 +390,7 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 		t.Fatal(err)
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
 		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
 	if err != nil {
@@ -344,6 +416,80 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 	}
 }
 
+func TestInstallationWorkerCleanupNeverUsesCurrentRootForUntrustedOrStaleSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		state         string
+		schemaVersion int
+		pinnedRoot    bool
+	}{
+		{name: "legacy snapshot", state: "queued", schemaVersion: 1},
+		{name: "stale snapshot", state: "queued", schemaVersion: 2, pinnedRoot: true},
+		{name: "failed redelivery", state: "failed", schemaVersion: 2, pinnedRoot: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, installationID := uuid.New(), uuid.New()
+			currentRoot, pinnedRoot := t.TempDir(), t.TempDir()
+			snapshotRoot := ""
+			if test.pinnedRoot {
+				snapshotRoot = pinnedRoot
+			}
+			snapshot, err := json.Marshal(service.InstallInputSnapshot{
+				SchemaVersion: test.schemaVersion, ToolsRoot: snapshotRoot, PackageKind: tools.PackageFPCalc,
+				SourceName: "chromaprint", ReleaseIdentity: "v1.6.1",
+				ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			installationState := "preparing"
+			if test.state == "failed" {
+				installationState = "failed"
+			}
+			operation := &persistence.Operation{
+				ID: id, Kind: "install", State: test.state, Stage: "download", InputSnapshot: snapshot,
+				TargetInstallationID: &installationID,
+			}
+			installation := &persistence.ToolInstallation{
+				ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+				SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: installationState,
+			}
+			repository := &workerRepository{operation: operation, installation: installation}
+			worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository), workerCatalog{},
+				workerSettings{root: currentRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
+			writeStagingMarker := func(root string) string {
+				t.Helper()
+				staging := filepath.Join(root, ".staging", id.String())
+				if err := os.MkdirAll(staging, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				marker := filepath.Join(staging, "keep-me")
+				if err := os.WriteFile(marker, []byte("preserve"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return marker
+			}
+			currentMarker := writeStagingMarker(currentRoot)
+			var pinnedMarker string
+			if test.pinnedRoot {
+				pinnedMarker = writeStagingMarker(pinnedRoot)
+			}
+
+			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(currentMarker); err != nil {
+				t.Fatalf("staging marker under current tools root was removed: %v", err)
+			}
+			if pinnedMarker != "" {
+				if _, err := os.Stat(pinnedMarker); !os.IsNotExist(err) {
+					t.Fatalf("validated snapshot staging marker remains: %v", err)
+				}
+			}
+		})
+	}
+}
+
 type ffmpegWorkerRunner struct{}
 
 func (ffmpegWorkerRunner) Run(_ context.Context, executable string, args ...string) ([]byte, error) {
@@ -357,7 +503,7 @@ func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFFmpeg, SourceName: "btbn",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFFmpeg, SourceName: "btbn",
 		ReleaseIdentity: "8.0", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "ffmpeg.zip"}},
 	})
 	if err != nil {
@@ -414,7 +560,7 @@ func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T)
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
 		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
 	if err != nil {
@@ -459,7 +605,7 @@ func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T)
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
 		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 	})
 	if err != nil {
@@ -514,7 +660,7 @@ func TestInstallationWorkerResumesConfirmedBackupBeforeLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		SchemaVersion: 1, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
+		SchemaVersion: 2, ToolsRoot: root, PackageKind: tools.PackageFPCalc, SourceName: "chromaprint",
 		ReleaseIdentity: "v1.6.1", ArtifactIdentities: []service.InstallArtifactIdentity{{Name: "fpcalc.zip"}},
 		ConfirmedConflicts: []string{target},
 	})

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -110,6 +112,45 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		assertToolsRootRaceState(t, ctx, database, rootA, uuid.Nil, uuid.Nil, 0)
 		if _, found, err := settingsRepository.Get(ctx, "output_directory"); err != nil || found {
 			t.Fatalf("failed runtime update persisted output directory: found=%t err=%v", found, err)
+		}
+	})
+
+	t.Run("move enqueue and install retry reject stale roots", func(t *testing.T) {
+		if err := settingsRepository.Set(ctx, "tools_directory", rootB); err != nil {
+			t.Fatal(err)
+		}
+		move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
+			InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-a","new_root":"/srv/tools-c"}`)}
+		if err := repository.CreateToolsMoveOperationAndEnqueue(ctx, move, client, service.OperationJobArgs{OperationID: move.ID}, nil); err == nil {
+			t.Fatal("move enqueue accepted a preflight for the old tools root")
+		}
+
+		installation := &persistence.ToolInstallation{
+			ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+			SourceName: "chromaprint", ReleaseIdentity: "1.5.2", RelativePath: "fpcalc/1.5.2", State: "failed",
+			ArtifactIdentities: json.RawMessage(`[]`),
+		}
+		if err := repository.CreateInstallation(ctx, installation); err != nil {
+			t.Fatal(err)
+		}
+		reason := "previous installation failed"
+		finished := time.Now().UTC()
+		operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed", Stage: "download", SafeError: &reason, FinishedAt: &finished,
+			InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.5.2:linux:amd64","schema_version":2,"tools_root":"/srv/tools-a"}`),
+			TargetInstallationID: &installation.ID}
+		if err := repository.CreateOperation(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.RetryOperationAndEnqueue(ctx, operation.ID, client,
+			service.OperationJobArgs{OperationID: operation.ID}, (*river.InsertOpts)(nil)); err == nil {
+			t.Fatal("retry accepted an installation snapshot pinned to the old tools root")
+		}
+		stored, err := repository.GetOperation(ctx, operation.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.State != "failed" || stored.Attempt != operation.Attempt {
+			t.Fatalf("stale retry changed operation state/attempt: %s/%d", stored.State, stored.Attempt)
 		}
 	})
 }

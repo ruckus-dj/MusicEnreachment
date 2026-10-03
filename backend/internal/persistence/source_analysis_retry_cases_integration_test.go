@@ -196,7 +196,11 @@ func TestSourceAnalysisRetryRefusesMoveWhenHoldCommittedFirstWithPostgreSQL(t *t
 	ctx := context.Background()
 	fixture := newAnalysisRetryFixture(t, false)
 	operation := insertFailedAnalysisOperation(t, ctx, fixture)
-	move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued", InputSnapshot: json.RawMessage(`{}`)}
+	if err := persistence.NewSettingsRepository(fixture.database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+		t.Fatal(err)
+	}
+	move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
+		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`)}
 	err := runQueryRace(t, ctx, fixture.database,
 		"LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE",
 		"LOCK TABLE operation",

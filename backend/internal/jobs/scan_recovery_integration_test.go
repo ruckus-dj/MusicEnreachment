@@ -35,7 +35,10 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	defer cancel()
 
 	settingsRepository := persistence.NewSettingsRepository(database)
-	toolsRoot := t.TempDir()
+	toolsRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
 	registry := settings.New(settingsRepository, nil)
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
@@ -188,7 +191,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 		t.Fatalf("create the interrupted installation: %v", err)
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
-		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 1,
+		TargetIdentity: "fpcalc:chromaprint:1.6.1:linux:amd64", SchemaVersion: 2, ToolsRoot: toolsRoot,
 		PackageKind: tools.PackageFPCalc, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
 	})
 	if err != nil {
@@ -215,6 +218,47 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), redeliveredLocations)
 
+	// A pre-pinning install snapshot cannot borrow the current setting as its
+	// historical root. Recovery must fail it without cleaning staging under the
+	// currently configured tools directory.
+	legacyInstallationID := uuid.New()
+	legacyInstallation := &persistence.ToolInstallation{
+		ID: legacyInstallationID, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.2", RelativePath: filepath.Join("fpcalc", "1.6.2"), State: "preparing",
+	}
+	if err := setupManager.CreateInstallation(ctx, legacyInstallation); err != nil {
+		t.Fatalf("create the legacy installation: %v", err)
+	}
+	legacyOperation := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "running", Stage: "materialize",
+		InputSnapshot:        json.RawMessage(`{"schema_version":1,"target_identity":"fpcalc:chromaprint:1.6.2:linux:amd64","package_kind":"fpcalc","source_name":"chromaprint","release_identity":"1.6.2"}`),
+		TargetInstallationID: &legacyInstallationID,
+	}
+	if err := setupManager.CreateOperation(ctx, legacyOperation); err != nil {
+		t.Fatalf("create the legacy install operation: %v", err)
+	}
+	legacyStaging, err := tools.EnsureOperationStaging(toolsRoot, legacyOperation.ID)
+	if err != nil {
+		t.Fatalf("create legacy staging marker directory: %v", err)
+	}
+	marker := filepath.Join(legacyStaging, "must-not-be-adopted")
+	if err := os.WriteFile(marker, []byte("legacy"), 0o600); err != nil {
+		t.Fatalf("write legacy staging marker: %v", err)
+	}
+	if err := ReconcileInterruptedOperations(ctx, setupManager, operations,
+		func(context.Context, *int64) (bool, error) { return false, nil }, registry); err != nil {
+		t.Fatalf("reconcile legacy install: %v", err)
+	}
+	legacyFailed := readScanDispatchOperation(t, ctx, setupManager, legacyOperation.ID)
+	requireScanDispatchSafeError(t, legacyFailed, "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation.")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("legacy recovery touched staging under the current tools root: %v", err)
+	}
+	failedLegacyInstallation, err := setupManager.GetInstallation(ctx, legacyInstallationID)
+	if err != nil || failedLegacyInstallation.State != "failed" {
+		t.Fatalf("legacy installation = %#v, lookup error %v; want failed", failedLegacyInstallation, err)
+	}
+
 	// Given a queued scan of the root whose River delivery is still live...
 	live := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
 	if _, err := database.NewRaw("UPDATE operation SET river_job_id = ? WHERE id = ?", 424242, live.ID).Exec(ctx); err != nil {
@@ -231,6 +275,65 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	assertOperationStage(t, ctx, setupManager, live.ID, "queued", service.SourceScanStageQueued)
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), redeliveredLocations)
+}
+
+func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreSQL(t *testing.T) {
+	database, _ := openDispatchDatabase(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx := context.Background()
+
+	settingsRepository := persistence.NewSettingsRepository(database)
+	root, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	setRuntimeRoots(t, ctx, settingsRepository, root)
+	runtimeSettings := settings.New(settingsRepository, nil)
+	repository := persistence.NewSetupManagerRepository(database)
+	operations := service.NewOperations(repository)
+
+	for _, state := range []string{"ready", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			release := "1.6.9-" + state
+			installation := &persistence.ToolInstallation{
+				ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+				SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: filepath.Join("fpcalc", release), State: "preparing",
+			}
+			if err := repository.CreateInstallation(ctx, installation); err != nil {
+				t.Fatalf("create %s installation: %v", state, err)
+			}
+			switch state {
+			case "ready":
+				if err := repository.MarkInstallationReady(ctx, installation.ID, json.RawMessage(`{"fpcalc":"fpcalc version 1.6.9"}`), time.Now().UTC()); err != nil {
+					t.Fatalf("mark installation ready: %v", err)
+				}
+			case "failed":
+				if err := repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
+					t.Fatalf("mark installation failed: %v", err)
+				}
+			}
+			operation := &persistence.Operation{
+				ID: uuid.New(), Kind: "install", State: "running", Stage: "materialize",
+				InputSnapshot: json.RawMessage(`{"schema_version":1,"target_identity":"fpcalc:chromaprint:` + release + `:linux:amd64"}`), TargetInstallationID: &installation.ID,
+			}
+			if err := repository.CreateOperation(ctx, operation); err != nil {
+				t.Fatalf("create legacy installation operation: %v", err)
+			}
+			if err := ReconcileInterruptedOperations(ctx, repository, operations,
+				func(context.Context, *int64) (bool, error) { return false, nil }, runtimeSettings); err != nil {
+				t.Fatalf("reconcile legacy %s installation: %v", state, err)
+			}
+			gotInstallation, err := repository.GetInstallation(ctx, installation.ID)
+			if err != nil || gotInstallation.State != state {
+				t.Fatalf("recovered installation state = %v, %v; want preserved %s", gotInstallation, err, state)
+			}
+			gotOperation, err := repository.GetOperation(ctx, operation.ID)
+			const safeError = "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation."
+			if err != nil || gotOperation.State != "failed" || gotOperation.SafeError == nil || *gotOperation.SafeError != safeError {
+				t.Fatalf("recovered operation = %#v, %v; want failed with safe legacy error", gotOperation, err)
+			}
+		})
+	}
 }
 
 // scanRecoveryRiverSlot lets the operations service be built before the River

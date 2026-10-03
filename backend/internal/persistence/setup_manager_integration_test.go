@@ -1052,8 +1052,19 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 
 	retryInstallation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "8.0")
+	retryRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatalf("normalize retry tools root: %v", err)
+	}
+	retrySnapshot, err := json.Marshal(service.InstallInputSnapshot{
+		TargetIdentity: "ffmpeg:test:8.0:linux:amd64", SchemaVersion: 2, ToolsRoot: retryRoot,
+		PackageKind: tools.PackageFFmpeg, SourceName: "test", ReleaseIdentity: "8.0",
+	})
+	if err != nil {
+		t.Fatalf("marshal retry installation snapshot: %v", err)
+	}
 	finishedAt := time.Now().UTC()
-	retryOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed", Stage: "verify", InputSnapshot: json.RawMessage(`{"target_identity":"ffmpeg:test:8.0:linux:amd64"}`), TargetInstallationID: &retryInstallation.ID, SafeError: stringPointer("safe failure"), FinishedAt: &finishedAt}
+	retryOperation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed", Stage: "verify", InputSnapshot: retrySnapshot, TargetInstallationID: &retryInstallation.ID, SafeError: stringPointer("safe failure"), FinishedAt: &finishedAt}
 	if err := repository.CreateOperation(ctx, retryOperation); err != nil {
 		t.Fatalf("create failed operation: %v", err)
 	}
@@ -1064,6 +1075,9 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if _, err := database.ExecContext(ctx, "UPDATE operation SET updated_at = ? WHERE id = ?", oldUpdatedAt, retryOperation.ID); err != nil {
 		t.Fatalf("set old retry timestamp: %v", err)
 	}
+	if err := persistence.NewSettingsRepository(database).Set(ctx, settings.ToolsDirectoryKey, retryRoot); err != nil {
+		t.Fatalf("set retry tools root: %v", err)
+	}
 	retried, err := repository.RetryOperationAndEnqueue(ctx, retryOperation.ID, client, transactionTestArgs{}, nil)
 	if err != nil {
 		t.Fatalf("retry operation: %v", err)
@@ -1073,6 +1087,9 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 	if !retried.UpdatedAt.After(oldUpdatedAt) {
 		t.Fatalf("retry updated_at = %v; want after %v", retried.UpdatedAt, oldUpdatedAt)
+	}
+	if _, err := database.ExecContext(ctx, "DELETE FROM app_setting WHERE setting_name = ?", settings.ToolsDirectoryKey); err != nil {
+		t.Fatalf("clear retry tools root: %v", err)
 	}
 	retriedInstallation, err := repository.GetInstallation(ctx, retryInstallation.ID)
 	if err != nil || retriedInstallation.State != "preparing" {

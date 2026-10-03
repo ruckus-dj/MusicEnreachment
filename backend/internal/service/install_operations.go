@@ -55,6 +55,7 @@ type InstallArtifactIdentity struct {
 type InstallInputSnapshot struct {
 	TargetIdentity     string                    `json:"target_identity"`
 	SchemaVersion      int                       `json:"schema_version"`
+	ToolsRoot          string                    `json:"tools_root"`
 	PackageKind        tools.PackageKind         `json:"package_kind"`
 	SourceName         string                    `json:"source_name"`
 	ReleaseIdentity    string                    `json:"release_identity"`
@@ -197,7 +198,8 @@ func (s *InstallOperations) StartFromPreflight(ctx context.Context, preflight In
 	targetIdentity := fmt.Sprintf("%s:%s:%s:%s:%s", current.PackageKind, source, release.Identity, s.platform.GOOS, s.platform.GOARCH)
 	snapshot := InstallInputSnapshot{
 		TargetIdentity:     targetIdentity,
-		SchemaVersion:      1,
+		SchemaVersion:      2,
+		ToolsRoot:          current.Root,
 		PackageKind:        current.PackageKind,
 		SourceName:         source,
 		ReleaseIdentity:    release.Identity,
