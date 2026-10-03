@@ -78,6 +78,7 @@ type SourceScanWorker struct {
 	settings   scanWorkerSettings
 	platform   settings.PlatformState
 	lifecycle  *tools.Lifecycle
+	newProbe   func(string) (service.SourceProbe, error)
 }
 
 func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanWorkerSettings, platform settings.PlatformState, lifecycle *tools.Lifecycle) *SourceScanWorker {
@@ -87,6 +88,7 @@ func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Op
 	return &SourceScanWorker{
 		repository: repository, operations: operations, paths: paths,
 		settings: runtimeSettings, platform: platform, lifecycle: lifecycle,
+		newProbe: func(executable string) (service.SourceProbe, error) { return tools.NewFFProbe(executable) },
 	}
 }
 
@@ -137,6 +139,17 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		slog.Warn("source scan cannot start", "operation", operation.ID.String(), "cause", err)
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeNotReady)
 	}
+	probe, err := worker.managedProbe(ctx)
+	if err != nil {
+		slog.Warn("source scan has no working managed ffprobe", "operation", operation.ID.String(), "cause", err)
+		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeTool)
+	}
+	// Prove descriptor transport before the validator makes any filesystem
+	// access to the source root. SourceScan repeats this check for direct callers.
+	if err := probe.CheckFileTransport(ctx); err != nil {
+		slog.Warn("source scan managed ffprobe file transport failed", "operation", operation.ID.String(), "cause", err)
+		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeTool)
+	}
 	// The root is re-validated against the path the snapshot carries: a path the
 	// operator changed after the enqueue must not publish files of the new path
 	// as the inventory of the old one.
@@ -156,11 +169,6 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if path != snapshot.ConfiguredPath {
 		slog.Warn("source scan path changed after the enqueue", "operation", operation.ID.String())
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
-	}
-	probe, err := worker.managedProbe(ctx)
-	if err != nil {
-		slog.Warn("source scan has no working managed ffprobe", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeTool)
 	}
 	scan := service.NewSourceScan(worker.repository, probe, worker.operations)
 	if err := scan.Run(ctx, service.SourceScanRequest{OperationID: operation.ID, RootID: root.ID}); err != nil {
@@ -301,7 +309,7 @@ func (worker *SourceScanWorker) managedProbe(ctx context.Context) (service.Sourc
 	if err != nil {
 		return nil, err
 	}
-	probe, err := tools.NewFFProbe(executable)
+	probe, err := worker.newProbe(executable)
 	if err != nil {
 		return nil, err
 	}

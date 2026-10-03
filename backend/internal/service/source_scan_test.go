@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -41,10 +43,11 @@ type sourceScanProbeFixture struct {
 	answers map[string]sourceScanProbeAnswer
 	probed  []string
 	onProbe func(name, absolutePath string)
+	paths   map[string]string
 }
 
 func newSourceScanProbeFixture() *sourceScanProbeFixture {
-	return &sourceScanProbeFixture{answers: map[string]sourceScanProbeAnswer{}}
+	return &sourceScanProbeFixture{answers: map[string]sourceScanProbeAnswer{}, paths: map[string]string{}}
 }
 
 func (fixture *sourceScanProbeFixture) answer(name string, hasAudio bool) {
@@ -61,11 +64,35 @@ func (fixture *sourceScanProbeFixture) probes() []string {
 	return probed
 }
 
-func (fixture *sourceScanProbeFixture) Probe(_ context.Context, absoluteServerPath string) (bool, error) {
-	name := filepath.Base(absoluteServerPath)
+func (fixture *sourceScanProbeFixture) CheckFileTransport(context.Context) error { return nil }
+
+func (fixture *sourceScanProbeFixture) ProbeFile(ctx context.Context, file sourcefs.RegularFile) (bool, error) {
+	info, err := file.Stat(ctx)
+	if err != nil {
+		return false, err
+	}
+	var name, absoluteServerPath string
+	for candidateName, candidatePath := range fixture.paths {
+		candidateInfo, statErr := os.Stat(candidatePath)
+		if statErr == nil && os.SameFile(info, candidateInfo) {
+			name, absoluteServerPath = candidateName, candidatePath
+			break
+		}
+	}
+	if name == "" {
+		return false, fmt.Errorf("test probe could not identify borrowed file")
+	}
 	fixture.probed = append(fixture.probed, name)
 	if fixture.onProbe != nil {
 		fixture.onProbe(name, absoluteServerPath)
+	}
+	// Borrowing reads the actual pinned descriptor, rather than trusting a path
+	// string reconstructed by this test fake.
+	if err := file.Borrow(ctx, func(handle *os.File) error {
+		_, err := io.Copy(io.Discard, handle)
+		return err
+	}); err != nil {
+		return false, err
 	}
 	answer, known := fixture.answers[name]
 	if !known {
@@ -179,10 +206,79 @@ type sourceScanFixture struct {
 	tree        string
 }
 
+type replacingSourceOpener struct {
+	base sourcefs.Opener
+	root string
+}
+
+func (opener replacingSourceOpener) OpenRoot(ctx context.Context, absolute string) (sourcefs.Directory, error) {
+	root, err := opener.base.OpenRoot(ctx, absolute)
+	if err != nil {
+		return nil, err
+	}
+	return replacingSourceDirectory{Directory: root, path: opener.root}, nil
+}
+
+type replacingSourceDirectory struct {
+	sourcefs.Directory
+	path string
+}
+
+func (directory replacingSourceDirectory) OpenDir(ctx context.Context, name string) (sourcefs.Directory, error) {
+	child, err := directory.Directory.OpenDir(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return replacingSourceDirectory{Directory: child, path: filepath.Join(directory.path, name)}, nil
+}
+
+func (directory replacingSourceDirectory) OpenRegular(ctx context.Context, name string) (sourcefs.RegularFile, error) {
+	path := filepath.Join(directory.path, name)
+	backup := path + ".walked-object"
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, content, info.Mode().Perm()); err != nil {
+		_ = os.Rename(backup, path)
+		return nil, err
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		_ = os.Remove(path)
+		_ = os.Rename(backup, path)
+		return nil, err
+	}
+	opened, openErr := directory.Directory.OpenRegular(ctx, name)
+	removeErr := os.Remove(path)
+	restoreErr := os.Rename(backup, path)
+	if openErr != nil {
+		return nil, openErr
+	}
+	if removeErr != nil {
+		_ = opened.Close()
+		return nil, removeErr
+	}
+	if restoreErr != nil {
+		_ = opened.Close()
+		return nil, restoreErr
+	}
+	return opened, nil
+}
+
 func newSourceScanFixture(t *testing.T) *sourceScanFixture {
 	t.Helper()
 	tree := t.TempDir()
-	path := tree
+	path, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		t.Fatalf("resolve source root path: %v", err)
+	}
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "music", ConfiguredPath: path, Enabled: true, InventoryPath: &path,
 	}
@@ -195,10 +291,40 @@ func newSourceScanFixture(t *testing.T) *sourceScanFixture {
 	}
 }
 
+func TestSourceScanRejectsOpenedReplacementRestoredBeforePostCheck(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	path := filepath.Join(fixture.tree, "album", "track.flac")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create album directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("same-size original"), 0o644); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+	mtime := time.Unix(1_700_000_000, 123_000)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("set original mtime: %v", err)
+	}
+	fixture.probe.paths = map[string]string{"track.flac": path}
+	fixture.probe.answer("track.flac", true)
+	fixture.scan = service.NewSourceScan(
+		fixture.repository, fixture.probe, fixture.stages,
+		service.WithSourceScanOpener(replacingSourceOpener{base: sourcefs.NewOpener(), root: fixture.tree}),
+	)
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{
+		OperationID: fixture.operationID, RootID: fixture.root.ID,
+	}); err == nil {
+		t.Fatal("scan accepted a descriptor opened on a same-metadata replacement")
+	}
+	if candidates := fixture.repository.candidates[fixture.operationID]; len(candidates) != 0 {
+		t.Fatalf("failed scan retained candidates: %+v", candidates)
+	}
+}
+
 func (fixture *sourceScanFixture) write(t *testing.T, relativePath, content string) string {
 	t.Helper()
 	absolute := filepath.Join(fixture.tree, relativePath)
 	writeSourceWalkFile(t, absolute, content)
+	fixture.probe.paths[filepath.Base(absolute)] = absolute
 	return absolute
 }
 

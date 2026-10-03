@@ -35,6 +35,12 @@ func queueSourceScan(t *testing.T, ctx context.Context, database *bun.DB, rootID
 	return operation
 }
 
+func setSourceScanProbePaths(probe *sourceScanProbeFixture, root string, names ...string) {
+	for _, name := range names {
+		probe.paths[name] = filepath.Join(root, "album", name)
+	}
+}
+
 func readScanCandidates(t *testing.T, ctx context.Context, database *bun.DB, operationID uuid.UUID) map[string]persistence.SourceScanCandidateInput {
 	t.Helper()
 	candidates := make([]persistence.SourceScanCandidateInput, 0)
@@ -101,7 +107,10 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	writeSourceWalkFile(t, filepath.Join(tree, "album", "silent.mka"), "video only bytes")
 	writeSourceWalkFile(t, filepath.Join(tree, "album", "broken.wav"), "unreadable bytes")
 	writeSourceWalkFile(t, filepath.Join(tree, "album", "cover.jpg"), "not audio")
-	path := tree
+	path, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		t.Fatalf("resolve source root path: %v", err)
+	}
 	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "music", ConfiguredPath: path, Enabled: true}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatalf("create the source root: %v", err)
@@ -109,6 +118,7 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	// Given a first scan of the tree whose probe confirms one file, finds no
 	// audio in another and fails on the third...
 	probe := newSourceScanProbeFixture()
+	setSourceScanProbePaths(probe, tree, "track.flac", "silent.mka", "broken.wav")
 	probe.answer("silent.mka", false)
 	probe.fail("broken.wav", errors.New("ffprobe failed"))
 	sourceScan := service.NewSourceScan(inventory, probe, operations)
@@ -157,6 +167,7 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 
 	// Given the file whose probe failed is readable now...
 	probe = newSourceScanProbeFixture()
+	setSourceScanProbePaths(probe, tree, "track.flac", "silent.mka", "broken.wav")
 	probe.answer("track.flac", false)
 	probe.answer("silent.mka", true)
 	probe.answer("broken.wav", true)
@@ -207,6 +218,7 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	// behind...
 	writeSourceWalkFile(t, filepath.Join(tree, "album", "fresh.wav"), "audio bytes")
 	barrier := newSourceScanProbeFixture()
+	setSourceScanProbePaths(barrier, tree, "fresh.wav")
 	probed := filepath.Join(tree, "album", "fresh.wav")
 	barrier.onProbe = func(name, _ string) {
 		if name != "fresh.wav" {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -343,9 +344,21 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nif [ \"$1\" = \"-version\" ]; then\n  echo \"$(basename \"$0\") version " + release + "\"\n  exit 0\nfi\nprintf '{\"streams\":[]}'\n"
-	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte(script), 0o755); err != nil {
+	t.Setenv("SCANNING_PROBE_VERSION", release)
+	t.Setenv("SCANNING_PROBE_NO_AUDIO", "1")
+	names := tools.ExpectedExecutables(tools.PackageFFmpeg, fixture.platform.Platform.GOOS)
+	target := filepath.Join(directory, names[0])
+	build := exec.Command("go", "build", "-o", target, "../jobs/testdata/scanningprobe")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("build the managed probe fixture: %v", err)
+	}
+	contents, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read the managed probe fixture: %v", err)
+	}
+	for _, name := range names[1:] {
+		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}

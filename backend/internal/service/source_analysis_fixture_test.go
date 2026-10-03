@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -97,23 +99,38 @@ func (f sourceAnalysisToolsFixture) GetToolsDirectory(context.Context) (string, 
 // the exact moment the file is probed, which is the deterministic barrier for a
 // file that changes or is replaced under the analysis.
 type sourceAnalysisProbeFixture struct {
-	raw        []byte
-	err        error
-	executable string
-	probed     []string
-	onProbe    func(absolutePath string)
+	raw          []byte
+	err          error
+	executable   string
+	probed       []string
+	onProbe      func(absolutePath string)
+	ignoreCancel bool
+	path         string
+	read         []byte
 }
 
-func (f *sourceAnalysisProbeFixture) ProbeTechnical(ctx context.Context, absoluteServerPath string) ([]byte, error) {
-	f.probed = append(f.probed, absoluteServerPath)
+func (f *sourceAnalysisProbeFixture) CheckFileTransport(context.Context) error { return nil }
+
+func (f *sourceAnalysisProbeFixture) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
+	f.probed = append(f.probed, f.path)
 	if f.onProbe != nil {
-		f.onProbe(absoluteServerPath)
+		f.onProbe(f.path)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil && !f.ignoreCancel {
 		return nil, err
 	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if ctx.Err() != nil && f.ignoreCancel {
+		return f.raw, nil
+	}
+	if err := file.Borrow(ctx, func(handle *os.File) error {
+		var err error
+		f.read, err = io.ReadAll(handle)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	return f.raw, nil
 }
@@ -188,7 +205,11 @@ func newSourceAnalysisFixture(t *testing.T, raw []byte) sourceAnalysisFixture {
 		"ffmpeg": sourceAnalysisFFmpegVersion, "ffprobe": sourceAnalysisFFprobeVersion,
 	}}
 	probe := &sourceAnalysisProbeFixture{raw: raw}
-	configured := rootDir
+	probe.path = filePath
+	configured, err := filepath.EvalSymlinks(rootDir)
+	if err != nil {
+		t.Fatalf("resolve source root path: %v", err)
+	}
 	repository := &sourceAnalysisRepositoryFixture{
 		root: &persistence.SourceRoot{ID: rootID, ConfiguredPath: configured, InventoryPath: &configured, Enabled: true, Status: persistence.SourceRootStatusAvailable},
 		location: &persistence.SourceLocation{
@@ -229,7 +250,11 @@ func sourceAnalysisRaw(t *testing.T) []byte {
 }
 
 func (fixture sourceAnalysisFixture) run() (persistence.SourceAnalysisApply, error) {
-	return fixture.analysis.Run(context.Background(), service.SourceAnalysisRequest{
+	return fixture.runContext(context.Background())
+}
+
+func (fixture sourceAnalysisFixture) runContext(ctx context.Context) (persistence.SourceAnalysisApply, error) {
+	return fixture.analysis.Run(ctx, service.SourceAnalysisRequest{
 		OperationID: fixture.operationID, Snapshot: fixture.snapshot,
 	})
 }

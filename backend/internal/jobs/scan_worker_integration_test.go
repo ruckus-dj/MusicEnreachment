@@ -6,8 +6,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -37,6 +41,34 @@ type scanDispatchLocation struct {
 	SafeError    *string   `bun:"safe_error"`
 }
 
+type recordingScanPathValidator struct {
+	delegate service.SourceScanPathValidator
+	calls    int
+}
+
+func (validator *recordingScanPathValidator) ValidateSourcePath(ctx context.Context, path string, rootID *uuid.UUID) (string, error) {
+	validator.calls++
+	return validator.delegate.ValidateSourcePath(ctx, path, rootID)
+}
+
+type failingTransportProbe struct{}
+
+func (failingTransportProbe) CheckFileTransport(context.Context) error {
+	return errors.New("transport check failed")
+}
+func (failingTransportProbe) ProbeFile(context.Context, sourcefs.RegularFile) (bool, error) {
+	return false, errors.New("file probe should not run")
+}
+
+type recordingScanProbeFactory struct {
+	created int
+}
+
+func (factory *recordingScanProbeFactory) New(string) (service.SourceProbe, error) {
+	factory.created++
+	return failingTransportProbe{}, nil
+}
+
 // TestSourceScanWorkerRiverDispatchPostgreSQL drives the scan worker through the
 // real River dispatcher and real PostgreSQL: a delivery scans, applies and
 // succeeds; a duplicate delivery does not walk the tree again; a traversal that
@@ -56,7 +88,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// installation of this platform has to exist before the first delivery.
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
 	registry := settings.New(settingsRepository, nil)
-	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
+	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
 	writeScanDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot)
 
 	setupManager := persistence.NewSetupManagerRepository(database)
@@ -72,7 +104,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 
 	operations := service.NewOperations(setupManager)
-	worker := NewSourceScanWorker(scanDispatchRepository{setupManager, inventory}, operations, roots, registry, platform, tools.NewLifecycle(nil))
+	pathValidator := &recordingScanPathValidator{delegate: roots}
+	worker := NewSourceScanWorker(scanDispatchRepository{setupManager, inventory}, operations, pathValidator, registry, platform, tools.NewLifecycle(nil))
 	riverClient, listenerPool := startScanDispatchRiver(t, databaseURL, database, worker)
 	defer listenerPool.Close()
 	defer stopRiverClient(t, riverClient)
@@ -201,7 +234,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 	// Given the managed ffprobe is gone...
 	beforeToolFailure := scanDispatchProbeCount(t, probes)
-	if err := os.Remove(filepath.Join(toolsRoot, "ffmpeg", "1.6.1", "ffprobe")); err != nil {
+	ffprobeName := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[1]
+	if err := os.Remove(filepath.Join(toolsRoot, "ffmpeg", "1.6.1", ffprobeName)); err != nil {
 		t.Fatalf("remove the managed ffprobe: %v", err)
 	}
 	fourth, err := scans.Start(ctx, root.ID)
@@ -223,6 +257,36 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// A missing managed tool never marks the root unavailable.
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
+	// Given the executable is present and version-verifies, but its transport
+	// capability check fails, the worker must fail before validating the source
+	// path or recording the root as unavailable.
+	ffmpegExecutable := filepath.Join(toolsRoot, "ffmpeg", "1.6.1", tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[0])
+	ffprobeExecutable := filepath.Join(toolsRoot, "ffmpeg", "1.6.1", ffprobeName)
+	ffmpegContents, err := os.ReadFile(ffmpegExecutable)
+	if err != nil {
+		t.Fatalf("read managed ffmpeg fixture: %v", err)
+	}
+	if err := os.WriteFile(ffprobeExecutable, ffmpegContents, 0o755); err != nil {
+		t.Fatalf("restore managed ffprobe fixture: %v", err)
+	}
+	factory := &recordingScanProbeFactory{}
+	worker.newProbe = factory.New
+	pathCalls := pathValidator.calls
+	transportFailure, err := scans.Start(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("start the transport-failure scan: %v", err)
+	}
+	awaitRiverCompletion(t, ctx, events, *transportFailure.RiverJobID)
+	assertOperationStage(t, ctx, setupManager, transportFailure.ID, "failed", service.SourceScanStageQueued)
+	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, transportFailure.ID), scanSafeTool)
+	if factory.created != 1 {
+		t.Fatalf("transport probe factory calls = %d, want 1", factory.created)
+	}
+	if pathValidator.calls != pathCalls {
+		t.Fatalf("source path validation calls = %d, want unchanged at %d", pathValidator.calls, pathCalls)
+	}
+	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
+
 	// Given a root the operator disabled while a scan of it was already queued...
 	disabled := false
 	if _, err := roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &disabled}); err != nil {
@@ -241,31 +305,30 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 }
 
-// writeScanDispatchFFmpeg materializes a fake managed ffmpeg whose ffprobe
-// answers by file name: a file whose path contains "silent" has no audio, a path
-// containing "broken" fails, and every other file carries audio. Each probe is
-// appended to probe-log, so a test observes exactly how often the tree was
-// walked.
+// writeScanDispatchFFmpeg materializes the native scan fixture binaries. Their
+// descriptor-input probe distinguishes the test payloads, and their protocol
+// and seek responses let the real transport gate verify its full witness.
 func writeScanDispatchFFmpeg(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SettingsRepository, toolsRoot string) {
 	t.Helper()
+	t.Setenv("SCANNING_PROBE_VERSION", "1.6.1")
+	t.Setenv("SCANNING_PROBE_LOG", filepath.Join(toolsRoot, "probe-log"))
 	directory := filepath.Join(toolsRoot, "ffmpeg", "1.6.1")
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatalf("create the managed ffmpeg directory: %v", err)
 	}
-	script := `#!/bin/sh
-if [ "$1" = "-version" ]; then
-  echo "$(basename "$0") version 1.6.1"
-  exit 0
-fi
-echo probe >> ` + filepath.Join(toolsRoot, "probe-log") + `
-case "$*" in
-  *silent*) printf '{"streams":[{"codec_type":"video"}]}' ;;
-  *broken*) printf 'the probe failed\n' >&2; exit 1 ;;
-  *) printf '{"streams":[{"codec_type":"audio"}]}' ;;
-esac
-`
-	for _, name := range []string{"ffmpeg", "ffprobe"} {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte(script), 0o755); err != nil {
+	names := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
+	target := filepath.Join(directory, names[0])
+	build := exec.Command("go", "build", "-o", target, "./testdata/scanningprobe")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("build the scan probe helper: %v", err)
+	}
+	contents, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read the scan probe helper: %v", err)
+	}
+	for _, name := range names[1:] {
+		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}
@@ -275,7 +338,7 @@ esac
 	}
 	verifiedAt := time.Now().UTC()
 	installation := &persistence.ToolInstallation{
-		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
+		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg), PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
 		SourceName: "btbn", ReleaseIdentity: "1.6.1", RelativePath: filepath.Join("ffmpeg", "1.6.1"),
 		State: "ready", ExecutableVersions: versions, VerifiedAt: &verifiedAt,
 	}

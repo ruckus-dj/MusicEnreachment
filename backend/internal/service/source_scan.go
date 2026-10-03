@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
@@ -59,11 +60,12 @@ type SourceScanRepository interface {
 	AppendSourceScanCandidates(context.Context, uuid.UUID, []persistence.SourceScanCandidateInput) error
 }
 
-// SourceProbe confirms whether one absolute server path carries an audio stream.
+// SourceProbe confirms whether one already-open source file carries an audio stream.
 // A managed ffprobe is the production implementation: it reports a valid answer
 // without an audio stream as (false, nil) and every other outcome as an error.
 type SourceProbe interface {
-	Probe(ctx context.Context, absoluteServerPath string) (bool, error)
+	CheckFileTransport(context.Context) error
+	ProbeFile(context.Context, sourcefs.RegularFile) (bool, error)
 }
 
 // SourceScanStages records the coarse stage a running scan reached.
@@ -86,10 +88,23 @@ type SourceScan struct {
 	repository SourceScanRepository
 	probe      SourceProbe
 	stages     SourceScanStages
+	opener     sourcefs.Opener
 }
 
-func NewSourceScan(repository SourceScanRepository, probe SourceProbe, stages SourceScanStages) *SourceScan {
-	return &SourceScan{repository: repository, probe: probe, stages: stages}
+// SourceScanOption replaces one filesystem dependency of a scan.
+type SourceScanOption func(*SourceScan)
+
+// WithSourceScanOpener replaces the platform source filesystem opener.
+func WithSourceScanOpener(opener sourcefs.Opener) SourceScanOption {
+	return func(scan *SourceScan) { scan.opener = opener }
+}
+
+func NewSourceScan(repository SourceScanRepository, probe SourceProbe, stages SourceScanStages, options ...SourceScanOption) *SourceScan {
+	scan := &SourceScan{repository: repository, probe: probe, stages: stages, opener: sourcefs.NewOpener()}
+	for _, option := range options {
+		option(scan)
+	}
+	return scan
 }
 
 // Run walks the configured path of the root and stores one candidate per
@@ -109,6 +124,9 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	if !root.Enabled {
 		return fmt.Errorf("scan source root: the root %q is disabled", root.DisplayName)
 	}
+	if err := s.probe.CheckFileTransport(ctx); err != nil {
+		return fmt.Errorf("scan source root: verify managed ffprobe file transport: %w", err)
+	}
 	previous, err := s.previousInventory(ctx, root)
 	if err != nil {
 		return err
@@ -124,7 +142,7 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	var traversed []SourceWalkEntry
 	var batch []persistence.SourceScanCandidateInput
 	walkErr := WalkSourceTree(ctx, root.ConfiguredPath, func(entry SourceWalkEntry) error {
-		candidate, err := s.candidateFor(ctx, previous, entry)
+		candidate, err := s.candidateFor(ctx, root.ConfiguredPath, previous, entry)
 		if err != nil {
 			return err
 		}
@@ -167,7 +185,7 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 // every other file: only a successful probe decides between audio and no_audio,
 // and a failed one becomes probe_error rather than a status the file never
 // earned.
-func (s *SourceScan) candidateFor(ctx context.Context, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
+func (s *SourceScan) candidateFor(ctx context.Context, rootPath string, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
 	candidate := persistence.SourceScanCandidateInput{
 		RelativePath: entry.RelativePath, SizeBytes: entry.SizeBytes, Mtime: sourceScanMtime(entry.Mtime),
 	}
@@ -180,32 +198,68 @@ func (s *SourceScan) candidateFor(ctx context.Context, previous map[string]persi
 	if err := sourceScanConfirmFile(entry); err != nil {
 		return candidate, err
 	}
-	hasAudio, err := s.probe.Probe(ctx, entry.AbsolutePath)
+	root, err := s.opener.OpenRoot(ctx, rootPath)
 	if err != nil {
-		// A probe that died because the scan itself was canceled is not a file
-		// problem: the whole scan fails instead of blaming one file.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return candidate, fmt.Errorf("confirm the audio stream of %q: %w", entry.RelativePath, ctxErr)
-		}
-		// A failing probe is no excuse for an unread file: the metadata is read
-		// again after it, so a file that changed or vanished while its probe ran
-		// fails the scan instead of being remembered as a probe_error.
-		if confirmErr := sourceScanConfirmFile(entry); confirmErr != nil {
-			return candidate, confirmErr
-		}
+		return candidate, fmt.Errorf("open pinned source root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	file, err := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
+	if err != nil {
+		return candidate, fmt.Errorf("open source file through pinned root: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	before, err := file.Stat(ctx)
+	if err != nil {
+		return candidate, fmt.Errorf("stat opened source file before probe: %w", err)
+	}
+	if !sourceScanMatchesEntry(before, entry) {
+		return candidate, fmt.Errorf("source file %q changed between traversal and open", entry.RelativePath)
+	}
+	hasAudio, probeErr := s.probe.ProbeFile(ctx, file)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return candidate, fmt.Errorf("confirm the audio stream of %q: %w", entry.RelativePath, ctxErr)
+	}
+	// The descriptor proves what was probed; the safe namespace reopen proves
+	// that this is still the file currently named by the pinned tree. Pathname
+	// checks around the probe are not identity checks and are not relied upon.
+	afterFile, openErr := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
+	if openErr != nil {
+		return candidate, fmt.Errorf("reopen source file after probe: %w", openErr)
+	}
+	after, statErr := afterFile.Stat(ctx)
+	closeErr := afterFile.Close()
+	if statErr != nil {
+		return candidate, fmt.Errorf("stat reopened source file after probe: %w", statErr)
+	}
+	if closeErr != nil {
+		return candidate, fmt.Errorf("close reopened source file: %w", closeErr)
+	}
+	probedAfter, err := file.Stat(ctx)
+	if err != nil {
+		return candidate, fmt.Errorf("stat probed source file after probe: %w", err)
+	}
+	if !os.SameFile(before, after) || !sourceScanMatchesEntry(after, entry) ||
+		probedAfter.Size() != before.Size() || !sourceScanMtime(probedAfter.ModTime()).Equal(sourceScanMtime(before.ModTime())) {
+		return candidate, fmt.Errorf("source file %q changed while it was being scanned", entry.RelativePath)
+	}
+	if probeErr != nil {
+		// A failing probe is no excuse for an unread file: the handle and namespace
+		// checks above still have to prove the file stayed the same.
 		safe := sourceScanProbeErrorText
 		candidate.ProbeStatus = persistence.SourceProbeStatusProbeError
 		candidate.SafeError = &safe
 		return candidate, nil
-	}
-	if err := sourceScanConfirmFile(entry); err != nil {
-		return candidate, err
 	}
 	candidate.ProbeStatus = persistence.SourceProbeStatusNoAudio
 	if hasAudio {
 		candidate.ProbeStatus = persistence.SourceProbeStatusAudio
 	}
 	return candidate, nil
+}
+
+func sourceScanMatchesEntry(info os.FileInfo, entry SourceWalkEntry) bool {
+	return info.Mode().IsRegular() && info.Size() == entry.SizeBytes &&
+		sourceScanMtime(info.ModTime()).Equal(sourceScanMtime(entry.Mtime))
 }
 
 // previousInventory reads the last applied generation of the root, keyed by

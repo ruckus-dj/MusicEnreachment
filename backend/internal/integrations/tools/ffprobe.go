@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 )
 
 const (
@@ -25,7 +27,6 @@ const (
 type FFProbe struct {
 	executable string
 	timeout    time.Duration
-	start      probeStarter
 	technical  technicalStarter
 	fileTech   fileTechnicalStarter
 }
@@ -37,7 +38,6 @@ func NewFFProbe(executable string) (*FFProbe, error) {
 	return &FFProbe{
 		executable: executable,
 		timeout:    probeTimeout,
-		start:      startExecProcess,
 		technical:  startTechnicalProcess,
 		fileTech:   startFileTechnicalProcess,
 	}, nil
@@ -53,60 +53,24 @@ func NewFFProbe(executable string) (*FFProbe, error) {
 // The timeout is a hard bound: a probe that outlives it is stopped, its output
 // pipe released and the process reaped, so a read that never ends cannot
 // outlast the probe itself.
-func (p *FFProbe) Probe(ctx context.Context, absoluteServerPath string) (bool, error) {
-	if !filepath.IsAbs(absoluteServerPath) {
-		return false, fmt.Errorf("source path must be an absolute path")
+func (p *FFProbe) ProbeFile(ctx context.Context, file sourcefs.RegularFile) (bool, error) {
+	if file == nil {
+		return false, errors.New("ffprobe source file is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
-
-	process, err := p.start(ctx, p.executable, probeArguments(absoluteServerPath))
-	if err != nil {
-		return false, fmt.Errorf("start ffprobe: %w", err)
-	}
-	stdout, err := process.stdoutPipe()
-	if err != nil {
-		return false, fmt.Errorf("read ffprobe output: %w", err)
-	}
-	if err := process.start(); err != nil {
-		return false, fmt.Errorf("start ffprobe: %w", err)
-	}
-
-	output := make(chan boundedRead, 1)
-	go func() { output <- readBounded(stdout, maxProbeOutputBytes) }()
-	var result boundedRead
-	select {
-	case result = <-output:
-	case <-ctx.Done():
-		// ffprobe outlived its deadline, or the caller canceled. Waiting for the
-		// pipe to close would make the probe outlast its own timeout whenever the
-		// process keeps its output open, so stop it here instead.
-		_ = process.kill()
-		_ = stdout.Close()
-		_ = process.wait()
-		return false, fmt.Errorf("ffprobe did not finish: %w", ctx.Err())
-	}
-	if result.overflow {
-		_ = process.kill()
-		_ = process.wait()
-		return false, fmt.Errorf("ffprobe output exceeded %d bytes", maxProbeOutputBytes)
-	}
-	if result.err != nil {
-		_ = process.kill()
-		_ = process.wait()
-		return false, fmt.Errorf("read ffprobe output: %w", result.err)
-	}
-	if err := process.wait(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return false, fmt.Errorf("ffprobe did not finish: %w", ctxErr)
+	var hasAudio bool
+	err := file.Borrow(ctx, func(handle *os.File) error {
+		output, err := p.runFileTechnical(ctx, handle, quickFileArguments())
+		if err != nil {
+			return err
 		}
-		return false, fmt.Errorf("ffprobe failed: %w", err)
-	}
-	return probeHasAudio(result.data)
+		hasAudio, err = probeHasAudio(output)
+		return err
+	})
+	return hasAudio, err
 }
 
-func probeArguments(absoluteServerPath string) []string {
-	return []string{"-v", "error", "-print_format", "json", "-show_entries", "stream=codec_type", absoluteServerPath}
+func quickFileArguments() []string {
+	return []string{"-v", "error", "-protocol_whitelist", "fd", "-fd", fileTransportDescriptor(), "-print_format", "json", "-show_entries", "stream=codec_type", "fd:"}
 }
 
 func probeHasAudio(output []byte) (bool, error) {
@@ -144,37 +108,4 @@ func readBounded(reader io.Reader, limit int64) boundedRead {
 		return boundedRead{data: buffer.Bytes()[:limit], overflow: true}
 	}
 	return boundedRead{data: buffer.Bytes()}
-}
-
-// probeStarter launches the managed executable; tests substitute a fake.
-type probeStarter func(context.Context, string, []string) (probeProcess, error)
-
-// probeProcess is one launched ffprobe process. Tests substitute a fake to
-// exercise bounded output, failures and cancellation without spawning ffprobe.
-type probeProcess interface {
-	stdoutPipe() (io.ReadCloser, error)
-	start() error
-	wait() error
-	kill() error
-}
-
-type execProcess struct{ command *exec.Cmd }
-
-// startExecProcess leaves stderr unset so the child writes it to the null
-// device: ffprobe diagnostics are never reported and must not be buffered.
-func startExecProcess(ctx context.Context, executable string, args []string) (probeProcess, error) {
-	return &execProcess{command: exec.CommandContext(ctx, executable, args...)}, nil
-}
-
-func (p *execProcess) stdoutPipe() (io.ReadCloser, error) { return p.command.StdoutPipe() }
-
-func (p *execProcess) start() error { return p.command.Start() }
-
-func (p *execProcess) wait() error { return p.command.Wait() }
-
-func (p *execProcess) kill() error {
-	if p.command.Process == nil {
-		return nil
-	}
-	return p.command.Process.Kill()
 }

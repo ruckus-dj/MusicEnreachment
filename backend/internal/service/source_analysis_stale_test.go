@@ -1,6 +1,8 @@
 package service_test
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -24,6 +26,10 @@ func TestSourceAnalysisRefusesAStaleRootOrLocation(t *testing.T) {
 		{"root inventory points elsewhere", func(f *sourceAnalysisFixture) {
 			other := elsewhere(f)
 			f.repository.root.InventoryPath = &other
+		}},
+		{"root row missing", func(f *sourceAnalysisFixture) { f.repository.rootErr = sql.ErrNoRows }},
+		{"location row missing", func(f *sourceAnalysisFixture) {
+			f.repository.locationErr = persistence.ErrSourceLocationNotFound
 		}},
 		{"root disabled", func(f *sourceAnalysisFixture) { f.repository.root.Enabled = false }},
 		{"root inventory missing", func(f *sourceAnalysisFixture) { f.repository.root.InventoryPath = nil }},
@@ -184,6 +190,19 @@ func TestSourceAnalysisRefusesSymlinkReplacement(t *testing.T) {
 			t.Fatalf("analysis error = %v, want %v", err, persistence.ErrSourceAnalysisStale)
 		}
 	})
+}
+
+func TestSourceAnalysisCancellationDuringPostProbeCheckIsNotStale(t *testing.T) {
+	fixture := newSourceAnalysisFixture(t, sourceAnalysisRaw(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture.probe.ignoreCancel = true
+	fixture.probe.onProbe = func(string) { cancel() }
+	if _, err := fixture.runContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("analysis error = %v, want context.Canceled", err)
+	} else if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+		t.Fatalf("canceled post-probe check was classified stale: %v", err)
+	}
 }
 
 // TestSourceAnalysisRefusesAnEscapingPath covers a snapshot relative path that

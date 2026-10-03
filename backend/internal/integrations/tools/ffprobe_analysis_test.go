@@ -75,14 +75,20 @@ func fixedTechnicalStarter(process *fakeTechnicalProcess) technicalStarter {
 	}
 }
 
+func useFileTechnicalStarter(probe *FFProbe) {
+	probe.fileTech = func(ctx context.Context, executable string, args []string, _ *os.File) (technicalProcess, error) {
+		return probe.technical(ctx, executable, args)
+	}
+}
+
 const validTechnicalJSON = `{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac"},{"index":1,"codec_type":"video","codec_name":"mjpeg"}]}`
 
-func TestTechnicalProbeUsesExactArgumentsAndAbsoluteExecutable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "an album", "track 01.flac")
+func TestTechnicalProbeUsesFixedFDArgumentsAndAbsoluteExecutable(t *testing.T) {
 	process := fakeTechnicalProcessFor(validTechnicalJSON, "")
 	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
-
-	output, err := probe.ProbeTechnical(context.Background(), path)
+	fixture := newBorrowedFixture(t)
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeTechnicalFile(context.Background(), fixture)
 	if err != nil {
 		t.Fatalf("ProbeTechnical: %v", err)
 	}
@@ -92,7 +98,7 @@ func TestTechnicalProbeUsesExactArgumentsAndAbsoluteExecutable(t *testing.T) {
 	if !filepath.IsAbs(process.executable) || process.executable != probe.executable {
 		t.Fatalf("executable = %q, want the managed absolute path %q", process.executable, probe.executable)
 	}
-	want := []string{"-v", "error", "-show_format", "-show_streams", "-of", "json", path}
+	want := technicalFileArguments()
 	if !slices.Equal(process.args, want) {
 		t.Fatalf("args = %q, want %q", process.args, want)
 	}
@@ -100,7 +106,9 @@ func TestTechnicalProbeUsesExactArgumentsAndAbsoluteExecutable(t *testing.T) {
 
 func TestTechnicalProbeKeepsEveryRawStreamIncludingVideo(t *testing.T) {
 	process := fakeTechnicalProcessFor(validTechnicalJSON, "")
-	output, err := newTechnicalFFProbe(t, fixedTechnicalStarter(process)).ProbeTechnical(context.Background(), sourcePath(t))
+	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 	if err != nil {
 		t.Fatalf("ProbeTechnical: %v", err)
 	}
@@ -138,24 +146,25 @@ func TestTechnicalProbeRejectsStructurallyInvalidResponses(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			path := sourcePath(t)
 			process := fakeTechnicalProcessFor(test.output, "")
-			output, err := newTechnicalFFProbe(t, fixedTechnicalStarter(process)).ProbeTechnical(context.Background(), path)
+			probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+			useFileTechnicalStarter(probe)
+			output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 			if err == nil {
 				t.Fatalf("ProbeTechnical accepted %q", test.output)
 			}
 			if output != nil {
 				t.Fatalf("invalid response returned output: %q", output)
 			}
-			requireProbeErrorDoesNotLeakPath(t, err, path)
 		})
 	}
 }
 
 func TestTechnicalProbeBoundsStdoutDuringCapture(t *testing.T) {
-	path := sourcePath(t)
 	process := fakeTechnicalProcessFor(strings.Repeat("x", maxProbeOutputBytes+1), "")
-	output, err := newTechnicalFFProbe(t, fixedTechnicalStarter(process)).ProbeTechnical(context.Background(), path)
+	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 	if err == nil || !strings.Contains(err.Error(), "stdout exceeded") {
 		t.Fatalf("err = %v, want a stdout-limit error", err)
 	}
@@ -168,9 +177,10 @@ func TestTechnicalProbeBoundsStdoutDuringCapture(t *testing.T) {
 }
 
 func TestTechnicalProbeBoundsStderrDuringCapture(t *testing.T) {
-	path := sourcePath(t)
 	process := fakeTechnicalProcessFor(validTechnicalJSON, strings.Repeat("e", maxProbeStderrBytes+1))
-	output, err := newTechnicalFFProbe(t, fixedTechnicalStarter(process)).ProbeTechnical(context.Background(), path)
+	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 	if err == nil || !strings.Contains(err.Error(), "stderr exceeded") {
 		t.Fatalf("err = %v, want a stderr-limit error", err)
 	}
@@ -183,12 +193,12 @@ func TestTechnicalProbeBoundsStderrDuringCapture(t *testing.T) {
 }
 
 func TestTechnicalProbeReportsNonzeroExitWithoutStderr(t *testing.T) {
-	path := sourcePath(t)
 	cause := errors.New("exit status 3")
 	process := fakeTechnicalProcessFor(validTechnicalJSON, "secret diagnostic that must never reach the user")
 	process.waitErr = cause
-
-	output, err := newTechnicalFFProbe(t, fixedTechnicalStarter(process)).ProbeTechnical(context.Background(), path)
+	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 	if !errors.Is(err, cause) {
 		t.Fatalf("err = %v, want %v", err, cause)
 	}
@@ -198,7 +208,6 @@ func TestTechnicalProbeReportsNonzeroExitWithoutStderr(t *testing.T) {
 	if strings.Contains(err.Error(), "secret diagnostic") {
 		t.Fatalf("error leaked stderr: %v", err)
 	}
-	requireProbeErrorDoesNotLeakPath(t, err, path)
 }
 
 func TestTechnicalProbeReportsDeadlineAndCancellation(t *testing.T) {
@@ -208,24 +217,25 @@ func TestTechnicalProbeReportsDeadlineAndCancellation(t *testing.T) {
 
 	expired, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Minute))
 	defer cancelDeadline()
-	if _, err := probe.ProbeTechnical(expired, sourcePath(t)); !errors.Is(err, context.DeadlineExceeded) {
+	useFileTechnicalStarter(probe)
+	if _, err := probe.ProbeTechnicalFile(expired, newBorrowedFixture(t)); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline error = %v, want %v", err, context.DeadlineExceeded)
 	}
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := probe.ProbeTechnical(cancelled, sourcePath(t)); !errors.Is(err, context.Canceled) {
+	if _, err := probe.ProbeTechnicalFile(cancelled, newBorrowedFixture(t)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error = %v, want %v", err, context.Canceled)
 	}
 }
 
-func TestTechnicalProbeRejectsRelativePath(t *testing.T) {
+func TestTechnicalProbeRequiresFileLoan(t *testing.T) {
 	probe, err := NewFFProbe(filepath.Join(t.TempDir(), "ffprobe"))
 	if err != nil {
 		t.Fatalf("NewFFProbe: %v", err)
 	}
-	if _, err := probe.ProbeTechnical(context.Background(), "relative.flac"); err == nil {
-		t.Fatal("ProbeTechnical accepted a relative source path")
+	if _, err := probe.ProbeTechnicalFile(context.Background(), nil); err == nil {
+		t.Fatal("ProbeTechnicalFile accepted a nil file")
 	}
 }
 
@@ -246,7 +256,6 @@ func buildFFProbeHelper(t *testing.T) string {
 
 func TestTechnicalProbeBoundsRealSubprocessOutput(t *testing.T) {
 	helper := buildFFProbeHelper(t)
-	path := filepath.Join(t.TempDir(), "track with spaces.flac")
 
 	cases := []struct {
 		mode      string
@@ -264,7 +273,7 @@ func TestTechnicalProbeBoundsRealSubprocessOutput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewFFProbe: %v", err)
 			}
-			output, err := probe.ProbeTechnical(context.Background(), path)
+			output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t))
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("mode %s error = %v, want %q", test.mode, err, test.wantError)
@@ -289,13 +298,11 @@ func TestTechnicalProbeDeliversSpacedFilenameAsOneArgument(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv.json")
 	t.Setenv("FFPROBE_HELPER_MODE", "valid")
 	t.Setenv("FFPROBE_HELPER_ARGV_FILE", argvFile)
-	path := filepath.Join(t.TempDir(), "an album", "track 01.flac")
-
 	probe, err := NewFFProbe(helper)
 	if err != nil {
 		t.Fatalf("NewFFProbe: %v", err)
 	}
-	if _, err := probe.ProbeTechnical(context.Background(), path); err != nil {
+	if _, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t)); err != nil {
 		t.Fatalf("ProbeTechnical: %v", err)
 	}
 	encoded, err := os.ReadFile(argvFile)
@@ -306,7 +313,7 @@ func TestTechnicalProbeDeliversSpacedFilenameAsOneArgument(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatalf("decode helper argv: %v", err)
 	}
-	want := []string{helper, "-v", "error", "-show_format", "-show_streams", "-of", "json", path}
+	want := append([]string{helper}, technicalFileArguments()...)
 	if !slices.Equal(got, want) {
 		t.Fatalf("child argv = %q, want %q", got, want)
 	}
@@ -336,11 +343,10 @@ func TestTechnicalProbeStopsRealSubprocessOnCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	path := sourcePath(t)
-
+	fixture := newBorrowedFixture(t)
 	done := make(chan error, 1)
 	go func() {
-		_, err := probe.ProbeTechnical(ctx, path)
+		_, err := probe.ProbeTechnicalFile(ctx, fixture)
 		done <- err
 	}()
 

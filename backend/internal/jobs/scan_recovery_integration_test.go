@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	}
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
 	registry := settings.New(settingsRepository, nil)
-	platform := settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}
+	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
 	writeScanDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot)
 
 	setupManager := persistence.NewSetupManagerRepository(database)

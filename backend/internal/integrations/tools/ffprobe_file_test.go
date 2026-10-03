@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -59,9 +61,13 @@ func (p *fileProbeProcess) wait() error {
 func (p *fileProbeProcess) kill() error { p.killed = true; return nil }
 
 func newBorrowedFixture(t *testing.T) *borrowedFixture {
+	return newBorrowedFixtureWithContents(t, []byte("witness"))
+}
+
+func newBorrowedFixtureWithContents(t *testing.T, contents []byte) *borrowedFixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "borrowed input")
-	if err := os.WriteFile(path, []byte("witness"), 0o600); err != nil {
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	file, err := os.Open(path)
@@ -115,6 +121,111 @@ func TestProbeTechnicalFileUsesBorrowedHandleAndFixedFDArguments(t *testing.T) {
 	if string(got) != response || !waited || fixture.borrowed {
 		t.Fatalf("output=%s waited=%v borrowActive=%v", got, waited, fixture.borrowed)
 	}
+}
+
+func TestQuickAndTechnicalProbeReadBorrowedBytesAcrossOutwardSymlinkSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory rename and symlink replacement are not portable to Windows")
+	}
+	for _, test := range []struct {
+		name  string
+		args  []string
+		probe func(*FFProbe, context.Context, *borrowedFixture) ([]byte, error)
+	}{
+		{
+			name: "quick",
+			args: quickFileArguments(),
+			probe: func(probe *FFProbe, ctx context.Context, file *borrowedFixture) ([]byte, error) {
+				got, err := probe.ProbeFile(ctx, file)
+				if err != nil {
+					return nil, err
+				}
+				return []byte(fmt.Sprintf(`{"streams":[{"codec_type":%q}]}`, map[bool]string{true: "audio", false: "video"}[got])), nil
+			},
+		},
+		{
+			name: "technical",
+			args: technicalFileArguments(),
+			probe: func(probe *FFProbe, ctx context.Context, file *borrowedFixture) ([]byte, error) {
+				return probe.ProbeTechnicalFile(ctx, file)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBorrowedFixtureWithContents(t, []byte("tag=original;type=audio"))
+			probe := newFileProbe(t)
+			probe.fileTech = func(_ context.Context, executable string, args []string, handle *os.File) (technicalProcess, error) {
+				if executable != probe.executable || !slices.Equal(args, test.args) {
+					t.Fatalf("child executable/args = %q %q", executable, args)
+				}
+				marker, err := readBorrowedAfterOutwardSymlinkSwap(t, fixture, handle)
+				if err != nil {
+					return nil, err
+				}
+				tag, streamType := parseProbeMarker(t, marker)
+				response := fmt.Sprintf(`{"format":{"tags":{"title":%q}},"streams":[{"codec_type":%q}]}`, tag, streamType)
+				if test.name == "quick" {
+					response = fmt.Sprintf(`{"streams":[{"codec_type":%q}]}`, streamType)
+				}
+				return &fileProbeProcess{stdout: io.NopCloser(strings.NewReader(response)), stderr: io.NopCloser(strings.NewReader(""))}, nil
+			}
+			output, err := test.probe(probe, context.Background(), fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "quick" {
+				if !bytes.Contains(output, []byte(`"audio"`)) {
+					t.Fatalf("quick probe did not report audio from original borrowed bytes: %s", output)
+				}
+			} else if !bytes.Contains(output, []byte(`"title":"original"`)) || !bytes.Contains(output, []byte(`"codec_type":"audio"`)) {
+				t.Fatalf("technical probe did not reflect original borrowed bytes: %s", output)
+			}
+		})
+	}
+}
+
+func readBorrowedAfterOutwardSymlinkSwap(t *testing.T, fixture *borrowedFixture, handle *os.File) ([]byte, error) {
+	t.Helper()
+	root := filepath.Dir(handle.Name())
+	name := filepath.Base(handle.Name())
+	backup := root + ".pinned"
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, name), []byte("tag=outward;type=video"), 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(root, backup); err != nil {
+		return nil, err
+	}
+	if err := os.Symlink(outside, root); err != nil {
+		_ = os.Rename(backup, root)
+		return nil, err
+	}
+	defer func() {
+		if err := os.Remove(root); err != nil {
+			t.Errorf("remove outward symlink: %v", err)
+		}
+		if err := os.Rename(backup, root); err != nil {
+			t.Errorf("restore original source ancestor: %v", err)
+		}
+	}()
+	if !fixture.borrowed || fixture.file != handle {
+		return nil, errors.New("child did not receive the active borrowed handle")
+	}
+	if _, err := handle.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(handle)
+}
+
+func parseProbeMarker(t *testing.T, marker []byte) (string, string) {
+	t.Helper()
+	parts := strings.Split(string(marker), ";type=")
+	if len(parts) != 2 {
+		t.Fatalf("invalid probe marker %q", marker)
+	}
+	tag := strings.TrimPrefix(parts[0], "tag=")
+	streamType := parts[1]
+	return tag, streamType
 }
 
 func TestProbeTechnicalFileBoundsOutputAndWaitsBeforeBorrowReturns(t *testing.T) {
@@ -349,7 +460,7 @@ func TestProbePacketSeekUsesPathOnlyForExplicitBaseline(t *testing.T) {
 		}
 		return &fileProbeProcess{stdout: io.NopCloser(strings.NewReader(response)), stderr: io.NopCloser(strings.NewReader(""))}, nil
 	}
-	if _, err := probe.ProbePacketSeek(context.Background(), path); err != nil {
+	if _, err := probe.probePacketSeekWitness(context.Background(), path); err != nil {
 		t.Fatal(err)
 	}
 }

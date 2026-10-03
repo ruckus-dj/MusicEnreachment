@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"io"
+	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 // maxProbeStderrBytes caps the diagnostic stream a technical probe reads. The
@@ -17,83 +18,26 @@ import (
 // captured diagnostics are never returned to a caller.
 const maxProbeStderrBytes = 64 << 10
 
-// ProbeTechnical runs one bounded technical request against the managed ffprobe
-// and returns the raw JSON describing the container format and every stream,
-// including video and attached-picture streams, which the caller stores
-// unchanged. It never filters or normalizes: mandatory structural checks live
-// here, while typed parsing of the values is a separate stage.
-//
-// The stdout stream is bounded while it is read (not after an unbounded
-// CombinedOutput), stderr is bounded likewise, and the whole call is bound by
-// the probe timeout. Empty, malformed or non-object JSON, a response without a
-// streams array, or a response with no audio stream is an error. A command
-// failure, an oversized stream, a timeout or a cancellation is an error too.
-// No returned error carries the probed path or any ffprobe stderr content.
-func (p *FFProbe) ProbeTechnical(ctx context.Context, absoluteServerPath string) ([]byte, error) {
-	if !filepath.IsAbs(absoluteServerPath) {
-		return nil, fmt.Errorf("source path must be an absolute path")
+// ProbeTechnicalFile performs the bounded structural probe against an already
+// opened source descriptor. The descriptor is never converted to a pathname.
+func (p *FFProbe) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
+	if file == nil {
+		return nil, errors.New("ffprobe source file is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
-
-	process, err := p.technical(ctx, p.executable, technicalArguments(absoluteServerPath))
-	if err != nil {
-		return nil, fmt.Errorf("start ffprobe: %w", err)
-	}
-	stdout, err := process.stdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("read ffprobe output: %w", err)
-	}
-	stderr, err := process.stderrPipe()
-	if err != nil {
-		_ = stdout.Close()
-		return nil, fmt.Errorf("read ffprobe output: %w", err)
-	}
-	if err := process.start(); err != nil {
-		_ = stdout.Close()
-		_ = stderr.Close()
-		return nil, fmt.Errorf("start ffprobe: %w", err)
-	}
-
-	// Both pipes are drained concurrently so a child that fills either one
-	// cannot block waiting for the reader. Each read buffers at most limit+1
-	// bytes, so the bound holds during capture, not after it.
-	stdoutResult := make(chan boundedRead, 1)
-	stderrResult := make(chan boundedRead, 1)
-	go func() { stdoutResult <- readBounded(stdout, maxProbeOutputBytes) }()
-	go func() { stderrResult <- readBounded(stderr, maxProbeStderrBytes) }()
-
-	var out, diagnostics boundedRead
-	for received := 0; received < 2; received++ {
-		select {
-		case out = <-stdoutResult:
-		case diagnostics = <-stderrResult:
-		case <-ctx.Done():
-			return nil, stopTechnicalProcess(process, stdout, stderr, fmt.Errorf("ffprobe did not finish: %w", ctx.Err()))
+	var output []byte
+	err := file.Borrow(ctx, func(handle *os.File) error {
+		var err error
+		output, err = p.runFileTechnical(ctx, handle, technicalFileArguments())
+		if err != nil {
+			return err
 		}
-		if out.overflow || diagnostics.overflow {
-			if out.overflow {
-				return nil, stopTechnicalProcess(process, stdout, stderr, fmt.Errorf("ffprobe stdout exceeded %d bytes", maxProbeOutputBytes))
-			}
-			return nil, stopTechnicalProcess(process, stdout, stderr, fmt.Errorf("ffprobe stderr exceeded %d bytes", maxProbeStderrBytes))
+		if err := validateTechnicalResponse(output); err != nil {
+			output = nil
+			return err
 		}
-	}
-	if out.err != nil {
-		return nil, stopTechnicalProcess(process, stdout, stderr, fmt.Errorf("read ffprobe output: %w", out.err))
-	}
-	if diagnostics.err != nil {
-		return nil, stopTechnicalProcess(process, stdout, stderr, fmt.Errorf("read ffprobe output: %w", diagnostics.err))
-	}
-	if err := process.wait(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("ffprobe did not finish: %w", ctxErr)
-		}
-		return nil, fmt.Errorf("ffprobe failed: %w", err)
-	}
-	if err := validateTechnicalResponse(out.data); err != nil {
-		return nil, err
-	}
-	return out.data, nil
+		return nil
+	})
+	return output, err
 }
 
 // stopTechnicalProcess tears a launched process down and returns the error the
@@ -104,13 +48,6 @@ func stopTechnicalProcess(process technicalProcess, stdout, stderr io.ReadCloser
 	_ = stderr.Close()
 	_ = process.wait()
 	return cause
-}
-
-// technicalArguments is the single, fixed request shape for the technical
-// probe: quiet mode, format, all streams and a JSON response, with exactly one
-// server-controlled filename appended last.
-func technicalArguments(absoluteServerPath string) []string {
-	return []string{"-v", "error", "-show_format", "-show_streams", "-of", "json", absoluteServerPath}
 }
 
 // validateTechnicalResponse enforces the mandatory structure only: the reply

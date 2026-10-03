@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -28,9 +31,10 @@ type SourceAnalysisRepository interface {
 }
 
 // SourceTechnicalProbe runs the bounded technical ffprobe request of one
-// absolute server path. *tools.FFProbe is the production implementation.
+// already-open source file. *tools.FFProbe is the production implementation.
 type SourceTechnicalProbe interface {
-	ProbeTechnical(ctx context.Context, absoluteServerPath string) ([]byte, error)
+	CheckFileTransport(context.Context) error
+	ProbeTechnicalFile(context.Context, sourcefs.RegularFile) ([]byte, error)
 }
 
 // SourceTechnicalProbeFactory builds the technical probe over the resolved
@@ -86,6 +90,7 @@ type SourceAnalysis struct {
 	verifier       InstallationVerifier
 	platform       settings.Platform
 	newProbe       SourceTechnicalProbeFactory
+	opener         sourcefs.Opener
 }
 
 // NewSourceAnalysis builds the analysis use case. The managed installation is
@@ -96,6 +101,7 @@ func NewSourceAnalysis(repository SourceAnalysisRepository, toolsDirectory Tools
 		repository: repository, toolsDirectory: toolsDirectory, platform: platform,
 		verifier: tools.NewLifecycle(nil),
 		newProbe: NewManagedSourceTechnicalProbe,
+		opener:   sourcefs.NewOpener(),
 	}
 	for _, option := range options {
 		option(analysis)
@@ -120,6 +126,9 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 	}
 	root, err := s.repository.GetSourceRoot(ctx, snapshot.SourceRootID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return empty, fmt.Errorf("analyze source location: the source root no longer exists: %w: %w", persistence.ErrSourceAnalysisStale, err)
+		}
 		return empty, fmt.Errorf("analyze source location: read the source root: %w", err)
 	}
 	if !root.Enabled || root.Stale() || root.ConfiguredPath != snapshot.ConfiguredPath ||
@@ -128,6 +137,9 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 	}
 	location, err := s.repository.GetSourceLocation(ctx, root.ID, snapshot.SourceLocationID)
 	if err != nil {
+		if errors.Is(err, persistence.ErrSourceLocationNotFound) {
+			return empty, fmt.Errorf("analyze source location: the source location no longer exists: %w: %w", persistence.ErrSourceAnalysisStale, err)
+		}
 		return empty, fmt.Errorf("analyze source location: read the source location: %w", err)
 	}
 	if location.SourceRootID != root.ID || location.RelativePath != snapshot.RelativePath ||
@@ -137,16 +149,6 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 		!sourceAnalysisSameVariant(location.MediaVariantID, snapshot.PreviousVariantID) {
 		return empty, fmt.Errorf("analyze source location: the location no longer matches the snapshot: %w", persistence.ErrSourceAnalysisStale)
 	}
-	absolute, before, err := sourceAnalysisResolveFile(root.ConfiguredPath, snapshot.RelativePath)
-	if err != nil {
-		return empty, fmt.Errorf("analyze source location: %w", err)
-	}
-	// The inventory keeps microseconds, so this comparison uses exactly that
-	// precision and accepts an unchanged file whose mtime is not aligned to a
-	// microsecond.
-	if before.Size() != snapshot.SizeBytes || !sourceScanMtime(before.ModTime()).Equal(sourceScanMtime(snapshot.Mtime)) {
-		return empty, fmt.Errorf("analyze source location: the file changed since it was inventoried: %w", persistence.ErrSourceAnalysisStale)
-	}
 	executable, version, err := s.resolveManagedFFProbe(ctx, snapshot)
 	if err != nil {
 		return empty, err
@@ -155,23 +157,61 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 	if err != nil {
 		return empty, fmt.Errorf("analyze source location: build the managed ffprobe: %w: %w", ErrSourceAnalysisToolUnavailable, err)
 	}
-	raw, err := probe.ProbeTechnical(ctx, absolute)
+	if err := probe.CheckFileTransport(ctx); err != nil {
+		return empty, fmt.Errorf("analyze source location: verify managed ffprobe file transport: %w: %w", ErrSourceAnalysisToolUnavailable, err)
+	}
+	pinnedRoot, err := s.opener.OpenRoot(ctx, root.ConfiguredPath)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
+		}
+		return empty, sourceAnalysisPathError("open pinned source root", err)
+	}
+	file, err := sourcefs.OpenRegularAt(ctx, pinnedRoot, snapshot.RelativePath)
+	if err != nil {
+		_ = pinnedRoot.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
+		}
+		return empty, sourceAnalysisPathError("open source file through pinned root", err)
+	}
+	defer func() { _ = pinnedRoot.Close() }()
+	defer func() { _ = file.Close() }()
+	before, err := file.Stat(ctx)
+	if err != nil {
+		return empty, fmt.Errorf("analyze source location: stat pinned source file: %w", err)
+	}
+	if !before.Mode().IsRegular() || before.Size() != snapshot.SizeBytes || !sourceScanMtime(before.ModTime()).Equal(sourceScanMtime(snapshot.Mtime)) {
+		return empty, fmt.Errorf("analyze source location: the file changed since it was inventoried: %w", persistence.ErrSourceAnalysisStale)
+	}
+	raw, err := probe.ProbeTechnicalFile(ctx, file)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
 		}
 		return empty, fmt.Errorf("analyze source location: probe the source file: %w", err)
 	}
-	// The path and the file are read again after the probe with the full
-	// filesystem precision: a file or a directory swapped for a symlink, a
-	// vanished file, and a file changed within the same PostgreSQL microsecond
-	// but a different filesystem nanosecond all fail here, so a changed file can
-	// never publish a result.
-	resolved, after, err := sourceAnalysisResolveFile(root.ConfiguredPath, snapshot.RelativePath)
+	// Re-open below the still-pinned root after probing to detect a path swap,
+	// link, or change to the inventoried file's identity without pathname IO.
+	afterFile, err := sourcefs.OpenRegularAt(ctx, pinnedRoot, snapshot.RelativePath)
 	if err != nil {
-		return empty, fmt.Errorf("analyze source location: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
+		}
+		return empty, sourceAnalysisPathError("reopen source path after probe", err)
 	}
-	if resolved != absolute || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+	after, statErr := afterFile.Stat(ctx)
+	closeErr := afterFile.Close()
+	if statErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return empty, fmt.Errorf("analyze source location: %w", ctxErr)
+		}
+		return empty, fmt.Errorf("analyze source location: stat source path after probe: %w", statErr)
+	}
+	if closeErr != nil {
+		return empty, fmt.Errorf("analyze source location: close source path after probe: %w", closeErr)
+	}
+	if !os.SameFile(before, after) || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return empty, fmt.Errorf("analyze source location: the file changed while it was being analyzed: %w", persistence.ErrSourceAnalysisStale)
 	}
 	analysis, err := ParseSourceTechnicalAnalysis(raw)
@@ -193,6 +233,18 @@ func (s *SourceAnalysis) Run(ctx context.Context, request SourceAnalysisRequest)
 		ObservedTags:          tags,
 		InspectedAt:           time.Now().UTC(),
 	}, nil
+}
+
+// sourceAnalysisPathError calls a path stale when the named object disappeared,
+// changed type, was replaced by a link, or the snapshot contains an invalid
+// relative path. Permission, unsupported-operation, resource-exhaustion and
+// other I/O failures are operational errors and must not be reported as stale.
+func sourceAnalysisPathError(action string, err error) error {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, sourcefs.ErrInvalidPath) || errors.Is(err, sourcefs.ErrLink) ||
+		errors.Is(err, sourcefs.ErrNotDirectory) || errors.Is(err, sourcefs.ErrNotRegular) {
+		return fmt.Errorf("analyze source location: %s: %w: %w", action, persistence.ErrSourceAnalysisStale, err)
+	}
+	return fmt.Errorf("analyze source location: %s: %w", action, err)
 }
 
 // validateRequest refuses a snapshot that is not the shape and policy this build

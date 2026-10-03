@@ -7,11 +7,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
@@ -46,11 +51,11 @@ func TestManagedFFProbeDescriptorTransport(t *testing.T) {
 
 	// This is a trusted fixture baseline, deliberately probed by pathname. The
 	// generated capability witness above is separate and never stages this source.
-	pathTechnical, err := probe.ProbeTechnical(ctx, manifest.FixturePath)
+	pathTechnical, err := trustedPathTechnicalBaseline(ctx, probe, manifest.FixturePath)
 	if err != nil {
 		t.Fatalf("probe trusted fixture baseline: %v", err)
 	}
-	pathSeek, err := probe.ProbePacketSeek(ctx, manifest.FixturePath)
+	pathSeek, err := probe.probePacketSeekWitness(ctx, manifest.FixturePath)
 	if err != nil {
 		t.Fatalf("seek trusted fixture baseline: %v", err)
 	}
@@ -65,6 +70,17 @@ func TestManagedFFProbeDescriptorTransport(t *testing.T) {
 		t.Fatalf("probe fixture through borrowed descriptor: %v", err)
 	}
 	assertTechnicalEquivalent(t, pathTechnical, fileTechnical)
+	pathQuick, err := trustedPathQuickBaseline(ctx, probe, manifest.FixturePath)
+	if err != nil {
+		t.Fatalf("probe trusted fixture quick baseline: %v", err)
+	}
+	fileQuick, err := probe.ProbeFile(ctx, opened)
+	if err != nil {
+		t.Fatalf("quick-probe fixture through borrowed descriptor: %v", err)
+	}
+	if fileQuick != pathQuick {
+		t.Fatalf("quick probe differs from trusted pathname baseline: path=%v fd=%v", pathQuick, fileQuick)
+	}
 	evidence, err := probe.ProbeFileTransportCapabilities(ctx, opened)
 	if err != nil {
 		t.Fatalf("verify fd protocol and backward seek: %v", err)
@@ -80,6 +96,7 @@ func TestManagedFFProbeDescriptorTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPipeCannotSeek(t, manifest.FFprobePath, witnessPath)
+	assertSecondaryReferencesBlocked(t, probe, manifest.FixturePath, pathQuick)
 
 	t.Run("opened fixture survives pathname replacement", func(t *testing.T) {
 		root := t.TempDir()
@@ -87,7 +104,7 @@ func TestManagedFFProbeDescriptorTransport(t *testing.T) {
 		if err := copyManagedFixture(manifest.FixturePath, fixturePath); err != nil {
 			t.Fatal(err)
 		}
-		baseline, err := probe.ProbePacketSeek(ctx, fixturePath)
+		baseline, err := probe.probePacketSeekWitness(ctx, fixturePath)
 		if err != nil {
 			t.Fatalf("probe pinned fixture baseline: %v", err)
 		}
@@ -110,6 +127,129 @@ func TestManagedFFProbeDescriptorTransport(t *testing.T) {
 			t.Fatalf("opened fixture no longer refers to pinned bytes\nbaseline: %s\nopened: %s", baseline, actual)
 		}
 	})
+}
+
+// trustedPathQuickBaseline is a test-only pathname control for the trusted
+// managed fixture. Source probes themselves always use the borrowed fd path.
+func trustedPathQuickBaseline(ctx context.Context, probe *FFProbe, path string) (bool, error) {
+	if !filepath.IsAbs(path) {
+		return false, fmt.Errorf("trusted fixture path must be absolute")
+	}
+	args := []string{"-v", "error", "-protocol_whitelist", "file", "-print_format", "json", "-show_entries", "stream=codec_type", path}
+	output, err := probe.runTechnical(ctx, args, func(ctx context.Context, executable string, args []string) (technicalProcess, error) {
+		return probe.technical(ctx, executable, args)
+	})
+	if err != nil {
+		return false, err
+	}
+	return probeHasAudio(output)
+}
+
+func assertSecondaryReferencesBlocked(t *testing.T, probe *FFProbe, fixturePath string, expectedAudio bool) {
+	t.Helper()
+	if !expectedAudio {
+		t.Fatal("managed fixture must expose audio to prove secondary-resource controls consumed valid media")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	root := t.TempDir()
+	secondary := filepath.Join(root, "secondary.bin")
+	if err := copyManagedFixture(fixturePath, secondary); err != nil {
+		t.Fatal(err)
+	}
+	localPlaylist := filepath.Join(root, "local.ffconcat")
+	if err := os.WriteFile(localPlaylist, []byte("ffconcat version 1.0\nfile '"+secondary+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localControl := assertConcatPathControl(t, ctx, probe, localPlaylist, "file")
+	if localControl != expectedAudio {
+		t.Fatalf("trusted local concat control audio=%v, fixture baseline=%v", localControl, expectedAudio)
+	}
+	localFile, err := openManagedFixture(ctx, localPlaylist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localHasAudio, localErr := probe.ProbeFile(ctx, localFile)
+	_ = localFile.Close()
+	if localErr == nil {
+		t.Fatalf("fd-only local concat source was not rejected (audio=%v)", localHasAudio)
+	}
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path != "/secondary" {
+			http.NotFound(w, r)
+			return
+		}
+		input, err := os.Open(fixturePath)
+		if err != nil {
+			http.Error(w, "fixture unavailable", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = input.Close() }()
+		_, _ = io.Copy(w, input)
+	}))
+	defer server.Close()
+	httpPlaylist := filepath.Join(root, "http.ffconcat")
+	playlist := fmt.Sprintf("ffconcat version 1.0\nfile '%s/secondary'\n", server.URL)
+	if err := os.WriteFile(httpPlaylist, []byte(playlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	httpControl := assertConcatPathControl(t, ctx, probe, httpPlaylist, "file,http,tcp")
+	if httpControl != expectedAudio {
+		t.Fatalf("trusted HTTP concat control audio=%v, fixture baseline=%v", httpControl, expectedAudio)
+	}
+	if requests.Load() == 0 {
+		t.Fatal("trusted whitelistfile/http concat control did not request its loopback secondary resource")
+	}
+	requests.Store(0)
+	httpFile, err := openManagedFixture(ctx, httpPlaylist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpHasAudio, httpErr := probe.ProbeFile(ctx, httpFile)
+	_ = httpFile.Close()
+	if httpErr == nil {
+		t.Fatalf("fd-only HTTP concat source was not rejected (audio=%v)", httpHasAudio)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("fd-only probe made %d loopback secondary-resource requests", got)
+	}
+}
+
+func assertConcatPathControl(t *testing.T, ctx context.Context, probe *FFProbe, playlist, whitelist string) bool {
+	t.Helper()
+	args := []string{"-v", "error", "-protocol_whitelist", whitelist, "-f", "concat", "-safe", "0", "-print_format", "json", "-show_entries", "stream=codec_type", playlist}
+	output, err := probe.runTechnical(ctx, args, func(ctx context.Context, executable string, args []string) (technicalProcess, error) {
+		return probe.technical(ctx, executable, args)
+	})
+	if err != nil {
+		t.Fatalf("trusted concat whitelist control (%s) failed: %v", strings.Join(args, " "), err)
+	}
+	hasAudio, err := probeHasAudio(output)
+	if err != nil {
+		t.Fatalf("trusted concat whitelist control returned invalid stream response: %v", err)
+	}
+	return hasAudio
+}
+
+// trustedPathTechnicalBaseline is test-only equivalence evidence for the
+// explicitly trusted managed fixture; source probes themselves accept loans.
+func trustedPathTechnicalBaseline(ctx context.Context, probe *FFProbe, path string) ([]byte, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("trusted fixture path must be absolute")
+	}
+	output, err := probe.runTechnical(ctx, []string{"-v", "error", "-show_format", "-show_streams", "-of", "json", path}, func(ctx context.Context, executable string, args []string) (technicalProcess, error) {
+		return probe.technical(ctx, executable, args)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTechnicalResponse(output); err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 func loadManagedFixtureManifest(path string) (managedFixtureManifest, error) {

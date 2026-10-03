@@ -64,7 +64,7 @@ func (p *FFProbe) CheckFileTransport(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("check ffprobe descriptor transport: %w", err)
 	}
-	baseline, err := p.ProbePacketSeek(ctx, path)
+	baseline, err := p.probePacketSeekWitness(ctx, path)
 	if err != nil {
 		return fmt.Errorf("check ffprobe witness pathname baseline: %w", err)
 	}
@@ -198,29 +198,9 @@ func (f *transportWitnessFile) Close() error {
 type fileTechnicalStarter func(context.Context, string, []string, *os.File) (technicalProcess, error)
 
 // ProbeTechnicalFile runs the same structural technical probe as
-// ProbeTechnical, but supplies the already-open source descriptor through the
-// fd protocol. The descriptor is borrowed only for the synchronous lifetime of
-// the child; it is never converted to a pathname or placed in argv.
-func (p *FFProbe) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
-	if file == nil {
-		return nil, errors.New("ffprobe source file is required")
-	}
-	var output []byte
-	err := file.Borrow(ctx, func(handle *os.File) error {
-		var err error
-		output, err = p.runFileTechnical(ctx, handle, technicalFileArguments())
-		if err != nil {
-			return err
-		}
-		return validateTechnicalResponse(output)
-	})
-	return output, err
-}
-
-// ProbePacketSeek runs the backward packet-seek witness against a pathname.
-// It is intended for fixture baselines and comparison evidence, not for
-// probing untrusted source paths in production.
-func (p *FFProbe) ProbePacketSeek(ctx context.Context, absolutePath string) ([]byte, error) {
+// probePacketSeekWitness runs the backward packet-seek witness against a
+// generated test or capability witness pathname. It is never used for sources.
+func (p *FFProbe) probePacketSeekWitness(ctx context.Context, absolutePath string) ([]byte, error) {
 	if !filepath.IsAbs(absolutePath) {
 		return nil, errors.New("source path must be an absolute path")
 	}

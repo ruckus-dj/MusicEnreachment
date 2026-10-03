@@ -32,6 +32,14 @@ func main() {
 			return
 		}
 	}
+	if hasArgument("-protocols") {
+		_, _ = os.Stdout.WriteString("Input:\n fd\n file\nOutput:\n file\n")
+		return
+	}
+	if hasArgument("-show_packets") {
+		writeSeekWitnessPackets()
+		return
+	}
 	if path := os.Getenv("ANALYSIS_PROBE_LOG"); path != "" {
 		if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			_, _ = file.WriteString("probe\n")
@@ -46,4 +54,17 @@ func main() {
 		return
 	}
 	_, _ = os.Stdout.WriteString(`{"format":{"format_name":"flac","duration":"1.500"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","sample_rate":"44100","channels":2}]}`)
+}
+
+func hasArgument(want string) bool {
+	for _, argument := range os.Args[1:] {
+		if argument == want {
+			return true
+		}
+	}
+	return false
+}
+
+func writeSeekWitnessPackets() {
+	_, _ = os.Stdout.WriteString(`{"packets":[{"pts_time":"8.0","data_hash":"SHA256:0000000000000000000000000000000000000000000000000000000000000000"},{"pts_time":"0.0","data_hash":"SHA256:1111111111111111111111111111111111111111111111111111111111111111"}]}`)
 }
