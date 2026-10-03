@@ -223,6 +223,10 @@ func SourcePathsOverlap(source, managed string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("normalize managed path: %w", err)
 	}
+	return sourcePathsOverlapNormalized(source, managed)
+}
+
+func sourcePathsOverlapNormalized(source, managed string) (bool, error) {
 	if pathContains(source, managed) || pathContains(managed, source) {
 		return true, nil
 	}

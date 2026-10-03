@@ -58,11 +58,7 @@ func sourceOverlapRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err = NormalizePath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root
+	return filepath.Clean(root)
 }
 
 func TestSourcePathsOverlapMixedCaseAliasesContinueComponentComparison(t *testing.T) {
@@ -73,7 +69,7 @@ func TestSourcePathsOverlapMixedCaseAliasesContinueComponentComparison(t *testin
 		root: "root", filepath.Join(root, "Music"): "music", filepath.Join(root, "music"): "music",
 		filepath.Join(root, "Music", "Album"): "upper-album", filepath.Join(root, "music", "album"): "lower-album",
 	}, nil)
-	got, err := SourcePathsOverlap(source, managed)
+	got, err := sourcePathsOverlapNormalized(source, managed)
 	if err != nil || got {
 		t.Fatalf("mixed case aliases overlap = %t, %v; want distinct", got, err)
 	}
@@ -109,7 +105,7 @@ func TestSourcePathsOverlapCaseSensitiveMissingSiblingIsDistinctBothDirections(t
 	entries := map[string]string{root: "root", upper: "music"}
 	t.Run("prospective managed spelling", func(t *testing.T) {
 		withSourceOverlapFilesystem(t, entries, nil)
-		got, err := SourcePathsOverlap(upper, missing)
+		got, err := sourcePathsOverlapNormalized(upper, missing)
 		if err != nil || got {
 			t.Fatalf("case-sensitive missing managed sibling overlap = %t, %v; want distinct", got, err)
 		}
