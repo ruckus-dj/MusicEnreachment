@@ -343,6 +343,57 @@ func TestCreateSourceRootAcceptsReadOnlyDirectory(t *testing.T) {
 	}
 }
 
+func TestSourceValidationNeverAttemptsFilesystemCreates(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	source := filepath.Join(base, "Music")
+	managed := filepath.Join(base, "music")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(managed, 0o755); err != nil {
+		if os.IsExist(err) {
+			t.Skip("requires a case-sensitive filesystem")
+		}
+		t.Fatal(err)
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedInfo, err := os.Stat(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(sourceInfo, managedInfo) {
+		t.Skip("requires a case-sensitive filesystem")
+	}
+	nested := filepath.Join(source, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repository := &sourceRootRepositoryFixture{locations: map[uuid.UUID]int64{}}
+	roots := service.NewSourceRoots(repository, managedPathsFixture{tools: managed})
+	var attempts int
+	restore := settings.SetFilesystemCreateAttemptHook(func(string) { attempts++ })
+	defer restore()
+
+	created, err := roots.Create(ctx, "Music", source)
+	if err != nil {
+		t.Fatalf("create source root: %v", err)
+	}
+	if _, err := roots.ValidateSourcePath(ctx, source, &created.ID); err != nil {
+		t.Fatalf("revalidate source path: %v", err)
+	}
+	newPath := nested
+	if _, err := roots.Edit(ctx, created.ID, service.SourceRootEdit{ConfiguredPath: &newPath}); err != nil {
+		t.Fatalf("edit source root: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("source path validation attempted %d filesystem creates", attempts)
+	}
+}
+
 func TestOverlappingSourceRootsKeepTheirOwnInventory(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)

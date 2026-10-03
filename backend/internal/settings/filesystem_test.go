@@ -38,6 +38,93 @@ func TestPathsOverlapWhenExistingDirectoryHasDifferentCase(t *testing.T) {
 	}
 }
 
+func TestSourcePathsOverlapUsesReadOnlyContainmentAndIdentity(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	nestedManaged := filepath.Join(source, "managed", "absent")
+	nestedSource := filepath.Join(source, "existing")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(nestedSource, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		first  string
+		second string
+		want   bool
+	}{
+		{name: "managed absent beneath source", first: source, second: nestedManaged, want: true},
+		{name: "source beneath managed", first: nestedSource, second: source, want: true},
+		{name: "disjoint", first: source, second: filepath.Join(root, "other"), want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := settings.SourcePathsOverlap(test.first, test.second)
+			if err != nil || got != test.want {
+				t.Fatalf("SourcePathsOverlap(%q, %q) = %t, %v; want %t", test.first, test.second, got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestSourcePathsOverlapAllowsDistinctCaseDirectories(t *testing.T) {
+	root := t.TempDir()
+	upper, lower := filepath.Join(root, "Music"), filepath.Join(root, "music")
+	if err := os.Mkdir(upper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(lower, 0o755); err != nil {
+		if os.IsExist(err) {
+			t.Skip("requires a case-sensitive filesystem")
+		}
+		t.Fatal(err)
+	}
+	upperInfo, err := os.Stat(upper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowerInfo, err := os.Stat(lower)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(upperInfo, lowerInfo) {
+		t.Skip("requires a case-sensitive filesystem")
+	}
+	got, err := settings.SourcePathsOverlap(upper, lower)
+	if err != nil || got {
+		t.Fatalf("distinct case paths overlap = %t, %v; want false", got, err)
+	}
+}
+
+func TestSourcePathsOverlapAllowsAbsentCaseDistinctManagedSuffixWithoutProbes(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "Music")
+	managed := filepath.Join(root, "music", "absent", "output")
+	if err := os.Mkdir(source, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "music")); err == nil {
+		t.Skip("requires a case-sensitive filesystem")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	// Do not rely on permission bits: they do not prevent writes when this suite
+	// runs with elevated privileges. Observe all semantics-probe create attempts
+	// through the filesystem seam instead.
+	var attempts []string
+	restore := settings.SetFilesystemCreateAttemptHook(func(path string) { attempts = append(attempts, path) })
+	defer restore()
+
+	got, err := settings.SourcePathsOverlap(source, managed)
+	if err != nil || got {
+		t.Fatalf("SourcePathsOverlap(%q, %q) = %t, %v; want distinct paths", source, managed, got, err)
+	}
+	if len(attempts) != 0 {
+		t.Fatalf("overlap validation attempted filesystem creates at %v", attempts)
+	}
+}
+
 func TestProbeFilesystemSemanticsReportsNoneWhenUnicodeNamesDiffer(t *testing.T) {
 	root := t.TempDir()
 	nfc := filepath.Join(root, "caf\u00e9")

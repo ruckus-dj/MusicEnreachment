@@ -7,12 +7,20 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 type probeDirectoryLock struct {
 	mu   sync.Mutex
 	refs int
 }
+
+var sourcePathFilesystem = struct {
+	stat         func(string) (os.FileInfo, error)
+	evalSymlinks func(string) (string, error)
+	sameFile     func(os.FileInfo, os.FileInfo) bool
+}{stat: os.Stat, evalSymlinks: filepath.EvalSymlinks, sameFile: os.SameFile}
 
 var probeDirectoryLocks = struct {
 	sync.Mutex
@@ -28,6 +36,25 @@ var probeDirectoryRegistrationHook = struct {
 	sync.RWMutex
 	fn func(string)
 }{}
+
+var filesystemCreateAttemptHook = struct {
+	sync.RWMutex
+	fn func(string)
+}{}
+
+// SetFilesystemCreateAttemptHook observes filesystem create attempts in tests.
+// It runs immediately before a semantics probe tries to create its directory.
+func SetFilesystemCreateAttemptHook(fn func(string)) func() {
+	filesystemCreateAttemptHook.Lock()
+	previous := filesystemCreateAttemptHook.fn
+	filesystemCreateAttemptHook.fn = fn
+	filesystemCreateAttemptHook.Unlock()
+	return func() {
+		filesystemCreateAttemptHook.Lock()
+		filesystemCreateAttemptHook.fn = previous
+		filesystemCreateAttemptHook.Unlock()
+	}
+}
 
 // SetProbeDirectoryRegistrationHook installs a test seam called after a probe
 // has registered for its directory guard and before it attempts to acquire it.
@@ -183,6 +210,152 @@ func PathsOverlap(first, second string) bool {
 	}
 }
 
+// SourcePathsOverlap checks whether a source directory intersects a managed
+// path without probing or creating anything on the filesystem. Unlike
+// PathsOverlap, uncertainty is returned as an error rather than treated as a
+// non-overlap; PathsOverlap remains unchanged for existing managed-path users.
+func SourcePathsOverlap(source, managed string) (bool, error) {
+	source, err := normalizeReadOnlyPath(source)
+	if err != nil {
+		return false, fmt.Errorf("normalize source path: %w", err)
+	}
+	managed, err = normalizeReadOnlyPath(managed)
+	if err != nil {
+		return false, fmt.Errorf("normalize managed path: %w", err)
+	}
+	if pathContains(source, managed) || pathContains(managed, source) {
+		return true, nil
+	}
+
+	// Compare filesystem identity only at the configured endpoints and at
+	// ancestors of the opposite endpoint. Common ancestors alone do not imply
+	// overlap, but an endpoint identical to an opposite ancestor does.
+	sourceInfo, err := sourcePathFilesystem.stat(source)
+	if err != nil {
+		return false, fmt.Errorf("inspect source path: %w", err)
+	}
+	managedInfo, managedErr := sourcePathFilesystem.stat(managed)
+	if managedErr != nil && !errors.Is(managedErr, os.ErrNotExist) {
+		return false, fmt.Errorf("inspect managed path: %w", managedErr)
+	}
+	for ancestor := managed; ; ancestor = filepath.Dir(ancestor) {
+		info, statErr := sourcePathFilesystem.stat(ancestor)
+		if statErr == nil && sourcePathFilesystem.sameFile(sourceInfo, info) {
+			return true, nil
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect managed path ancestor: %w", statErr)
+		}
+		if ancestor == filepath.Dir(ancestor) {
+			break
+		}
+	}
+	if managedErr == nil {
+		for ancestor := source; ; ancestor = filepath.Dir(ancestor) {
+			info, statErr := sourcePathFilesystem.stat(ancestor)
+			if statErr == nil && sourcePathFilesystem.sameFile(managedInfo, info) {
+				return true, nil
+			}
+			if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				return false, fmt.Errorf("inspect source path ancestor: %w", statErr)
+			}
+			if ancestor == filepath.Dir(ancestor) {
+				break
+			}
+		}
+	}
+
+	// On a case-sensitive filesystem two existing, differently-cased sibling
+	// components are distinct. Check the first differently-cased component to
+	// distinguish that case from an alias on a case-insensitive filesystem.
+	if foldContains(source, managed) || foldContains(managed, source) {
+		return caseFoldOverlap(source, managed)
+	}
+	return false, nil
+}
+
+func normalizeReadOnlyPath(value string) (string, error) {
+	if !filepath.IsAbs(value) {
+		return "", fmt.Errorf("path must be absolute")
+	}
+	path := filepath.Clean(value)
+	for existing := path; ; existing = filepath.Dir(existing) {
+		resolved, err := sourcePathFilesystem.evalSymlinks(existing)
+		if err == nil {
+			relative, relErr := filepath.Rel(existing, path)
+			if relErr != nil {
+				return "", relErr
+			}
+			return filepath.Join(resolved, relative), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if existing == filepath.Dir(existing) {
+			return "", err
+		}
+	}
+}
+
+func pathContains(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
+}
+
+func foldContains(parent, child string) bool {
+	if unicodeFoldPath(parent) == unicodeFoldPath(child) {
+		return true
+	}
+	return strings.HasPrefix(unicodeFoldPath(child), unicodeFoldPath(parent+string(filepath.Separator)))
+}
+
+func unicodeFoldPath(path string) string {
+	parts := strings.Split(path, string(filepath.Separator))
+	for index := range parts {
+		parts[index] = norm.NFC.String(strings.ToLower(parts[index]))
+	}
+	return strings.Join(parts, string(filepath.Separator))
+}
+
+func caseFoldOverlap(first, second string) (bool, error) {
+	parent, child := first, second
+	if foldContains(second, first) && !foldContains(first, second) {
+		parent, child = second, first
+	}
+	volume := filepath.VolumeName(parent)
+	parentParts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(parent, volume), string(filepath.Separator)), string(filepath.Separator))
+	childParts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(child, volume), string(filepath.Separator)), string(filepath.Separator))
+	prefixParent, prefixChild := volume+string(filepath.Separator), volume+string(filepath.Separator)
+	for index := range parentParts {
+		if index >= len(childParts) || unicodeFoldPath(parentParts[index]) != unicodeFoldPath(childParts[index]) {
+			return false, fmt.Errorf("cannot determine case-sensitive path overlap between %q and %q", first, second)
+		}
+		prefixParent = filepath.Join(prefixParent, parentParts[index])
+		prefixChild = filepath.Join(prefixChild, childParts[index])
+		if parentParts[index] == childParts[index] {
+			continue
+		}
+		parentInfo, parentErr := sourcePathFilesystem.stat(prefixParent)
+		childInfo, childErr := sourcePathFilesystem.stat(prefixChild)
+		if parentErr != nil && !errors.Is(parentErr, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect case-sensitive path: %w", parentErr)
+		}
+		if childErr != nil && !errors.Is(childErr, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect case-sensitive path: %w", childErr)
+		}
+		if parentErr == nil && childErr == nil {
+			if !sourcePathFilesystem.sameFile(parentInfo, childInfo) {
+				return false, nil
+			}
+			// Both spellings identify the same component. Keep walking: a later
+			// per-directory case-sensitive component can still make the paths distinct.
+			continue
+		}
+		return false, fmt.Errorf("cannot determine case-sensitive path overlap between %q and %q: component resolution is ambiguous", first, second)
+	}
+	return true, nil
+}
+
 type FilesystemSemantics struct {
 	CaseSensitive        bool
 	UnicodeNormalization string // "none", "nfc", "nfd", or "unknown"
@@ -267,6 +440,12 @@ func ProbeOutputDirectory(path string, requireEmpty bool) (FilesystemSemantics, 
 }
 
 func probeFilesystemSemantics(normalized string) (semantics FilesystemSemantics, resultErr error) {
+	filesystemCreateAttemptHook.RLock()
+	createHook := filesystemCreateAttemptHook.fn
+	filesystemCreateAttemptHook.RUnlock()
+	if createHook != nil {
+		createHook(normalized)
+	}
 	probeRoot, err := os.MkdirTemp(normalized, ".melotrove-semantics-")
 	if err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("create semantics probe: %w", err)

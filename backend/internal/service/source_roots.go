@@ -252,15 +252,27 @@ func (s *SourceRoots) checkManagedOverlap(ctx context.Context, path string) erro
 	if err != nil {
 		return fmt.Errorf("read managed tools directory: %w", err)
 	}
-	if hasTools && toolsRoot != "" && settings.PathsOverlap(path, toolsRoot) {
-		return fmt.Errorf("source directory overlaps the managed tools directory")
+	if hasTools && toolsRoot != "" {
+		overlap, err := settings.SourcePathsOverlap(path, toolsRoot)
+		if err != nil {
+			return fmt.Errorf("check managed tools directory overlap: %w", err)
+		}
+		if overlap {
+			return fmt.Errorf("source directory overlaps the managed tools directory")
+		}
 	}
 	outputRoot, hasOutput, err := s.managedPaths.GetOutputDirectory(ctx)
 	if err != nil {
 		return fmt.Errorf("read managed output directory: %w", err)
 	}
-	if hasOutput && outputRoot != "" && settings.PathsOverlap(path, outputRoot) {
-		return fmt.Errorf("source directory overlaps the managed output directory")
+	if hasOutput && outputRoot != "" {
+		overlap, err := settings.SourcePathsOverlap(path, outputRoot)
+		if err != nil {
+			return fmt.Errorf("check managed output directory overlap: %w", err)
+		}
+		if overlap {
+			return fmt.Errorf("source directory overlaps the managed output directory")
+		}
 	}
 	return nil
 }
