@@ -59,7 +59,7 @@ func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
 	if err := inventory.UpdateSourceRoot(ctx, &moved); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("path change with an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("delete with an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
 	if operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'analyze_source'"); operations != 1 {
@@ -70,7 +70,7 @@ func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
 	}
 
 	setOperationState(t, ctx, database, active.ID, "succeeded")
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
 		t.Fatalf("delete after the active analysis finished: %v", err)
 	}
 }

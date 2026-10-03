@@ -80,7 +80,7 @@ func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, 
 	return fmt.Errorf("update source root: root does not exist")
 }
 
-func (fixture *sourceRootRepositoryFixture) DeleteSourceRoot(_ context.Context, id uuid.UUID) error {
+func (fixture *sourceRootRepositoryFixture) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {
 	if fixture.busy {
 		return fmt.Errorf("delete source root: %w", persistence.ErrSourceRootActiveScan)
 	}

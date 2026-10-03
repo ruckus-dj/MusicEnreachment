@@ -25,6 +25,18 @@ type sourceRootsIntegration struct {
 	output    string
 }
 
+type sourceRootDeleteBarrier struct {
+	service.SourceRootRepository
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (repository *sourceRootDeleteBarrier) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
+	close(repository.entered)
+	<-repository.release
+	return repository.SourceRootRepository.DeleteSourceRoot(ctx, id, confirmedPath, confirmedLocations)
+}
+
 func newSourceRootsIntegration(t *testing.T) sourceRootsIntegration {
 	t.Helper()
 	database := testpostgres.Open(t)
@@ -311,6 +323,157 @@ func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
 		stored, err := os.ReadFile(path)
 		if err != nil || string(stored) != contents {
 			t.Fatalf("file %q after the root deletion = %q, %v; want %q kept", path, stored, err, contents)
+		}
+	}
+}
+
+func TestSourceRootDeletionRechecksConfirmationAfterServiceReadWithPostgreSQL(t *testing.T) {
+	for _, scenario := range []string{"path patch", "scan inventory change"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			integration := newSourceRootsIntegration(t)
+			source := t.TempDir()
+			created, err := integration.roots.Create(ctx, "Music", source)
+			if err != nil {
+				t.Fatalf("create source root: %v", err)
+			}
+			initial := startScanOperation(t, ctx, integration.database, created.ID, "running")
+			applyScanInventory(t, ctx, integration.inventory, initial, created.ConfiguredPath, "album/one.flac")
+			finishScanOperation(t, ctx, integration.database, initial.ID)
+
+			barrier := &sourceRootDeleteBarrier{
+				SourceRootRepository: integration.inventory,
+				entered:              make(chan struct{}), release: make(chan struct{}),
+			}
+			roots := service.NewSourceRoots(barrier, managedPathsFixture{tools: integration.tools, output: integration.output})
+			deleteResult := make(chan error, 1)
+			var expectedPath string
+			go func() { deleteResult <- roots.Delete(ctx, created.ID, created.ConfiguredPath, 1) }()
+			<-barrier.entered // GetSourceRoot and CountSourceLocations have completed.
+
+			switch scenario {
+			case "path patch":
+				expectedPath = normalizedPath(t, t.TempDir())
+				if _, err := integration.roots.Edit(ctx, created.ID, service.SourceRootEdit{ConfiguredPath: &expectedPath}); err != nil {
+					t.Fatalf("patch configured path after deletion prechecks: %v", err)
+				}
+			case "scan inventory change":
+				update := startScanOperation(t, ctx, integration.database, created.ID, "running")
+				applyScanInventory(t, ctx, integration.inventory, update, created.ConfiguredPath,
+					"album/one.flac", "album/two.flac")
+				finishScanOperation(t, ctx, integration.database, update.ID)
+			}
+			close(barrier.release)
+			if err := <-deleteResult; !errors.Is(err, service.ErrSourceRootConfirmation) {
+				t.Fatalf("deletion after %s changed between precheck and transaction = %v, want confirmation conflict", scenario, err)
+			}
+			current, err := integration.inventory.GetSourceRoot(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("read root after refused deletion: %v", err)
+			}
+			wantCount := int64(1)
+			if scenario == "path patch" {
+				if current.ConfiguredPath != expectedPath {
+					t.Fatalf("configured path after refused deletion = %q, want competing patch %q", current.ConfiguredPath, expectedPath)
+				}
+			} else {
+				wantCount = 2
+			}
+			count, err := integration.inventory.CountSourceLocations(ctx, created.ID)
+			if err != nil || count != wantCount {
+				t.Fatalf("locations after refused deletion = %d, %v; want %d", count, err, wantCount)
+			}
+		})
+	}
+}
+
+// The inverse of the edit-before-delete case: deletion must get the operation
+// table lock before a competing root PATCH or scan inventory apply. Once deletion
+// commits, the waiting writer must observe the missing root, never recreate it.
+func TestSourceRootDeletionSerializesWritersWithPostgreSQL(t *testing.T) {
+	for _, writer := range []string{"path patch", "scan inventory apply"} {
+		t.Run(writer, func(t *testing.T) {
+			baseCtx := context.Background()
+			integration := newSourceRootsIntegration(t)
+			created, err := integration.roots.Create(baseCtx, "Music", t.TempDir())
+			if err != nil {
+				t.Fatalf("create source root: %v", err)
+			}
+			seed := startScanOperation(t, baseCtx, integration.database, created.ID, "running")
+			applyScanInventory(t, baseCtx, integration.inventory, seed, created.ConfiguredPath, "album/one.flac")
+			finishScanOperation(t, baseCtx, integration.database, seed.ID)
+
+			// This transaction owns the real lock used by deletion. The query
+			// barrier below proves the writer reached PostgreSQL and is blocked.
+			lockCtx, cancelLock := context.WithTimeout(baseCtx, 10*time.Second)
+			defer cancelLock()
+			locked, release := make(chan struct{}), make(chan struct{})
+			deleteResult := make(chan error, 1)
+			go func() {
+				deleteResult <- holdSourceRootDeletion(lockCtx, integration.database, created.ID, locked, release)
+			}()
+			select {
+			case <-locked:
+			case <-lockCtx.Done():
+				t.Fatal("deletion did not acquire its operation lock")
+			}
+
+			// For a PATCH, Get/validation precedes UpdateSourceRoot. For an
+			// inventory writer, begin its transaction with the same operation lock.
+			writerStarted := make(chan error, 1)
+			writerCtx, cancelWriter := context.WithTimeout(baseCtx, 10*time.Second)
+			defer cancelWriter()
+			newPath := normalizedPath(t, t.TempDir())
+			go func() {
+				if writer == "path patch" {
+					_, err := integration.roots.Edit(writerCtx, created.ID, service.SourceRootEdit{ConfiguredPath: &newPath})
+					writerStarted <- err
+					return
+				}
+				writerStarted <- integration.inventory.ApplySourceScan(writerCtx, persistence.SourceScanApply{
+					OperationID: seed.ID, ExpectedConfiguredPath: created.ConfiguredPath,
+				})
+			}()
+			// Ensure writer attempt is observable without timing assumptions: wait
+			// until PostgreSQL reports an ungranted conflicting lock for its backend.
+			waitForBlockedWriter(t, writerCtx, integration.database, created.ID)
+
+			close(release)
+			if err := <-deleteResult; err != nil {
+				t.Fatalf("deletion transaction: %v", err)
+			}
+			if err := <-writerStarted; err == nil {
+				t.Fatal("writer succeeded after deletion; it must report not found/conflict")
+			}
+			var count int
+			if err := integration.database.NewRaw("SELECT count(*) FROM source_root WHERE id = ?", created.ID).Scan(baseCtx, &count); err != nil || count != 0 {
+				t.Fatalf("root count after competing writer = %d, %v; want deleted", count, err)
+			}
+		})
+	}
+}
+
+func waitForBlockedWriter(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID) {
+	t.Helper()
+	// pg_stat_activity is a database-side barrier, not a sleep: the query returns
+	// only once another backend is actively waiting on the operation-table lock.
+	for {
+		var waiting bool
+		err := database.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+		)`).Scan(ctx, &waiting)
+		if err == nil && waiting {
+			return
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("writer did not block on operation lock for root %s: %v", rootID, ctx.Err())
+		}
+		// Repeated database observation is bounded by context deadline; no
+		// scheduling-dependent sleep is used.
+		if _, err := database.ExecContext(ctx, "SELECT 1"); err != nil {
+			t.Fatalf("observe blocked writer: %v", err)
 		}
 	}
 }

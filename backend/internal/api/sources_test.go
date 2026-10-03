@@ -104,7 +104,7 @@ func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, root 
 	return fmt.Errorf("update source root: root does not exist")
 }
 
-func (repository *sourceAPIRepository) DeleteSourceRoot(_ context.Context, id uuid.UUID) error {
+func (repository *sourceAPIRepository) DeleteSourceRoot(_ context.Context, id uuid.UUID, _ string, _ int64) error {
 	if repository.busy {
 		return fmt.Errorf("delete source root: %w", persistence.ErrSourceRootActiveScan)
 	}

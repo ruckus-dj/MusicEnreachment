@@ -509,7 +509,7 @@ func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 1024, probeMtime())
 	variantID := insertMediaVariantRow(t, ctx, database, 1024, uuid.New())
 	linkLocationVariant(t, ctx, database, location.ID, variantID)
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
 		t.Fatalf("delete a root with a linked variant: %v", err)
 	}
 	if mediaVariantExists(t, ctx, database, variantID) {
@@ -527,7 +527,7 @@ func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
 	installationID := insertAnalysisInstallation(t, ctx, database, "active-delete")
 	insertRunningAnalysisOperation(t, ctx, database, activeRoot, activeLocation, installationID, &activeVariant)
 
-	if err := inventory.DeleteSourceRoot(ctx, activeRoot.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+	if err := deleteInventoryRoot(ctx, inventory, activeRoot.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("root deletion during an active analysis = %v, want ErrSourceRootActiveScan", err)
 	}
 	if !mediaVariantExists(t, ctx, database, activeVariant) {

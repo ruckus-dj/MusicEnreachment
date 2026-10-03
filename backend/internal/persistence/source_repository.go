@@ -24,6 +24,10 @@ const (
 // write.
 var ErrSourceRootActiveScan = errors.New("source root has an active scan")
 
+// ErrSourceRootConfirmation reports that the deletion confirmation no longer
+// matches the root or its inventory at the point of deletion.
+var ErrSourceRootConfirmation = errors.New("source root deletion confirmation does not match")
+
 // Probe statuses written into source_location by a scan apply.
 const (
 	SourceProbeStatusAudio      = "audio"
@@ -176,14 +180,24 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 // Deletion is refused while a scan of the root is queued or running, and the
 // LOCK TABLE makes that check and the delete atomic against a concurrent scan
 // insert.
-func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID) error {
+func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
 			return fmt.Errorf("lock operations for source root deletion: %w", err)
 		}
-		var rootID uuid.UUID
-		if err := tx.NewRaw("SELECT id FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, &rootID); err != nil {
+		root := new(SourceRoot)
+		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, root); err != nil {
 			return fmt.Errorf("lock source root: %w", err)
+		}
+		if root.ConfiguredPath != confirmedPath {
+			return fmt.Errorf("delete source root: confirmed path no longer matches: %w", ErrSourceRootConfirmation)
+		}
+		locationCount, err := tx.NewSelect().Model((*SourceLocation)(nil)).Where("source_root_id = ?", id).Count(ctx)
+		if err != nil {
+			return fmt.Errorf("count source locations for deletion: %w", err)
+		}
+		if int64(locationCount) != confirmedLocations {
+			return fmt.Errorf("delete source root: confirmed location count no longer matches: %w", ErrSourceRootConfirmation)
 		}
 		active, err := activeSourceScan(ctx, tx, id)
 		if err != nil {

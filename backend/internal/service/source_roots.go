@@ -20,7 +20,7 @@ var ErrSourceRootBusy = errors.New("source root has an active scan")
 
 // ErrSourceRootConfirmation reports a deletion whose confirmed configured path
 // or location count does not describe the root as it is now.
-var ErrSourceRootConfirmation = errors.New("source root deletion confirmation does not match")
+var ErrSourceRootConfirmation = persistence.ErrSourceRootConfirmation
 
 // ErrSourceRootInaccessible reports a configured source directory that cannot be
 // used at all: it is gone, it is no longer a directory, or it cannot be opened
@@ -35,7 +35,7 @@ type SourceRootRepository interface {
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
 	ListSourceRoots(context.Context) ([]persistence.SourceRoot, error)
 	UpdateSourceRoot(context.Context, *persistence.SourceRoot) error
-	DeleteSourceRoot(context.Context, uuid.UUID) error
+	DeleteSourceRoot(context.Context, uuid.UUID, string, int64) error
 	CountSourceLocations(context.Context, uuid.UUID) (int64, error)
 }
 
@@ -187,9 +187,12 @@ func (s *SourceRoots) Delete(ctx context.Context, id uuid.UUID, confirmedPath st
 		return fmt.Errorf("delete source root: confirmed %d locations but the inventory holds %d: %w",
 			confirmedLocations, count, ErrSourceRootConfirmation)
 	}
-	if err := s.repository.DeleteSourceRoot(ctx, id); err != nil {
+	if err := s.repository.DeleteSourceRoot(ctx, id, confirmedPath, confirmedLocations); err != nil {
 		if errors.Is(err, persistence.ErrSourceRootActiveScan) {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootBusy)
+		}
+		if errors.Is(err, persistence.ErrSourceRootConfirmation) {
+			return fmt.Errorf("delete source root: %w", ErrSourceRootConfirmation)
 		}
 		return fmt.Errorf("delete source root: %w", err)
 	}

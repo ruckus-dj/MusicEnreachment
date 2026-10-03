@@ -202,7 +202,7 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 	}
 	// The retry made the root active again, so an edit or deletion racing it is
 	// refused exactly like one racing a scan start.
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("deleting the root of a retried scan = %v, want ErrSourceRootActiveScan", err)
 	}
 }
@@ -278,7 +278,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 
 	doomed := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-doomed")
 	doomedFailed := failedSourceScanRetryOperation(t, ctx, repository, doomed, "traversing", "The traversal failed.")
-	if err := inventory.DeleteSourceRoot(ctx, doomed.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, doomed.ID); err != nil {
 		t.Fatalf("delete the root of the failed scan: %v", err)
 	}
 	if _, err := retrySourceScan(t, ctx, repository, doomedFailed.ID, client); err == nil {

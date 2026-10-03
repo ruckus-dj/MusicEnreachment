@@ -61,7 +61,7 @@ func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 		t.Fatal("an edit of a root another writer already advanced was accepted")
 	}
 
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
 		t.Fatalf("delete source root: %v", err)
 	}
 	if _, err := inventory.GetSourceRoot(ctx, root.ID); err == nil {
@@ -499,7 +499,7 @@ func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
 	}
 	// Deleting the root removes only its own locations: the applied generation
 	// is gone, and the candidate rows of its operation cannot outlive it either.
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
 		t.Fatalf("delete root after candidate cleanup: %v", err)
 	}
 	if count, err := inventory.CountSourceLocations(ctx, root.ID); err != nil || count != 0 {
@@ -571,7 +571,7 @@ func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
 	applySourceScan(t, ctx, inventory, operation, root.ConfiguredPath,
 		sourceCandidate("album/track.flac", 1024, probeMtime()))
 
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err == nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err == nil {
 		t.Fatal("a root with an active scan was deleted")
 	}
 	if count, err := inventory.CountSourceLocations(ctx, root.ID); err != nil || count != 1 {
@@ -582,7 +582,7 @@ func TestSourceRootDeletionGuardsWithPostgreSQL(t *testing.T) {
 	if err := persistOperationState(t, ctx, database, operation.ID, "succeeded"); err != nil {
 		t.Fatalf("finish the scan operation: %v", err)
 	}
-	if err := inventory.DeleteSourceRoot(ctx, root.ID); err != nil {
+	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
 		t.Fatalf("delete the root after its scan finished: %v", err)
 	}
 	if count, err := inventory.CountSourceLocations(ctx, root.ID); err != nil || count != 0 {
@@ -621,7 +621,7 @@ func TestSourceRootDeletionRacesScanWithPostgreSQL(t *testing.T) {
 	deleteResult := make(chan error, 1)
 	go func() {
 		close(deleteStarted)
-		deleteResult <- inventory.DeleteSourceRoot(ctx, root.ID)
+		deleteResult <- deleteInventoryRoot(ctx, inventory, root.ID)
 	}()
 	<-deleteStarted
 	close(release)
@@ -707,6 +707,18 @@ func createInventoryRoot(t *testing.T, ctx context.Context, inventory *persisten
 		t.Fatalf("create source root %s: %v", path, err)
 	}
 	return root
+}
+
+func deleteInventoryRoot(ctx context.Context, inventory *persistence.SourceInventoryRepository, id uuid.UUID) error {
+	root, err := inventory.GetSourceRoot(ctx, id)
+	if err != nil {
+		return err
+	}
+	count, err := inventory.CountSourceLocations(ctx, id)
+	if err != nil {
+		return err
+	}
+	return inventory.DeleteSourceRoot(ctx, id, root.ConfiguredPath, count)
 }
 
 func newSourceScanOperation(t *testing.T, ctx context.Context, database *bun.DB, root *persistence.SourceRoot, state string) *persistence.Operation {
