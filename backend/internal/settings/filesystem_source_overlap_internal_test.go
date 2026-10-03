@@ -88,6 +88,41 @@ func TestSourcePathsOverlapProspectiveUnicodeAmbiguityFailsClosed(t *testing.T) 
 	}
 }
 
+func TestSourcePathsOverlapCaseSensitiveMissingSiblingIsDistinctBothDirections(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "fixture")
+	upper := filepath.Join(root, "Music")
+	lower := filepath.Join(root, "music")
+	missing := filepath.Join(lower, "absent", "output")
+	entries := map[string]string{root: "root", upper: "music"}
+	t.Run("prospective managed spelling", func(t *testing.T) {
+		withSourceOverlapFilesystem(t, entries, nil)
+		got, err := SourcePathsOverlap(upper, missing)
+		if err != nil || got {
+			t.Fatalf("case-sensitive missing managed sibling overlap = %t, %v; want distinct", got, err)
+		}
+	})
+	for _, test := range []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{
+			name: "existing spelling first", first: upper, second: missing,
+		},
+		{
+			name: "existing spelling second", first: missing, second: upper,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withSourceOverlapFilesystem(t, entries, nil)
+			got, err := caseFoldOverlap(test.first, test.second)
+			if err != nil || got {
+				t.Fatalf("case-sensitive missing sibling overlap = %t, %v; want distinct", got, err)
+			}
+		})
+	}
+}
+
 func TestSourcePathsOverlapPermissionErrorsFailClosedWithoutCreateAttempts(t *testing.T) {
 	root := filepath.Join(string(filepath.Separator), "fixture")
 	source := filepath.Join(root, "source")

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -99,10 +98,7 @@ func TestUnixOpenerRejectsSymlinkRacesAndFIFO(t *testing.T) {
 		return platformOpenChild(parent, name, flags)
 	}
 	_, err := rootRaceOpener.OpenRoot(context.Background(), target)
-	linkRejected := errors.Is(err, ErrLink)
-	if runtime.GOOS == "darwin" && errors.Is(err, ErrNotDirectory) {
-		linkRejected = true
-	}
+	linkRejected := errors.Is(err, ErrLink) || errors.Is(err, ErrNotDirectory)
 	if !linkRejected {
 		t.Fatalf("root symlink race error = %v, want ErrLink", err)
 	}

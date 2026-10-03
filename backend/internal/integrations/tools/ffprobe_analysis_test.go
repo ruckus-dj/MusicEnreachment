@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -232,6 +233,9 @@ func TestTechnicalProbeRejectsRelativePath(t *testing.T) {
 func buildFFProbeHelper(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "ffprobehelper")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, "./testdata/ffprobehelper")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {

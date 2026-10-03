@@ -111,7 +111,7 @@ tasks:
       MANIFEST: '{{.MANIFEST | default "build/tool-fixtures/manifest.json"}}'
     dir: backend
     cmds:
-      - go run ./cmd/tool-fixtures -release "{{.RELEASE}}" -output "../{{.OUTPUT}}" -manifest "../{{.MANIFEST}}"
+      - go run ./cmd/tool-fixtures -release "{{.RELEASE}}" -output "{{if isAbs .OUTPUT}}{{.OUTPUT}}{{else}}{{joinPath .ROOT_DIR .OUTPUT}}{{end}}" -manifest "{{if isAbs .MANIFEST}}{{.MANIFEST}}{{else}}{{joinPath .ROOT_DIR .MANIFEST}}{{end}}"
 
   fixtures:managed-transport:
     desc: Provision fixture then run managed-transport-tagged tools tests against its manifest
@@ -120,7 +120,7 @@ tasks:
       MANIFEST: '{{.MANIFEST | default "build/tool-fixtures/manifest.json"}}'
     dir: backend
     cmds:
-      - go test -tags=managed_transport ./internal/integrations/tools -args -managed-manifest "../{{.MANIFEST}}"
+      - go test -tags=managed_transport ./internal/integrations/tools -args -managed-manifest "{{if isAbs .MANIFEST}}{{.MANIFEST}}{{else}}{{joinPath .ROOT_DIR .MANIFEST}}{{end}}"
 
   verify:
     desc: Run generation, linting, tests, and build

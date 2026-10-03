@@ -351,6 +351,13 @@ func caseFoldOverlap(first, second string) (bool, error) {
 			// per-directory case-sensitive component can still make the paths distinct.
 			continue
 		}
+		if norm.NFC.String(parentParts[index]) != norm.NFC.String(childParts[index]) &&
+			((parentErr == nil && errors.Is(childErr, os.ErrNotExist)) ||
+				(parentErr != nil && errors.Is(parentErr, os.ErrNotExist) && childErr == nil)) {
+			// Exactly one case spelling exists. The filesystem distinguishes them,
+			// so the paths are distinct even when the other endpoint is prospective.
+			return false, nil
+		}
 		return false, fmt.Errorf("cannot determine case-sensitive path overlap between %q and %q: component resolution is ambiguous", first, second)
 	}
 	return true, nil
