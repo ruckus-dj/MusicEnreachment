@@ -224,6 +224,253 @@ type replacingSourceDirectory struct {
 	path string
 }
 
+type sourceScanHandleTracker struct {
+	directoryCloses int
+	fileCloses      int
+	directories     map[*trackingSourceDirectory]int
+	files           map[*trackingSourceRegular]int
+	failReadAt      string
+	cancelOnFile    bool
+	cancel          context.CancelFunc
+}
+
+type trackingSourceOpener struct {
+	base    sourcefs.Opener
+	tracker *sourceScanHandleTracker
+}
+
+func (opener trackingSourceOpener) OpenRoot(ctx context.Context, absolute string) (sourcefs.Directory, error) {
+	directory, err := opener.base.OpenRoot(ctx, absolute)
+	if err != nil {
+		return nil, err
+	}
+	opener.tracker.directories = map[*trackingSourceDirectory]int{}
+	opener.tracker.files = map[*trackingSourceRegular]int{}
+	wrapped := &trackingSourceDirectory{Directory: directory, tracker: opener.tracker}
+	opener.tracker.directories[wrapped] = 0
+	return wrapped, nil
+}
+
+type trackingSourceDirectory struct {
+	sourcefs.Directory
+	tracker *sourceScanHandleTracker
+	path    string
+}
+
+func (directory *trackingSourceDirectory) ReadDir(ctx context.Context, n int) ([]sourcefs.Entry, error) {
+	if directory.tracker.failReadAt != "" && directory.path == directory.tracker.failReadAt {
+		return nil, fs.ErrPermission
+	}
+	return directory.Directory.ReadDir(ctx, n)
+}
+
+func (directory *trackingSourceDirectory) OpenDir(ctx context.Context, name string) (sourcefs.Directory, error) {
+	child, err := directory.Directory.OpenDir(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	wrapped := &trackingSourceDirectory{Directory: child, tracker: directory.tracker, path: filepath.Join(directory.path, name)}
+	directory.tracker.directories[wrapped] = 0
+	return wrapped, nil
+}
+
+func (directory *trackingSourceDirectory) OpenRegular(ctx context.Context, name string) (sourcefs.RegularFile, error) {
+	file, err := directory.Directory.OpenRegular(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if directory.tracker.cancelOnFile {
+		directory.tracker.cancel()
+	}
+	wrapped := &trackingSourceRegular{RegularFile: file, tracker: directory.tracker}
+	directory.tracker.files[wrapped] = 0
+	return wrapped, nil
+}
+
+func (directory *trackingSourceDirectory) Close() error {
+	directory.tracker.directoryCloses++
+	directory.tracker.directories[directory]++
+	return directory.Directory.Close()
+}
+
+type trackingSourceRegular struct {
+	sourcefs.RegularFile
+	tracker *sourceScanHandleTracker
+}
+
+func (file *trackingSourceRegular) Close() error {
+	file.tracker.fileCloses++
+	file.tracker.files[file]++
+	return file.RegularFile.Close()
+}
+
+func TestSourceScanClosesPinnedHandlesAndAbandonsFailedTraversal(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		failReadAt   string
+		cancelOnFile bool
+		wantSuccess  bool
+	}{
+		{name: "successful traversal", wantSuccess: true},
+		{name: "subtree resource failure", failReadAt: "album"},
+		{name: "cancellation after opening file", cancelOnFile: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSourceScanFixture(t)
+			fixture.write(t, "album/track.flac", "audio")
+			fixture.storeLocation(t, "album/track.flac", persistence.SourceProbeStatusAudio)
+			previous := slices.Clone(fixture.repository.locations)
+			fixture.repository.candidates[fixture.operationID] = []persistence.SourceScanCandidateInput{{
+				RelativePath: "leftover.flac", SizeBytes: 1, ProbeStatus: persistence.SourceProbeStatusAudio,
+			}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tracker := &sourceScanHandleTracker{failReadAt: test.failReadAt, cancelOnFile: test.cancelOnFile, cancel: cancel}
+			fixture.scan = service.NewSourceScan(
+				fixture.repository, fixture.probe, fixture.stages,
+				service.WithSourceScanOpener(trackingSourceOpener{base: sourcefs.NewOpener(), tracker: tracker}),
+			)
+			err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID})
+			if test.wantSuccess && err != nil {
+				t.Fatalf("successful scan returned an error: %v", err)
+			}
+			if !test.wantSuccess && err == nil {
+				t.Fatal("failed traversal returned nil")
+			}
+			if test.failReadAt != "" && errors.Is(err, service.ErrSourceRootInaccessible) {
+				t.Fatalf("subtree resource failure marked the root unavailable: %v", err)
+			}
+			if test.cancelOnFile && !errors.Is(err, context.Canceled) {
+				t.Fatalf("scan error = %v, want cancellation", err)
+			}
+			if got := fixture.repository.candidates[fixture.operationID]; test.wantSuccess && len(got) != 1 {
+				t.Errorf("successful scan candidates = %+v, want one", got)
+			} else if !test.wantSuccess && len(got) != 0 {
+				t.Errorf("failed scan candidates = %+v, want none", got)
+			}
+			if !slices.Equal(fixture.repository.locations, previous) {
+				t.Errorf("published inventory changed: got %+v, want %+v", fixture.repository.locations, previous)
+			}
+			wantDirectoryCloses := 2 // pinned root and opened album directory
+			if test.wantSuccess {
+				wantDirectoryCloses++ // confirmation opens and closes its own album handle
+			}
+			if tracker.directoryCloses != wantDirectoryCloses {
+				t.Errorf("directory handles closed = %d, want %d", tracker.directoryCloses, wantDirectoryCloses)
+			}
+			if len(tracker.directories) != wantDirectoryCloses {
+				t.Errorf("wrapped directory handles = %d, want %d", len(tracker.directories), wantDirectoryCloses)
+			}
+			for directory, closes := range tracker.directories {
+				if closes != 1 {
+					t.Errorf("directory handle %p close count = %d, want exactly one", directory, closes)
+				}
+			}
+			wantFileCloses := 1
+			if test.failReadAt != "" {
+				wantFileCloses = 0
+			} else if test.wantSuccess {
+				wantFileCloses++ // confirmation owns a separately opened file
+			}
+			if tracker.fileCloses != wantFileCloses {
+				t.Errorf("regular file handles closed = %d, want %d", tracker.fileCloses, wantFileCloses)
+			}
+			if len(tracker.files) != wantFileCloses {
+				t.Errorf("wrapped regular file handles = %d, want %d", len(tracker.files), wantFileCloses)
+			}
+			for file, closes := range tracker.files {
+				if closes != 1 {
+					t.Errorf("regular file handle %p close count = %d, want exactly one", file, closes)
+				}
+			}
+		})
+	}
+}
+
+// sourceScanAncestorSwapOpener swaps a listed child directory for an external
+// symlink after enumeration but before the walker opens that child. The barrier
+// lives on the returned directory instance, not in process-global filesystem
+// hooks, so parallel scans cannot interfere with one another.
+type sourceScanAncestorSwapOpener struct {
+	base                         sourcefs.Opener
+	root, child, parked, outside string
+	swapped                      bool
+}
+
+func (opener *sourceScanAncestorSwapOpener) OpenRoot(ctx context.Context, absolute string) (sourcefs.Directory, error) {
+	dir, err := opener.base.OpenRoot(ctx, absolute)
+	if err != nil {
+		return nil, err
+	}
+	return &sourceScanAncestorSwapDirectory{Directory: dir, opener: opener, root: true}, nil
+}
+
+type sourceScanAncestorSwapDirectory struct {
+	sourcefs.Directory
+	opener *sourceScanAncestorSwapOpener
+	root   bool
+}
+
+func (directory *sourceScanAncestorSwapDirectory) ReadDir(ctx context.Context, n int) ([]sourcefs.Entry, error) {
+	entries, err := directory.Directory.ReadDir(ctx, n)
+	if directory.root && !directory.opener.swapped {
+		opener := directory.opener
+		if renameErr := os.Rename(opener.child, opener.parked); renameErr != nil {
+			return nil, renameErr
+		}
+		if linkErr := os.Symlink(opener.outside, opener.child); linkErr != nil {
+			return nil, linkErr
+		}
+		opener.swapped = true
+	}
+	return entries, err
+}
+
+func (directory *sourceScanAncestorSwapDirectory) OpenDir(ctx context.Context, name string) (sourcefs.Directory, error) {
+	dir, err := directory.Directory.OpenDir(ctx, name)
+	if directory.root && directory.opener.swapped {
+		if removeErr := os.Remove(directory.opener.child); removeErr != nil {
+			return nil, removeErr
+		}
+		if restoreErr := os.Rename(directory.opener.parked, directory.opener.child); restoreErr != nil {
+			return nil, restoreErr
+		}
+		directory.opener.swapped = false
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &sourceScanAncestorSwapDirectory{Directory: dir, opener: directory.opener}, nil
+}
+
+func (directory *sourceScanAncestorSwapDirectory) OpenRegular(ctx context.Context, name string) (sourcefs.RegularFile, error) {
+	return directory.Directory.OpenRegular(ctx, name)
+}
+
+func TestSourceScanDoesNotFollowAncestorSwappedToExternalSymlink(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	child := filepath.Join(fixture.tree, "album")
+	parked := child + ".original"
+	outside := t.TempDir()
+	writeSourceWalkFile(t, filepath.Join(child, "inside.flac"), "inside")
+	writeSourceWalkFile(t, filepath.Join(outside, "outside.flac"), "outside")
+	opener := &sourceScanAncestorSwapOpener{base: sourcefs.NewOpener(), root: fixture.tree, child: child, parked: parked, outside: outside}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanOpener(opener))
+	err := fixture.run(t)
+	if err == nil {
+		t.Fatal("scan followed an ancestor replaced by an external symlink")
+	}
+	if opener.swapped {
+		t.Fatal("test did not restore the original ancestor before confirmation")
+	}
+	if got := sourceScanCandidatePaths(fixture.candidates(t)); len(got) != 0 {
+		t.Fatalf("failed scan candidates = %v, want none", got)
+	}
+	if len(fixture.probe.probes()) != 0 {
+		t.Fatalf("probed files = %v, external marker must never be read", fixture.probe.probes())
+	}
+}
+
 func (directory replacingSourceDirectory) OpenDir(ctx context.Context, name string) (sourcefs.Directory, error) {
 	child, err := directory.Directory.OpenDir(ctx, name)
 	if err != nil {
@@ -812,13 +1059,15 @@ func TestSourceScanClearsStoredBatchesWhenTheTraversalFails(t *testing.T) {
 	for index := 0; index < 501; index++ {
 		fixture.write(t, filepath.Join("album", fmt.Sprintf("file-%03d.flac", index)), "audio bytes")
 	}
-	last := filepath.Join(fixture.tree, "album", "file-500.flac")
+	first := filepath.Join(fixture.tree, "album", "file-000.flac")
+	probes := 0
 	fixture.probe.onProbe = func(name, _ string) {
-		if name != "file-500.flac" {
+		probes++
+		if probes != 501 {
 			return
 		}
-		if err := os.WriteFile(last, []byte("a payload written after the traversal read the file"), 0o644); err != nil {
-			t.Errorf("rewrite the last traversed file: %v", err)
+		if err := os.WriteFile(first, []byte("a payload written after the traversal read the file"), 0o644); err != nil {
+			t.Errorf("rewrite an already traversed file: %v", err)
 		}
 	}
 

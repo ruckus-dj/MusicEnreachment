@@ -132,6 +132,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if root.LastAppliedOperationID != nil && *root.LastAppliedOperationID == operation.ID {
 		return worker.operations.Succeed(ctx, operation.ID, scanSucceededStage)
 	}
+	if root.ConfiguredPath != snapshot.ConfiguredPath {
+		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
+	}
 	if !root.Enabled {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeDisabled)
 	}
@@ -171,7 +174,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
 	}
 	scan := service.NewSourceScan(worker.repository, probe, worker.operations)
-	if err := scan.Run(ctx, service.SourceScanRequest{OperationID: operation.ID, RootID: root.ID}); err != nil {
+	if err := scan.Run(ctx, service.SourceScanRequest{
+		OperationID: operation.ID, RootID: root.ID, ExpectedConfiguredPath: snapshot.ConfiguredPath,
+	}); err != nil {
 		if ctx.Err() != nil {
 			return err
 		}

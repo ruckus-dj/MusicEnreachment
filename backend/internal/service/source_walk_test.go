@@ -66,10 +66,7 @@ func TestWalkSourceTreeVisitsApprovedExtensionsIgnoringCase(t *testing.T) {
 			t.Errorf("walked %q, which is not an approved audio file with its exact path", entry.RelativePath)
 			continue
 		}
-		absolute := filepath.Join(root, entry.RelativePath)
-		if entry.AbsolutePath != absolute {
-			t.Errorf("absolute path of %q = %q, want %q", entry.RelativePath, entry.AbsolutePath, absolute)
-		}
+		absolute := filepath.Join(root, filepath.FromSlash(entry.RelativePath))
 		if entry.SizeBytes != int64(len(content)) {
 			t.Errorf("size of %q = %d, want %d", entry.RelativePath, entry.SizeBytes, len(content))
 		}
@@ -103,11 +100,10 @@ func TestWalkSourceTreePreservesExactPathCase(t *testing.T) {
 		t.Fatalf("walked %v, want the single file Album/Track.FLAC", sourceWalkRelativePaths(entries))
 	}
 	want := service.SourceWalkEntry{
-		AbsolutePath: filepath.Join(root, "Album", "Track.FLAC"),
-		RelativePath: filepath.Join("Album", "Track.FLAC"),
+		RelativePath: "Album/Track.FLAC",
 		SizeBytes:    int64(len("audio bytes")),
 	}
-	if entries[0].RelativePath != want.RelativePath || entries[0].AbsolutePath != want.AbsolutePath || entries[0].SizeBytes != want.SizeBytes {
+	if entries[0].RelativePath != want.RelativePath || entries[0].SizeBytes != want.SizeBytes {
 		t.Errorf("walked %+v, want the exact case-preserving path %+v", entries[0], want)
 	}
 }
@@ -124,7 +120,7 @@ func TestWalkSourceTreeKeepsCaseDistinctPathsOnCaseSensitiveFilesystems(t *testi
 	if err != nil {
 		t.Fatalf("walk the source tree: %v", err)
 	}
-	want := []string{filepath.Join("Album", "track.flac"), filepath.Join("album", "track.flac")}
+	want := []string{"Album/track.flac", "album/track.flac"}
 	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
 		t.Errorf("walked %v, want the two case-distinct paths %v", got, want)
 	}
@@ -145,14 +141,9 @@ func TestWalkSourceTreeSkipsSymlinksAndCannotLeaveTheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk the source tree: %v", err)
 	}
-	want := []string{filepath.Join("Music", "track.flac")}
+	want := []string{"Music/track.flac"}
 	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
 		t.Errorf("walked %v, want only the file reachable without following a link: %v", got, want)
-	}
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.AbsolutePath, root+string(filepath.Separator)) {
-			t.Errorf("absolute path %q of %q left the root %q", entry.AbsolutePath, entry.RelativePath, root)
-		}
 	}
 }
 
@@ -198,7 +189,7 @@ func TestWalkSourceTreeFailsOnCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var visited []string
-		err := service.WalkSourceTree(ctx, root, func(entry service.SourceWalkEntry) error {
+		err := service.WalkSourceTree(ctx, sourceWalkResolvedPath(t, root), func(entry service.SourceWalkEntry) error {
 			visited = append(visited, entry.RelativePath)
 			cancel()
 			return nil
@@ -210,6 +201,25 @@ func TestWalkSourceTreeFailsOnCancellation(t *testing.T) {
 			t.Errorf("visited %v, want the walk to stop after %v", visited, want)
 		}
 	})
+
+	t.Run("when the only-file visitor cancels", func(t *testing.T) {
+		singleRoot := t.TempDir()
+		writeSourceWalkFile(t, filepath.Join(singleRoot, "only.flac"), "first")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var visited []string
+		err := service.WalkSourceTree(ctx, sourceWalkResolvedPath(t, singleRoot), func(entry service.SourceWalkEntry) error {
+			visited = append(visited, entry.RelativePath)
+			cancel()
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("walk error = %v, want cancellation rather than successful short-batch completion", err)
+		}
+		if want := []string{"only.flac"}; !slices.Equal(visited, want) {
+			t.Errorf("visited %v, want %v", visited, want)
+		}
+	})
 }
 
 func TestWalkSourceTreeStopsOnVisitorError(t *testing.T) {
@@ -218,7 +228,7 @@ func TestWalkSourceTreeStopsOnVisitorError(t *testing.T) {
 	writeSourceWalkFile(t, filepath.Join(root, "b.flac"), "second")
 
 	var visited []string
-	err := service.WalkSourceTree(context.Background(), root, func(entry service.SourceWalkEntry) error {
+	err := service.WalkSourceTree(context.Background(), sourceWalkResolvedPath(t, root), func(entry service.SourceWalkEntry) error {
 		visited = append(visited, entry.RelativePath)
 		return errStopSourceWalk
 	})
@@ -264,11 +274,24 @@ func TestWalkSourceTreeRejectsRootsThatAreNotDirectories(t *testing.T) {
 func collectSourceWalk(t *testing.T, ctx context.Context, root string) ([]service.SourceWalkEntry, error) {
 	t.Helper()
 	var entries []service.SourceWalkEntry
-	err := service.WalkSourceTree(ctx, root, func(entry service.SourceWalkEntry) error {
+	err := service.WalkSourceTree(ctx, sourceWalkResolvedPath(t, root), func(entry service.SourceWalkEntry) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	return entries, err
+}
+
+func sourceWalkResolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(path))
+	if parentErr == nil && errors.Is(err, fs.ErrNotExist) {
+		return filepath.Join(parent, filepath.Base(path))
+	}
+	return path
 }
 
 func sourceWalkRelativePaths(entries []service.SourceWalkEntry) []string {
@@ -403,7 +426,7 @@ func TestWalkSourceTreeMarksOnlyAnInaccessibleRoot(t *testing.T) {
 		writeSourceWalkFile(t, filepath.Join(locked, "hidden.flac"), "audio bytes")
 		lockSourceWalkDirectory(t, locked)
 
-		err := service.WalkSourceTree(context.Background(), root, func(service.SourceWalkEntry) error { return nil })
+		err := service.WalkSourceTree(context.Background(), sourceWalkResolvedPath(t, root), func(service.SourceWalkEntry) error { return nil })
 
 		if !errors.Is(err, fs.ErrPermission) {
 			t.Fatalf("walk error = %v, want a permission failure", err)
@@ -416,7 +439,7 @@ func TestWalkSourceTreeMarksOnlyAnInaccessibleRoot(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := service.WalkSourceTree(ctx, t.TempDir(), func(service.SourceWalkEntry) error { return nil })
+		err := service.WalkSourceTree(ctx, sourceWalkResolvedPath(t, t.TempDir()), func(service.SourceWalkEntry) error { return nil })
 
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("walk error = %v, want the cancellation", err)
@@ -434,7 +457,7 @@ func TestWalkSourceTreeMarksOnlyAnInaccessibleRoot(t *testing.T) {
 			t.Fatalf("remove the root: %v", err)
 		}
 
-		err := service.WalkSourceTree(context.Background(), root, func(service.SourceWalkEntry) error { return nil })
+		err := service.WalkSourceTree(context.Background(), sourceWalkResolvedPath(t, root), func(service.SourceWalkEntry) error { return nil })
 
 		if !errors.Is(err, service.ErrSourceRootInaccessible) {
 			t.Fatalf("walk error = %v, want the root access marker", err)

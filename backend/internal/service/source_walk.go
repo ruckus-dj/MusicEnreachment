@@ -2,114 +2,166 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 )
 
-// sourceWalkExtensions holds the 13 audio extensions a source inventory
-// accepts. The walker compares an entry's extension against this set without
-// case folding, while every stored path keeps the exact case of the file on
-// disk.
+// sourceWalkExtensions holds the exact 13 accepted audio extensions. Extension
+// matching is case-insensitive; relative paths retain the spelling on disk.
 var sourceWalkExtensions = map[string]struct{}{
 	".flac": {}, ".wav": {}, ".aif": {}, ".aiff": {}, ".ape": {}, ".wv": {},
 	".mp3": {}, ".m4a": {}, ".aac": {}, ".ogg": {}, ".opus": {}, ".wma": {}, ".mka": {},
 }
 
-// SourceWalkEntry is one approved regular file found below a source root. The
-// absolute path is what a managed ffprobe is later executed against, and the
-// relative path, size and mtime come from the file's own stat, never from a
-// case-folded or otherwise rewritten name.
+// SourceWalkEntry is one approved regular file. privateInfo is the identity
+// witness from the safely opened descriptor; it must not escape this package.
 type SourceWalkEntry struct {
-	AbsolutePath string
 	RelativePath string
 	SizeBytes    int64
 	Mtime        time.Time
+	privateInfo  fs.FileInfo
 }
 
-// SourceWalkVisitor receives every approved file once, in the order the walk
-// finds it. Returning an error stops the walk and is returned to the caller.
 type SourceWalkVisitor func(SourceWalkEntry) error
+type sourceWalkFileVisitor func(SourceWalkEntry, sourcefs.RegularFile) error
 
-// WalkSourceTree walks the directory at the absolute rootPath and hands every
-// approved regular file to visit. Only regular files whose extension is one of
-// the 13 approved audio extensions are visited, and the comparison ignores the
-// case of the extension only. Symlink entries, whether they point at a file or
-// at a directory, are skipped without being stat'd, so the walk can neither
-// leave the root nor loop through a link. No file is created, written, opened
-// for writing or probed inside the tree.
-//
-// A nil error means the whole tree was read and every entry was delivered. An
-// unreadable subtree, a canceled context or a visitor error fails the walk as a
-// whole: the returned error makes the entries already delivered unusable, so
-// the caller must discard them instead of treating the run as a partial success.
+const sourceWalkReadBatch = 64
+
+// WalkSourceTree safely walks an absolute source path through one pinned root.
+// File handles are loaned only for the synchronous visitor call and immediately
+// closed. The walk retains at most one 64-entry directory batch per depth, so
+// directory-handle usage is O(depth); file handles close immediately after each
+// visitor. Scan uses walkSourceRoot to share the same pinned root with confirms.
 func WalkSourceTree(ctx context.Context, rootPath string, visit SourceWalkVisitor) error {
 	if !filepath.IsAbs(rootPath) {
 		return fmt.Errorf("walk source tree: root %q is not an absolute path", rootPath)
 	}
-	return walkSourceDirectory(ctx, filepath.Clean(rootPath), "", visit)
+	root, err := sourcefs.NewOpener().OpenRoot(ctx, filepath.Clean(rootPath))
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("open source root: %w", ctx.Err())
+		}
+		return fmt.Errorf("open source root: %w: %w", ErrSourceRootInaccessible, err)
+	}
+	defer func() { _ = root.Close() }()
+	return walkSourceRoot(ctx, root, func(entry SourceWalkEntry, _ sourcefs.RegularFile) error {
+		return visit(entry)
+	})
 }
 
-// walkSourceDirectory reads one directory below root and recurses into its
-// subdirectories. relative is the exact path of the directory below root, and
-// is empty for the root itself.
-func walkSourceDirectory(ctx context.Context, root, relative string, visit SourceWalkVisitor) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("walk source tree: %w", err)
+func walkSourceRoot(ctx context.Context, root sourcefs.Directory, visit sourceWalkFileVisitor) error {
+	return walkSourceDirectory(ctx, root, "", true, visit)
+}
+
+func walkSourceDirectory(ctx context.Context, directory sourcefs.Directory, relative string, isRoot bool, visit sourceWalkFileVisitor) error {
+	if !isRoot {
+		defer func() { _ = directory.Close() }()
 	}
-	directory := root
-	if relative != "" {
-		directory = filepath.Join(root, relative)
-	}
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		// Only the root directory itself failing to read proves the registered
-		// directory inaccessible; an unreadable subtree is not the root's
-		// inaccessibility and must not carry the marker.
-		if relative == "" {
-			return fmt.Errorf("read source directory %q: %w: %w", directory, ErrSourceRootInaccessible, err)
-		}
-		return fmt.Errorf("read source directory %q: %w", directory, err)
-	}
-	for _, entry := range entries {
+	for {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("walk source tree: %w", err)
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("read source entry %q: %w", filepath.Join(relative, entry.Name()), err)
+		entries, err := directory.ReadDir(ctx, sourceWalkReadBatch)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("walk source tree: %w", ctxErr)
 		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			continue
-		}
-		child := filepath.Join(relative, entry.Name())
-		if info.IsDir() {
-			if err := walkSourceDirectory(ctx, root, child, visit); err != nil {
-				return err
+		if err != nil && (!errors.Is(err, io.EOF) || len(entries) == 0) {
+			if errors.Is(err, io.EOF) && len(entries) == 0 {
+				return nil
 			}
-			continue
+			if isRoot && ctx.Err() == nil {
+				return fmt.Errorf("read source directory %q: %w: %w", relative, ErrSourceRootInaccessible, err)
+			}
+			return fmt.Errorf("read source directory %q: %w", relative, err)
 		}
-		if !info.Mode().IsRegular() {
-			continue
+		for _, item := range entries {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("walk source tree: %w", err)
+			}
+			child := item.Name
+			if relative != "" {
+				child = relative + "/" + item.Name
+			}
+			if item.Kind == sourcefs.KindExcluded {
+				continue
+			}
+			if item.Kind == sourcefs.KindDir || item.Kind == sourcefs.KindUnknown {
+				childDir, dirErr := directory.OpenDir(ctx, item.Name)
+				if dirErr == nil {
+					if item.Kind == sourcefs.KindUnknown {
+						info, statErr := childDir.Stat(ctx)
+						if statErr != nil || !info.IsDir() {
+							_ = childDir.Close()
+							if statErr != nil {
+								return fmt.Errorf("stat source directory %q: %w", child, statErr)
+							}
+							return fmt.Errorf("source entry %q changed type", child)
+						}
+					}
+					if err := walkSourceDirectory(ctx, childDir, child, false, visit); err != nil {
+						return err
+					}
+					continue
+				}
+				if errors.Is(dirErr, sourcefs.ErrLink) && item.Kind == sourcefs.KindUnknown {
+					continue
+				}
+				if errors.Is(dirErr, sourcefs.ErrLink) || item.Kind == sourcefs.KindDir {
+					return fmt.Errorf("open source directory %q: %w", child, dirErr)
+				}
+				if !errors.Is(dirErr, sourcefs.ErrNotDirectory) && !errors.Is(dirErr, sourcefs.ErrNotRegular) {
+					return fmt.Errorf("open source directory %q: %w", child, dirErr)
+				}
+			}
+			if _, approved := sourceWalkExtensions[strings.ToLower(filepath.Ext(item.Name))]; !approved {
+				continue
+			}
+			file, fileErr := directory.OpenRegular(ctx, item.Name)
+			if fileErr != nil {
+				if errors.Is(fileErr, sourcefs.ErrLink) || errors.Is(fileErr, sourcefs.ErrNotRegular) {
+					// Existing link/special entries are ignored; a selected regular
+					// entry replaced by one fails because it had KindRegular.
+					if item.Kind == sourcefs.KindRegular {
+						return fmt.Errorf("open source file %q: %w", child, fileErr)
+					}
+					continue
+				}
+				return fmt.Errorf("open source file %q: %w", child, fileErr)
+			}
+			info, statErr := file.Stat(ctx)
+			if statErr != nil {
+				_ = file.Close()
+				return fmt.Errorf("stat source file %q: %w", child, statErr)
+			}
+			if !info.Mode().IsRegular() {
+				_ = file.Close()
+				return fmt.Errorf("source entry %q is not a regular file", child)
+			}
+			entry := SourceWalkEntry{RelativePath: child, SizeBytes: info.Size(), Mtime: info.ModTime(), privateInfo: info}
+			visitErr := visit(entry, file)
+			closeErr := file.Close()
+			if visitErr != nil {
+				return fmt.Errorf("visit source file %q: %w", child, visitErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close source file %q: %w", child, closeErr)
+			}
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("walk source tree: %w", err)
+			}
 		}
-		if _, approved := sourceWalkExtensions[strings.ToLower(filepath.Ext(entry.Name()))]; !approved {
-			continue
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("walk source tree: %w", err)
 		}
-		err = visit(SourceWalkEntry{
-			AbsolutePath: filepath.Join(root, child),
-			RelativePath: child,
-			SizeBytes:    info.Size(),
-			Mtime:        info.ModTime(),
-		})
-		if err != nil {
-			return fmt.Errorf("visit source file %q: %w", child, err)
+		if len(entries) < sourceWalkReadBatch {
+			return nil
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("walk source tree: %w", err)
-	}
-	return nil
 }

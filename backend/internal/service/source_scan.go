@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"time"
 
@@ -77,8 +78,9 @@ type SourceScanStages interface {
 // SourceScanRequest names one scan: the durable operation that owns the stored
 // candidates, and the root the scan reads.
 type SourceScanRequest struct {
-	OperationID uuid.UUID
-	RootID      uuid.UUID
+	OperationID            uuid.UUID
+	RootID                 uuid.UUID
+	ExpectedConfiguredPath string
 }
 
 // SourceScan reads a registered source root and turns the files it finds into
@@ -124,6 +126,9 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	if !root.Enabled {
 		return fmt.Errorf("scan source root: the root %q is disabled", root.DisplayName)
 	}
+	if request.ExpectedConfiguredPath != "" && request.ExpectedConfiguredPath != root.ConfiguredPath {
+		return fmt.Errorf("scan source root: configured path changed since the scan was queued")
+	}
 	if err := s.probe.CheckFileTransport(ctx); err != nil {
 		return fmt.Errorf("scan source root: verify managed ffprobe file transport: %w", err)
 	}
@@ -139,32 +144,35 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	if err := s.reportStage(ctx, request.OperationID, SourceScanStageTraversing); err != nil {
 		return err
 	}
+	rootHandle, err := s.opener.OpenRoot(ctx, root.ConfiguredPath)
+	if err != nil {
+		return s.abandonFailedScan(ctx, request.OperationID, fmt.Errorf("open pinned source root: %w: %w", ErrSourceRootInaccessible, err))
+	}
+	defer func() { _ = rootHandle.Close() }()
 	var traversed []SourceWalkEntry
 	var batch []persistence.SourceScanCandidateInput
-	walkErr := WalkSourceTree(ctx, root.ConfiguredPath, func(entry SourceWalkEntry) error {
-		candidate, err := s.candidateFor(ctx, root.ConfiguredPath, previous, entry)
-		if err != nil {
-			return err
-		}
+	walkErr := walkSourceRoot(ctx, rootHandle, func(entry SourceWalkEntry, _ sourcefs.RegularFile) error {
 		traversed = append(traversed, entry)
-		batch = append(batch, candidate)
-		if len(batch) < sourceScanCandidateBatchSize {
-			return nil
-		}
-		if err := s.appendCandidates(ctx, request.OperationID, batch); err != nil {
-			return err
-		}
-		batch = nil
 		return nil
 	})
 	if walkErr != nil {
 		return s.abandonFailedScan(ctx, request.OperationID,
 			fmt.Errorf("scan source root: traverse %q: %w", root.ConfiguredPath, walkErr))
 	}
+	for _, entry := range traversed {
+		candidate, err := s.candidateFor(ctx, rootHandle, previous, entry)
+		if err != nil {
+			return s.abandonFailedScan(ctx, request.OperationID, err)
+		}
+		batch = append(batch, candidate)
+		if len(batch) == sourceScanCandidateBatchSize {
+			if err := s.appendCandidates(ctx, request.OperationID, batch); err != nil {
+				return s.abandonFailedScan(ctx, request.OperationID, err)
+			}
+			batch = nil
+		}
+	}
 	if err := s.reportStage(ctx, request.OperationID, SourceScanStageApplying); err != nil {
-		// The traversal may already have stored full batches while it walked, so
-		// a scan that cannot report its snapshot complete must drop them instead
-		// of leaving them for a later step to apply.
 		return s.abandonFailedScan(ctx, request.OperationID, err)
 	}
 	if len(batch) > 0 {
@@ -173,7 +181,7 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 		}
 	}
 	for _, entry := range traversed {
-		if err := sourceScanConfirmFile(entry); err != nil {
+		if err := sourceScanConfirmFile(ctx, rootHandle, entry); err != nil {
 			return s.abandonFailedScan(ctx, request.OperationID, err)
 		}
 	}
@@ -185,7 +193,7 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 // every other file: only a successful probe decides between audio and no_audio,
 // and a failed one becomes probe_error rather than a status the file never
 // earned.
-func (s *SourceScan) candidateFor(ctx context.Context, rootPath string, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
+func (s *SourceScan) candidateFor(ctx context.Context, root sourcefs.Directory, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
 	candidate := persistence.SourceScanCandidateInput{
 		RelativePath: entry.RelativePath, SizeBytes: entry.SizeBytes, Mtime: sourceScanMtime(entry.Mtime),
 	}
@@ -193,54 +201,32 @@ func (s *SourceScan) candidateFor(ctx context.Context, rootPath string, previous
 		candidate.ProbeStatus = stored.ProbeStatus
 		return candidate, nil
 	}
-	// The walk's own stat is the metadata before the probe; a file that moved
-	// between that reading and the probe is a changing file, not a snapshot.
-	if err := sourceScanConfirmFile(entry); err != nil {
-		return candidate, err
-	}
-	root, err := s.opener.OpenRoot(ctx, rootPath)
-	if err != nil {
-		return candidate, fmt.Errorf("open pinned source root: %w", err)
-	}
-	defer func() { _ = root.Close() }()
 	file, err := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
 	if err != nil {
-		return candidate, fmt.Errorf("open source file through pinned root: %w", err)
+		return candidate, fmt.Errorf("open source file for probe %q: %w", entry.RelativePath, err)
 	}
 	defer func() { _ = file.Close() }()
 	before, err := file.Stat(ctx)
 	if err != nil {
 		return candidate, fmt.Errorf("stat opened source file before probe: %w", err)
 	}
-	if !sourceScanMatchesEntry(before, entry) {
+	if !sourceScanMatchesEntry(before, entry) || !os.SameFile(before, entry.privateInfo) {
 		return candidate, fmt.Errorf("source file %q changed between traversal and open", entry.RelativePath)
 	}
 	hasAudio, probeErr := s.probe.ProbeFile(ctx, file)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return candidate, fmt.Errorf("confirm the audio stream of %q: %w", entry.RelativePath, ctxErr)
 	}
-	// The descriptor proves what was probed; the safe namespace reopen proves
-	// that this is still the file currently named by the pinned tree. Pathname
-	// checks around the probe are not identity checks and are not relied upon.
-	afterFile, openErr := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
-	if openErr != nil {
-		return candidate, fmt.Errorf("reopen source file after probe: %w", openErr)
-	}
-	after, statErr := afterFile.Stat(ctx)
-	closeErr := afterFile.Close()
-	if statErr != nil {
-		return candidate, fmt.Errorf("stat reopened source file after probe: %w", statErr)
-	}
-	if closeErr != nil {
-		return candidate, fmt.Errorf("close reopened source file: %w", closeErr)
-	}
 	probedAfter, err := file.Stat(ctx)
 	if err != nil {
 		return candidate, fmt.Errorf("stat probed source file after probe: %w", err)
 	}
-	if !os.SameFile(before, after) || !sourceScanMatchesEntry(after, entry) ||
+	if !sourceScanMatchesEntry(probedAfter, entry) ||
 		probedAfter.Size() != before.Size() || !sourceScanMtime(probedAfter.ModTime()).Equal(sourceScanMtime(before.ModTime())) {
 		return candidate, fmt.Errorf("source file %q changed while it was being scanned", entry.RelativePath)
+	}
+	if err := sourceScanConfirmFile(ctx, root, entry); err != nil {
+		return candidate, err
 	}
 	if probeErr != nil {
 		// A failing probe is no excuse for an unread file: the handle and namespace
@@ -257,7 +243,7 @@ func (s *SourceScan) candidateFor(ctx context.Context, rootPath string, previous
 	return candidate, nil
 }
 
-func sourceScanMatchesEntry(info os.FileInfo, entry SourceWalkEntry) bool {
+func sourceScanMatchesEntry(info fs.FileInfo, entry SourceWalkEntry) bool {
 	return info.Mode().IsRegular() && info.Size() == entry.SizeBytes &&
 		sourceScanMtime(info.ModTime()).Equal(sourceScanMtime(entry.Mtime))
 }
@@ -325,15 +311,23 @@ func sourceScanReusesStatus(stored persistence.SourceLocation, candidate persist
 // the file is no longer the regular file the traversal recorded. The read never
 // follows a symlink, so a file swapped for a link cannot pass as itself, and the
 // mtime is compared at the resolution the inventory keeps.
-func sourceScanConfirmFile(entry SourceWalkEntry) error {
-	info, err := os.Lstat(entry.AbsolutePath)
+func sourceScanConfirmFile(ctx context.Context, root sourcefs.Directory, entry SourceWalkEntry) error {
+	file, err := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
+	if err != nil {
+		if errors.Is(err, sourcefs.ErrLink) || errors.Is(err, sourcefs.ErrNotRegular) {
+			return fmt.Errorf("confirm source file %q: the file is no longer a regular file", entry.RelativePath)
+		}
+		return fmt.Errorf("confirm source file %q: %w", entry.RelativePath, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat(ctx)
 	if err != nil {
 		return fmt.Errorf("confirm source file %q: %w", entry.RelativePath, err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("confirm source file %q: the file is no longer a regular file", entry.RelativePath)
 	}
-	if info.Size() != entry.SizeBytes || !sourceScanMtime(info.ModTime()).Equal(sourceScanMtime(entry.Mtime)) {
+	if !os.SameFile(info, entry.privateInfo) || info.Size() != entry.SizeBytes || !sourceScanMtime(info.ModTime()).Equal(sourceScanMtime(entry.Mtime)) {
 		return fmt.Errorf("confirm source file %q: the file changed while it was being scanned", entry.RelativePath)
 	}
 	return nil

@@ -121,6 +121,8 @@ func (directory *unixDirectory) ReadDir(ctx context.Context, n int) ([]Entry, er
 			kind = KindDir
 		} else if item.Type().IsRegular() {
 			kind = KindRegular
+		} else if item.Type()&os.ModeSymlink != 0 || item.Type() != 0 {
+			kind = KindExcluded
 		}
 		entries = append(entries, Entry{Name: item.Name(), Kind: kind})
 	}
