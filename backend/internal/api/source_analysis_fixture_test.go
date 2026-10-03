@@ -29,28 +29,31 @@ type sourceAnalysisAPIRepository struct {
 	installations map[uuid.UUID]*persistence.ToolInstallation
 }
 
-// GetSourceLocation answers only for a location the named root owns: a foreign
-// location and a missing one fail identically, so the API can never address a
-// file through a root it does not belong to.
-func (repository *sourceAnalysisAPIRepository) GetSourceLocation(_ context.Context, rootID, locationID uuid.UUID) (*persistence.SourceLocation, error) {
+// ReadSourceLocationDetail returns the fixture's complete inspector snapshot.
+// A foreign location and a missing one fail identically.
+func (repository *sourceAnalysisAPIRepository) ReadSourceLocationDetail(ctx context.Context, rootID, locationID uuid.UUID) (*persistence.SourceLocationDetailSnapshot, error) {
+	root, err := repository.GetSourceRoot(ctx, rootID)
+	if err != nil {
+		return nil, err
+	}
+	var location *persistence.SourceLocation
 	for index := range repository.locations[rootID] {
 		if repository.locations[rootID][index].ID == locationID {
-			location := repository.locations[rootID][index]
-			return &location, nil
+			copy := repository.locations[rootID][index]
+			location = &copy
+			break
 		}
 	}
-	return nil, fmt.Errorf("get source location: %w", persistence.ErrSourceLocationNotFound)
-}
-
-func (repository *sourceAnalysisAPIRepository) GetMediaVariant(_ context.Context, id uuid.UUID) (*persistence.MediaVariant, error) {
-	variant := repository.variants[id]
-	if variant == nil {
-		return nil, fmt.Errorf("get media variant: %w", persistence.ErrMediaVariantNotFound)
+	if location == nil {
+		return nil, fmt.Errorf("read source location detail location: %w", persistence.ErrSourceLocationNotFound)
 	}
-	return variant, nil
-}
-
-func (repository *sourceAnalysisAPIRepository) ActiveSourceAnalysisOperationID(_ context.Context, rootID, locationID uuid.UUID) (*uuid.UUID, error) {
+	var variant *persistence.MediaVariant
+	if location.MediaVariantID != nil {
+		variant = repository.variants[*location.MediaVariantID]
+		if variant == nil {
+			return nil, fmt.Errorf("read source location detail variant: %w", persistence.ErrMediaVariantNotFound)
+		}
+	}
 	repository.operations.mu.Lock()
 	defer repository.operations.mu.Unlock()
 	var newest *persistence.Operation
@@ -67,10 +70,23 @@ func (repository *sourceAnalysisAPIRepository) ActiveSourceAnalysisOperationID(_
 		}
 	}
 	if newest == nil {
-		return nil, nil
+		return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant}, nil
 	}
 	id := newest.ID
-	return &id, nil
+	return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant, ActiveOperationID: &id}, nil
+}
+
+// GetSourceLocation is also used by the source-analysis start and worker
+// contracts; detail reads use ReadSourceLocationDetail to keep all fields in one
+// database snapshot.
+func (repository *sourceAnalysisAPIRepository) GetSourceLocation(_ context.Context, rootID, locationID uuid.UUID) (*persistence.SourceLocation, error) {
+	for index := range repository.locations[rootID] {
+		if repository.locations[rootID][index].ID == locationID {
+			location := repository.locations[rootID][index]
+			return &location, nil
+		}
+	}
+	return nil, fmt.Errorf("get source location: %w", persistence.ErrSourceLocationNotFound)
 }
 
 func (repository *sourceAnalysisAPIRepository) GetInstallation(_ context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {

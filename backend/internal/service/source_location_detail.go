@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -16,10 +15,7 @@ import (
 // still active, and it writes nothing: the inspector never probes a file and
 // never touches the stored result.
 type SourceLocationDetailRepository interface {
-	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
-	GetSourceLocation(context.Context, uuid.UUID, uuid.UUID) (*persistence.SourceLocation, error)
-	GetMediaVariant(context.Context, uuid.UUID) (*persistence.MediaVariant, error)
-	ActiveSourceAnalysisOperationID(context.Context, uuid.UUID, uuid.UUID) (*uuid.UUID, error)
+	ReadSourceLocationDetail(context.Context, uuid.UUID, uuid.UUID) (*persistence.SourceLocationDetailSnapshot, error)
 }
 
 // SourceLocationRootState is the availability of the owning root, reported
@@ -97,20 +93,14 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 	if rootID == uuid.Nil || locationID == uuid.Nil {
 		return SourceLocationDetail{}, fmt.Errorf("read source location detail: a root and a location are required")
 	}
-	root, err := s.repository.GetSourceRoot(ctx, rootID)
+	snapshot, err := s.repository.ReadSourceLocationDetail(ctx, rootID, locationID)
 	if err != nil {
 		if IsSourceRootNotFound(err) {
 			return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", ErrSourceRootNotFound)
 		}
 		return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", err)
 	}
-	location, err := s.repository.GetSourceLocation(ctx, rootID, locationID)
-	if err != nil {
-		if errors.Is(err, persistence.ErrSourceLocationNotFound) {
-			return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", persistence.ErrSourceLocationNotFound)
-		}
-		return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", err)
-	}
+	root, location := snapshot.Root, snapshot.Location
 	detail := SourceLocationDetail{
 		RootID: root.ID,
 		Root: SourceLocationRootState{
@@ -121,11 +111,7 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 		Mtime: location.Mtime, ProbeStatus: location.ProbeStatus, SafeError: location.SafeError,
 		MediaVariantID: location.MediaVariantID,
 	}
-	if location.MediaVariantID != nil {
-		variant, err := s.repository.GetMediaVariant(ctx, *location.MediaVariantID)
-		if err != nil {
-			return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", err)
-		}
+	if variant := snapshot.Variant; variant != nil {
 		analysis, err := ParseSourceTechnicalAnalysis(variant.FFProbeJSON)
 		if err != nil {
 			return SourceLocationDetail{}, fmt.Errorf("read source location detail: the stored technical result cannot be read: %w", err)
@@ -138,10 +124,6 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 			Analysis:              analysis,
 		}
 	}
-	active, err := s.repository.ActiveSourceAnalysisOperationID(ctx, rootID, locationID)
-	if err != nil {
-		return SourceLocationDetail{}, fmt.Errorf("read source location detail: %w", err)
-	}
-	detail.ActiveAnalysisOperationID = active
+	detail.ActiveAnalysisOperationID = snapshot.ActiveOperationID
 	return detail, nil
 }

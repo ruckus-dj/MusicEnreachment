@@ -63,6 +63,13 @@ func TestSourceLocationDetailReportsIdentityAvailabilityAndActiveOperation(t *te
 	root := fixture.seedAnalysisRoot(t, nil)
 	mtime := time.Date(2026, time.September, 2, 8, 30, 0, 123000000, time.UTC)
 	location := analysisLocation(root.ID, "disc/track.flac", mtime)
+	prior := &persistence.MediaVariant{
+		ID: uuid.New(), SizeBytes: location.SizeBytes, AnalysisPolicyVersion: persistence.SourceAnalysisPolicyVersion,
+		FFProbeVersion: "6.1.1", FFProbeJSON: json.RawMessage(technicalResultFixture),
+		ObservedTags: json.RawMessage(`{"TITLE":["Song"]}`), InspectedAt: mtime, AppliedOperationID: uuid.New(),
+	}
+	fixture.repository.variants[prior.ID] = prior
+	location.MediaVariantID = &prior.ID
 	fixture.repository.locations[root.ID] = []persistence.SourceLocation{location}
 	active := &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "queued", Stage: service.SourceAnalysisStageQueued,
@@ -86,8 +93,11 @@ func TestSourceLocationDetailReportsIdentityAvailabilityAndActiveOperation(t *te
 		detail.Root.SafeError != nil || detail.Root.InventoryPath == nil {
 		t.Fatalf("detail root availability = %+v", detail.Root)
 	}
-	if detail.MediaVariantID != nil || detail.Result != nil || detail.AnalysisState != "not_analyzed" {
-		t.Fatalf("never-analyzed detail = %+v", detail)
+	if detail.MediaVariantID == nil || *detail.MediaVariantID != prior.ID || detail.Result == nil || detail.AnalysisState != "analyzed" {
+		t.Fatalf("detail with a prior result and active analysis = %+v", detail)
+	}
+	if detail.Result.FFProbeVersion != prior.FFProbeVersion || detail.Result.AppliedOperationID != prior.AppliedOperationID {
+		t.Fatalf("prior analysis result = %+v", detail.Result)
 	}
 	if detail.ActiveAnalysisOperationID == nil || *detail.ActiveAnalysisOperationID != active.ID {
 		t.Fatalf("active analysis = %v, want %s", detail.ActiveAnalysisOperationID, active.ID)
