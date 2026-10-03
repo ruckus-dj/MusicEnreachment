@@ -117,6 +117,97 @@ func TestWindowsAdapterUsesRenameCompatibleSharing(t *testing.T) {
 	}
 }
 
+func TestWindowsAdapterUsesPinnedDirectoryAcrossJunctionSwap(t *testing.T) {
+	ctx := context.Background()
+	rootPath := filepath.Join(t.TempDir(), "root")
+	externalPath := filepath.Join(t.TempDir(), "external")
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(externalPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalDir := filepath.Join(rootPath, "album")
+	if err := os.Mkdir(originalDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const originalMarker = "original pinned directory marker"
+	const externalMarker = "external junction marker"
+	if err := os.WriteFile(filepath.Join(originalDir, "marker.txt"), []byte(originalMarker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(externalPath, "marker.txt"), []byte(externalMarker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := newPlatformOpener().OpenRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	pinnedChild, err := root.OpenDir(ctx, "album")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinnedChild.Close()
+
+	heldDir := filepath.Join(rootPath, "album.held")
+	if err := os.Rename(originalDir, heldDir); err != nil {
+		t.Fatalf("hold original directory with pinned child open: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := os.Lstat(originalDir); err == nil {
+			if err := os.Remove(originalDir); err != nil {
+				t.Errorf("remove temporary junction: %v", err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("stat junction path during cleanup: %v", err)
+		}
+		if _, err := os.Stat(heldDir); err == nil {
+			if err := os.Rename(heldDir, originalDir); err != nil {
+				t.Errorf("restore original directory: %v", err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("stat held original directory during cleanup: %v", err)
+		}
+	})
+	makeWindowsJunction(t, originalDir, externalPath)
+
+	visible, err := os.ReadFile(filepath.Join(originalDir, "marker.txt"))
+	if err != nil {
+		t.Fatalf("read marker through junction control path: %v", err)
+	}
+	if string(visible) != externalMarker {
+		t.Fatalf("junction control path read %q, want external marker %q", visible, externalMarker)
+	}
+
+	pinnedFile, err := pinnedChild.OpenRegular(ctx, "marker.txt")
+	if err != nil {
+		t.Fatalf("open marker through pinned child directory: %v", err)
+	}
+	var pinnedBytes []byte
+	if err := pinnedFile.Borrow(ctx, func(file *os.File) error {
+		var readErr error
+		pinnedBytes, readErr = io.ReadAll(file)
+		return readErr
+	}); err != nil {
+		t.Fatalf("read marker through pinned child directory: %v", err)
+	}
+	if string(pinnedBytes) != originalMarker {
+		t.Errorf("pinned child read %q, want original marker %q", pinnedBytes, originalMarker)
+	}
+	if err := pinnedFile.Close(); err != nil {
+		t.Fatalf("close pinned marker file before restoring namespace: %v", err)
+	}
+
+	if replacement, err := root.OpenDir(ctx, "album"); !errors.Is(err, ErrLink) {
+		if err == nil {
+			_ = replacement.Close()
+		}
+		t.Fatalf("reopen swapped directory from root error = %v, want ErrLink", err)
+	}
+}
+
 func TestWindowsAdapterRejectsJunctionsAndClosesFailedOpens(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()

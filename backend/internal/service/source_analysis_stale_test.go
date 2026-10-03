@@ -154,6 +154,7 @@ func TestSourceAnalysisUsesTheBorrowedFileDuringTransientSymlinkSwaps(t *testing
 				t.Fatalf("set external source mtime: %v", err)
 			}
 
+			ancestorRenameDenied := false
 			fixture.probe.beforeRead = func(_ context.Context, _ *os.File) func() {
 				var restore func()
 				switch swap {
@@ -181,7 +182,21 @@ func TestSourceAnalysisUsesTheBorrowedFileDuringTransientSymlinkSwaps(t *testing
 				case "ancestor":
 					held := filepath.Join(fixture.rootDir, "album.held")
 					if err := os.Rename(filepath.Dir(fixture.filePath), held); err != nil {
-						t.Errorf("hold original ancestor: %v", err)
+						// Windows can deny renaming an ancestor with an open child even
+						// when the child handle permits delete sharing.
+						if !sourceAnalysisAncestorRenameAccessDenied(err) {
+							t.Errorf("hold original ancestor: %v", err)
+							return nil
+						}
+						ancestorRenameDenied = true
+						if _, statErr := os.Lstat(held); !errors.Is(statErr, os.ErrNotExist) {
+							t.Errorf("held ancestor after denied rename: stat error = %v, want not-exist", statErr)
+						}
+						if visibleBytes, readErr := os.ReadFile(fixture.filePath); readErr != nil {
+							t.Errorf("read source after denied ancestor rename: %v", readErr)
+						} else if string(visibleBytes) != string(originalBytes) {
+							t.Errorf("source after denied ancestor rename = %q, want original %q", visibleBytes, originalBytes)
+						}
 						return nil
 					}
 					if err := os.Symlink(externalAlbum, filepath.Dir(fixture.filePath)); err != nil {
@@ -225,6 +240,9 @@ func TestSourceAnalysisUsesTheBorrowedFileDuringTransientSymlinkSwaps(t *testing
 			}
 			if got := string(fixture.probe.read); got != string(originalBytes) {
 				t.Fatalf("borrowed bytes = %q, want original %q", got, originalBytes)
+			}
+			if swap == "ancestor" && ancestorRenameDenied {
+				t.Log("Windows denied renaming an ancestor with an open child; namespace remained unchanged")
 			}
 			if got := string(apply.ObservedTags); got != `{"ALBUM":["Example Album"],"ARTIST":["Example"],"TITLE":["Track"]}` {
 				t.Fatalf("observed tags = %s, want tags from original borrowed bytes", got)

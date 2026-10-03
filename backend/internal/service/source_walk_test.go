@@ -100,7 +100,7 @@ func TestWalkSourceTreePreservesExactPathCase(t *testing.T) {
 		t.Fatalf("walked %v, want the single file Album/Track.FLAC", sourceWalkRelativePaths(entries))
 	}
 	want := service.SourceWalkEntry{
-		RelativePath: "Album/Track.FLAC",
+		RelativePath: filepath.Join("Album", "Track.FLAC"),
 		SizeBytes:    int64(len("audio bytes")),
 	}
 	if entries[0].RelativePath != want.RelativePath || entries[0].SizeBytes != want.SizeBytes {
@@ -120,7 +120,7 @@ func TestWalkSourceTreeKeepsCaseDistinctPathsOnCaseSensitiveFilesystems(t *testi
 	if err != nil {
 		t.Fatalf("walk the source tree: %v", err)
 	}
-	want := []string{"Album/track.flac", "album/track.flac"}
+	want := []string{filepath.Join("Album", "track.flac"), filepath.Join("album", "track.flac")}
 	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
 		t.Errorf("walked %v, want the two case-distinct paths %v", got, want)
 	}
@@ -141,7 +141,7 @@ func TestWalkSourceTreeSkipsSymlinksAndCannotLeaveTheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk the source tree: %v", err)
 	}
-	want := []string{"Music/track.flac"}
+	want := []string{filepath.Join("Music", "track.flac")}
 	if got := sourceWalkRelativePaths(entries); !slices.Equal(got, want) {
 		t.Errorf("walked %v, want only the file reachable without following a link: %v", got, want)
 	}
