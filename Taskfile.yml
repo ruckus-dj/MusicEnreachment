@@ -103,6 +103,25 @@ tasks:
     cmds:
       - golangci-lint run ./...
 
+  fixtures:provision:
+    desc: Download approved managed FFmpeg binaries and generate a seek-dependent transport fixture
+    vars:
+      RELEASE: '{{.RELEASE | default "latest"}}'
+      OUTPUT: '{{.OUTPUT | default "build/tool-fixtures"}}'
+      MANIFEST: '{{.MANIFEST | default "build/tool-fixtures/manifest.json"}}'
+    dir: backend
+    cmds:
+      - go run ./cmd/tool-fixtures -release "{{.RELEASE}}" -output "../{{.OUTPUT}}" -manifest "../{{.MANIFEST}}"
+
+  fixtures:managed-transport:
+    desc: Provision fixture then run managed-transport-tagged tools tests against its manifest
+    deps: [fixtures:provision]
+    vars:
+      MANIFEST: '{{.MANIFEST | default "build/tool-fixtures/manifest.json"}}'
+    dir: backend
+    cmds:
+      - go test -tags=managed_transport ./internal/integrations/tools -args -managed-manifest "../{{.MANIFEST}}"
+
   verify:
     desc: Run generation, linting, tests, and build
     cmds:

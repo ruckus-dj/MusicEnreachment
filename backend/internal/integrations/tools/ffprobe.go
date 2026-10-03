@@ -27,6 +27,7 @@ type FFProbe struct {
 	timeout    time.Duration
 	start      probeStarter
 	technical  technicalStarter
+	fileTech   fileTechnicalStarter
 }
 
 func NewFFProbe(executable string) (*FFProbe, error) {
@@ -38,6 +39,7 @@ func NewFFProbe(executable string) (*FFProbe, error) {
 		timeout:    probeTimeout,
 		start:      startExecProcess,
 		technical:  startTechnicalProcess,
+		fileTech:   startFileTechnicalProcess,
 	}, nil
 }
 
