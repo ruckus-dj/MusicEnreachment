@@ -1,6 +1,5 @@
 // Package sourcefs defines the handle-based, read-only contract for traversing a
-// registered source tree. It deliberately has no pathname-based implementation:
-// platform adapters must be added separately and fail closed until then.
+// registered source tree.
 //
 // A successfully opened root pins a directory object, not a filesystem snapshot.
 // The containing mount topology is trusted; renaming a pinned directory does not
@@ -14,6 +13,9 @@
 // handle, return no more than n entries when n > 0, and use io.EOF only when a
 // bounded read returns no entries. Entry.Kind is advisory; callers must still
 // open and verify an entry before relying on its type.
+// Linux uses openat2 with RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS and deliberately
+// has no weaker-kernel pathname fallback. Darwin uses single-component openat
+// calls with O_NOFOLLOW from the pinned parent descriptor.
 //
 // Unix relative paths use '/' as the only separator; a backslash is an ordinary
 // filename character. Windows adapters must reject rooted and drive-relative
@@ -107,9 +109,8 @@ type RegularFile interface {
 
 type unsupportedOpener struct{}
 
-// NewOpener returns the platform opener. Until a reviewed platform adapter is
-// available this implementation rejects every valid root without touching it.
-func NewOpener() Opener { return unsupportedOpener{} }
+// NewOpener returns the platform opener.
+func NewOpener() Opener { return newPlatformOpener() }
 
 func (unsupportedOpener) OpenRoot(_ context.Context, absolute string) (Directory, error) {
 	if !filepath.IsAbs(absolute) || absolute == "" {

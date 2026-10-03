@@ -257,12 +257,12 @@ func TestRegularFileBorrowRejectsInvalidAndCancelledLoans(t *testing.T) {
 	}
 }
 
-func TestDefaultOpenerFailsClosedWithoutPathnameAccess(t *testing.T) {
+func TestUnsupportedOpenerFailsClosedWithoutPathnameAccess(t *testing.T) {
 	ctx := context.Background()
-	if _, err := NewOpener().OpenRoot(ctx, filepath.Join(t.TempDir(), "not-created")); !errors.Is(err, ErrUnsupported) {
+	if _, err := (unsupportedOpener{}).OpenRoot(ctx, filepath.Join(t.TempDir(), "not-created")); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("valid root error = %v, want ErrUnsupported", err)
 	}
-	if _, err := NewOpener().OpenRoot(ctx, "relative"); !errors.Is(err, ErrInvalidPath) {
+	if _, err := (unsupportedOpener{}).OpenRoot(ctx, "relative"); !errors.Is(err, ErrInvalidPath) {
 		t.Fatalf("relative root error = %v, want ErrInvalidPath", err)
 	}
 }
