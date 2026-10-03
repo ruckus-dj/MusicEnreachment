@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,6 +64,104 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 		}
 	}
 	return setup, registry, store
+}
+
+func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.ResetAndMigrate(t, database)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	setup, registry, _ := completionFixture(t, database, server.URL+"/ws/2", time.Now)
+	output, _, err := registry.GetOutputDirectory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	releaseProbe := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseProbe()
+	var pause sync.Once
+	registered := make(chan string, 4)
+	restoreRegistration := settings.SetProbeDirectoryRegistrationHook(func(path string) {
+		if path == output {
+			registered <- path
+		}
+	})
+	defer restoreRegistration()
+	restore := settings.SetProbeFilesystemSemanticsHook(func() {
+		pause.Do(func() { close(entered); <-release })
+	})
+	defer restore()
+	stateDone := make(chan error, 1)
+	go func() { _, err := setup.State(ctx); stateDone <- err }()
+	select {
+	case <-registered: // State has registered before entering the paused probe.
+	case <-ctx.Done():
+		t.Fatal("state did not register for the output guard")
+	}
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("state did not reach the filesystem probe seam")
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+		t.Fatalf("semantics probe entries are not present while paused: %v, %v", entries, err)
+	}
+
+	completeDone := make(chan error, 1)
+	go func() { completeDone <- setup.Complete(ctx) }()
+	select {
+	case <-registered: // Complete has registered and is now waiting on State's guard.
+	case <-ctx.Done():
+		t.Fatal("completion did not register for the output guard")
+	}
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- setup.SaveRuntime(ctx, "", output, "") }()
+	select {
+	case <-registered:
+	case <-ctx.Done():
+		t.Fatal("runtime save did not register for the output guard")
+	}
+	validateDone := make(chan error, 1)
+	go func() {
+		_, err := setup.ValidatePaths(ctx, "", "")
+		validateDone <- err
+	}()
+	select {
+	case <-registered:
+	case <-ctx.Done():
+		t.Fatal("path validation did not register for the output guard")
+	}
+	restoreRegistration()
+	releaseProbe()
+
+	for name, result := range map[string]<-chan error{
+		"state": stateDone, "complete": completeDone, "save runtime": saveDone, "validate paths": validateDone,
+	} {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		case <-ctx.Done():
+			t.Errorf("%s remained blocked: %v", name, ctx.Err())
+		}
+	}
+	if _, err := settings.ProbeOutputDirectory(output, false); err != nil {
+		t.Fatalf("probe retry after concurrent setup operations: %v", err)
+	}
+	entries, err = os.ReadDir(output)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("concurrent probes left artifacts: %v, %v", entries, err)
+	}
 }
 
 func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {

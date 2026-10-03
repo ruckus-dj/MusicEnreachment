@@ -257,14 +257,9 @@ func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDir
 	if toolsDirectory != "" && PathsOverlap(normalized, toolsDirectory) {
 		return fmt.Errorf("output directory overlaps with tools directory")
 	}
-	if err := ProbeWritableEmpty(normalized); err != nil {
-		return fmt.Errorf("output directory: %w", err)
-	}
-
-	// Probe filesystem semantics
-	semantics, err := ProbeFilesystemSemantics(normalized)
+	semantics, err := ProbeOutputDirectory(normalized, true)
 	if err != nil {
-		return fmt.Errorf("probe filesystem semantics: %w", err)
+		return fmt.Errorf("output directory: %w", err)
 	}
 	normalized, err = serializeSetting(outputRootSetting, normalized)
 	if err != nil {

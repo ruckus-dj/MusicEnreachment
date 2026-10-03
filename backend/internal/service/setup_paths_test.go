@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -155,5 +157,109 @@ func TestValidatePathsAllowsExistingCompletedOutputWithoutRequiringEmpty(t *test
 	}
 	if !maps.Equal(before, store.data) {
 		t.Fatalf("preflight changed completed settings: %#v", store.data)
+	}
+}
+
+func TestValidatePathsMissingOutputSharesExistingAncestorProbeGuard(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	setup := NewSetup(store, settings.New(store, nil), settings.PlatformState{}, nil, nil)
+	tools := t.TempDir()
+	parent := t.TempDir()
+	missingOutput := filepath.Join(parent, "not-created", "output")
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	guardDone := make(chan error, 1)
+	go func() {
+		guardDone <- settings.WithProbeDirectory(parent, func(string) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	if err := os.WriteFile(filepath.Join(parent, ".melotrove-semantics-user-file"), []byte("user"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	missingDone := make(chan error, 1)
+	go func() {
+		_, err := setup.ValidatePaths(ctx, tools, missingOutput)
+		missingDone <- err
+	}()
+	parentDone := make(chan error, 1)
+	go func() {
+		_, err := setup.ValidatePaths(ctx, tools, parent)
+		parentDone <- err
+	}()
+	close(release)
+	if err := <-guardDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-missingDone:
+		if err != nil {
+			t.Errorf("missing output probe should use its writable existing ancestor: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("missing output validation remained blocked")
+	}
+	select {
+	case err := <-parentDone:
+		if err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Errorf("existing non-empty output was not rejected: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("existing output validation remained blocked")
+	}
+	if _, err := os.Stat(missingOutput); !os.IsNotExist(err) {
+		t.Errorf("path validation created missing output %q: %v", missingOutput, err)
+	}
+}
+
+func TestValidatePathsMissingOutputUnderCompletedOutputUsesAncestor(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	tools, output := t.TempDir(), t.TempDir()
+	store.data[settings.ToolsDirectoryKey] = tools
+	store.data[settings.OutputDirectoryKey] = output
+	store.data[settings.SetupCompletedAtKey] = "2026-09-28T00:00:00Z"
+	if err := os.WriteFile(filepath.Join(output, "published.mka"), []byte("music"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setup := NewSetup(store, settings.New(store, nil), settings.PlatformState{}, nil, nil)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var pause sync.Once
+	restore := settings.SetProbeFilesystemSemanticsHook(func() {
+		pause.Do(func() { close(entered); <-release })
+	})
+	defer restore()
+	first := make(chan error, 1)
+	go func() { _, err := setup.ValidatePaths(ctx, "", ""); first <- err }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("initial validation did not reach probe hook")
+	}
+
+	// The prospective output is below the completed output, so both probes
+	// resolve to the same actual directory and must share its guard.
+	missing := filepath.Join(output, "absent", "output")
+	second := make(chan error, 1)
+	go func() { _, err := setup.ValidatePaths(ctx, tools, missing); second <- err }()
+	close(release)
+	for name, ch := range map[string]<-chan error{"initial": first, "missing ancestor": second} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Errorf("%s validation: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s validation remained blocked", name)
+		}
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("validation created missing ancestor: %v", err)
 	}
 }

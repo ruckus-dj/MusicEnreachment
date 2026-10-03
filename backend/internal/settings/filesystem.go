@@ -1,11 +1,127 @@
 package settings
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+type probeDirectoryLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+var probeDirectoryLocks = struct {
+	sync.Mutex
+	locks map[string]*probeDirectoryLock
+}{locks: make(map[string]*probeDirectoryLock)}
+
+var probeFilesystemSemanticsHook = struct {
+	sync.RWMutex
+	fn func()
+}{}
+
+var probeDirectoryRegistrationHook = struct {
+	sync.RWMutex
+	fn func(string)
+}{}
+
+// SetProbeDirectoryRegistrationHook installs a test seam called after a probe
+// has registered for its directory guard and before it attempts to acquire it.
+func SetProbeDirectoryRegistrationHook(fn func(string)) func() {
+	probeDirectoryRegistrationHook.Lock()
+	previous := probeDirectoryRegistrationHook.fn
+	probeDirectoryRegistrationHook.fn = fn
+	probeDirectoryRegistrationHook.Unlock()
+	return func() {
+		probeDirectoryRegistrationHook.Lock()
+		probeDirectoryRegistrationHook.fn = previous
+		probeDirectoryRegistrationHook.Unlock()
+	}
+}
+
+// SetProbeFilesystemSemanticsHook installs a synchronization hook for tests that
+// need to observe an in-progress semantics probe. The returned function restores
+// the previous hook. Production callers should not use this test seam.
+func SetProbeFilesystemSemanticsHook(fn func()) func() {
+	probeFilesystemSemanticsHook.Lock()
+	previous := probeFilesystemSemanticsHook.fn
+	probeFilesystemSemanticsHook.fn = fn
+	probeFilesystemSemanticsHook.Unlock()
+	return func() {
+		probeFilesystemSemanticsHook.Lock()
+		probeFilesystemSemanticsHook.fn = previous
+		probeFilesystemSemanticsHook.Unlock()
+	}
+}
+
+// WithProbeDirectory serializes filesystem probes for the normalized directory.
+// Callers should use the complete probe helpers below rather than nesting this
+// guard around them.
+func WithProbeDirectory(path string, fn func(string) error) error {
+	return withProbeDirectory(path, false, fn)
+}
+
+// withProbeDirectory coordinates directory creation separately from the
+// per-directory probe lock. The registry lock is held only until a prospective
+// directory has been materialized and its actual filesystem identity registered;
+// the potentially long probe runs under its directory lock alone.
+func withProbeDirectory(path string, create bool, fn func(string) error) error {
+	normalized, err := NormalizePath(path)
+	if err != nil {
+		return err
+	}
+	probeDirectoryLocks.Lock()
+	if create {
+		if err := os.MkdirAll(normalized, 0o755); err != nil {
+			probeDirectoryLocks.Unlock()
+			return fmt.Errorf("create directory: %w", err)
+		}
+	}
+	lock := probeDirectoryLocks.locks[normalized]
+	if info, statErr := os.Stat(normalized); statErr == nil && info.IsDir() {
+		// Stat active keys afresh: aliases of a newly materialized directory
+		// must share the existing probe lock before this registry lock is released.
+		for key, candidate := range probeDirectoryLocks.locks {
+			candidateInfo, candidateErr := os.Stat(key)
+			if candidateErr == nil && candidateInfo.IsDir() && os.SameFile(info, candidateInfo) {
+				lock = candidate
+				break
+			}
+		}
+	}
+	if lock == nil {
+		lock = &probeDirectoryLock{}
+	}
+	probeDirectoryLocks.locks[normalized] = lock
+	lock.refs++
+	probeDirectoryLocks.Unlock()
+	probeDirectoryRegistrationHook.RLock()
+	hook := probeDirectoryRegistrationHook.fn
+	probeDirectoryRegistrationHook.RUnlock()
+	if hook != nil {
+		hook(normalized)
+	}
+
+	lock.mu.Lock()
+	defer func() {
+		lock.mu.Unlock()
+		probeDirectoryLocks.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			for key, candidate := range probeDirectoryLocks.locks {
+				if candidate == lock {
+					delete(probeDirectoryLocks.locks, key)
+				}
+			}
+		}
+		probeDirectoryLocks.Unlock()
+	}()
+	return fn(normalized)
+}
 
 // NormalizePath canonicalizes an existing or prospective local path before it
 // is persisted or compared. Symlinks are resolved only for existing ancestors.
@@ -73,13 +189,10 @@ type FilesystemSemantics struct {
 }
 
 func ProbeWritableEmpty(path string) error {
-	normalized, err := NormalizePath(path)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(normalized, 0o755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
-	}
+	return withProbeDirectory(path, true, probeWritableEmpty)
+}
+
+func probeWritableEmpty(normalized string) error {
 	entries, err := os.ReadDir(normalized)
 	if err != nil {
 		return fmt.Errorf("read directory: %w", err)
@@ -93,8 +206,7 @@ func ProbeWritableEmpty(path string) error {
 	}
 	name := probe.Name()
 	if err := probe.Close(); err != nil {
-		_ = os.Remove(name)
-		return err
+		return errors.Join(err, os.Remove(name))
 	}
 	if err := os.Remove(name); err != nil {
 		return fmt.Errorf("remove write probe: %w", err)
@@ -103,21 +215,17 @@ func ProbeWritableEmpty(path string) error {
 }
 
 func ProbeWritable(path string) error {
-	normalized, err := NormalizePath(path)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(normalized, 0o755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
-	}
+	return withProbeDirectory(path, true, probeWritable)
+}
+
+func probeWritable(normalized string) error {
 	probe, err := os.CreateTemp(normalized, ".melotrove-write-probe-")
 	if err != nil {
 		return fmt.Errorf("directory is not writable: %w", err)
 	}
 	name := probe.Name()
 	if err := probe.Close(); err != nil {
-		_ = os.Remove(name)
-		return err
+		return errors.Join(err, os.Remove(name))
 	}
 	if err := os.Remove(name); err != nil {
 		return fmt.Errorf("remove write probe: %w", err)
@@ -129,31 +237,49 @@ func ProbeWritable(path string) error {
 // behavior by creating temporary probe files. All probes are cleaned up on both
 // success and error paths.
 func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
-	normalized, err := NormalizePath(path)
-	if err != nil {
-		return FilesystemSemantics{}, err
-	}
-	if err := os.MkdirAll(normalized, 0o755); err != nil {
-		return FilesystemSemantics{}, fmt.Errorf("create directory: %w", err)
-	}
+	var semantics FilesystemSemantics
+	err := withProbeDirectory(path, true, func(normalized string) error {
+		var err error
+		semantics, err = probeFilesystemSemantics(normalized)
+		return err
+	})
+	return semantics, err
+}
+
+// ProbeOutputDirectory holds the directory guard across both the writable/empty
+// check and semantics probes, including all temporary-file cleanup.
+func ProbeOutputDirectory(path string, requireEmpty bool) (FilesystemSemantics, error) {
+	var semantics FilesystemSemantics
+	err := withProbeDirectory(path, true, func(normalized string) error {
+		var err error
+		if requireEmpty {
+			err = probeWritableEmpty(normalized)
+		} else {
+			err = probeWritable(normalized)
+		}
+		if err != nil {
+			return err
+		}
+		semantics, err = probeFilesystemSemantics(normalized)
+		return err
+	})
+	return semantics, err
+}
+
+func probeFilesystemSemantics(normalized string) (semantics FilesystemSemantics, resultErr error) {
 	probeRoot, err := os.MkdirTemp(normalized, ".melotrove-semantics-")
 	if err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("create semantics probe: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(probeRoot) }()
-
-	var probeFiles []string
 	defer func() {
-		for _, probe := range probeFiles {
-			_ = os.Remove(probe)
+		if err := os.RemoveAll(probeRoot); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove semantics probe: %w", err))
 		}
 	}()
 
 	// Case sensitivity probe
 	lowerProbe := filepath.Join(probeRoot, ".melotrove-case-probe-lower")
 	upperProbe := filepath.Join(probeRoot, ".melotrove-case-probe-LOWER")
-	probeFiles = append(probeFiles, lowerProbe, upperProbe)
-
 	if err := os.WriteFile(lowerProbe, []byte("lower"), 0o644); err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("write case probe: %w", err)
 	}
@@ -169,8 +295,6 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 	nfdName := unicodePrefix + "e\u0301"
 	nfcProbe := filepath.Join(probeRoot, nfcName)
 	nfdProbe := filepath.Join(probeRoot, nfdName)
-	probeFiles = append(probeFiles, nfcProbe, nfdProbe)
-
 	if err := os.WriteFile(nfcProbe, []byte("nfc"), 0o644); err != nil {
 		return FilesystemSemantics{}, fmt.Errorf("write unicode probe: %w", err)
 	}
@@ -195,6 +319,12 @@ func ProbeFilesystemSemantics(path string) (FilesystemSemantics, error) {
 			storedName = strings.TrimPrefix(entry.Name(), unicodePrefix)
 			break
 		}
+	}
+	probeFilesystemSemanticsHook.RLock()
+	hook := probeFilesystemSemanticsHook.fn
+	probeFilesystemSemanticsHook.RUnlock()
+	if hook != nil {
+		hook()
 	}
 	return FilesystemSemantics{CaseSensitive: caseSensitive, UnicodeNormalization: classifyUnicodeNormalization(aliases, storedName)}, nil
 }

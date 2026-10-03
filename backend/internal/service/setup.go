@@ -156,25 +156,17 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 			health.Healthy = false
 			health.Problems = append(health.Problems, "output directory is unavailable")
 		} else {
-			var probeErr error
-			if completed {
-				probeErr = settings.ProbeWritable(runtimeSettings.OutputDirectory)
-			} else {
-				probeErr = settings.ProbeWritableEmpty(runtimeSettings.OutputDirectory)
-			}
+			current, probeErr := settings.ProbeOutputDirectory(runtimeSettings.OutputDirectory, !completed)
 			if probeErr != nil {
 				health.Healthy = false
 				health.Problems = append(health.Problems, "output directory is not ready")
 			} else if runtimeSettings.OutputCaseSensitive == nil || runtimeSettings.OutputUnicodeNormalization == "" {
 				health.Healthy = false
 				health.Problems = append(health.Problems, "output filesystem semantics are missing")
-			} else {
-				current, err := settings.ProbeFilesystemSemantics(runtimeSettings.OutputDirectory)
-				if err != nil || current.CaseSensitive != *runtimeSettings.OutputCaseSensitive ||
-					current.UnicodeNormalization != runtimeSettings.OutputUnicodeNormalization {
-					health.Healthy = false
-					health.Problems = append(health.Problems, "output filesystem semantics changed")
-				}
+			} else if current.CaseSensitive != *runtimeSettings.OutputCaseSensitive ||
+				current.UnicodeNormalization != runtimeSettings.OutputUnicodeNormalization {
+				health.Healthy = false
+				health.Problems = append(health.Problems, "output filesystem semantics changed")
 			}
 		}
 	}
@@ -223,10 +215,7 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 		if err != nil {
 			return fmt.Errorf("output directory: %w", err)
 		}
-		if err := settings.ProbeWritableEmpty(normalized); err != nil {
-			return fmt.Errorf("output directory: %w", err)
-		}
-		semantics, err := settings.ProbeFilesystemSemantics(normalized)
+		semantics, err := settings.ProbeOutputDirectory(normalized, true)
 		if err != nil {
 			return fmt.Errorf("output directory semantics: %w", err)
 		}
@@ -293,17 +282,9 @@ func (s *SetupService) ValidatePaths(ctx context.Context, toolsDir, outputDir st
 	if err != nil {
 		return PathValidation{}, fmt.Errorf("output directory: %w", err)
 	}
-	if exists && (!completed || outputPath != savedOutput) {
-		err = settings.ProbeWritableEmpty(outputProbe)
-	} else {
-		err = settings.ProbeWritable(outputProbe)
-	}
+	semantics, err := settings.ProbeOutputDirectory(outputProbe, exists && (!completed || outputPath != savedOutput))
 	if err != nil {
-		return PathValidation{}, fmt.Errorf("output directory is not writable or empty: %w", err)
-	}
-	semantics, err := settings.ProbeFilesystemSemantics(outputProbe)
-	if err != nil {
-		return PathValidation{}, fmt.Errorf("probe output filesystem semantics: %w", err)
+		return PathValidation{}, fmt.Errorf("output directory is not writable or empty or semantics could not be probed: %w", err)
 	}
 	return PathValidation{
 		ToolsDirectory:             toolsPath,
@@ -393,12 +374,9 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	if err := settings.ProbeWritable(state.Runtime.ToolsDirectory); err != nil {
 		return fmt.Errorf("tools directory is not writable: %w", err)
 	}
-	if err := settings.ProbeWritableEmpty(state.Runtime.OutputDirectory); err != nil {
-		return fmt.Errorf("output directory is not ready: %w", err)
-	}
-	semantics, err := settings.ProbeFilesystemSemantics(state.Runtime.OutputDirectory)
+	semantics, err := settings.ProbeOutputDirectory(state.Runtime.OutputDirectory, true)
 	if err != nil {
-		return fmt.Errorf("probe output filesystem semantics: %w", err)
+		return fmt.Errorf("output directory is not ready: %w", err)
 	}
 	if state.Runtime.OutputCaseSensitive == nil || semantics.CaseSensitive != *state.Runtime.OutputCaseSensitive ||
 		semantics.UnicodeNormalization != state.Runtime.OutputUnicodeNormalization {
