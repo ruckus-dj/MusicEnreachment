@@ -170,7 +170,7 @@ func makeWindowsJunction(t *testing.T, path, target string) {
 	t.Helper()
 	output, err := exec.Command("cmd", "/c", "mklink", "/J", path, target).CombinedOutput()
 	if err != nil {
-		t.Skipf("junction creation unavailable: %v: %s", err, output)
+		t.Fatalf("junction creation unavailable: %v: %s", err, output)
 	}
 }
 
