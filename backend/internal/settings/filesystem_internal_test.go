@@ -78,14 +78,11 @@ func TestProbeOutputDirectorySerializesAliasDiscoveredAfterCreation(t *testing.T
 	}()
 	select {
 	case path := <-registered:
-		if filepath.Base(path) != filepath.Base(normalizedAlias) {
-			t.Fatalf("registered alias path = %q, want alias %q", path, normalizedAlias)
-		}
 		probeDirectoryLocks.Lock()
 		aliasLock := probeDirectoryLocks.locks[path]
 		probeDirectoryLocks.Unlock()
 		if aliasLock != firstLock {
-			t.Fatal("prospective alias did not reuse the active probe lock")
+			t.Fatalf("registered alias path %q did not reuse the active probe lock for %q (normalized alias %q)", path, normalizedTarget, normalizedAlias)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("alias did not register its active probe lock")

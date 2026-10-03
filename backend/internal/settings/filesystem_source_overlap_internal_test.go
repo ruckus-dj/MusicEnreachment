@@ -52,8 +52,21 @@ func withSourceOverlapFilesystem(t *testing.T, entries map[string]string, statEr
 	return &creates
 }
 
+func sourceOverlapRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = NormalizePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func TestSourcePathsOverlapMixedCaseAliasesContinueComponentComparison(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "fixture")
+	root := sourceOverlapRoot(t)
 	source := filepath.Join(root, "Music", "Album")
 	managed := filepath.Join(root, "music", "album", "output")
 	withSourceOverlapFilesystem(t, map[string]string{
@@ -67,7 +80,7 @@ func TestSourcePathsOverlapMixedCaseAliasesContinueComponentComparison(t *testin
 }
 
 func TestSourcePathsOverlapExistingUnicodeAliases(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "fixture")
+	root := sourceOverlapRoot(t)
 	nfc := filepath.Join(root, "caf\u00e9")
 	nfd := filepath.Join(root, "cafe\u0301")
 	withSourceOverlapFilesystem(t, map[string]string{root: "root", nfc: "cafe", nfd: "cafe"}, nil)
@@ -78,7 +91,7 @@ func TestSourcePathsOverlapExistingUnicodeAliases(t *testing.T) {
 }
 
 func TestSourcePathsOverlapProspectiveUnicodeAmbiguityFailsClosed(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "fixture")
+	root := sourceOverlapRoot(t)
 	source := filepath.Join(root, "caf\u00e9")
 	managed := filepath.Join(root, "cafe\u0301", "prospective")
 	withSourceOverlapFilesystem(t, map[string]string{root: "root", filepath.Join(root, "caf\u00e9"): "nfc"}, nil)
@@ -89,7 +102,7 @@ func TestSourcePathsOverlapProspectiveUnicodeAmbiguityFailsClosed(t *testing.T) 
 }
 
 func TestSourcePathsOverlapCaseSensitiveMissingSiblingIsDistinctBothDirections(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "fixture")
+	root := sourceOverlapRoot(t)
 	upper := filepath.Join(root, "Music")
 	lower := filepath.Join(root, "music")
 	missing := filepath.Join(lower, "absent", "output")
@@ -124,7 +137,7 @@ func TestSourcePathsOverlapCaseSensitiveMissingSiblingIsDistinctBothDirections(t
 }
 
 func TestSourcePathsOverlapPermissionErrorsFailClosedWithoutCreateAttempts(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "fixture")
+	root := sourceOverlapRoot(t)
 	source := filepath.Join(root, "source")
 	managed := filepath.Join(root, "managed")
 	denied := &fs.PathError{Op: "stat", Path: managed, Err: fs.ErrPermission}
