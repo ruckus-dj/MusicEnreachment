@@ -23,6 +23,10 @@ Authoritative design documentation (Russian). Conventions, architecture, decisio
 
 **Immutable once shipped**: Changes to foundational decisions (config model, layering, auth-less design) require updating these docs first.
 
+**Source-file freshness**: Follow the owner decision in `decisions.md`: matching
+size and `mtime` is the product criterion. Do not treat stricter implementation
+guards or race/security proofs as product requirements or feature blockers.
+
 ## STRUCTURE
 designs.md and repository-architecture.md are the two most frequently referenced files. decisions.md covers what is allowed/forbidden; repository-architecture.md covers how packages relate.
 

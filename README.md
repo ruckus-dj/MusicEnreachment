@@ -30,12 +30,13 @@ PostgreSQL, edited through the UI. An unavailable source or an interrupted scan
 must not erase the last successfully observed inventory or existing managed
 publications.
 
-Windows SMB/UNC source roots (for example, `\\server\share`, including slash
-aliases) are explicitly unsupported in this slice. Create, edit, and revalidation
-reject them before filesystem access; legacy entries remain readable, while scan
-and analysis fail with an actionable unsupported-path message. There is no unsafe
-fallback. This owner-approved scope limitation is not a claim that Windows UNC
-support is complete.
+The current Windows implementation rejects SMB/UNC source roots (for example,
+`\\server\share`, including slash aliases) before filesystem access; legacy
+entries remain readable, while scan and analysis fail with an actionable
+unsupported-path message. This is an implementation limitation, not a permanent
+product prohibition. If NAS/UNC access is required, it may be implemented using
+ordinary pathname and `stat` checks subject to functional requirements; this
+README does not claim that UNC currently works.
 
 ## Supported platforms and external tools
 

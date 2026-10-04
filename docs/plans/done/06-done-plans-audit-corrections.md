@@ -2,18 +2,44 @@
 
 ## Статус и основания
 
-Подготовлен 2026-10-03. **TODO: реализация не начата.** Основание —
+Подготовлен 2026-10-03. **Статус: COMPLETE (2026-10-04).** Шаги 1–11 были
+реализованы, шаг 12 завершён: независимый полный `task verify` завершился с
+кодом 0, реальный ручной сценарий пройден, независимая приёмка выполнена,
+полный native CI `37153819171` прошёл всеми jobs на ревизии
+`a42f09fded69fbd6b90f22122392aeb27c69e7f1`. UNC/SMB исключён из этой части по
+одобрению владельца; это ограничение продукта, а не blocker согласованного
+scope. Основание —
 `docs/audit/done-plans-validation-2026-10-02.md`, замечания A01–A09.
-Повторная сверка выполнена по текущему коду ревизии
-`1d4889a6669ce5c6dae848c93c66913aa0c30e14`, совпадающей с ревизией аудита.
-Это план исправлений, а не свидетельство их выполнения.
+Ранняя повторная сверка в этом документе — исторический снимок до исправлений,
+а не описание текущего состояния. Актуальные свидетельства выполнения и
+независимая матрица A01–A09: `../../audit/plan06-independent-review-2026-10-04.md`,
+`../../audit/plan06-acceptance-2026-10-03.md` и
+`../../audit/source-io-evidence-2026-10-03.md`.
 
-### Повторная сверка актуальности
+### Уточнение владельца после завершения (2026-10-04)
 
-Все девять замечаний **подтверждены статическим анализом текущих call paths**.
+Решение владельца в `docs/design/decisions.md` уточняет продуктовый критерий:
+размер и `mtime` достаточны для признания файла текущим; неизменность байтов и
+защита от конкурентной подмены пути/ссылки не являются требованиями или
+блокерами. Это новое решение не меняет историческую приёмку плана: A01–A09 и
+шаг 12 остаются **COMPLETE** по тогда согласованному scope. Реализация может
+оставаться строже; pinned handles, no-follow/reparse rejection, проверки
+идентичности, fd transport и сопутствующие CI-проверки сохранены, но не
+обязательны как продуктовый acceptance gate. Текущий отказ Windows UNC остаётся
+реализационным ограничением, а не постоянным запретом; восстановление NAS-доступа
+будет функциональной задачей и не требует доказательств безопасной работы с SMB.
+Исходные шаги 1–5 и прежние аудиты не переписываются.
+
+### Повторная сверка актуальности (исторический снимок до изменений)
+
+Все девять замечаний **были подтверждены статическим анализом call paths на
+ревизии аудита**.
 Новые runtime reproducer-tests и `task verify` при подготовке этого документа
 не запускались; PASS gate из исходного аудита не выдаётся за повторную проверку.
-Ниже — карта актуальных причин, а не новые результаты тестового запуска.
+Ниже — карта причин на исходной ревизии, а не описание текущего состояния и не
+новые результаты тестового запуска.
+Таблица ниже — снимок состояния из исходного аудита **до** изменений; она не
+переписана после реализации шагов.
 
 | ID | Актуальное свидетельство в коде | Уточнение / шаг |
 | --- | --- | --- |
@@ -26,6 +52,35 @@
 | A07, P2 | `SourceRoots.checkManagedOverlap` → `PathsOverlap(source, managed)` → write-based `ProbeFilesystemSemantics` в source/его существующем предке. | Итоговая неизменность дерева после cleanup не доказывает отсутствие записи. Шаг 6. |
 | A08, P2 | `SourceLocationDetails.Read`: отдельные root/location/variant/active reads; `ApplyAnalysisResult` завершает operation атомарно, cleanup может удалить уже отвязанный variant. | Для второго сценария убрать удержания A из operation rows; свежий success может удерживать A. Шаг 7. |
 | A09, P1 | `SourceAnalysis.Run`: resolve → pathname `ProbeTechnical` → resolve; `FFProbe.ProbeTechnical` открывает путь позже проверок. | Transient swap с восстановлением до post-check не покрыт тестом persistent swap. Шаги 8–9, 11. |
+
+### Ход исполнения
+
+Таблица ниже сохраняет историю реализации шагов 1–11 и исправлений. Отметка о
+статическом ревью относится к тому периоду и не заменяет завершённую независимую
+приёмку шага 12, описанную в актуальных evidence reports.
+
+| Шаг | Коммит(ы) |
+| --- | --- |
+| 1 | `5c0fb8b` |
+| 2 | 2a: `ba37b3b`; 2b: `f6134c9` |
+| 3 | `7eba315` |
+| 4 | `2519ab9` |
+| 5 | `2b40ef0` |
+| 6 | `6eef618` |
+| 7 | `3a7a365` |
+| 8 | 8a: `af250da`; 8b: `1059997`; 8c: `79fb8ef`; 8d: `3ab1f57` |
+| fixes | `2784703`, `cef527c`, `84a0801`, `2fb0cb1` |
+| 9 | `d35a2bd` |
+| 10 | `12963b8` |
+| 11 | `1ca975c` |
+| CI updates | `7d31194` |
+| 12 / final corrections | `acad608`, `a42f09f` |
+
+Шаг 12 завершён на полном commit `a42f09fded69fbd6b90f22122392aeb27c69e7f1`.
+Независимый `task verify` — exit 0 (Go test cache использовался там, где
+применимо); полный CI — все jobs SUCCESS; ручные сценарии и cleanup завершены.
+Подробные имена тестов, ограничения Windows namespace acceptance и точные
+манифестные версии/SHA-256 приведены в трёх отчётах, перечисленных выше.
 
 Основания контрактов: `docs/plans/done/02-setup-manager-and-managed-tools.md`,
 `03-source-inventory-first-slice.md`, `04-source-inventory-design-alignment.md`,
@@ -488,3 +543,29 @@ interleavings, gate exit/log, CI evidence, результаты реальног
 | Scan/analysis не читают внешний объект через symlink replacement. | Шаги 8–11: no-follow adapters, pinned probe input, transient ancestor/file swaps. |
 | Сохранены seek, лимиты, отмена и поддерживаемые платформы. | Шаги 8–9, 12: real managed ffprobe fixtures + platform CI evidence. |
 | Gate и независимая приёмка пройдены без ослабления контрактов. | Шаг 12: `task verify` exit 0, COMPLETE, перечисленные ограничения. |
+
+## Итог выполнения и доказательства (2026-10-04)
+
+| Шаг | Реализация | Приёмка / результат |
+| --- | --- | --- |
+| 1 / A01 | `5c0fb8b` | PASS; независимая матрица A01, persistence/service regression coverage. |
+| 2 / A02 | `ba37b3b`, `f6134c9` | PASS; независимая матрица A02, transactional root/enqueue race coverage. |
+| 3 / A03 | `7eba315` | PASS; probe guard, в том числе отсутствующий output с общим существующим предком. |
+| 4 / A04 | `2519ab9` | PASS; миграционный rollback с историей scan. |
+| 5 / A05 | `2b40ef0` | PASS; path/count confirmation проверяется под lock. |
+| 6 / A07 | `6eef618` | PASS; source overlap validation read-only. |
+| 7 / A08 | `3a7a365` | PASS; согласованный persistence snapshot и race regressions. |
+| 8 / A06/A09 | `af250da`, `1059997`, `79fb8ef`, `3ab1f57` | PASS; Unix/Windows sourcefs adapters и managed transport. |
+| 9 / A06/A09 | `d35a2bd` (после перечисленных step-8 fixes) | PASS; ffprobe читает pinned seekable object. |
+| 10 / A06 | `12963b8` | PASS; scan traversal/confirm через root-scoped I/O. |
+| 11 / A09 | `1ca975c` | PASS; analysis использует pinned source object. |
+| Исправления и CI | `2784703`, `cef527c`, `84a0801`, `2fb0cb1`, `7d31194` | Ранние CI failures сохранены исторически; см. CI chronology в evidence report. |
+| 12 / independent acceptance | `acad608`, `a42f09f` | PASS; independent `task verify` exit 0; native CI `37153819171` all jobs SUCCESS; реальная macOS acceptance пройдена и cleanup подтверждён. |
+
+Независимый gate использовал Go test cache там, где это применимо. Windows
+UNC/SMB не поддержан в согласованном scope; попытка Windows ancestor namespace
+swap завершилась `ERROR_ACCESS_DENIED`, поэтому её нельзя описывать как
+успешный swap. Ручной `/api/setup/paths/check` не включал candidate path keys и
+проверил только сохранённые пути; это не выдаётся за ручную проверку пустых или
+явно заданных кандидатных путей. Остальные ограничения и ссылки на полные
+доказательства см. в `docs/audit/plan06-independent-review-2026-10-04.md`.
