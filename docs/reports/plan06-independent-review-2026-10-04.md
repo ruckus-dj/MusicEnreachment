@@ -11,7 +11,7 @@ decision dated 2026-10-04 subsequently clarifies that this is not a permanent
 product ban or a future feature blocker.
 
 Plan: [completed audit-corrections plan](../plans/done/06-done-plans-audit-corrections.md).
-Historical baseline: [2026-10-02 audit](done-plans-validation-2026-10-02.md).
+Historical baseline: [2026-10-02 audit](../audit/done-plans-validation-2026-10-02.md).
 Evidence: [manual acceptance](plan06-acceptance-2026-10-03.md),
 [managed source-I/O and CI](source-io-evidence-2026-10-03.md).
 

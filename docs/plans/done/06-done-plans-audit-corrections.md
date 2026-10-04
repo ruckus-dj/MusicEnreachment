@@ -12,9 +12,9 @@ scope. Основание —
 `docs/audit/done-plans-validation-2026-10-02.md`, замечания A01–A09.
 Ранняя повторная сверка в этом документе — исторический снимок до исправлений,
 а не описание текущего состояния. Актуальные свидетельства выполнения и
-независимая матрица A01–A09: `../../audit/plan06-independent-review-2026-10-04.md`,
-`../../audit/plan06-acceptance-2026-10-03.md` и
-`../../audit/source-io-evidence-2026-10-03.md`.
+независимая матрица A01–A09: `../../reports/plan06-independent-review-2026-10-04.md`,
+`../../reports/plan06-acceptance-2026-10-03.md` и
+`../../reports/source-io-evidence-2026-10-03.md`.
 
 ### Уточнение владельца после завершения (2026-10-04)
 
@@ -568,4 +568,4 @@ swap завершилась `ERROR_ACCESS_DENIED`, поэтому её нель�
 успешный swap. Ручной `/api/setup/paths/check` не включал candidate path keys и
 проверил только сохранённые пути; это не выдаётся за ручную проверку пустых или
 явно заданных кандидатных путей. Остальные ограничения и ссылки на полные
-доказательства см. в `docs/audit/plan06-independent-review-2026-10-04.md`.
+доказательства см. в `docs/reports/plan06-independent-review-2026-10-04.md`.

@@ -14,7 +14,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 │   ├── cmd/              # server (HTTP), migrate (rollback), openapi (export)
 │   └── internal/         # See backend/internal/*/AGENTS.md for domain details
 ├── frontend/             # React 19 + Vite + Tailwind 4, see frontend/AGENTS.md
-├── docs/
+├── docs/                 # Directory map: see docs/AGENTS.md
 │   ├── design/           # Authoritative conventions (Russian), see AGENTS.md
 │   └── app-design/       # HTML prototype + screenshots, see AGENTS.md
 ├── deploy/               # Dockerfile + docker-compose.yml
