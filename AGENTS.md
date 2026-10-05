@@ -5,6 +5,13 @@
 **Branch:** main
 
 ## OVERVIEW
+### Product decisions — explicit owner approval required
+
+- Do not make new product decisions or change existing ones without the owner's explicit approval. This rule applies to the primary agent and all subagents, across code, documentation, and plans.
+- Preserve the meaning of approved requirements: do not make optional features mandatory, remove settings, choose defaults, or change user-facing behavior without separate approval.
+- A request to update documentation, write a plan, or implement a stage does not authorize revising product decisions. The owner's silence is not approval either.
+- If requirements are ambiguous or contradictory, ask the owner first. Until they answer, do not record an assumption as an approved decision or implement it. Clearly separate proposals from approved decisions.
+
 MeloTrove (legacy name: MusicEnreachment) - music library manager with source inventory, audio analysis (Chromaprint), transcoding (ffmpeg), and publication. Go 1.27 backend (Huma/chi API, Bun ORM, River jobs, PostgreSQL) + React 19 frontend (Vite, TanStack Query, Orval-generated client). No auth by design; deployment-boundary security only.
 
 ## STRUCTURE
