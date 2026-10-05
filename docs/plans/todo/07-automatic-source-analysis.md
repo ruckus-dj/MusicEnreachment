@@ -218,12 +218,17 @@ identity. Перечислить terminal/recovery states и FK release behavior
 
 **Готово, когда:** reviewer принимает таблицу «текущее → target → миграция» и
 решение по hash/shared media identity; подтверждена совместимость завершённых,
-failed и queued старых операций. Открытый вопрос no_audio передан владельцу до
-выбора пользовательского поведения.
+failed и queued старых операций. Поведение no_audio соответствует уточнению
+владельца от 2026-10-05 выше; новые правила probe_error не вводятся.
 
 ### 2. Ввести persistence-модель результатов, hash identity и идемпотентные apply
 
 **Зависимости:** 1. **Область:** новые миграции, persistence/models/repos/tests.
+
+Рабочий проект схемы для исполнения:
+[schema proposal](07-automatic-source-analysis-schema-proposal.md).
+Независимый reviewer принял проект пункта 1 (2026-10-05); это не приёмка
+реализованной миграции или остальных пунктов.
 
 Добавить только согласованную схему. При включённой SHA-настройке SHA-256
 вычисляется для новых locations и изменившихся источников; не заполнять hash у
@@ -418,7 +423,7 @@ COMPLETE. Ограничения среды и непроверенные platfo
 | Нынешний manual scan автоматически и durable ставит анализ только после полного успеха. | Шаги 3, 5, 8: transaction/crash recovery и failed scan tests. |
 | `(size, mtime)` определяет freshness; при включённом toggle SHA пересчитывается при изменении stat без требования bytes-proof при прежнем stat. | Шаги 2, 4, 5: exact stat interleavings. |
 | Успехи ffprobe/hash/fingerprint независимы и сохраняются при чужом failure; ручной retry точечный, явный rerun fingerprint сохраняет прежний результат. | Шаги 2–4, 6–7: partial apply и worker/API/UI tests. |
-| Только single-audio-stream файл получает fingerprint; multi-stream даёт unsupported/skipped (не failure) с probe и hash если включён, без retry; no_audio policy не выдумана. | Шаги 1, 4, 6–7: product decision и tests. |
+| Только single-audio-stream файл получает fingerprint; multi-stream даёт unsupported/skipped (не failure) с probe и hash если включён, без retry; no_audio хешируется при enabled согласно решению владельца. | Шаги 1, 4, 6–7: product decision и tests. |
 | Тот же актуальный SHA+fpcalc version переиспользует результат только при вычисленном hash; без hash locations независимы, SHA не выступает fingerprint/recording identity. | Шаги 1–2, 4, 6–7: concurrent dedup/provenance and no-hash tests. |
 | Смена active fpcalc не вызывает массовую переобработку; UI показывает actual/current versions. | Шаги 3, 6–7: tool swap/version UI test и отсутствие bulk jobs. |
 | Старые ffprobe-only rows и operation snapshots переживают миграцию, restart и retry. | Шаги 1–3, 6, 8: legacy fixtures + migration/River tests. |
