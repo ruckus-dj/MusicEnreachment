@@ -37,14 +37,36 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 			}
 			return fmt.Errorf("read source location detail location: %w", err)
 		}
+		var selectedVariantID *uuid.UUID
+		work := new(SourceAnalysisWork)
+		if err := tx.NewSelect().Model(work).
+			Where("source_root_id = ?", rootID).Where("location_id = ?", locationID).
+			Where("relative_path = ?", location.RelativePath).Where("size_bytes = ?", location.SizeBytes).
+			Where("mtime = ?", location.Mtime).Order("created_at DESC").Limit(1).Scan(ctx); err == nil {
+			var probeStep SourceAnalysisStep
+			if err := tx.NewSelect().Model(&probeStep).
+				Where("work_id = ?", work.ID).Where("step = ?", SourceStepProbe).Scan(ctx); err == nil {
+				selectedVariantID = probeStep.SuccessProbeVariantID
+			} else if err != sql.ErrNoRows {
+				return fmt.Errorf("read source location detail selected probe: %w", err)
+			}
+		} else if err != sql.ErrNoRows {
+			return fmt.Errorf("read source location detail current work: %w", err)
+		}
+		if selectedVariantID == nil {
+			selectedVariantID = location.MediaVariantID
+		}
 		var variant *MediaVariant
-		if location.MediaVariantID != nil {
+		if selectedVariantID != nil {
 			variant = new(MediaVariant)
-			if err := tx.NewRaw("SELECT * FROM media_variant WHERE id = ? /* source_location_detail_variant */", *location.MediaVariantID).Scan(ctx, variant); err != nil {
+			if err := tx.NewRaw(`SELECT id, size_bytes, analysis_policy_version, ffprobe_version, ffprobe_json,
+					observed_tags, inspected_at, applied_operation_id, created_at
+					FROM media_variant WHERE id = ? AND ffprobe_version IS NOT NULL /* source_location_detail_variant */`, *selectedVariantID).Scan(ctx, variant); err != nil {
 				if err == sql.ErrNoRows {
-					return fmt.Errorf("read source location detail variant: %w", ErrMediaVariantNotFound)
+					variant = nil
+				} else {
+					return fmt.Errorf("read source location detail variant: %w", err)
 				}
-				return fmt.Errorf("read source location detail variant: %w", err)
 			}
 		}
 		var activeID uuid.UUID

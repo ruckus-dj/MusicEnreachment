@@ -117,6 +117,57 @@ func TestTechnicalProbeKeepsEveryRawStreamIncludingVideo(t *testing.T) {
 	}
 }
 
+func TestTechnicalProbeAllowsNonAudioMediaWithoutChangingRawJSON(t *testing.T) {
+	const videoOnly = `{"format":{"format_name":"matroska","tags":{"title":"kept"}},"streams":[{"codec_type":"video"}]}`
+	process := fakeTechnicalProcessFor(videoOnly, "")
+	probe := newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	output, err := probe.ProbeMediaFile(context.Background(), newBorrowedFixture(t))
+	if err != nil || string(output) != videoOnly {
+		t.Fatalf("output=%q err=%v", output, err)
+	}
+	process = fakeTechnicalProcessFor(videoOnly, "")
+	probe = newTechnicalFFProbe(t, fixedTechnicalStarter(process))
+	useFileTechnicalStarter(probe)
+	if output, err := probe.ProbeTechnicalFile(context.Background(), newBorrowedFixture(t)); err == nil || output != nil {
+		t.Fatalf("strict audio probe output=%q err=%v", output, err)
+	}
+}
+
+// TestTechnicalProbeAnyStreamsAcceptsMinimalStructureAndPreservesRawJSON pins
+// the relaxed structural contract used by ProbeMediaFile: an empty format
+// object beside an empty streams array is a valid no-audio reply, a full format
+// with valid fields is also accepted, the raw response is returned byte-for-byte
+// and exactly one child is launched per probe.
+func TestTechnicalProbeAnyStreamsAcceptsMinimalStructureAndPreservesRawJSON(t *testing.T) {
+	cases := map[string]string{
+		"minimal empty structure": `{"format":{},"streams":[]}`,
+		"format fields":           validTechnicalJSON,
+	}
+	for name, response := range cases {
+		t.Run(name, func(t *testing.T) {
+			launches := 0
+			process := fakeTechnicalProcessFor(response, "")
+			probe := newTechnicalFFProbe(t, func(_ context.Context, executable string, args []string) (technicalProcess, error) {
+				launches++
+				process.executable, process.args = executable, args
+				return process, nil
+			})
+			useFileTechnicalStarter(probe)
+			output, err := probe.ProbeMediaFile(context.Background(), newBorrowedFixture(t))
+			if err != nil {
+				t.Fatalf("ProbeMediaFile: %v", err)
+			}
+			if string(output) != response {
+				t.Fatalf("output = %q, want the raw response unchanged", output)
+			}
+			if launches != 1 {
+				t.Fatalf("launches = %d, want exactly one", launches)
+			}
+		})
+	}
+}
+
 func TestTechnicalProbeRejectsStructurallyInvalidResponses(t *testing.T) {
 	cases := []struct {
 		name   string

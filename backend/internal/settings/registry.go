@@ -189,6 +189,10 @@ var (
 		name: LRCLIBEnabledKey, kind: "bool", parse: strconv.ParseBool,
 		serialize: strconv.FormatBool, defaultVal: &defaultTrue, mutable: true,
 	}
+	sha256Setting = settingDefinition[bool]{
+		name: SHA256EnabledKey, kind: "bool", parse: strconv.ParseBool,
+		serialize: strconv.FormatBool, defaultVal: &defaultTrue, mutable: true,
+	}
 	logSetting = settingDefinition[string]{
 		name: LogLevelKey, kind: "enum", parse: parseLevel,
 		serialize: func(value string) string { return value }, defaultVal: &defaultInfo, mutable: true,
@@ -220,6 +224,6 @@ var registeredSettings = []registeredSetting{
 	platformOSSetting, platformArchSetting, toolsRootSetting, outputRootSetting,
 	outputCaseSetting, outputUnicodeSetting, publicationSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
-	musicBrainzVerifiedSetting, lrclibSetting, logSetting,
+	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
 	activeFFmpegSetting, activeFPCalcSetting, setupCompletedSetting,
 }

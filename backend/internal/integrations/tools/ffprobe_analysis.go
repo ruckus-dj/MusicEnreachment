@@ -21,6 +21,22 @@ const maxProbeStderrBytes = 64 << 10
 // ProbeTechnicalFile performs the bounded structural probe against an already
 // opened source descriptor. The descriptor is never converted to a pathname.
 func (p *FFProbe) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
+	return p.probeTechnicalFile(ctx, file, true)
+}
+
+// ProbeTechnicalFileAnyStreams returns the same bounded technical JSON while
+// accepting media with no audio stream.
+func (p *FFProbe) ProbeTechnicalFileAnyStreams(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
+	return p.probeTechnicalFile(ctx, file, false)
+}
+
+// ProbeMediaFile is the full technical media probe; it preserves ffprobe's raw
+// JSON so callers can retain tags and provenance without a second invocation.
+func (p *FFProbe) ProbeMediaFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
+	return p.ProbeTechnicalFileAnyStreams(ctx, file)
+}
+
+func (p *FFProbe) probeTechnicalFile(ctx context.Context, file sourcefs.RegularFile, requireAudio bool) ([]byte, error) {
 	if file == nil {
 		return nil, errors.New("ffprobe source file is required")
 	}
@@ -31,7 +47,7 @@ func (p *FFProbe) ProbeTechnicalFile(ctx context.Context, file sourcefs.RegularF
 		if err != nil {
 			return err
 		}
-		if err := validateTechnicalResponse(output); err != nil {
+		if err := validateTechnicalResponse(output, requireAudio); err != nil {
 			output = nil
 			return err
 		}
@@ -51,11 +67,11 @@ func stopTechnicalProcess(process technicalProcess, stdout, stderr io.ReadCloser
 }
 
 // validateTechnicalResponse enforces the mandatory structure only: the reply
-// must be a JSON object with a format object, a streams array of stream
-// objects that each carry a string codec_type, and at least one audio stream.
-// It deliberately leaves numeric normalization, tag collection and unknown
-// values to the typed parsing stage.
-func validateTechnicalResponse(output []byte) error {
+// must be a JSON object with a format object and a streams array of stream
+// objects that each carry a string codec_type. Audio is mandatory by default;
+// full-media probes can opt out. Numeric normalization, tags and unknown values
+// are left to the typed parsing stage.
+func validateTechnicalResponse(output []byte, requireAudio ...bool) error {
 	if len(bytes.TrimSpace(output)) == 0 {
 		return errors.New("ffprobe returned no output")
 	}
@@ -103,7 +119,8 @@ func validateTechnicalResponse(output []byte) error {
 			hasAudio = true
 		}
 	}
-	if !hasAudio {
+	needsAudio := len(requireAudio) == 0 || requireAudio[0]
+	if needsAudio && !hasAudio {
 		return errors.New("ffprobe response has no audio stream")
 	}
 	return nil

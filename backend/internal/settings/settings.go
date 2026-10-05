@@ -26,6 +26,7 @@ const (
 	MusicBrainzConfigIdentityKey  = "musicbrainz_config_identity"
 	MusicBrainzVerifiedAtKey      = "musicbrainz_verified_at"
 	LRCLIBEnabledKey              = "lrclib_enabled"
+	SHA256EnabledKey              = "sha256_enabled"
 	LogLevelKey                   = "log_level"
 	ActiveFFmpegInstallationKey   = "active_ffmpeg_installation_id"
 	ActiveFPCalcInstallationKey   = "active_fpcalc_installation_id"
@@ -472,6 +473,12 @@ func (r *Registry) GetLRCLIBEnabled(ctx context.Context) (bool, error) {
 	return value, err
 }
 
+// GetSHA256Enabled returns whether SHA-256 sampling is enabled.
+func (r *Registry) GetSHA256Enabled(ctx context.Context) (bool, error) {
+	value, _, err := readSetting(ctx, r.store, sha256Setting)
+	return value, err
+}
+
 func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
 	tools, _, err := readSetting(ctx, r.store, toolsRootSetting)
 	if err != nil {
@@ -547,6 +554,15 @@ func (r *Registry) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
 		return err
 	}
 	return r.store.Set(ctx, LRCLIBEnabledKey, value)
+}
+
+// SetSHA256Enabled stores the SHA-256 sampling flag.
+func (r *Registry) SetSHA256Enabled(ctx context.Context, enabled bool) error {
+	value, err := serializeSetting(sha256Setting, enabled)
+	if err != nil {
+		return err
+	}
+	return r.store.Set(ctx, SHA256EnabledKey, value)
 }
 
 // ComputeConfigurationHealth checks all required settings and returns health status.

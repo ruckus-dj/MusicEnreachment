@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const sourceScanCandidateColumns = "relative_path text, size_bytes bigint, mtime timestamptz, probe_status text, safe_error text"
+const sourceScanCandidateColumns = "relative_path text, size_bytes bigint, mtime timestamptz, probe_status text, safe_error text, source_sha256 text, sha256_calculated_at timestamptz, sha256_applied_operation_id uuid, audio_stream_count integer, ffprobe_version text, ffprobe_json jsonb, analysis_policy_version integer, observed_tags jsonb, inspected_at timestamptz, probe_applied_operation_id uuid"
 
 // sourceLocationRows projects the candidate batch onto the location table. A row
 // keeps the id of a location already stored for its relative path, which is what
@@ -38,8 +39,12 @@ func storeSourceScanCandidates(ctx context.Context, database bun.IDB, operationI
 		return err
 	}
 	if _, err := database.NewRaw(
-		`INSERT INTO source_scan_candidate (id, operation_id, relative_path, size_bytes, mtime, probe_status, safe_error)
-		 SELECT gen_random_uuid(), ?::uuid, batch.relative_path, batch.size_bytes, batch.mtime, batch.probe_status, batch.safe_error
+		`INSERT INTO source_scan_candidate (id, operation_id, relative_path, size_bytes, mtime, probe_status, safe_error,
+		 source_sha256, sha256_calculated_at, sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json,
+		 analysis_policy_version, observed_tags, inspected_at, probe_applied_operation_id)
+		 SELECT gen_random_uuid(), ?::uuid, batch.relative_path, batch.size_bytes, batch.mtime, batch.probe_status, batch.safe_error,
+		 decode(batch.source_sha256,'hex'), batch.sha256_calculated_at, batch.sha256_applied_operation_id, batch.audio_stream_count,
+		 batch.ffprobe_version, batch.ffprobe_json, batch.analysis_policy_version, batch.observed_tags, batch.inspected_at, batch.probe_applied_operation_id
 		 FROM jsonb_to_recordset(?) AS batch(`+sourceScanCandidateColumns+`)`,
 		operationID, marshalled,
 	).Exec(ctx); err != nil {
@@ -51,15 +56,35 @@ func storeSourceScanCandidates(ctx context.Context, database bun.IDB, operationI
 func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) ([]json.RawMessage, error) {
 	marshalled := make([]json.RawMessage, 0, len(candidates))
 	for _, candidate := range candidates {
+		var digestHex *string
+		if len(candidate.SourceSHA256) > 0 {
+			encoded := hex.EncodeToString(candidate.SourceSHA256)
+			digestHex = &encoded
+		}
 		payload, err := json.Marshal(struct {
-			RelativePath string    `json:"relative_path"`
-			SizeBytes    int64     `json:"size_bytes"`
-			Mtime        time.Time `json:"mtime"`
-			ProbeStatus  string    `json:"probe_status"`
-			SafeError    *string   `json:"safe_error"`
+			RelativePath             string          `json:"relative_path"`
+			SizeBytes                int64           `json:"size_bytes"`
+			Mtime                    time.Time       `json:"mtime"`
+			ProbeStatus              string          `json:"probe_status"`
+			SafeError                *string         `json:"safe_error"`
+			SourceSHA256             *string         `json:"source_sha256"`
+			SHA256CalculatedAt       *time.Time      `json:"sha256_calculated_at"`
+			SHA256AppliedOperationID *uuid.UUID      `json:"sha256_applied_operation_id"`
+			AudioStreamCount         *int            `json:"audio_stream_count"`
+			FFProbeVersion           *string         `json:"ffprobe_version"`
+			FFProbeJSON              json.RawMessage `json:"ffprobe_json"`
+			AnalysisPolicyVersion    *int            `json:"analysis_policy_version"`
+			ObservedTags             json.RawMessage `json:"observed_tags"`
+			InspectedAt              *time.Time      `json:"inspected_at"`
+			ProbeAppliedOperationID  *uuid.UUID      `json:"probe_applied_operation_id"`
 		}{
 			RelativePath: candidate.RelativePath, SizeBytes: candidate.SizeBytes, Mtime: candidate.Mtime,
 			ProbeStatus: candidate.ProbeStatus, SafeError: candidate.SafeError,
+			SourceSHA256: digestHex, SHA256CalculatedAt: candidate.SHA256CalculatedAt,
+			SHA256AppliedOperationID: candidate.SHA256AppliedOperationID, AudioStreamCount: candidate.AudioStreamCount,
+			FFProbeVersion: candidate.FFProbeVersion, FFProbeJSON: candidate.FFProbeJSON,
+			AnalysisPolicyVersion: candidate.AnalysisPolicyVersion, ObservedTags: candidate.ObservedTags,
+			InspectedAt: candidate.InspectedAt, ProbeAppliedOperationID: candidate.ProbeAppliedOperationID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("prepare scan candidate %q: %w", candidate.RelativePath, err)
@@ -76,7 +101,9 @@ func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) ([]json.
 func loadSourceScanCandidates(ctx context.Context, database bun.IDB, operationID uuid.UUID) ([]SourceScanCandidateInput, error) {
 	candidates := make([]SourceScanCandidateInput, 0)
 	if err := database.NewRaw(
-		`SELECT relative_path, size_bytes, mtime, probe_status, safe_error
+		`SELECT relative_path, size_bytes, mtime, probe_status, safe_error, source_sha256, sha256_calculated_at,
+		 sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json, analysis_policy_version,
+		 observed_tags, inspected_at, probe_applied_operation_id
 		 FROM source_scan_candidate WHERE operation_id = ? ORDER BY relative_path, id`,
 		operationID,
 	).Scan(ctx, &candidates); err != nil {
@@ -147,12 +174,12 @@ func insertSourceLocations(ctx context.Context, tx bun.Tx, root SourceRoot, gene
 		Set("probe_status = EXCLUDED.probe_status").
 		Set("safe_error = EXCLUDED.safe_error").
 		Set("last_seen_scan_generation = EXCLUDED.last_seen_scan_generation").
-		// An unchanged file that is still audio keeps the variant of its last
-		// successful analysis; a file whose size or mtime moved, or that is no
-		// longer audio, loses the link and starts from no result. The link is
+		// An unchanged file keeps its current identity, including a SHA-only or
+		// no-audio result. A file whose size or mtime moved loses the link.
+		// The link is
 		// dropped explicitly here; it is never nulled implicitly by the variant
 		// cleanup.
-		Set("media_variant_id = CASE WHEN source_location.size_bytes = EXCLUDED.size_bytes AND source_location.mtime = EXCLUDED.mtime AND EXCLUDED.probe_status = 'audio' THEN source_location.media_variant_id ELSE NULL END").
+		Set("media_variant_id = CASE WHEN source_location.size_bytes = EXCLUDED.size_bytes AND source_location.mtime = EXCLUDED.mtime AND (source_location.probe_status = EXCLUDED.probe_status OR (source_location.probe_status = 'probe_error' AND EXCLUDED.probe_status = 'audio')) THEN source_location.media_variant_id ELSE NULL END").
 		Set("updated_at = now()").
 		Exec(ctx); err != nil {
 		return fmt.Errorf("write source locations: %w", err)

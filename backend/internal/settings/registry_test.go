@@ -24,6 +24,7 @@ func TestRegistryDefinesEveryTypedSetting(t *testing.T) {
 		MusicBrainzConfigIdentityKey:  {"uuid", false, true},
 		MusicBrainzVerifiedAtKey:      {"timestamp", false, true},
 		LRCLIBEnabledKey:              {"bool", true, true},
+		SHA256EnabledKey:              {"bool", true, true},
 		LogLevelKey:                   {"enum", true, true},
 		ActiveFFmpegInstallationKey:   {"uuid", false, true},
 		ActiveFPCalcInstallationKey:   {"uuid", false, true},

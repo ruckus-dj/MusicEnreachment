@@ -130,11 +130,24 @@ func (repository *SourceInventoryRepository) GetSourceLocation(ctx context.Conte
 // GetMediaVariant reads the saved technical result of one analysis.
 func (repository *SourceInventoryRepository) GetMediaVariant(ctx context.Context, id uuid.UUID) (*MediaVariant, error) {
 	variant := new(MediaVariant)
-	if err := repository.db.NewSelect().Model(variant).Where("id = ?", id).Scan(ctx); err != nil {
+	if err := repository.db.NewSelect().Model(variant).Where("id = ?", id).Where("ffprobe_version IS NOT NULL").Scan(ctx); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("get media variant: %w", ErrMediaVariantNotFound)
 		}
 		return nil, fmt.Errorf("get media variant: %w", err)
+	}
+	return variant, nil
+}
+
+// GetSourceMediaVariant reads the nullable full result shape, preserving the
+// distinction between SHA-only and a successful ffprobe result.
+func (repository *SourceInventoryRepository) GetSourceMediaVariant(ctx context.Context, id uuid.UUID) (*SourceMediaVariant, error) {
+	variant := new(SourceMediaVariant)
+	if err := repository.db.NewSelect().Model(variant).Where("id = ?", id).Scan(ctx); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("get source media variant: %w", ErrMediaVariantNotFound)
+		}
+		return nil, fmt.Errorf("get source media variant: %w", err)
 	}
 	return variant, nil
 }
@@ -302,10 +315,28 @@ func (repository *SourceInventoryRepository) ApplyAnalysisResult(ctx context.Con
 func deleteOrphanedMediaVariants(ctx context.Context, tx bun.IDB) error {
 	if _, err := tx.NewRaw(
 		`DELETE FROM media_variant AS variant
-		 WHERE NOT EXISTS (SELECT 1 FROM source_location AS location WHERE location.media_variant_id = variant.id)
-		   AND NOT EXISTS (SELECT 1 FROM operation AS operation WHERE operation.analysis_media_variant_id = variant.id)`,
+			 WHERE variant.source_sha256 IS NULL
+			   AND NOT EXISTS (SELECT 1 FROM source_location AS location WHERE location.media_variant_id = variant.id)
+			   AND NOT EXISTS (SELECT 1 FROM operation AS operation WHERE operation.analysis_media_variant_id = variant.id)
+			   AND NOT EXISTS (SELECT 1 FROM source_analysis_step AS step
+			       WHERE step.success_sha_variant_id = variant.id OR step.success_probe_variant_id = variant.id)
+			   AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
+			       JOIN source_analysis_step AS step ON step.work_id = hold.work_id
+			       WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued', 'running'))
+			         AND (step.success_sha_variant_id = variant.id OR step.success_probe_variant_id = variant.id))`,
 	).Exec(ctx); err != nil {
 		return fmt.Errorf("delete orphaned media variants: %w", err)
+	}
+	if _, err := tx.NewRaw(
+		`DELETE FROM media_fingerprint_result AS result
+		 WHERE NOT EXISTS (SELECT 1 FROM source_analysis_step AS step WHERE step.success_fingerprint_result_id = result.id)
+		   AND NOT EXISTS (SELECT 1 FROM media_fingerprint_cache AS cache WHERE cache.result_id = result.id)
+		   AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
+		       JOIN source_analysis_step AS step ON step.work_id = hold.work_id
+		       WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued', 'running'))
+		         AND step.success_fingerprint_result_id = result.id)`,
+	).Exec(ctx); err != nil {
+		return fmt.Errorf("delete orphaned source fingerprint results: %w", err)
 	}
 	return nil
 }

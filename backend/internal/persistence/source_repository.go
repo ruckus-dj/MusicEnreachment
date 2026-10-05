@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -38,11 +39,21 @@ const (
 // SourceScanCandidateInput is one traversed file a scan wants to apply. It
 // carries no identity: identity belongs to the location row the apply reuses.
 type SourceScanCandidateInput struct {
-	RelativePath string
-	SizeBytes    int64
-	Mtime        time.Time
-	ProbeStatus  string
-	SafeError    *string
+	RelativePath             string
+	SizeBytes                int64
+	Mtime                    time.Time
+	ProbeStatus              string
+	SafeError                *string
+	SourceSHA256             []byte
+	SHA256CalculatedAt       *time.Time
+	SHA256AppliedOperationID *uuid.UUID
+	AudioStreamCount         *int
+	FFProbeVersion           *string         `bun:"ffprobe_version"`
+	FFProbeJSON              json.RawMessage `bun:"ffprobe_json"`
+	AnalysisPolicyVersion    *int
+	ObservedTags             json.RawMessage
+	InspectedAt              *time.Time
+	ProbeAppliedOperationID  *uuid.UUID
 }
 
 // SourceLocationCursor is the stable pagination key of the location list. It

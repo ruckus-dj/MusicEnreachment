@@ -21,6 +21,11 @@
 Эти явно согласованные в сессии реализации уточнения имеют приоритет над
 описанием прежнего quick-probe/manual-analysis разделения ниже:
 
+- Уточнение владельца: это dev-ветка, установок и релизов нет. Поддержка прежней
+  модели как «legacy», backward compatibility и параллельные исполнители
+  snapshot v1/v2 не требуются. Реализуется одна актуальная модель; требования
+  к сохранению успешных шагов, retry/recovery и provenance остаются в силе.
+
 - SHA-256 toggle по умолчанию включён. При включённом toggle hash обязателен
   для всех новых/изменённых файлов инвентаря, включая `no_audio`; digest позволяет
   переиспользовать известный анализ, в том числе результат отсутствия audio.
@@ -48,8 +53,11 @@ Chromaprint через managed `fpcalc`. Отдельно нажимать Analy
 нужно. Глобальная настройка SHA-256 вкл/выкл — типизированная runtime setting в
 PostgreSQL с управлением через Settings UI; новой env-переменной нет. Никакого
 scheduled scan этот этап не добавляет.
-Setting фиксируется для analysis operation при её старте; последующее изменение
-toggle влияет на новые operations, а не меняет уже начатую operation.
+SHA-setting фиксируется при создании scan operation в её durable
+snapshot, поскольку hash preparation выполняется до probe. Последующий analysis
+work наследует эту policy, не читая toggle заново; explicit retry failed hash
+сохраняет исходную policy. Переключение не меняет уже поставленную работу и не
+создаёт hash intent для неизменённых locations без digest.
 Само переключение не создаёт analysis jobs и не инициирует массовый rehash.
 
 - Location текущий, если наблюдаемые `size` и `mtime` совпадают. При включённой
@@ -84,11 +92,10 @@ toggle влияет на новые operations, а не меняет уже на
   возможны только при актуальном вычисленном hash; без hash locations остаются
   независимыми, а fingerprint не является identity. Hash задаёт точное равенство
   bytes, но не уникальность fingerprint или произведения.
-- Существующие ручные ffprobe-only results и durable operations должны остаться
-  читаемыми. Старый анализ не считать новым анализом «всех шагов» и не объявлять
-  fingerprint/SHA успешно выполненными. Snapshot schema эволюционирует
-  backward-compatible; нельзя додумывать недостающие поля старой операции из
-  сегодняшних settings.
+- Частичный результат не считается успешным выполнением всех шагов. Не
+  придумывать SHA/fingerprint или дополнять snapshot текущими settings.
+  Прежний ручной ffprobe-only путь заменяется актуальным поэтапным анализом,
+  а не сохраняется как отдельный совместимый исполнитель.
 - Вне scope: scheduled scan, automatic retry/backoff, кнопка полного повторного
   анализа как основное действие, настройки/пороговые условия, не утверждённые
   владельцем (кроме согласованного SHA-256 toggle), staged/work directory, inbox groups, matching, AcoustID,
@@ -185,11 +192,18 @@ version. Явный ручной повтор разрешён: как точе�
 
 ## Порядок реализации
 
-Шаги последовательны. Исполнитель сначала читает локальные AGENTS.md, текущие
+Интеграция шагов последовательна. Независимые адаптеры инструментов и их unit
+tests из пункта 4 можно реализовать параллельно пунктам 2–3: они не меняют
+persistence, очередь, API или UI. Подключение адаптеров к исполнению и приёмка
+пункта 4 остаются после пунктов 2–3. Полные gates выполняются строго по одному.
+Typed SHA-setting в registry также можно подготовить независимо: её значение
+нужно для immutable scan snapshot в пункте 3. REST/read model и UI этой настройки
+остаются в пунктах 6–7; само добавление registry не запускает работу.
+Исполнитель сначала читает локальные AGENTS.md, текущие
 migrations, models, persistence, service, API, worker, generated client и
 соседние tests. Названия новых сущностей ниже — понятия контракта, не требование
 к именованию. Конфликт актуального кода с контрактом, необходимость нового
-продуктового выбора или недостаточная backward compatibility останавливают
+продуктового выбора или нарушения актуального контракта останавливают
 зависимый шаг и возвращаются ведущему агенту/владельцу; не исправлять scope
 молча.
 
@@ -197,7 +211,7 @@ migrations, models, persistence, service, API, worker, generated client и
 допустимы только для диагностики его failure. Generated client обновлять штатным
 pipeline, не вручную. Коммиты — только по отдельному явному разрешению сессии.
 
-### 1. Сверить физическую модель и спроектировать backward-compatible state
+### 1. Сверить физическую модель и спроектировать актуальный state
 
 **Зависимости:** нет. **Область:** `docs/design/data-model.md`,
 `docs/design/music_ingest_redesign.dbml`, миграции, operation snapshots,
@@ -207,18 +221,17 @@ persistence models.
 целевыми независимыми шагами, shared SHA identity и lifecycle provenance.
 Предложить физическую схему: какие результаты принадлежат location/media
 identity, как сохраняются per-step ошибки и версии, какие уникальные ключи и
-FK соблюдают legacy variant references. Проверить applied migration chain и
-rollback на существующих manual analysis rows. Не переписывать старые миграции;
+FK защищают текущие result references. Проверить migration chain и rollback
+актуальной схемы. Не переписывать старые миграции;
 не менять концептуальный DBML так, будто предложение уже применено.
 
-Заранее описать schema-version dispatch: старый snapshot читается исходным
-ручным ffprobe-only исполнителем/путём и не получает придуманного SHA/fingerprint;
-новый snapshot однозначно описывает target step(s), tool installations и stat
-identity. Перечислить terminal/recovery states и FK release behavior.
+Описать единую актуальную форму snapshot: target step(s), tool installations
+и stat identity, terminal/recovery states и FK release behavior. Malformed
+snapshot получает безопасный отказ с освобождением удержаний; нельзя угадывать
+обязательные поля из текущих settings или переписывать сохранённый snapshot.
 
 **Готово, когда:** reviewer принимает таблицу «текущее → target → миграция» и
-решение по hash/shared media identity; подтверждена совместимость завершённых,
-failed и queued старых операций. Поведение no_audio соответствует уточнению
+решение по hash/shared media identity и текущим операциям. Поведение no_audio соответствует уточнению
 владельца от 2026-10-05 выше; новые правила probe_error не вводятся.
 
 ### 2. Ввести persistence-модель результатов, hash identity и идемпотентные apply
@@ -227,8 +240,9 @@ failed и queued старых операций. Поведение no_audio со
 
 Рабочий проект схемы для исполнения:
 [schema proposal](07-automatic-source-analysis-schema-proposal.md).
-Независимый reviewer принял проект пункта 1 (2026-10-05); это не приёмка
-реализованной миграции или остальных пунктов.
+Первое review пункта 1 выполнено 2026-10-05. После уточнения владельца об
+отсутствии legacy проект упрощается и требует повторного review; прежний PASS
+не означает приёмку изменённой схемы или реализованной миграции.
 
 Добавить только согласованную схему. При включённой SHA-настройке SHA-256
 вычисляется для новых locations и изменившихся источников; не заполнять hash у
@@ -248,10 +262,11 @@ digest-less variants на основании fingerprints. Изменивший�
 references и активные operations/read holds; не полагаться на CASCADE как на
 неявную семантику media lifecycle.
 
-**Готово, когда:** чистая миграция, rollback, upgrade с существующими данными,
+**Готово, когда:** чистая миграция и rollback актуальной схемы,
 уникальный concurrent insert одного digest, повторный apply, stale identity,
-failure после успешного sibling step и сохранение старых references покрыты
-PostgreSQL tests. Тесты также доказывают, что no-hash location не deduplicates и
+failure после успешного sibling step и сохранение references актуальных
+результатов покрыты PostgreSQL tests. Upgrade fixtures прежней модели не
+требуются. Тесты также доказывают, что no-hash location не deduplicates и
 не переиспользует fingerprint, а stale digest не участвует в identity/reuse.
 Прежние locations не получают fabricated digest/fingerprint.
 
@@ -260,9 +275,10 @@ PostgreSQL tests. Тесты также доказывают, что no-hash loc
 **Зависимости:** 1–2. **Область:** analysis start/service, operation snapshot /
 dispatch, persistence enqueue, tool mutation boundaries, River workers.
 
-Выбрать минимальную схему operation compatible с существующей `analyze_source`.
+Выбрать минимальную актуальную схему operation для `analyze_source`, без
+параллельного compatibility executor.
 Atomic durable start/enqueue для требуемых шагов использует server-resolved
-installation IDs только для необходимых tool steps, versioned snapshot и
+installation IDs только для необходимых tool steps, единую актуальную форму snapshot и
 `(root, location, size, mtime)`. Hold нужного tool сериализуется с delete/move;
 retry конкретного failed шага восстанавливает только необходимый hold и durable
 job атомарно. SHA retry не требует installation. Fingerprint retry использует
@@ -272,14 +288,13 @@ job атомарно. SHA retry не требует installation. Fingerprint re
 
 Определить lock ordering относительно scan, setup tools activation/move/delete,
 source root mutations и concurrent retries. Независимые roots и операции, не
-использующие один ресурс, остаются независимыми. Сохранить dispatch/worker для
-уже существующих snapshot версий; не превращать schema migration в массовую
-перепостановку старых операций.
+использующие один ресурс, остаются независимыми. Использовать один актуальный
+dispatch/worker; schema migration не запускает массовый анализ или backfill.
 
 **Готово, когда:** PostgreSQL/River integration tests доказывают atomic enqueue,
 commit/rollback, duplicate delivery, holds только используемых installations,
 оба порядка
-конкуренции с move/delete/retry и legacy snapshot execution. Нет job без
+конкуренции с move/delete/retry и выполнение актуального snapshot. Нет job без
 durable target или operation без recoverable job/intent.
 
 ### 4. Выделить шаги ffprobe, SHA-256 и fpcalc с независимым сохранением
@@ -343,8 +358,10 @@ OpenAPI/Orval-generated client, Settings API/runtime setting, API tests.
 Settings API читает и изменяет глобальный SHA-256 toggle как typed runtime
 setting, сохранённый в PostgreSQL; client не задаёт setting через env. Если hash
 не вычислялся, digest остаётся null/отсутствующим, а не fabricated. Setting
-сэмплируется при создании analysis operation и фиксируется в durable snapshot,
-чтобы позднейшее переключение не меняло поведение уже поставленной работы. GET
+сэмплируется при создании scan operation и фиксируется в её durable snapshot;
+последующий analysis work наследует policy, explicit retry failed hash сохраняет
+исходную policy. Переключение не меняет поставленную работу и не создаёт hash
+intent для неизменённых locations без digest. GET
 inspector возвращает независимый статус шагов, сохранённые данные/версии,
 активную operation и актуальную active fpcalc version. Retry принимает только
 конкретный поддерживаемый failed step и текущую expected identity; client не
@@ -358,7 +375,7 @@ fingerprint остаётся читаемым; неуспешный rerun не �
 операций.
 
 **Готово, когда:** API tests проверяют enabled/disabled setting persistence and
-readback, старые и новые snapshots, 404/409/503
+readback, актуальные и malformed snapshots, 404/409/503
 границы, stale retry, неправильный шаг, успешный и неуспешный step retry, явный
 rerun fingerprint успешного результата прежней версии текущей active `fpcalc`,
 сохранение прежнего fingerprint при неудаче, tool version display, shared hash
@@ -394,7 +411,7 @@ after reload; scan → automatic queued/running/success,
 partial success + fpcalc failure, step-only retry, явный rerun fingerprint
 прежней версии с сохранением прежнего результата при неудаче, multi-stream
 unsupported/skipped без retry, version change lazy state, shared hash reuse,
-source changed/stale, active reconnect, legacy ffprobe-only location и
+source changed/stale, active reconnect, частичный ffprobe-only результат и
 отказ/ошибки без потери прежних результатов.
 
 ### 8. Обновить документацию и провести независимую приёмку
@@ -426,7 +443,7 @@ COMPLETE. Ограничения среды и непроверенные platfo
 | Только single-audio-stream файл получает fingerprint; multi-stream даёт unsupported/skipped (не failure) с probe и hash если включён, без retry; no_audio хешируется при enabled согласно решению владельца. | Шаги 1, 4, 6–7: product decision и tests. |
 | Тот же актуальный SHA+fpcalc version переиспользует результат только при вычисленном hash; без hash locations независимы, SHA не выступает fingerprint/recording identity. | Шаги 1–2, 4, 6–7: concurrent dedup/provenance and no-hash tests. |
 | Смена active fpcalc не вызывает массовую переобработку; UI показывает actual/current versions. | Шаги 3, 6–7: tool swap/version UI test и отсутствие bulk jobs. |
-| Старые ffprobe-only rows и operation snapshots переживают миграцию, restart и retry. | Шаги 1–3, 6, 8: legacy fixtures + migration/River tests. |
+| Актуальная модель переживает restart/retry; migration и rollback не фабрикуют результаты. | Шаги 1–3, 6, 8: migration/River tests актуального контракта. |
 | Источники read-only; holds нужны только используемым tools, чужие roots/уже сматченные и опубликованные состояния не портятся. | Шаги 3–5, 8: source byte evidence, lock/race tests, references audit. |
 | Scope остаётся без scheduled scan/auto retry/matching/groups/publication. | Шаги 5–8: независимый review документации, API и diff. |
 | `task verify` и независимая приёмка завершены. | Шаг 8: gate evidence и COMPLETE report. |

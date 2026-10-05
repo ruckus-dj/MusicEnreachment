@@ -22,6 +22,46 @@ import (
 // rollback test isolates exactly this migration by name, never "the last element
 // of the collection", so a later migration cannot silently change what it runs.
 const analysisVariantMigration = "20261005000000"
+const automaticSourceAnalysisMigration = "20261006000000"
+
+func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChangesWithPostgreSQL(t *testing.T) {
+	database := testpostgres.Open(t)
+	testpostgres.Reset(t, database)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, automaticSourceAnalysisMigration))
+	migration := migrationNamed(t, collection, automaticSourceAnalysisMigration)
+	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+
+	digest := make([]byte, 32)
+	digest[0] = 0x5a
+	variantID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO media_variant(id,size_bytes,source_sha256,sha256_calculated_at,sha256_algorithm,sha256_applied_operation_id) VALUES(?,4096,?,now(),'SHA-256',?)`, variantID, digest, uuid.New()); err != nil {
+		t.Fatalf("insert populated analysis result: %v", err)
+	}
+
+	rollback := migrate.NewMigrator(database, migrationSet(t, migration), migrate.WithMarkAppliedOnSuccess(true))
+	if _, err := rollback.Rollback(ctx); err == nil {
+		t.Fatal("rollback with persisted analysis results succeeded, want refusal")
+	}
+	if relation := relationName(t, database, "media_variant"); relation == nil {
+		t.Fatal("media_variant was dropped despite rollback refusal")
+	}
+	if !columnExists(t, database, "media_variant", "source_sha256") {
+		t.Fatal("source_sha256 column was removed despite rollback refusal")
+	}
+	var count int
+	if err := database.NewRaw(`SELECT count(*) FROM media_variant WHERE id=? AND source_sha256=?`, variantID, digest).Scan(ctx, &count); err != nil || count != 1 {
+		t.Fatalf("stored result after refused rollback = %d, %v; want it unchanged", count, err)
+	}
+}
+
+func migrationSet(t *testing.T, migration *migrate.Migration) *migrate.Migrations {
+	t.Helper()
+	collection := migrate.NewMigrations()
+	collection.Add(*migration)
+	return collection
+}
 
 // TestSourceMediaVariantMigrationRollbackWithPostgreSQL applies every migration
 // before the analysis-result pair, then the pair as its own migration group, and
@@ -64,7 +104,9 @@ func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
 		t.Fatalf("media_variant exists before its migration: %s", *relation)
 	}
 
-	migrator := migrate.NewMigrator(database, full, migrate.WithMarkAppliedOnSuccess(true))
+	// Keep this rollback focused on the migration under test. Later migrations
+	// intentionally add dependencies to the schema and must not be batched here.
+	migrator := migrate.NewMigrator(database, migrationSet(t, migrationNamed(t, full, analysisVariantMigration)), migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
 		t.Fatalf("initialize the full migration set: %v", err)
 	}
@@ -163,8 +205,20 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 			"media_variant_analysis_policy_version_positive")
 		requireViolation(t, tryVariantVersion(t, ctx, database, ""),
 			"media_variant_ffprobe_version_not_empty")
-		requireViolation(t, tryVariantWithoutOperation(t, ctx, database),
-			"applied_operation_id")
+		if err := tryVariantSHAOnly(t, ctx, database); err != nil {
+			t.Fatalf("insert SHA-only variant without probe provenance: %v", err)
+		}
+		var nullableProbeRows int
+		if err := database.NewRaw(`SELECT count(*) FROM media_variant WHERE ffprobe_version IS NULL AND ffprobe_json IS NULL AND analysis_policy_version IS NULL AND observed_tags IS NULL AND inspected_at IS NULL AND applied_operation_id IS NULL`).Scan(ctx, &nullableProbeRows); err != nil {
+			t.Fatalf("count null-probe variants: %v", err)
+		}
+		if nullableProbeRows != 1 {
+			t.Fatalf("null-probe variants = %d, want 1", nullableProbeRows)
+		}
+		_, err := database.ExecContext(ctx, `INSERT INTO media_variant (id, size_bytes, ffprobe_version) VALUES (?, 128, '7.1')`, uuid.New())
+		if err == nil || !strings.Contains(err.Error(), "media_variant_probe_group_all_or_none") {
+			t.Fatalf("partial probe provenance error = %v, want media_variant_probe_group_all_or_none violation", err)
+		}
 	})
 
 	t.Run("analyze_source_target_shape", func(t *testing.T) {
@@ -614,12 +668,19 @@ func tryVariantVersion(t *testing.T, ctx context.Context, database *bun.DB, vers
 		uuid.New(), version, uuid.New())
 }
 
-func tryVariantWithoutOperation(t *testing.T, ctx context.Context, database *bun.DB) error {
+// tryVariantSHAOnly inserts the valid non-probe half of the single provenance
+// model: the whole SHA-256 group is populated while the entire probe group stays
+// NULL. media_variant_probe_group_all_or_none accepts it because every probe
+// column is NULL, unlike the partial probe group below that names ffprobe_version
+// but no applied_operation_id.
+func tryVariantSHAOnly(t *testing.T, ctx context.Context, database *bun.DB) error {
 	t.Helper()
+	digest := make([]byte, 32)
+	digest[0] = 0x1b
 	return execError(ctx, database,
-		`INSERT INTO media_variant (id, size_bytes, analysis_policy_version, ffprobe_version, ffprobe_json, observed_tags, inspected_at)
-		 VALUES (?, 128, 1, '7.1', '{}'::jsonb, '{}'::jsonb, now())`,
-		uuid.New())
+		`INSERT INTO media_variant (id, size_bytes, source_sha256, sha256_calculated_at, sha256_algorithm, sha256_applied_operation_id)
+		 VALUES (?, 128, ?, now(), 'SHA-256', ?)`,
+		uuid.New(), digest, uuid.New())
 }
 
 func insertOperation(t *testing.T, ctx context.Context, database *bun.DB, operation *persistence.Operation) uuid.UUID {
