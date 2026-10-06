@@ -209,8 +209,6 @@ func TestParseSourceTechnicalAnalysisRejectsMalformedStructure(t *testing.T) {
 		{"stream_without_codec_type", `{"format":{},"streams":[{"index":0}]}`},
 		{"stream_codec_type_null", `{"format":{},"streams":[{"codec_type":null}]}`},
 		{"stream_codec_type_number", `{"format":{},"streams":[{"codec_type":7}]}`},
-		{"no_audio", `{"format":{},"streams":[{"codec_type":"video"}]}`},
-		{"empty_streams", `{"format":{},"streams":[]}`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -222,6 +220,21 @@ func TestParseSourceTechnicalAnalysisRejectsMalformedStructure(t *testing.T) {
 				t.Errorf("rejected response returned a populated read-model: %+v", analysis)
 			}
 		})
+	}
+}
+
+func TestParseSourceTechnicalAnalysisAcceptsNoAudioStreams(t *testing.T) {
+	raw := []byte(`{"format":{"format_name":"wav","tags":{"artist":"Container Artist"}},"streams":[{"codec_type":"video"}]}`)
+	analysis, err := service.ParseSourceTechnicalAnalysis(raw)
+	if err != nil {
+		t.Fatalf("parse valid no-audio response: %v", err)
+	}
+	if analysis.Streams == nil || len(analysis.Streams) != 0 {
+		t.Fatalf("streams = %#v, want empty non-nil slice", analysis.Streams)
+	}
+	assertTechnicalEqual(t, "tags", analysis.Tags, map[string][]string{"ARTIST": {"Container Artist"}})
+	if !bytes.Equal(analysis.RawJSON, raw) {
+		t.Error("raw snapshot changed")
 	}
 }
 

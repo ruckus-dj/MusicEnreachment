@@ -161,9 +161,6 @@ func ParseSourceTechnicalAnalysis(raw []byte) (SourceTechnicalAnalysis, error) {
 			position: position,
 		})
 	}
-	if len(audio) == 0 {
-		return SourceTechnicalAnalysis{}, fmt.Errorf("%w: response has no audio stream", ErrSourceTechnicalMalformed)
-	}
 	sort.SliceStable(audio, func(left, right int) bool {
 		return sourceTechnicalStreamBefore(audio[left], audio[right])
 	})

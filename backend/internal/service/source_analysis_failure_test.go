@@ -104,7 +104,7 @@ func TestSourceAnalysisRefusesAMissingManagedExecutable(t *testing.T) {
 // mandatory structure is broken fails the analysis and leaves the previous
 // variant linked, because nothing is applied here.
 func TestSourceAnalysisMalformedProbeKeepsThePreviousVariant(t *testing.T) {
-	fixture := newSourceAnalysisFixture(t, []byte(`{"format":{},"streams":[]}`))
+	fixture := newSourceAnalysisFixture(t, []byte(`{"format":null,"streams":[]}`))
 	if _, err := fixture.run(); !errors.Is(err, service.ErrSourceTechnicalMalformed) {
 		t.Fatalf("analysis error = %v, want %v", err, service.ErrSourceTechnicalMalformed)
 	}
