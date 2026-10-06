@@ -45,6 +45,7 @@ func TestSourceInventoryRollbackChainWithStoredScanAndPostgreSQL(t *testing.T) {
 	assertSourceRootWasRemoved(t, ctx, database, rootID)
 	assertTerminalScanRetainedAfterRootDeletion(t, ctx, database, scanID)
 	for _, name := range []string{
+		"20261007000000",
 		"20261006000000",
 		"20261005000000",
 		"20261004000000",
@@ -59,6 +60,7 @@ func TestSourceInventoryRollbackChainWithStoredScanAndPostgreSQL(t *testing.T) {
 		"20261004000000",
 		"20261005000000",
 		"20261006000000",
+		"20261007000000",
 	} {
 		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migrationNamed(t, collection, name)})
 	}

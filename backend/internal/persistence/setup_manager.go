@@ -47,6 +47,14 @@ type Operation struct {
 	// names. It is required while the operation is active and may become NULL
 	// after a terminal state if the location was deleted.
 	TargetSourceLocationID *uuid.UUID `bun:"target_source_location_id,type:uuid,nullzero"`
+	// SourceAnalysisMode selects normalized source-analysis operation semantics.
+	SourceAnalysisMode string `bun:"source_analysis_mode,nullzero"`
+	// TargetWorkID and TargetStep are both present only for a single-step
+	// operation; batch operations select their work items in the snapshot.
+	TargetWorkID      *uuid.UUID `bun:"target_work_id,type:uuid,nullzero"`
+	TargetStep        *string    `bun:"target_step,nullzero"`
+	ToolsReadRequired bool       `bun:"tools_read_required"`
+	RerunTarget       bool       `bun:"rerun_target"`
 	// AnalysisInstallationID is the read hold on the managed FFmpeg installation
 	// an analysis uses. It is not a mutation target and is cleared at the
 	// terminal transition.
