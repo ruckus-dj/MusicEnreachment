@@ -11,7 +11,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const sourceScanCandidateColumns = "relative_path text, size_bytes bigint, mtime timestamptz, probe_status text, safe_error text, source_sha256 text, sha256_calculated_at timestamptz, sha256_applied_operation_id uuid, audio_stream_count integer, ffprobe_version text, ffprobe_json jsonb, analysis_policy_version integer, observed_tags jsonb, inspected_at timestamptz, probe_applied_operation_id uuid"
+const sourceScanCandidateColumns = "relative_path text, size_bytes bigint, mtime timestamptz, probe_status text, safe_error text, source_sha256 text, sha256_calculated_at timestamptz, sha256_applied_operation_id uuid, audio_stream_count integer, ffprobe_version text, ffprobe_json jsonb, analysis_policy_version integer, observed_tags jsonb, inspected_at timestamptz, probe_applied_operation_id uuid, prepared_analysis jsonb"
 
 // sourceLocationRows projects the candidate batch onto the location table. A row
 // keeps the id of a location already stored for its relative path, which is what
@@ -41,10 +41,10 @@ func storeSourceScanCandidates(ctx context.Context, database bun.IDB, operationI
 	if _, err := database.NewRaw(
 		`INSERT INTO source_scan_candidate (id, operation_id, relative_path, size_bytes, mtime, probe_status, safe_error,
 		 source_sha256, sha256_calculated_at, sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json,
-		 analysis_policy_version, observed_tags, inspected_at, probe_applied_operation_id)
+		 analysis_policy_version, observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis)
 		 SELECT gen_random_uuid(), ?::uuid, batch.relative_path, batch.size_bytes, batch.mtime, batch.probe_status, batch.safe_error,
 		 decode(batch.source_sha256,'hex'), batch.sha256_calculated_at, batch.sha256_applied_operation_id, batch.audio_stream_count,
-		 batch.ffprobe_version, batch.ffprobe_json, batch.analysis_policy_version, batch.observed_tags, batch.inspected_at, batch.probe_applied_operation_id
+		 batch.ffprobe_version, batch.ffprobe_json, batch.analysis_policy_version, batch.observed_tags, batch.inspected_at, batch.probe_applied_operation_id, batch.prepared_analysis
 		 FROM jsonb_to_recordset(?) AS batch(`+sourceScanCandidateColumns+`)`,
 		operationID, marshalled,
 	).Exec(ctx); err != nil {
@@ -53,7 +53,7 @@ func storeSourceScanCandidates(ctx context.Context, database bun.IDB, operationI
 	return nil
 }
 
-func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) ([]json.RawMessage, error) {
+func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) (json.RawMessage, error) {
 	marshalled := make([]json.RawMessage, 0, len(candidates))
 	for _, candidate := range candidates {
 		var digestHex *string
@@ -62,21 +62,22 @@ func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) ([]json.
 			digestHex = &encoded
 		}
 		payload, err := json.Marshal(struct {
-			RelativePath             string          `json:"relative_path"`
-			SizeBytes                int64           `json:"size_bytes"`
-			Mtime                    time.Time       `json:"mtime"`
-			ProbeStatus              string          `json:"probe_status"`
-			SafeError                *string         `json:"safe_error"`
-			SourceSHA256             *string         `json:"source_sha256"`
-			SHA256CalculatedAt       *time.Time      `json:"sha256_calculated_at"`
-			SHA256AppliedOperationID *uuid.UUID      `json:"sha256_applied_operation_id"`
-			AudioStreamCount         *int            `json:"audio_stream_count"`
-			FFProbeVersion           *string         `json:"ffprobe_version"`
-			FFProbeJSON              json.RawMessage `json:"ffprobe_json"`
-			AnalysisPolicyVersion    *int            `json:"analysis_policy_version"`
-			ObservedTags             json.RawMessage `json:"observed_tags"`
-			InspectedAt              *time.Time      `json:"inspected_at"`
-			ProbeAppliedOperationID  *uuid.UUID      `json:"probe_applied_operation_id"`
+			RelativePath             string                      `json:"relative_path"`
+			SizeBytes                int64                       `json:"size_bytes"`
+			Mtime                    time.Time                   `json:"mtime"`
+			ProbeStatus              string                      `json:"probe_status"`
+			SafeError                *string                     `json:"safe_error"`
+			SourceSHA256             *string                     `json:"source_sha256"`
+			SHA256CalculatedAt       *time.Time                  `json:"sha256_calculated_at"`
+			SHA256AppliedOperationID *uuid.UUID                  `json:"sha256_applied_operation_id"`
+			AudioStreamCount         *int                        `json:"audio_stream_count"`
+			FFProbeVersion           *string                     `json:"ffprobe_version"`
+			FFProbeJSON              json.RawMessage             `json:"ffprobe_json"`
+			AnalysisPolicyVersion    *int                        `json:"analysis_policy_version"`
+			ObservedTags             json.RawMessage             `json:"observed_tags"`
+			InspectedAt              *time.Time                  `json:"inspected_at"`
+			ProbeAppliedOperationID  *uuid.UUID                  `json:"probe_applied_operation_id"`
+			PreparedAnalysis         *SourceScanPreparedAnalysis `json:"prepared_analysis"`
 		}{
 			RelativePath: candidate.RelativePath, SizeBytes: candidate.SizeBytes, Mtime: candidate.Mtime,
 			ProbeStatus: candidate.ProbeStatus, SafeError: candidate.SafeError,
@@ -85,13 +86,18 @@ func marshalSourceScanCandidates(candidates []SourceScanCandidateInput) ([]json.
 			FFProbeVersion: candidate.FFProbeVersion, FFProbeJSON: candidate.FFProbeJSON,
 			AnalysisPolicyVersion: candidate.AnalysisPolicyVersion, ObservedTags: candidate.ObservedTags,
 			InspectedAt: candidate.InspectedAt, ProbeAppliedOperationID: candidate.ProbeAppliedOperationID,
+			PreparedAnalysis: candidate.PreparedAnalysis,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("prepare scan candidate %q: %w", candidate.RelativePath, err)
 		}
 		marshalled = append(marshalled, payload)
 	}
-	return marshalled, nil
+	batch, err := json.Marshal(marshalled)
+	if err != nil {
+		return nil, fmt.Errorf("marshal scan candidate batch: %w", err)
+	}
+	return batch, nil
 }
 
 // loadSourceScanCandidates reads the durable candidate rows of one operation.
@@ -103,7 +109,7 @@ func loadSourceScanCandidates(ctx context.Context, database bun.IDB, operationID
 	if err := database.NewRaw(
 		`SELECT relative_path, size_bytes, mtime, probe_status, safe_error, source_sha256, sha256_calculated_at,
 		 sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json, analysis_policy_version,
-		 observed_tags, inspected_at, probe_applied_operation_id
+		 observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis
 		 FROM source_scan_candidate WHERE operation_id = ? ORDER BY relative_path, id`,
 		operationID,
 	).Scan(ctx, &candidates); err != nil {

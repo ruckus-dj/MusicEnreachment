@@ -54,6 +54,7 @@ type SourceScanCandidateInput struct {
 	ObservedTags             json.RawMessage
 	InspectedAt              *time.Time
 	ProbeAppliedOperationID  *uuid.UUID
+	PreparedAnalysis         *SourceScanPreparedAnalysis `bun:"prepared_analysis,type:jsonb"`
 }
 
 // SourceLocationCursor is the stable pagination key of the location list. It
