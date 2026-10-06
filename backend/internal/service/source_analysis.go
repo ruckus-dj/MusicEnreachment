@@ -16,20 +16,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-// ErrSourceAnalysisToolUnavailable reports the managed FFmpeg installation an
-// analysis snapshot pins cannot be used: it is missing, not ready, built for
-// another platform, carries an invalid managed path, or fails its version query.
-var ErrSourceAnalysisToolUnavailable = errors.New("the selected managed ffmpeg installation is unavailable")
-
-// SourceAnalysisRepository is the read-only persistence contract of one source
-// analysis. It only reads: the analysis never writes the database, so a caller
-// applies the prepared result later, in the transactional apply of step 2.
-type SourceAnalysisRepository interface {
-	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
-	GetSourceLocation(context.Context, uuid.UUID, uuid.UUID) (*persistence.SourceLocation, error)
-	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
-}
-
 // SourceTechnicalProbe runs the bounded technical ffprobe request of one
 // already-open source file. *tools.FFProbe is the production implementation.
 type SourceTechnicalProbe interface {
