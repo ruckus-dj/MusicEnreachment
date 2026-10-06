@@ -29,6 +29,20 @@ func Start(ctx context.Context, databaseURL string, database *sql.DB) (*river.Cl
 }
 
 func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+	client, listenerPool, err := PrepareWithWorkers(ctx, databaseURL, database, register, periodicJobs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := client.Start(ctx); err != nil {
+		listenerPool.Close()
+		return nil, nil, fmt.Errorf("start River: %w", err)
+	}
+	return client, listenerPool, nil
+}
+
+// PrepareWithWorkers constructs an unstarted client so recovery can enqueue
+// durable work before any worker begins consuming it.
+func PrepareWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
 	if database == nil {
 		return nil, nil, fmt.Errorf("start River: database pool is required")
 	}
@@ -68,10 +82,6 @@ func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB,
 	if err != nil {
 		listenerPool.Close()
 		return nil, nil, fmt.Errorf("create River client: %w", err)
-	}
-	if err := client.Start(ctx); err != nil {
-		listenerPool.Close()
-		return nil, nil, fmt.Errorf("start River: %w", err)
 	}
 	return client, listenerPool, nil
 }
