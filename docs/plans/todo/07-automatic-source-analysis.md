@@ -43,8 +43,16 @@
   digest-less variant очищается после освобождения references/read holds.
   История прежних результатов у изменённой location не вводится.
 
-Физическая схема и порядок hash lookup / единственного probe уточняются в шаге 1;
-эти пункты фиксируют решения владельца, а не доказательство реализации.
+Порядок подготовки утверждён: SHA вычисляется (если включён), затем digest
+сначала используется для lookup сохранённого успешного `ffprobe`; при cache miss
+недостающие `ffprobe` и `fpcalc` могут выполняться параллельно. `fpcalc` может
+закончить до подтверждения audio eligibility: его успешный результат сохраняется
+при ошибке `ffprobe` и остаётся доступен для reuse по `(SHA-256, fpcalc version)`
+независимо от probe; single-audio gate ограничивает только matching, поэтому
+fingerprint не участвует в matching, пока успешный `ffprobe` не подтвердит ровно
+один audio stream. Пункт 1 проектирует физическое
+представление и исполнение этого порядка, не меняя его. Это решения владельца, а
+не доказательство реализации.
 
 Оператор по-прежнему явно запускает scan. После **полностью успешно
 завершившегося** scan новые и изменённые locations автоматически получают
@@ -76,9 +84,20 @@ work наследует эту policy, не читая toggle заново; expl
   reuse, пока его `size`/`mtime` identity остаётся текущей.
 - Каждый шаг имеет независимо сохраняемый успех и свою фактическую версию / её
   происхождение. Ошибка одного шага не отменяет уже успешные результаты других.
-  Оператор явно повторяет конкретный ошибочный шаг, а не весь анализ.
-- Chromaprint рассчитывается только для файла ровно с одним audio stream.
-  Смена active `fpcalc` не запускает массовый backfill. UI показывает версию
+  Сохраняются ошибки всех независимых шагов; явный retry адресует только
+  конкретный ошибочный шаг и не повторяет успешные siblings. Внутренняя batch
+  operation — механизм доставки/исполнения, а не отдельный пользовательский
+  aggregate result.
+- Используемый для matching fingerprint допустим только для файла, чей успешный
+  `ffprobe` подтвердил ровно один audio stream. Чтобы не ждать probe eligibility,
+  `fpcalc` может выполняться параллельно с probe; успешный output при ошибке
+  `ffprobe` сохраняется и остаётся доступен для reuse по `(SHA-256, fpcalc
+  version)` независимо от probe. Single-audio gate ограничивает только matching:
+  до single-audio подтверждения fingerprint не участвует в matching, но это не
+  ограничивает его хранение или cache reuse. При подтверждённом zero/multi-audio
+  он не становится используемым для matching fingerprint, состояние остаётся
+  unsupported/skipped; успешный результат не отбрасывается. Смена active `fpcalc` не
+  запускает массовый backfill. UI показывает версию
   `fpcalc`, использованную для сохранённого fingerprint, и текущую active
   версию. Кроме повтора ошибочного шага оператор может явно запустить отдельный
   точечный ручной rerun fingerprint существующего успешного результата текущей
@@ -103,11 +122,16 @@ work наследует эту policy, не читая toggle заново; expl
 
 Не менять правила `no_audio`/`probe_error` без отдельного ответа владельца.
 Multi-stream больше не открытый продуктовый blocker: fingerprint по согласованию
-вычисляется только для single-audio-stream файла. Для файла с несколькими audio
-streams `fpcalc` не запускается, сохраняются доступные probe и SHA-256 (если
-hashing включён), показывается нейтральное состояние unsupported/skipped, а не
-failure; retry ошибки для него не предлагается. Технические proposals ниже должны сохранять успешные допустимые
-шаги, не трактуя неисполняемый fingerprint как успешный fingerprint. Новое
+используется для matching только у single-audio-stream файла. Поскольку `fpcalc`
+может быть запущен параллельно до получения probe eligibility, его успешный
+output сохраняется и доступен для reuse по `(SHA-256, fpcalc version)` независимо
+от probe; single-audio gate ограничивает только matching, поэтому output не
+участвует в matching без подтверждения ровно одного audio stream и не становится
+используемым для matching fingerprint при подтверждённом zero/multi-audio. Сохраняются
+допустимые probe и SHA-256 (если hashing включён), показывается нейтральное
+состояние unsupported/skipped, а не failure; retry ошибки для него не
+предлагается. Технические proposals ниже должны сохранять успешные допустимые
+шаги, не трактуя преждевременно полученный fingerprint как допустимый результат. Новое
 продуктово видимое состояние/кнопки для ещё не определённых случаев — blocker
 соответствующего шага до уточнения.
 
@@ -163,6 +187,20 @@ Recovery повторно выясняет недостающие/ошибочн
 ### Инструменты и ресурсы
 
 Анализ читает source только read-only и применяет freshness contract `(size, mtime)`.
+Текущий план реализуется только in-place: локальная копия и staged mode не
+реализуются; настройки staged mode сейчас нет. SHA при включённой настройке
+сначала даёт digest для cache lookup. Если успешного probe cache hit нет,
+недостающие полноценный `ffprobe` и `fpcalc` могут выполняться параллельно.
+Fingerprint, полученный до probe eligibility, можно сохранить при ошибке probe;
+его успешный результат остаётся доступен для cache reuse по `(SHA-256, fpcalc
+version)` независимо от probe. В matching он участвует только при выбранном
+успешном актуальном `ffprobe`, подтвердившем ровно один audio stream; при
+подтверждённом zero/multi-audio состояние остаётся нейтральным unsupported/skipped
+для matching, а успешный fingerprint не отбрасывается. Внутренняя модель private
+typed candidate → atomic publish выбранного успешного fingerprint не зависит от
+probe success и eligibility; техническому review подлежит конкретная реализация
+этой модели, а не допустимость публикации успешного результата по audio
+eligibility.
 Pin-ить и удерживать от move/delete нужно только managed tools, необходимые
 выбранным шагам операции; использовать installation IDs/version snapshots, не
 PATH или client path. Activation иной версии после enqueue не должна незаметно
@@ -219,6 +257,11 @@ persistence models.
 
 Составить сопоставление текущих columns/constraints/operation snapshots с
 целевыми независимыми шагами, shared SHA identity и lifecycle provenance.
+Спроектировать выполнение SHA-first cache lookup, единственного полного probe и
+возможного параллельного fpcalc; явно определить private preparation до scan
+commit и безопасное сохранение/допуск fingerprint, завершившегося до подтверждения
+single-audio eligibility. Не добавлять видимые outcomes или downstream jobs до
+полностью успешного traversal.
 Предложить физическую схему: какие результаты принадлежат location/media
 identity, как сохраняются per-step ошибки и версии, какие уникальные ключи и
 FK защищают текущие result references. Проверить migration chain и rollback
@@ -231,7 +274,8 @@ snapshot получает безопасный отказ с освобожде�
 обязательные поля из текущих settings или переписывать сохранённый snapshot.
 
 **Готово, когда:** reviewer принимает таблицу «текущее → target → миграция» и
-решение по hash/shared media identity и текущим операциям. Поведение no_audio соответствует уточнению
+решение по hash/shared media identity, текущим операциям и private preparation/
+fingerprint eligibility integration. Поведение no_audio соответствует уточнению
 владельца от 2026-10-05 выше; новые правила probe_error не вводятся.
 
 ### 2. Ввести persistence-модель результатов, hash identity и идемпотентные apply
@@ -302,14 +346,23 @@ durable target или operation без recoverable job/intent.
 **Зависимости:** 2–3. **Область:** `integrations/tools/`, source analysis
 service, worker, тесты.
 
-Расширить ffprobe результатом только при нужной причине актуализации, не
-переанализировать его потому, что неудачен fpcalc. Если SHA toggle включён,
-SHA-256 вычисляется отдельным последовательным чтением source в in-place mode.
-Если toggle выключен, hash-step
-neutral/skipped, а ffprobe и допустимый fpcalc продолжаются без hash. Повторный stat перед/после
-сохраняет текущую freshness модель,
-не вводя новый продуктовый барьер обнаружения bytes при прежнем stat.
-Chromaprint запускается managed fpcalc только для ровно одного audio stream.
+Если SHA toggle включён, сначала вычислить SHA-256 отдельным последовательным
+чтением source в in-place mode и выполнить digest lookup успешного probe.
+Cache miss запускает недостающие полноценный `ffprobe` и `fpcalc` параллельно;
+`fpcalc` разрешён до получения audio eligibility. Его успешный output/provenance
+сохраняется при ошибке probe и доступен для cache reuse по `(SHA-256, fpcalc
+version)` независимо от probe; single-audio gate ограничивает только matching:
+fingerprint не участвует в matching, пока выбранный успешный актуальный `ffprobe`
+не подтвердит ровно один audio stream. Успешный probe без ровно одного audio
+stream не получает используемый для matching fingerprint: состояние остаётся
+нейтральным unsupported/skipped для matching, не failure, а успешный fingerprint
+не отбрасывается. Внутренняя модель private typed candidate → atomic publish
+выбранного успешного fingerprint не зависит от probe success и eligibility;
+техническому review подлежит конкретная реализация этой модели, а не допустимость
+публикации успешного результата по audio eligibility. При выключенном toggle
+hash нейтрально пропускается, а инструменты продолжаются без hash. Повторный
+stat перед/после сохраняет текущую freshness модель, не вводя новый продуктовый
+барьер обнаружения bytes при прежнем stat.
 Каждый step возвращает typed result/error и достаточный provenance (версия
 реального executable для tool steps); не публиковать успешный fingerprint с
 ошибочным/пустым output.
@@ -323,8 +376,13 @@ limits, fallback, retry или audio policy, которых нет в утвер
 ошибка каждого инструмента, source stat change, cancellation, output limits и
 version provenance. Тестировать enabled и disabled toggle, transitions, neutral
 disabled hash с продолжением ffprobe/fpcalc, и reuse только с актуальным
-вычисленным digest. Последовательность «ffprobe success → SHA success → fpcalc
-failure» оставляет первые два шага доступными; retry запускает только fpcalc.
+вычисленным digest. Проверить SHA-first probe-cache lookup, параллельный запуск
+недостающих probe и fpcalc, fingerprint output при ошибке probe (с запретом
+ matching до single-audio подтверждения), а также сохранение успешного
+ fingerprint и provenance при zero/multi-audio, включая cache reuse по
+ `(SHA-256, fpcalc version)`, с neutral unsupported/skipped только для matching.
+ Retry запускает только
+адресованный ошибочный шаг.
 
 ### 5. Автоматически и надёжно запускать анализ после успешного scan
 
@@ -332,8 +390,13 @@ failure» оставляет первые два шага доступными; 
 River recovery, root concurrency integration tests.
 
 После commit полностью успешного scan поставить анализ новых/изменённых
-locations без отдельного клиентского Analyze. В случае failed/interrupted scan
-не ставить работу по неполному candidate set и не менять inventory. Использовать
+locations без отдельного клиентского Analyze. Для overlap полного `ffprobe` и
+`fpcalc` scan может выполнить их подготовку до commit в private candidates;
+никакие результаты, location associations, inspector state или downstream jobs
+не становятся видимыми/долговечными до успешного traversal и atomic apply.
+Подготовка, включая уже успешный tool output, discarded при failed/interrupted
+scan. В случае failed/interrupted scan не ставить работу по неполному candidate
+set и не менять inventory. Использовать
 одну transaction для reconciliation + enqueue/intent или доказанный эквивалент;
 crash между успешной фиксацией scan и enqueue должен находиться и восстанавливаться
 startup reconciliation. Recovery отличает недоставленную работу от failed step:
@@ -396,9 +459,10 @@ location. Показывать состояние ffprobe/hash/fingerprint от�
 конкретной ошибки, actual analysis version и current active fpcalc version.
 Отдельно показать явное ручное действие rerun fingerprint, когда сохранённый
 успешный fingerprint получен прежней версией, и сохранять его на экране, пока
-идёт rerun или пока rerun неудачен. Multi-stream location показывать как
-unsupported/skipped fingerprint (не failure), без retry ошибки, с сохранёнными
-probe и hash, если hashing включён. Disabled hash показывать нейтрально skipped,
+идёт rerun или пока rerun неудачен. Для zero/multi-audio показывать matching
+eligibility как нейтральное unsupported/skipped, без retry ошибки matching.
+Успешный шаг fpcalc сохраняет success, fingerprint и provenance; доступные
+probe и hash также сохраняются. Disabled hash показывать нейтрально skipped,
 не ошибкой; ffprobe/fpcalc продолжаются. При duplicate hash показать
 shared/reused результат только для актуального вычисленного digest; без hash
 показывать независимую location. Не утверждать уникальность fingerprint или
@@ -409,8 +473,9 @@ shared/reused результат только для актуального вы
 **Готово, когда:** RTL покрывает Settings toggle enabled/disabled and persistence
 after reload; scan → automatic queued/running/success,
 partial success + fpcalc failure, step-only retry, явный rerun fingerprint
-прежней версии с сохранением прежнего результата при неудаче, multi-stream
-unsupported/skipped без retry, version change lazy state, shared hash reuse,
+прежней версии с сохранением прежнего результата при неудаче, zero/multi-audio:
+fpcalc success и сохранённый результат отдельно от unsupported/skipped matching,
+version change lazy state, shared hash reuse,
 source changed/stale, active reconnect, частичный ffprobe-only результат и
 отказ/ошибки без потери прежних результатов.
 
@@ -439,8 +504,8 @@ COMPLETE. Ограничения среды и непроверенные platfo
 | Без актуального вычисленного SHA locations независимы; устаревший digest не участвует в reuse/dedup; fingerprint не является identity. | Шаги 1–2, 4, 6–7: no-hash/stale-hash and reuse tests. |
 | Нынешний manual scan автоматически и durable ставит анализ только после полного успеха. | Шаги 3, 5, 8: transaction/crash recovery и failed scan tests. |
 | `(size, mtime)` определяет freshness; при включённом toggle SHA пересчитывается при изменении stat без требования bytes-proof при прежнем stat. | Шаги 2, 4, 5: exact stat interleavings. |
-| Успехи ffprobe/hash/fingerprint независимы и сохраняются при чужом failure; ручной retry точечный, явный rerun fingerprint сохраняет прежний результат. | Шаги 2–4, 6–7: partial apply и worker/API/UI tests. |
-| Только single-audio-stream файл получает fingerprint; multi-stream даёт unsupported/skipped (не failure) с probe и hash если включён, без retry; no_audio хешируется при enabled согласно решению владельца. | Шаги 1, 4, 6–7: product decision и tests. |
+| Успехи ffprobe/hash/fingerprint независимы и сохраняются при чужом failure; успешный fingerprint доступен для cache reuse по SHA-256+fpcalc version независимо от probe, а в matching участвует только при выбранном успешном актуальном ffprobe ровно с одним audio stream; ручной retry точечный, явный rerun fingerprint сохраняет прежний результат. | Шаги 2–4, 6–7: partial apply и worker/API/UI tests. |
+| Только single-audio-stream файл получает fingerprint, используемый для matching; при zero/multi состояние нейтрально unsupported/skipped для matching без отбрасывания успешного fingerprint, с probe и hash если включён, без retry; no_audio хешируется при enabled согласно решению владельца. | Шаги 1, 4, 6–7: product decision и tests. |
 | Тот же актуальный SHA+fpcalc version переиспользует результат только при вычисленном hash; без hash locations независимы, SHA не выступает fingerprint/recording identity. | Шаги 1–2, 4, 6–7: concurrent dedup/provenance and no-hash tests. |
 | Смена active fpcalc не вызывает массовую переобработку; UI показывает actual/current versions. | Шаги 3, 6–7: tool swap/version UI test и отсутствие bulk jobs. |
 | Актуальная модель переживает restart/retry; migration и rollback не фабрикуют результаты. | Шаги 1–3, 6, 8: migration/River tests актуального контракта. |
