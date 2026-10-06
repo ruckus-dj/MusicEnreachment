@@ -32,6 +32,7 @@ const settings: SetupStateBody["settings"] = {
   musicbrainz_mode: "public",
   musicbrainz_base_url: "",
   lrclib_enabled: true,
+  sha256_enabled: true,
   log_level: "info",
 };
 function state(

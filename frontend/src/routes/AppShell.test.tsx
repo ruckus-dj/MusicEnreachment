@@ -31,6 +31,7 @@ const state: SetupStateBody = {
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
     lrclib_enabled: true,
+    sha256_enabled: true,
     log_level: "info",
   },
   configuration_health: { healthy: false, problems: ["setup incomplete"] },

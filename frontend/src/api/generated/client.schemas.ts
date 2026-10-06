@@ -252,6 +252,7 @@ export interface RuntimeSettingsResponse {
   output_directory: string;
   output_unicode_normalization?: string;
   publication_format: string;
+  sha256_enabled: boolean;
   tools_directory: string;
 }
 
@@ -485,6 +486,12 @@ export interface UpdateMusicBrainzBody {
   /** @maxLength 2048 */
   base_url?: string;
   mode: UpdateMusicBrainzBodyMode;
+}
+
+export interface UpdateSHA256Body {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  enabled: boolean;
 }
 
 export type UpdateSettingsBodyPublicationFormat = typeof UpdateSettingsBodyPublicationFormat[keyof typeof UpdateSettingsBodyPublicationFormat];

@@ -55,6 +55,7 @@ import type {
   UpdateLRCLIBBody,
   UpdateLogLevelBody,
   UpdateMusicBrainzBody,
+  UpdateSHA256Body,
   UpdateSettingsBody,
   UpdateSourceBody
 } from './client.schemas';
@@ -1254,6 +1255,120 @@ export const useUpdateSettings = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getUpdateSettingsMutationOptions(options), queryClient);
+    }
+
+export type updateSha256SettingResponse204 = {
+  data: void
+  status: 204
+}
+
+export type updateSha256SettingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type updateSha256SettingResponseSuccess = (updateSha256SettingResponse204) & {
+  headers: Headers;
+};
+export type updateSha256SettingResponseError = (updateSha256SettingResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateSha256SettingResponse = (updateSha256SettingResponseSuccess | updateSha256SettingResponseError)
+
+export const getUpdateSha256SettingUrl = () => {
+
+
+
+
+  return `/api/settings/sha256`
+}
+
+/**
+ * @summary Enable or disable SHA-256 sampling
+ */
+export const updateSha256Setting = async (updateSHA256Body: NonReadonly<UpdateSHA256Body>, options?: RequestInit): Promise<updateSha256SettingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUpdateSha256SettingUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateSHA256Body)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateSha256SettingResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as updateSha256SettingResponse
+}
+
+
+
+
+
+export const getUpdateSha256SettingMutationKey = () => ['updateSha256Setting'] as const;
+
+export const getUpdateSha256SettingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSha256Setting>>, TError,UpdateSha256SettingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSha256Setting>>, TError,UpdateSha256SettingMutationVariables, TContext> => {
+
+const mutationKey = getUpdateSha256SettingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSha256Setting>>, UpdateSha256SettingMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateSha256Setting(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSha256SettingMutationResult = NonNullable<Awaited<ReturnType<typeof updateSha256Setting>>>
+    export type UpdateSha256SettingMutationBody = NonReadonly<UpdateSHA256Body>
+    export type UpdateSha256SettingMutationError = ErrorModel
+    export type UpdateSha256SettingMutationVariables = {data: NonReadonly<UpdateSHA256Body>}
+
+    /**
+ * @summary Enable or disable SHA-256 sampling
+ */
+export const useUpdateSha256Setting = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSha256Setting>>, TError,UpdateSha256SettingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateSha256Setting>>,
+        TError,
+        UpdateSha256SettingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateSha256SettingMutationOptions(options), queryClient);
     }
 
 export type getSetupStateResponse200 = {

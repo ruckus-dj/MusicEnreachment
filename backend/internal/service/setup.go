@@ -20,6 +20,7 @@ type SetupState struct {
 	ConfigurationHealth settings.ConfigurationHealth
 	Platform            settings.PlatformState
 	Runtime             settings.RuntimeSettings
+	SHA256Enabled       bool
 }
 
 type PathValidation struct {
@@ -66,6 +67,10 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 	runtimeSettings, err := s.registry.ReadRuntimeSettings(ctx)
 	if err != nil {
 		return SetupState{}, fmt.Errorf("read setup runtime settings: %w", err)
+	}
+	sha256Enabled, err := s.registry.GetSHA256Enabled(ctx)
+	if err != nil {
+		return SetupState{}, fmt.Errorf("read setup SHA-256 setting: %w", err)
 	}
 	// Validate the same values that Complete later compares under database locks.
 	health := settings.ConfigurationHealth{Healthy: true}
@@ -170,7 +175,7 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 			}
 		}
 	}
-	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings}, nil
+	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings, SHA256Enabled: sha256Enabled}, nil
 }
 func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
 	update := settings.RuntimeUpdate{}

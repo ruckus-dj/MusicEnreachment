@@ -25,6 +25,7 @@ import {
   updateLrclibSetting,
   updateMusicbrainzSettings,
   updateSettings,
+  updateSha256Setting,
 } from "../../api/generated/client";
 import type {
   CatalogBody,
@@ -98,6 +99,7 @@ export function SettingsScreen() {
   const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>("public");
   const [baseURL, setBaseURL] = useState("");
   const [lrclib, setLrclib] = useState(true);
+  const [sha256Enabled, setSha256Enabled] = useState<boolean>();
   const [logLevel, setLogLevel] = useState<UpdateLogLevelBodyLevel>("info");
   const [selectedRelease, setSelectedRelease] = useState<
     Partial<Record<Kind, string>>
@@ -130,6 +132,7 @@ export function SettingsScreen() {
     );
     setBaseURL(settings.musicbrainz_base_url);
     setLrclib(settings.lrclib_enabled);
+    setSha256Enabled(settings.sha256_enabled);
     setLogLevel(settings.log_level as UpdateLogLevelBodyLevel);
     setMoveDirectory(settings.tools_directory);
   }, []);
@@ -616,6 +619,29 @@ export function SettingsScreen() {
                 }
               >
                 Сохранить LRCLIB
+              </AppButton>
+              <label className="settings-inline">
+                <input
+                  type="checkbox"
+                  checked={sha256Enabled ?? state.settings.sha256_enabled}
+                  onChange={(event) => setSha256Enabled(event.target.checked)}
+                />{" "}
+                Вычислять SHA-256
+              </label>
+              <AppButton
+                isDisabled={busy}
+                onPress={() =>
+                  void mutate(
+                    () =>
+                      updateSha256Setting({
+                        enabled: sha256Enabled ?? state.settings.sha256_enabled,
+                      }),
+                    204,
+                    "Настройка SHA-256 сохранена.",
+                  )
+                }
+              >
+                Сохранить SHA-256
               </AppButton>
             </section>
             <section

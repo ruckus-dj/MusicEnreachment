@@ -36,6 +36,7 @@ type RuntimeSettingsResponse struct {
 	MusicBrainzBaseURL         string     `json:"musicbrainz_base_url"`
 	MusicBrainzVerifiedAt      *time.Time `json:"musicbrainz_verified_at,omitempty"`
 	LRCLIBEnabled              bool       `json:"lrclib_enabled"`
+	SHA256Enabled              bool       `json:"sha256_enabled"`
 	LogLevel                   string     `json:"log_level"`
 	ActiveFFmpegInstallationID string     `json:"active_ffmpeg_installation_id,omitempty"`
 	ActiveFPCalcInstallationID string     `json:"active_fpcalc_installation_id,omitempty"`
@@ -271,6 +272,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				MusicBrainzBaseURL:         state.Runtime.MusicBrainzBaseURL,
 				MusicBrainzVerifiedAt:      state.Runtime.MusicBrainzVerifiedAt,
 				LRCLIBEnabled:              state.Runtime.LRCLIBEnabled,
+				SHA256Enabled:              state.SHA256Enabled,
 				LogLevel:                   state.Runtime.LogLevel,
 				ActiveFFmpegInstallationID: state.Runtime.ActiveFFmpegInstallation,
 				ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,

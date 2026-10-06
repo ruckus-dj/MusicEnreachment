@@ -34,6 +34,14 @@ type UpdateLRCLIBBody struct {
 	Enabled bool `json:"enabled"`
 }
 
+type UpdateSHA256Input struct {
+	Body UpdateSHA256Body `json:"body"`
+}
+
+type UpdateSHA256Body struct {
+	Enabled bool `json:"enabled"`
+}
+
 type UpdateLogLevelInput struct {
 	Body UpdateLogLevelBody `json:"body"`
 }
@@ -121,6 +129,22 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		if err := setup.SetLRCLIBEnabled(ctx, input.Body.Enabled); err != nil {
 			return nil, huma.Error500InternalServerError("LRCLIB setting could not be saved")
+		}
+		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-sha256-setting", Method: http.MethodPut, Path: "/settings/sha256",
+		Summary: "Enable or disable SHA-256 sampling", Tags: []string{"Settings"},
+	}, func(ctx context.Context, input *UpdateSHA256Input) (*struct{}, error) {
+		if err := requireSetupComplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := requireSupportedPlatform(ctx, setup); err != nil {
+			return nil, err
+		}
+		if err := setup.SetSHA256Enabled(ctx, input.Body.Enabled); err != nil {
+			return nil, huma.Error500InternalServerError("SHA-256 setting could not be saved")
 		}
 		return nil, nil
 	})

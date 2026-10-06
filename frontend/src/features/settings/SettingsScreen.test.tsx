@@ -32,6 +32,7 @@ const settings = {
     musicbrainz_base_url: "",
     musicbrainz_verified_at: "2026-09-01T00:00:00Z",
     lrclib_enabled: true,
+    sha256_enabled: true,
     log_level: "info",
     active_ffmpeg_installation_id: "ff-active",
     active_fpcalc_installation_id: "fp-active",
@@ -401,6 +402,120 @@ describe("SettingsScreen", () => {
     await waitFor(() =>
       expect(lyrics).toHaveBeenCalledWith({ enabled: false }),
     );
+  });
+
+  it.each([
+    true,
+    false,
+  ])("loads the persisted SHA-256 setting (%s) without a client default", async (enabled) => {
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, sha256_enabled: enabled },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    expect(await screen.findByLabelText("Вычислять SHA-256")).toHaveProperty(
+      "checked",
+      enabled,
+    );
+  });
+
+  it("does not invent a SHA-256 value while settings are loading", async () => {
+    let releaseSettings!: () => void;
+    const settingsReady = new Promise<void>((resolve) => {
+      releaseSettings = resolve;
+    });
+    server.use(
+      http.get("/api/settings", async () => {
+        await settingsReady;
+        return json(settings);
+      }),
+    );
+    render(<SettingsScreen />);
+    expect(
+      screen.queryByLabelText("Вычислять SHA-256"),
+    ).not.toBeInTheDocument();
+    releaseSettings();
+    expect(await screen.findByLabelText("Вычислять SHA-256")).toHaveProperty(
+      "checked",
+      true,
+    );
+  });
+
+  it("saves an explicit false SHA-256 value, waits for the save, then refreshes server state", async () => {
+    let enabled = true;
+    let releaseSave!: () => void;
+    const saveReady = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const saved = vi.fn(async ({ request }: { request: Request }) => {
+      await saveReady;
+      const body = await request.json();
+      expect(body).toEqual({ enabled: false });
+      enabled = false;
+      return new HttpResponse(null, { status: 204 });
+    });
+    const reads = vi.fn(() =>
+      json({
+        ...settings,
+        settings: { ...settings.settings, sha256_enabled: enabled },
+      }),
+    );
+    server.use(
+      http.put("/api/settings/sha256", saved),
+      http.get("/api/settings", reads),
+    );
+    render(<SettingsScreen />);
+    const toggle = await screen.findByLabelText("Вычислять SHA-256");
+    fireEvent.click(toggle);
+    const response = nextResponseFor("/api/settings/sha256", "PUT");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить SHA-256" }));
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Выполняется запрос…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Сохранить SHA-256" }),
+    ).toBeDisabled();
+    releaseSave();
+    await response;
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(
+      screen.getByText("Настройка SHA-256 сохранена."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps server SHA-256 state on a rejected save and restores it on refresh", async () => {
+    const saved = vi.fn();
+    server.use(
+      http.put("/api/settings/sha256", () => {
+        saved();
+        return HttpResponse.json(
+          { detail: "Не удалось сохранить" },
+          { status: 500 },
+        );
+      }),
+    );
+    render(<SettingsScreen />);
+    const toggle = await screen.findByLabelText("Вычислять SHA-256");
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить SHA-256" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось сохранить",
+    );
+    expect(saved).toHaveBeenCalledTimes(1);
+    expect(toggle).not.toBeChecked();
+    const refreshed = nextResponseFor("/api/settings", "GET");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      );
+      await refreshed;
+    });
+    expect(toggle).toBeChecked();
   });
 
   it("sends log-level change to backend and rereads it", async () => {
