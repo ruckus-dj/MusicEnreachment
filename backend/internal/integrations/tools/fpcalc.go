@@ -95,6 +95,12 @@ func parseFPCalcVersion(banner string) (FPCalcVersion, error) {
 	return version, nil
 }
 
+// ParseFPCalcVersion parses a previously captured fpcalc version banner without
+// invoking fpcalc. It is used to display verified installation metadata.
+func ParseFPCalcVersion(banner string) (FPCalcVersion, error) {
+	return parseFPCalcVersion(banner)
+}
+
 func parseFPCalcJSON(output []byte) (FPCalcResult, error) {
 	var raw struct {
 		Duration    json.RawMessage `json:"duration"`
