@@ -86,19 +86,20 @@ type SourceAnalysisWork struct {
 
 type SourceAnalysisStep struct {
 	bun.BaseModel              `bun:"table:source_analysis_step"`
-	WorkID                     uuid.UUID  `bun:"work_id,pk,type:uuid"`
-	Step                       string     `bun:"step,pk"`
-	State                      string     `bun:"state"`
-	StepAttempt                int        `bun:"step_attempt"`
-	SafeError                  *string    `bun:"safe_error,nullzero"`
-	SkipReason                 *string    `bun:"skip_reason,nullzero"`
-	UpdatedAt                  time.Time  `bun:"updated_at,nullzero"`
-	ExecutionOperationID       *uuid.UUID `bun:"execution_operation_id,type:uuid,nullzero"`
-	ExecutionOperationAttempt  *int       `bun:"execution_operation_attempt,nullzero"`
-	ExecutionJobID             *int64     `bun:"execution_job_id,nullzero"`
-	LastOperationID            *uuid.UUID `bun:"last_operation_id,type:uuid,nullzero"`
-	SuccessSHAVariantID        *uuid.UUID `bun:"success_sha_variant_id,type:uuid,nullzero"`
-	SuccessProbeVariantID      *uuid.UUID `bun:"success_probe_variant_id,type:uuid,nullzero"`
-	SuccessFingerprintResultID *uuid.UUID `bun:"success_fingerprint_result_id,type:uuid,nullzero"`
-	SuccessReuseOrigin         *string    `bun:"success_reuse_origin,nullzero"`
+	WorkID                     uuid.UUID       `bun:"work_id,pk,type:uuid"`
+	Step                       string          `bun:"step,pk"`
+	State                      string          `bun:"state"`
+	StepAttempt                int             `bun:"step_attempt"`
+	SafeError                  *string         `bun:"safe_error,nullzero"`
+	SkipReason                 *string         `bun:"skip_reason,nullzero"`
+	UpdatedAt                  time.Time       `bun:"updated_at,nullzero"`
+	ExecutionOperationID       *uuid.UUID      `bun:"execution_operation_id,type:uuid,nullzero"`
+	ExecutionOperationAttempt  *int            `bun:"execution_operation_attempt,nullzero"`
+	ExecutionJobID             *int64          `bun:"execution_job_id,nullzero"`
+	LastOperationID            *uuid.UUID      `bun:"last_operation_id,type:uuid,nullzero"`
+	SuccessSHAVariantID        *uuid.UUID      `bun:"success_sha_variant_id,type:uuid,nullzero"`
+	SuccessProbeVariantID      *uuid.UUID      `bun:"success_probe_variant_id,type:uuid,nullzero"`
+	SuccessFingerprintResultID *uuid.UUID      `bun:"success_fingerprint_result_id,type:uuid,nullzero"`
+	SuccessReuseOrigin         *string         `bun:"success_reuse_origin,nullzero"`
+	InputSnapshot              json.RawMessage `bun:"input_snapshot,type:jsonb,nullzero"`
 }
