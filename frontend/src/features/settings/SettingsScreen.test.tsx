@@ -285,6 +285,55 @@ describe("SettingsScreen", () => {
     expect(window.location.hash).not.toBe("#/setup");
   });
 
+  it("automatically loads catalogs after the initial operations request completes", async () => {
+    let releaseOperations!: () => void;
+    const operationsGate = new Promise<void>((resolve) => {
+      releaseOperations = resolve;
+    });
+    let markOperationsRequested!: () => void;
+    const operationsRequested = new Promise<void>((resolve) => {
+      markOperationsRequested = resolve;
+    });
+    const catalogRequests: string[] = [];
+    server.use(
+      http.get("/api/operations", async () => {
+        markOperationsRequested();
+        await operationsGate;
+        return json({ operations: [] });
+      }),
+      http.get("/api/tools/catalog", ({ request }) => {
+        const kind = new URL(request.url).searchParams.get("package_kind");
+        if (kind) catalogRequests.push(kind);
+        return json({
+          package_kind: kind,
+          releases: [
+            { identity: `${kind}-release`, source: "fixture", artifacts: [] },
+          ],
+        });
+      }),
+    );
+
+    render(<SettingsScreen />);
+    expect(await screen.findByText("/srv/tools")).toBeTruthy();
+    await operationsRequested;
+    expect(catalogRequests).toEqual([]);
+
+    await act(async () => {
+      releaseOperations();
+      await operationsGate;
+    });
+
+    expect(
+      await screen.findByRole("option", { name: /ffmpeg-release/ }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole("option", { name: /fpcalc-release/ }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(catalogRequests.sort()).toEqual(["ffmpeg", "fpcalc"]),
+    );
+  });
+
   it("saves settings and rereads server state, while showing validation errors", async () => {
     const calls: string[] = [];
     server.use(

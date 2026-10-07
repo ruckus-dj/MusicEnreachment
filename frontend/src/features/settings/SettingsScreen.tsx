@@ -92,6 +92,7 @@ export function SettingsScreen() {
   const [checkedAt, setCheckedAt] = useState(
     () => localStorage.getItem(catalogCheckedKey) || "",
   );
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [operations, setOperations] = useState<OperationResponse[]>([]);
   const [output, setOutput] = useState("");
   const [format, setFormat] =
@@ -115,7 +116,6 @@ export function SettingsScreen() {
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
-  const firstLoad = useRef(true);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
   const installDialogRef = useRef<HTMLDialogElement>(null);
@@ -176,7 +176,7 @@ export function SettingsScreen() {
       setError(message(reason));
     } finally {
       setBusy(false);
-      firstLoad.current = false;
+      setInitialLoadComplete(true);
     }
   }, [refreshInstallations, refreshOperations, refreshState]);
 
@@ -225,14 +225,14 @@ export function SettingsScreen() {
   }, []);
 
   useEffect(() => {
-    if (firstLoad.current || !state || automaticCatalogRequested.current)
+    if (!initialLoadComplete || !state || automaticCatalogRequested.current)
       return;
     const last = checkedAt ? Date.parse(checkedAt) : 0;
     if (!last || Date.now() - last >= cooldownMs) {
       automaticCatalogRequested.current = true;
       void requestCatalog();
     }
-  }, [checkedAt, requestCatalog, state]);
+  }, [checkedAt, initialLoadComplete, requestCatalog, state]);
 
   async function mutate<T extends { status: number }>(
     action: () => Promise<T>,
