@@ -2,10 +2,18 @@
 
 ## Статус и основания
 
-**Статус на 2026-10-07: основная реализация выполнена; завершение приёмки в работе.**
-Независимая проверка выявила оставшиеся исправления инспектора, недостающее
-API/RTL-покрытие и устаревшую runtime-документацию. План остаётся в `todo` до
-полного gate, актуального runtime evidence и независимого вердикта COMPLETE.
+**Статус: COMPLETE (2026-10-07).** Шаги 1–8 выполнены и приняты.
+Проверенная кодовая ревизия — `5448d069ea91ca0e9bc234ed41e7aa031a79c9b3`;
+последующие завершающие коммиты изменяют только документацию.
+Полный `task verify` в чистом checkout завершился с кодом 0, включая Go
+integration tests и 168 frontend tests. Реальный PostgreSQL/River прогон с
+managed tools подтвердил анализ, reuse, toggle, lazy version update, точечный
+retry, SIGKILL/restart recovery и неизменность source bytes.
+Основания: [независимая приёмка COMPLETE](../../reports/plan07-independent-review-2026-10-07.md)
+и [runtime evidence](../../reports/plan07-runtime-acceptance-5448d06.md).
+Runtime проверен на macOS arm64 с PostgreSQL 17; непроверенные платформы и
+границы доказательств явно перечислены в отчётах. Исторические планы 05/06
+не переписаны; утверждённые границы этого плана не расширены.
 План подготовлен
 2026-10-05 по решению владельца после завершения ручного source analysis в
 `docs/plans/done/05-source-technical-analysis-and-inspector.md` и corrections в

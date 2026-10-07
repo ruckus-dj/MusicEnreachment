@@ -1,0 +1,37 @@
+# Plan 07 runtime acceptance — revision 5448d06
+
+**Status: RUNTIME ACCEPTED.** Runtime evidence below satisfies the restart requirement. The subsequent [independent review](plan07-independent-review-2026-10-07.md) issued COMPLETE on 2026-10-07; that review, not this runtime report alone, establishes plan completion.
+
+## Provenance and scope
+
+- Revision: `5448d069ea91ca0e9bc234ed41e7aa031a79c9b3`; the primary session verified the clean worktree and `task verify` exit 0 (log: `/private/var/folders/53/d19hgbk92bx678h9hm3s7fm40000gn/T/opencode/plan07-verified-5448d06.log`). No build or test suite was run during runtime acceptance.
+- Binary: `build/backend/server`, SHA-256 `6f417876010b256f78564d241811591ad4e56f84398778be8f00b0efcb754ab2`, Go `go1.27.1`.
+- Host/runtime: macOS Darwin arm64, native app; isolated PostgreSQL 17 in Docker. Platform support was reported by the running app as supported, non-diagnostic.
+- Managed tools: ffmpeg/ffprobe `9.0.2` (Martin Riedl release); fpcalc `v1.6.0` and `v1.6.1` (Chromaprint). Temporary isolated settings selected source publication format. No production defaults or other databases were changed.
+- Isolated run ID/database: `5448d069ea91ca0e9bc234ed41e7aa031a79c9b3`; source root `917be7fd-d3bd-4a2d-920a-8c85a79dbb21`.
+
+## Accepted evidence
+
+All six scenarios succeeded on this binary: initial (`0e9f1ce8-41df-473c-8850-eefc113ffdfc`), unchanged (`79600d3b-626e-43e8-acb5-935688bfac22`), duplicate (`8edce569-099d-4759-9b8f-67454bb43f90`), changed (`337b8aea-cfef-40f3-9570-dc6a58e2e373`), toggle (`28d5ac7d-93cc-489a-a5f1-735ffde3e8ab`), and lazy (recorded operation `caeb9a58-0162-4671-ba45-41a8cbed175d`, a fingerprint rerun). Seven actual scans have per-scan source-byte guards; each recorded unchanged source bytes. The harness manifest retains each scan's before/after SHA-256/path manifests and result details.
+
+Exact single-step probe retry also ran and failed as expected on the deliberately malformed fixture; operation `adf0aacc-e382-4bf0-9d1f-8419d56216fe` and evidence `retry-recovery-evidence.json` record the result. A harness assertion initially compared the whole persisted retry input against the admitted operation snapshot and failed: the step snapshot additionally contains `analysis_policy_version`. The harness was corrected to require the policy version and compare the remaining retained logical input exactly; rerun passed. This was an evidence-assertion correction, not an application change.
+
+## Earlier crash/recovery attempt (historical, unclassified)
+
+`crash-prekill-sql.json` is final-revision frozen-state evidence: after retry admission the owned app was SIGSTOPed; SQL showed operation `254c01da-f441-4cf9-87b4-f04872421684` queued, probe step queued, and a matching operation/attempt/job execution fence (`attempt=1`, River job `16`). **The capture did not include the River job's own state.** A queued operation and matching fence alone do not prove an orphaned/claimed delivery: if River still considered job 16 available/pending/retryable/scheduled, leaving it durable for normal execution after restart can be correct. The app was restarted; the harness later found no successor and its assertion failed, but that alone does not establish a recovery defect or distinguish ordinary durable-job execution from orphan reconciliation. SQL later showed the probe failed at attempt 4 with no execution triple; the exact River phase at freeze is unavailable because the acceptance container has since been removed. This crash evidence is therefore **unclassified and not accepted as the required claimed/orphaned-delivery recovery proof**.
+
+An earlier crash attempt stopped too late: SQL showed that operation already failed before the fence query; the harness resumed/settled it and correctly failed closed. It is not a valid crash-recovery pass. A further harness attempt correctly captured a queued operation/step fence but omitted the River job phase; its later no-successor assertion is quarantined rather than treated as a product failure. The exact retry harness and all runtime evidence are under `/private/var/folders/53/d19hgbk92bx678h9hm3s7fm40000gn/T/opencode/plan07-final-5448d069ea91ca0e9bc234ed41e7aa031a79c9b3/`.
+
+The separate committed-failure-before-restart/no-auto-retry observation exists only on diagnostic revision `a7177220987d97653c79c8ace1cb5928fb84ab81`; it is supplemental historical evidence and is not attributed to this final revision. The earlier false-positive successor interpretation remains quarantined and is not used here.
+
+## Limits and next verification
+
+This run covers only macOS arm64 and the listed managed tool releases; it does not assert behavior on other OS/architecture combinations. No application source or defaults were modified as part of this acceptance work.
+
+## Addendum — native crash/restart proof (2026-10-07)
+
+A fresh isolated PostgreSQL 17 database and native process used the same verified binary (SHA-256 above), with source root `2a40715f-7192-4ae9-a5ac-3d1d4c41010c`. This fresh run seeded only the initial scenario to provide a malformed-probe fixture, a successful SHA-256 sibling, and the retained failed fingerprint sibling; none of the six already accepted scenarios was rerun. The final crash attempt was a fresh exact probe retry against this isolated fixture. To try to retain a still-available delivery, the harness paused the isolated `source_analysis` River queue before admission; nevertheless, the frozen capture classified the job as `running`, so this is reported as a claimed-delivery recovery case, not as queued-job resumption. The driver SIGSTOPed owned app PID `62436` immediately after the HTTP admission response and before SQL capture, then SIGKILLed it and restarted that same binary.
+
+Frozen SQL evidence (`crash-prekill-sql.json`) records operation `976ff2b3-2e3d-49b9-a9e9-ab985207534a` queued at operation attempt 1, River job `8` in `running`, target work `236c954d-6ec5-4156-a6ac-2ee483a752ef`, probe step queued at step attempt 1, and the complete matching execution fence: operation ID/attempt and job ID all match (`976ff2b3-2e3d-49b9-a9e9-ab985207534a` / `1` / `8`). Following restart, the original operation settled `failed` at stage `recovered`; successor operation `1bd00025-f091-4c93-b16b-7c5f07aab290` was persisted and settled failed against the same exact target and retained probe input. The SHA-256 sibling remained succeeded at attempt 0, the fingerprint sibling remained failed at attempt 0, and the probe step advanced once from attempt 1 to 2. The complete source path/size/SHA-256 manifest was byte-for-byte unchanged before and after. This run establishes claimed-job recovery with a successor; it does not claim a still-available durable-job/same-operation observation.
+
+Evidence directory: `/private/var/folders/53/d19hgbk92bx678h9hm3s7fm40000gn/T/opencode/plan07-runtime-restart-e7c3b6e0-d0bc-42cf-a139-cf96925ca3f8/` (`crash-prekill-sql.json`, `crash-recovery-evidence.json`, `crash-post-sql.json`, `post-restart-data.sql`, `source-bytes-crash-before.json`, `source-bytes-crash-after.json`, and `manifest.json`). This observed claimed/running-delivery case proves orphan recovery with a successor. A separate queued-operation + still-available durable River job may validly resume the same operation after restart; a successor is not universally required. The earlier unclassified attempt above remains quarantined, and diagnostic-revision `a7177220987d97653c79c8ace1cb5928fb84ab81` remains supplemental historical evidence only.
