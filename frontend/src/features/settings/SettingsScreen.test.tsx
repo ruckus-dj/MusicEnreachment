@@ -744,6 +744,529 @@ describe("SettingsScreen", () => {
     expect(screen.getByText("ff-1 — активна")).toBeTruthy();
   });
 
+  it("keeps an installation preflight refusal on the screen and focuses its screen alert", async () => {
+    server.use(
+      http.post("/api/tools/installations/preflight", () =>
+        HttpResponse.json(
+          { detail: "Каталог установки недоступен" },
+          { status: 409 },
+        ),
+      ),
+    );
+    render(<SettingsScreen />);
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    const trigger = within(
+      screen.getByRole("region", { name: "FFmpeg package" }),
+    ).getByRole("button", { name: "Установить без активации" });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Каталог установки недоступен");
+    expect(alert).toHaveFocus();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(alert.closest("dialog")).toBeNull();
+  });
+
+  it("shows move preflight errors and retries inside the move dialog", async () => {
+    let preflightCalls = 0;
+    server.use(
+      http.post("/api/tools/move/preflight", () => {
+        preflightCalls += 1;
+        if (preflightCalls === 1)
+          return HttpResponse.json(
+            { detail: "Проверка переноса отклонена" },
+            { status: 400 },
+          );
+        return json({
+          preflight_token: "move-retry-token",
+          conflicts: [],
+          managed_file_count: 1,
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const path = within(dialog).getByLabelText("Новый Tools directory");
+    fireEvent.change(path, { target: { value: "/srv/move-retry" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("Проверка переноса отклонена");
+    expect(alert).toHaveFocus();
+    expect(alert.closest("dialog")).toBe(dialog);
+    expect(path).toHaveValue("/srv/move-retry");
+
+    fireEvent.change(path, { target: { value: "/srv/move-fixed" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    expect(
+      await within(dialog).findByText("Управляемых файлов: 1"),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(path).toHaveValue("/srv/move-fixed");
+  });
+
+  it("keeps a rejected download in its dialog, focuses it, and permits retry", async () => {
+    let startCalls = 0;
+    const installOperation = { ...operation, kind: "install" };
+    server.use(
+      http.get("/api/operations/:id", () => json(installOperation)),
+      http.post("/api/tools/installations/preflight", () =>
+        json({
+          preflight_token: "download-token",
+          targets: ["/srv/tools/ffmpeg/new/ffmpeg"],
+          conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+        }),
+      ),
+      http.post("/api/tools/installations", () => {
+        startCalls += 1;
+        if (startCalls === 1)
+          return HttpResponse.json(
+            { detail: "Загрузка отклонена" },
+            { status: 409 },
+          );
+        return json(installOperation);
+      }),
+    );
+    render(<SettingsScreen />);
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    const trigger = within(
+      screen.getByRole("region", { name: "FFmpeg package" }),
+    ).getByRole("button", { name: "Установить без активации" });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    let dialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      }),
+    );
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("Загрузка отклонена");
+    expect(alert).toHaveFocus();
+    expect(alert.closest("dialog")).toBe(dialog);
+    expect(screen.queryByText("Загрузка отклонена")).toBe(alert);
+
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    dialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      }),
+    );
+    await screen.findByRole("group", { name: "Операция op-1" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+    expect(startCalls).toBe(2);
+  });
+
+  it("invalidates a refused move token, leaves inputs editable, and retries with a fresh token", async () => {
+    let preflightCalls = 0;
+    const submissions: unknown[] = [];
+    server.use(
+      http.post("/api/tools/move/preflight", () => {
+        preflightCalls += 1;
+        return json({
+          preflight_token: `fresh-move-token-${preflightCalls}`,
+          conflicts: ["/srv/new-tools/conflict"],
+          managed_file_count: 2,
+        });
+      }),
+      http.post("/api/tools/move", async ({ request }) => {
+        submissions.push(await request.json());
+        if (submissions.length === 1)
+          return HttpResponse.json(
+            { detail: "Срок проверки истёк" },
+            { status: 409 },
+          );
+        return json(operation);
+      }),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    let dialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const path = within(dialog).getByLabelText("Новый Tools directory");
+    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await within(dialog).findByText("Управляемых файлов: 2");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить перенос" }),
+    );
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("Срок проверки истёк");
+    expect(alert).toHaveFocus();
+    expect(alert.closest("dialog")).toBe(dialog);
+    expect(path).toHaveValue("/srv/new-tools");
+    expect(
+      within(dialog).queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Перенос Tools directory" });
+    const reopenedPath = within(dialog).getByLabelText("Новый Tools directory");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(reopenedPath).toHaveValue("/srv/new-tools");
+
+    fireEvent.change(reopenedPath, {
+      target: { value: "/srv/new-tools-fixed" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await within(dialog).findByText("Управляемых файлов: 2");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить перенос" }),
+    );
+    await screen.findByRole("group", { name: "Операция op-1" });
+    expect(submissions).toEqual([
+      {
+        preflight_token: "fresh-move-token-1",
+        confirmed_conflicts: ["/srv/new-tools/conflict"],
+      },
+      {
+        preflight_token: "fresh-move-token-2",
+        confirmed_conflicts: ["/srv/new-tools/conflict"],
+      },
+    ]);
+    expect(trigger).toHaveFocus();
+  });
+
+  it("ignores late install and move start refusals after closing and reopening their dialogs", async () => {
+    let resolveInstallStart!: (response: Response) => void;
+    let resolveMoveStart!: (response: Response) => void;
+    let installPreflightCount = 0;
+    let movePreflightCount = 0;
+    server.use(
+      http.get("/api/operations/:id", () => json(operation)),
+      http.post("/api/tools/installations/preflight", () => {
+        installPreflightCount += 1;
+        return json({
+          preflight_token: `install-late-${installPreflightCount}`,
+          targets: ["/srv/tools/ffmpeg/new/ffmpeg"],
+          conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+        });
+      }),
+      http.post(
+        "/api/tools/installations",
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveInstallStart = resolve;
+          }),
+      ),
+      http.post("/api/tools/move/preflight", () => {
+        movePreflightCount += 1;
+        return json({
+          preflight_token: `move-late-${movePreflightCount}`,
+          conflicts: [],
+          managed_file_count: 1,
+        });
+      }),
+      http.post(
+        "/api/tools/move",
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveMoveStart = resolve;
+          }),
+      ),
+    );
+    render(<SettingsScreen />);
+
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    const installTrigger = within(
+      screen.getByRole("region", { name: "FFmpeg package" }),
+    ).getByRole("button", { name: "Установить без активации" });
+    await waitFor(() => expect(installTrigger).not.toBeDisabled());
+    fireEvent.click(installTrigger);
+    let installDialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    fireEvent.click(
+      within(installDialog).getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      }),
+    );
+    await waitFor(() => expect(resolveInstallStart).toBeTypeOf("function"));
+    fireEvent.keyDown(installDialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(installTrigger).not.toBeDisabled());
+    fireEvent.click(installTrigger);
+    installDialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    await act(async () => {
+      resolveInstallStart(
+        HttpResponse.json(
+          { detail: "Поздний отказ загрузки" },
+          { status: 409 },
+        ),
+      );
+    });
+    expect(
+      screen.getByRole("dialog", { name: /Подтверждение установки/ }),
+    ).toBeInTheDocument();
+    expect(within(installDialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(installDialog.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(installDialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    const moveTrigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(moveTrigger).not.toBeDisabled());
+    fireEvent.click(moveTrigger);
+    let moveDialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    fireEvent.click(
+      within(moveDialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await within(moveDialog).findByText("Управляемых файлов: 1");
+    fireEvent.click(
+      within(moveDialog).getByRole("button", { name: "Подтвердить перенос" }),
+    );
+    await waitFor(() => expect(resolveMoveStart).toBeTypeOf("function"));
+    fireEvent.keyDown(moveDialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(moveTrigger).not.toBeDisabled());
+    fireEvent.click(moveTrigger);
+    moveDialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    await act(async () => {
+      resolveMoveStart(
+        HttpResponse.json(
+          { detail: "Поздний отказ переноса" },
+          { status: 409 },
+        ),
+      );
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Перенос Tools directory" }),
+    ).toBeInTheDocument();
+    expect(within(moveDialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(moveDialog).getByRole("button", { name: "Проверить перенос" }),
+    ).toBeInTheDocument();
+    expect(moveDialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it("registers late successful install starts without closing a newer dialog or clearing its busy state", async () => {
+    const installOperation = (id: string) => ({
+      ...operation,
+      id,
+      kind: "install",
+    });
+    const resolveStarts: Array<(response: Response) => void> = [];
+    server.use(
+      http.get("/api/operations/:id", ({ params }) =>
+        json({ ...operation, id: String(params.id) }),
+      ),
+      http.post("/api/tools/installations/preflight", () =>
+        json({
+          preflight_token: "install-late-success",
+          targets: ["/srv/tools/ffmpeg/new/ffmpeg"],
+          conflicts: ["/srv/tools/ffmpeg/new/ffmpeg"],
+        }),
+      ),
+      http.post(
+        "/api/tools/installations",
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveStarts.push(resolve);
+          }),
+      ),
+    );
+    render(<SettingsScreen />);
+
+    await screen.findByRole("option", { name: /ffmpeg-release/ });
+    fireEvent.change(screen.getByLabelText("Версия ffmpeg"), {
+      target: { value: "ffmpeg-release" },
+    });
+    const trigger = within(
+      screen.getByRole("region", { name: "FFmpeg package" }),
+    ).getByRole("button", { name: "Установить без активации" });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    let dialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    const confirm = () =>
+      within(dialog).getByRole("button", {
+        name: "Подтвердить перечисленные конфликты",
+      });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(resolveStarts).toHaveLength(1));
+
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(trigger);
+    dialog = await screen.findByRole("dialog", {
+      name: /Подтверждение установки/,
+    });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(resolveStarts).toHaveLength(2));
+
+    await act(async () => {
+      resolveStarts[0](json(installOperation("install-old")));
+    });
+    expect(
+      screen.getByRole("group", { name: "Операция install-old" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: /Подтверждение установки/ }),
+    ).toBe(dialog);
+    expect(confirm()).toBeDisabled();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await act(async () => {
+      resolveStarts[1](json(installOperation("install-new")));
+    });
+    expect(
+      screen.getByRole("group", { name: "Операция install-new" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("registers late successful move starts without closing a newer dialog or clearing its busy state", async () => {
+    const moveOperation = (id: string) => ({
+      ...operation,
+      id,
+      kind: "move_tools_root",
+    });
+    const resolveStarts: Array<(response: Response) => void> = [];
+    server.use(
+      http.get("/api/operations/:id", ({ params }) =>
+        json({ ...operation, id: String(params.id) }),
+      ),
+      http.post("/api/tools/move/preflight", () =>
+        json({
+          preflight_token: "move-late-success",
+          conflicts: [],
+          managed_file_count: 1,
+        }),
+      ),
+      http.post(
+        "/api/tools/move",
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveStarts.push(resolve);
+          }),
+      ),
+    );
+    render(<SettingsScreen />);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    let dialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const confirm = () =>
+      within(dialog).getByRole("button", { name: "Подтвердить перенос" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await within(dialog).findByText("Управляемых файлов: 1");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(resolveStarts).toHaveLength(1));
+
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Перенос Tools directory" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await within(dialog).findByText("Управляемых файлов: 1");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(resolveStarts).toHaveLength(2));
+
+    await act(async () => {
+      resolveStarts[0](json(moveOperation("move-old")));
+    });
+    expect(
+      screen.getByRole("group", { name: "Операция move-old" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Перенос Tools directory" }),
+    ).toBe(dialog);
+    expect(confirm()).toBeDisabled();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await act(async () => {
+      resolveStarts[1](json(moveOperation("move-new")));
+    });
+    expect(
+      screen.getByRole("group", { name: "Операция move-new" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
   it("rolls back activation UI when the server rejects re-verification", async () => {
     server.use(
       http.post("/api/tools/installations/ff-old/activate", () =>

@@ -116,21 +116,37 @@ export function SettingsScreen() {
   const [movePlan, setMovePlan] = useState<MovePlan>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [installDialogError, setInstallDialogError] = useState("");
+  const [moveDialogError, setMoveDialogError] = useState("");
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
+  const installDialogAlert = useRef<HTMLParagraphElement>(null);
+  const moveDialogAlert = useRef<HTMLParagraphElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
   const installDialogRef = useRef<HTMLDialogElement>(null);
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
+  const dialogFocusRestorePending = useRef(false);
   const moveDirectoryRef = useRef("");
   const removeOldRef = useRef(false);
   const moveInputRevision = useRef(0);
   const moveSessionRevision = useRef(0);
   const moveRequestRevision = useRef(0);
   const movePendingRequest = useRef(0);
+  const installSessionRevision = useRef(0);
+  const installRequestRevision = useRef(0);
+  const installPendingRequest = useRef(0);
+  const installStartRevision = useRef(0);
+  const moveStartRevision = useRef(0);
+
+  const restoreDialogFocus = useCallback(() => {
+    const trigger = dialogReturnFocusRef.current;
+    dialogReturnFocusRef.current = null;
+    trigger?.focus();
+  }, []);
 
   const invalidateMovePlan = useCallback(() => {
     moveRequestRevision.current += 1;
@@ -222,8 +238,27 @@ export function SettingsScreen() {
     void loadScreen();
   }, [loadScreen]);
   useEffect(() => {
-    if (error) alert.current?.focus();
-  }, [error]);
+    if (error && !installDialog && !moveDialog) alert.current?.focus();
+  }, [error, installDialog, moveDialog]);
+  useLayoutEffect(() => {
+    if (installDialogError && installDialogRef.current?.open)
+      installDialogAlert.current?.focus();
+  }, [installDialogError]);
+  useLayoutEffect(() => {
+    if (moveDialogError && moveDialogRef.current?.open)
+      moveDialogAlert.current?.focus();
+  }, [moveDialogError]);
+  useLayoutEffect(() => {
+    if (
+      dialogFocusRestorePending.current &&
+      !installDialog &&
+      !moveDialog &&
+      !busy
+    ) {
+      dialogFocusRestorePending.current = false;
+      restoreDialogFocus();
+    }
+  }, [busy, installDialog, moveDialog, restoreDialogFocus]);
   useLayoutEffect(() => {
     if (installDialog) showSettingsDialog(installDialogRef.current);
   }, [installDialog]);
@@ -314,32 +349,32 @@ export function SettingsScreen() {
     }
   }
 
-  function restoreDialogFocus() {
-    const trigger = dialogReturnFocusRef.current;
-    dialogReturnFocusRef.current = null;
-    trigger?.focus();
-  }
   function closeInstallDialog() {
+    dialogFocusRestorePending.current = true;
+    installSessionRevision.current += 1;
+    installRequestRevision.current += 1;
+    installPendingRequest.current = 0;
+    installStartRevision.current += 1;
+    setInstallDialogError("");
+    setBusy(false);
     const dialog = installDialogRef.current;
     if (dialog?.open) dialog.close();
     else {
       setInstallDialog(undefined);
-      restoreDialogFocus();
     }
   }
   function closeMoveDialog() {
+    dialogFocusRestorePending.current = true;
     moveSessionRevision.current += 1;
     invalidateMovePlan();
+    moveStartRevision.current += 1;
+    setMoveDialogError("");
+    setBusy(false);
     const dialog = moveDialogRef.current;
     if (dialog?.open) dialog.close();
     else {
       setMoveDialog(false);
-      restoreDialogFocus();
     }
-  }
-  function onDialogClose(setClosed: () => void) {
-    setClosed();
-    restoreDialogFocus();
   }
   function onDialogKeyDown(
     event: React.KeyboardEvent<HTMLDialogElement>,
@@ -359,8 +394,12 @@ export function SettingsScreen() {
       setError("Выберите версию для установки.");
       return;
     }
-    setBusy(true);
+    const sessionRevision = ++installSessionRevision.current;
+    const requestRevision = ++installRequestRevision.current;
+    installPendingRequest.current = requestRevision;
+    setInstallDialogError("");
     setError("");
+    setBusy(true);
     try {
       const response = successful(
         await preflightToolInstall({
@@ -369,16 +408,33 @@ export function SettingsScreen() {
         }),
         200,
       );
+      if (
+        sessionRevision !== installSessionRevision.current ||
+        requestRevision !== installRequestRevision.current
+      )
+        return;
       const plan = response.data;
       if (plan.conflicts?.length) setInstallDialog({ kind, release, plan });
-      else await startInstall(plan, []);
+      else await startInstall(plan, [], sessionRevision);
     } catch (reason) {
-      setError(message(reason));
+      if (
+        sessionRevision === installSessionRevision.current &&
+        requestRevision === installRequestRevision.current
+      )
+        setError(message(reason));
     } finally {
-      setBusy(false);
+      if (installPendingRequest.current === requestRevision) {
+        installPendingRequest.current = 0;
+        setBusy(false);
+      }
     }
   }
-  async function startInstall(plan: InstallPreflightBody, confirmed: string[]) {
+  async function startInstall(
+    plan: InstallPreflightBody,
+    confirmed: string[],
+    sessionRevision?: number,
+  ) {
+    const startRevision = ++installStartRevision.current;
     const started = successful(
       await startToolInstall({
         preflight_token: plan.preflight_token,
@@ -386,25 +442,54 @@ export function SettingsScreen() {
       }),
       200,
     );
-    closeInstallDialog();
     setOperations((previous) => [
       ...previous.filter((item) => item.id !== started.data.id),
       started.data,
     ]);
+    if (
+      sessionRevision !== undefined &&
+      (sessionRevision !== installSessionRevision.current ||
+        startRevision !== installStartRevision.current)
+    )
+      return;
+    closeInstallDialog();
   }
   async function confirmInstall() {
     if (!installDialog) return;
+    const sessionRevision = installSessionRevision.current;
+    const startRevision = ++installStartRevision.current;
     setBusy(true);
-    setError("");
+    setInstallDialogError("");
     try {
-      await startInstall(
-        installDialog.plan,
-        installDialog.plan.conflicts || [],
+      const started = successful(
+        await startToolInstall({
+          preflight_token: installDialog.plan.preflight_token,
+          confirmed_conflicts: [...(installDialog.plan.conflicts || [])],
+        }),
+        200,
       );
+      setOperations((previous) => [
+        ...previous.filter((item) => item.id !== started.data.id),
+        started.data,
+      ]);
+      if (
+        sessionRevision !== installSessionRevision.current ||
+        startRevision !== installStartRevision.current
+      )
+        return;
+      closeInstallDialog();
     } catch (reason) {
-      setError(message(reason));
+      if (
+        sessionRevision === installSessionRevision.current &&
+        startRevision === installStartRevision.current
+      )
+        setInstallDialogError(message(reason));
     } finally {
-      setBusy(false);
+      if (
+        sessionRevision === installSessionRevision.current &&
+        startRevision === installStartRevision.current
+      )
+        setBusy(false);
     }
   }
   async function activate(item: InstallationResponse, kind: Kind) {
@@ -462,6 +547,7 @@ export function SettingsScreen() {
     const sourceDirectory = state?.settings.tools_directory || "";
     setBusy(true);
     setError("");
+    setMoveDialogError("");
     try {
       const response = successful(
         await preflightToolsRootMove({
@@ -496,7 +582,7 @@ export function SettingsScreen() {
         sessionRevision === moveSessionRevision.current &&
         moveDialog
       )
-        setError(message(reason));
+        setMoveDialogError(message(reason));
     } finally {
       if (movePendingRequest.current === requestRevision) {
         movePendingRequest.current = 0;
@@ -517,8 +603,10 @@ export function SettingsScreen() {
       return;
     }
     const confirmedPlan = movePlan;
+    const sessionRevision = moveSessionRevision.current;
+    const startRevision = ++moveStartRevision.current;
     setBusy(true);
-    setError("");
+    setMoveDialogError("");
     try {
       const response = successful(
         await startToolsRootMove({
@@ -531,13 +619,27 @@ export function SettingsScreen() {
         ...previous.filter((item) => item.id !== response.data.id),
         response.data,
       ]);
+      if (
+        sessionRevision !== moveSessionRevision.current ||
+        startRevision !== moveStartRevision.current
+      )
+        return;
       setMovePlan(undefined);
       closeMoveDialog();
     } catch (reason) {
-      invalidateMovePlan();
-      setError(message(reason));
+      if (
+        sessionRevision === moveSessionRevision.current &&
+        startRevision === moveStartRevision.current
+      ) {
+        invalidateMovePlan();
+        setMoveDialogError(message(reason));
+      }
     } finally {
-      setBusy(false);
+      if (
+        sessionRevision === moveSessionRevision.current &&
+        startRevision === moveStartRevision.current
+      )
+        setBusy(false);
     }
   }
   const onOperation = useCallback(
@@ -778,6 +880,8 @@ export function SettingsScreen() {
                 isDisabled={!platformReady || busy}
                 onPress={(event) => {
                   dialogReturnFocusRef.current = event.target as HTMLElement;
+                  setError("");
+                  setMoveDialogError("");
                   moveSessionRevision.current += 1;
                   moveInputRevision.current += 1;
                   setMovePlan(undefined);
@@ -904,6 +1008,7 @@ export function SettingsScreen() {
                           onPress={(event) => {
                             dialogReturnFocusRef.current =
                               event.target as HTMLElement;
+                            setError("");
                             void preflightInstall(kind);
                           }}
                         >
@@ -970,7 +1075,11 @@ export function SettingsScreen() {
           aria-modal="true"
           aria-labelledby="install-dialog-title"
           className="settings-dialog"
-          onClose={() => onDialogClose(() => setInstallDialog(undefined))}
+          onClose={() => {
+            dialogFocusRestorePending.current = true;
+            setInstallDialog(undefined);
+            setInstallDialogError("");
+          }}
           onKeyDown={(event) => onDialogKeyDown(event, closeInstallDialog)}
           onCancel={(event) => {
             event.preventDefault();
@@ -985,6 +1094,11 @@ export function SettingsScreen() {
             conflicts={installDialog.plan.conflicts || []}
             targets={installDialog.plan.targets || []}
           />
+          {installDialogError && (
+            <p ref={installDialogAlert} tabIndex={-1} role="alert">
+              {installDialogError}
+            </p>
+          )}
           <AppButton isDisabled={busy} onPress={() => void confirmInstall()}>
             Подтвердить перечисленные конфликты
           </AppButton>
@@ -999,7 +1113,11 @@ export function SettingsScreen() {
           aria-modal="true"
           aria-labelledby="move-dialog-title"
           className="settings-dialog"
-          onClose={() => onDialogClose(() => setMoveDialog(false))}
+          onClose={() => {
+            dialogFocusRestorePending.current = true;
+            setMoveDialog(false);
+            setMoveDialogError("");
+          }}
           onKeyDown={(event) => onDialogKeyDown(event, closeMoveDialog)}
           onCancel={(event) => {
             event.preventDefault();
@@ -1022,6 +1140,11 @@ export function SettingsScreen() {
             />{" "}
             Удалить прежние управляемые файлы после успешного переноса
           </label>
+          {moveDialogError && (
+            <p ref={moveDialogAlert} tabIndex={-1} role="alert">
+              {moveDialogError}
+            </p>
+          )}
           {!movePlan ? (
             <AppButton isDisabled={busy} onPress={() => void preflightMove()}>
               Проверить перенос
