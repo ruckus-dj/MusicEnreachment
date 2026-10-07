@@ -274,6 +274,103 @@ FK защищают текущие result references. Проверить migrati
 snapshot получает безопасный отказ с освобождением удержаний; нельзя угадывать
 обязательные поля из текущих settings или переписывать сохранённый snapshot.
 
+#### Техническая форма целевой схемы
+
+Ниже фиксируются физические ограничения для реализации утверждённых выше
+контрактов; это не дополнительные продуктовые требования. SQL/migrations задают
+физическую схему, существующий DBML остаётся концептуальным.
+
+- `media_variant` хранит SHA-256 как `NULL` либо 32 bytes с unique canonical
+  identity. Probe result — цельная nullable-группа (`ffprobe_json`, версия,
+  policy version, observed tags, время и provenance operation); SHA-only row не
+  получает фиктивный probe. Audio count `0` означает успешный zero-audio, `NULL`
+  — отсутствие результата. `applied_operation_id` относится к probe, не к
+  последнему применившему sibling шагу.
+- `media_probe_cache` отделяет cache association от selected probe result:
+  PK `(source_sha256, ffprobe_version_sha256, analysis_policy_version)`,
+  FK RESTRICT на canonical digest и result. При reuse проверяются размер,
+  полный ffprobe banner и policy; digest banner не заменяет сравнение полного
+  значения. Первый committed cache winner сохраняется. Конкурентный writer,
+  проигравший заполнение canonical row, сохраняет собственный probe-bearing
+  result, пока тот выбран его work; cache winner не подменяет selected result.
+- `media_fingerprint_result` хранит неизменяемые compressed fingerprint, фактические
+  версии fpcalc/Chromaprint, algorithm namespace, duration, время, provenance и
+  parser contract. Отдельный `media_fingerprint_cache` имеет PK
+  `(source_sha256, fpcalc_version)`, FK RESTRICT на canonical variant digest и
+  composite FK RESTRICT `(result_id, fpcalc_version)` на result. Первый успешный
+  cache insert побеждает; повтор той же версии cache не перезаписывает. Selected
+  result не уникален по variant/version. У variant без SHA прежний success живёт
+  до успешной замены; ошибка его не перезаписывает.
+- `source_analysis_work` — текущая работа на location: UUID, unique
+  `location_id`, root, immutable configured/inventory/relative paths, size/mtime,
+  scan-sampled SHA policy, scan-operation provenance без FK и creation time.
+  `(location_id, source_root_id)` защищается unique key и composite FK; изменение
+  identity создаёт новый work UUID, backfill нет.
+- `source_analysis_step` имеет PK `(work_id, step)` и work FK CASCADE; хранит
+  независимый latest attempt/status, delivery, safe error, успешный result и
+  reuse provenance. Execution operation/attempt/job либо заполнены все вместе,
+  либо все NULL; queued/running требуют тройку, failed — непустую safe error,
+  skipped — reason. Step-specific successful result FKs — RESTRICT; terminal,
+  queued/running/failed могут удерживать предыдущий success. Provenance operation
+  UUID не FK на очищаемую operation. Это current state, не история; retry отказа
+  его не меняет.
+- Operation snapshot использует nullable `source_analysis_mode` (`batch` /
+  `single_step`), target work/step и `tools_read_required`. Scan несёт active root,
+  но не analysis target; batch — active root без location/work/step; single-step
+  — root/location/work/step, terminal target поля nullable. Admission и constraint
+  trigger проверяют принадлежность work/location/root. На active source operation
+  deferred constraint trigger требует tool-read hold тогда и только тогда, когда
+  `tools_read_required`; `operation_tool_read_hold` имеет PK
+  `(operation_id, installation_id)` и FK RESTRICT для обоих ключей; terminal
+  удаляет holds атомарно. Исключение tools-move учитывает только
+  `tools_read_required`, без fallback. Hash-only работа не зависит от tool move.
+- `operation_source_work_hold` с PK `(operation_id, work_id)` и FK RESTRICT
+  удерживает batch target; execution pair ссылается на hold. Terminal сначала
+  очищает execution triples, затем holds. Delivery — `operation.river_job_id`;
+  существующий unique `(operation.id, attempt, river_job_id)` служит fence.
+  Удаление operation не удаляет work.
+
+Scan публикует private SHA/probe/fpcalc candidates только после полного успешного
+traversal. Atomic apply проверяет operation/attempt/root, reconciles candidates,
+обновляет identity и independent step state, создаёт durable pending intent,
+завершает scan и удаляет candidates; ошибка откатывает публикацию целиком.
+Подготовленный fpcalc output — typed candidate и публикуется вместе с выбранным
+успешным fingerprint независимо от probe; matching eligibility не определяет
+сохранение результата. Отдельная admission transaction создаёт batch и River job
+из committed intent.
+
+Для canonical digest применять `INSERT ... ON CONFLICT DO NOTHING`, затем
+отдельный `SELECT` при READ COMMITTED: один CTE snapshot может не увидеть
+конкурирующий insert. Проверять размер canonical row; mismatch — conflict, не
+молчаливое объединение. При успешном hash retry переключать identity, не меняя
+уже успешные selected probe/fingerprint siblings; заполнять лишь отсутствующие
+canonical cache successes и чистить после обновления consumers. Cleanup digest-less
+variant проверяет все inbound references (locations, current successes, live holds
+и другие domain refs); digest orphan остаётся cache. Provenance UUID и snapshot
+сами по себе holds не создают.
+
+В batch достаточно одного orchestration River job, без child jobs; step attempt
+входит в delivery fence. Recovery восстанавливает недоставленный pending intent,
+но не persisted failure или committed success; старые deliveries не применяются,
+повтор terminal delivery — no-op. Успешный probe retry может добавить только
+недостающий fingerprint intent. Общий порядок блокировок: tools-move gate для
+tool-dependent admission → package selection → roots → locations/work →
+installations → operations/steps → digest/variants/results → writes. UUID-наборы
+сортируются; filesystem execution идёт вне DB transaction. SHA-only path не берёт
+tools gate. Root lock удерживается только в короткой transaction, а unrelated
+roots остаются независимыми. Per-root active-operation unique index охватывает
+все source operations.
+
+Managed fpcalc вызывается как `-json -- ABSOLUTE_SERVER_SOURCE_PATH`, без shell,
+PATH, client paths/version и `-length`; используется встроенная длительность
+120 секунд, без дополнительного backend-лимита и обещания full-file fingerprint.
+Перед/после проверяется stat. Down-миграции до изменений проверяют небезопасные
+строки и отказывают без destructive guesses; безопасный down удаляет только свои
+artifacts. Реализация схемы разбита на этап 2 (results/cache, work/step, holds,
+fences и apply APIs) и этап 3 (единая operation shape, guards, admission/retry/
+recovery/terminal и lock ordering); down каждого этапа возвращает предыдущую
+shape и отказывает при небезопасном состоянии.
+
 **Готово, когда:** reviewer принимает таблицу «текущее → target → миграция» и
 решение по hash/shared media identity, текущим операциям и private preparation/
 fingerprint eligibility integration. Поведение no_audio соответствует уточнению
@@ -283,11 +380,10 @@ fingerprint eligibility integration. Поведение no_audio соответ�
 
 **Зависимости:** 1. **Область:** новые миграции, persistence/models/repos/tests.
 
-Рабочий проект схемы для исполнения:
-[schema proposal](07-automatic-source-analysis-schema-proposal.md).
-Первое review пункта 1 выполнено 2026-10-05. После уточнения владельца об
-отсутствии legacy проект упрощается и требует повторного review; прежний PASS
-не означает приёмку изменённой схемы или реализованной миграции.
+Техническая форма схемы описана в подразделе «Техническая форма целевой схемы»
+шага 1 выше. Первое review пункта 1 выполнено 2026-10-05. После уточнения
+владельца об отсутствии legacy проект упрощается и требует повторного review;
+прежний PASS не означает приёмку изменённой схемы или реализованной миграции.
 
 Добавить только согласованную схему. При включённой SHA-настройке SHA-256
 вычисляется для новых locations и изменившихся источников; не заполнять hash у
