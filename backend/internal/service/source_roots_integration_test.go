@@ -56,12 +56,23 @@ func newSourceRootsIntegration(t *testing.T) sourceRootsIntegration {
 func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID, state string) *persistence.Operation {
 	t.Helper()
 	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: "scan_source", State: state, Stage: "applying",
+		ID: uuid.New(), Kind: "scan_source", State: "queued", Stage: "queued", Attempt: 1,
 		InputSnapshot:      []byte(`{"source_root_id":"` + rootID.String() + `"}`),
 		TargetSourceRootID: &rootID,
 	}
-	if err := persistence.NewSetupManagerRepository(database).CreateOperation(ctx, operation); err != nil {
-		t.Fatalf("create scan operation: %v", err)
+	client := openSourceScanRiver(t, database)
+	if err := persistence.NewSourceInventoryRepository(database).CreateSourceScanOperationAndEnqueue(
+		ctx, operation, client, service.ScanSourceJobArgs{OperationID: operation.ID}, nil,
+	); err != nil {
+		t.Fatalf("enqueue scan operation: %v", err)
+	}
+	if state != "queued" {
+		if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
+			Set("state = ?", state).Set("stage = 'applying'").Set("updated_at = now()").
+			Where("id = ?", operation.ID).Exec(ctx); err != nil {
+			t.Fatalf("set scan operation state: %v", err)
+		}
+		operation.State, operation.Stage = state, "applying"
 	}
 	return operation
 }
@@ -91,6 +102,7 @@ func applyScanInventory(t *testing.T, ctx context.Context, inventory *persistenc
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: configuredPath,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply the scan of operation %s: %v", operation.ID, err)
 	}
@@ -436,6 +448,7 @@ func TestSourceRootDeletionSerializesWritersWithPostgreSQL(t *testing.T) {
 				}
 				writerStarted <- integration.inventory.ApplySourceScan(writerCtx, persistence.SourceScanApply{
 					OperationID: seed.ID, ExpectedConfiguredPath: created.ConfiguredPath,
+					ExpectedAttempt: seed.Attempt, ExpectedJobID: *seed.RiverJobID,
 				})
 			}()
 			// Ensure writer attempt is observable without timing assumptions: wait

@@ -206,8 +206,8 @@ func TestSourceLocationDetailStaysReadableWithoutSetupOrSupportedPlatform(t *tes
 				t.Fatalf("read-only detail status=%d, want 200: %s", response.Code, response.Body.String())
 			}
 			blocked := sourceRequest(t, fixture.handler, http.MethodPost,
-				"/sources/"+root.ID.String()+"/locations/"+location.ID.String()+"/analyze",
-				analyzeBody(location.SizeBytes, location.Mtime.Format(time.RFC3339Nano)))
+				"/sources/"+root.ID.String()+"/locations/"+location.ID.String()+"/retry",
+				`{"step":"sha256","expected_size_bytes":2048,"expected_mtime":"`+location.Mtime.Format(time.RFC3339Nano)+`"}`)
 			want := http.StatusConflict
 			if test.platform.Diagnostic {
 				want = http.StatusServiceUnavailable
@@ -223,7 +223,11 @@ func TestSourceLocationDetailStaysReadableWithoutSetupOrSupportedPlatform(t *tes
 	if response := sourceRequest(t, handler, http.MethodGet, path, ""); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("detail without dependencies status=%d, want 503: %s", response.Code, response.Body.String())
 	}
-	if response := sourceRequest(t, handler, http.MethodPost, path+"/analyze", `{"expected_size_bytes":1,"expected_mtime":"2026-09-02T08:30:00Z"}`); response.Code != http.StatusServiceUnavailable {
+	if response := sourceRequest(t, handler, http.MethodPost, path+"/analyze", `{"expected_size_bytes":1,"expected_mtime":"2026-09-02T08:30:00Z"}`); response.Code != http.StatusNotFound {
+		t.Fatalf("removed legacy analysis endpoint status=%d, want 404: %s", response.Code, response.Body.String())
+	}
+	if response := sourceRequest(t, handler, http.MethodPost, path+"/retry",
+		`{"step":"sha256","expected_size_bytes":1,"expected_mtime":"2026-09-02T08:30:00Z"}`); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("analysis without dependencies status=%d, want 503: %s", response.Code, response.Body.String())
 	}
 }

@@ -113,6 +113,24 @@ type sourceRootsFixture struct {
 	otherSource string
 }
 
+type pendingSourceRootFixture struct {
+	calls           int
+	rootID          uuid.UUID
+	isCommitted     func() bool
+	committedAtCall bool
+	admissionErr    error
+}
+
+func (fixture *pendingSourceRootFixture) AdmitPending(_ context.Context, rootID uuid.UUID) (*persistence.Operation, error) {
+	fixture.calls++
+	fixture.rootID = rootID
+	fixture.committedAtCall = fixture.isCommitted == nil || fixture.isCommitted()
+	if !fixture.committedAtCall {
+		return nil, errors.New("source root was not committed before pending admission")
+	}
+	return nil, fixture.admissionErr
+}
+
 func newSourceRootsFixture(t *testing.T) sourceRootsFixture {
 	t.Helper()
 	source := t.TempDir()
@@ -600,5 +618,32 @@ func TestDeleteSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 	}
 	if _, err := fixture.roots.Get(ctx, created.ID); err != nil {
 		t.Fatalf("root after the refused deletion: %v", err)
+	}
+}
+
+func TestEditEnabledSourceRootAdmitsPendingAfterCommitBestEffort(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSourceRootsFixture(t)
+	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: fixture.normalized, Enabled: false}
+	fixture.repository.roots = append(fixture.repository.roots, root)
+	dispatcher := &pendingSourceRootFixture{
+		admissionErr: errors.New("pending service unavailable"),
+		isCommitted:  func() bool { return fixture.repository.roots[0].Enabled },
+	}
+	fixture.roots.SetPendingDispatcher(dispatcher)
+	enabled := true
+
+	updated, err := fixture.roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &enabled})
+	if err != nil {
+		t.Fatalf("enable root despite downstream admission failure: %v", err)
+	}
+	if !updated.Enabled || !fixture.repository.roots[0].Enabled {
+		t.Fatalf("committed root enabled = (%t returned, %t stored), want true", updated.Enabled, fixture.repository.roots[0].Enabled)
+	}
+	if dispatcher.calls != 1 || dispatcher.rootID != root.ID {
+		t.Fatalf("pending admission = (%d calls, root %s), want (1, %s)", dispatcher.calls, dispatcher.rootID, root.ID)
+	}
+	if !dispatcher.committedAtCall {
+		t.Fatal("pending admission ran before the root edit committed")
 	}
 }

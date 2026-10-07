@@ -111,8 +111,9 @@ func failedScanRetryOperation(root *persistence.SourceRoot, stage string) *persi
 	finished := time.Now().UTC()
 	return &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "failed", Stage: stage,
-		InputSnapshot: []byte(`{"schema_version":1,"source_root_id":"` + root.ID.String() +
-			`","configured_path":"` + root.ConfiguredPath + `"}`),
+		InputSnapshot: []byte(`{"schema_version":3,"source_root_id":"` + root.ID.String() +
+			`","configured_path":"` + root.ConfiguredPath + `","scan_generation":` + fmt.Sprint(root.ScanGeneration) +
+			`,"sha256_enabled":false,"tools":[]}`),
 		TargetSourceRootID: &root.ID, Attempt: 1, SafeError: scanRetrySafeError("The traversal failed."),
 		FinishedAt: &finished,
 	}

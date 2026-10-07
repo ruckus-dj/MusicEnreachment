@@ -4,6 +4,7 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 // TestSourceScanStartupRecoveryPostgreSQL drives the scan-specific startup
@@ -31,8 +33,8 @@ import (
 // install policy the same recovery runs is asserted unchanged at the end.
 func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -86,7 +88,8 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	// Given a queued scan whose process left stored candidates behind and died
 	// before any live delivery could run it...
 	writeScanDispatchFile(t, filepath.Join(source, "album", "retry.flac"), "audio bytes")
-	queued := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	queued := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, queued, false)
 	appendScanRecoveryCandidates(t, ctx, inventory, queued.ID, scanRecoveryCandidates(t, source, "album/retry.flac")...)
 	requireScanDispatchCandidates(t, ctx, database, queued.ID, 1)
 	probesBeforeRecovery := scanDispatchProbeCount(t, probes)
@@ -122,7 +125,8 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	// Given a scan that was interrupted while traversing and had already stored
 	// candidates of a file the applied generation does not contain...
 	writeScanDispatchFile(t, filepath.Join(source, "album", "second.flac"), "audio bytes")
-	traversing := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	traversing := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, traversing, false)
 	if err := operations.Running(ctx, traversing.ID, service.SourceScanStageTraversing); err != nil {
 		t.Fatalf("record the traversing scan as running: %v", err)
 	}
@@ -142,12 +146,13 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	// Given a scan whose apply committed and whose process died before it could
 	// report the success: the root records that operation as the applied one.
 	tree := []string{"album/track.flac", "album/silent.mka", "album/broken.wav", "album/retry.flac", "album/second.flac"}
-	applied := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	applied := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, applied, false)
 	if err := operations.Running(ctx, applied.ID, service.SourceScanStageApplying); err != nil {
 		t.Fatalf("record the applied scan as running: %v", err)
 	}
 	appendScanRecoveryCandidates(t, ctx, inventory, applied.ID, scanRecoveryCandidates(t, source, tree...)...)
-	applyScanGeneration(t, ctx, inventory, applied.ID, root.ConfiguredPath)
+	applyScanGeneration(t, ctx, setupManager, operations, inventory, applied.ID, root.ConfiguredPath)
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
 	appliedLocations := readScanDispatchLocations(t, ctx, database, root.ID)
 
@@ -163,12 +168,16 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	// Given a delivered scan whose generation an earlier delivery already applied
 	// and whose operation never reported the success...
 	writeScanDispatchFile(t, filepath.Join(source, "album", "delivery.flac"), "audio bytes")
-	redelivered := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	redelivered := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, redelivered, false)
 	appendScanRecoveryCandidates(t, ctx, inventory, redelivered.ID, scanRecoveryCandidates(t, source, append(tree, "album/delivery.flac")...)...)
-	applyScanGeneration(t, ctx, inventory, redelivered.ID, root.ConfiguredPath)
+	applyScanGeneration(t, ctx, setupManager, operations, inventory, redelivered.ID, root.ConfiguredPath)
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
 	redeliveredLocations := readScanDispatchLocations(t, ctx, database, root.ID)
 	probesBeforeDelivery := scanDispatchProbeCount(t, probes)
+	// Startup recovery recognizes the committed generation and makes the
+	// operation terminal before an actual duplicate River delivery is sent.
+	reconcileScanRecovery(t, ctx, setupManager, operations, registry)
 
 	// When the job is delivered again through the real dispatcher...
 	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, redelivered.ID))
@@ -262,10 +271,8 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	}
 
 	// Given a queued scan of the root whose River delivery is still live...
-	live := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
-	if _, err := database.NewRaw("UPDATE operation SET river_job_id = ? WHERE id = ?", 424242, live.ID).Exec(ctx); err != nil {
-		t.Fatalf("attach a live River delivery to the queued scan: %v", err)
-	}
+	live := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, live, true)
 
 	// When the recovery runs while that delivery is live...
 	if err := ReconcileInterruptedOperations(ctx, setupManager, operations,
@@ -281,8 +288,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 
 func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, _ := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 
 	settingsRepository := persistence.NewSettingsRepository(database)
@@ -379,11 +385,53 @@ func appendScanRecoveryCandidates(t *testing.T, ctx context.Context, inventory *
 	}
 }
 
-func applyScanGeneration(t *testing.T, ctx context.Context, inventory *persistence.SourceInventoryRepository, operationID uuid.UUID, configuredPath string) {
+func applyScanGeneration(t *testing.T, ctx context.Context, setup *persistence.SetupManagerRepository, operations *service.Operations, inventory *persistence.SourceInventoryRepository, operationID uuid.UUID, configuredPath string) {
 	t.Helper()
-	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{OperationID: operationID, ExpectedConfiguredPath: configuredPath}); err != nil {
+	operation, err := setup.GetOperation(ctx, operationID)
+	if err != nil {
+		t.Fatalf("read persisted scan operation %s: %v", operationID, err)
+	}
+	if operation.RiverJobID == nil || operation.Attempt < 1 {
+		t.Fatalf("scan operation %s has no persisted attempt/job fence: %+v", operationID, operation)
+	}
+	if operation.State != "running" {
+		if err := operations.Running(ctx, operationID, service.SourceScanStageApplying); err != nil {
+			t.Fatalf("mark persisted scan operation %s running before apply: %v", operationID, err)
+		}
+	}
+	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
+		OperationID: operationID, ExpectedConfiguredPath: configuredPath,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
+	}); err != nil {
 		t.Fatalf("apply the scan generation of %s: %v", operationID, err)
 	}
+}
+
+func attachScanRecoveryJob(t *testing.T, ctx context.Context, database *bun.DB, client *river.Client[*sql.Tx], operation *persistence.Operation, live bool) {
+	t.Helper()
+	tx, err := database.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin persisted recovery delivery: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	inserted, err := client.InsertTx(ctx, tx, service.ScanSourceJobArgs{OperationID: operation.ID}, nil)
+	if err != nil {
+		t.Fatalf("insert persisted recovery delivery: %v", err)
+	}
+	if live {
+		if _, err := tx.ExecContext(ctx, `UPDATE river_job SET state='scheduled', scheduled_at=now() + interval '1 hour' WHERE id=$1`, inserted.Job.ID); err != nil {
+			t.Fatalf("schedule live recovery delivery: %v", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE river_job SET state='completed', finalized_at=now() WHERE id=$1`, inserted.Job.ID); err != nil {
+		t.Fatalf("finish orphan recovery delivery: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE operation SET river_job_id = $1 WHERE id = $2", inserted.Job.ID, operation.ID); err != nil {
+		t.Fatalf("attach persisted recovery delivery to operation: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit persisted recovery delivery: %v", err)
+	}
+	operation.RiverJobID = &inserted.Job.ID
 }
 
 // reconcileScanRecovery runs the production startup recovery with no live River

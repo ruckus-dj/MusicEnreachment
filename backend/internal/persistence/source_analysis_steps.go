@@ -36,7 +36,9 @@ type SourceStepClaim struct {
 	OperationAttempt int
 	JobID            int64
 	Step             SourceStepName
-	AllowSuccessful  bool
+	// AllowSuccessful is retained for source compatibility but is ignored.
+	// Successful results are re-claimable only through persisted operation intent.
+	AllowSuccessful bool
 }
 
 // SourceSHA256Apply is the successful hash output and its captured fence.
@@ -157,8 +159,32 @@ func (repository *SourceInventoryRepository) ClaimSourceAnalysisStep(ctx context
 		if locked.Operation.State != "running" {
 			return fmt.Errorf("claim source analysis step: operation must be running")
 		}
-		if locked.Step.State == "queued" || locked.Step.State == "running" || locked.Step.State == "skipped" || (locked.Step.State == "succeeded" && !claim.AllowSuccessful) {
-			return fmt.Errorf("claim source analysis step: step is not claimable")
+		if locked.Step.State != "queued" {
+			return fmt.Errorf("claim source analysis step: step is not queued for this delivery")
+		}
+		snapshot, err := ValidateSourceAnalysisOperationContract(&locked.Operation)
+		if err != nil {
+			return fmt.Errorf("claim source analysis step: %w", err)
+		}
+		if locked.Step.ExecutionOperationID == nil || *locked.Step.ExecutionOperationID != claim.OperationID ||
+			locked.Step.ExecutionOperationAttempt == nil || *locked.Step.ExecutionOperationAttempt != claim.OperationAttempt ||
+			locked.Step.ExecutionJobID == nil || *locked.Step.ExecutionJobID != claim.JobID {
+			return fmt.Errorf("claim source analysis step: queued delivery triple does not match the claim")
+		}
+		if snapshot.Mode == SourceAnalysisModeSingleStep {
+			if snapshot.TargetWorkID == nil || *snapshot.TargetWorkID != claim.WorkID || snapshot.TargetStep == nil || *snapshot.TargetStep != string(claim.Step) {
+				return fmt.Errorf("claim source analysis step: claim does not match the exact single-step target")
+			}
+		} else {
+			if !containsSourceWork(snapshot.WorkIDs, claim.WorkID) {
+				return fmt.Errorf("claim source analysis step: work item is outside the pinned batch")
+			}
+			if !selectsSourceAnalysisStep(snapshot.SelectedSteps, claim.WorkID, claim.Step) {
+				return fmt.Errorf("claim source analysis step: step is outside the selected batch membership")
+			}
+		}
+		if locked.Operation.RerunTarget && (snapshot.Mode != SourceAnalysisModeSingleStep || claim.Step != SourceStepFingerprint) {
+			return fmt.Errorf("claim source analysis step: persisted rerun intent does not authorize this step")
 		}
 		var held bool
 		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_source_work_hold WHERE operation_id=? AND work_id=?)`, claim.OperationID, claim.WorkID).Scan(ctx, &held); err != nil {
@@ -176,6 +202,18 @@ func (repository *SourceInventoryRepository) ClaimSourceAnalysisStep(ctx context
 		return nil
 	})
 	return attempt, err
+}
+
+func selectsSourceAnalysisStep(selections []SourceAnalysisStepSelection, workID uuid.UUID, step SourceStepName) bool {
+	if selections == nil {
+		return true
+	}
+	for _, selection := range selections {
+		if selection.WorkID == workID && selection.Step == step {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplySourceSHA256 commits the digest independently and promotes selected
@@ -314,8 +352,8 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 			if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, *canonicalID).Scan(ctx, canonical); err != nil {
 				return fmt.Errorf("apply source probe: read canonical digest: %w", err)
 			}
-			if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, apply.FFProbeVersion, apply.AnalysisPolicy, result.ID); err != nil {
-				return fmt.Errorf("apply source probe: register cache: %w", err)
+			if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, result.ID); err != nil {
+				return fmt.Errorf("apply source probe: register probe cache: %w", err)
 			}
 		}
 		return nil
@@ -448,6 +486,56 @@ func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.
 	return selected, nil
 }
 
+// ReuseSourceProbe selects an immutable probe cache row for the current SHA
+// identity. It never rewrites canonical provenance or attaches the cache row to
+// the location; the step records only which reusable result it selected.
+func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Context, claim SourceStepClaim, capturedStepAttempt int, resultID uuid.UUID, ffprobeVersion string, policy int) (*SourceMediaVariant, error) {
+	if claim.Step != SourceStepProbe || claim.WorkID == uuid.Nil || claim.OperationID == uuid.Nil || claim.OperationAttempt < 1 || claim.JobID < 1 || capturedStepAttempt < 1 || resultID == uuid.Nil || ffprobeVersion == "" || policy < 1 {
+		return nil, fmt.Errorf("reuse source probe: valid probe fence, result identity, version, and policy are required")
+	}
+	var selected *SourceMediaVariant
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := lockSourceAnalysisStep(ctx, tx, claim.WorkID, claim.OperationID, claim.OperationAttempt, claim.JobID, SourceStepProbe)
+		if err != nil {
+			return fmt.Errorf("reuse source probe: %w", err)
+		}
+		var sha SourceAnalysisStep
+		if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='sha256'`, claim.WorkID).Scan(ctx, &sha); err != nil || sha.SuccessSHAVariantID == nil {
+			return fmt.Errorf("reuse source probe: no successful current SHA identity is selected")
+		}
+		var digest []byte
+		if err := tx.NewRaw(`SELECT source_sha256 FROM media_variant WHERE id=?`, *sha.SuccessSHAVariantID).Scan(ctx, &digest); err != nil || len(digest) != 32 {
+			return fmt.Errorf("reuse source probe: selected SHA identity is unavailable")
+		}
+		selected = new(SourceMediaVariant)
+		if err := tx.NewRaw(`SELECT result.* FROM media_probe_cache cache
+			JOIN media_variant result ON result.id=cache.result_id
+			WHERE cache.source_sha256=? AND cache.ffprobe_version_sha256=sha256(convert_to(?, 'UTF8')) AND cache.ffprobe_version=? AND cache.analysis_policy_version=?
+			AND result.id=? AND result.size_bytes=?`, digest, ffprobeVersion, ffprobeVersion, policy, resultID, locked.Work.SizeBytes).Scan(ctx, selected); err != nil {
+			return fmt.Errorf("reuse source probe: cache result does not match current digest, size, version, and policy: %w", err)
+		}
+		if err := checkSourceStepApplyFence(locked, capturedStepAttempt); err != nil {
+			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == capturedStepAttempt && sameUUID(locked.Step.LastOperationID, claim.OperationID) && sameUUID(locked.Step.SuccessProbeVariantID, resultID) {
+				return nil
+			}
+			return fmt.Errorf("reuse source probe: %w", ErrSourceAnalysisStale)
+		}
+		if locked.Operation.State != "running" {
+			return fmt.Errorf("reuse source probe: %w", ErrSourceAnalysisStale)
+		}
+		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_probe_variant_id=?,success_reuse_origin='sha256',safe_error=NULL,
+			execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
+			WHERE work_id=? AND step='probe' AND step_attempt=?`, resultID, claim.OperationID, claim.WorkID, capturedStepAttempt).Exec(ctx); err != nil {
+			return fmt.Errorf("reuse source probe: select cached result: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
 func deleteUnreferencedSourceFingerprintResult(ctx context.Context, tx bun.IDB, resultID uuid.UUID) error {
 	if _, err := tx.NewRaw(`DELETE FROM media_fingerprint_result AS result WHERE result.id=?
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step AS step WHERE step.success_fingerprint_result_id=result.id)
@@ -496,7 +584,6 @@ func (repository *SourceInventoryRepository) CleanupSourceMediaVariants(ctx cont
 	}
 	if _, err := repository.db.NewRaw(`DELETE FROM media_variant v WHERE v.id IN (?) AND v.source_sha256 IS NULL
 		AND NOT EXISTS (SELECT 1 FROM source_location l WHERE l.media_variant_id=v.id)
-		AND NOT EXISTS (SELECT 1 FROM operation o WHERE o.analysis_media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM media_probe_cache c WHERE c.result_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold h JOIN source_analysis_step s ON s.work_id=h.work_id
@@ -528,6 +615,8 @@ func lockSourceAnalysisStep(ctx context.Context, tx bun.Tx, workID, operationID 
 	if !locked.Root.Enabled || locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
 		return nil, ErrSourceAnalysisStale
 	}
+	// Operation and step are fenced only after the root/work identity. This
+	// matches admission and terminal settlement without serializing unrelated roots.
 	if err := tx.NewRaw(`SELECT * FROM operation WHERE id=? FOR UPDATE`, operationID).Scan(ctx, &locked.Operation); err != nil {
 		return nil, ErrSourceAnalysisStale
 	}
@@ -560,6 +649,30 @@ func insertSourceProbeVariant(ctx context.Context, tx bun.Tx, size int64, apply 
 	return result, nil
 }
 
+func registerSourceProbeCache(ctx context.Context, tx bun.IDB, digest []byte, resultID uuid.UUID) error {
+	if len(digest) != 32 || resultID == uuid.Nil {
+		return fmt.Errorf("valid digest and probe result are required")
+	}
+	var version string
+	var policy int
+	if err := tx.NewRaw(`SELECT ffprobe_version, analysis_policy_version FROM media_variant WHERE id=? AND ffprobe_version IS NOT NULL`, resultID).Scan(ctx, &version, &policy); err != nil {
+		return err
+	}
+	if _, err := tx.NewRaw(`INSERT INTO media_probe_cache(source_sha256,ffprobe_version,analysis_policy_version,result_id)
+		VALUES(?,?,?,?) ON CONFLICT(source_sha256,ffprobe_version_sha256,analysis_policy_version) DO NOTHING`, digest, version, policy, resultID).Exec(ctx); err != nil {
+		return err
+	}
+	var registeredVersion string
+	if err := tx.NewRaw(`SELECT ffprobe_version FROM media_probe_cache
+		WHERE source_sha256=? AND ffprobe_version_sha256=sha256(convert_to(?, 'UTF8')) AND analysis_policy_version=?`, digest, version, policy).Scan(ctx, &registeredVersion); err != nil {
+		return fmt.Errorf("verify registered probe cache banner: %w", err)
+	}
+	if registeredVersion != version {
+		return fmt.Errorf("register probe cache: ffprobe version banner digest collision")
+	}
+	return nil
+}
+
 func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceStep, canonical *SourceMediaVariant) error {
 	var probeStep SourceAnalysisStep
 	if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='probe'`, locked.Work.ID).Scan(ctx, &probeStep); err != nil && err != sql.ErrNoRows {
@@ -574,14 +687,8 @@ func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceSt
 		}
 	}
 	if probeStep.SuccessProbeVariantID != nil {
-		probe := new(SourceMediaVariant)
-		if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, *probeStep.SuccessProbeVariantID).Scan(ctx, probe); err != nil {
-			return err
-		}
-		if probe.FFProbeVersion != nil && probe.AnalysisPolicyVersion != nil {
-			if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, *probe.FFProbeVersion, *probe.AnalysisPolicyVersion, probe.ID); err != nil {
-				return err
-			}
+		if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, *probeStep.SuccessProbeVariantID); err != nil {
+			return fmt.Errorf("register probe cache: %w", err)
 		}
 	}
 	var fingerprintStep SourceAnalysisStep

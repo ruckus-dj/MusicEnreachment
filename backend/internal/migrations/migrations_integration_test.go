@@ -4,6 +4,7 @@ package migrations_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 const inventoryMigration = "20261003000000"
 
 func TestSourceInventoryMigrationRollsBackWithStoredScanAndReappliesWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
@@ -35,35 +37,178 @@ func TestSourceInventoryMigrationRollsBackWithStoredScanAndReappliesWithPostgreS
 }
 
 func TestSourceInventoryRollbackChainWithStoredScanAndPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
 	collection := mustMigrations(t)
-	chain := migrationsThrough(t, collection, "20261006000000")
-	applyMigrationsOneAtATime(t, ctx, database, chain)
+	applyMigrationsOneAtATime(t, ctx, database, migrationPointers(collection.Sorted()))
 
 	rootID, scanID, toolsOperationID := insertRollbackFixture(t, ctx, database)
 	assertSourceRootWasRemoved(t, ctx, database, rootID)
 	assertTerminalScanRetainedAfterRootDeletion(t, ctx, database, scanID)
-	for _, name := range []string{
-		"20261006000000",
-		"20261005000000",
-		"20261004000000",
-		inventoryMigration,
-	} {
+	sorted := collection.Sorted()
+	for index := len(sorted) - 1; index >= 0; index-- {
+		migration := &sorted[index]
+		if migration.Name == "20261006000000" {
+			break
+		}
+		rollbackMigration(t, ctx, database, migration)
+	}
+	for _, name := range []string{"20261006000000", "20261005000000", "20261004000000", inventoryMigration} {
 		rollbackMigration(t, ctx, database, migrationNamed(t, collection, name))
 	}
 	assertInventoryRolledBack(t, ctx, database, scanID, toolsOperationID)
 
-	for _, name := range []string{
-		inventoryMigration,
-		"20261004000000",
-		"20261005000000",
-		"20261006000000",
-	} {
-		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migrationNamed(t, collection, name)})
-	}
+	applyMigrationsOneAtATime(t, ctx, database, migrationsFrom(t, collection, inventoryMigration))
 	assertInventorySchemaExists(t, ctx, database)
+}
+
+func TestNormalizedSourceAnalysisMigrationRollbackPreflightWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	latest := migrationNamed(t, collection, "20261009000000")
+
+	t.Run("clean schema rolls back", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, "20261009000000"))
+		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{latest})
+		rollbackMigration(t, ctx, database, latest)
+		if constraintExists(t, database, "operation_normalized_analysis_shape") {
+			t.Fatal("normalized analysis shape constraint remains after clean rollback")
+		}
+		if constraintDefinition(t, database, "operation_active_analysis_has_target_location") == "" ||
+			constraintDefinition(t, database, "operation_active_analysis_has_installation") == "" {
+			t.Fatal("legacy active-analysis guards were not restored after rollback")
+		}
+	})
+
+	t.Run("persisted operation prevents rollback before DDL", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, "20261009000000"))
+		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{latest})
+		id := uuid.New()
+		if _, err := database.ExecContext(ctx, `INSERT INTO operation
+			(id,kind,state,stage,input_snapshot,attempt,created_at,updated_at,finished_at,source_analysis_mode,tools_read_required,rerun_target)
+			VALUES (?, 'analyze_source','succeeded','completed','{"schema_version":1,"mode":"batch","work_ids":[],"tools":[]}',1,now(),now(),now(),'batch',false,false)`, id); err != nil {
+			t.Fatalf("insert persisted normalized operation: %v", err)
+		}
+		migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+		if _, err := migrator.Rollback(ctx); err == nil {
+			t.Fatal("rollback with a persisted normalized operation succeeded")
+		}
+		var count int
+		if err := database.NewRaw(`SELECT count(*) FROM information_schema.columns WHERE table_name='operation' AND column_name='source_analysis_mode'`).Scan(ctx, &count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatal("failed rollback dropped normalized selector schema")
+		}
+	})
+}
+
+func TestSourceAnalysisStepInputsRollbackPreflightWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	migrationName := "20261008120000"
+	migration := migrationNamed(t, collection, migrationName)
+	testpostgres.Reset(t, database)
+	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, migrationName))
+	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+
+	rootID := newVariantRoot(t, ctx, database, "/srv/step-input-preflight")
+	locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
+	workID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_work
+		(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id)
+		VALUES (?,?,?,'/srv/step-input-preflight','/srv/step-input-preflight','album/track.flac',1,now(),true,?)`,
+		workID, locationID, rootID, uuid.New()); err != nil {
+		t.Fatalf("insert durable analysis work: %v", err)
+	}
+	stepInput := `{"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false}`
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,input_snapshot)
+		VALUES (?, 'sha256', 'pending', ?::jsonb)`, workID, stepInput); err != nil {
+		t.Fatalf("insert durable step input: %v", err)
+	}
+
+	rollback := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+	if _, err := rollback.Rollback(ctx); err == nil {
+		t.Fatal("rollback with durable source-analysis step inputs succeeded")
+	}
+	if !columnExists(t, database, "source_analysis_step", "input_snapshot") {
+		t.Fatal("failed rollback dropped durable step input schema")
+	}
+	var preserved int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_step
+		WHERE work_id=? AND step='sha256' AND input_snapshot=?::jsonb`, workID, stepInput).Scan(ctx, &preserved); err != nil {
+		t.Fatalf("read durable step input after refused rollback: %v", err)
+	}
+	if preserved != 1 {
+		t.Fatal("durable step input was removed despite rollback refusal")
+	}
+}
+
+func TestObsoleteAnalysisHoldsMigrationSchemaAndPreflightWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	name := "20261012000000"
+	migration := migrationNamed(t, collection, name)
+
+	t.Run("legacy hold refuses migration before DDL", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, name))
+		installationID := newVariantInstallation(t, ctx, database, "obsolete-hold-preflight")
+		if _, err := database.ExecContext(ctx, `INSERT INTO operation
+			(id,kind,state,stage,input_snapshot,attempt,created_at,updated_at,finished_at,analysis_installation_id)
+			VALUES (?, 'analyze_source','succeeded','applying','{}',1,now(),now(),now(),?)`, uuid.New(), installationID); err != nil {
+			t.Fatalf("insert legacy analysis hold: %v", err)
+		}
+		migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+		if _, err := migrator.Migrate(ctx); err == nil {
+			t.Fatal("migration with a persisted legacy analysis hold succeeded")
+		}
+		if !columnExists(t, database, "operation", "analysis_installation_id") ||
+			constraintDefinition(t, database, "operation_normalized_analysis_shape") == "" {
+			t.Fatal("failed migration changed the legacy analysis schema")
+		}
+	})
+
+	t.Run("up removes holds and down restores the prior schema", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, name))
+		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+		for _, column := range []string{"analysis_installation_id", "analysis_media_variant_id"} {
+			if columnExists(t, database, "operation", column) {
+				t.Fatalf("obsolete operation.%s column remains after migration", column)
+			}
+		}
+		shape := constraintDefinition(t, database, "operation_normalized_analysis_shape")
+		if shape == "" || strings.Contains(shape, "analysis_installation_id") || strings.Contains(shape, "analysis_media_variant_id") {
+			t.Fatalf("normalized analysis shape still depends on obsolete columns: %s", shape)
+		}
+
+		rollbackMigration(t, ctx, database, migration)
+		for _, column := range []string{"analysis_installation_id", "analysis_media_variant_id"} {
+			if !columnExists(t, database, "operation", column) {
+				t.Fatalf("operation.%s was not restored on rollback", column)
+			}
+		}
+		if constraintDefinition(t, database, "operation_analysis_installation_id_fkey") == "" ||
+			constraintDefinition(t, database, "operation_analysis_media_variant_id_fkey") == "" ||
+			!indexExists(t, database, "operation_analysis_installation_idx") {
+			t.Fatal("legacy analysis hold foreign keys or index were not restored")
+		}
+		shape = constraintDefinition(t, database, "operation_normalized_analysis_shape")
+		if !strings.Contains(shape, "analysis_installation_id IS NULL") || !strings.Contains(shape, "analysis_media_variant_id IS NULL") {
+			t.Fatalf("prior normalized analysis shape was not restored: %s", shape)
+		}
+	})
 }
 
 func mustMigrations(t *testing.T) *migrate.Migrations {
@@ -86,6 +231,32 @@ func migrationsBefore(t *testing.T, collection *migrate.Migrations, name string)
 	}
 	t.Fatalf("migration %q not found", name)
 	return nil
+}
+
+func migrationsFrom(t *testing.T, collection *migrate.Migrations, name string) []*migrate.Migration {
+	t.Helper()
+	var selected []*migrate.Migration
+	found := false
+	for _, migration := range collection.Sorted() {
+		if migration.Name == name {
+			found = true
+		}
+		if found {
+			selected = append(selected, &migration)
+		}
+	}
+	if !found {
+		t.Fatalf("migration %q not found", name)
+	}
+	return selected
+}
+
+func migrationPointers(sorted migrate.MigrationSlice) []*migrate.Migration {
+	pointers := make([]*migrate.Migration, 0, len(sorted))
+	for index := range sorted {
+		pointers = append(pointers, &sorted[index])
+	}
+	return pointers
 }
 
 func migrationNamed(t *testing.T, collection *migrate.Migrations, name string) *migrate.Migration {
@@ -112,7 +283,7 @@ func applyMigrationsOneAtATime(t *testing.T, ctx context.Context, database *bun.
 		if err != nil {
 			t.Fatalf("apply migration %s: %v", migration.Name, err)
 		}
-		if group == nil || len(group.Migrations) != 1 {
+		if group == nil || len(group.Migrations) != 1 || group.Migrations[0].Name != migration.Name {
 			t.Fatalf("migration %s was not recorded as one migrator-applied migration", migration.Name)
 		}
 	}
@@ -120,9 +291,16 @@ func applyMigrationsOneAtATime(t *testing.T, ctx context.Context, database *bun.
 
 func rollbackMigration(t *testing.T, ctx context.Context, database *bun.DB, migration *migrate.Migration) {
 	t.Helper()
-	collection := migrate.NewMigrations()
-	collection.Add(*migration)
+	collection := mustMigrations(t)
 	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+	status, err := migrator.MigrationsWithStatus(ctx)
+	if err != nil {
+		t.Fatalf("read migration status before rolling back %s: %v", migration.Name, err)
+	}
+	latest := status.LastGroup()
+	if latest == nil || len(latest.Migrations) != 1 || latest.Migrations[0].Name != migration.Name {
+		t.Fatalf("latest applied migration group = %#v, want only migration %s", latest, migration.Name)
+	}
 	group, err := migrator.Rollback(ctx)
 	if err != nil {
 		t.Fatalf("rollback migration %s: %v", migration.Name, err)
@@ -235,7 +413,18 @@ func assertInventorySchemaExists(t *testing.T, ctx context.Context, database *bu
 	}
 }
 
+func constraintExists(t *testing.T, database *bun.DB, name string) bool {
+	t.Helper()
+	var count int
+	if err := database.NewRaw("SELECT count(*) FROM pg_constraint WHERE conname = ?", name).
+		Scan(context.Background(), &count); err != nil {
+		t.Fatalf("read constraint %s: %v", name, err)
+	}
+	return count == 1
+}
+
 func TestMigrationsApplyAndRollbackWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx := context.Background()

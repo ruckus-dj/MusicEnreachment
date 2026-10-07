@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -58,13 +59,19 @@ func readSourceScanRetryJob(t *testing.T, ctx context.Context, database *bun.DB,
 	return row
 }
 
-func failedSourceScanRetryOperation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, root *persistence.SourceRoot, stage, safe string) *persistence.Operation {
+func failedSourceScanRetryOperation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, inventory *persistence.SourceInventoryRepository, root *persistence.SourceRoot, stage, safe string) *persistence.Operation {
 	t.Helper()
+	currentRoot, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read the source root for the scan snapshot: %v", err)
+	}
+	root.ScanGeneration = currentRoot.ScanGeneration
 	finished := time.Now().UTC()
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: "scan_source", State: "failed", Stage: stage,
-		InputSnapshot: []byte(`{"schema_version":1,"source_root_id":"` + root.ID.String() +
-			`","configured_path":"` + root.ConfiguredPath + `"}`),
+		InputSnapshot: []byte(`{"schema_version":3,"source_root_id":"` + root.ID.String() +
+			`","configured_path":"` + root.ConfiguredPath + `","scan_generation":` + fmt.Sprint(root.ScanGeneration) +
+			`,"sha256_enabled":false,"tools":[]}`),
 		TargetSourceRootID: &root.ID, Attempt: 1, SafeError: stringPointer(safe), FinishedAt: &finished,
 	}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
@@ -137,7 +144,7 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 	baseline := snapshotInventory(t, ctx, database, root.ID)
 	keepID := locationID(t, ctx, database, root.ID, "album/keep.flac")
 
-	failed := failedSourceScanRetryOperation(t, ctx, repository, root, "traversing", "The source directory could not be read completely.")
+	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "traversing", "The source directory could not be read completely.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, failed.ID,
 		sourceCandidate("album/stale.flac", 4096, probeMtime()),
 		sourceCandidate("album/keep.flac", 1024, probeMtime()))
@@ -189,8 +196,9 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 	}
 	wantSnapshot := service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID, ConfiguredPath: root.ConfiguredPath,
+		ScanGeneration: root.ScanGeneration, SHA256Enabled: boolPointer(false), Tools: []persistence.SourceAnalysisToolSelection{},
 	}
-	if snapshot != wantSnapshot {
+	if !reflect.DeepEqual(snapshot, wantSnapshot) {
 		t.Fatalf("stored snapshot after the retry = %+v, want %+v preserved", snapshot, wantSnapshot)
 	}
 	after := snapshotInventory(t, ctx, database, root.ID)
@@ -219,7 +227,7 @@ func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 	client := openScanEnqueueRiver(t, database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-rollback")
 
-	failed := failedSourceScanRetryOperation(t, ctx, repository, root, "applying", "The verified scan could not be applied.")
+	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "applying", "The verified scan could not be applied.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, failed.ID,
 		sourceCandidate("album/partial.flac", 512, probeMtime()))
 
@@ -257,7 +265,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	client := openScanEnqueueRiver(t, database)
 
 	busy := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-busy")
-	busyFailed := failedSourceScanRetryOperation(t, ctx, repository, busy, "traversing", "The traversal failed.")
+	busyFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, busy, "traversing", "The traversal failed.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, busyFailed.ID, sourceCandidate("album/busy.flac", 1, probeMtime()))
 	active := newSourceScanOperation(t, ctx, database, busy, "queued")
 	if _, err := retrySourceScan(t, ctx, repository, busyFailed.ID, client); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
@@ -267,7 +275,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	setOperationState(t, ctx, database, active.ID, "succeeded")
 
 	disabled := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-disabled")
-	disabledFailed := failedSourceScanRetryOperation(t, ctx, repository, disabled, "queued", "The root was disabled.")
+	disabledFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, disabled, "queued", "The root was disabled.")
 	if _, err := database.NewUpdate().Model((*persistence.SourceRoot)(nil)).
 		Set("enabled = false").Where("id = ?", disabled.ID).Exec(ctx); err != nil {
 		t.Fatalf("disable the source root: %v", err)
@@ -277,7 +285,7 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	}
 
 	doomed := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-doomed")
-	doomedFailed := failedSourceScanRetryOperation(t, ctx, repository, doomed, "traversing", "The traversal failed.")
+	doomedFailed := failedSourceScanRetryOperation(t, ctx, repository, inventory, doomed, "traversing", "The traversal failed.")
 	if err := deleteInventoryRoot(ctx, inventory, doomed.ID); err != nil {
 		t.Fatalf("delete the root of the failed scan: %v", err)
 	}
@@ -288,12 +296,20 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 	finished := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-finished")
 	succeeded := newSourceScanOperation(t, ctx, database, finished, "queued")
 	setOperationState(t, ctx, database, succeeded.ID, "succeeded")
+	// The fixture stores its own River job, so the refusal must leave that stored
+	// state alone instead of assuming a nil job: capture the operation and the
+	// job count first and compare them after the refused retry.
+	before, err := repository.GetOperation(ctx, succeeded.ID)
+	if err != nil {
+		t.Fatalf("read the succeeded scan before the refused retry: %v", err)
+	}
+	jobsBefore := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind)
 	if _, err := retrySourceScan(t, ctx, repository, succeeded.ID, client); err == nil {
 		t.Fatal("retry of a succeeded scan was accepted")
 	}
 	stored, err := repository.GetOperation(ctx, succeeded.ID)
-	if err != nil || stored.State != "succeeded" || stored.Attempt != 1 || stored.RiverJobID != nil {
-		t.Fatalf("succeeded scan after the refused retry = %+v, %v; want it untouched", stored, err)
+	if err != nil || stored.RiverJobID == nil || !reflect.DeepEqual(before, stored) {
+		t.Fatalf("succeeded scan after the refused retry = %+v, %v; want %+v untouched", stored, err, before)
 	}
 
 	finishedAt := time.Now().UTC()
@@ -309,8 +325,8 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 		t.Fatal("a failed install was accepted by the scan retry")
 	}
 
-	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != 0 {
-		t.Fatalf("scan River jobs after the refusals = %d, want 0", jobs)
+	if jobs := countSourceScanRetryJobs(t, ctx, database, service.SourceScanJobKind); jobs != jobsBefore {
+		t.Fatalf("scan River jobs after the refusals = %d, want the %d before them preserved", jobs, jobsBefore)
 	}
 	if jobs := countSourceScanRetryJobs(t, ctx, database, "operation_v1"); jobs != 0 {
 		t.Fatalf("River jobs under the generic operation kind after the refusals = %d, want 0", jobs)
@@ -330,7 +346,7 @@ func TestSourceScanRetrySerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
 	client := openScanEnqueueRiver(t, database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-retry-deletion")
 
-	failed := failedSourceScanRetryOperation(t, ctx, repository, root, "traversing", "The traversal failed.")
+	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "traversing", "The traversal failed.")
 	storeSourceScanRetryCandidates(t, ctx, inventory, failed.ID, sourceCandidate("album/stale.flac", 2048, probeMtime()))
 
 	locked, release := make(chan struct{}), make(chan struct{})

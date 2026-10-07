@@ -10,6 +10,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// SourceScanSnapshotVersion is the schema version of the durable source-scan
+// operation snapshot. Producers and consumers share this version through the
+// persistence package so a tool hold validates the same contract as the worker.
+const SourceScanSnapshotVersion = 3
+
 // ErrSourceRootDisabled reports a scan start refused because the operator
 // disabled the root. A disabled root keeps its previous inventory and is only
 // traversed again after an edit enables it.
@@ -36,9 +41,6 @@ func (repository *SourceInventoryRepository) CreateSourceScanOperationAndEnqueue
 		return fmt.Errorf("enqueue source scan: operation must be a scan of a source root")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
-			return fmt.Errorf("enqueue source scan: lock operations: %w", err)
-		}
 		root := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
 			if err == sql.ErrNoRows {

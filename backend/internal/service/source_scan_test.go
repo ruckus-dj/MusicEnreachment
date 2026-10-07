@@ -1,7 +1,9 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -101,6 +103,47 @@ func (fixture *sourceScanProbeFixture) ProbeFile(ctx context.Context, file sourc
 	return answer.hasAudio, answer.err
 }
 
+// Prepare is a test-only adapter; production scans inject the shared preparer.
+func (fixture *sourceScanProbeFixture) Prepare(ctx context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+	result := service.SourceAnalysisPreparation{
+		SHA256:      service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+		Probe:       service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+		Fingerprint: service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+	}
+	if request.Targets&service.SourceAnalysisTargetFingerprint != 0 {
+		result.Fingerprint = service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisFailed, SafeError: "fingerprint failed"}}
+	}
+	if request.Targets&service.SourceAnalysisTargetProbe == 0 {
+		return result
+	}
+	hasAudio, err := fixture.ProbeFile(ctx, request.File)
+	if err != nil {
+		result.Probe = service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisFailed, SafeError: "probe failed"}}
+		return result
+	}
+	streams, count := `[]`, 0
+	if hasAudio {
+		streams, count = `[{"codec_type":"audio"}]`, 1
+	}
+	info, err := request.File.Stat(ctx)
+	if err != nil {
+		result.Probe = service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisFailed, SafeError: "probe failed"}}
+		return result
+	}
+	version, policy, inspected, applied := "test-ffprobe", 1, time.Now().UTC(), uuid.New()
+	raw := []byte(`{"format":{},"streams":` + streams + `}`)
+	result.Probe = service.SourceAnalysisProbeOutcome{
+		SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded},
+		RawJSON:                   raw, AudioStreamCount: count,
+		Result: &persistence.SourceMediaVariant{
+			ID: uuid.New(), SizeBytes: info.Size(), FFProbeVersion: &version, AnalysisPolicyVersion: &policy,
+			FFProbeJSON: raw, ObservedTags: []byte(`{}`), InspectedAt: &inspected,
+			AppliedOperationID: &applied, AudioStreamCount: &count,
+		},
+	}
+	return result
+}
+
 // errSourceScanStageReport is what the stages fixture returns for the one stage
 // a test makes fail, so a scan that dies after its traversal is observable.
 var errSourceScanStageReport = errors.New("the operation could not be advanced")
@@ -130,6 +173,8 @@ func (fixture *sourceScanStagesFixture) Running(_ context.Context, operationID u
 type sourceScanRepositoryFixture struct {
 	root       *persistence.SourceRoot
 	locations  []persistence.SourceLocation
+	variants   map[uuid.UUID]*persistence.SourceMediaVariant
+	details    map[uuid.UUID]*persistence.SourceLocationDetailSnapshot
 	candidates map[uuid.UUID][]persistence.SourceScanCandidateInput
 	events     []string
 	batchSizes []int
@@ -140,8 +185,30 @@ type sourceScanRepositoryFixture struct {
 
 func newSourceScanRepositoryFixture(root *persistence.SourceRoot) *sourceScanRepositoryFixture {
 	return &sourceScanRepositoryFixture{
-		root: root, candidates: map[uuid.UUID][]persistence.SourceScanCandidateInput{},
+		root: root, variants: map[uuid.UUID]*persistence.SourceMediaVariant{},
+		details: map[uuid.UUID]*persistence.SourceLocationDetailSnapshot{}, candidates: map[uuid.UUID][]persistence.SourceScanCandidateInput{},
 	}
+}
+
+func (fixture *sourceScanRepositoryFixture) GetSourceMediaVariant(_ context.Context, id uuid.UUID) (*persistence.SourceMediaVariant, error) {
+	variant := fixture.variants[id]
+	if variant == nil {
+		return nil, fmt.Errorf("get source media variant: no rows in result set")
+	}
+	return variant, nil
+}
+
+func (fixture *sourceScanRepositoryFixture) ReadSourceLocationDetail(_ context.Context, rootID, locationID uuid.UUID) (*persistence.SourceLocationDetailSnapshot, error) {
+	if detail := fixture.details[locationID]; detail != nil {
+		return detail, nil
+	}
+	for index := range fixture.locations {
+		location := &fixture.locations[index]
+		if location.ID == locationID && location.SourceRootID == rootID {
+			return &persistence.SourceLocationDetailSnapshot{Location: location}, nil
+		}
+	}
+	return nil, fmt.Errorf("read source location detail: no rows in result set")
 }
 
 func (fixture *sourceScanRepositoryFixture) GetSourceRoot(_ context.Context, id uuid.UUID) (*persistence.SourceRoot, error) {
@@ -170,7 +237,10 @@ func (fixture *sourceScanRepositoryFixture) ListSourceLocationsPage(_ context.Co
 	return page, &persistence.SourceLocationCursor{RelativePath: last.RelativePath, ID: last.ID}, nil
 }
 
-func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidates(_ context.Context, operationID uuid.UUID) error {
+func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidatesForDelivery(_ context.Context, operationID uuid.UUID, attempt int, jobID int64) error {
+	if attempt != 1 || jobID != 11 {
+		return fmt.Errorf("delete source scan candidates: unexpected delivery identity %d/%d", attempt, jobID)
+	}
 	fixture.events = append(fixture.events, "delete "+operationID.String())
 	if fixture.deleteErr != nil {
 		return fixture.deleteErr
@@ -179,7 +249,10 @@ func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidates(_ context
 	return nil
 }
 
-func (fixture *sourceScanRepositoryFixture) AppendSourceScanCandidates(_ context.Context, operationID uuid.UUID, batch []persistence.SourceScanCandidateInput) error {
+func (fixture *sourceScanRepositoryFixture) AppendSourceScanCandidatesForDelivery(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, batch []persistence.SourceScanCandidateInput) error {
+	if attempt != 1 || jobID != 11 {
+		return fmt.Errorf("append source scan candidates: unexpected delivery identity %d/%d", attempt, jobID)
+	}
 	fixture.events = append(fixture.events, fmt.Sprintf("append %s %d", operationID, len(batch)))
 	fixture.batchSizes = append(fixture.batchSizes, len(batch))
 	if fixture.appendErr != nil {
@@ -329,8 +402,9 @@ func TestSourceScanClosesPinnedHandlesAndAbandonsFailedTraversal(t *testing.T) {
 			fixture.scan = service.NewSourceScan(
 				fixture.repository, fixture.probe, fixture.stages,
 				service.WithSourceScanOpener(trackingSourceOpener{base: sourcefs.NewOpener(), tracker: tracker}),
+				service.WithSourceScanAnalysis(fixture.probe),
 			)
-			err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID})
+			err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: service.SourceAnalysisTargetProbe})
 			if test.wantSuccess && err != nil {
 				t.Fatalf("successful scan returned an error: %v", err)
 			}
@@ -455,7 +529,7 @@ func TestSourceScanDoesNotFollowAncestorSwappedToExternalSymlink(t *testing.T) {
 	writeSourceWalkFile(t, filepath.Join(child, "inside.flac"), "inside")
 	writeSourceWalkFile(t, filepath.Join(outside, "outside.flac"), "outside")
 	opener := &sourceScanAncestorSwapOpener{base: sourcefs.NewOpener(), root: fixture.tree, child: child, parked: parked, outside: outside}
-	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanOpener(opener))
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanOpener(opener), service.WithSourceScanAnalysis(fixture.probe))
 	err := fixture.run(t)
 	if err == nil {
 		t.Fatal("scan followed an ancestor replaced by an external symlink")
@@ -533,8 +607,218 @@ func newSourceScanFixture(t *testing.T) *sourceScanFixture {
 	probe := newSourceScanProbeFixture()
 	stages := &sourceScanStagesFixture{}
 	return &sourceScanFixture{
-		scan: service.NewSourceScan(repository, probe, stages), repository: repository, probe: probe,
+		scan: service.NewSourceScan(repository, probe, stages, service.WithSourceScanAnalysis(probe)), repository: repository, probe: probe,
 		stages: stages, root: root, operationID: uuid.New(), tree: tree,
+	}
+}
+
+type sourceScanPreparingFixture struct {
+	prepare  func(service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation
+	requests []service.SourceAnalysisPrepareRequest
+}
+
+func (fixture *sourceScanPreparingFixture) Prepare(_ context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+	fixture.requests = append(fixture.requests, request)
+	return fixture.prepare(request)
+}
+
+func TestSourceScanRetriesUnchangedProbeErrorWithoutSHAAndKeepsRetainedAnalysis(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	fixture.write(t, "album/track.flac", "audio")
+	fixture.storeLocation(t, "album/track.flac", persistence.SourceProbeStatusProbeError)
+	retained := sourceScanTestVariant(fixture.repository.locations[0].SizeBytes, true)
+	fixture.repository.locations[0].MediaVariantID = &retained.ID
+	fixture.repository.variants[retained.ID] = retained
+	originalScanID := uuid.New()
+	fixture.root.LastAppliedOperationID = &originalScanID
+	fingerprint := sourceScanTestFingerprint()
+	fingerprintStep := persistence.SourceAnalysisStep{
+		Step: string(persistence.SourceStepFingerprint), State: "failed",
+		SuccessFingerprintResultID: &fingerprint.ID,
+	}
+	fixture.repository.details[fixture.repository.locations[0].ID] = &persistence.SourceLocationDetailSnapshot{
+		Location: &fixture.repository.locations[0],
+		Work:     &persistence.SourceAnalysisWork{ID: uuid.New()},
+		Steps:    []persistence.SourceAnalysisStep{fingerprintStep}, SHAVariant: retained,
+		Fingerprint: fingerprint,
+	}
+	probeResult := sourceScanTestVariant(fixture.repository.locations[0].SizeBytes, false)
+	preparer := &sourceScanPreparingFixture{prepare: func(request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		if request.ExistingSHA256 == nil || !reflect.DeepEqual(request.ExistingSHA256[:], retained.SourceSHA256) {
+			t.Errorf("retained digest = %v, want %x", request.ExistingSHA256, retained.SourceSHA256)
+		}
+		return service.SourceAnalysisPreparation{
+			SHA256: service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+			Probe: service.SourceAnalysisProbeOutcome{
+				SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded},
+				AudioStreamCount:          1, Result: probeResult,
+			},
+			Fingerprint: service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+		}
+	}}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanAnalysis(preparer))
+	targets := service.SourceAnalysisTargetSHA256 | service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: targets}); err != nil {
+		t.Fatalf("retry unchanged probe_error scan: %v", err)
+	}
+	if len(preparer.requests) != 1 {
+		t.Fatalf("preparation calls = %d, want one probe/fingerprint cache lookup", len(preparer.requests))
+	}
+	request := preparer.requests[0]
+	if request.Targets != service.SourceAnalysisTargetProbe {
+		t.Fatalf("retry targets = %03b, want probe only; SHA backfill and fingerprint rerun are forbidden", request.Targets)
+	}
+	candidate := fixture.candidates(t)[0]
+	if candidate.ProbeStatus != persistence.SourceProbeStatusAudio || candidate.PreparedAnalysis == nil {
+		t.Fatalf("retry candidate = %+v, want audio with prepared provenance", candidate)
+	}
+	prepared := candidate.PreparedAnalysis
+	if prepared.SHA256State != persistence.SourcePreparedNotRequested || prepared.HashRequested || prepared.RetainedSHA256Variant == nil || prepared.RetainedSHA256Variant.ID != retained.ID {
+		t.Fatalf("retained SHA provenance was not preserved without backfill: %+v", prepared)
+	}
+	if prepared.FingerprintState != persistence.SourcePreparedSucceeded || prepared.FingerprintReused || prepared.FingerprintResult == nil || prepared.FingerprintResult.ID != fingerprint.ID {
+		t.Fatalf("previously selected fingerprint provenance was not preserved: %+v", prepared)
+	}
+	if prepared.OriginalScanOperationID == nil || *prepared.OriginalScanOperationID != originalScanID {
+		t.Fatalf("original scan operation = %v, want %s", prepared.OriginalScanOperationID, originalScanID)
+	}
+}
+
+func TestSourceScanMapsDeferredToolOutcomesWithoutLosingSuccessfulSiblings(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	fixture.write(t, "track.flac", "audio")
+	probeResult := sourceScanTestVariant(int64(len("audio")), false)
+	preparer := &sourceScanPreparingFixture{prepare: func(service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		return service.SourceAnalysisPreparation{
+			SHA256:      service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded}, Digest: sha256.Sum256([]byte("audio"))},
+			Probe:       service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded}, AudioStreamCount: 1, Result: probeResult},
+			Fingerprint: service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisDeferred}},
+		}
+	}}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanAnalysis(preparer))
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: service.SourceAnalysisTargetSHA256 | service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint}); err != nil {
+		t.Fatalf("scan with deferred fingerprint: %v", err)
+	}
+	candidate := fixture.candidates(t)[0]
+	if candidate.ProbeStatus != persistence.SourceProbeStatusAudio || candidate.SafeError != nil {
+		t.Fatalf("successful probe classification was not retained: %+v", candidate)
+	}
+	if prepared := candidate.PreparedAnalysis; prepared == nil || prepared.SHA256State != persistence.SourcePreparedSucceeded || prepared.ProbeState != persistence.SourcePreparedSucceeded || prepared.FingerprintState != persistence.SourcePreparedDeferred {
+		t.Fatalf("prepared outcomes did not preserve successful siblings and defer fingerprint: %+v", prepared)
+	}
+}
+
+func TestSourceScanDeferredProbeDoesNotFabricateInventoryClassification(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	fixture.write(t, "track.flac", "audio")
+	preparer := &sourceScanPreparingFixture{prepare: func(service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		return service.SourceAnalysisPreparation{
+			SHA256:      service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded}, Digest: sha256.Sum256([]byte("audio"))},
+			Probe:       service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisDeferred}},
+			Fingerprint: service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisDeferred}},
+		}
+	}}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanAnalysis(preparer))
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: service.SourceAnalysisTargetSHA256 | service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint}); err != nil {
+		t.Fatalf("scan with deferred tools: %v", err)
+	}
+	candidate := fixture.candidates(t)[0]
+	if candidate.ProbeStatus != persistence.SourceProbeStatusProbeError || candidate.SafeError == nil || *candidate.SafeError != "source technical analysis is pending" {
+		t.Fatalf("unknown inventory classification = %+v", candidate)
+	}
+	if prepared := candidate.PreparedAnalysis; prepared == nil || prepared.ProbeState != persistence.SourcePreparedDeferred || prepared.FingerprintState != persistence.SourcePreparedDeferred {
+		t.Fatalf("durable steps were not deferred: %+v", prepared)
+	}
+}
+
+func TestSourceScanProbeErrorWithSelectedFingerprintAndNoDigestRetriesProbeOnly(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	fixture.write(t, "album/track.flac", "audio")
+	fixture.storeLocation(t, "album/track.flac", persistence.SourceProbeStatusProbeError)
+	variant := sourceScanTestVariant(fixture.repository.locations[0].SizeBytes, false)
+	fixture.repository.locations[0].MediaVariantID = &variant.ID
+	fixture.repository.variants[variant.ID] = variant
+	fingerprint := sourceScanTestFingerprint()
+	fingerprintStep := persistence.SourceAnalysisStep{
+		Step: string(persistence.SourceStepFingerprint), State: "succeeded",
+		SuccessFingerprintResultID: &fingerprint.ID,
+	}
+	fixture.repository.details[fixture.repository.locations[0].ID] = &persistence.SourceLocationDetailSnapshot{
+		Location: &fixture.repository.locations[0], Work: &persistence.SourceAnalysisWork{ID: uuid.New()},
+		Steps: []persistence.SourceAnalysisStep{fingerprintStep}, Fingerprint: fingerprint,
+	}
+	probeResult := sourceScanTestVariant(fixture.repository.locations[0].SizeBytes, false)
+	preparer := &sourceScanPreparingFixture{prepare: func(request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		if request.ExistingSHA256 != nil {
+			t.Errorf("unexpected digest for a location without retained SHA: %x", request.ExistingSHA256)
+		}
+		return service.SourceAnalysisPreparation{
+			SHA256: service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+			Probe: service.SourceAnalysisProbeOutcome{
+				SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisSucceeded},
+				AudioStreamCount:          1, Result: probeResult,
+			},
+			Fingerprint: service.SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
+		}
+	}}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanAnalysis(preparer))
+	targets := service.SourceAnalysisTargetSHA256 | service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: targets}); err != nil {
+		t.Fatalf("retry probe_error without digest: %v", err)
+	}
+	if len(preparer.requests) != 1 || preparer.requests[0].Targets != service.SourceAnalysisTargetProbe {
+		t.Fatalf("retry preparation requests = %+v, want one probe-only request", preparer.requests)
+	}
+	candidate := fixture.candidates(t)[0]
+	if candidate.ProbeStatus != persistence.SourceProbeStatusAudio || candidate.PreparedAnalysis == nil || candidate.PreparedAnalysis.HashRequested {
+		t.Fatalf("probe retry candidate = %+v, want audio without SHA backfill", candidate)
+	}
+	prepared := candidate.PreparedAnalysis
+	if prepared.FingerprintState != persistence.SourcePreparedSucceeded || prepared.FingerprintResult == nil || prepared.FingerprintResult.ID != fingerprint.ID {
+		t.Fatalf("selected fingerprint was not retained: %+v", prepared)
+	}
+}
+
+func TestSourceScanUnchangedStatusDoesNotBackfillWhenSHAIsEnabledLater(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	fixture.write(t, "album/track.flac", "audio")
+	fixture.storeLocation(t, "album/track.flac", persistence.SourceProbeStatusAudio)
+	preparer := &sourceScanPreparingFixture{prepare: func(service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		t.Fatal("unchanged audio candidate unexpectedly ran preparation")
+		return service.SourceAnalysisPreparation{}
+	}}
+	fixture.scan = service.NewSourceScan(fixture.repository, fixture.probe, fixture.stages, service.WithSourceScanAnalysis(preparer))
+	targets := service.SourceAnalysisTargetSHA256 | service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint
+	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: targets}); err != nil {
+		t.Fatalf("scan unchanged audio candidate: %v", err)
+	}
+	candidate := fixture.candidates(t)[0]
+	if candidate.ProbeStatus != persistence.SourceProbeStatusAudio || candidate.PreparedAnalysis != nil || len(preparer.requests) != 0 {
+		t.Fatalf("unchanged candidate was reanalyzed/backfilled: %+v, requests %d", candidate, len(preparer.requests))
+	}
+}
+
+func sourceScanTestVariant(size int64, withSHA bool) *persistence.SourceMediaVariant {
+	version, policy := "pinned-ffprobe", 1
+	inspected, applied, count := time.Now().UTC(), uuid.New(), 1
+	variant := &persistence.SourceMediaVariant{
+		ID: uuid.New(), SizeBytes: size, FFProbeVersion: &version, AnalysisPolicyVersion: &policy,
+		FFProbeJSON: []byte(`{"format":{},"streams":[{"codec_type":"audio"}]}`), ObservedTags: []byte(`{}`),
+		InspectedAt: &inspected, AppliedOperationID: &applied, AudioStreamCount: &count,
+	}
+	if withSHA {
+		algorithm, shaApplied, calculated := "sha256", uuid.New(), time.Now().UTC()
+		variant.SourceSHA256 = bytes.Repeat([]byte{0xab}, 32)
+		variant.SHA256Algorithm, variant.SHA256AppliedOperationID, variant.SHA256CalculatedAt = &algorithm, &shaApplied, &calculated
+	}
+	return variant
+}
+
+func sourceScanTestFingerprint() *persistence.SourceFingerprintResult {
+	return &persistence.SourceFingerprintResult{
+		ID: uuid.New(), FPCalcVersion: "pinned-fpcalc", VersionBanner: "fpcalc test", AlgorithmNamespace: "acoustid",
+		AlgorithmID: 1, Fingerprint: "abc", ReportedDuration: 1, CalculatedAt: time.Now().UTC(),
+		AppliedOperationID: uuid.New(), ParserContractVersion: 1,
 	}
 }
 
@@ -556,9 +840,12 @@ func TestSourceScanRejectsOpenedReplacementRestoredBeforePostCheck(t *testing.T)
 	fixture.scan = service.NewSourceScan(
 		fixture.repository, fixture.probe, fixture.stages,
 		service.WithSourceScanOpener(replacingSourceOpener{base: sourcefs.NewOpener(), root: fixture.tree}),
+		service.WithSourceScanAnalysis(fixture.probe),
 	)
 	if err := fixture.scan.Run(context.Background(), service.SourceScanRequest{
 		OperationID: fixture.operationID, RootID: fixture.root.ID,
+		ExpectedAttempt: 1, ExpectedJobID: 11,
+		AnalysisTargets: service.SourceAnalysisTargetProbe,
 	}); err == nil {
 		t.Fatal("scan accepted a descriptor opened on a same-metadata replacement")
 	}
@@ -594,6 +881,8 @@ func (fixture *sourceScanFixture) run(t *testing.T) error {
 	t.Helper()
 	return fixture.scan.Run(context.Background(), service.SourceScanRequest{
 		OperationID: fixture.operationID, RootID: fixture.root.ID,
+		ExpectedAttempt: 1, ExpectedJobID: 11,
+		AnalysisTargets: service.SourceAnalysisTargetProbe,
 	})
 }
 
@@ -866,7 +1155,7 @@ func TestSourceScanFailsWhenCanceledDuringAProbe(t *testing.T) {
 	fixture.probe.onProbe = func(string, string) { cancel() }
 	fixture.probe.fail("track.flac", errors.New("ffprobe was interrupted"))
 
-	err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID})
+	err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: service.SourceAnalysisTargetProbe})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("scan error = %v, want the cancellation the probe died of", err)
@@ -887,7 +1176,7 @@ func TestSourceScanFailsWhenCanceledDuringTraversal(t *testing.T) {
 	defer cancel()
 	fixture.probe.onProbe = func(string, string) { cancel() }
 
-	err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID})
+	err := fixture.scan.Run(ctx, service.SourceScanRequest{OperationID: fixture.operationID, RootID: fixture.root.ID, ExpectedAttempt: 1, ExpectedJobID: 11, AnalysisTargets: service.SourceAnalysisTargetProbe})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("scan error = %v, want a cancellation", err)
@@ -968,6 +1257,20 @@ func TestSourceScanReplacesTheCandidatesOfAnEarlierAttempt(t *testing.T) {
 	want := []string{"delete " + fixture.operationID.String(), "append " + fixture.operationID.String() + " 1"}
 	if !slices.Equal(fixture.repository.events, want) {
 		t.Fatalf("repository calls = %v, want the candidates of the earlier attempt dropped first", fixture.repository.events)
+	}
+}
+
+func TestSourceScanRequiresDeliveryIdentityBeforeRepositoryWrites(t *testing.T) {
+	fixture := newSourceScanFixture(t)
+	err := fixture.scan.Run(context.Background(), service.SourceScanRequest{
+		OperationID: fixture.operationID, RootID: fixture.root.ID,
+		AnalysisTargets: service.SourceAnalysisTargetProbe,
+	})
+	if err == nil || !strings.Contains(err.Error(), "delivery identity") {
+		t.Fatalf("scan error = %v, want missing delivery identity", err)
+	}
+	if len(fixture.repository.events) != 0 {
+		t.Fatalf("scan without delivery identity made repository writes: %v", fixture.repository.events)
 	}
 }
 

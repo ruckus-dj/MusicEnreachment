@@ -27,6 +27,8 @@ type sourceAnalysisAPIRepository struct {
 	*sourceAPIRepository
 	variants      map[uuid.UUID]*persistence.MediaVariant
 	installations map[uuid.UUID]*persistence.ToolInstallation
+	works         map[uuid.UUID]*persistence.SourceAnalysisWork
+	steps         map[uuid.UUID][]persistence.SourceAnalysisStep
 }
 
 // ReadSourceLocationDetail returns the fixture's complete inspector snapshot.
@@ -70,15 +72,14 @@ func (repository *sourceAnalysisAPIRepository) ReadSourceLocationDetail(ctx cont
 		}
 	}
 	if newest == nil {
-		return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant}, nil
+		return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant, Work: repository.works[locationID], Steps: repository.steps[locationID]}, nil
 	}
 	id := newest.ID
-	return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant, ActiveOperationID: &id}, nil
+	return &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Variant: variant, Work: repository.works[locationID], Steps: repository.steps[locationID], ActiveOperationID: &id}, nil
 }
 
-// GetSourceLocation is also used by the source-analysis start and worker
-// contracts; detail reads use ReadSourceLocationDetail to keep all fields in one
-// database snapshot.
+// GetSourceLocation supports existing source-operation fixtures; normalized
+// source-analysis controls read their work and steps through the detail snapshot.
 func (repository *sourceAnalysisAPIRepository) GetSourceLocation(_ context.Context, rootID, locationID uuid.UUID) (*persistence.SourceLocation, error) {
 	for index := range repository.locations[rootID] {
 		if repository.locations[rootID][index].ID == locationID {
@@ -97,22 +98,17 @@ func (repository *sourceAnalysisAPIRepository) GetInstallation(_ context.Context
 	return installation, nil
 }
 
-func (repository *sourceAnalysisAPIRepository) CreateSourceAnalysisOperationAndEnqueue(ctx context.Context, operation *persistence.Operation, _, _, _ string, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
-	repository.operations.mu.Lock()
-	active := false
-	for _, existing := range repository.operations.operations {
-		if existing.State != "queued" && existing.State != "running" {
-			continue
-		}
-		if existing.TargetSourceRootID != nil && operation.TargetSourceRootID != nil && *existing.TargetSourceRootID == *operation.TargetSourceRootID {
-			active = true
-			break
+func (repository *sourceAnalysisAPIRepository) GetNormalizedSourceAnalysisWork(ctx context.Context, workID uuid.UUID) (*persistence.SourceAnalysisWork, *persistence.SourceLocation, error) {
+	for _, work := range repository.works {
+		if work.ID == workID {
+			location, err := repository.GetSourceLocation(ctx, work.SourceRootID, work.LocationID)
+			return work, location, err
 		}
 	}
-	repository.operations.mu.Unlock()
-	if active {
-		return fmt.Errorf("create analysis operation: %w", persistence.ErrSourceRootActiveAnalysis)
-	}
+	return nil, nil, sql.ErrNoRows
+}
+
+func (repository *sourceAnalysisAPIRepository) CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
 	return repository.operations.CreateOperation(ctx, operation)
 }
 
@@ -149,10 +145,6 @@ func (repository *sourceAnalysisAPIRepository) CreateOperationAndEnqueue(ctx con
 }
 
 func (repository *sourceAnalysisAPIRepository) RetryOperationAndEnqueue(ctx context.Context, id uuid.UUID, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) (*persistence.Operation, error) {
-	return repository.requeueFailed(ctx, id)
-}
-
-func (repository *sourceAnalysisAPIRepository) RetrySourceAnalysisOperationAndEnqueue(ctx context.Context, id uuid.UUID, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) (*persistence.Operation, error) {
 	return repository.requeueFailed(ctx, id)
 }
 
@@ -196,6 +188,8 @@ func newSourceAnalysisAPIFixture(t *testing.T, platform settings.PlatformState, 
 		sourceAPIRepository: base,
 		variants:            map[uuid.UUID]*persistence.MediaVariant{},
 		installations:       map[uuid.UUID]*persistence.ToolInstallation{},
+		works:               map[uuid.UUID]*persistence.SourceAnalysisWork{},
+		steps:               map[uuid.UUID][]persistence.SourceAnalysisStep{},
 	}
 	roots := service.NewSourceRoots(repository, sourceAPIManagedPaths{tools: t.TempDir(), output: t.TempDir()})
 	handler := api.HandlerWithDependencies(api.Dependencies{
@@ -210,19 +204,6 @@ func newSourceAnalysisAPIFixture(t *testing.T, platform settings.PlatformState, 
 	return sourceAnalysisAPIFixture{handler: handler, repository: repository, operations: operations, store: store}
 }
 
-// activateFFmpeg registers one ready FFmpeg installation of the instance
-// platform and makes it the active selection, so a start can resolve it.
-func (fixture sourceAnalysisAPIFixture) activateFFmpeg(t *testing.T, platform settings.PlatformState) uuid.UUID {
-	t.Helper()
-	id := uuid.New()
-	fixture.repository.installations[id] = &persistence.ToolInstallation{
-		ID: id, PackageKind: "ffmpeg", State: "ready",
-		PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,
-	}
-	fixture.store[settings.ActiveFFmpegInstallationKey] = id.String()
-	return id
-}
-
 // seedAnalysisRoot stores an available, enabled, non-stale root that owns the
 // given locations.
 func (fixture sourceAnalysisAPIFixture) seedAnalysisRoot(t *testing.T, locations []persistence.SourceLocation) *persistence.SourceRoot {
@@ -235,8 +216,4 @@ func (fixture sourceAnalysisAPIFixture) seedAnalysisRoot(t *testing.T, locations
 	fixture.repository.roots = append(fixture.repository.roots, root)
 	fixture.repository.locations[root.ID] = locations
 	return root
-}
-
-func analyzeBody(sizeBytes int64, mtime string) string {
-	return fmt.Sprintf(`{"expected_size_bytes":%d,"expected_mtime":%q}`, sizeBytes, mtime)
 }

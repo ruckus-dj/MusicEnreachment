@@ -67,6 +67,7 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 }
 
 func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
+	// The unfiltered process-global probe hook must not overlap other tests.
 	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

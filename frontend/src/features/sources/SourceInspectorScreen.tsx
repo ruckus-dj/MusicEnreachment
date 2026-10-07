@@ -1,10 +1,14 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-aria-components";
+import type { SourceAnalysisStepResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
-import { SourceTechnicalResult } from "./SourceTechnicalResult";
+import { SourceAnalysisSteps } from "./SourceAnalysisSteps";
 import { statusLabel } from "./sourcesApi";
 import { useSourceInspector } from "./useSourceInspector";
 import "./sources.css";
+
+const stepNames = ["sha256", "probe", "fingerprint"] as const;
+type StepName = (typeof stepNames)[number];
 
 export function SourceInspectorScreen({
   sourceId,
@@ -24,12 +28,58 @@ export function SourceInspectorScreen({
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
-  const allowed =
-    detail?.root.enabled &&
+
+  const stepsByName = new Map(
+    (detail?.steps ?? []).map((current) => [current.name, current]),
+  );
+  const getStep = (name: StepName): SourceAnalysisStepResponse | undefined =>
+    stepsByName.get(name);
+  const steps = Object.fromEntries(
+    stepNames.map((name) => {
+      const current = getStep(name);
+      return [
+        name,
+        {
+          // Missing work remains unknown; it must not look like a successful step.
+          state:
+            current?.state === "not_requested"
+              ? "pending"
+              : (current?.state ?? "loading"),
+          safeError: current?.safe_error,
+          skipReason: current?.skip_reason,
+        },
+      ];
+    }),
+  ) as Parameters<typeof SourceAnalysisSteps>[0]["steps"];
+  const rootAvailable =
+    detail?.root.enabled === true &&
     !detail.root.stale &&
-    detail.root.status !== "unavailable" &&
-    detail.probe_status === "audio";
-  const failed = operation?.state === "failed";
+    detail.root.status === "available";
+  const active = pending || !!detail?.active_analysis_operation_id;
+  const retryAvailable = Object.fromEntries(
+    stepNames.map((name) => [
+      name,
+      rootAvailable && !active && getStep(name)?.state === "failed",
+    ]),
+  ) as Record<StepName, boolean>;
+  const sha256 = getStep("sha256")?.sha256;
+  const fingerprint = getStep("fingerprint")?.fingerprint;
+  const fingerprintStepState = getStep("fingerprint")?.state;
+  // The service only reruns a fingerprint whose latest step succeeded and whose
+  // stored result was produced by a different active fpcalc version. Mirror that
+  // exactly instead of enabling a rerun for any retained fingerprint.
+  const activeFingerprintVersion = detail?.active_fpcalc_version;
+  const fingerprintRerunAvailable =
+    rootAvailable &&
+    !!fingerprint &&
+    fingerprintStepState === "succeeded" &&
+    !!activeFingerprintVersion &&
+    activeFingerprintVersion !== fingerprint.version &&
+    !active &&
+    !busy &&
+    !loading &&
+    !error;
+
   return (
     <section
       className="sources-screen sources-inspector mx-auto max-w-5xl py-3"
@@ -127,51 +177,15 @@ export function SourceInspectorScreen({
           </section>
           <section className="sources-panel" aria-labelledby="analysis-title">
             <h2 id="analysis-title">Технический анализ</h2>
-            <p className="sources-help">
-              Запускается вручную. Повторный анализ заново читает исходный файл,
-              не изменяя его.
-            </p>
-            <AppButton
-              isDisabled={!allowed || loading || busy || pending || !!error}
-              onPress={() => void inspector.action("start")}
-            >
-              {detail.result ? "Повторить анализ" : "Анализировать"}
-            </AppButton>
             {busy && <p role="status">Выполняется запрос…</p>}
             {pending && (
               <p role="status">
                 {operation?.stage === "applying"
-                  ? "Сохранение результата анализа."
+                  ? "Сохранение результата этапа анализа."
                   : operation?.stage === "probing"
                     ? "Чтение технических данных ffprobe."
-                    : "Анализ поставлен в очередь."}
+                    : "Этап анализа поставлен в очередь."}
               </p>
-            )}
-            {operation?.state === "succeeded" && (
-              <p role="status">Анализ завершён.</p>
-            )}
-            {failed && (
-              <p role="alert">
-                Ошибка анализа:{" "}
-                {operation.safe_error || "Анализ не завершился."}{" "}
-                {detail.result && "Предыдущий результат сохранён."}
-              </p>
-            )}
-            {failed && (
-              <AppButton
-                isDisabled={loading || busy || !allowed}
-                onPress={() => void inspector.action("retry")}
-              >
-                Повторить попытку операции
-              </AppButton>
-            )}
-            {failed && (
-              <AppButton
-                isDisabled={loading || busy}
-                onPress={() => void inspector.action("dismiss")}
-              >
-                Скрыть операцию
-              </AppButton>
             )}
             {streamError && pending && (
               <p role="status">
@@ -179,11 +193,31 @@ export function SourceInspectorScreen({
                 показан последний ответ сервера.
               </p>
             )}
-            {!detail.result && (
-              <p className="sources-note">Файл ещё не анализировался.</p>
-            )}
           </section>
-          {detail.result && <SourceTechnicalResult result={detail.result} />}
+          <SourceAnalysisSteps
+            steps={steps}
+            sha256={
+              sha256 && {
+                value: sha256.value,
+                provenance: getStep("sha256")?.reuse_origin,
+              }
+            }
+            probeResult={detail.result}
+            probeProvenance={getStep("probe")?.reuse_origin}
+            fingerprint={
+              fingerprint && {
+                value: fingerprint.value,
+                version: fingerprint.version,
+                provenance: getStep("fingerprint")?.reuse_origin,
+              }
+            }
+            retryAvailable={retryAvailable}
+            onRetry={(name) => void inspector.action("retry", name)}
+            fingerprintRerunAvailable={fingerprintRerunAvailable}
+            onRerunFingerprint={() => void inspector.action("rerun")}
+            activeFingerprintVersion={activeFingerprintVersion}
+            matching={{ eligible: detail.matching_eligible }}
+          />
         </>
       )}
     </section>

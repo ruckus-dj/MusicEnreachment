@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -148,6 +149,7 @@ func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 	afterEdit := snapshotInventory(t, ctx, database, root.ID)
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: staleScan.ID, ExpectedConfiguredPath: "/srv/edit-old",
+		ExpectedAttempt: staleScan.Attempt, ExpectedJobID: *staleScan.RiverJobID,
 	}); err == nil {
 		t.Fatal("an apply carrying the previous configured path was accepted")
 	}
@@ -167,6 +169,7 @@ func TestSourceRootPathEditWithPostgreSQL(t *testing.T) {
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: fresh.ID, ExpectedConfiguredPath: "/srv/edit-new",
+		ExpectedAttempt: fresh.Attempt, ExpectedJobID: *fresh.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply the scan of the new path: %v", err)
 	}
@@ -244,6 +247,7 @@ func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: foreign.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: foreign.Attempt, ExpectedJobID: *foreign.RiverJobID,
 	}); err == nil {
 		t.Fatal("an apply for an operation of another root was accepted")
 	}
@@ -254,6 +258,7 @@ func TestSourceScanApplyWithPostgreSQL(t *testing.T) {
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: install.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: install.Attempt, ExpectedJobID: *install.RiverJobID,
 	}); err == nil {
 		t.Fatal("an apply for a non-scan operation was accepted")
 	}
@@ -279,6 +284,7 @@ func TestSourceScanApplyIgnoresCallerSliceWithPostgreSQL(t *testing.T) {
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply the stored candidates: %v", err)
 	}
@@ -313,6 +319,7 @@ func TestSourceScanApplyEmptyStoredCandidatesWithPostgreSQL(t *testing.T) {
 	defer setOperationState(t, ctx, database, empty.ID, "succeeded")
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: empty.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: empty.Attempt, ExpectedJobID: *empty.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply an empty scan: %v", err)
 	}
@@ -358,6 +365,7 @@ func TestSourceScanApplyKeepsCandidatesOnRollbackWithPostgreSQL(t *testing.T) {
 	}
 	err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: second.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: second.Attempt, ExpectedJobID: *second.RiverJobID,
 	})
 	if err == nil {
 		t.Fatal("an apply for an operation without a source root target was accepted")
@@ -460,6 +468,7 @@ func TestSourceScanApplyHonoursConfiguredPathWithPostgreSQL(t *testing.T) {
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: staleScan.ID, ExpectedConfiguredPath: "/srv/path-a",
+		ExpectedAttempt: staleScan.Attempt, ExpectedJobID: *staleScan.RiverJobID,
 	}); err == nil {
 		t.Fatal("an apply carrying the previous configured path was accepted")
 	}
@@ -513,6 +522,7 @@ func TestSourceCandidatesWrapOperationWithPostgreSQL(t *testing.T) {
 	assertCandidateCount(t, ctx, database, operation.ID, 2)
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply the appended batches: %v", err)
 	}
@@ -732,6 +742,7 @@ func applySourceScan(t *testing.T, ctx context.Context, inventory *persistence.S
 	}
 	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: path,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err != nil {
 		t.Fatalf("apply scan operation %s: %v", operation.ID, err)
 	}
@@ -761,13 +772,32 @@ func deleteInventoryRoot(ctx context.Context, inventory *persistence.SourceInven
 func newSourceScanOperation(t *testing.T, ctx context.Context, database *bun.DB, root *persistence.SourceRoot, state string) *persistence.Operation {
 	t.Helper()
 	repository := persistence.NewSetupManagerRepository(database)
+	shaEnabled := true
+	snapshot, err := json.Marshal(service.ScanSourceSnapshot{
+		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
+		ConfiguredPath: root.ConfiguredPath, ScanGeneration: root.ScanGeneration,
+		SHA256Enabled: &shaEnabled, Tools: []persistence.SourceAnalysisToolSelection{},
+	})
+	if err != nil {
+		t.Fatalf("encode scan snapshot: %v", err)
+	}
 	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: "scan_source", State: state, Stage: "applying",
-		InputSnapshot:      []byte(`{"source_root_id":"` + root.ID.String() + `","configured_path":"` + root.ConfiguredPath + `"}`),
+		ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued", Stage: "queued",
+		InputSnapshot:      snapshot,
 		TargetSourceRootID: &root.ID,
 	}
-	if err := repository.CreateOperation(ctx, operation); err != nil {
-		t.Fatalf("create scan operation: %v", err)
+	client := openScanEnqueueRiver(t, database)
+	if err := repository.CreateOperationAndEnqueue(ctx, operation, client,
+		service.ScanSourceJobArgs{OperationID: operation.ID}, nil); err != nil {
+		t.Fatalf("enqueue scan operation: %v", err)
+	}
+	if state == "running" {
+		if err := service.NewOperations(repository).Running(ctx, operation.ID, "applying"); err != nil {
+			t.Fatalf("mark scan operation running: %v", err)
+		}
+		operation.State, operation.Stage = "running", "applying"
+	} else if state != "queued" {
+		t.Fatalf("unsupported scan fixture state %q", state)
 	}
 	return operation
 }
@@ -970,6 +1000,13 @@ func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing
 	root := createInventoryRoot(t, ctx, inventory, "/srv/refusals")
 
 	active := newSourceScanOperation(t, ctx, database, root, "queued")
+	// The active scan fixture stores one operation and its River job; the refused
+	// enqueues must not add another of either, so capture the real baseline first.
+	operationsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
+	jobsBefore := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
+	if operationsBefore != 1 || jobsBefore != 1 {
+		t.Fatalf("scan enqueue baseline: operations=%d jobs=%d, want the active scan and its job alone", operationsBefore, jobsBefore)
+	}
 	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
 		service.ScanSourceJobArgs{OperationID: active.ID}, nil); !errors.Is(err, persistence.ErrSourceRootActiveScan) {
 		t.Fatalf("enqueue on a root with a queued scan = %v, want ErrSourceRootActiveScan", err)
@@ -990,11 +1027,11 @@ func TestSourceScanEnqueueRefusesDisabledAndActiveRootsWithPostgreSQL(t *testing
 	operations := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM operation WHERE kind = 'scan_source'")
 	jobs := countScanEnqueueRows(t, ctx, database, "SELECT count(*) FROM river_job WHERE kind = ?", service.SourceScanJobKind)
 	t.Logf("after the refused enqueues: scan operations=%d scan_source river jobs=%d", operations, jobs)
-	if operations != 1 {
-		t.Fatalf("scan operations after the refusals = %d, want the terminal one alone", operations)
+	if operations != operationsBefore {
+		t.Fatalf("scan operations after the refusals = %d, want the initial %d preserved", operations, operationsBefore)
 	}
-	if jobs != 0 {
-		t.Fatalf("River jobs after the refusals = %d, want 0", jobs)
+	if jobs != jobsBefore {
+		t.Fatalf("River jobs after the refusals = %d, want the initial %d preserved", jobs, jobsBefore)
 	}
 }
 

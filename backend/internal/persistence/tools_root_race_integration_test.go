@@ -33,7 +33,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 	t.Run("root update commits before stale enqueue", func(t *testing.T) {
 		installation, operation := toolsRootRaceInstall()
 		err := runQueryRace(t, ctx, database,
-			"LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE", "LOCK TABLE operation",
+			"SELECT pg_advisory_xact_lock(1297371734, 1)", "pg_advisory_xact_lock_shared",
 			func(ctx context.Context, tx bun.Tx) error {
 				_, err := tx.NewInsert().Model(&persistence.AppSetting{Name: "tools_directory", Value: rootB}).
 					On("CONFLICT (setting_name) DO UPDATE").Set("setting_value = EXCLUDED.setting_value").Exec(ctx)
@@ -54,7 +54,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 	t.Run("enqueue commits before root update", func(t *testing.T) {
 		installation, operation := toolsRootRaceInstall()
 		err := runQueryRace(t, ctx, database,
-			"LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE", "LOCK TABLE operation",
+			"SELECT pg_advisory_xact_lock_shared(1297371734, 1)", "pg_advisory_xact_lock(",
 			func(ctx context.Context, tx bun.Tx) error {
 				result, err := client.InsertTx(ctx, tx.Tx, service.OperationJobArgs{OperationID: operation.ID}, nil)
 				if err != nil {
@@ -78,6 +78,18 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		assertToolsRootRaceState(t, ctx, database, rootA, installation.ID, operation.ID, 1)
 		if _, found, err := settingsRepository.Get(ctx, "output_directory"); err != nil || found {
 			t.Fatalf("runtime update partially persisted output directory: found=%t err=%v", found, err)
+		}
+		if operation.RiverJobID == nil {
+			t.Fatal("enqueued installation operation has no River job ID")
+		}
+		if _, err := database.NewRaw(`DELETE FROM river_job WHERE id=?`, *operation.RiverJobID).Exec(ctx); err != nil {
+			t.Fatalf("delete completed race fixture River job: %v", err)
+		}
+		if _, err := database.NewDelete().Model(operation).WherePK().Exec(ctx); err != nil {
+			t.Fatalf("delete completed race fixture operation: %v", err)
+		}
+		if _, err := database.NewDelete().Model(installation).WherePK().Exec(ctx); err != nil {
+			t.Fatalf("delete completed race fixture installation: %v", err)
 		}
 	})
 

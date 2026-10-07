@@ -24,7 +24,6 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
-  AnalyzeSourceLocationBody,
   CatalogBody,
   CheckMusicBrainzBody,
   CheckPathsBody,
@@ -44,6 +43,8 @@ import type {
   MovePreflightInputBody,
   OperationResponse,
   OperationsBody,
+  RerunSourceFingerprintBody,
+  RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
   SetupStateBody,
   SourceLocationDetailResponse,
@@ -3156,40 +3157,40 @@ export function useGetSourceLocation<TData = Awaited<ReturnType<typeof getSource
 
 
 
-export type analyzeSourceLocationResponse202 = {
+export type rerunSourceFingerprintResponse202 = {
   data: OperationResponse
   status: 202
 }
 
-export type analyzeSourceLocationResponseDefault = {
+export type rerunSourceFingerprintResponseDefault = {
   data: ErrorModel
   status: Exclude<HTTPStatusCodes, 202>
 }
 
-export type analyzeSourceLocationResponseSuccess = (analyzeSourceLocationResponse202) & {
+export type rerunSourceFingerprintResponseSuccess = (rerunSourceFingerprintResponse202) & {
   headers: Headers;
 };
-export type analyzeSourceLocationResponseError = (analyzeSourceLocationResponseDefault) & {
+export type rerunSourceFingerprintResponseError = (rerunSourceFingerprintResponseDefault) & {
   headers: Headers;
 };
 
-export type analyzeSourceLocationResponse = (analyzeSourceLocationResponseSuccess | analyzeSourceLocationResponseError)
+export type rerunSourceFingerprintResponse = (rerunSourceFingerprintResponseSuccess | rerunSourceFingerprintResponseError)
 
-export const getAnalyzeSourceLocationUrl = (sourceId: string,
+export const getRerunSourceFingerprintUrl = (sourceId: string,
     locationId: string,) => {
 
 
 
 
-  return `/api/sources/${sourceId}/locations/${locationId}/analyze`
+  return `/api/sources/${sourceId}/locations/${locationId}/fingerprint/rerun`
 }
 
 /**
- * @summary Analyze one source location
+ * @summary Rerun source fingerprint calculation
  */
-export const analyzeSourceLocation = async (sourceId: string,
+export const rerunSourceFingerprint = async (sourceId: string,
     locationId: string,
-    analyzeSourceLocationBody: NonReadonly<AnalyzeSourceLocationBody>, options?: RequestInit): Promise<analyzeSourceLocationResponse> => {
+    rerunSourceFingerprintBody: NonReadonly<RerunSourceFingerprintBody>, options?: RequestInit): Promise<rerunSourceFingerprintResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -3205,33 +3206,33 @@ export const analyzeSourceLocation = async (sourceId: string,
     }
     return headers;
   };
-const res = await fetch(getAnalyzeSourceLocationUrl(sourceId,locationId),
+const res = await fetch(getRerunSourceFingerprintUrl(sourceId,locationId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(analyzeSourceLocationBody)
+    body: JSON.stringify(rerunSourceFingerprintBody)
   }
 )
 
 
   const body = [204, 205, 304].includes(res.status) ? null : await res.text();
 
-  const data: analyzeSourceLocationResponse['data'] = body ? JSON.parse(body) : {}
-  return { data, status: res.status, headers: res.headers } as analyzeSourceLocationResponse
+  const data: rerunSourceFingerprintResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as rerunSourceFingerprintResponse
 }
 
 
 
 
 
-export const getAnalyzeSourceLocationMutationKey = () => ['analyzeSourceLocation'] as const;
+export const getRerunSourceFingerprintMutationKey = () => ['rerunSourceFingerprint'] as const;
 
-export const getAnalyzeSourceLocationMutationOptions = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext>, fetch?: RequestInit}
-): UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext> => {
+export const getRerunSourceFingerprintMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rerunSourceFingerprint>>, TError,RerunSourceFingerprintMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof rerunSourceFingerprint>>, TError,RerunSourceFingerprintMutationVariables, TContext> => {
 
-const mutationKey = getAnalyzeSourceLocationMutationKey();
+const mutationKey = getRerunSourceFingerprintMutationKey();
 const {mutation: mutationOptions, fetch: fetchOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -3241,10 +3242,10 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof analyzeSourceLocation>>, AnalyzeSourceLocationMutationVariables> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rerunSourceFingerprint>>, RerunSourceFingerprintMutationVariables> = (props) => {
           const {sourceId,locationId,data} = props ?? {};
 
-          return  analyzeSourceLocation(sourceId,locationId,data,fetchOptions)
+          return  rerunSourceFingerprint(sourceId,locationId,data,fetchOptions)
         }
 
 
@@ -3254,23 +3255,140 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type AnalyzeSourceLocationMutationResult = NonNullable<Awaited<ReturnType<typeof analyzeSourceLocation>>>
-    export type AnalyzeSourceLocationMutationBody = NonReadonly<AnalyzeSourceLocationBody>
-    export type AnalyzeSourceLocationMutationError = ErrorModel
-    export type AnalyzeSourceLocationMutationVariables = {sourceId: string;locationId: string;data: NonReadonly<AnalyzeSourceLocationBody>}
+    export type RerunSourceFingerprintMutationResult = NonNullable<Awaited<ReturnType<typeof rerunSourceFingerprint>>>
+    export type RerunSourceFingerprintMutationBody = NonReadonly<RerunSourceFingerprintBody>
+    export type RerunSourceFingerprintMutationError = ErrorModel
+    export type RerunSourceFingerprintMutationVariables = {sourceId: string;locationId: string;data: NonReadonly<RerunSourceFingerprintBody>}
 
     /**
- * @summary Analyze one source location
+ * @summary Rerun source fingerprint calculation
  */
-export const useAnalyzeSourceLocation = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSourceLocation>>, TError,AnalyzeSourceLocationMutationVariables, TContext>, fetch?: RequestInit}
+export const useRerunSourceFingerprint = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rerunSourceFingerprint>>, TError,RerunSourceFingerprintMutationVariables, TContext>, fetch?: RequestInit}
  , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof analyzeSourceLocation>>,
+        Awaited<ReturnType<typeof rerunSourceFingerprint>>,
         TError,
-        AnalyzeSourceLocationMutationVariables,
+        RerunSourceFingerprintMutationVariables,
         TContext
       > => {
-      return useMutation(getAnalyzeSourceLocationMutationOptions(options), queryClient);
+      return useMutation(getRerunSourceFingerprintMutationOptions(options), queryClient);
+    }
+
+export type retrySourceAnalysisStepResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type retrySourceAnalysisStepResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type retrySourceAnalysisStepResponseSuccess = (retrySourceAnalysisStepResponse202) & {
+  headers: Headers;
+};
+export type retrySourceAnalysisStepResponseError = (retrySourceAnalysisStepResponseDefault) & {
+  headers: Headers;
+};
+
+export type retrySourceAnalysisStepResponse = (retrySourceAnalysisStepResponseSuccess | retrySourceAnalysisStepResponseError)
+
+export const getRetrySourceAnalysisStepUrl = (sourceId: string,
+    locationId: string,) => {
+
+
+
+
+  return `/api/sources/${sourceId}/locations/${locationId}/retry`
+}
+
+/**
+ * @summary Retry one failed source analysis step
+ */
+export const retrySourceAnalysisStep = async (sourceId: string,
+    locationId: string,
+    retrySourceAnalysisStepBody: NonReadonly<RetrySourceAnalysisStepBody>, options?: RequestInit): Promise<retrySourceAnalysisStepResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getRetrySourceAnalysisStepUrl(sourceId,locationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(retrySourceAnalysisStepBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: retrySourceAnalysisStepResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as retrySourceAnalysisStepResponse
+}
+
+
+
+
+
+export const getRetrySourceAnalysisStepMutationKey = () => ['retrySourceAnalysisStep'] as const;
+
+export const getRetrySourceAnalysisStepMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retrySourceAnalysisStep>>, TError,RetrySourceAnalysisStepMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof retrySourceAnalysisStep>>, TError,RetrySourceAnalysisStepMutationVariables, TContext> => {
+
+const mutationKey = getRetrySourceAnalysisStepMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retrySourceAnalysisStep>>, RetrySourceAnalysisStepMutationVariables> = (props) => {
+          const {sourceId,locationId,data} = props ?? {};
+
+          return  retrySourceAnalysisStep(sourceId,locationId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetrySourceAnalysisStepMutationResult = NonNullable<Awaited<ReturnType<typeof retrySourceAnalysisStep>>>
+    export type RetrySourceAnalysisStepMutationBody = NonReadonly<RetrySourceAnalysisStepBody>
+    export type RetrySourceAnalysisStepMutationError = ErrorModel
+    export type RetrySourceAnalysisStepMutationVariables = {sourceId: string;locationId: string;data: NonReadonly<RetrySourceAnalysisStepBody>}
+
+    /**
+ * @summary Retry one failed source analysis step
+ */
+export const useRetrySourceAnalysisStep = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retrySourceAnalysisStep>>, TError,RetrySourceAnalysisStepMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retrySourceAnalysisStep>>,
+        TError,
+        RetrySourceAnalysisStepMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetrySourceAnalysisStepMutationOptions(options), queryClient);
     }
 
 export type startSourceScanResponse200 = {

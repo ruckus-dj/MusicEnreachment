@@ -33,6 +33,12 @@ type interruptedOperationSettings interface {
 
 var errInvalidInstallPublicationEvidence = errors.New("invalid installation publication evidence")
 
+// analysisSafeInterrupted is the retryable reason startup recovery records for a
+// normalized analysis whose process stopped before its result committed. The
+// current recovery fails the orphaned delivery and releases both read holds in
+// the same transaction, so the operation can be retried without a partially
+// published variant.
+
 type riverJobLiveness func(context.Context, *int64) (bool, error)
 
 // interruptedSourceScanRecovery is the scan-specific half of startup recovery:

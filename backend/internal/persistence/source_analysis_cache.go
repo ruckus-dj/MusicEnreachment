@@ -6,13 +6,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/google/uuid"
-	"github.com/uptrace/bun"
 )
 
-// LookupSourceProbe returns the immutable result selected for this digest,
-// ffprobe banner and analysis policy.
+// LookupSourceProbe returns original immutable provenance without accessing tools.
 func (repository *SourceInventoryRepository) LookupSourceProbe(ctx context.Context, digest [sha256.Size]byte, version string, policy int) (*SourceMediaVariant, bool, error) {
 	var cachedVersion string
 	err := repository.db.NewRaw(`SELECT ffprobe_version FROM media_probe_cache
@@ -41,13 +37,10 @@ func (repository *SourceInventoryRepository) LookupSourceProbe(ctx context.Conte
 	return result, true, nil
 }
 
-// LookupSourceFingerprint returns the immutable result selected for this
-// digest and fpcalc version.
+// LookupSourceFingerprint returns the cache winner's original result unchanged.
 func (repository *SourceInventoryRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte, version string) (*SourceFingerprintResult, bool, error) {
 	result := new(SourceFingerprintResult)
-	err := repository.db.NewRaw(`SELECT r.* FROM media_fingerprint_cache c
-		JOIN media_fingerprint_result r ON r.id=c.result_id AND r.fpcalc_version=c.fpcalc_version
-		WHERE c.source_sha256=? AND c.fpcalc_version=?`, digest[:], version).Scan(ctx, result)
+	err := repository.db.NewRaw(`SELECT r.* FROM media_fingerprint_cache c JOIN media_fingerprint_result r ON r.id=c.result_id AND r.fpcalc_version=c.fpcalc_version WHERE c.source_sha256=? AND c.fpcalc_version=?`, digest[:], version).Scan(ctx, result)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -55,15 +48,4 @@ func (repository *SourceInventoryRepository) LookupSourceFingerprint(ctx context
 		return nil, false, fmt.Errorf("lookup source fingerprint cache: %w", err)
 	}
 	return result, true, nil
-}
-
-func registerSourceProbeCache(ctx context.Context, tx bun.IDB, digest []byte, version string, policy int, resultID uuid.UUID) error {
-	if len(digest) != sha256.Size || version == "" || policy < 1 || resultID == uuid.Nil {
-		return fmt.Errorf("valid digest, version, policy and result are required")
-	}
-	if _, err := tx.NewRaw(`INSERT INTO media_probe_cache(source_sha256,ffprobe_version,analysis_policy_version,result_id)
-		VALUES(?,?,?,?) ON CONFLICT(source_sha256,ffprobe_version_sha256,analysis_policy_version) DO NOTHING`, digest, version, policy, resultID).Exec(ctx); err != nil {
-		return fmt.Errorf("insert cache association: %w", err)
-	}
-	return nil
 }

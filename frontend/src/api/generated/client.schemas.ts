@@ -4,14 +4,6 @@
  * MeloTrove API
  * OpenAPI spec version: 0.0.0
  */
-export interface AnalyzeSourceLocationBody {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  expected_mtime: string;
-  /** @minimum 0 */
-  expected_size_bytes: number;
-}
-
 export interface ArtifactResponse {
   checksum_provided: boolean;
   name: string;
@@ -240,6 +232,32 @@ export interface OperationsBody {
   operations: OperationResponse[] | null;
 }
 
+export interface RerunSourceFingerprintBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_mtime: string;
+  /** @minimum 0 */
+  expected_size_bytes: number;
+}
+
+export type RetrySourceAnalysisStepBodyStep = typeof RetrySourceAnalysisStepBodyStep[keyof typeof RetrySourceAnalysisStepBodyStep];
+
+
+export const RetrySourceAnalysisStepBodyStep = {
+  sha256: 'sha256',
+  probe: 'probe',
+  fingerprint: 'fingerprint',
+} as const;
+
+export interface RetrySourceAnalysisStepBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_mtime: string;
+  /** @minimum 0 */
+  expected_size_bytes: number;
+  step: RetrySourceAnalysisStepBodyStep;
+}
+
 export interface RuntimeSettingsResponse {
   active_ffmpeg_installation_id?: string;
   active_fpcalc_installation_id?: string;
@@ -281,6 +299,58 @@ export interface SetupStateBody {
   configuration_health: ConfigurationHealthResponse;
   platform: PlatformResponse;
   settings: RuntimeSettingsResponse;
+}
+
+export type SourceAnalysisStepResponseName = typeof SourceAnalysisStepResponseName[keyof typeof SourceAnalysisStepResponseName];
+
+
+export const SourceAnalysisStepResponseName = {
+  sha256: 'sha256',
+  probe: 'probe',
+  fingerprint: 'fingerprint',
+} as const;
+
+export type SourceAnalysisStepResponseState = typeof SourceAnalysisStepResponseState[keyof typeof SourceAnalysisStepResponseState];
+
+
+export const SourceAnalysisStepResponseState = {
+  not_requested: 'not_requested',
+  pending: 'pending',
+  queued: 'queued',
+  running: 'running',
+  succeeded: 'succeeded',
+  failed: 'failed',
+  skipped: 'skipped',
+} as const;
+
+export interface SourceFingerprintResponse {
+  algorithm_id: number;
+  algorithm_namespace: string;
+  applied_operation_id: string;
+  calculated_at: string;
+  duration: number;
+  parser_contract_version: number;
+  value: string;
+  version: string;
+  version_banner: string;
+}
+
+export interface SourceSHA256ResultResponse {
+  algorithm?: string;
+  applied_operation_id?: string;
+  calculated_at?: string;
+  value: string;
+}
+
+export interface SourceAnalysisStepResponse {
+  attempt: number;
+  fingerprint?: SourceFingerprintResponse;
+  name: SourceAnalysisStepResponseName;
+  reuse_origin?: string;
+  safe_error?: string;
+  sha256?: SourceSHA256ResultResponse;
+  skip_reason?: string;
+  state: SourceAnalysisStepResponseState;
 }
 
 export type SourceLocationDetailResponseAnalysisState = typeof SourceLocationDetailResponseAnalysisState[keyof typeof SourceLocationDetailResponseAnalysisState];
@@ -357,8 +427,10 @@ export interface SourceLocationDetailResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   active_analysis_operation_id?: string;
+  active_fpcalc_version?: string;
   analysis_state: SourceLocationDetailResponseAnalysisState;
   location_id: string;
+  matching_eligible: boolean;
   media_variant_id?: string;
   mtime: string;
   probe_status: SourceLocationDetailResponseProbeStatus;
@@ -367,7 +439,10 @@ export interface SourceLocationDetailResponse {
   root: SourceLocationRootStateResponse;
   root_id: string;
   safe_error?: string;
+  selected_probe_variant_id?: string;
   size_bytes: number;
+  /** @nullable */
+  steps: SourceAnalysisStepResponse[] | null;
 }
 
 export type SourceLocationResponseProbeStatus = typeof SourceLocationResponseProbeStatus[keyof typeof SourceLocationResponseProbeStatus];

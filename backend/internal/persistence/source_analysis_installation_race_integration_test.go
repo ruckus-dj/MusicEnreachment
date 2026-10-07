@@ -4,24 +4,21 @@ package persistence_test
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 )
 
-// TestSourceAnalysisEnqueueFencesActiveInstallationUnderLockWithPostgreSQL
-// proves the start's linearization against activation. The competing
-// transaction takes the same active-installation advisory lock the enqueue uses
-// and commits a different active setting under it; the enqueue, proven by the
-// query barrier to have reached that advisory lock, must then refuse the start
-// rather than queue an analysis pinned to an installation the operator no longer
-// sees. An activation that commits after the enqueue cannot touch the queued
-// snapshot, which is covered by the immutable-snapshot tests.
-func TestSourceAnalysisEnqueueFencesActiveInstallationUnderLockWithPostgreSQL(t *testing.T) {
+// TestSourceAnalysisEnqueueLocksPinnedInstallationWithPostgreSQL proves that
+// admission takes its installation row lock after the root lock and holds it
+// through insertion. A competing transaction's row lock makes admission block
+// on the actual SELECT FOR SHARE statement; activation remains independently
+// guarded by the package-selection coordination lock.
+func TestSourceAnalysisEnqueueLocksPinnedInstallationWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
@@ -31,22 +28,20 @@ func TestSourceAnalysisEnqueueFencesActiveInstallationUnderLockWithPostgreSQL(t 
 	establishInventory(t, ctx, database, root)
 	selected := insertAnalysisInstallation(t, ctx, database, "selected")
 	setActiveAnalysisFFmpeg(t, ctx, database, selected)
-	replacement := insertAnalysisInstallation(t, ctx, database, "replacement")
 
-	operation := analysisEnqueueOperation(root, location, selected, nil)
+	tool := normalizedToolSelection(t, ctx, database, selected, "ffprobe")
+	operation := normalizedQueuedAnalysis(t, ctx, inventory, root, location, []persistence.SourceAnalysisToolSelection{tool})
 	err := runQueryRace(t, ctx, database,
-		"SELECT pg_advisory_xact_lock(hashtext('active-installation:ffmpeg'))",
-		"active-installation:ffmpeg",
-		func(ctx context.Context, tx bun.Tx) error {
-			_, err := tx.NewInsert().Model(&persistence.AppSetting{
-				Name: settings.ActiveFFmpegInstallationKey, Value: replacement.String(),
-			}).On("CONFLICT (setting_name) DO UPDATE").
-				Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx)
-			return err
-		},
-		func(ctx context.Context) error { return enqueueAnalysis(t, ctx, inventory, operation, client) })
-	if !errors.Is(err, persistence.ErrSourceAnalysisInstallationChanged) {
-		t.Fatalf("analysis start racing an activation = %v, want ErrSourceAnalysisInstallationChanged", err)
+		fmt.Sprintf("SELECT id FROM tool_installation WHERE id = '%s' FOR UPDATE", selected),
+		"FOR SHARE",
+		func(context.Context, bun.Tx) error { return nil },
+		func(ctx context.Context) error {
+			return enqueueNormalizedAnalysis(t, ctx, inventory, client, operation)
+		})
+	if err != nil {
+		t.Fatalf("analysis admission after the installation metadata writer commits: %v", err)
 	}
-	assertNoAnalysisStart(t, ctx, database)
+	if jobs := analysisJobs(t, ctx, database); jobs != 1 {
+		t.Fatalf("analysis River jobs after admission = %d, want 1", jobs)
+	}
 }

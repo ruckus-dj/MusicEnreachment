@@ -45,15 +45,52 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 		return nil
 	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		for _, name := range []string{
-			"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity", "musicbrainz_verified_at",
-		} {
-			if _, present := values[name]; present {
-				if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
-					return fmt.Errorf("lock MusicBrainz configuration: %w", err)
-				}
-				break
+		if _, rootChange := values["tools_directory"]; rootChange {
+			if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
+				return fmt.Errorf("lock tools move gate: %w", err)
 			}
+			if err := rejectActiveRootMove(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockInstallationPackages(ctx, tx, activeSettingPackages(values)...); err != nil {
+				return fmt.Errorf("lock active installations: %w", err)
+			}
+			var current string
+			err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name='tools_directory'").Scan(ctx, &current)
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("read tools directory: %w", err)
+			}
+			if current != values["tools_directory"] {
+				var installationID string
+				err = tx.NewRaw("SELECT id FROM tool_installation LIMIT 1 FOR UPDATE").Scan(ctx, &installationID)
+				if err == nil {
+					return fmt.Errorf("tools directory cannot change while installations exist; use the move operation")
+				}
+				if err != sql.ErrNoRows {
+					return fmt.Errorf("check tool installations: %w", err)
+				}
+				var operationID string
+				err = tx.NewRaw("SELECT id FROM operation WHERE kind='install' AND state IN ('queued','running') LIMIT 1").Scan(ctx, &operationID)
+				if err == nil {
+					return fmt.Errorf("tools directory cannot change while tools operations are active")
+				}
+				if err != sql.ErrNoRows {
+					return fmt.Errorf("check active tools operations: %w", err)
+				}
+			}
+		} else {
+			packages := activeSettingPackages(values)
+			if len(packages) > 0 {
+				if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+					return fmt.Errorf("lock tools move gate: %w", err)
+				}
+				if err := lockInstallationPackages(ctx, tx, packages...); err != nil {
+					return fmt.Errorf("lock active installations: %w", err)
+				}
+			}
+		}
+		if err := lockMusicBrainzIfNeeded(ctx, tx, values); err != nil {
+			return err
 		}
 		names := make([]string, 0, len(values))
 		for name := range values {
@@ -74,12 +111,49 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 	})
 }
 
+func activeSettingPackages(values map[string]string) []string {
+	packages := make([]string, 0, 2)
+	if _, ok := values["active_ffmpeg_installation_id"]; ok {
+		packages = append(packages, "ffmpeg")
+	}
+	if _, ok := values["active_fpcalc_installation_id"]; ok {
+		packages = append(packages, "fpcalc")
+	}
+	return packages
+}
+
+func lockMusicBrainzIfNeeded(ctx context.Context, tx bun.Tx, values map[string]string) error {
+	for _, name := range []string{"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity", "musicbrainz_verified_at"} {
+		if _, present := values[name]; present {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+				return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func rejectActiveRootMove(ctx context.Context, tx bun.Tx) error {
+	active, err := activeToolsMove(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("check active tools root move: %w", err)
+	}
+	if active {
+		return fmt.Errorf("tools directory cannot change while a tools root move is active")
+	}
+	return nil
+}
+
 // UpdateRuntime serializes a direct tools-root change with every tools
 // mutation. expectedToolsRoot is empty when no root is currently configured.
 func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoot string, values map[string]string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations: %w", err)
+		}
+		if err := rejectActiveRootMove(ctx, tx); err != nil {
+			return err
 		}
 		var currentRoot string
 		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentRoot)
@@ -100,7 +174,7 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 				return fmt.Errorf("check tool installations: %w", err)
 			}
 			var operationID string
-			err = tx.NewRaw("SELECT id FROM operation WHERE kind IN ('install', 'move_tools_root') AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE").Scan(ctx, &operationID)
+			err = tx.NewRaw("SELECT id FROM operation WHERE kind = 'install' AND state IN ('queued', 'running') LIMIT 1").Scan(ctx, &operationID)
 			if err == nil {
 				return fmt.Errorf("tools directory cannot change while tools operations are active")
 			}
@@ -113,15 +187,8 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 }
 
 func setManyTx(ctx context.Context, tx bun.Tx, values map[string]string) error {
-	for _, name := range []string{
-		"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity", "musicbrainz_verified_at",
-	} {
-		if _, present := values[name]; present {
-			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
-				return fmt.Errorf("lock MusicBrainz configuration: %w", err)
-			}
-			break
-		}
+	if err := lockMusicBrainzIfNeeded(ctx, tx, values); err != nil {
+		return err
 	}
 	names := make([]string, 0, len(values))
 	for name := range values {
@@ -250,8 +317,17 @@ func (r *SettingsRepository) InitializePlatform(ctx context.Context, goos, goarc
 
 func (r *SettingsRepository) CompleteSetupOnce(ctx context.Context, value string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("lock tools move gate: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
 			return fmt.Errorf("lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("lock active installations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
 		}
 		_, err := tx.NewInsert().Model(&AppSetting{Name: "setup_completed_at", Value: value}).
 			On("CONFLICT (setting_name) DO NOTHING").Exec(ctx)
@@ -266,31 +342,14 @@ func (r *SettingsRepository) CompleteSetupOnce(ctx context.Context, value string
 // command. No network or filesystem work runs inside this transaction.
 func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expected map[string]string, value string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("lock tools move gate: %w", err)
+		}
 		// Match activation's ordering: completion, package activation, then rows.
 		// The MusicBrainz lock also protects absent/default configuration keys.
 		for _, name := range []string{"setup-completion", "active-installation:ffmpeg", "active-installation:fpcalc", "musicbrainz-config"} {
 			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", name); err != nil {
 				return fmt.Errorf("lock setup requirement %q: %w", name, err)
-			}
-		}
-		names := make([]string, 0, len(expected))
-		for name := range expected {
-			names = append(names, name)
-		}
-		var current []AppSetting
-		if err := tx.NewSelect().Model(&current).Where("setting_name IN (?)", bun.List(names)).
-			Order("setting_name").For("UPDATE").Scan(ctx); err != nil {
-			return fmt.Errorf("lock current setup settings: %w", err)
-		}
-		values := map[string]string{
-			"musicbrainz_mode": "public", "musicbrainz_base_url": "", "musicbrainz_config_identity": "",
-		}
-		for _, setting := range current {
-			values[setting.Name] = setting.Value
-		}
-		for name, checked := range expected {
-			if saved, exists := values[name]; !exists || saved != checked {
-				return fmt.Errorf("setup configuration changed during final check")
 			}
 		}
 		// Active IDs and their records stay locked until completion commits.
@@ -324,6 +383,25 @@ func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expecte
 				if strings.TrimSpace(versions[executable]) == "" {
 					return fmt.Errorf("active %s installation has no verified %s", required.kind, executable)
 				}
+			}
+		}
+		names := make([]string, 0, len(expected))
+		for name := range expected {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		var current []AppSetting
+		if err := tx.NewSelect().Model(&current).Where("setting_name IN (?)", bun.List(names)).
+			Order("setting_name").For("UPDATE").Scan(ctx); err != nil {
+			return fmt.Errorf("lock current setup settings: %w", err)
+		}
+		values := map[string]string{"musicbrainz_mode": "public", "musicbrainz_base_url": "", "musicbrainz_config_identity": ""}
+		for _, setting := range current {
+			values[setting.Name] = setting.Value
+		}
+		for name, checked := range expected {
+			if saved, exists := values[name]; !exists || saved != checked {
+				return fmt.Errorf("setup configuration changed during final check")
 			}
 		}
 		if _, err := tx.NewInsert().Model(&AppSetting{Name: "musicbrainz_verified_at", Value: value}).

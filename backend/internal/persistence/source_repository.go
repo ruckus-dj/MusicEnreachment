@@ -74,14 +74,19 @@ type SourceLocationCursor struct {
 type SourceScanApply struct {
 	OperationID            uuid.UUID
 	ExpectedConfiguredPath string
+	ExpectedAttempt        int
+	ExpectedJobID          int64
+	SHA256Enabled          *bool
 }
 
 // SourceScanUnavailable names a scan that found its registered directory
 // unreadable, together with the safe reason to record on the root. The reason is
 // what the UI shows instead of a raw diagnostic, so it must not be empty.
 type SourceScanUnavailable struct {
-	OperationID uuid.UUID
-	SafeError   string
+	OperationID     uuid.UUID
+	SafeError       string
+	ExpectedAttempt int
+	ExpectedJobID   int64
 }
 
 type SourceInventoryRepository struct {
@@ -148,14 +153,9 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // while a scan of the root is queued or running: the path the running scan
 // carries is the one it would publish, and a disabled root must not keep a scan
 // it no longer owns. A display name change is always accepted. The operation
-// table lock makes the check atomic against a scan starting, exactly like the
-// deletion guard, because the source_root row lock alone does not stop a new
-// operation row.
+// source-root lock makes the check atomic against a scan or analysis starting.
 func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
-			return fmt.Errorf("update source root: lock operations: %w", err)
-		}
 		current := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", cas.ID).Scan(ctx, current); err != nil {
 			if err == sql.ErrNoRows {
@@ -189,14 +189,10 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 
 // DeleteSourceRoot removes a root and every one of its locations in one
 // transaction. It never touches source files or the managed output directory.
-// Deletion is refused while a scan of the root is queued or running, and the
-// LOCK TABLE makes that check and the delete atomic against a concurrent scan
-// insert.
+// Deletion is refused while an operation of the root is queued or running. The
+// root row lock serializes the check against every operation admission.
 func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE"); err != nil {
-			return fmt.Errorf("lock operations for source root deletion: %w", err)
-		}
 		root := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, root); err != nil {
 			return fmt.Errorf("lock source root: %w", err)
@@ -238,11 +234,10 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 // queued or running. Both kinds target the root, and the root exclusivity rule
 // makes them mutually exclusive, so a root edit that changes its path or enabled
 // state, a root deletion and a scan start all refuse while either is active.
-// Callers hold LOCK TABLE operation so the answer cannot change under them
-// before they write.
+// Callers hold the root row lock, which serializes this read against admission.
 func activeSourceScan(ctx context.Context, database bun.IDB, rootID uuid.UUID) (bool, error) {
 	var active uuid.UUID
-	err := database.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE", rootID).Scan(ctx, &active)
+	err := database.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') LIMIT 1", rootID).Scan(ctx, &active)
 	if err == nil {
 		return true, nil
 	}
@@ -332,6 +327,13 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 			}
 			return fmt.Errorf("apply source scan: lock source root: %w", err)
 		}
+		operation := new(Operation)
+		if err := tx.NewRaw("SELECT * FROM operation WHERE id = ? FOR UPDATE", apply.OperationID).Scan(ctx, operation); err != nil {
+			return fmt.Errorf("apply source scan: lock operation: %w", err)
+		}
+		if operation.Kind != sourceScanOperationKind || operation.State != "running" || operation.TargetSourceRootID == nil || *operation.TargetSourceRootID != root.ID || operation.Attempt != apply.ExpectedAttempt || operation.RiverJobID == nil || *operation.RiverJobID != apply.ExpectedJobID {
+			return fmt.Errorf("apply source scan: delivery identity changed")
+		}
 		if root.ConfiguredPath != apply.ExpectedConfiguredPath {
 			return fmt.Errorf("apply source scan: configured path changed since the scan started")
 		}
@@ -345,6 +347,21 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 		}
 		generation := root.ScanGeneration + 1
 		if err := applySourceScanCandidates(ctx, tx, root, generation, stored); err != nil {
+			return fmt.Errorf("apply source scan: %w", err)
+		}
+		for _, candidate := range stored {
+			if candidate.PreparedAnalysis == nil {
+				continue
+			}
+			if apply.SHA256Enabled == nil || apply.ExpectedAttempt < 1 || apply.ExpectedJobID < 1 {
+				return fmt.Errorf("apply source scan: prepared analysis requires explicit policy and delivery identity")
+			}
+			if err := publishPreparedSourceScanAnalysis(ctx, tx, root, *operation, *apply.SHA256Enabled, stored); err != nil {
+				return fmt.Errorf("apply source scan: %w", err)
+			}
+			break
+		}
+		if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
 			return fmt.Errorf("apply source scan: %w", err)
 		}
 		// Candidates are removed only now, after the generation was written in
@@ -400,6 +417,20 @@ func (repository *SourceInventoryRepository) MarkSourceRootUnavailable(ctx conte
 		}
 		if operation.TargetSourceRootID == nil {
 			return fmt.Errorf("mark source root unavailable: operation does not target a source root")
+		}
+		var lockedRootID uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM source_root WHERE id=? FOR UPDATE`, *operation.TargetSourceRootID).Scan(ctx, &lockedRootID); err != nil {
+			return fmt.Errorf("mark source root unavailable: lock source root: %w", err)
+		}
+		if unavailable.ExpectedAttempt > 0 {
+			locked := new(Operation)
+			if err := tx.NewRaw(`SELECT * FROM operation WHERE id=? FOR UPDATE`, unavailable.OperationID).Scan(ctx, locked); err != nil {
+				return fmt.Errorf("mark source root unavailable: lock scan delivery: %w", err)
+			}
+			if locked.TargetSourceRootID == nil || *locked.TargetSourceRootID != *operation.TargetSourceRootID || locked.Attempt != unavailable.ExpectedAttempt || locked.RiverJobID == nil || *locked.RiverJobID != unavailable.ExpectedJobID {
+				return fmt.Errorf("mark source root unavailable: %w", ErrSourceAnalysisStale)
+			}
+			operation = locked
 		}
 		attemptStartedAt := operation.CreatedAt
 		if operation.Attempt > 1 {

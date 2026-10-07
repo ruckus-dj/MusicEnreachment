@@ -23,6 +23,7 @@ const (
 )
 
 func TestSourceProbeCacheSchemaBackfillWinnerAndGuardsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
@@ -78,6 +79,7 @@ func TestSourceProbeCacheSchemaBackfillWinnerAndGuardsWithPostgreSQL(t *testing.
 }
 
 func TestSourceProbeCacheRollbackRefusesNoncanonicalWinnerWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
@@ -95,9 +97,7 @@ func TestSourceProbeCacheRollbackRefusesNoncanonicalWinnerWithPostgreSQL(t *test
 	}
 	assertProbeCacheWinner(t, ctx, database, digest[:], 1, winner)
 
-	rollbackCollection := migrate.NewMigrations()
-	rollbackCollection.Add(*migrationNamed(t, collection, probeCacheMigration))
-	migrator := migrate.NewMigrator(database, rollbackCollection, migrate.WithMarkAppliedOnSuccess(true))
+	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
 		t.Fatalf("initialize source probe cache rollback: %v", err)
 	}

@@ -47,6 +47,9 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 	sort.Slice(workIDs, func(i, j int) bool { return strings.Compare(workIDs[i].String(), workIDs[j].String()) < 0 })
 	var configuredRoot string
 	if err := repository.db.NewSelect().Model((*SourceRoot)(nil)).Column("configured_path").Where("id=?", *operation.TargetSourceRootID).Scan(ctx, &configuredRoot); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("admit source analysis: configured root disappeared: %w", ErrSourceAnalysisStale)
+		}
 		return fmt.Errorf("admit source analysis: read configured root for coordination: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
@@ -71,7 +74,17 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		}
 		root := new(SourceRoot)
 		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("admit source analysis: source root disappeared: %w", ErrSourceAnalysisStale)
+			}
 			return fmt.Errorf("admit source analysis: lock source root: %w", err)
+		}
+		activeKind, active, err := activeSourceRootMutationExists(ctx, tx, root.ID)
+		if err != nil {
+			return fmt.Errorf("admit source analysis: check active source-root operation: %w", err)
+		}
+		if active {
+			return fmt.Errorf("admit source analysis: %w", sourceRootActiveOperationError(activeKind))
 		}
 		if snapshot.ToolsReadRequired {
 			moving, err := activeToolsMoveExists(ctx, tx)
@@ -298,6 +311,30 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		}
 		return nil
 	})
+}
+
+// activeSourceRootMutationExists is called only after locking the source root.
+// That per-root lock serializes this check with every scan and analysis
+// admission without taking a table-wide operation lock.
+func activeSourceRootMutationExists(ctx context.Context, tx bun.IDB, rootID uuid.UUID) (string, bool, error) {
+	var kind string
+	err := tx.NewRaw(`SELECT kind FROM operation
+		WHERE target_source_root_id = ? AND kind IN ('scan_source', 'analyze_source')
+		AND state IN ('queued', 'running') LIMIT 1`, rootID).Scan(ctx, &kind)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return kind, true, nil
+}
+
+func sourceRootActiveOperationError(kind string) error {
+	if kind == "scan_source" {
+		return ErrSourceRootActiveScan
+	}
+	return ErrSourceRootActiveAnalysis
 }
 
 func validatePinnedInstallations(ctx context.Context, tx bun.Tx, tools []SourceAnalysisToolSelection) error {

@@ -71,8 +71,8 @@ func PrepareWithWorkers(ctx context.Context, databaseURL string, database *sql.D
 	}
 	client, err := river.NewClient(driver, &river.Config{
 		Workers: workers,
-		// The analysis queue runs one worker: the first slice analyzes one file
-		// at a time, a fixed technical limit with no runtime setting.
+		// Preserve the fixed orchestration concurrency; individual analysis steps
+		// can execute concurrently within one delivery.
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:          {MaxWorkers: 1},
 			service.SourceAnalysisQueue: {MaxWorkers: 1},

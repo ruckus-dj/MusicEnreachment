@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,16 +59,17 @@ const SourceScanDirectoryUnavailableReason = "The configured source directory is
 type SourceScanRepository interface {
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
 	ListSourceLocationsPage(context.Context, uuid.UUID, *persistence.SourceLocationCursor, int) ([]persistence.SourceLocation, *persistence.SourceLocationCursor, error)
-	DeleteSourceScanCandidates(context.Context, uuid.UUID) error
-	AppendSourceScanCandidates(context.Context, uuid.UUID, []persistence.SourceScanCandidateInput) error
+	ReadSourceLocationDetail(context.Context, uuid.UUID, uuid.UUID) (*persistence.SourceLocationDetailSnapshot, error)
+	DeleteSourceScanCandidatesForDelivery(context.Context, uuid.UUID, int, int64) error
+	AppendSourceScanCandidatesForDelivery(context.Context, uuid.UUID, int, int64, []persistence.SourceScanCandidateInput) error
 }
 
-// SourceProbe confirms whether one already-open source file carries an audio stream.
-// A managed ffprobe is the production implementation: it reports a valid answer
-// without an audio stream as (false, nil) and every other outcome as an error.
+// SourceProbe exposes the pre-traversal capability check a source scan performs.
+// A managed ffprobe is the production implementation: it verifies the managed
+// ffprobe file transport before the traversal begins. Per-file probing is not
+// part of this contract; scans delegate it to the shared analysis preparer.
 type SourceProbe interface {
 	CheckFileTransport(context.Context) error
-	ProbeFile(context.Context, sourcefs.RegularFile) (bool, error)
 }
 
 // SourceScanStages records the coarse stage a running scan reached.
@@ -81,6 +84,12 @@ type SourceScanRequest struct {
 	OperationID            uuid.UUID
 	RootID                 uuid.UUID
 	ExpectedConfiguredPath string
+	ExpectedAttempt        int
+	ExpectedJobID          int64
+	// AnalysisTargets is sampled by the caller and is part of the durable scan
+	// request. In particular SHA hashing is never inferred from service settings.
+	AnalysisTargets        SourceAnalysisTarget
+	BypassFingerprintCache bool
 }
 
 // SourceScan reads a registered source root and turns the files it finds into
@@ -89,6 +98,7 @@ type SourceScanRequest struct {
 type SourceScan struct {
 	repository SourceScanRepository
 	probe      SourceProbe
+	analysis   SourceAnalysisPreparing
 	stages     SourceScanStages
 	opener     sourcefs.Opener
 }
@@ -99,6 +109,12 @@ type SourceScanOption func(*SourceScan)
 // WithSourceScanOpener replaces the platform source filesystem opener.
 func WithSourceScanOpener(opener sourcefs.Opener) SourceScanOption {
 	return func(scan *SourceScan) { scan.opener = opener }
+}
+
+// WithSourceScanAnalysis injects the shared executor configured with pinned
+// tool metadata and cache lookup. Source scans do not construct tool runners.
+func WithSourceScanAnalysis(analysis SourceAnalysisPreparing) SourceScanOption {
+	return func(scan *SourceScan) { scan.analysis = analysis }
 }
 
 func NewSourceScan(repository SourceScanRepository, probe SourceProbe, stages SourceScanStages, options ...SourceScanOption) *SourceScan {
@@ -119,6 +135,9 @@ func NewSourceScan(repository SourceScanRepository, probe SourceProbe, stages So
 // attempt are dropped, so no partial snapshot survives it and the previous
 // inventory is never touched.
 func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
+	if request.ExpectedAttempt <= 0 || request.ExpectedJobID <= 0 {
+		return fmt.Errorf("scan source root: delivery identity is required")
+	}
 	root, err := s.repository.GetSourceRoot(ctx, request.RootID)
 	if err != nil {
 		return fmt.Errorf("scan source root: %w", err)
@@ -135,13 +154,16 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	if err := s.probe.CheckFileTransport(ctx); err != nil {
 		return fmt.Errorf("scan source root: verify managed ffprobe file transport: %w", err)
 	}
+	if s.analysis == nil {
+		return fmt.Errorf("scan source root: shared source analysis preparer is unavailable")
+	}
 	previous, err := s.previousInventory(ctx, root)
 	if err != nil {
 		return err
 	}
 	// A retry re-runs the whole traversal, and (operation_id, relative_path) is
 	// unique, so the candidates an earlier attempt left behind go first.
-	if err := s.repository.DeleteSourceScanCandidates(ctx, request.OperationID); err != nil {
+	if err := s.repository.DeleteSourceScanCandidatesForDelivery(ctx, request.OperationID, request.ExpectedAttempt, request.ExpectedJobID); err != nil {
 		return fmt.Errorf("scan source root: drop the candidates of an earlier attempt: %w", err)
 	}
 	if err := s.reportStage(ctx, request.OperationID, SourceScanStageTraversing); err != nil {
@@ -149,7 +171,7 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 	}
 	rootHandle, err := s.opener.OpenRoot(ctx, root.ConfiguredPath)
 	if err != nil {
-		return s.abandonFailedScan(ctx, request.OperationID, fmt.Errorf("open pinned source root: %w: %w", ErrSourceRootInaccessible, err))
+		return s.abandonFailedScan(ctx, request, fmt.Errorf("open pinned source root: %w: %w", ErrSourceRootInaccessible, err))
 	}
 	defer func() { _ = rootHandle.Close() }()
 	var traversed []SourceWalkEntry
@@ -159,34 +181,37 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 		return nil
 	})
 	if walkErr != nil {
-		return s.abandonFailedScan(ctx, request.OperationID,
+		return s.abandonFailedScan(ctx, request,
 			fmt.Errorf("scan source root: traverse %q: %w", root.ConfiguredPath, walkErr))
 	}
 	for _, entry := range traversed {
-		candidate, err := s.candidateFor(ctx, rootHandle, previous, entry)
+		candidate, err := s.candidateFor(ctx, rootHandle, root.ConfiguredPath, root.LastAppliedOperationID, request, previous, entry)
 		if err != nil {
-			return s.abandonFailedScan(ctx, request.OperationID, err)
+			return s.abandonFailedScan(ctx, request, err)
 		}
 		batch = append(batch, candidate)
 		if len(batch) == sourceScanCandidateBatchSize {
-			if err := s.appendCandidates(ctx, request.OperationID, batch); err != nil {
-				return s.abandonFailedScan(ctx, request.OperationID, err)
+			if err := s.appendCandidates(ctx, request, batch); err != nil {
+				return s.abandonFailedScan(ctx, request, err)
 			}
 			batch = nil
 		}
 	}
 	if err := s.reportStage(ctx, request.OperationID, SourceScanStageApplying); err != nil {
-		return s.abandonFailedScan(ctx, request.OperationID, err)
+		return s.abandonFailedScan(ctx, request, err)
 	}
 	if len(batch) > 0 {
-		if err := s.appendCandidates(ctx, request.OperationID, batch); err != nil {
-			return s.abandonFailedScan(ctx, request.OperationID, err)
+		if err := s.appendCandidates(ctx, request, batch); err != nil {
+			return s.abandonFailedScan(ctx, request, err)
 		}
 	}
 	for _, entry := range traversed {
 		if err := sourceScanConfirmFile(ctx, rootHandle, entry); err != nil {
-			return s.abandonFailedScan(ctx, request.OperationID, err)
+			return s.abandonFailedScan(ctx, request, err)
 		}
+	}
+	if err := sourceScanConfirmRootNamespace(ctx, root.ConfiguredPath, rootHandle); err != nil {
+		return s.abandonFailedScan(ctx, request, err)
 	}
 	return nil
 }
@@ -196,17 +221,19 @@ func (s *SourceScan) Run(ctx context.Context, request SourceScanRequest) error {
 // every other file: only a successful probe decides between audio and no_audio,
 // and a failed one becomes probe_error rather than a status the file never
 // earned.
-func (s *SourceScan) candidateFor(ctx context.Context, root sourcefs.Directory, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
+func (s *SourceScan) candidateFor(ctx context.Context, root sourcefs.Directory, rootPath string, originalScanOperationID *uuid.UUID, request SourceScanRequest, previous map[string]persistence.SourceLocation, entry SourceWalkEntry) (persistence.SourceScanCandidateInput, error) {
 	candidate := persistence.SourceScanCandidateInput{
 		RelativePath: entry.RelativePath, SizeBytes: entry.SizeBytes, Mtime: sourceScanMtime(entry.Mtime),
 	}
-	if stored, known := previous[entry.RelativePath]; known && sourceScanReusesStatus(stored, candidate) {
+	stored, known := previous[entry.RelativePath]
+	unchangedIdentity := known && stored.SizeBytes == candidate.SizeBytes && stored.Mtime.Equal(candidate.Mtime)
+	if unchangedIdentity && sourceScanReusesStatus(stored, candidate) {
 		candidate.ProbeStatus = stored.ProbeStatus
 		return candidate, nil
 	}
 	file, err := sourcefs.OpenRegularAt(ctx, root, entry.RelativePath)
 	if err != nil {
-		return candidate, fmt.Errorf("open source file for probe %q: %w", entry.RelativePath, err)
+		return candidate, fmt.Errorf("open source file for analysis %q: %w", entry.RelativePath, err)
 	}
 	defer func() { _ = file.Close() }()
 	before, err := file.Stat(ctx)
@@ -216,13 +243,86 @@ func (s *SourceScan) candidateFor(ctx context.Context, root sourcefs.Directory, 
 	if !sourceScanMatchesEntry(before, entry) || !os.SameFile(before, entry.privateInfo) {
 		return candidate, fmt.Errorf("source file %q changed between traversal and open", entry.RelativePath)
 	}
-	hasAudio, probeErr := s.probe.ProbeFile(ctx, file)
+	absoluteFilePath := filepath.Join(rootPath, filepath.FromSlash(entry.RelativePath))
+	targets := request.AnalysisTargets
+	var existingSHA *[sha256.Size]byte
+	var retainedSHA *persistence.SourceMediaVariant
+	var retainedFingerprint *persistence.SourceFingerprintResult
+	if unchangedIdentity && stored.ProbeStatus == persistence.SourceProbeStatusProbeError {
+		// A retry of a prior probe failure is not a new file identity. Reuse the
+		// selected work snapshot so successful or already-attempted fingerprints
+		// are not rerun; only an absent initial fingerprint is eligible to start.
+		targets &^= SourceAnalysisTargetSHA256
+		targets |= SourceAnalysisTargetProbe
+		detail, detailErr := s.repository.ReadSourceLocationDetail(ctx, request.RootID, stored.ID)
+		if detailErr != nil {
+			return candidate, fmt.Errorf("read retained source analysis for %q: %w", entry.RelativePath, detailErr)
+		}
+		if detail == nil || detail.Location == nil || detail.Location.ID != stored.ID {
+			return candidate, fmt.Errorf("read retained source analysis for %q: location detail is incomplete", entry.RelativePath)
+		}
+		retainedSHA = detail.SHAVariant
+		if retainedSHA == nil && stored.MediaVariantID != nil {
+			if variant, ok := s.repository.(interface {
+				GetSourceMediaVariant(context.Context, uuid.UUID) (*persistence.SourceMediaVariant, error)
+			}); ok {
+				retainedSHA, err = variant.GetSourceMediaVariant(ctx, *stored.MediaVariantID)
+				if err != nil {
+					return candidate, fmt.Errorf("read retained source digest for %q: %w", entry.RelativePath, err)
+				}
+			}
+		}
+		if retainedSHA != nil && len(retainedSHA.SourceSHA256) == sha256.Size {
+			var digest [sha256.Size]byte
+			copy(digest[:], retainedSHA.SourceSHA256)
+			existingSHA = &digest
+		}
+		fingerprintStepExists := false
+		for _, step := range detail.Steps {
+			if step.Step == string(persistence.SourceStepFingerprint) {
+				fingerprintStepExists = true
+				break
+			}
+		}
+		if fingerprintStepExists {
+			targets &^= SourceAnalysisTargetFingerprint
+			retainedFingerprint = detail.Fingerprint
+		} else {
+			targets |= SourceAnalysisTargetFingerprint
+		}
+	}
+	if err := sourceScanConfirmRootNamespace(ctx, rootPath, root); err != nil {
+		return candidate, err
+	}
+	if err := sourceScanConfirmFileNamespace(absoluteFilePath, before); err != nil {
+		return candidate, err
+	}
+	prepared := s.analysis.Prepare(ctx, SourceAnalysisPrepareRequest{
+		File: file, ServerPath: filepath.Join(rootPath, filepath.FromSlash(entry.RelativePath)),
+		Targets: targets, ExistingSHA256: existingSHA,
+		BypassFingerprintCache: request.BypassFingerprintCache,
+	})
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return candidate, fmt.Errorf("confirm the audio stream of %q: %w", entry.RelativePath, ctxErr)
+		return candidate, fmt.Errorf("prepare source analysis for %q: %w", entry.RelativePath, ctxErr)
+	}
+	if err := sourceScanConfirmRootNamespace(ctx, rootPath, root); err != nil {
+		return candidate, err
+	}
+	if err := sourceScanConfirmFileNamespace(absoluteFilePath, before); err != nil {
+		return candidate, err
+	}
+	if targets&SourceAnalysisTargetProbe == 0 {
+		return candidate, fmt.Errorf("prepare source analysis for %q: probe was not requested", entry.RelativePath)
+	}
+	if targets&SourceAnalysisTargetFingerprint != 0 && prepared.Fingerprint.State == SourceAnalysisNotRequested {
+		return candidate, fmt.Errorf("prepare source analysis for %q: requested fingerprint was not prepared", entry.RelativePath)
+	}
+	if targets&SourceAnalysisTargetFingerprint == 0 && prepared.Fingerprint.State != SourceAnalysisNotRequested {
+		return candidate, fmt.Errorf("prepare source analysis for %q: unrequested fingerprint was prepared", entry.RelativePath)
 	}
 	probedAfter, err := file.Stat(ctx)
 	if err != nil {
-		return candidate, fmt.Errorf("stat probed source file after probe: %w", err)
+		return candidate, fmt.Errorf("stat prepared source file after analysis: %w", err)
 	}
 	if !sourceScanMatchesEntry(probedAfter, entry) ||
 		probedAfter.Size() != before.Size() || !sourceScanMtime(probedAfter.ModTime()).Equal(sourceScanMtime(before.ModTime())) {
@@ -231,19 +331,172 @@ func (s *SourceScan) candidateFor(ctx context.Context, root sourcefs.Directory, 
 	if err := sourceScanConfirmFile(ctx, root, entry); err != nil {
 		return candidate, err
 	}
-	if probeErr != nil {
-		// A failing probe is no excuse for an unread file: the handle and namespace
-		// checks above still have to prove the file stayed the same.
+	switch prepared.Probe.State {
+	case SourceAnalysisFailed:
 		safe := sourceScanProbeErrorText
 		candidate.ProbeStatus = persistence.SourceProbeStatusProbeError
 		candidate.SafeError = &safe
-		return candidate, nil
+	case SourceAnalysisDeferred:
+		if unchangedIdentity {
+			candidate.ProbeStatus = stored.ProbeStatus
+			candidate.SafeError = stored.SafeError
+		} else {
+			// Inventory has no pending probe classification. Keep this as an
+			// inventory-only unknown; the durable analysis step below remains pending.
+			safe := "source technical analysis is pending"
+			candidate.ProbeStatus = persistence.SourceProbeStatusProbeError
+			candidate.SafeError = &safe
+		}
+	case SourceAnalysisSucceeded, SourceAnalysisCacheHit:
+		candidate.ProbeStatus = persistence.SourceProbeStatusNoAudio
+		if prepared.Probe.AudioStreamCount > 0 {
+			candidate.ProbeStatus = persistence.SourceProbeStatusAudio
+		}
+	default:
+		return candidate, fmt.Errorf("prepare source analysis for %q: probe was not requested", entry.RelativePath)
 	}
-	candidate.ProbeStatus = persistence.SourceProbeStatusNoAudio
-	if hasAudio {
-		candidate.ProbeStatus = persistence.SourceProbeStatusAudio
+	preparedAnalysis, err := sourceScanPreparedAnalysis(request.OperationID, originalScanOperationID, candidate.SizeBytes, targets, prepared, retainedSHA, retainedFingerprint, known, stored)
+	if err != nil {
+		return candidate, fmt.Errorf("prepare source analysis for %q: %w", entry.RelativePath, err)
 	}
+	candidate.PreparedAnalysis = preparedAnalysis
 	return candidate, nil
+}
+
+// sourceScanConfirmRootNamespace makes sure the absolute namespace used by
+// pathname-based analysis still names the directory pinned for this scan.
+func sourceScanConfirmRootNamespace(ctx context.Context, rootPath string, root sourcefs.Directory) error {
+	pinnedInfo, err := root.Stat(ctx)
+	if err != nil {
+		return fmt.Errorf("stat pinned source root: %w", err)
+	}
+	currentInfo, err := os.Stat(rootPath)
+	if err != nil {
+		return fmt.Errorf("stat current source root namespace: %w", err)
+	}
+	if !currentInfo.IsDir() || !os.SameFile(pinnedInfo, currentInfo) {
+		return fmt.Errorf("source root namespace changed while it was being scanned")
+	}
+	return nil
+}
+
+// sourceScanConfirmFileNamespace protects the pathname passed to tools such as
+// fpcalc from resolving to a different file than the descriptor-backed input.
+func sourceScanConfirmFileNamespace(path string, pinnedInfo fs.FileInfo) error {
+	currentInfo, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat current source file namespace: %w", err)
+	}
+	if !currentInfo.Mode().IsRegular() || !os.SameFile(pinnedInfo, currentInfo) {
+		return fmt.Errorf("source file namespace changed while it was being scanned")
+	}
+	return nil
+}
+
+func sourceScanPreparedAnalysis(operationID uuid.UUID, originalScanOperationID *uuid.UUID, size int64, targets SourceAnalysisTarget, result SourceAnalysisPreparation, retained *persistence.SourceMediaVariant, retainedFingerprint *persistence.SourceFingerprintResult, hasOriginal bool, original persistence.SourceLocation) (*persistence.SourceScanPreparedAnalysis, error) {
+	prepared := &persistence.SourceScanPreparedAnalysis{
+		Version:          1,
+		SHA256State:      persistence.SourcePreparedNotRequested,
+		ProbeState:       persistence.SourcePreparedNotRequested,
+		FingerprintState: persistence.SourcePreparedNotRequested,
+	}
+	if targets&SourceAnalysisTargetSHA256 != 0 {
+		prepared.HashRequested = true
+		switch result.SHA256.State {
+		case SourceAnalysisSucceeded:
+			algorithm := "sha256"
+			calculated := time.Now().UTC()
+			applied := operationID
+			prepared.SHA256State = persistence.SourcePreparedSucceeded
+			prepared.SHA256Variant = &persistence.SourceMediaVariant{
+				ID: uuid.New(), SizeBytes: size, SourceSHA256: append([]byte(nil), result.SHA256.Digest[:]...),
+				SHA256Algorithm: &algorithm, SHA256CalculatedAt: &calculated, SHA256AppliedOperationID: &applied,
+			}
+		case SourceAnalysisFailed:
+			prepared.SHA256State = persistence.SourcePreparedFailed
+			prepared.SHA256SafeError = result.SHA256.SafeError
+		default:
+			return nil, fmt.Errorf("requested SHA-256 was not prepared")
+		}
+	}
+	if retained != nil && len(retained.SourceSHA256) == sha256.Size {
+		prepared.RetainedSHA256Variant = retained
+	}
+	if retainedFingerprint != nil {
+		prepared.FingerprintState = persistence.SourcePreparedSucceeded
+		prepared.FingerprintResult = retainedFingerprint
+		prepared.ReusedImmutableIDs = append(prepared.ReusedImmutableIDs, retainedFingerprint.ID)
+	}
+	if result.Probe.State == SourceAnalysisSucceeded || result.Probe.State == SourceAnalysisCacheHit {
+		if result.Probe.Result == nil {
+			return nil, fmt.Errorf("successful probe has no immutable result")
+		}
+		prepared.ProbeState = persistence.SourcePreparedSucceeded
+		prepared.ProbeVariant = result.Probe.Result
+		if result.Probe.State == SourceAnalysisCacheHit {
+			prepared.ReusedImmutableIDs = append(prepared.ReusedImmutableIDs, result.Probe.Result.ID)
+		}
+	} else if result.Probe.State == SourceAnalysisFailed {
+		prepared.ProbeState = persistence.SourcePreparedFailed
+		prepared.ProbeSafeError = result.Probe.SafeError
+	} else if result.Probe.State == SourceAnalysisDeferred {
+		prepared.ProbeState = persistence.SourcePreparedDeferred
+	} else if result.Probe.State != SourceAnalysisNotRequested {
+		return nil, fmt.Errorf("unknown probe outcome %q", result.Probe.State)
+	}
+	if targets&SourceAnalysisTargetFingerprint == 0 && result.Fingerprint.State != SourceAnalysisNotRequested {
+		return nil, fmt.Errorf("unrequested fingerprint was prepared")
+	}
+	if targets&SourceAnalysisTargetFingerprint != 0 && (result.Fingerprint.State == SourceAnalysisSucceeded || result.Fingerprint.State == SourceAnalysisCacheHit) {
+		if result.Fingerprint.Result == nil {
+			return nil, fmt.Errorf("successful fingerprint has no immutable result")
+		}
+		prepared.FingerprintState = persistence.SourcePreparedSucceeded
+		prepared.FingerprintResult = result.Fingerprint.Result
+		if result.Fingerprint.State == SourceAnalysisCacheHit {
+			prepared.FingerprintReused = true
+			prepared.FingerprintCacheSHA256 = sourceScanPreparedDigest(prepared, retained)
+			prepared.FingerprintCacheVersion = result.Fingerprint.Result.FPCalcVersion
+			prepared.ReusedImmutableIDs = append(prepared.ReusedImmutableIDs, result.Fingerprint.Result.ID)
+		}
+	} else if targets&SourceAnalysisTargetFingerprint != 0 && result.Fingerprint.State == SourceAnalysisFailed {
+		prepared.FingerprintState = persistence.SourcePreparedFailed
+		prepared.FingerprintSafeError = result.Fingerprint.SafeError
+	} else if targets&SourceAnalysisTargetFingerprint != 0 && result.Fingerprint.State == SourceAnalysisDeferred {
+		prepared.FingerprintState = persistence.SourcePreparedDeferred
+	} else if targets&SourceAnalysisTargetFingerprint != 0 && result.Fingerprint.State != SourceAnalysisNotRequested {
+		return nil, fmt.Errorf("unknown fingerprint outcome %q", result.Fingerprint.State)
+	}
+	if hasOriginal {
+		locationID := original.ID
+		prepared.OriginalLocationID = &locationID
+		if originalScanOperationID != nil {
+			originalOperationID := *originalScanOperationID
+			prepared.OriginalScanOperationID = &originalOperationID
+		}
+		if original.MediaVariantID != nil {
+			variantID := *original.MediaVariantID
+			prepared.OriginalMediaVariantID = &variantID
+		}
+	}
+	if err := prepared.Validate(); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func sourceScanPreparedDigest(prepared *persistence.SourceScanPreparedAnalysis, retained *persistence.SourceMediaVariant) string {
+	variant := prepared.SHA256Variant
+	if variant == nil {
+		variant = prepared.RetainedSHA256Variant
+	}
+	if variant == nil && retained != nil {
+		variant = retained
+	}
+	if variant == nil || len(variant.SourceSHA256) != sha256.Size {
+		return ""
+	}
+	return fmt.Sprintf("%x", variant.SourceSHA256)
 }
 
 func sourceScanMatchesEntry(info fs.FileInfo, entry SourceWalkEntry) bool {
@@ -283,8 +536,9 @@ func (s *SourceScan) reportStage(ctx context.Context, operationID uuid.UUID, sta
 	return nil
 }
 
-func (s *SourceScan) appendCandidates(ctx context.Context, operationID uuid.UUID, batch []persistence.SourceScanCandidateInput) error {
-	if err := s.repository.AppendSourceScanCandidates(ctx, operationID, batch); err != nil {
+func (s *SourceScan) appendCandidates(ctx context.Context, request SourceScanRequest, batch []persistence.SourceScanCandidateInput) error {
+	err := s.repository.AppendSourceScanCandidatesForDelivery(ctx, request.OperationID, request.ExpectedAttempt, request.ExpectedJobID, batch)
+	if err != nil {
 		return fmt.Errorf("scan source root: store a candidate batch: %w", err)
 	}
 	return nil
@@ -294,8 +548,9 @@ func (s *SourceScan) appendCandidates(ctx context.Context, operationID uuid.UUID
 // that did not read the whole tree leaves nothing another step could apply. The
 // cleanup ignores the cancellation that failed the scan; both errors are
 // reported, never one instead of the other.
-func (s *SourceScan) abandonFailedScan(ctx context.Context, operationID uuid.UUID, scanErr error) error {
-	if err := s.repository.DeleteSourceScanCandidates(context.WithoutCancel(ctx), operationID); err != nil {
+func (s *SourceScan) abandonFailedScan(ctx context.Context, request SourceScanRequest, scanErr error) error {
+	err := s.repository.DeleteSourceScanCandidatesForDelivery(context.WithoutCancel(ctx), request.OperationID, request.ExpectedAttempt, request.ExpectedJobID)
+	if err != nil {
 		return errors.Join(scanErr, fmt.Errorf("scan source root: drop the candidates of the failed scan: %w", err))
 	}
 	return scanErr

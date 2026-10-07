@@ -40,7 +40,41 @@ type SourceLocationDetailResponse struct {
 	AnalysisState  string                         `json:"analysis_state" enum:"not_analyzed,analyzed"`
 	Result         *SourceTechnicalResultResponse `json:"result,omitempty"`
 
-	ActiveAnalysisOperationID *uuid.UUID `json:"active_analysis_operation_id,omitempty"`
+	ActiveAnalysisOperationID *uuid.UUID                   `json:"active_analysis_operation_id,omitempty"`
+	SelectedProbeVariantID    *uuid.UUID                   `json:"selected_probe_variant_id,omitempty"`
+	ActiveFPCalcVersion       *string                      `json:"active_fpcalc_version,omitempty"`
+	Steps                     []SourceAnalysisStepResponse `json:"steps"`
+	MatchingEligible          bool                         `json:"matching_eligible"`
+}
+
+type SourceAnalysisStepResponse struct {
+	Name        string                      `json:"name" enum:"sha256,probe,fingerprint"`
+	State       string                      `json:"state" enum:"not_requested,pending,queued,running,succeeded,failed,skipped"`
+	SafeError   *string                     `json:"safe_error,omitempty"`
+	SkipReason  *string                     `json:"skip_reason,omitempty"`
+	Attempt     int                         `json:"attempt"`
+	ReuseOrigin *string                     `json:"reuse_origin,omitempty"`
+	SHA256      *SourceSHA256ResultResponse `json:"sha256,omitempty"`
+	Fingerprint *SourceFingerprintResponse  `json:"fingerprint,omitempty"`
+}
+
+type SourceSHA256ResultResponse struct {
+	Value              string     `json:"value"`
+	Algorithm          *string    `json:"algorithm,omitempty"`
+	CalculatedAt       *time.Time `json:"calculated_at,omitempty"`
+	AppliedOperationID *uuid.UUID `json:"applied_operation_id,omitempty"`
+}
+
+type SourceFingerprintResponse struct {
+	Value                 string    `json:"value"`
+	Version               string    `json:"version"`
+	VersionBanner         string    `json:"version_banner"`
+	AlgorithmNamespace    string    `json:"algorithm_namespace"`
+	AlgorithmID           int16     `json:"algorithm_id"`
+	Duration              float64   `json:"duration"`
+	CalculatedAt          time.Time `json:"calculated_at"`
+	AppliedOperationID    uuid.UUID `json:"applied_operation_id"`
+	ParserContractVersion int       `json:"parser_contract_version"`
 }
 
 // SourceLocationRootStateResponse is the availability of the owning root,
@@ -126,10 +160,37 @@ func sourceLocationDetailResponse(detail service.SourceLocationDetail) (SourceLo
 		SafeError:      detail.SafeError,
 		MediaVariantID: detail.MediaVariantID, AnalysisState: "not_analyzed",
 		ActiveAnalysisOperationID: detail.ActiveAnalysisOperationID,
+		SelectedProbeVariantID:    detail.SelectedProbeVariantID,
+		ActiveFPCalcVersion:       detail.ActiveFPCalcVersion,
+		Steps:                     make([]SourceAnalysisStepResponse, 0, len(detail.Steps)),
+		MatchingEligible:          detail.MatchingEligible,
 		Root: SourceLocationRootStateResponse{
 			Status: detail.Root.Status, SafeError: detail.Root.SafeError, Enabled: detail.Root.Enabled,
 			Stale: detail.Root.Stale, InventoryPath: detail.Root.InventoryPath,
 		},
+	}
+	for _, step := range detail.Steps {
+		stepResponse := SourceAnalysisStepResponse{
+			Name: step.Name, State: step.State, SafeError: step.SafeError,
+			SkipReason: step.SkipReason, Attempt: step.Attempt, ReuseOrigin: step.ReuseOrigin,
+		}
+		if step.SHA256 != nil {
+			stepResponse.SHA256 = &SourceSHA256ResultResponse{
+				Value: step.SHA256.Value, Algorithm: step.SHA256.Algorithm,
+				CalculatedAt: step.SHA256.CalculatedAt, AppliedOperationID: step.SHA256.AppliedOperationID,
+			}
+		}
+		if step.Fingerprint != nil {
+			fingerprint := step.Fingerprint
+			stepResponse.Fingerprint = &SourceFingerprintResponse{
+				Value: fingerprint.Value, Version: fingerprint.Version, VersionBanner: fingerprint.VersionBanner,
+				AlgorithmNamespace: fingerprint.AlgorithmNamespace, AlgorithmID: fingerprint.AlgorithmID,
+				Duration: fingerprint.Duration, CalculatedAt: fingerprint.CalculatedAt,
+				AppliedOperationID:    fingerprint.AppliedOperationID,
+				ParserContractVersion: fingerprint.ParserContractVersion,
+			}
+		}
+		response.Steps = append(response.Steps, stepResponse)
 	}
 	if detail.Result == nil {
 		return response, nil

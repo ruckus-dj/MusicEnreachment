@@ -19,6 +19,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/uptrace/bun"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
@@ -278,8 +279,13 @@ func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
 		t.Fatalf("published locations = %+v", page.Locations)
 	}
 	if page.Locations[0].ProbeStatus != persistence.SourceProbeStatusNoAudio {
-		t.Fatalf("probe status = %q, want %q for a file ffprobe reports without an audio stream",
-			page.Locations[0].ProbeStatus, persistence.SourceProbeStatusNoAudio)
+		var probeFailure string
+		if err := fixture.database.NewRaw(`SELECT COALESCE(s.safe_error, '') FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.location_id=? AND s.step='probe'`, page.Locations[0].ID).Scan(t.Context(), &probeFailure); err != nil {
+			t.Fatalf("read probe failure: %v", err)
+		}
+		t.Fatalf("probe status = %q, want %q for a file ffprobe reports without an audio stream: %s",
+			page.Locations[0].ProbeStatus, persistence.SourceProbeStatusNoAudio,
+			probeFailure)
 	}
 	var scanned api.SourceRootResponse
 	decodeInto(t, fixture.request(t, http.MethodGet, "/sources/"+root.ID.String(), ""), &scanned)
@@ -416,7 +422,13 @@ func (fixture sourceApplicationFixture) runScan(t *testing.T, rootID uuid.UUID) 
 	if stored.State != "queued" || stored.Stage != service.SourceScanStageQueued {
 		t.Fatalf("queued operation state = %q stage = %q", stored.State, stored.Stage)
 	}
-	job := &river.Job[service.ScanSourceJobArgs]{Args: service.ScanSourceJobArgs{OperationID: stored.ID}}
+	if stored.RiverJobID == nil {
+		t.Fatal("queued scan has no River job ID")
+	}
+	job := &river.Job[service.ScanSourceJobArgs]{
+		JobRow: &rivertype.JobRow{ID: *stored.RiverJobID},
+		Args:   service.ScanSourceJobArgs{OperationID: stored.ID},
+	}
 	if err := fixture.worker.Work(context.Background(), job); err != nil {
 		t.Fatalf("the production scan worker failed: %v", err)
 	}
@@ -434,8 +446,6 @@ type testContainer struct {
 // InsertTx path the repositories use exactly as production does.
 func startSourceApplicationDatabase(t *testing.T) testContainer {
 	t.Helper()
-	startup, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-	defer cancel()
 	database := testpostgres.OpenMigrated(t)
 	databaseURL := testpostgres.URL(t, database)
 	databaseSQL := database.DB
@@ -445,7 +455,7 @@ func startSourceApplicationDatabase(t *testing.T) testContainer {
 	if err != nil {
 		t.Fatalf("create the River migrator: %v", err)
 	}
-	if _, err := migrator.Migrate(startup, rivermigrate.DirectionUp, nil); err != nil {
+	if _, err := migrator.Migrate(t.Context(), rivermigrate.DirectionUp, nil); err != nil {
 		t.Fatalf("apply the River schema: %v", err)
 	}
 	client, err := river.NewClient(driver, &river.Config{})

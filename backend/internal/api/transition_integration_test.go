@@ -4,7 +4,6 @@ package api_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -23,17 +21,12 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
 func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openAPTransitionDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 
@@ -271,33 +264,4 @@ type transitionBlockingWorker struct {
 func (*transitionBlockingWorker) Work(ctx context.Context, _ *river.Job[service.OperationJobArgs]) error {
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-func openAPTransitionDatabase(t *testing.T) (*bun.DB, string) {
-	t.Helper()
-	startup, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-	defer cancel()
-	container, err := postgres.Run(startup, "postgres:17", postgres.WithDatabase("setup_manager_api_test"), postgres.WithUsername("postgres"), postgres.WithPassword("postgres"), testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(45*time.Second)))
-	if err != nil {
-		t.Fatalf("start PostgreSQL Testcontainer: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := container.Terminate(context.Background()); err != nil {
-			t.Errorf("terminate PostgreSQL Testcontainer: %v", err)
-		}
-	})
-	databaseURL, err := container.ConnectionString(startup, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	databaseSQL, err := sql.Open("pgx", databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	database := bun.NewDB(databaseSQL, pgdialect.New())
-	if err := database.PingContext(startup); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	return database, databaseURL
 }

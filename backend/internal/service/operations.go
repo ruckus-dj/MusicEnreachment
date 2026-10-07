@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -56,13 +57,14 @@ type sourceScanRetryEnqueuer interface {
 	RetrySourceScanOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 }
 
-// sourceAnalysisRetryEnqueuer is the analysis-specific half of a retry. An
-// analysis is delivered under its own River kind on its dedicated queue, so the
-// generic operation retry would hand its job to the install/move dispatcher; the
-// repository that owns the operation table implements this, and
-// NewOperationsWithRiver discovers it once.
-type sourceAnalysisRetryEnqueuer interface {
-	RetrySourceAnalysisOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+// sourceAnalysisRetryer recreates a normalized single-step retry through the
+// source-analysis service, which owns current-work validation and atomic admission.
+type sourceAnalysisRetryer interface {
+	RetryOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
+}
+
+type sourceAnalysisPendingAdmitter interface {
+	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
 }
 
 // operationArgs carries only the durable operation ID. Workers always reload
@@ -79,11 +81,18 @@ type Operations struct {
 	repository    OperationRepository
 	enqueuer      operationEnqueuingRepository
 	scanRetry     sourceScanRetryEnqueuer
-	analysisRetry sourceAnalysisRetryEnqueuer
+	analysisRetry sourceAnalysisRetryer
+	pending       sourceAnalysisPendingAdmitter
 	river         persistence.RiverInserter
 	mu            sync.Mutex
 	watchers      map[uuid.UUID]map[chan struct{}]struct{}
 	now           func() time.Time
+}
+
+// SetPendingDispatcher wires event-driven pending analysis admission. It is
+// optional so Operations remains usable by isolated state-machine callers.
+func (s *Operations) SetPendingDispatcher(dispatcher sourceAnalysisPendingAdmitter) {
+	s.pending = dispatcher
 }
 
 func NewOperations(repository OperationRepository) *Operations {
@@ -93,15 +102,15 @@ func NewOperations(repository OperationRepository) *Operations {
 // NewOperationsWithRiver makes production operation creation and retry atomic
 // with their River jobs. The simpler constructor remains useful for pure state
 // machine tests.
-func NewOperationsWithRiver(repository operationEnqueuingRepository, client persistence.RiverInserter) *Operations {
+func NewOperationsWithRiver(repository operationEnqueuingRepository, client persistence.RiverInserter, analysisRetry ...sourceAnalysisRetryer) *Operations {
 	operations := NewOperations(repository)
 	operations.enqueuer = repository
 	operations.river = client
 	if scans, ok := repository.(sourceScanRetryEnqueuer); ok {
 		operations.scanRetry = scans
 	}
-	if analyses, ok := repository.(sourceAnalysisRetryEnqueuer); ok {
-		operations.analysisRetry = analyses
+	if len(analysisRetry) > 0 {
+		operations.analysisRetry = analysisRetry[0]
 	}
 	return operations
 }
@@ -187,6 +196,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	if existing.State != "failed" {
 		return nil, fmt.Errorf("only failed operations can be retried")
 	}
+	if existing.Kind == SourceAnalysisOperationKind {
+		return s.retryAnalysis(ctx, existing)
+	}
 	existing.State = "queued"
 	if !strings.HasPrefix(existing.Stage, "retry:") {
 		existing.Stage = "retry:" + existing.Stage
@@ -215,16 +227,13 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 	if err != nil {
 		return nil, err
 	}
-	s.notify(id)
+	s.notify(operation.ID)
 	return operation, nil
 }
 
 // enqueueRetry keeps the generic retry for every kind but a scan and an
-// analysis. A scan retry is a new complete traversal of its root, and an
-// analysis retry re-runs the pinned snapshot on its dedicated queue: only the
-// owning repository can enqueue either, so a repository that cannot do it fails
-// the retry instead of sending the operation to a worker that does not know the
-// kind.
+// analysis. A scan retry is a new complete traversal of its root; normalized
+// analysis retries are delegated to the source-analysis service.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
 	switch existing.Kind {
 	case SourceScanOperationKind:
@@ -233,13 +242,27 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 		}
 		return s.scanRetry.RetrySourceScanOperationAndEnqueue(ctx, existing.ID, s.river, ScanSourceJobArgs{OperationID: existing.ID}, nil)
 	case SourceAnalysisOperationKind:
-		if s.analysisRetry == nil {
-			return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source analysis")
-		}
-		return s.analysisRetry.RetrySourceAnalysisOperationAndEnqueue(ctx, existing.ID, s.river, SourceAnalysisJobArgs{OperationID: existing.ID}, &river.InsertOpts{Queue: SourceAnalysisQueue})
+		return s.retryAnalysis(ctx, existing)
 	default:
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, OperationJobArgs{OperationID: existing.ID}, nil)
 	}
+}
+
+func (s *Operations) retryAnalysis(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
+	if existing.State != "failed" {
+		return nil, fmt.Errorf("only failed operations can be retried")
+	}
+	snapshot, err := persistence.ValidateSourceAnalysisOperationContract(existing)
+	if err != nil {
+		return nil, fmt.Errorf("retry operation: %w", err)
+	}
+	if snapshot.Mode != persistence.SourceAnalysisModeSingleStep {
+		return nil, fmt.Errorf("retry operation: source analysis batch operations cannot be retried")
+	}
+	if s.analysisRetry == nil {
+		return nil, fmt.Errorf("retry operation: source analysis retry is unavailable")
+	}
+	return s.analysisRetry.RetryOperation(ctx, existing.ID)
 }
 func (s *Operations) Dismiss(ctx context.Context, id uuid.UUID) error {
 	return s.repository.DismissOperation(ctx, id)
@@ -248,11 +271,15 @@ func (s *Operations) Cleanup(ctx context.Context) error {
 	return s.repository.DeleteSucceededBefore(ctx, s.now().Add(-24*time.Hour))
 }
 func (s *Operations) transition(ctx context.Context, id uuid.UUID, state, stage, safe string, modify func(*persistence.Operation)) error {
+	var pendingRootID uuid.UUID
 	err := s.repository.TransitionOperation(ctx, id, func(o *persistence.Operation) error {
 		if o.State == "succeeded" || o.State == "failed" {
 			return fmt.Errorf("operation is already final")
 		}
 		now := s.now()
+		if (state == "succeeded" || state == "failed") && o.TargetSourceRootID != nil {
+			pendingRootID = *o.TargetSourceRootID
+		}
 		o.State = state
 		o.Stage = stage
 		if state == "running" && o.StartedAt == nil {
@@ -274,6 +301,12 @@ func (s *Operations) transition(ctx context.Context, id uuid.UUID, state, stage,
 		return err
 	}
 	s.notify(id)
+	if pendingRootID != uuid.Nil && s.pending != nil {
+		if _, err := s.pending.AdmitPending(context.WithoutCancel(ctx), pendingRootID); err != nil {
+			slog.WarnContext(ctx, "pending source analysis admission failed after operation settled",
+				"operation", id, "root", pendingRootID, "cause", err)
+		}
+	}
 	return nil
 }
 func (s *Operations) Subscribe(id uuid.UUID) (<-chan struct{}, func()) {

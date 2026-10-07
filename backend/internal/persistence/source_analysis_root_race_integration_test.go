@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type analysisRaceFixture struct {
 	client         persistence.RiverInserter
 	root           *persistence.SourceRoot
 	location       persistence.SourceLocation
+	work           *persistence.SourceAnalysisWork
 	installationID uuid.UUID
 }
 
@@ -31,11 +33,12 @@ func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 	root := createInventoryRoot(t, ctx, inventory, path)
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "race")
-	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
+	work := normalizedWork(t, ctx, inventory, root, location, true,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
+	installationID := insertAnalysisInstallation(t, ctx, database, "root-race")
 	return analysisRaceFixture{
 		database: database, inventory: inventory, client: openScanEnqueueRiver(t, database),
-		root: root, location: location, installationID: installationID,
+		root: root, location: location, work: work, installationID: installationID,
 	}
 }
 
@@ -52,11 +55,12 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 	run := func(t *testing.T, path string, compete func(context.Context, bun.Tx, analysisRaceFixture) error, want error) {
 		t.Helper()
 		fixture := newAnalysisRaceFixture(t, path)
-		operation := analysisEnqueueOperation(fixture.root, fixture.location, fixture.installationID, nil)
-		err := runOperationLockRace(t, ctx, fixture.database,
+		operation := normalizedOperation(t, fixture.root, fixture.location, fixture.work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
+		holdRoot := fmt.Sprintf("SELECT id FROM source_root WHERE id = '%s' FOR UPDATE", fixture.root.ID)
+		err := runQueryRace(t, ctx, fixture.database, holdRoot, "FOR UPDATE",
 			func(ctx context.Context, tx bun.Tx) error { return compete(ctx, tx, fixture) },
 			func(ctx context.Context) error {
-				return enqueueAnalysis(t, ctx, fixture.inventory, operation, fixture.client)
+				return enqueueNormalizedAnalysis(t, ctx, fixture.inventory, fixture.client, operation)
 			})
 		if !errors.Is(err, want) {
 			t.Fatalf("analysis start racing the competing mutation = %v, want %v", err, want)
@@ -68,13 +72,12 @@ func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
 
 	t.Run("active_analysis", func(t *testing.T) {
 		run(t, "/srv/race-analysis", func(ctx context.Context, tx bun.Tx, f analysisRaceFixture) error {
-			return insertQueuedOperation(ctx, tx, &persistence.Operation{
-				ID: uuid.New(), Kind: "analyze_source", State: "queued", Stage: "queued",
-				InputSnapshot:          json.RawMessage(`{}`),
-				TargetSourceRootID:     &f.root.ID,
-				TargetSourceLocationID: &f.location.ID,
-				AnalysisInstallationID: &f.installationID,
-			})
+			competing := normalizedOperation(t, f.root, f.location, f.work, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
+			if err := insertQueuedOperation(ctx, tx, competing); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, "INSERT INTO operation_source_work_hold (operation_id, work_id) VALUES (?, ?)", competing.ID, f.work.ID)
+			return err
 		}, persistence.ErrSourceRootActiveAnalysis)
 	})
 

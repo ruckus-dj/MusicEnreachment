@@ -193,6 +193,8 @@ describe("AppShell sources routing", () => {
           mtime: "2026-10-01T10:20:00Z",
           probe_status: "audio",
           analysis_state: "not_analyzed",
+          matching_eligible: false,
+          steps: [],
           root: { enabled: true, stale: false, status: "available" },
         }),
       ),

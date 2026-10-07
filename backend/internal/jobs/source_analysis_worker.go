@@ -2,89 +2,93 @@ package jobs
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-// The safe reasons a failed source analysis reports. An operator reads one of
-// them on the operation; none of them carries a path, an ffprobe diagnostic or
-// any other internal detail.
 const (
 	analysisSafeInvalidInput = "The source analysis input is invalid. Start a new analysis."
-	analysisSafeRootGone     = "The source root no longer exists."
-	analysisSafeDisabled     = "The source root is disabled. Enable it before analyzing it again."
 	analysisSafeNotReady     = "The source analysis requires a completed setup on a supported server platform."
-	analysisSafeUnsupported  = "Windows UNC source roots are not supported yet. Configure a local drive path."
-	analysisSafeStale        = "The source file or its inventory changed since the analysis was queued. Start a new analysis."
-	analysisSafeTool         = "The managed ffprobe is unavailable or failed verification. Repair the managed tools and retry the analysis."
-	analysisSafeProbe        = "The source file could not be analyzed. The previous result is unchanged."
-	analysisSafeApply        = "The verified analysis could not be saved. The previous result is unchanged."
-	// analysisSafeInterrupted is the reason startup recovery records for an
-	// analysis whose process stopped before its result was committed: the
-	// previous result stays linked and the operation stays retryable.
-	analysisSafeInterrupted = "The source analysis was interrupted. Retry the analysis."
+	analysisSafeInterrupted  = "The source analysis was interrupted. Pending work will be resumed."
 )
 
-// analysisWorkerRepository is the persistence contract of an analysis worker:
-// the read-only analysis inputs, the atomic apply of the prepared result, the
-// operation it reloads and the terminal failure that releases both holds.
 type analysisWorkerRepository interface {
 	service.SourceAnalysisRepository
+	service.SourceAnalysisCacheLookup
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
-	ApplyAnalysisResult(context.Context, persistence.SourceAnalysisApply) (*persistence.Operation, error)
-	FailSourceAnalysisOperation(context.Context, uuid.UUID, string, string) error
+	ListNormalizedSourceAnalysisExecution(context.Context, uuid.UUID, int, int64) ([]persistence.SourceAnalysisExecution, error)
+	GetNormalizedSourceAnalysisWork(context.Context, uuid.UUID) (*persistence.SourceAnalysisWork, *persistence.SourceLocation, error)
+	ClaimSourceAnalysisStep(context.Context, persistence.SourceStepClaim) (int, error)
+	ApplySourceSHA256(context.Context, persistence.SourceSHA256Apply) (*persistence.SourceMediaVariant, error)
+	ApplySourceProbe(context.Context, persistence.SourceProbeApply) (*persistence.SourceMediaVariant, error)
+	ApplySourceFingerprint(context.Context, persistence.SourceFingerprintApply) (*persistence.SourceFingerprintResult, error)
+	ReuseSourceProbe(context.Context, persistence.SourceStepClaim, int, uuid.UUID, string, int) (*persistence.SourceMediaVariant, error)
+	ReuseSourceFingerprint(context.Context, persistence.SourceStepClaim, int, string) (*persistence.SourceFingerprintResult, error)
+	FailSourceAnalysisStep(context.Context, persistence.SourceStepFailure) error
+	SettleNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string, string, string) error
+	RecoverNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string) error
+	CheckNormalizedSourceAnalysisToolHold(context.Context, uuid.UUID, uuid.UUID, int, int64, string) error
 }
 
-// analysisWorkerSettings is the runtime state an analysis reloads before it
-// probes: the completed Setup and the managed tools directory the pinned
-// installation is read from.
 type analysisWorkerSettings interface {
 	SetupCompleted(context.Context) (bool, error)
 	GetToolsDirectory(context.Context) (string, bool, error)
 }
 
-// SourceAnalysisWorker runs one queued technical analysis of a source location.
-// The River job carries only the durable operation ID; the worker reloads the
-// immutable snapshot, the root and the location, so a job never carries an input
-// that could contradict the stored record. It resolves the executable from the
-// managed installation the snapshot pins, never from PATH, and never accepts a
-// path from the request.
-//
-// A delivery of an operation a previous delivery already committed finishes
-// without a fresh version query, probe or source read. A failure before the
-// apply leaves the previous variant linked and releases both read holds in one
-// transaction with the terminal state, so no failed analysis keeps a hold.
+// pendingDispatcher admits the next queued batch for a source root after a
+// normalized analysis settles. The pending service owns the root-exclusive
+// admission; the worker only wakes it after a committed terminal settlement, so
+// the release of the operation's holds never strands pending siblings.
+type pendingDispatcher interface {
+	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
+}
+
 type SourceAnalysisWorker struct {
 	river.WorkerDefaults[service.SourceAnalysisJobArgs]
-	repository      analysisWorkerRepository
-	operations      *service.Operations
-	toolsDirectory  service.ToolsDirectoryReader
-	runtimeSettings analysisWorkerSettings
-	platform        settings.PlatformState
+	repository           analysisWorkerRepository
+	operations           *service.Operations
+	toolsDirectory       service.ToolsDirectoryReader
+	runtimeSettings      analysisWorkerSettings
+	platform             settings.PlatformState
+	opener               sourcefs.Opener
+	preparer             service.SourceAnalysisPreparing
+	verifyFFProbeVersion func(context.Context, string) (string, error)
+	pendingDispatcher    pendingDispatcher
 }
 
 func NewSourceAnalysisWorker(repository analysisWorkerRepository, operations *service.Operations, toolsDirectory service.ToolsDirectoryReader, runtimeSettings analysisWorkerSettings, platform settings.PlatformState) *SourceAnalysisWorker {
-	return &SourceAnalysisWorker{
-		repository: repository, operations: operations, toolsDirectory: toolsDirectory,
-		runtimeSettings: runtimeSettings, platform: platform,
-	}
+	return &SourceAnalysisWorker{repository: repository, operations: operations, toolsDirectory: toolsDirectory,
+		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener()}
 }
 
-// Work revalidates the analysis preconditions, probes the pinned file once and
-// commits the prepared result and the terminal state in the apply's single
-// transaction. The commit returns the succeeded operation, and only then is the
-// wake-up notification sent, so a subscriber that reacts can already read the
-// committed result. A failure preserves the previous variant exactly as it was
-// and fails the operation with a safe reason while releasing both read holds.
+// WithPreparer makes the step engine replaceable in deterministic worker tests.
+func (worker *SourceAnalysisWorker) WithPreparer(preparer service.SourceAnalysisPreparing) *SourceAnalysisWorker {
+	worker.preparer = preparer
+	return worker
+}
+
+// SetPendingDispatcher wires the root-scoped pending admission wake. It is set
+// after composition because the pending service depends on the running River
+// client.
+func (worker *SourceAnalysisWorker) SetPendingDispatcher(dispatcher pendingDispatcher) {
+	worker.pendingDispatcher = dispatcher
+}
+
 func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[service.SourceAnalysisJobArgs]) error {
 	operation, err := worker.repository.GetOperation(ctx, job.Args.OperationID)
 	if err != nil {
@@ -93,76 +97,609 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	if operation.Kind != service.SourceAnalysisOperationKind {
 		return fmt.Errorf("operation %s is not a source analysis", operation.ID)
 	}
-	// A duplicate delivery of an operation that already reached a final state
-	// must not run a fresh version query, probe or source read.
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return nil
 	}
-	snapshot, err := persistence.DecodeSourceAnalysisSnapshot(operation.InputSnapshot)
-	if err != nil || operation.TargetSourceRootID == nil || *operation.TargetSourceRootID != snapshot.SourceRootID ||
-		operation.TargetSourceLocationID == nil || *operation.TargetSourceLocationID != snapshot.SourceLocationID {
-		slog.Warn("source analysis input is invalid", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
+	snapshot, err := persistence.ValidateSourceAnalysisOperationContract(operation)
+	if operation.RiverJobID == nil || *operation.RiverJobID != job.ID {
+		return nil // Stale delivery: it owns no current execution fence.
 	}
-	root, err := worker.repository.GetSourceRoot(ctx, snapshot.SourceRootID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeRootGone)
+	delivery := persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: job.ID}
+	if operation.State == "running" {
+		rootID := operation.TargetSourceRootID
+		if err := worker.repository.RecoverNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, analysisSafeInterrupted); err != nil {
+			if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+				return nil
+			}
+			return err
 		}
-		return err
+		operation, err = worker.repository.GetOperation(ctx, operation.ID)
+		if err != nil {
+			return err
+		}
+		if operation.State != "failed" || operation.Stage != "recovered" {
+			return nil
+		}
+		operation.TargetSourceRootID = rootID
+		worker.operations.Notify(operation.ID)
+		worker.wakePending(ctx, operation)
+		return nil
 	}
-	if !root.Enabled {
-		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeDisabled)
-	}
-	if root.Stale() || root.ConfiguredPath != snapshot.ConfiguredPath ||
-		root.InventoryPath == nil || *root.InventoryPath != snapshot.InventoryPath {
-		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeStale)
-	}
-	if errors.Is(sourcefs.ValidateRootPathSupport(root.ConfiguredPath), service.ErrUnsupportedSourceRoot) {
-		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeUnsupported)
+	if err != nil || operation.State != "queued" {
+		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
 	}
 	if err := worker.ready(ctx); err != nil {
-		slog.Warn("source analysis cannot start", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceAnalysisStageQueued, analysisSafeNotReady)
+		slog.Warn("source analysis cannot start", "operation", operation.ID, "cause", err)
+		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeNotReady)
 	}
 	if err := worker.operations.Running(ctx, operation.ID, service.SourceAnalysisStageProbing); err != nil {
 		return err
 	}
-	analysis := service.NewSourceAnalysis(worker.repository, worker.toolsDirectory, worker.platform.Platform)
-	apply, err := analysis.Run(ctx, service.SourceAnalysisRequest{OperationID: operation.ID, Snapshot: snapshot})
+	operation.State = "running"
+	// A batch only owns the queued execution triples written at admission. It never
+	// expands to newly-pending steps and never revisits source scans.
+	executions, err := worker.repository.ListNormalizedSourceAnalysisExecution(ctx, operation.ID, operation.Attempt, job.ID)
 	if err != nil {
-		if ctx.Err() != nil {
-			return err
-		}
-		slog.Warn("source analysis failed", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceAnalysisStageProbing, analysisRunSafe(err))
-	}
-	if err := worker.operations.Running(ctx, operation.ID, service.SourceAnalysisStageApplying); err != nil {
 		return err
 	}
-	committed, err := worker.repository.ApplyAnalysisResult(ctx, apply)
-	if err != nil {
-		if ctx.Err() != nil {
+	if len(executions) == 0 {
+		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
+	}
+	var singleFailure *sourceAnalysisStepFailure
+	groups := groupSourceAnalysisExecutions(executions)
+	for _, group := range groups {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		slog.Warn("source analysis apply failed", "operation", operation.ID.String(), "cause", err)
-		if errors.Is(err, persistence.ErrSourceAnalysisStale) {
-			return worker.fail(ctx, operation, service.SourceAnalysisStageApplying, analysisSafeStale)
+		if err := worker.runWorkGroup(ctx, operation, snapshot, job.ID, group); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+				return worker.recoverStaleDelivery(ctx, operation, delivery)
+			}
+			var stepFailure *sourceAnalysisStepFailure
+			if !errors.As(err, &stepFailure) {
+				return err
+			}
+			if snapshot.Mode == persistence.SourceAnalysisModeSingleStep {
+				singleFailure = stepFailure
+			}
+			slog.Warn("source analysis work delivery failed", "operation", operation.ID, "work", group[0].Work.ID, "cause", err)
 		}
-		return worker.fail(ctx, operation, service.SourceAnalysisStageApplying, analysisSafeApply)
+		worker.operations.Notify(operation.ID)
 	}
-	// The result, the location link and the terminal state are durable now; the
-	// notification is a wake-up and follows the commit.
-	worker.operations.Notify(committed.ID)
+	state, safeError := "succeeded", ""
+	if singleFailure != nil {
+		state, safeError = "failed", singleFailure.safeError
+	}
+	if err := worker.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: job.ID}, state, service.SourceAnalysisStageApplying, safeError); err != nil {
+		return err
+	}
+	worker.operations.Notify(operation.ID)
+	worker.wakePending(ctx, operation)
 	return nil
 }
 
-// ready reports whether the instance can probe a source at all: an unusable
-// platform has no managed tools to read a source with, and an unfinished Setup
-// has not verified them yet.
+func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, operation *persistence.Operation, delivery persistence.SourceAnalysisOperationDelivery) error {
+	rootID := operation.TargetSourceRootID
+	if err := worker.repository.RecoverNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, analysisSafeInterrupted); err != nil {
+		if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+			return nil
+		}
+		return err
+	}
+	recovered, err := worker.repository.GetOperation(ctx, operation.ID)
+	if err != nil {
+		return err
+	}
+	if recovered.State != "failed" || recovered.Stage != "recovered" {
+		return nil
+	}
+	if rootID != nil {
+		recovered.TargetSourceRootID = rootID
+	}
+	worker.operations.Notify(operation.ID)
+	worker.wakePending(ctx, recovered)
+	return nil
+}
+
+func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution) error {
+	if len(executions) == 0 {
+		return nil
+	}
+	workID := executions[0].Work.ID
+	claims := make(map[persistence.SourceStepName]int, len(executions))
+	var failures []error
+	claim := func(execution persistence.SourceAnalysisExecution) error {
+		step := persistence.SourceStepName(execution.Step.Step)
+		attempt, err := worker.repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{WorkID: workID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step})
+		if err != nil {
+			return err
+		}
+		claims[step] = attempt
+		return nil
+	}
+	byStep := make(map[persistence.SourceStepName]persistence.SourceAnalysisExecution, len(executions))
+	for _, execution := range executions {
+		byStep[persistence.SourceStepName(execution.Step.Step)] = execution
+	}
+	ordered := make([]persistence.SourceStepName, 0, len(executions))
+	for _, step := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
+		if _, ok := byStep[step]; ok {
+			ordered = append(ordered, step)
+		}
+	}
+	var newDigest *[32]byte
+	for _, step := range ordered {
+		if err := claim(byStep[step]); err != nil {
+			return err
+		}
+		if step == persistence.SourceStepSHA256 {
+			prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, byStep[step], claims, []persistence.SourceStepName{step}, nil)
+			if file != nil {
+				defer func() { _ = file.Close() }()
+			}
+			if root != nil {
+				defer func() { _ = root.Close() }()
+			}
+			if err != nil {
+				var stepFailure *sourceAnalysisStepFailure
+				if errors.As(err, &stepFailure) {
+					failures = append(failures, err)
+					continue
+				}
+				return err
+			}
+			digest, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[step], claims[step], work, step, prepared)
+			if applyErr != nil {
+				failures = append(failures, applyErr)
+			} else {
+				newDigest = digest
+			}
+		}
+	}
+	// Claims for non-SHA steps are fenced independently before the shared prepare.
+	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
+		if _, ok := byStep[step]; ok {
+			if _, exists := claims[step]; !exists {
+				if err := claim(byStep[step]); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	var existing *[32]byte
+	if _, hasSHA := byStep[persistence.SourceStepSHA256]; hasSHA {
+		existing = newDigest
+	} else {
+		existing = executions[0].ExistingSHA256
+	}
+	steps := make([]persistence.SourceStepName, 0, 2)
+	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
+		if _, ok := byStep[step]; ok {
+			steps = append(steps, step)
+		}
+	}
+	if len(steps) > 0 {
+		prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, byStep[steps[0]], claims, steps, existing)
+		if file != nil {
+			defer func() { _ = file.Close() }()
+		}
+		if root != nil {
+			defer func() { _ = root.Close() }()
+		}
+		if err != nil {
+			var stepFailure *sourceAnalysisStepFailure
+			if errors.As(err, &stepFailure) {
+				failures = append(failures, err)
+				for _, sibling := range steps[1:] {
+					failures = append(failures, worker.failStep(ctx, operation, byStep[sibling], sibling, claims[sibling], jobID, stepFailure.safeError))
+				}
+				return errors.Join(failures...)
+			}
+			return err
+		}
+		for _, step := range steps {
+			_, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[step], claims[step], work, step, prepared)
+			if applyErr != nil {
+				failures = append(failures, applyErr)
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (worker *SourceAnalysisWorker) prepareWorkSteps(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, execution persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, steps []persistence.SourceStepName, existing *[32]byte) (service.SourceAnalysisPreparation, *persistence.SourceAnalysisWork, sourcefs.RegularFile, sourcefs.Directory, error) {
+	step := persistence.SourceStepName(execution.Step.Step)
+	work, location, err := worker.repository.GetNormalizedSourceAnalysisWork(ctx, execution.Work.ID)
+	if err != nil {
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file is no longer available for analysis.")
+	}
+	root, err := worker.repository.GetSourceRoot(ctx, work.SourceRootID)
+	if err != nil || root == nil || !root.Enabled || root.Stale() || root.ConfiguredPath != work.ConfiguredPath || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath {
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source inventory changed. Start a new analysis.")
+	}
+	if location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || analysisMtime(location.Mtime) != analysisMtime(work.Mtime) {
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
+	}
+	rootDir, err := worker.opener.OpenRoot(ctx, work.InventoryPath)
+	if err != nil {
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source directory is unavailable. The previous result is unchanged.")
+	}
+	file, err := sourcefs.OpenRegularAt(ctx, rootDir, work.RelativePath)
+	if err != nil {
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file is unavailable. The previous result is unchanged.")
+	}
+	info, err := file.Stat(ctx)
+	if err != nil || info.Size() != work.SizeBytes || analysisMtime(info.ModTime()) != analysisMtime(work.Mtime) {
+		_ = file.Close()
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
+	}
+	if err := worker.verifyAbsoluteSourceStillCurrent(ctx, work, file, rootDir); err != nil {
+		_ = file.Close()
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
+	}
+	targets := service.SourceAnalysisTarget(0)
+	for _, targetStep := range steps {
+		targets |= analysisTargets(targetStep)
+	}
+	request := service.SourceAnalysisPrepareRequest{File: file, Targets: targets, ExistingSHA256: existing}
+	if snapshot.Mode == persistence.SourceAnalysisModeSingleStep && operation.RerunTarget && snapshot.TargetStep != nil && *snapshot.TargetStep == string(persistence.SourceStepFingerprint) {
+		request.BypassFingerprintCache = true
+	}
+	config, err := worker.preparerConfig(ctx, snapshot, work, operation.ID, operation.Attempt, jobID, steps...)
+	if err != nil {
+		_ = file.Close()
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The selected managed analysis tool is unavailable.")
+	}
+	preparer := worker.preparer
+	if preparer == nil {
+		preparer = service.NewSourceAnalysisPreparer(config)
+	}
+	if targets&service.SourceAnalysisTargetFingerprint != 0 {
+		request.ServerPath = filepath.Join(work.InventoryPath, filepath.FromSlash(work.RelativePath))
+	}
+	prepared := preparer.Prepare(ctx, request)
+	if err := ctx.Err(); err != nil {
+		_ = file.Close()
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, err
+	}
+	if err := worker.verifyAbsoluteSourceStillCurrent(ctx, work, file, rootDir); err != nil {
+		_ = file.Close()
+		_ = rootDir.Close()
+		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
+	}
+	return prepared, work, file, rootDir, nil
+}
+
+func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, execution persistence.SourceAnalysisExecution, attempt int, work *persistence.SourceAnalysisWork, step persistence.SourceStepName, prepared service.SourceAnalysisPreparation) (*[32]byte, error) {
+	fence := func() persistence.SourceStepFailure {
+		return persistence.SourceStepFailure{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Step: step}
+	}
+	var err error
+	switch step {
+	case persistence.SourceStepSHA256:
+		if prepared.SHA256.State != service.SourceAnalysisSucceeded {
+			failure := fence()
+			failure.SafeError = safeStepError(prepared.SHA256.SafeError, "The source digest could not be calculated.")
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		applied, applyErr := worker.repository.ApplySourceSHA256(ctx, persistence.SourceSHA256Apply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, SHA256: prepared.SHA256.Digest[:], CalculatedAt: time.Now().UTC(), Algorithm: "sha256"})
+		err = applyErr
+		if err == nil && applied != nil && len(applied.SourceSHA256) == 32 {
+			var digest [32]byte
+			copy(digest[:], applied.SourceSHA256)
+			return &digest, nil
+		}
+		if err == nil {
+			err = fmt.Errorf("applied source digest is unavailable")
+		}
+	case persistence.SourceStepProbe:
+		if prepared.Probe.State == service.SourceAnalysisFailed || prepared.Probe.Result == nil || prepared.Probe.Result.AnalysisPolicyVersion == nil || prepared.Probe.Result.FFProbeVersion == nil || prepared.Probe.Result.InspectedAt == nil {
+			failure := fence()
+			failure.SafeError = safeStepError(prepared.Probe.SafeError, "The technical analysis could not be completed.")
+			if snapshot.CacheOnlyReuse != nil && *snapshot.CacheOnlyReuse {
+				failure.SafeError = "No cached technical analysis is available for the selected version."
+			}
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		result := prepared.Probe.Result
+		if prepared.Probe.State == service.SourceAnalysisCacheHit {
+			_, err = worker.repository.ReuseSourceProbe(ctx, persistence.SourceStepClaim{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step}, attempt, result.ID, *result.FFProbeVersion, *result.AnalysisPolicyVersion)
+			return nil, err
+		}
+		_, err = worker.repository.ApplySourceProbe(ctx, persistence.SourceProbeApply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, SizeBytes: work.SizeBytes, AnalysisPolicy: *result.AnalysisPolicyVersion, FFProbeVersion: *result.FFProbeVersion, FFProbeJSON: result.FFProbeJSON, ObservedTags: result.ObservedTags, InspectedAt: *result.InspectedAt, AudioStreamCount: prepared.Probe.AudioStreamCount})
+	case persistence.SourceStepFingerprint:
+		if prepared.Fingerprint.State == service.SourceAnalysisFailed || prepared.Fingerprint.Result == nil {
+			failure := fence()
+			failure.SafeError = safeStepError(prepared.Fingerprint.SafeError, "The fingerprint could not be calculated.")
+			if snapshot.CacheOnlyReuse != nil && *snapshot.CacheOnlyReuse {
+				failure.SafeError = "No cached fingerprint is available for the selected version."
+			}
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		if prepared.Fingerprint.State == service.SourceAnalysisCacheHit {
+			_, err = worker.repository.ReuseSourceFingerprint(ctx, persistence.SourceStepClaim{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step}, attempt, prepared.Fingerprint.Result.FPCalcVersion)
+			return nil, err
+		}
+		_, err = worker.repository.ApplySourceFingerprint(ctx, persistence.SourceFingerprintApply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Result: *prepared.Fingerprint.Result})
+	default:
+		return nil, fmt.Errorf("unsupported source analysis step %q", step)
+	}
+	if err != nil {
+		if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+			return nil, err
+		}
+		failure := fence()
+		failure.SafeError = "The analysis result could not be saved. The previous result is unchanged."
+		return nil, worker.persistStepFailure(ctx, failure)
+	}
+	return nil, nil
+}
+
+// verifyAbsoluteSourceStillCurrent checks both the pinned inventory handle and
+// the configured absolute namespace. The former protects traversal; the latter
+// detects replacement of the root path while a long-running preparer is active.
+func (worker *SourceAnalysisWorker) verifyAbsoluteSourceStillCurrent(ctx context.Context, work *persistence.SourceAnalysisWork, original sourcefs.RegularFile, pinnedRoot sourcefs.Directory) error {
+	if err := worker.verifySourceStillCurrent(ctx, work, original, pinnedRoot); err != nil {
+		return err
+	}
+	freshRoot, err := worker.opener.OpenRoot(ctx, work.InventoryPath)
+	if err != nil {
+		return fmt.Errorf("reopen absolute inventory root: %w", err)
+	}
+	defer func() { _ = freshRoot.Close() }()
+	rootInfo, rootErr := pinnedRoot.Stat(ctx)
+	freshRootInfo, freshRootErr := freshRoot.Stat(ctx)
+	if rootErr != nil || freshRootErr != nil || !os.SameFile(rootInfo, freshRootInfo) {
+		return fmt.Errorf("absolute inventory root no longer names the analyzed directory")
+	}
+	freshFile, err := sourcefs.OpenRegularAt(ctx, freshRoot, work.RelativePath)
+	if err != nil {
+		return fmt.Errorf("reopen absolute source path: %w", err)
+	}
+	defer func() { _ = freshFile.Close() }()
+	return original.Borrow(ctx, func(first *os.File) error {
+		return freshFile.Borrow(ctx, func(second *os.File) error {
+			firstInfo, firstErr := first.Stat()
+			secondInfo, secondErr := second.Stat()
+			if firstErr != nil || secondErr != nil || !os.SameFile(firstInfo, secondInfo) {
+				return fmt.Errorf("absolute source path no longer names the analyzed file")
+			}
+			return nil
+		})
+	})
+}
+
+func groupSourceAnalysisExecutions(executions []persistence.SourceAnalysisExecution) [][]persistence.SourceAnalysisExecution {
+	byWork := make(map[uuid.UUID][]persistence.SourceAnalysisExecution)
+	for _, execution := range executions {
+		byWork[execution.Work.ID] = append(byWork[execution.Work.ID], execution)
+	}
+	ids := make([]uuid.UUID, 0, len(byWork))
+	for id := range byWork {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
+	groups := make([][]persistence.SourceAnalysisExecution, 0, len(ids))
+	for _, id := range ids {
+		group := byWork[id]
+		sort.Slice(group, func(i, j int) bool {
+			return stepOrder(persistence.SourceStepName(group[i].Step.Step)) < stepOrder(persistence.SourceStepName(group[j].Step.Step))
+		})
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func stepOrder(step persistence.SourceStepName) int {
+	switch step {
+	case persistence.SourceStepSHA256:
+		return 0
+	case persistence.SourceStepProbe:
+		return 1
+	case persistence.SourceStepFingerprint:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func (worker *SourceAnalysisWorker) preparerConfig(ctx context.Context, snapshot persistence.SourceAnalysisOperationSnapshot, work *persistence.SourceAnalysisWork, operationID uuid.UUID, operationAttempt int, jobID int64, steps ...persistence.SourceStepName) (service.SourceAnalysisPreparerConfig, error) {
+	config := service.SourceAnalysisPreparerConfig{Cache: worker.repository, AnalysisPolicy: persistence.SourceAnalysisPolicyVersion}
+	needsProbe, needsFingerprint := false, false
+	for _, step := range steps {
+		needsProbe = needsProbe || step == persistence.SourceStepProbe
+		needsFingerprint = needsFingerprint || step == persistence.SourceStepFingerprint
+	}
+	if !needsProbe && !needsFingerprint {
+		return config, nil
+	}
+	if snapshot.CacheOnlyReuse != nil && *snapshot.CacheOnlyReuse {
+		if needsProbe {
+			config.FFProbeVersion = snapshot.CacheOnlyFFProbeVersion
+			config.ProbeFactory = func(string) (service.SourceAnalysisProbe, error) {
+				return nil, fmt.Errorf("cache-only reuse cannot execute ffprobe")
+			}
+		}
+		if needsFingerprint {
+			config.FPCalcVersion.Version = snapshot.CacheOnlyFPCalcVersion
+			config.FingerprinterFactory = func(string) (service.SourceAnalysisFingerprinter, error) {
+				return nil, fmt.Errorf("cache-only reuse cannot execute fpcalc")
+			}
+		}
+		return config, nil
+	}
+	root, ok, err := worker.toolsDirectory.GetToolsDirectory(ctx)
+	if err != nil || !ok || root == "" {
+		return config, fmt.Errorf("managed tools root unavailable")
+	}
+	selected := make(map[persistence.SourceStepName]*persistence.SourceAnalysisToolSelection)
+	for index := range snapshot.Tools {
+		tool := &snapshot.Tools[index]
+		if tool.Executable == "ffprobe" {
+			selected[persistence.SourceStepProbe] = tool
+		}
+		if tool.Executable == "fpcalc" {
+			selected[persistence.SourceStepFingerprint] = tool
+		}
+	}
+	config.Hold = func(ctx context.Context, requested service.SourceAnalysisStep) (func(), error) {
+		step := persistence.SourceStepName(requested)
+		selection := selected[step]
+		if selection == nil {
+			return nil, fmt.Errorf("pinned tool selection is unavailable")
+		}
+		return func() {}, worker.repository.CheckNormalizedSourceAnalysisToolHold(ctx, operationID, selection.InstallationID, operationAttempt, jobID, string(step))
+	}
+	if needsProbe {
+		selection := selected[persistence.SourceStepProbe]
+		config.ProbeFactory = func(string) (service.SourceAnalysisProbe, error) {
+			return nil, fmt.Errorf("pinned ffprobe selection is unavailable")
+		}
+		if selection == nil {
+			if !needsFingerprint {
+				return config, fmt.Errorf("pinned ffprobe selection is unavailable")
+			}
+		} else {
+			config.FFProbeVersion = selection.Version
+			base := filepath.Join(root, filepath.FromSlash(selection.RelativePath))
+			executable := filepath.Join(base, selection.Executable)
+			if worker.platform.Platform.GOOS == "windows" {
+				executable += ".exe"
+			}
+			if filepath.IsAbs(executable) && pathInside(root, executable) {
+				config.ProbeExecutable = executable
+				config.ProbeFactory = func(path string) (service.SourceAnalysisProbe, error) {
+					verify := worker.verifyFFProbeVersion
+					if verify == nil {
+						verify = func(ctx context.Context, executable string) (string, error) {
+							output, err := (tools.SystemRunner{}).Run(ctx, executable, "-version")
+							return strings.TrimSpace(string(output)), err
+						}
+					}
+					banner, err := verify(ctx, path)
+					if err != nil || !pinnedFFProbeVersionMatches(banner, selection.Version) {
+						return nil, fmt.Errorf("managed ffprobe version does not match pinned selection")
+					}
+					return tools.NewFFProbe(path)
+				}
+			} else if !needsFingerprint {
+				return config, fmt.Errorf("pinned ffprobe path is invalid")
+			}
+		}
+		config.ProbeResult = persistence.SourceMediaVariant{ID: uuid.New(), SizeBytes: work.SizeBytes, AppliedOperationID: uuidPointer(operationID), ObservedTags: []byte(`{}`)}
+	}
+	if needsFingerprint {
+		selection := selected[persistence.SourceStepFingerprint]
+		config.FingerprinterFactory = func(string) (service.SourceAnalysisFingerprinter, error) {
+			return nil, fmt.Errorf("pinned fpcalc selection is unavailable")
+		}
+		if selection == nil {
+			if !needsProbe {
+				return config, fmt.Errorf("pinned fpcalc selection is unavailable")
+			}
+		} else {
+			// Preserve the selected version for a cache lookup; bad runner metadata must
+			// only fail this step, and a cache hit does not need a tool invocation.
+			config.FPCalcVersion.Version = selection.Version
+			base := filepath.Join(root, filepath.FromSlash(selection.RelativePath))
+			executable := filepath.Join(base, selection.Executable)
+			if worker.platform.Platform.GOOS == "windows" {
+				executable += ".exe"
+			}
+			version, parseErr := tools.ParseFPCalcVersion(selection.VersionBanner)
+			if filepath.IsAbs(executable) && pathInside(root, executable) && parseErr == nil && version.Version == selection.Version {
+				config.FPCalcExecutable, config.FPCalcVersion = executable, version
+				config.FingerprinterFactory = func(path string) (service.SourceAnalysisFingerprinter, error) { return tools.NewFPCalc(path) }
+				config.FingerprintResult = persistence.SourceFingerprintResult{ID: uuid.New(), VersionBanner: selection.VersionBanner, FPCalcVersion: selection.Version, AlgorithmNamespace: "chromaprint", ParserContractVersion: 1, AppliedOperationID: operationID}
+			} else if !needsProbe {
+				return config, fmt.Errorf("pinned fpcalc metadata is invalid")
+			}
+		}
+	}
+	return config, nil
+}
+
+func pinnedFFProbeVersionMatches(banner, version string) bool {
+	if version == "" {
+		return false
+	}
+	pattern := regexp.MustCompile(`(?:^|[^0-9A-Za-z.+-])` + regexp.QuoteMeta(version) + `(?:$|[^0-9A-Za-z.+-])`)
+	return pattern.MatchString(banner)
+}
+
+func (worker *SourceAnalysisWorker) failStep(ctx context.Context, operation *persistence.Operation, execution persistence.SourceAnalysisExecution, step persistence.SourceStepName, attempt int, jobID int64, safe string) error {
+	return worker.persistStepFailure(ctx, persistence.SourceStepFailure{WorkID: execution.Work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Step: step, SafeError: safe})
+}
+
+type sourceAnalysisStepFailure struct{ safeError string }
+
+func (failure *sourceAnalysisStepFailure) Error() string { return failure.safeError }
+
+func (worker *SourceAnalysisWorker) persistStepFailure(ctx context.Context, failure persistence.SourceStepFailure) error {
+	if err := worker.repository.FailSourceAnalysisStep(ctx, failure); err != nil {
+		return err
+	}
+	return &sourceAnalysisStepFailure{safeError: failure.SafeError}
+}
+
+func analysisMtime(value time.Time) time.Time { return value.UTC().Truncate(time.Microsecond) }
+
+func (worker *SourceAnalysisWorker) verifySourceStillCurrent(ctx context.Context, work *persistence.SourceAnalysisWork, original sourcefs.RegularFile, root sourcefs.Directory) error {
+	info, err := original.Stat(ctx)
+	if err != nil || info.Size() != work.SizeBytes || analysisMtime(info.ModTime()) != analysisMtime(work.Mtime) {
+		return fmt.Errorf("source descriptor changed")
+	}
+	reopened, err := sourcefs.OpenRegularAt(ctx, root, work.RelativePath)
+	if err != nil {
+		return fmt.Errorf("reopen source path: %w", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	return original.Borrow(ctx, func(first *os.File) error {
+		return reopened.Borrow(ctx, func(second *os.File) error {
+			firstInfo, firstErr := first.Stat()
+			secondInfo, secondErr := second.Stat()
+			if firstErr != nil || secondErr != nil || !os.SameFile(firstInfo, secondInfo) {
+				return fmt.Errorf("source path no longer names the analyzed file")
+			}
+			return nil
+		})
+	})
+}
+
+func (worker *SourceAnalysisWorker) terminalFailure(ctx context.Context, operation *persistence.Operation, jobID int64, stage, safe string) error {
+	if err := worker.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: jobID}, "failed", stage, safe); err != nil {
+		return err
+	}
+	worker.operations.Notify(operation.ID)
+	worker.wakePending(ctx, operation)
+	return nil
+}
+
+// wakePending admits the next pending batch for the operation's root after its
+// terminal settlement committed. Admission is best-effort infrastructure: a
+// downstream error is logged as a safe warning and never returned, so a
+// committed terminal operation stays terminal and River does not rerun this
+// delivery. A stale delivery never reaches here because its settlement fails.
+func (worker *SourceAnalysisWorker) wakePending(ctx context.Context, operation *persistence.Operation) {
+	if worker.pendingDispatcher == nil || operation == nil || operation.TargetSourceRootID == nil {
+		return
+	}
+	if _, err := worker.pendingDispatcher.AdmitPending(context.WithoutCancel(ctx), *operation.TargetSourceRootID); err != nil {
+		slog.WarnContext(ctx, "source analysis pending admission failed", "operation", operation.ID, "root", *operation.TargetSourceRootID)
+	}
+}
+
 func (worker *SourceAnalysisWorker) ready(ctx context.Context) error {
 	if worker.platform.Diagnostic || !worker.platform.Platform.Supported() {
-		return fmt.Errorf("the instance platform is not usable: %s", worker.platform.Reason)
+		return fmt.Errorf("the instance platform is not usable")
 	}
 	completed, err := worker.runtimeSettings.SetupCompleted(ctx)
 	if err != nil {
@@ -174,34 +711,31 @@ func (worker *SourceAnalysisWorker) ready(ctx context.Context) error {
 	return nil
 }
 
-// fail releases both read holds and records the safe reason in one transaction
-// and, only after that commit, sends the same wake-up a successful commit sends,
-// so a client waiting on the operation's final notification is woken even when
-// the analysis failed. The wake carries no data: the subscriber re-reads the
-// committed operation and sees the failed state with both holds released. A
-// cancellation that outlived the failure leaves the operation to the River
-// retry instead of recording a terminal state from a dead context.
-func (worker *SourceAnalysisWorker) fail(ctx context.Context, operation *persistence.Operation, stage, safe string) error {
-	if err := worker.repository.FailSourceAnalysisOperation(ctx, operation.ID, stage, safe); err != nil {
-		return err
+func analysisTargets(step persistence.SourceStepName) service.SourceAnalysisTarget {
+	switch step {
+	case persistence.SourceStepSHA256:
+		return service.SourceAnalysisTargetSHA256
+	case persistence.SourceStepProbe:
+		return service.SourceAnalysisTargetProbe
+	case persistence.SourceStepFingerprint:
+		return service.SourceAnalysisTargetFingerprint
+	default:
+		return 0
 	}
-	worker.operations.Notify(operation.ID)
-	return nil
 }
 
-// analysisRunSafe classifies a failed analysis into the safe reason an operator
-// reads, without leaking a path, an ffprobe diagnostic or a tool error.
-func analysisRunSafe(err error) string {
-	switch {
-	case errors.Is(err, service.ErrUnsupportedSourceRoot):
-		return analysisSafeUnsupported
-	case errors.Is(err, service.ErrSourceAnalysisToolUnavailable):
-		return analysisSafeTool
-	case errors.Is(err, persistence.ErrSourceAnalysisStale):
-		return analysisSafeStale
-	default:
-		return analysisSafeProbe
+func safeStepError(message, fallback string) string {
+	if strings.TrimSpace(message) == "" {
+		return fallback
 	}
+	return message
+}
+
+func uuidPointer(value uuid.UUID) *uuid.UUID { return &value }
+
+func pathInside(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 var _ river.Worker[service.SourceAnalysisJobArgs] = (*SourceAnalysisWorker)(nil)

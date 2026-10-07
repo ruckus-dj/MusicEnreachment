@@ -25,20 +25,52 @@ import (
 func queueSourceScan(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID) *persistence.Operation {
 	t.Helper()
 	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: "scan_source", State: "queued", Stage: service.SourceScanStageQueued,
+		ID: uuid.New(), Kind: "scan_source", State: "queued", Stage: service.SourceScanStageQueued, Attempt: 1,
 		InputSnapshot:      []byte(`{"source_root_id":"` + rootID.String() + `"}`),
 		TargetSourceRootID: &rootID,
 	}
-	if err := persistence.NewSetupManagerRepository(database).CreateOperation(ctx, operation); err != nil {
-		t.Fatalf("create the scan operation: %v", err)
+	client := openSourceScanRiver(t, database)
+	if err := persistence.NewSourceInventoryRepository(database).CreateSourceScanOperationAndEnqueue(
+		ctx, operation, client, service.ScanSourceJobArgs{OperationID: operation.ID}, nil,
+	); err != nil {
+		t.Fatalf("enqueue the scan operation: %v", err)
 	}
 	return operation
+}
+
+func startSourceScan(t *testing.T, ctx context.Context, operations *service.Operations, operation *persistence.Operation) *persistence.Operation {
+	t.Helper()
+	if err := operations.Running(ctx, operation.ID, service.SourceScanStageQueued); err != nil {
+		t.Fatalf("start the source scan operation: %v", err)
+	}
+	started, err := operations.Get(ctx, operation.ID)
+	if err != nil {
+		t.Fatalf("read the started source scan operation: %v", err)
+	}
+	if started.Attempt <= 0 || started.RiverJobID == nil || *started.RiverJobID <= 0 {
+		t.Fatalf("started scan has no delivery identity: attempt %d, job %v", started.Attempt, started.RiverJobID)
+	}
+	return started
 }
 
 func setSourceScanProbePaths(probe *sourceScanProbeFixture, root string, names ...string) {
 	for _, name := range names {
 		probe.paths[name] = filepath.Join(root, "album", name)
 	}
+}
+
+type sourceScanOperationProbeFixture struct {
+	*sourceScanProbeFixture
+	operationID uuid.UUID
+}
+
+func (fixture *sourceScanOperationProbeFixture) Prepare(ctx context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+	result := fixture.sourceScanProbeFixture.Prepare(ctx, request)
+	if result.Probe.Result != nil {
+		appliedOperationID := fixture.operationID
+		result.Probe.Result.AppliedOperationID = &appliedOperationID
+	}
+	return result
 }
 
 func readScanCandidates(t *testing.T, ctx context.Context, database *bun.DB, operationID uuid.UUID) map[string]persistence.SourceScanCandidateInput {
@@ -117,13 +149,15 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	}
 	// Given a first scan of the tree whose probe confirms one file, finds no
 	// audio in another and fails on the third...
-	probe := newSourceScanProbeFixture()
-	setSourceScanProbePaths(probe, tree, "track.flac", "silent.mka", "broken.wav")
-	probe.answer("silent.mka", false)
-	probe.fail("broken.wav", errors.New("ffprobe failed"))
-	sourceScan := service.NewSourceScan(inventory, probe, operations)
-	first := queueSourceScan(t, ctx, database, root.ID)
-	if err := sourceScan.Run(ctx, service.SourceScanRequest{OperationID: first.ID, RootID: root.ID}); err != nil {
+	firstProbe := newSourceScanProbeFixture()
+	setSourceScanProbePaths(firstProbe, tree, "track.flac", "silent.mka", "broken.wav")
+	firstProbe.answer("silent.mka", false)
+	firstProbe.fail("broken.wav", errors.New("ffprobe failed"))
+	firstPrepared := &sourceScanOperationProbeFixture{sourceScanProbeFixture: firstProbe}
+	sourceScan := service.NewSourceScan(inventory, firstProbe, operations, service.WithSourceScanAnalysis(firstPrepared))
+	first := startSourceScan(t, ctx, operations, queueSourceScan(t, ctx, database, root.ID))
+	firstPrepared.operationID = first.ID
+	if err := sourceScan.Run(ctx, service.SourceScanRequest{OperationID: first.ID, RootID: root.ID, ExpectedAttempt: first.Attempt, ExpectedJobID: *first.RiverJobID, AnalysisTargets: service.SourceAnalysisTargetProbe}); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 
@@ -151,7 +185,12 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	}
 
 	// When the traversal of the first scan is applied as a generation...
-	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{OperationID: first.ID, ExpectedConfiguredPath: root.ConfiguredPath}); err != nil {
+	sha256Enabled := false
+	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
+		OperationID: first.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: first.Attempt, ExpectedJobID: *first.RiverJobID,
+		SHA256Enabled: &sha256Enabled,
+	}); err != nil {
 		t.Fatalf("apply the first generation: %v", err)
 	}
 	if err := operations.Succeed(ctx, first.ID, service.SourceScanStageApplying); err != nil {
@@ -166,23 +205,25 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	requireSourceScanGeneration(t, ctx, inventory, root.ID, 1)
 
 	// Given the file whose probe failed is readable now...
-	probe = newSourceScanProbeFixture()
-	setSourceScanProbePaths(probe, tree, "track.flac", "silent.mka", "broken.wav")
-	probe.answer("track.flac", false)
-	probe.answer("silent.mka", true)
-	probe.answer("broken.wav", true)
-	sourceScan = service.NewSourceScan(inventory, probe, operations)
-	second := queueSourceScan(t, ctx, database, root.ID)
+	secondProbe := newSourceScanProbeFixture()
+	setSourceScanProbePaths(secondProbe, tree, "track.flac", "silent.mka", "broken.wav")
+	secondProbe.answer("track.flac", false)
+	secondProbe.answer("silent.mka", true)
+	secondProbe.answer("broken.wav", true)
+	secondPrepared := &sourceScanOperationProbeFixture{sourceScanProbeFixture: secondProbe}
+	sourceScan = service.NewSourceScan(inventory, secondProbe, operations, service.WithSourceScanAnalysis(secondPrepared))
+	second := startSourceScan(t, ctx, operations, queueSourceScan(t, ctx, database, root.ID))
+	secondPrepared.operationID = second.ID
 
 	// When the tree is scanned again...
-	if err := sourceScan.Run(ctx, service.SourceScanRequest{OperationID: second.ID, RootID: root.ID}); err != nil {
+	if err := sourceScan.Run(ctx, service.SourceScanRequest{OperationID: second.ID, RootID: root.ID, ExpectedAttempt: second.Attempt, ExpectedJobID: *second.RiverJobID, AnalysisTargets: service.SourceAnalysisTargetProbe}); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
 
 	// Then only that file is probed again, the other candidates carry the stored
 	// statuses, and the applied generation is still exactly what it was before
 	// the second traversal.
-	if got, want := probe.probes(), []string{"broken.wav"}; !slices.Equal(got, want) {
+	if got, want := secondProbe.probes(), []string{"broken.wav"}; !slices.Equal(got, want) {
 		t.Fatalf("probed %v, want only %v", got, want)
 	}
 	secondCandidates := readScanCandidates(t, ctx, database, second.ID)
@@ -194,7 +235,11 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	}
 
 	// When the second traversal is applied...
-	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{OperationID: second.ID, ExpectedConfiguredPath: root.ConfiguredPath}); err != nil {
+	if err := inventory.ApplySourceScan(ctx, persistence.SourceScanApply{
+		OperationID: second.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: second.Attempt, ExpectedJobID: *second.RiverJobID,
+		SHA256Enabled: &sha256Enabled,
+	}); err != nil {
 		t.Fatalf("apply the second generation: %v", err)
 	}
 
@@ -228,7 +273,7 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 			t.Errorf("rewrite the probed file: %v", err)
 		}
 	}
-	third := queueSourceScan(t, ctx, database, root.ID)
+	third := startSourceScan(t, ctx, operations, queueSourceScan(t, ctx, database, root.ID))
 	if err := inventory.ReplaceSourceScanCandidates(ctx, third.ID, []persistence.SourceScanCandidateInput{{
 		RelativePath: "album/leftover.flac", SizeBytes: 1, Mtime: time.Now().UTC().Truncate(time.Microsecond),
 		ProbeStatus: persistence.SourceProbeStatusAudio,
@@ -237,7 +282,7 @@ func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
 	}
 
 	// When the traversal meets the barrier...
-	err = service.NewSourceScan(inventory, barrier, operations).Run(ctx, service.SourceScanRequest{OperationID: third.ID, RootID: root.ID})
+	err = service.NewSourceScan(inventory, barrier, operations, service.WithSourceScanAnalysis(barrier)).Run(ctx, service.SourceScanRequest{OperationID: third.ID, RootID: root.ID, ExpectedAttempt: third.Attempt, ExpectedJobID: *third.RiverJobID, AnalysisTargets: service.SourceAnalysisTargetProbe})
 
 	// Then the whole scan failed, its candidates are gone, and the applied
 	// generation is untouched.

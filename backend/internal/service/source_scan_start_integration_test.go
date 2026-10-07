@@ -194,8 +194,11 @@ func TestSourceScanStartEnqueuesTheOperationAndItsJobWithPostgreSQL(t *testing.T
 	want := service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: fixture.root.ID,
 		ConfiguredPath: fixture.root.ConfiguredPath,
+		ScanGeneration: fixture.root.ScanGeneration,
+		SHA256Enabled:  new(true),
+		Tools:          []persistence.SourceAnalysisToolSelection{},
 	}
-	if snapshot != want {
+	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("stored snapshot = %+v, want %+v", snapshot, want)
 	}
 

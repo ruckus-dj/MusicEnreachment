@@ -4,92 +4,100 @@ package persistence_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/uptrace/bun"
 )
 
-// TestSourceAnalysisStageTransitionTakesOperationTableLockBeforeRowWithPostgreSQL
-// pins the lock order of an analysis stage transition. A competing transaction
-// holds the operation table lock and then locks the source root and the active
-// operation row, the order a root deletion or edit uses. If the transition took
-// its operation row lock before the table lock, its own UPDATE would need the
-// table ROW EXCLUSIVE that the competitor's SHARE ROW EXCLUSIVE blocks, while
-// the competitor waits for the operation row: a deadlock. The query barrier
-// proves the transition reaches its table lock first, the competitor commits, and
-// the transition finishes with the running stage and both holds kept.
-func TestSourceAnalysisStageTransitionTakesOperationTableLockBeforeRowWithPostgreSQL(t *testing.T) {
+// TestSourceAnalysisStageTransitionSerializesOnItsOperationRowWithPostgreSQL
+// proves a stage transition waits for the operation row it updates, without
+// requiring a table-wide lock that would serialize unrelated operations.
+func TestSourceAnalysisStageTransitionSerializesOnItsOperationRowWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	fixture := newAnalysisRetryFixture(t, true)
-	operation := insertAnalysisOperation(t, ctx, fixture, &fixture.previousVariantID, "queued", service.SourceAnalysisStageQueued)
-	operations := service.NewOperations(fixture.setup)
+	fixture, operation, previousVariantID := newWriteLockAnalysisFixture(t, ctx)
+	operations := service.NewOperations(persistence.NewSetupManagerRepository(fixture.database))
 
-	err := runOperationLockRace(t, ctx, fixture.database, lockRootAndActiveOperation(fixture.root.ID),
+	err := runQueryRace(t, ctx, fixture.database, operationRowLockQuery(operation.ID), "FROM operation",
+		func(context.Context, bun.Tx) error { return nil },
 		func(ctx context.Context) error {
 			return operations.Running(ctx, operation.ID, service.SourceAnalysisStageProbing)
 		})
 	if err != nil {
-		t.Fatalf("stage transition with a competing root mutation = %v, want no deadlock", err)
+		t.Fatalf("stage transition while its operation row is locked = %v", err)
 	}
-	stored, err := fixture.setup.GetOperation(ctx, operation.ID)
+	stored, err := persistence.NewSetupManagerRepository(fixture.database).GetOperation(ctx, operation.ID)
 	if err != nil {
 		t.Fatalf("read the transitioned operation: %v", err)
 	}
 	if stored.State != "running" || stored.Stage != service.SourceAnalysisStageProbing {
 		t.Fatalf("operation after the transition = %s/%s, want running/%s", stored.State, stored.Stage, service.SourceAnalysisStageProbing)
 	}
-	if stored.AnalysisMediaVariantID == nil || *stored.AnalysisMediaVariantID != fixture.previousVariantID || stored.AnalysisInstallationID == nil {
-		t.Fatalf("stage transition released a hold: %+v", stored)
+	assertOperationHoldCounts(t, ctx, fixture.database, operation.ID, 1, 1)
+	if !mediaVariantExists(t, ctx, fixture.database, previousVariantID) {
+		t.Fatal("the stage transition removed the previous variant")
 	}
 }
 
-// TestSourceAnalysisFailTakesOperationTableLockBeforeRowWithPostgreSQL pins the
-// lock order of the terminal failure. The same competing root-mutation ordering
-// holds the table lock and the root; the failure reaches its table lock first and
-// then releases both holds, so the two transactions cannot cycledeadlock. The
-// committed failure keeps the previous variant linked.
-func TestSourceAnalysisFailTakesOperationTableLockBeforeRowWithPostgreSQL(t *testing.T) {
+// TestSourceAnalysisFailureSerializesOnItsOperationRowWithPostgreSQL proves a
+// normalized terminal failure waits for its own operation row before releasing
+// its holds. Other operations remain free to progress independently.
+func TestSourceAnalysisFailureSerializesOnItsOperationRowWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	fixture := newAnalysisRetryFixture(t, true)
-	operation := insertAnalysisOperation(t, ctx, fixture, &fixture.previousVariantID, "running", service.SourceAnalysisStageProbing)
+	fixture, operation, previousVariantID := newWriteLockAnalysisFixture(t, ctx)
+	if err := service.NewOperations(persistence.NewSetupManagerRepository(fixture.database)).Running(ctx, operation.ID, service.SourceAnalysisStageProbing); err != nil {
+		t.Fatalf("start normalized source analysis: %v", err)
+	}
 
-	err := runOperationLockRace(t, ctx, fixture.database, lockRootAndActiveOperation(fixture.root.ID),
+	err := runQueryRace(t, ctx, fixture.database, operationRowLockQuery(operation.ID), "FROM operation",
+		func(context.Context, bun.Tx) error { return nil },
 		func(ctx context.Context) error {
-			return fixture.inventory.FailSourceAnalysisOperation(ctx, operation.ID, service.SourceAnalysisStageProbing, "The source file could not be analyzed. The previous result is unchanged.")
+			return fixture.repository.SettleNormalizedSourceAnalysisOperation(ctx, operation.ID, "failed", service.SourceAnalysisStageProbing, "The source file could not be analyzed. The previous result is unchanged.")
 		})
 	if err != nil {
-		t.Fatalf("terminal failure with a competing root mutation = %v, want no deadlock", err)
+		t.Fatalf("terminal failure while its operation row is locked = %v", err)
 	}
-	stored, err := fixture.setup.GetOperation(ctx, operation.ID)
+	stored, err := persistence.NewSetupManagerRepository(fixture.database).GetOperation(ctx, operation.ID)
 	if err != nil {
 		t.Fatalf("read the failed operation: %v", err)
 	}
-	if stored.State != "failed" || stored.AnalysisMediaVariantID != nil || stored.AnalysisInstallationID != nil {
-		t.Fatalf("failed operation = %+v, want failed with both holds released", stored)
+	if stored.State != "failed" {
+		t.Fatalf("failed operation = %+v, want failed", stored)
 	}
-	if !mediaVariantExists(t, ctx, fixture.database, fixture.previousVariantID) {
+	assertOperationHoldCounts(t, ctx, fixture.database, operation.ID, 0, 0)
+	if !mediaVariantExists(t, ctx, fixture.database, previousVariantID) {
 		t.Fatal("the failed analysis removed the previous variant")
 	}
-	linked, err := fixture.inventory.GetSourceLocation(ctx, fixture.root.ID, fixture.location.ID)
+	linked, err := fixture.repository.GetSourceLocation(ctx, fixture.root.ID, fixture.location.ID)
 	if err != nil {
 		t.Fatalf("read the location: %v", err)
 	}
-	if linked.MediaVariantID == nil || *linked.MediaVariantID != fixture.previousVariantID {
-		t.Fatalf("previous variant link = %v, want the unchanged %s", linked.MediaVariantID, fixture.previousVariantID)
+	if linked.MediaVariantID == nil || *linked.MediaVariantID != previousVariantID {
+		t.Fatalf("previous variant link = %v, want the unchanged %s", linked.MediaVariantID, previousVariantID)
 	}
 }
 
-// lockRootAndActiveOperation simulates the lock sequence a root mutation takes
-// after its operation table lock: the root row, then the active operation row.
-func lockRootAndActiveOperation(rootID uuid.UUID) func(context.Context, bun.Tx) error {
-	return func(ctx context.Context, tx bun.Tx) error {
-		var lockedRootID string
-		if err := tx.NewRaw("SELECT id FROM source_root WHERE id = ? FOR UPDATE", rootID).Scan(ctx, &lockedRootID); err != nil {
-			return err
-		}
-		var activeID string
-		return tx.NewRaw("SELECT id FROM operation WHERE target_source_root_id = ? AND state IN ('queued', 'running') FOR UPDATE", rootID).Scan(ctx, &activeID)
+func newWriteLockAnalysisFixture(t *testing.T, ctx context.Context) (normalizedAnalysisFixture, *persistence.Operation, uuid.UUID) {
+	t.Helper()
+	fixture := newNormalizedWorkOperation(t, "/srv/normalized-analysis-write-lock", false,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepProbe, State: "pending"}})
+	previousVariantID := insertMediaVariantRow(t, ctx, fixture.database, fixture.location.SizeBytes, uuid.New())
+	linkLocationVariant(t, ctx, fixture.database, fixture.location.ID, previousVariantID)
+	tool := insertVerifiedAnalysisTool(t, ctx, fixture.database, "ffmpeg", "ffprobe", "7.1", "ffprobe version 7.1")
+	operation := fixture.batchOperation(t, tool)
+	if err := fixture.admit(t, ctx, operation); err != nil {
+		t.Fatalf("admit normalized source analysis: %v", err)
 	}
+	return fixture, operation, previousVariantID
+}
+
+// operationRowLockQuery locks only the operation under test. UUIDs are generated
+// by the fixture, so embedding this value in the test-only SQL is safe.
+func operationRowLockQuery(operationID uuid.UUID) string {
+	return fmt.Sprintf("SELECT * FROM operation WHERE id = '%s' FOR UPDATE", operationID)
 }

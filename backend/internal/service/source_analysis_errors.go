@@ -2,7 +2,6 @@ package service
 
 import "errors"
 
-// ErrSourceAnalysisToolUnavailable reports the managed FFmpeg installation an
-// analysis snapshot pins cannot be used: it is missing, not ready, built for
-// another platform, carries an invalid managed path, or fails its version query.
+// ErrSourceAnalysisToolUnavailable reports that a managed tool selected by a
+// source analysis cannot be used.
 var ErrSourceAnalysisToolUnavailable = errors.New("the selected managed ffmpeg installation is unavailable")

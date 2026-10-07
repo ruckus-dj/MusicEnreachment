@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
@@ -48,6 +51,38 @@ type SourceTechnicalResult struct {
 	Analysis              SourceTechnicalAnalysis
 }
 
+// SourceAnalysisStepDetail is a persisted step row together with its selected
+// result, if any. Results remain available after a later failed attempt.
+type SourceAnalysisStepDetail struct {
+	Name        string
+	State       string
+	SafeError   *string
+	SkipReason  *string
+	Attempt     int
+	ReuseOrigin *string
+	SHA256      *SourceSHA256Result
+	Fingerprint *SourceFingerprintDetail
+}
+
+type SourceSHA256Result struct {
+	Value              string
+	Algorithm          *string
+	CalculatedAt       *time.Time
+	AppliedOperationID *uuid.UUID
+}
+
+type SourceFingerprintDetail struct {
+	Value                 string
+	Version               string
+	VersionBanner         string
+	AlgorithmNamespace    string
+	AlgorithmID           int16
+	Duration              float64
+	CalculatedAt          time.Time
+	AppliedOperationID    uuid.UUID
+	ParserContractVersion int
+}
+
 // SourceLocationDetail is the complete read-model of one inspected location: the
 // inventory identity of the file, the availability of its root, the optional
 // stored technical result and the analysis operation that is currently active.
@@ -55,14 +90,15 @@ type SourceTechnicalResult struct {
 // unknown technical values stay nil inside the result instead of becoming zero
 // or empty.
 type SourceLocationDetail struct {
-	RootID         uuid.UUID
-	Root           SourceLocationRootState
-	LocationID     uuid.UUID
-	RelativePath   string
-	SizeBytes      int64
-	Mtime          time.Time
-	ProbeStatus    string
-	SafeError      *string
+	RootID       uuid.UUID
+	Root         SourceLocationRootState
+	LocationID   uuid.UUID
+	RelativePath string
+	SizeBytes    int64
+	Mtime        time.Time
+	ProbeStatus  string
+	SafeError    *string
+	// MediaVariantID is the inventory location's canonical result link.
 	MediaVariantID *uuid.UUID
 	// Result is the last successful technical analysis, or nil when the file was
 	// never analyzed or its result was unlinked by a changed inventory.
@@ -72,6 +108,12 @@ type SourceLocationDetail struct {
 	// so a client can adopt an ongoing operation instead of showing the previous
 	// result alone.
 	ActiveAnalysisOperationID *uuid.UUID
+	// SelectedProbeVariantID is the variant used by the selected analysis work;
+	// it can differ from the canonical location link after an independent retry.
+	SelectedProbeVariantID *uuid.UUID
+	ActiveFPCalcVersion    *string
+	Steps                  []SourceAnalysisStepDetail
+	MatchingEligible       bool
 }
 
 // SourceLocationDetails reads one location of a root for the inspector. It never
@@ -112,6 +154,8 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 		MediaVariantID: location.MediaVariantID,
 	}
 	if variant := snapshot.Variant; variant != nil {
+		selectedProbeVariantID := variant.ID
+		detail.SelectedProbeVariantID = &selectedProbeVariantID
 		analysis, err := ParseSourceTechnicalAnalysis(variant.FFProbeJSON)
 		if err != nil {
 			return SourceLocationDetail{}, fmt.Errorf("read source location detail: the stored technical result cannot be read: %w", err)
@@ -124,6 +168,54 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 			Analysis:              analysis,
 		}
 	}
+	detail.ActiveFPCalcVersion = activeFPCalcVersion(snapshot.ActiveFPCalcInstallation)
 	detail.ActiveAnalysisOperationID = snapshot.ActiveOperationID
+	detail.MatchingEligible = snapshot.MatchingEligible
+	if len(snapshot.Steps) > 0 {
+		detail.Steps = make([]SourceAnalysisStepDetail, 0, len(snapshot.Steps))
+		for _, step := range snapshot.Steps {
+			stepDetail := SourceAnalysisStepDetail{
+				Name: step.Step, State: step.State, SafeError: step.SafeError,
+				SkipReason: step.SkipReason, Attempt: step.StepAttempt, ReuseOrigin: step.SuccessReuseOrigin,
+			}
+			if step.Step == string(persistence.SourceStepSHA256) && snapshot.SHAVariant != nil {
+				sha := snapshot.SHAVariant
+				stepDetail.SHA256 = &SourceSHA256Result{
+					Value: hex.EncodeToString(sha.SourceSHA256), Algorithm: sha.SHA256Algorithm,
+					CalculatedAt: sha.SHA256CalculatedAt, AppliedOperationID: sha.SHA256AppliedOperationID,
+				}
+			}
+			if step.Step == string(persistence.SourceStepFingerprint) && snapshot.Fingerprint != nil {
+				fingerprint := snapshot.Fingerprint
+				stepDetail.Fingerprint = &SourceFingerprintDetail{
+					Value: fingerprint.Fingerprint, Version: fingerprint.FPCalcVersion,
+					VersionBanner: fingerprint.VersionBanner, AlgorithmNamespace: fingerprint.AlgorithmNamespace,
+					AlgorithmID: fingerprint.AlgorithmID, Duration: fingerprint.ReportedDuration,
+					CalculatedAt: fingerprint.CalculatedAt, AppliedOperationID: fingerprint.AppliedOperationID,
+					ParserContractVersion: fingerprint.ParserContractVersion,
+				}
+			}
+			detail.Steps = append(detail.Steps, stepDetail)
+		}
+	}
 	return detail, nil
+}
+
+func activeFPCalcVersion(installation *persistence.ToolInstallation) *string {
+	if installation == nil || len(installation.ExecutableVersions) == 0 {
+		return nil
+	}
+	var executableVersions map[string]string
+	if err := json.Unmarshal(installation.ExecutableVersions, &executableVersions); err != nil {
+		return nil
+	}
+	banner, ok := tools.VerifiedExecutableVersion(executableVersions, tools.PackageFPCalc, "fpcalc", installation.PlatformGOOS)
+	if !ok {
+		return nil
+	}
+	version, err := tools.ParseFPCalcVersion(banner)
+	if err != nil {
+		return nil
+	}
+	return &version.Version
 }

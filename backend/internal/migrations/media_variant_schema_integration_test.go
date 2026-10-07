@@ -5,6 +5,7 @@ package migrations_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -25,6 +27,7 @@ const analysisVariantMigration = "20261005000000"
 const automaticSourceAnalysisMigration = "20261006000000"
 
 func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChangesWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
@@ -40,7 +43,7 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 		t.Fatalf("insert populated analysis result: %v", err)
 	}
 
-	rollback := migrate.NewMigrator(database, migrationSet(t, migration), migrate.WithMarkAppliedOnSuccess(true))
+	rollback := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if _, err := rollback.Rollback(ctx); err == nil {
 		t.Fatal("rollback with persisted analysis results succeeded, want refusal")
 	}
@@ -56,19 +59,13 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 	}
 }
 
-func migrationSet(t *testing.T, migration *migrate.Migration) *migrate.Migrations {
-	t.Helper()
-	collection := migrate.NewMigrations()
-	collection.Add(*migration)
-	return collection
-}
-
 // TestSourceMediaVariantMigrationRollbackWithPostgreSQL applies every migration
 // before the analysis-result pair, then the pair as its own migration group, and
 // proves the down migration restores the pre-analysis schema: no media_variant
 // table, no new operation columns, no location variant column, and the old kind
 // check and root guard back in place.
 func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
@@ -77,42 +74,25 @@ func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load migrations: %v", err)
 	}
-	baseline := migrate.NewMigrations()
 	found := false
 	for _, migration := range full.Sorted() {
 		if migration.Name == analysisVariantMigration {
 			found = true
-			continue
 		}
-		if migration.Name > analysisVariantMigration {
-			continue
-		}
-		baseline.Add(migration)
 	}
 	if !found {
 		t.Fatalf("migration %s is missing from the collection", analysisVariantMigration)
 	}
 
-	baselineMigrator := migrate.NewMigrator(database, baseline, migrate.WithMarkAppliedOnSuccess(true))
-	if err := baselineMigrator.Init(ctx); err != nil {
-		t.Fatalf("initialize baseline migrations: %v", err)
-	}
-	if _, err := baselineMigrator.Migrate(ctx); err != nil {
-		t.Fatalf("apply baseline migrations: %v", err)
-	}
+	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, full, analysisVariantMigration))
 	if relation := relationName(t, database, "media_variant"); relation != nil {
 		t.Fatalf("media_variant exists before its migration: %s", *relation)
 	}
 
 	// Keep this rollback focused on the migration under test. Later migrations
 	// intentionally add dependencies to the schema and must not be batched here.
-	migrator := migrate.NewMigrator(database, migrationSet(t, migrationNamed(t, full, analysisVariantMigration)), migrate.WithMarkAppliedOnSuccess(true))
-	if err := migrator.Init(ctx); err != nil {
-		t.Fatalf("initialize the full migration set: %v", err)
-	}
-	if _, err := migrator.Migrate(ctx); err != nil {
-		t.Fatalf("apply the analysis-result migration: %v", err)
-	}
+	migration := migrationNamed(t, full, analysisVariantMigration)
+	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
 
 	if relation := relationName(t, database, "media_variant"); relation == nil {
 		t.Fatal("media_variant is missing after its migration")
@@ -131,13 +111,7 @@ func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
 		t.Fatal("source_location.media_variant_id is missing after its migration")
 	}
 
-	group, err := migrator.Rollback(ctx)
-	if err != nil {
-		t.Fatalf("roll back the analysis-result migration: %v", err)
-	}
-	if group == nil || len(group.Migrations) != 1 || group.Migrations[0].Name != analysisVariantMigration {
-		t.Fatalf("rolled back group = %+v, want only migration %s", group, analysisVariantMigration)
-	}
+	rollbackMigration(t, ctx, database, migration)
 
 	if relation := relationName(t, database, "media_variant"); relation != nil {
 		t.Fatalf("media_variant survives the rollback: %s", *relation)
@@ -170,6 +144,7 @@ func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
 // analyze_source target shape, root exclusivity across scan and analysis, the
 // resource holds, and the untouched install/move constraints.
 func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx := context.Background()
@@ -223,78 +198,45 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 
 	t.Run("analyze_source_target_shape", func(t *testing.T) {
 		rootID := newVariantRoot(t, ctx, database, "/srv/variant-shape")
+		missingMode := tryOperation(t, ctx, database, &persistence.Operation{
+			Kind: "analyze_source", State: "queued", Stage: "queued",
+			TargetSourceRootID: &rootID,
+		})
+		requireViolation(t, missingMode, "operation_normalized_analysis_shape")
+
+		batchSnapshot := json.RawMessage(`{"schema_version":1,"mode":"batch","work_ids":["` + uuid.NewString() + `"],"tools":[],"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false,"tools_read_required":false}`)
+		missingRoot := tryOperation(t, ctx, database, &persistence.Operation{
+			Kind: "analyze_source", State: "queued", Stage: "queued",
+			InputSnapshot: batchSnapshot, SourceAnalysisMode: "batch",
+		})
+		requireViolation(t, missingRoot, "operation_analysis_target_shape")
+
 		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
-		installationID := newVariantInstallation(t, ctx, database, "shape")
-
-		requireViolation(t, tryOperation(t, ctx, database, &persistence.Operation{
+		missingWork := uuid.New()
+		singleSnapshot := json.RawMessage(`{"schema_version":1,"mode":"single_step","work_ids":["` + missingWork.String() + `"],"target_work_id":"` + missingWork.String() + `","target_step":"sha256","tools":[],"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false,"tools_read_required":false}`)
+		noSingleTarget := tryOperation(t, ctx, database, &persistence.Operation{
 			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			AnalysisInstallationID: &installationID,
-		}), "operation_active_analysis_has_target_location")
-
-		requireViolation(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			TargetInstallationID:   nil,
-		}), "operation_active_analysis_has_installation")
-
-		requireViolation(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			TargetInstallationID:   &installationID,
-			AnalysisInstallationID: &installationID,
-		}), "operation_analysis_target_shape")
-
-		requireViolation(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
-		}), "operation_analysis_target_shape")
-
-		missingLocation := uuid.New()
-		requireViolation(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &missingLocation,
-			AnalysisInstallationID: &installationID,
-		}), "operation_target_source_location_id_fkey")
-
-		insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
+			InputSnapshot: singleSnapshot, SourceAnalysisMode: "single_step",
+			TargetSourceRootID: &rootID, TargetSourceLocationID: &locationID,
 		})
-
-		// A terminal snapshot may have lost its location (the FK is SET NULL),
-		// so it is valid without one.
-		terminalRoot := newVariantRoot(t, ctx, database, "/srv/variant-terminal")
-		finished := time.Now().UTC()
-		insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "succeeded", Stage: "applying",
-			TargetSourceRootID: &terminalRoot, FinishedAt: &finished,
-		})
+		requireViolation(t, noSingleTarget, "operation_normalized_analysis_shape")
 	})
 
 	t.Run("active_analysis_blocks_location_deletion", func(t *testing.T) {
 		rootID := newVariantRoot(t, ctx, database, "/srv/variant-location-delete")
 		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
-		installationID := newVariantInstallation(t, ctx, database, "delete")
-		operationID := insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
-		})
+		operationID, workID := insertHeldBatchAnalysis(t, ctx, database, rootID, locationID)
 
 		requireViolation(t, execError(ctx, database, "DELETE FROM source_location WHERE id = ?", locationID),
-			"operation_active_analysis_has_target_location")
+			"operation_source_work_hold_work_id_fkey")
 
-		if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
-			Set("state = 'succeeded'").Set("finished_at = now()").Set("updated_at = now()").
-			Where("id = ?", operationID).Exec(ctx); err != nil {
+		if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM operation_source_work_hold WHERE operation_id = ? AND work_id = ?", operationID, workID); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `UPDATE operation SET state='succeeded',stage='finished',finished_at=now(),updated_at=now(),target_source_root_id=NULL WHERE id=?`, operationID)
+			return err
+		}); err != nil {
 			t.Fatalf("finish the analysis operation: %v", err)
 		}
 		if _, err := database.ExecContext(ctx, "DELETE FROM source_location WHERE id = ?", locationID); err != nil {
@@ -316,44 +258,22 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 			TargetSourceRootID: &scanRoot,
 		})
 		scanLocation := newVariantLocation(t, ctx, database, scanRoot, "album/track.flac")
-		installationID := newVariantInstallation(t, ctx, database, "exclusive-1")
-		requireRootConflict(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &scanRoot,
-			TargetSourceLocationID: &scanLocation,
-			AnalysisInstallationID: &installationID,
-		}))
+		requireRootConflict(t, tryHeldBatchAnalysis(t, ctx, database, scanRoot, scanLocation))
 
 		analysisRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-2")
 		analysisLocation := newVariantLocation(t, ctx, database, analysisRoot, "album/track.flac")
-		insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &analysisRoot,
-			TargetSourceLocationID: &analysisLocation,
-			AnalysisInstallationID: &installationID,
-		})
-		secondLocation := newVariantLocation(t, ctx, database, analysisRoot, "album/second.flac")
-		requireRootConflict(t, tryOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &analysisRoot,
-			TargetSourceLocationID: &secondLocation,
-			AnalysisInstallationID: &installationID,
-		}))
+		insertHeldBatchAnalysis(t, ctx, database, analysisRoot, analysisLocation)
+		requireRootConflict(t, tryHeldBatchAnalysis(t, ctx, database, analysisRoot, analysisLocation))
 
-		// Independent roots stay independent, even holding the same installation.
+		// Independent roots stay independent for batch analysis as well as scans.
 		otherScanRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-3")
 		insertOperation(t, ctx, database, &persistence.Operation{
 			Kind: "scan_source", State: "queued", Stage: "queued",
 			TargetSourceRootID: &otherScanRoot,
 		})
 		otherAnalysisRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-4")
-		otherLocation := newVariantLocation(t, ctx, database, otherAnalysisRoot, "album/track.flac")
-		insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &otherAnalysisRoot,
-			TargetSourceLocationID: &otherLocation,
-			AnalysisInstallationID: &installationID,
-		})
+		otherAnalysisLocation := newVariantLocation(t, ctx, database, otherAnalysisRoot, "album/track.flac")
+		insertHeldBatchAnalysis(t, ctx, database, otherAnalysisRoot, otherAnalysisLocation)
 	})
 
 	t.Run("install_and_move_constraints_unaffected", func(t *testing.T) {
@@ -383,29 +303,30 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 		}), "operation_active_tools_operations_exclusive")
 	})
 
-	t.Run("resource_holds_refuse_deletion", func(t *testing.T) {
-		holdRoot := newVariantRoot(t, ctx, database, "/srv/variant-hold")
-		holdingOperationID := newTerminalAnalysisOperation(t, ctx, database, holdRoot)
-		variantID := newVariant(t, ctx, database, 4096, holdingOperationID)
-		if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
-			Set("analysis_media_variant_id = ?", variantID).Set("updated_at = now()").
-			Where("id = ?", holdingOperationID).Exec(ctx); err != nil {
-			t.Fatalf("hold the previous variant: %v", err)
+	t.Run("normalized_selected_result_refuses_deletion", func(t *testing.T) {
+		rootID := newVariantRoot(t, ctx, database, "/srv/variant-selected-result")
+		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
+		workID := uuid.New()
+		if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_work
+			(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id)
+			VALUES (?,?,?,'/srv/variant-selected-result','/srv/variant-selected-result','album/track.flac',1024,now(),true,?)`,
+			workID, locationID, rootID, uuid.New()); err != nil {
+			t.Fatalf("insert normalized analysis work: %v", err)
+		}
+		variantID := newVariant(t, ctx, database, 1024, uuid.New())
+		if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step
+			(work_id,step,state,success_sha_variant_id,success_reuse_origin)
+			VALUES (?,'sha256','succeeded',?,'executed')`, workID, variantID); err != nil {
+			t.Fatalf("select successful normalized SHA-256 result: %v", err)
 		}
 		requireViolation(t, execError(ctx, database, "DELETE FROM media_variant WHERE id = ?", variantID),
-			"operation_analysis_media_variant_id_fkey")
-		if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
-			Set("analysis_media_variant_id = NULL").Set("updated_at = now()").
-			Where("id = ?", holdingOperationID).Exec(ctx); err != nil {
-			t.Fatalf("release the variant hold: %v", err)
-		}
-		if _, err := database.ExecContext(ctx, "DELETE FROM media_variant WHERE id = ?", variantID); err != nil {
-			t.Fatalf("delete the released variant: %v", err)
-		}
+			"source_analysis_step_success_sha_variant_id_fkey")
+	})
 
+	t.Run("location_link_refuses_deletion", func(t *testing.T) {
 		locationRoot := newVariantRoot(t, ctx, database, "/srv/variant-hold-location")
 		locationID := newVariantLocation(t, ctx, database, locationRoot, "album/track.flac")
-		linkedVariantID := newVariant(t, ctx, database, 2048, holdingOperationID)
+		linkedVariantID := newVariant(t, ctx, database, 2048, uuid.New())
 		if _, err := database.NewUpdate().Model((*persistence.SourceLocation)(nil)).
 			Set("media_variant_id = ?", linkedVariantID).Set("updated_at = now()").
 			Where("id = ?", locationID).Exec(ctx); err != nil {
@@ -421,31 +342,18 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 		if _, err := database.ExecContext(ctx, "DELETE FROM media_variant WHERE id = ?", linkedVariantID); err != nil {
 			t.Fatalf("delete the unlinked variant: %v", err)
 		}
-
-		installationRoot := newVariantRoot(t, ctx, database, "/srv/variant-hold-installation")
-		installationID := newVariantInstallation(t, ctx, database, "hold")
-		finished := time.Now().UTC()
-		insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "succeeded", Stage: "applying",
-			TargetSourceRootID: &installationRoot, FinishedAt: &finished,
-			AnalysisInstallationID: &installationID,
-		})
-		requireViolation(t, execError(ctx, database, "DELETE FROM tool_installation WHERE id = ?", installationID),
-			"operation_analysis_installation_id_fkey")
 	})
 }
 
-// storedAnalysisOperation is the durable shape a terminal analysis must keep
-// after its source root is deleted: the row itself and its input snapshot stay,
-// while the live root and location targets become NULL through the two SET NULL
-// foreign keys.
+// storedAnalysisOperation is the durable shape a terminal analysis keeps after
+// its source root is deleted: the row and its input snapshot remain, while its
+// normalized live targets are already cleared at settlement.
 type storedAnalysisOperation struct {
 	Kind       string          `bun:"kind"`
 	State      string          `bun:"state"`
 	Input      json.RawMessage `bun:"input_snapshot"`
 	RootTarget *uuid.UUID      `bun:"target_source_root_id"`
 	Location   *uuid.UUID      `bun:"target_source_location_id"`
-	Install    *uuid.UUID      `bun:"analysis_installation_id"`
 	SafeError  *string         `bun:"safe_error"`
 }
 
@@ -453,7 +361,7 @@ func readStoredAnalysis(t *testing.T, ctx context.Context, database *bun.DB, ope
 	t.Helper()
 	var stored storedAnalysisOperation
 	if err := database.NewRaw(
-		"SELECT kind, state, input_snapshot, target_source_root_id, target_source_location_id, analysis_installation_id, safe_error FROM operation WHERE id = ?",
+		"SELECT kind, state, input_snapshot, target_source_root_id, target_source_location_id, safe_error FROM operation WHERE id = ?",
 		operationID,
 	).Scan(ctx, &stored); err != nil {
 		t.Fatalf("read the analysis operation after root deletion: %v", err)
@@ -463,31 +371,25 @@ func readStoredAnalysis(t *testing.T, ctx context.Context, database *bun.DB, ope
 
 // TestSourceMediaVariantTerminalRootDeletionWithPostgreSQL is the regression
 // for the root-deletion boundary of the new kind. Deleting a source root that
-// still has a terminal analysis must succeed: the operation snapshot survives
-// and only its live root and location targets are nulled by the two ON DELETE
-// SET NULL foreign keys. An earlier shape check required target_source_root_id
-// for every analyze_source state, so that cascade aborted and made the plan's
-// root deletion impossible; a failed history is covered as well as a succeeded
-// one, and an active analysis must still refuse the deletion.
+// still has a terminal analysis must succeed: the durable operation snapshot
+// survives independently of live targets. An earlier shape check required
+// target_source_root_id for every analyze_source state, so root deletion could
+// invalidate terminal history; failed history is covered as well as succeeded,
+// and an active analysis with its normalized work hold must still refuse deletion.
 func TestSourceMediaVariantTerminalRootDeletionWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx := context.Background()
 
-	installationID := newVariantInstallation(t, ctx, database, "root-deletion")
-
 	t.Run("succeeded_analysis_survives_root_deletion", func(t *testing.T) {
 		rootID := newVariantRoot(t, ctx, database, "/srv/delete-succeeded")
-		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
+		newVariantLocation(t, ctx, database, rootID, "album/track.flac")
 		finished := time.Now().UTC()
-		snapshot := json.RawMessage(`{"source_root_id":"` + rootID.String() + `"}`)
+		snapshot := terminalAnalysisSnapshot(rootID)
 		operationID := insertOperation(t, ctx, database, &persistence.Operation{
 			Kind: "analyze_source", State: "succeeded", Stage: "applying",
-			InputSnapshot:          snapshot,
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
-			FinishedAt:             &finished,
+			InputSnapshot: snapshot, SourceAnalysisMode: "batch", FinishedAt: &finished,
 		})
 
 		if _, err := database.ExecContext(ctx, "DELETE FROM source_root WHERE id = ?", rootID); err != nil {
@@ -499,31 +401,21 @@ func TestSourceMediaVariantTerminalRootDeletionWithPostgreSQL(t *testing.T) {
 			t.Fatalf("operation after root deletion = %s/%s, want analyze_source/succeeded", stored.Kind, stored.State)
 		}
 		requireSourceSnapshot(t, stored.Input, rootID)
-		if stored.RootTarget != nil {
-			t.Fatalf("target_source_root_id = %s after root deletion, want NULL", *stored.RootTarget)
-		}
-		if stored.Location != nil {
-			t.Fatalf("target_source_location_id = %s after root deletion, want NULL", *stored.Location)
-		}
-		if stored.Install == nil || *stored.Install != installationID {
-			t.Fatalf("analysis_installation_id = %v after root deletion, want the held installation %s", stored.Install, installationID)
+		if stored.RootTarget != nil || stored.Location != nil {
+			t.Fatalf("terminal operation retained live targets after root deletion: root=%v location=%v", stored.RootTarget, stored.Location)
 		}
 	})
 
 	t.Run("failed_analysis_survives_root_deletion", func(t *testing.T) {
 		rootID := newVariantRoot(t, ctx, database, "/srv/delete-failed")
-		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
+		newVariantLocation(t, ctx, database, rootID, "album/track.flac")
 		finished := time.Now().UTC()
 		safeError := "ffprobe exited with status 1"
-		snapshot := json.RawMessage(`{"source_root_id":"` + rootID.String() + `"}`)
+		snapshot := terminalAnalysisSnapshot(rootID)
 		operationID := insertOperation(t, ctx, database, &persistence.Operation{
 			Kind: "analyze_source", State: "failed", Stage: "probing",
-			InputSnapshot:          snapshot,
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
-			SafeError:              &safeError,
-			FinishedAt:             &finished,
+			InputSnapshot: snapshot, SourceAnalysisMode: "batch",
+			SafeError: &safeError, FinishedAt: &finished,
 		})
 
 		if _, err := database.ExecContext(ctx, "DELETE FROM source_root WHERE id = ?", rootID); err != nil {
@@ -546,40 +438,38 @@ func TestSourceMediaVariantTerminalRootDeletionWithPostgreSQL(t *testing.T) {
 	t.Run("active_analysis_blocks_root_deletion", func(t *testing.T) {
 		rootID := newVariantRoot(t, ctx, database, "/srv/delete-active")
 		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
-		operationID := insertOperation(t, ctx, database, &persistence.Operation{
-			Kind: "analyze_source", State: "queued", Stage: "queued",
-			TargetSourceRootID:     &rootID,
-			TargetSourceLocationID: &locationID,
-			AnalysisInstallationID: &installationID,
-		})
+		operationID, _ := insertHeldBatchAnalysis(t, ctx, database, rootID, locationID)
 
 		err := execError(ctx, database, "DELETE FROM source_root WHERE id = ?", rootID)
 		if err == nil {
 			t.Fatal("deleting a root with an active analysis was accepted")
 		}
-		if !strings.Contains(err.Error(), "operation_analysis_target_shape") &&
-			!strings.Contains(err.Error(), "operation_active_analysis_has_target_location") {
-			t.Fatalf("error = %v, want an active-analysis root-deletion guard", err)
-		}
+		requirePostgresCheckViolation(t, err)
 
 		// The refused cascade must leave the live row and its guard values intact.
 		stored := readStoredAnalysis(t, ctx, database, operationID)
-		if stored.State != "queued" || stored.RootTarget == nil || *stored.RootTarget != rootID ||
-			stored.Location == nil || *stored.Location != locationID {
-			t.Fatalf("active analysis after the refused deletion = %+v, want queued with its root and location targets", stored)
+		if stored.State != "queued" || stored.RootTarget == nil || *stored.RootTarget != rootID || stored.Location != nil {
+			t.Fatalf("active analysis after the refused deletion = %+v, want queued with its batch root target and no location target", stored)
 		}
 	})
 }
 
 func requireSourceSnapshot(t *testing.T, raw json.RawMessage, rootID uuid.UUID) {
 	t.Helper()
-	var snapshot map[string]string
+	var snapshot struct {
+		SourceRootID string `json:"source_root_id"`
+		Mode         string `json:"mode"`
+	}
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		t.Fatalf("decode the retained operation snapshot: %v", err)
 	}
-	if len(snapshot) != 1 || snapshot["source_root_id"] != rootID.String() {
-		t.Fatalf("operation snapshot after root deletion = %v, want only source_root_id=%s", snapshot, rootID)
+	if snapshot.SourceRootID != rootID.String() || snapshot.Mode != "batch" {
+		t.Fatalf("operation snapshot after root deletion = %+v, want batch source_root_id=%s", snapshot, rootID)
 	}
+}
+
+func terminalAnalysisSnapshot(rootID uuid.UUID) json.RawMessage {
+	return json.RawMessage(`{"schema_version":1,"mode":"batch","work_ids":[],"tools":[],"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false,"tools_read_required":false,"source_root_id":"` + rootID.String() + `"}`)
 }
 
 func newVariantRoot(t *testing.T, ctx context.Context, database *bun.DB, path string) uuid.UUID {
@@ -691,6 +581,57 @@ func insertOperation(t *testing.T, ctx context.Context, database *bun.DB, operat
 	return operation.ID
 }
 
+func insertHeldBatchAnalysis(t *testing.T, ctx context.Context, database *bun.DB, rootID, locationID uuid.UUID) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	operationID, workID, err := storeHeldBatchAnalysis(ctx, database, rootID, locationID)
+	if err != nil {
+		t.Fatalf("insert active normalized batch with work hold: %v", err)
+	}
+	return operationID, workID
+}
+
+func tryHeldBatchAnalysis(t *testing.T, ctx context.Context, database *bun.DB, rootID, locationID uuid.UUID) error {
+	t.Helper()
+	_, _, err := storeHeldBatchAnalysis(ctx, database, rootID, locationID)
+	return err
+}
+
+func storeHeldBatchAnalysis(ctx context.Context, database *bun.DB, rootID, locationID uuid.UUID) (uuid.UUID, uuid.UUID, error) {
+	operationID := uuid.New()
+	workID := uuid.New()
+	var configuredPath, relativePath string
+	if err := database.NewRaw(`SELECT r.configured_path, l.relative_path
+		FROM source_root r JOIN source_location l ON l.source_root_id=r.id
+		WHERE r.id=? AND l.id=?`, rootID, locationID).Scan(ctx, &configuredPath, &relativePath); err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	snapshot, err := json.Marshal(map[string]any{
+		"schema_version": 1, "mode": "batch", "work_ids": []uuid.UUID{workID}, "tools": []any{},
+		"sha256_enabled": true, "cache_only_reuse": false, "rerun_target": false, "tools_read_required": false,
+	})
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	err = database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation := &persistence.Operation{
+			ID: operationID, Kind: "analyze_source", State: "queued", Stage: "queued",
+			InputSnapshot: snapshot, TargetSourceRootID: &rootID, SourceAnalysisMode: "batch", Attempt: 1,
+		}
+		if _, err := tx.NewInsert().Model(operation).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO source_analysis_work
+			(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id)
+			VALUES (?,?,?,?,?,?,1,now(),true,?)`,
+			workID, locationID, rootID, configuredPath, configuredPath, relativePath, uuid.New()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES (?,?)`, operationID, workID)
+		return err
+	})
+	return operationID, workID, err
+}
+
 func tryOperation(t *testing.T, ctx context.Context, database *bun.DB, operation *persistence.Operation) error {
 	t.Helper()
 	if operation.ID == uuid.Nil {
@@ -782,4 +723,12 @@ func constraintDefinition(t *testing.T, database *bun.DB, name string) string {
 		t.Fatalf("read constraint %s: %v", name, err)
 	}
 	return definition
+}
+
+func requirePostgresCheckViolation(t *testing.T, err error) {
+	t.Helper()
+	var pgErr pgdriver.Error
+	if !errors.As(err, &pgErr) || pgErr.Field('C') != "23514" {
+		t.Fatalf("error = %v, want a PostgreSQL check violation (SQLSTATE 23514)", err)
+	}
 }

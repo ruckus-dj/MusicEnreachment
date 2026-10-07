@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +50,13 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
+	toolsRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatalf("normalize tools root: %v", err)
+	}
+	if err := persistence.NewSettingsRepository(database).Set(ctx, settings.ToolsDirectoryKey, toolsRoot); err != nil {
+		t.Fatalf("set tools root before creating installations: %v", err)
+	}
 	installation := &persistence.ToolInstallation{
 		ID:                 uuid.New(),
 		PackageKind:        "ffmpeg",
@@ -426,8 +434,8 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 		t.Fatal("deleted installation remains in database")
 	}
 	preserved, err := repository.GetOperation(ctx, historical.ID)
-	if err != nil || preserved.TargetInstallationID != nil {
-		t.Fatalf("historical operation = %#v, %v; want preserved without deleted target", preserved, err)
+	if err != nil || preserved.Kind != "install" || preserved.State != "succeeded" || preserved.TargetInstallationID != nil {
+		t.Fatalf("historical operation = %#v, %v; want terminal install preserved without its deleted target", preserved, err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, "operator-note.txt")); err != nil {
 		t.Fatalf("unknown file was deleted: %v", err)
@@ -659,14 +667,33 @@ func TestDeleteInstallationAndRetryUseConsistentOperationLockOrder(t *testing.T)
 	if _, err := database.ExecContext(ctx, "UPDATE tool_installation SET state = 'failed' WHERE id = ?", installation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", t.TempDir()); err != nil {
+	toolsRoot, err := settings.NormalizePath(t.TempDir())
+	if err != nil {
+		t.Fatalf("normalize tools root: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", toolsRoot); err != nil {
 		t.Fatal(err)
+	}
+	managedFile := filepath.Join(toolsRoot, installation.RelativePath, "probe")
+	if err := os.MkdirAll(filepath.Dir(managedFile), 0o755); err != nil {
+		t.Fatalf("create managed installation directory: %v", err)
+	}
+	if err := os.WriteFile(managedFile, []byte("preserve"), 0o600); err != nil {
+		t.Fatalf("create managed installation file: %v", err)
 	}
 	finished := time.Now().UTC()
 	safeError := "previous attempt failed"
+	snapshot, err := json.Marshal(struct {
+		TargetIdentity string `json:"target_identity"`
+		SchemaVersion  int    `json:"schema_version"`
+		ToolsRoot      string `json:"tools_root"`
+	}{TargetIdentity: "ffmpeg:test:7.1:linux:amd64", SchemaVersion: 2, ToolsRoot: toolsRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
 	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: "delete", State: "failed", Stage: "preflight",
-		InputSnapshot:        json.RawMessage(`{"target_identity":"ffmpeg:test:7.1:linux:amd64"}`),
+		ID: installation.ID, Kind: "install", State: "failed", Stage: "download",
+		InputSnapshot:        snapshot,
 		TargetInstallationID: &installation.ID, FinishedAt: &finished, SafeError: &safeError,
 	}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
@@ -690,8 +717,8 @@ func TestDeleteInstallationAndRetryUseConsistentOperationLockOrder(t *testing.T)
 			<-deleteDone
 		}
 	}()
-	// pause after retry holds the operation and common locks, before the job insert
-	// and final UPDATE, to create a deterministic contention point.
+	// Pause after retry holds the package and installation locks, before the job
+	// insert and final UPDATE, to create a deterministic contention point.
 	go func() {
 		_, retryErr := repository.RetryOperationAndEnqueue(ctx, operation.ID, inserter,
 			service.OperationJobArgs{OperationID: operation.ID}, nil)
@@ -707,30 +734,133 @@ func TestDeleteInstallationAndRetryUseConsistentOperationLockOrder(t *testing.T)
 	deleteStarted = true
 	go func() {
 		deleteDone <- repository.DeleteInstallation(ctx, installation.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey,
-			func(*persistence.ToolInstallation, string) error {
+			func(target *persistence.ToolInstallation, root string) error {
 				deleteCallbackCalled <- struct{}{}
-				return nil
+				return os.RemoveAll(filepath.Join(root, target.RelativePath))
 			})
 	}()
-	waitForOperationTableLockWait(t, ctx, database)
+	waitForDatabaseLockWait(t, ctx, database)
+	select {
+	case <-deleteCallbackCalled:
+		t.Fatal("delete removed installation files while retry was becoming active")
+	default:
+	}
 	release()
 	retryErr := <-retryDone
 	retryJoined = true
 	if retryErr != nil {
-		t.Fatalf("retry failed while delete waited for the common table lock: %v", retryErr)
+		t.Fatalf("retry failed while delete waited for the package lock: %v", retryErr)
 	}
 	deleteErr := <-deleteDone
 	deleteJoined = true
-	if deleteErr == nil {
-		t.Fatal("delete succeeded after retry queued an active installation operation")
+	if deleteErr == nil || (!strings.Contains(deleteErr.Error(), "not deletable") && !strings.Contains(deleteErr.Error(), "active operation")) {
+		t.Fatalf("delete error = %v, want a refusal for the retried installation", deleteErr)
 	}
 	select {
 	case <-deleteCallbackCalled:
-		t.Fatal("delete callback ran despite the active retried operation")
+		t.Fatal("delete called filesystem remover after retry became active")
 	default:
 	}
-	if _, err := repository.GetInstallation(ctx, installation.ID); err != nil {
-		t.Fatalf("installation disappeared during retry/delete contention: %v", err)
+	remaining, err := repository.GetInstallation(ctx, installation.ID)
+	if err != nil || remaining.State != "preparing" || remaining.PlatformGOOS != "linux" || remaining.PlatformGOARCH != "amd64" {
+		t.Fatalf("installation after retry/delete contention = %#v, %v; want preparing linux/amd64", remaining, err)
+	}
+	if _, err := os.Stat(managedFile); err != nil {
+		t.Fatalf("managed file was removed during retry contention: %v", err)
+	}
+	queued, err := repository.GetOperation(ctx, operation.ID)
+	if err != nil || queued.State != "queued" || queued.TargetInstallationID == nil || *queued.TargetInstallationID != installation.ID {
+		t.Fatalf("retried operation = %#v, %v; want queued with original target", queued, err)
+	}
+
+	// Activation retry uses the same generic repository entry point but does not
+	// reset the installation to preparing. Its queued operation must still block
+	// deletion before the filesystem callback runs.
+	activationTarget := createReadyInstallation(t, ctx, repository, "fpcalc", "linux", "amd64", "1.6.0")
+	activationFile := filepath.Join(toolsRoot, activationTarget.RelativePath, "probe")
+	if err := os.MkdirAll(filepath.Dir(activationFile), 0o755); err != nil {
+		t.Fatalf("create activation target directory: %v", err)
+	}
+	if err := os.WriteFile(activationFile, []byte("preserve"), 0o600); err != nil {
+		t.Fatalf("create activation target file: %v", err)
+	}
+	activationFinished := time.Now().UTC()
+	activationOperation := &persistence.Operation{
+		ID: uuid.New(), Kind: "activate", State: "failed", Stage: "verify",
+		InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:test:1.6.0:linux:amd64"}`),
+		TargetInstallationID: &activationTarget.ID, FinishedAt: &activationFinished, SafeError: &safeError,
+	}
+	if err := repository.CreateOperation(ctx, activationOperation); err != nil {
+		t.Fatalf("create failed activation operation: %v", err)
+	}
+	activationInserter := riverInsertPause{RiverInserter: client, entered: make(chan struct{}), release: make(chan struct{})}
+	var activationReleaseOnce sync.Once
+	activationRelease := func() { activationReleaseOnce.Do(func() { close(activationInserter.release) }) }
+	activationRetryDone := make(chan error, 1)
+	activationDeleteDone := make(chan error, 1)
+	activationCallbackCalled := make(chan struct{}, 1)
+	activationDeleteStarted := false
+	activationRetryJoined := false
+	activationDeleteJoined := false
+	defer func() {
+		activationRelease()
+		if !activationRetryJoined {
+			<-activationRetryDone
+		}
+		if activationDeleteStarted && !activationDeleteJoined {
+			<-activationDeleteDone
+		}
+	}()
+	go func() {
+		_, retryErr := repository.RetryOperationAndEnqueue(ctx, activationOperation.ID, activationInserter,
+			service.OperationJobArgs{OperationID: activationOperation.ID}, nil)
+		activationRetryDone <- retryErr
+	}()
+	select {
+	case <-activationInserter.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("activation retry did not reach River insert barrier")
+	}
+	activationDeleteStarted = true
+	go func() {
+		activationDeleteDone <- repository.DeleteInstallation(ctx, activationTarget.ID, "fpcalc", "linux", "amd64", settings.ActiveFPCalcInstallationKey,
+			func(target *persistence.ToolInstallation, root string) error {
+				activationCallbackCalled <- struct{}{}
+				return os.RemoveAll(filepath.Join(root, target.RelativePath))
+			})
+	}()
+	waitForDatabaseLockWait(t, ctx, database)
+	select {
+	case <-activationCallbackCalled:
+		t.Fatal("delete removed activation target files while retry was becoming active")
+	default:
+	}
+	activationRelease()
+	activationRetryErr := <-activationRetryDone
+	activationRetryJoined = true
+	if activationRetryErr != nil {
+		t.Fatalf("activation retry failed while delete waited for the package lock: %v", activationRetryErr)
+	}
+	activationDeleteErr := <-activationDeleteDone
+	activationDeleteJoined = true
+	if activationDeleteErr == nil || !strings.Contains(activationDeleteErr.Error(), "active operation") {
+		t.Fatalf("activation delete error = %v, want active operation conflict", activationDeleteErr)
+	}
+	select {
+	case <-activationCallbackCalled:
+		t.Fatal("delete called filesystem remover after activation retry became active")
+	default:
+	}
+	if _, err := os.Stat(activationFile); err != nil {
+		t.Fatalf("activation target file was removed during retry contention: %v", err)
+	}
+	activationAfterRace, err := repository.GetInstallation(ctx, activationTarget.ID)
+	if err != nil || activationAfterRace.State != "ready" || activationAfterRace.PlatformGOOS != "linux" || activationAfterRace.PlatformGOARCH != "amd64" {
+		t.Fatalf("activation target after retry/delete contention = %#v, %v; want ready linux/amd64", activationAfterRace, err)
+	}
+	activationQueued, err := repository.GetOperation(ctx, activationOperation.ID)
+	if err != nil || activationQueued.State != "queued" || activationQueued.TargetInstallationID == nil || *activationQueued.TargetInstallationID != activationTarget.ID {
+		t.Fatalf("retried activation = %#v, %v; want queued with original target", activationQueued, err)
 	}
 }
 
@@ -750,7 +880,7 @@ func (inserter riverInsertPause) InsertTx(ctx context.Context, tx *sql.Tx, args 
 	return inserter.RiverInserter.InsertTx(ctx, tx, args, options)
 }
 
-func waitForOperationTableLockWait(t *testing.T, ctx context.Context, database *bun.DB) {
+func waitForDatabaseLockWait(t *testing.T, ctx context.Context, database *bun.DB) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -758,16 +888,17 @@ func waitForOperationTableLockWait(t *testing.T, ctx context.Context, database *
 		if err := database.NewRaw(`SELECT EXISTS (
 			SELECT 1 FROM pg_stat_activity
 			WHERE wait_event_type = 'Lock'
-			AND query LIKE 'LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE%'
+			AND query LIKE '%pg_advisory_xact_lock%'
+			AND cardinality(pg_blocking_pids(pid)) > 0
 		)`).Scan(ctx, &waiting); err != nil {
-			t.Fatalf("observe operation-table lock waiter: %v", err)
+			t.Fatalf("observe package lock waiter: %v", err)
 		}
 		if waiting {
 			return
 		}
 		runtime.Gosched()
 	}
-	t.Fatal("delete did not block on the operation-table lock")
+	t.Fatal("delete did not block on the package lock")
 }
 
 func TestActivateInstallationConflictsWithActiveMoveWithPostgreSQL(t *testing.T) {
@@ -1003,6 +1134,10 @@ func finishOperation(t *testing.T, ctx context.Context, repository *persistence.
 
 func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SetupManagerRepository) {
 	t.Helper()
+	expectedToolsRoot, exists, err := persistence.NewSettingsRepository(database).Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || !exists {
+		t.Fatalf("read tools root for installation enqueue: %q, exists=%v, err=%v", expectedToolsRoot, exists, err)
+	}
 	driver := riverdatabasesql.New(database.DB)
 	migrator, err := rivermigrate.New(driver, nil)
 	if err != nil {
@@ -1052,9 +1187,9 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 
 	retryInstallation := createReadyInstallation(t, ctx, repository, "ffmpeg", "linux", "amd64", "8.0")
-	retryRoot, err := settings.NormalizePath(t.TempDir())
-	if err != nil {
-		t.Fatalf("normalize retry tools root: %v", err)
+	retryRoot, exists, err := persistence.NewSettingsRepository(database).Get(ctx, settings.ToolsDirectoryKey)
+	if err != nil || !exists {
+		t.Fatalf("read tools root for retry: %q, exists=%v, err=%v", retryRoot, exists, err)
 	}
 	retrySnapshot, err := json.Marshal(service.InstallInputSnapshot{
 		TargetIdentity: "ffmpeg:test:8.0:linux:amd64", SchemaVersion: 2, ToolsRoot: retryRoot,
@@ -1075,9 +1210,6 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	if _, err := database.ExecContext(ctx, "UPDATE operation SET updated_at = ? WHERE id = ?", oldUpdatedAt, retryOperation.ID); err != nil {
 		t.Fatalf("set old retry timestamp: %v", err)
 	}
-	if err := persistence.NewSettingsRepository(database).Set(ctx, settings.ToolsDirectoryKey, retryRoot); err != nil {
-		t.Fatalf("set retry tools root: %v", err)
-	}
 	retried, err := repository.RetryOperationAndEnqueue(ctx, retryOperation.ID, client, transactionTestArgs{}, nil)
 	if err != nil {
 		t.Fatalf("retry operation: %v", err)
@@ -1087,9 +1219,6 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 	}
 	if !retried.UpdatedAt.After(oldUpdatedAt) {
 		t.Fatalf("retry updated_at = %v; want after %v", retried.UpdatedAt, oldUpdatedAt)
-	}
-	if _, err := database.ExecContext(ctx, "DELETE FROM app_setting WHERE setting_name = ?", settings.ToolsDirectoryKey); err != nil {
-		t.Fatalf("clear retry tools root: %v", err)
 	}
 	retriedInstallation, err := repository.GetInstallation(ctx, retryInstallation.ID)
 	if err != nil || retriedInstallation.State != "preparing" {
@@ -1133,7 +1262,7 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 		InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.7.0:linux:amd64"}`),
 		TargetInstallationID: &preparing.ID,
 	}
-	if err := repository.CreateInstallationOperationAndEnqueue(ctx, "", preparing, installOperation, client, transactionTestArgs{}, nil); err != nil {
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, expectedToolsRoot, preparing, installOperation, client, transactionTestArgs{}, nil); err != nil {
 		t.Fatalf("atomically create installation, operation, and job: %v", err)
 	}
 	if _, err := repository.GetInstallation(ctx, preparing.ID); err != nil {
@@ -1153,7 +1282,7 @@ func assertTransactionalRiverEnqueue(t *testing.T, ctx context.Context, database
 		ID: uuid.New(), Kind: "install", State: "queued", Stage: "queued",
 		InputSnapshot: installOperation.InputSnapshot, TargetInstallationID: &duplicateTarget.ID,
 	}
-	if err := repository.CreateInstallationOperationAndEnqueue(ctx, "", &duplicateTarget, duplicateOperation, client, transactionTestArgs{}, nil); err == nil {
+	if err := repository.CreateInstallationOperationAndEnqueue(ctx, expectedToolsRoot, &duplicateTarget, duplicateOperation, client, transactionTestArgs{}, nil); err == nil {
 		t.Fatal("duplicate installation identity was enqueued")
 	}
 	var rolledBackInstallRows int

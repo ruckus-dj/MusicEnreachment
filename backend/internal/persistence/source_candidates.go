@@ -41,10 +41,10 @@ func storeSourceScanCandidates(ctx context.Context, database bun.IDB, operationI
 	if _, err := database.NewRaw(
 		`INSERT INTO source_scan_candidate (id, operation_id, relative_path, size_bytes, mtime, probe_status, safe_error,
 		 source_sha256, sha256_calculated_at, sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json,
-		 analysis_policy_version, observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis)
+			 analysis_policy_version, observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis)
 		 SELECT gen_random_uuid(), ?::uuid, batch.relative_path, batch.size_bytes, batch.mtime, batch.probe_status, batch.safe_error,
 		 decode(batch.source_sha256,'hex'), batch.sha256_calculated_at, batch.sha256_applied_operation_id, batch.audio_stream_count,
-		 batch.ffprobe_version, batch.ffprobe_json, batch.analysis_policy_version, batch.observed_tags, batch.inspected_at, batch.probe_applied_operation_id, batch.prepared_analysis
+			 batch.ffprobe_version, batch.ffprobe_json, batch.analysis_policy_version, batch.observed_tags, batch.inspected_at, batch.probe_applied_operation_id, batch.prepared_analysis
 		 FROM jsonb_to_recordset(?) AS batch(`+sourceScanCandidateColumns+`)`,
 		operationID, marshalled,
 	).Exec(ctx); err != nil {
@@ -109,7 +109,7 @@ func loadSourceScanCandidates(ctx context.Context, database bun.IDB, operationID
 	if err := database.NewRaw(
 		`SELECT relative_path, size_bytes, mtime, probe_status, safe_error, source_sha256, sha256_calculated_at,
 		 sha256_applied_operation_id, audio_stream_count, ffprobe_version, ffprobe_json, analysis_policy_version,
-		 observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis
+			 observed_tags, inspected_at, probe_applied_operation_id, prepared_analysis
 		 FROM source_scan_candidate WHERE operation_id = ? ORDER BY relative_path, id`,
 		operationID,
 	).Scan(ctx, &candidates); err != nil {
@@ -159,12 +159,8 @@ func applySourceScanCandidates(ctx context.Context, tx bun.Tx, root SourceRoot, 
 	if remaining != len(candidates) {
 		return fmt.Errorf("applied generation has %d locations of %d candidates", remaining, len(candidates))
 	}
-	// Unseen, changed and path-invalidated locations have released their
-	// variants; a variant nothing links and no operation holds is removed here,
-	// inside the same transaction, so reconciliation never leaves an orphan.
-	if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
-		return err
-	}
+	// Result cleanup follows prepared-result publication in the same transaction,
+	// so replacing the inventory cannot discard identities still needed to publish.
 	return nil
 }
 

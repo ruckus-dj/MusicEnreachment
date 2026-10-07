@@ -17,6 +17,7 @@ import (
 const sourceAnalysisStepInputStorageMigration = "20261008120000"
 
 func TestSourceAnalysisStepInputStorageMigrationWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	ctx := context.Background()
 	collection := mustMigrations(t)

@@ -34,7 +34,9 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	establishInventory(t, ctx, database, root)
 	installationID := insertAnalysisInstallation(t, ctx, database, "held")
 	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
-	if err := enqueueAnalysis(t, ctx, inventory, analysisEnqueueOperation(root, location, installationID, nil), client); err != nil {
+	tool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
+	analysis := normalizedQueuedAnalysis(t, ctx, inventory, root, location, []persistence.SourceAnalysisToolSelection{tool})
+	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, analysis); err != nil {
 		t.Fatalf("enqueue the holding analysis: %v", err)
 	}
 

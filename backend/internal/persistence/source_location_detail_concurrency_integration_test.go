@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
@@ -28,8 +29,19 @@ func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *t
 	root := createInventoryRoot(t, ctx, inventory, "/srv/detail-apply-snapshot")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "detail-apply-snapshot")
-	operation := insertRunningAnalysisOperation(t, ctx, database, root, location, installationID, nil)
+	work := normalizedWork(t, ctx, inventory, root, location, false,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepProbe, State: "pending"})
+	tool := insertVerifiedAnalysisTool(t, ctx, database, "ffmpeg", "ffprobe", "7.1", "ffprobe version 7.1")
+	operation := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeBatch, nil, nil, false, false,
+		[]persistence.SourceAnalysisToolSelection{tool})
+	admitAndRunNormalizedAnalysis(t, ctx, database, inventory, openScanEnqueueRiver(t, database), operation)
+	stepAttempt, err := inventory.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{
+		WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt,
+		JobID: *operation.RiverJobID, Step: persistence.SourceStepProbe,
+	})
+	if err != nil {
+		t.Fatalf("claim normalized probe: %v", err)
+	}
 
 	barrier := newPausingQueryBarrier("source_location_detail_active")
 	barrier.armed.Store(true)
@@ -42,8 +54,14 @@ func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *t
 		readErr <- err
 	}()
 	awaitSignal(t, barrier.attempted, "the detail read to reach its active-operation query")
-	if _, err := inventory.ApplyAnalysisResult(ctx, analysisApplyFor(operation, location, "7.1")); err != nil {
-		t.Fatalf("apply the first analysis while detail is paused: %v", err)
+	if _, err := inventory.ApplySourceProbe(ctx, persistence.SourceProbeApply{
+		WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt,
+		JobID: *operation.RiverJobID, StepAttempt: stepAttempt, SizeBytes: location.SizeBytes,
+		AnalysisPolicy: persistence.SourceAnalysisPolicyVersion, FFProbeVersion: tool.VersionBanner,
+		FFProbeJSON: []byte(`{"format":{"format_name":"flac"}}`), ObservedTags: []byte(`{}`),
+		InspectedAt: time.Now().UTC().Truncate(time.Microsecond), AudioStreamCount: 1,
+	}); err != nil {
+		t.Fatalf("apply normalized probe while detail is paused: %v", err)
 	}
 	close(barrier.release)
 	snapshot := awaitValue(t, readResult, "the detail read")
@@ -69,13 +87,9 @@ func TestSourceLocationDetailSurvivesConcurrentOrphanVariantDeleteWithPostgreSQL
 	root := createInventoryRoot(t, ctx, inventory, "/srv/detail-orphan-delete")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 1024, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "detail-orphan-delete")
-	operation := insertRunningAnalysisOperation(t, ctx, database, root, location, installationID, nil)
-	if _, err := inventory.ApplyAnalysisResult(ctx, analysisApplyFor(operation, location, "7.1")); err != nil {
-		t.Fatalf("apply initial analysis: %v", err)
-	}
+	variantID := insertMediaVariantRow(t, ctx, database, location.SizeBytes, uuid.New())
+	linkLocationVariant(t, ctx, database, location.ID, variantID)
 	location = readLocationByID(t, ctx, database, location.ID)
-	variantID := *location.MediaVariantID
 
 	barrier := newPausingQueryBarrier("source_location_detail_variant")
 	barrier.armed.Store(true)

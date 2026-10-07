@@ -22,24 +22,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
 func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -144,8 +139,8 @@ func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
@@ -349,8 +344,8 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 
 func TestMoveWorkerRiverInterruptionRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -504,8 +499,8 @@ func TestMoveWorkerRiverInterruptionRecoveryPostgreSQL(t *testing.T) {
 
 func TestMoveWorkerRiverSwitchAndCleanupInterruptionRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -626,8 +621,8 @@ func TestMoveWorkerRiverSwitchAndCleanupInterruptionRecoveryPostgreSQL(t *testin
 
 func TestMoveWorkerRiverRecoversPublishedTargetBeforeOwnershipJournalPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -1001,43 +996,6 @@ func newDispatchCatalog(t *testing.T, release string) *dispatchCatalog {
 	}
 }
 
-func openDispatchDatabase(t *testing.T) (*bun.DB, string) {
-	t.Helper()
-	startup, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	container, err := postgres.Run(startup, "postgres:17",
-		postgres.WithDatabase("melotrove_jobs_test"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("postgres"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(45*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start PostgreSQL Testcontainer: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := container.Terminate(context.Background()); err != nil {
-			t.Errorf("terminate PostgreSQL Testcontainer: %v", err)
-		}
-	})
-	databaseURL, err := container.ConnectionString(startup, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("get PostgreSQL Testcontainer connection string: %v", err)
-	}
-	sqlDatabase, err := sql.Open("pgx", databaseURL)
-	if err != nil {
-		t.Fatalf("open PostgreSQL Testcontainer database: %v", err)
-	}
-	database := bun.NewDB(sqlDatabase, pgdialect.New())
-	if err := database.PingContext(startup); err != nil {
-		_ = database.Close()
-		t.Fatalf("connect to PostgreSQL Testcontainer: %v", err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	return database, databaseURL
-}
-
 func startDispatchRiver(t *testing.T, databaseURL string, database *bun.DB,
 	worker *InstallationWorker) (*river.Client[*sql.Tx], *pgxpool.Pool) {
 	t.Helper()
@@ -1131,6 +1089,11 @@ func awaitRiverCompletion(t *testing.T, ctx context.Context, events <-chan *rive
 
 func setRuntimeRoots(t *testing.T, ctx context.Context, repository *persistence.SettingsRepository, root string) {
 	t.Helper()
+	normalized, err := settings.NormalizePath(root)
+	if err != nil {
+		t.Fatalf("normalize fixture tools directory: %v", err)
+	}
+	root = normalized
 	if err := repository.Set(ctx, settings.ToolsDirectoryKey, root); err != nil {
 		t.Fatalf("set tools directory: %v", err)
 	}
@@ -1181,8 +1144,8 @@ var _ river.Worker[service.OperationJobArgs] = (*InstallationWorker)(nil)
 
 func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 

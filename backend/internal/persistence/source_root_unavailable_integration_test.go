@@ -50,6 +50,7 @@ func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
 	failing := newSourceScanOperation(t, ctx, database, root, "running")
 	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
 		OperationID: failing.ID, SafeError: unavailableSafeReason,
+		ExpectedAttempt: failing.Attempt, ExpectedJobID: *failing.RiverJobID,
 	}); err != nil {
 		t.Fatalf("mark the root unavailable: %v", err)
 	}
@@ -126,8 +127,8 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 	baseline := snapshotInventory(t, ctx, database, root.ID)
 
 	for _, stale := range []persistence.SourceScanUnavailable{
-		{OperationID: older.ID, SafeError: unavailableSafeReason},
-		{OperationID: success.ID, SafeError: unavailableSafeReason},
+		{OperationID: older.ID, SafeError: unavailableSafeReason, ExpectedAttempt: older.Attempt, ExpectedJobID: *older.RiverJobID},
+		{OperationID: success.ID, SafeError: unavailableSafeReason, ExpectedAttempt: success.Attempt, ExpectedJobID: *success.RiverJobID},
 	} {
 		if err := inventory.MarkSourceRootUnavailable(ctx, stale); err != nil {
 			t.Fatalf("mark with the superseded operation %s: %v", stale.OperationID, err)
@@ -164,7 +165,7 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 
 	// A scan of the same root fails and is retried: the retry is a fresh attempt
 	// enqueued after the success.
-	failed := failedSourceScanRetryOperation(t, ctx, repository, root, "queued", unavailableSafeReason)
+	failed := failedSourceScanRetryOperation(t, ctx, repository, inventory, root, "queued", unavailableSafeReason)
 	retried, err := retrySourceScan(t, ctx, repository, failed.ID, client)
 	if err != nil {
 		t.Fatalf("retry the failed scan: %v", err)
@@ -176,8 +177,13 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 	// The retry fails before it starts its traversal: started_at stays NULL and
 	// the failure moves updated_at past the success.
 	failScanOperation(t, ctx, database, retried.ID, unavailableSafeReason)
+	retried, err = repository.GetOperation(ctx, retried.ID)
+	if err != nil {
+		t.Fatalf("read the stored retry delivery: %v", err)
+	}
 	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
 		OperationID: retried.ID, SafeError: unavailableSafeReason,
+		ExpectedAttempt: retried.Attempt, ExpectedJobID: *retried.RiverJobID,
 	}); err != nil {
 		t.Fatalf("mark with the fresh retry: %v", err)
 	}
@@ -210,7 +216,7 @@ func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
 	before := snapshotInventory(t, ctx, database, root.ID)
 
 	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
-		OperationID: operation.ID, SafeError: "",
+		OperationID: operation.ID, SafeError: "", ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err == nil {
 		t.Fatal("an unavailable report with an empty safe error was accepted")
 	}
@@ -237,6 +243,7 @@ func TestSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL(t *testing.T
 
 	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
 		OperationID: operation.ID, SafeError: unavailableSafeReason,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: *operation.RiverJobID,
 	}); err == nil {
 		t.Fatal("an unavailable report for an operation without a source root target was accepted")
 	}

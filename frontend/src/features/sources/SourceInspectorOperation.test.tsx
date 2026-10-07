@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../../test/server";
@@ -10,199 +10,104 @@ import {
   operation,
   responseFor,
   result,
-  stamp,
   stream,
 } from "./sourceInspectorTestSupport";
 
-describe("inspector analysis operations", () => {
-  it("posts the observed identity and refreshes detail when the operation succeeds", async () => {
-    // Given
-    let analyzed = false;
-    let body: unknown;
-    server.use(
-      http.get(detailPath, () =>
-        HttpResponse.json(
-          detail(analyzed ? { result, analysis_state: "analyzed" } : {}),
-        ),
-      ),
-      http.post(`${detailPath}/analyze`, async ({ request }) => {
-        body = await request.json();
-        analyzed = true;
-        return HttpResponse.json(operation(), { status: 202 });
-      }),
-      http.get("/api/operations/analysis-1", () =>
-        HttpResponse.json(operation({ state: "succeeded" })),
-      ),
-    );
-    await openInspector();
-    const refreshed = responseFor(detailPath);
-    // When
-    fireEvent.click(screen.getByRole("button", { name: "Анализировать" }));
-    await refreshed;
-    await observe(() => !!screen.queryByText("matroska"));
-    // Then
-    expect(body).toEqual({
-      expected_size_bytes: 1048576,
-      expected_mtime: stamp,
-    });
-    expect(
-      screen.getByRole("button", { name: "Повторить анализ" }),
-    ).toBeEnabled();
-    expect(stream().close).toHaveBeenCalled();
-  });
-  it("rereads identity and offers a fresh load when start returns conflict", async () => {
-    // Given
-    server.use(
-      http.post(`${detailPath}/analyze`, () =>
-        HttpResponse.json({ detail: "identity changed" }, { status: 409 }),
-      ),
-    );
-    await openInspector();
-    const refreshed = responseFor(detailPath);
-    // When
-    fireEvent.click(screen.getByRole("button", { name: "Анализировать" }));
-    await refreshed;
-    await observe(() => !!screen.queryByRole("alert"));
-    // Then
-    expect(screen.getByRole("alert")).toHaveTextContent("identity changed");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "новый анализ текущего файла",
-    );
-    expect(
-      screen.getByRole("button", { name: "Повторить загрузку" }),
-    ).toBeEnabled();
-  });
-  it("keeps previous result and its date when a repeat fails", async () => {
-    // Given
-    server.use(
-      http.get(detailPath, () =>
-        HttpResponse.json(detail({ result, analysis_state: "analyzed" })),
-      ),
-      http.post(`${detailPath}/analyze`, () =>
-        HttpResponse.json(operation(), { status: 202 }),
-      ),
-      http.get("/api/operations/analysis-1", () =>
-        HttpResponse.json(
-          operation({
-            state: "failed",
-            stage: "probing",
-            safe_error: "probe read failed",
-          }),
-        ),
-      ),
-    );
-    await openInspector();
-    // When
-    fireEvent.click(screen.getByRole("button", { name: "Повторить анализ" }));
-    await observe(
-      () =>
-        !!screen.queryByRole("button", {
-          name: "Повторить попытку операции",
-        }) && !screen.queryByText(/Загрузка файла/),
-    );
-    // Then
-    expect(screen.getByRole("alert")).toHaveTextContent("probe read failed");
-    expect(screen.getByText("matroska")).toBeVisible();
-    expect(screen.getByText(/Анализ от/)).toHaveTextContent(
-      new Date(stamp).toLocaleString(),
-    );
-  });
-  it("adopts active analysis, treats SSE as wake only, and refreshes failure detail on reconnect", async () => {
-    // Given
-    let state = "running";
-    let reads = 0;
+describe("source inspector operation wake-ups", () => {
+  it("rereads the inspector on intermediate wakes while preserving previous results", async () => {
+    let phase = 0;
+    let detailReads = 0;
+    let operationReads = 0;
     server.use(
       http.get(detailPath, () => {
-        reads += 1;
+        detailReads += 1;
         return HttpResponse.json(
           detail({
             result,
-            analysis_state: "analyzed",
-            ...(state === "running"
-              ? { active_analysis_operation_id: "analysis-1" }
-              : {}),
+            relative_path: phase > 0 ? "album/02.flac" : "album/01.flac",
+            active_analysis_operation_id: "step-op",
+            steps:
+              phase > 0
+                ? [
+                    {
+                      name: "sha256",
+                      state: "succeeded",
+                      attempt: 1,
+                      sha256: { value: "digest-value" },
+                    },
+                  ]
+                : [{ name: "sha256", state: "running", attempt: 1 }],
           }),
         );
       }),
-      http.get("/api/operations/analysis-1", () =>
+      http.get("/api/operations/step-op", () => {
+        operationReads += 1;
+        return HttpResponse.json(
+          operation({
+            id: "step-op",
+            kind: "retry-source-location-step",
+            state: "running",
+            stage: "hashing",
+          }),
+        );
+      }),
+    );
+    const initialOperation = responseFor("/api/operations/step-op");
+    await openInspector();
+    await initialOperation;
+    await observe(() => !!screen.queryByText(/Состояние: Выполняется/));
+    const previousDetailReads = detailReads;
+    const previousOperationReads = operationReads;
+    phase = 1;
+    const refreshed = responseFor(detailPath, "GET", 1);
+    const operationRefreshed = responseFor("/api/operations/step-op", "GET", 1);
+    await act(async () => {
+      stream().dispatchEvent(
+        new MessageEvent("operation-changed", {
+          data: JSON.stringify(
+            operation({
+              id: "step-op",
+              state: "running",
+              updated_at: "2026-10-01T11:00:00Z",
+            }),
+          ),
+        }),
+      );
+      await Promise.all([refreshed, operationRefreshed]);
+    });
+    expect(detailReads).toBeGreaterThan(previousDetailReads);
+    expect(operationReads).toBeGreaterThan(previousOperationReads);
+    expect(screen.getByText("matroska")).toBeVisible();
+  });
+
+  it("clears a stale active operation after the server no longer reports its ID", async () => {
+    let reads = 0;
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            ...(reads++ === 0
+              ? { active_analysis_operation_id: "stale-op" }
+              : {}),
+          }),
+        ),
+      ),
+      http.get("/api/operations/stale-op", () =>
         HttpResponse.json(
           operation({
-            state,
-            stage: "probing",
-            safe_error: "reconnected failure",
+            id: "stale-op",
+            state: "failed",
+            safe_error: "old failure",
           }),
         ),
       ),
     );
-    // When
+    const reread = responseFor(detailPath, "GET", 2);
     await openInspector();
+    await reread;
     await observe(
-      () => !!screen.queryByText("Чтение технических данных ffprobe."),
+      () => !screen.queryByText(/Сохранение результата этапа анализа/),
     );
-    // Then
-    expect(
-      screen.getByRole("button", { name: "Повторить анализ" }),
-    ).toBeDisabled();
-    const events = stream();
-    const disconnectedRead = responseFor("/api/operations/analysis-1");
-    await act(async () => {
-      events.dispatchEvent(new Event("error"));
-      await disconnectedRead;
-    });
-    expect(screen.getByText(/Поток событий прерван/)).toBeVisible();
-    state = "failed";
-    const refreshed = responseFor(detailPath);
-    act(() => {
-      events.dispatchEvent(
-        new MessageEvent("operation-changed", {
-          data: JSON.stringify(operation({ state: "succeeded" })),
-        }),
-      );
-    });
-    await refreshed;
-    await observe(
-      () =>
-        !!screen.queryByRole("alert") && !screen.queryByText(/Загрузка файла/),
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent("reconnected failure");
-    expect(reads).toBe(2);
-    expect(screen.getByText("matroska")).toBeVisible();
-    expect(events.close).toHaveBeenCalled();
-  });
-  it("dismisses a failed operation without erasing the saved result", async () => {
-    // Given
-    server.use(
-      http.get(detailPath, () =>
-        HttpResponse.json(detail({ result, analysis_state: "analyzed" })),
-      ),
-      http.post(`${detailPath}/analyze`, () =>
-        HttpResponse.json(operation(), { status: 202 }),
-      ),
-      http.get("/api/operations/analysis-1", () =>
-        HttpResponse.json(
-          operation({ state: "failed", safe_error: "probe failed" }),
-        ),
-      ),
-      http.delete(
-        "/api/operations/analysis-1",
-        () => new HttpResponse(null, { status: 204 }),
-      ),
-    );
-    await openInspector();
-    fireEvent.click(screen.getByRole("button", { name: "Повторить анализ" }));
-    await observe(
-      () =>
-        !!screen.queryByRole("button", { name: "Скрыть операцию" }) &&
-        !screen.queryByText(/Загрузка файла/),
-    );
-    const dismissed = responseFor("/api/operations/analysis-1", "DELETE");
-    // When
-    fireEvent.click(screen.getByRole("button", { name: "Скрыть операцию" }));
-    await act(async () => {
-      await dismissed;
-    });
-    // Then
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("matroska")).toBeVisible();
+    expect(reads).toBeGreaterThanOrEqual(2);
   });
 });

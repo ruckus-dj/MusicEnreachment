@@ -30,8 +30,7 @@ func sourceTimePointer(value time.Time) *time.Time { return &value }
 // properties of a fake.
 func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, _ := openAPTransitionDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 
@@ -206,8 +205,7 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 // the existing 503 before they reach the repository, so the rows stay identical.
 func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database, _ := openAPTransitionDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 

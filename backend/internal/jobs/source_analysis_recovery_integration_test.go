@@ -3,8 +3,10 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,10 +19,9 @@ import (
 // TestSourceAnalysisStartupRecoveryPostgreSQL drives the analysis-specific
 // startup recovery against real PostgreSQL and the production River liveness
 // check. An orphaned analysis whose result never committed fails retryably with
-// both read holds released and publishes no variant; an analysis whose apply
-// really committed is already succeeded, so recovery leaves it untouched and a
-// duplicate worker delivery re-reads nothing; and an analysis whose real River
-// delivery is still scheduled is preserved.
+// selected unfinished steps returned to pending and their delivery fences
+// cleared; an analysis whose normal admission has a live River delivery, work
+// selection, and tool hold is preserved.
 func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
 	t.Parallel()
 	t.Run("interrupted before commit", func(t *testing.T) {
@@ -28,48 +29,47 @@ func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		operation := fixture.createOrphanAnalysis(t, ctx, "running", service.SourceAnalysisStageProbing)
+		admitted := fixture.readOperation(t, ctx, operation.ID)
 		probesBefore := scanDispatchProbeCount(t, fixture.probeLog)
 
 		reconcileAnalysisRecovery(t, ctx, fixture)
 
-		assertOperationStage(t, ctx, fixture.setup, operation.ID, "failed", service.SourceAnalysisStageProbing)
-		requireScanDispatchSafeError(t, fixture.readOperation(t, ctx, operation.ID), analysisSafeInterrupted)
-		requireAnalysisHolds(t, fixture.readOperation(t, ctx, operation.ID), nil, nil)
+		assertOperationStage(t, ctx, fixture.setup, operation.ID, "failed", "recovered")
+		recovered := fixture.readOperation(t, ctx, operation.ID)
+		requireScanDispatchSafeError(t, recovered, analysisSafeInterrupted)
+		if !bytes.Equal(recovered.InputSnapshot, admitted.InputSnapshot) {
+			t.Fatal("recovery changed the admitted input snapshot")
+		}
+		requireAnalysisHolds(t, ctx, fixture, operation.ID, nil, nil)
 		if variants := fixture.countVariants(t, ctx); variants != 0 {
 			t.Fatalf("media variants after the recovery = %d, want none committed", variants)
 		}
+		snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(operation.InputSnapshot)
+		if err != nil {
+			t.Fatalf("decode recovered normalized snapshot: %v", err)
+		}
+		var steps []persistence.SourceAnalysisStep
+		if err := fixture.database.NewSelect().Model(&steps).Where("work_id = ?", snapshot.WorkIDs[0]).Order("step").Scan(ctx); err != nil {
+			t.Fatalf("read recovered steps: %v", err)
+		}
+		states := make(map[string]persistence.SourceAnalysisStep, len(steps))
+		for _, step := range steps {
+			states[step.Step] = step
+		}
+		sha := states[string(persistence.SourceStepSHA256)]
+		if sha.State != "pending" || sha.ExecutionOperationID != nil || sha.ExecutionOperationAttempt != nil || sha.ExecutionJobID != nil {
+			t.Fatalf("interrupted SHA step after recovery = %+v, want pending with its delivery fence cleared", sha)
+		}
+		probe := states[string(persistence.SourceStepProbe)]
+		if probe.State != "pending" || probe.ExecutionOperationID != nil || probe.ExecutionOperationAttempt != nil || probe.ExecutionJobID != nil {
+			t.Fatalf("interrupted probe step after recovery = %+v, want pending with its delivery fence cleared", probe)
+		}
+		fingerprint := states[string(persistence.SourceStepFingerprint)]
+		if fingerprint.State != "failed" || fingerprint.SafeError == nil || *fingerprint.SafeError != "previous fingerprint failure" {
+			t.Fatalf("failed fingerprint sibling changed during recovery: %+v", fingerprint)
+		}
 		if probes := scanDispatchProbeCount(t, fixture.probeLog); probes != probesBefore {
 			t.Fatalf("probes during the recovery = %d, want the unchanged %d", probes, probesBefore)
-		}
-	})
-
-	t.Run("interrupted after commit", func(t *testing.T) {
-		fixture := newAnalysisDispatchFixture(t)
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		operation := fixture.createOrphanAnalysis(t, ctx, "running", service.SourceAnalysisStageApplying)
-		// The real apply commits the variant, the location link and the succeeded
-		// state in one transaction; only the process and its wake-up are missing.
-		committed := fixture.applyRunningAnalysis(t, ctx, operation)
-		probesBefore := scanDispatchProbeCount(t, fixture.probeLog)
-
-		reconcileAnalysisRecovery(t, ctx, fixture)
-
-		assertOperationStage(t, ctx, fixture.setup, operation.ID, "succeeded", service.SourceAnalysisStageApplying)
-		requireAnalysisHolds(t, fixture.readOperation(t, ctx, operation.ID), nil, nil)
-		if fixture.requireLinkedVariant(t, ctx) != committed {
-			t.Fatal("the committed result was not kept linked")
-		}
-		if variants := fixture.countVariants(t, ctx); variants != 1 {
-			t.Fatalf("media variants after the recovery = %d, want the committed one", variants)
-		}
-		// A duplicate delivery of the already succeeded operation reads nothing.
-		awaitRiverCompletion(t, ctx, fixture.events, fixture.deliver(t, ctx, operation.ID))
-		if probes := scanDispatchProbeCount(t, fixture.probeLog); probes != probesBefore {
-			t.Fatalf("probes after the duplicate delivery = %d, want none", probes)
-		}
-		if variants := fixture.countVariants(t, ctx); variants != 1 {
-			t.Fatalf("media variants after the duplicate delivery = %d, want the committed one", variants)
 		}
 	})
 
@@ -78,92 +78,104 @@ func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		operation := fixture.createOrphanAnalysis(t, ctx, "queued", service.SourceAnalysisStageQueued)
-		// A real River row in a live (scheduled) state, inserted through the real
-		// client, is what the production liveness check reads.
-		jobID := fixture.scheduleRiverDelivery(t, ctx, operation.ID)
-		if _, err := fixture.database.ExecContext(ctx, "UPDATE operation SET river_job_id = ? WHERE id = ?", jobID, operation.ID); err != nil {
-			t.Fatalf("attach the live delivery: %v", err)
-		}
 
 		reconcileAnalysisRecovery(t, ctx, fixture)
 
 		stored := fixture.readOperation(t, ctx, operation.ID)
-		if stored.State != "queued" || stored.AnalysisInstallationID == nil || stored.AnalysisMediaVariantID != nil {
+		if stored.State != "queued" || stored.RiverJobID == nil || !stored.ToolsReadRequired || stored.TargetSourceRootID == nil || *stored.TargetSourceRootID != fixture.root.ID {
 			t.Fatalf("live analysis was touched: %+v", stored)
+		}
+		snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(stored.InputSnapshot)
+		if err != nil {
+			t.Fatalf("decode live normalized snapshot: %v", err)
+		}
+		if len(snapshot.WorkIDs) != 1 || snapshot.ToolsReadRequired != true || len(snapshot.Tools) != 1 ||
+			snapshot.Tools[0].InstallationID != fixture.installationID || snapshot.Tools[0].PackageKind != "ffmpeg" ||
+			snapshot.Tools[0].Executable != "ffprobe" || snapshot.Tools[0].RelativePath != filepath.Join("ffmpeg", analysisDispatchRelease) ||
+			snapshot.Tools[0].Version != analysisDispatchRelease || snapshot.Tools[0].VersionBanner != "ffprobe version "+analysisDispatchRelease {
+			t.Fatalf("live admission selectors = %+v, want its selected work and pinned installation", snapshot)
+		}
+		requireAnalysisHolds(t, ctx, fixture, stored.ID, []uuid.UUID{fixture.installationID}, snapshot.WorkIDs)
+		var selected persistence.SourceAnalysisStep
+		if err := fixture.database.NewSelect().Model(&selected).Where("work_id = ? AND step = ?", snapshot.WorkIDs[0], string(persistence.SourceStepProbe)).Scan(ctx); err != nil {
+			t.Fatalf("read the live probe execution selector: %v", err)
+		}
+		if selected.State != "queued" || selected.ExecutionOperationID == nil || *selected.ExecutionOperationID != stored.ID || selected.ExecutionOperationAttempt == nil || *selected.ExecutionOperationAttempt != stored.Attempt || selected.ExecutionJobID == nil || *selected.ExecutionJobID != *stored.RiverJobID {
+			t.Fatalf("live probe execution selector was changed: %+v", selected)
 		}
 	})
 }
 
-// createOrphanAnalysis inserts one analysis operation with both read holds and
-// the immutable snapshot of the fixture's location, without a River job, which
-// is the state of an analysis whose delivery is gone.
+// createOrphanAnalysis admits a real operation against normalized work with a
+// future River delivery, then optionally simulates a process interruption after
+// the selected steps have started. Normal admission writes the work selection,
+// managed-tool hold, operation, River job, and step execution fences atomically.
 func (fixture *analysisDispatchFixture) createOrphanAnalysis(t *testing.T, ctx context.Context, state, stage string) *persistence.Operation {
 	t.Helper()
-	snapshot, err := json.Marshal(persistence.SourceAnalysisSnapshot{
-		SchemaVersion:          persistence.SourceAnalysisSnapshotVersion,
-		SourceRootID:           fixture.root.ID,
-		SourceLocationID:       fixture.track.ID,
-		ConfiguredPath:         fixture.root.ConfiguredPath,
-		InventoryPath:          fixture.root.ConfiguredPath,
-		RelativePath:           fixture.track.RelativePath,
-		SizeBytes:              fixture.track.SizeBytes,
-		Mtime:                  fixture.track.Mtime,
-		AnalysisPolicyVersion:  persistence.SourceAnalysisPolicyVersion,
-		AnalysisInstallationID: fixture.installationID,
+	work := fixture.work
+	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_step SET state='pending',safe_error=NULL,
+		input_snapshot=NULL,execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL
+		WHERE work_id=? AND step IN ('sha256','probe')`, work.ID); err != nil {
+		t.Fatalf("prepare pending recovery steps: %v", err)
+	}
+	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_step SET state='failed',safe_error=?,input_snapshot=NULL,
+		execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL WHERE work_id=? AND step='fingerprint'`,
+		"previous fingerprint failure", work.ID); err != nil {
+		t.Fatalf("prepare historical fingerprint failure: %v", err)
+	}
+	shaEnabled, rerun, cacheOnly := true, false, false
+	probe := persistence.SourceAnalysisToolSelection{
+		PackageKind: "ffmpeg", InstallationID: fixture.installationID,
+		RelativePath: filepath.Join("ffmpeg", analysisDispatchRelease), Executable: "ffprobe",
+		Version: analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
+	}
+	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
+		Mode:          persistence.SourceAnalysisModeBatch, WorkIDs: []uuid.UUID{work.ID},
+		SHA256Enabled: &shaEnabled, RerunTarget: &rerun, CacheOnlyReuse: &cacheOnly,
+		ToolsReadRequired: true, Tools: []persistence.SourceAnalysisToolSelection{probe},
 	})
 	if err != nil {
 		t.Fatalf("marshal the orphan snapshot: %v", err)
 	}
 	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: state, Stage: stage, Attempt: 1,
-		InputSnapshot:          snapshot,
-		TargetSourceRootID:     &fixture.root.ID,
-		TargetSourceLocationID: &fixture.track.ID,
-		AnalysisInstallationID: &fixture.installationID,
+		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "queued", Stage: service.SourceAnalysisStageQueued, Attempt: 1,
+		SourceAnalysisMode: persistence.SourceAnalysisModeBatch,
+		InputSnapshot:      snapshot,
+		TargetSourceRootID: &fixture.root.ID,
+		ToolsReadRequired:  true,
 	}
-	if _, err := fixture.database.NewInsert().Model(operation).Exec(ctx); err != nil {
-		t.Fatalf("insert the orphan analysis: %v", err)
+	if err := fixture.inventory.CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx, operation, fixture.client,
+		service.SourceAnalysisJobArgs{OperationID: operation.ID},
+		&river.InsertOpts{Queue: service.SourceAnalysisQueue, ScheduledAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("admit normalized interrupted analysis: %v", err)
+	}
+	if operation.RiverJobID == nil {
+		t.Fatal("normalized analysis admission has no River job")
+	}
+	if state == "running" {
+		if _, err := fixture.database.ExecContext(ctx, "UPDATE operation SET state = ?, stage = ? WHERE id = ?", state, stage, operation.ID); err != nil {
+			t.Fatalf("mark normalized operation interrupted: %v", err)
+		}
+		if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_step SET state='running',step_attempt=1
+			WHERE work_id=? AND step IN ('sha256','probe') AND execution_operation_id=? AND execution_operation_attempt=? AND execution_job_id=?`,
+			work.ID, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
+			t.Fatalf("mark normalized steps interrupted: %v", err)
+		}
+		var runningSteps int
+		if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE work_id=? AND state='running'
+			AND execution_operation_id=? AND execution_operation_attempt=? AND execution_job_id=?`,
+			work.ID, operation.ID, operation.Attempt, *operation.RiverJobID).Scan(ctx, &runningSteps); err != nil {
+			t.Fatalf("verify interrupted execution selectors: %v", err)
+		}
+		if runningSteps != 2 {
+			t.Fatalf("interrupted steps with the old delivery fence = %d, want 2", runningSteps)
+		}
+		if _, err := fixture.database.ExecContext(ctx, "UPDATE river_job SET state = 'completed', finalized_at = now() WHERE id = ?", *operation.RiverJobID); err != nil {
+			t.Fatalf("mark interrupted River delivery terminal: %v", err)
+		}
 	}
 	return operation
-}
-
-// applyRunningAnalysis commits the prepared result of the running operation
-// through the real apply, then returns the variant it linked to the location.
-func (fixture *analysisDispatchFixture) applyRunningAnalysis(t *testing.T, ctx context.Context, operation *persistence.Operation) uuid.UUID {
-	t.Helper()
-	apply := persistence.SourceAnalysisApply{
-		OperationID: operation.ID, RelativePath: fixture.track.RelativePath,
-		SizeBytes: fixture.track.SizeBytes, Mtime: fixture.track.Mtime,
-		AnalysisPolicyVersion: persistence.SourceAnalysisPolicyVersion,
-		FFProbeVersion:        "ffprobe version " + analysisDispatchRelease,
-		FFProbeJSON:           json.RawMessage(`{"format":{},"streams":[]}`),
-		ObservedTags:          json.RawMessage(`{}`),
-		InspectedAt:           time.Now().UTC(),
-	}
-	if _, err := fixture.inventory.ApplyAnalysisResult(ctx, apply); err != nil {
-		t.Fatalf("apply the running analysis: %v", err)
-	}
-	return fixture.requireLinkedVariant(t, ctx)
-}
-
-// scheduleRiverDelivery inserts a real River job one hour out, so the job row is
-// in the live scheduled state and no worker consumes it during the test.
-func (fixture *analysisDispatchFixture) scheduleRiverDelivery(t *testing.T, ctx context.Context, operationID uuid.UUID) int64 {
-	t.Helper()
-	tx, err := fixture.database.DB.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin the scheduled delivery: %v", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	inserted, err := fixture.client.InsertTx(ctx, tx, service.SourceAnalysisJobArgs{OperationID: operationID},
-		&river.InsertOpts{Queue: service.SourceAnalysisQueue, ScheduledAt: time.Now().Add(time.Hour)})
-	if err != nil {
-		t.Fatalf("insert the scheduled delivery: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit the scheduled delivery: %v", err)
-	}
-	return inserted.Job.ID
 }
 
 // reconcileAnalysisRecovery runs the production startup recovery with the exact

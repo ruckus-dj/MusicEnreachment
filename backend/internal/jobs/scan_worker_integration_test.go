@@ -33,6 +33,10 @@ type scanDispatchRepository struct {
 	*persistence.SourceInventoryRepository
 }
 
+func (repository scanDispatchRepository) GetInstallation(ctx context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
+	return repository.SetupManagerRepository.GetInstallation(ctx, id)
+}
+
 type scanDispatchLocation struct {
 	ID           uuid.UUID `bun:"id,type:uuid"`
 	RelativePath string    `bun:"relative_path"`
@@ -76,6 +80,7 @@ func (factory *recordingScanProbeFactory) New(string) (service.SourceProbe, erro
 // only a root directory the worker cannot access is recorded as unavailable,
 // which the next successful scan restores.
 func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -125,6 +130,13 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	assertOperationStage(t, ctx, setupManager, first.ID, "succeeded", "succeeded")
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 1)
 	locations := readScanDispatchLocations(t, ctx, database, root.ID)
+	if locations["album/silent.mka"].ProbeStatus == persistence.SourceProbeStatusProbeError {
+		var reason string
+		if err := database.NewRaw(`SELECT COALESCE(s.safe_error, '') FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.location_id=? AND s.step='probe'`, locations["album/silent.mka"].ID).Scan(ctx, &reason); err != nil {
+			t.Fatalf("read silent probe failure: %v", err)
+		}
+		t.Fatalf("silent probe failed: %s", reason)
+	}
 	requireScanDispatchStatus(t, locations, "album/broken.wav", persistence.SourceProbeStatusProbeError)
 	requireScanDispatchStatus(t, locations, "album/silent.mka", persistence.SourceProbeStatusNoAudio)
 	requireScanDispatchStatus(t, locations, "album/track.flac", persistence.SourceProbeStatusAudio)
@@ -201,7 +213,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if err := os.RemoveAll(source); err != nil {
 		t.Fatalf("remove the source directory: %v", err)
 	}
-	missing := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	missing := createScanDispatchOperation(t, ctx, setupManager, inventory, third.InputSnapshot, root.ID, root.ConfiguredPath)
 	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, missing.ID))
 
 	// Then the worker's own revalidation proves the root inaccessible: the
@@ -232,6 +244,9 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
 
 	// Given the managed ffprobe is gone...
+	// A new file forces an uncached per-file probe; unchanged previous results
+	// must remain visible if probing it cannot run.
+	writeScanDispatchFile(t, filepath.Join(source, "album", "tool-missing.flac"), "new uncached bytes")
 	beforeToolFailure := scanDispatchProbeCount(t, probes)
 	ffprobeName := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[1]
 	if err := os.Remove(filepath.Join(toolsRoot, "ffmpeg", "1.6.1", ffprobeName)); err != nil {
@@ -243,12 +258,17 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}
 	awaitRiverCompletion(t, ctx, events, *fourth.RiverJobID)
 
-	// Then the whole scan fails once, with the tool reason, instead of turning
-	// every traversed file into a probe_error.
-	assertOperationStage(t, ctx, setupManager, fourth.ID, "failed", service.SourceScanStageQueued)
-	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, fourth.ID), scanSafeTool)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
-	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
+	// Then traversal succeeds and records the per-file probe failures without
+	// marking the root unavailable or discarding the previous inventory.
+	assertOperationStage(t, ctx, setupManager, fourth.ID, "succeeded", "succeeded")
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	fourthLocations := readScanDispatchLocations(t, ctx, database, root.ID)
+	for path, previous := range locations {
+		if current := fourthLocations[path]; current.ID != previous.ID || current.ProbeStatus != previous.ProbeStatus {
+			t.Fatalf("previous inventory result for %q changed after probe failure: %+v -> %+v", path, previous, current)
+		}
+	}
+	requireScanDispatchStatus(t, fourthLocations, "album/tool-missing.flac", persistence.SourceProbeStatusProbeError)
 	requireScanDispatchCandidates(t, ctx, database, fourth.ID, 0)
 	if delta := scanDispatchProbeCount(t, probes) - beforeToolFailure; delta != 0 {
 		t.Fatalf("probes during the tool failure = %d, want none without a working tool", delta)
@@ -257,8 +277,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
 	// Given the executable is present and version-verifies, but its transport
-	// capability check fails, the worker must fail before validating the source
-	// path or recording the root as unavailable.
+	// capability check fails, per-file probe errors are recorded while traversal
+	// and the inventory generation still complete.
 	ffmpegExecutable := filepath.Join(toolsRoot, "ffmpeg", "1.6.1", tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[0])
 	ffprobeExecutable := filepath.Join(toolsRoot, "ffmpeg", "1.6.1", ffprobeName)
 	ffmpegContents, err := os.ReadFile(ffmpegExecutable)
@@ -276,13 +296,15 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 		t.Fatalf("start the transport-failure scan: %v", err)
 	}
 	awaitRiverCompletion(t, ctx, events, *transportFailure.RiverJobID)
-	assertOperationStage(t, ctx, setupManager, transportFailure.ID, "failed", service.SourceScanStageQueued)
-	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, transportFailure.ID), scanSafeTool)
-	if factory.created != 1 {
-		t.Fatalf("transport probe factory calls = %d, want 1", factory.created)
+	assertOperationStage(t, ctx, setupManager, transportFailure.ID, "succeeded", "succeeded")
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
+	transportLocations := readScanDispatchLocations(t, ctx, database, root.ID)
+	requireScanDispatchStatus(t, transportLocations, "album/tool-missing.flac", persistence.SourceProbeStatusProbeError)
+	if factory.created != 2 {
+		t.Fatalf("transport probe factory calls = %d, want the cached-error file and new file", factory.created)
 	}
-	if pathValidator.calls != pathCalls {
-		t.Fatalf("source path validation calls = %d, want unchanged at %d", pathValidator.calls, pathCalls)
+	if pathValidator.calls != pathCalls+1 {
+		t.Fatalf("source path validation calls = %d, want one traversal validation after %d", pathValidator.calls, pathCalls)
 	}
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
@@ -291,15 +313,15 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	if _, err := roots.Edit(ctx, root.ID, service.SourceRootEdit{Enabled: &disabled}); err != nil {
 		t.Fatalf("disable the source root: %v", err)
 	}
-	queued := createScanDispatchOperation(t, ctx, setupManager, root.ID, root.ConfiguredPath)
+	queued := createScanDispatchOperation(t, ctx, setupManager, inventory, restored.InputSnapshot, root.ID, root.ConfiguredPath)
 	awaitRiverCompletion(t, ctx, events, deliverScanDispatchJob(t, ctx, database, riverClient, queued.ID))
 
 	// Then the worker re-checks the flag it reloaded and refuses the scan, and the
 	// inventory of the disabled root stays visible.
 	assertOperationStage(t, ctx, setupManager, queued.ID, "failed", service.SourceScanStageQueued)
 	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, queued.ID), scanSafeDisabled)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
-	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), locations)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
+	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), fourthLocations)
 	// Disabling a root reports no directory problem.
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 }
@@ -381,23 +403,35 @@ func deliverScanDispatchJob(t *testing.T, ctx context.Context, database *bun.DB,
 	if err != nil {
 		t.Fatalf("insert the scan delivery: %v", err)
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operation SET river_job_id=$1 WHERE id=$2 AND state='queued'`, inserted.Job.ID, operationID); err != nil {
+		t.Fatalf("attach queued scan delivery: %v", err)
+	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit the scan delivery: %v", err)
 	}
 	return inserted.Job.ID
 }
 
-func createScanDispatchOperation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, rootID uuid.UUID, configuredPath string) *persistence.Operation {
+func createScanDispatchOperation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, inventory *persistence.SourceInventoryRepository, sourceSnapshot json.RawMessage, rootID uuid.UUID, configuredPath string) *persistence.Operation {
 	t.Helper()
-	snapshot, err := json.Marshal(service.ScanSourceSnapshot{
-		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: rootID, ConfiguredPath: configuredPath,
-	})
+	var snapshot service.ScanSourceSnapshot
+	if err := json.Unmarshal(sourceSnapshot, &snapshot); err != nil {
+		t.Fatalf("decode verified scan snapshot fixture: %v", err)
+	}
+	root, err := inventory.GetSourceRoot(ctx, rootID)
+	if err != nil {
+		t.Fatalf("read source root for scan snapshot fixture: %v", err)
+	}
+	snapshot.SourceRootID = rootID
+	snapshot.ConfiguredPath = configuredPath
+	snapshot.ScanGeneration = root.ScanGeneration
+	rawSnapshot, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued", Stage: service.SourceScanStageQueued,
-		InputSnapshot: snapshot, TargetSourceRootID: &rootID,
+		InputSnapshot: rawSnapshot, TargetSourceRootID: &rootID,
 	}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
 		t.Fatalf("create the scan operation: %v", err)

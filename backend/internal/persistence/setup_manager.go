@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,23 +56,15 @@ type Operation struct {
 	TargetStep        *string    `bun:"target_step,nullzero"`
 	ToolsReadRequired bool       `bun:"tools_read_required"`
 	RerunTarget       bool       `bun:"rerun_target"`
-	// AnalysisInstallationID is the read hold on the managed FFmpeg installation
-	// an analysis uses. It is not a mutation target and is cleared at the
-	// terminal transition.
-	AnalysisInstallationID *uuid.UUID `bun:"analysis_installation_id,type:uuid,nullzero"`
-	// AnalysisMediaVariantID is the read hold on the variant an analysis keeps
-	// alive so a failed re-analysis never loses the previous result. It is
-	// cleared at the terminal transition.
-	AnalysisMediaVariantID *uuid.UUID `bun:"analysis_media_variant_id,type:uuid,nullzero"`
-	Attempt                int        `bun:"attempt"`
-	BytesCompleted         int64      `bun:"bytes_completed"`
-	BytesTotal             *int64     `bun:"bytes_total,nullzero"`
-	SafeError              *string    `bun:"safe_error,nullzero"`
-	RiverJobID             *int64     `bun:"river_job_id,nullzero"`
-	CreatedAt              time.Time  `bun:"created_at,nullzero"`
-	StartedAt              *time.Time `bun:"started_at,nullzero"`
-	FinishedAt             *time.Time `bun:"finished_at,nullzero"`
-	UpdatedAt              time.Time  `bun:"updated_at,nullzero"`
+	Attempt           int        `bun:"attempt"`
+	BytesCompleted    int64      `bun:"bytes_completed"`
+	BytesTotal        *int64     `bun:"bytes_total,nullzero"`
+	SafeError         *string    `bun:"safe_error,nullzero"`
+	RiverJobID        *int64     `bun:"river_job_id,nullzero"`
+	CreatedAt         time.Time  `bun:"created_at,nullzero"`
+	StartedAt         *time.Time `bun:"started_at,nullzero"`
+	FinishedAt        *time.Time `bun:"finished_at,nullzero"`
+	UpdatedAt         time.Time  `bun:"updated_at,nullzero"`
 }
 
 type SetupManagerRepository struct {
@@ -107,7 +100,7 @@ func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Contex
 		operation.Attempt = 1
 	}
 	if operation.Kind == "move_tools_root" && operation.State == "queued" {
-		if err := lockToolsOperations(ctx, database); err != nil {
+		if err := lockToolsMoveGateExclusive(ctx, database); err != nil {
 			return fmt.Errorf("lock operation exclusivity: %w", err)
 		}
 	}
@@ -117,16 +110,22 @@ func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Contex
 	return nil
 }
 
-// lockToolsOperations establishes the common lock order used by
-// transactions that coordinate installation mutations with tools-root moves.
-func lockToolsOperations(ctx context.Context, database bun.IDB) error {
-	if _, err := database.NewRaw("LOCK TABLE operation IN SHARE ROW EXCLUSIVE MODE").Exec(ctx); err != nil {
-		return err
-	}
-	if _, err := database.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", "setup-operation-exclusivity").Exec(ctx); err != nil {
-		return err
-	}
-	return nil
+func lockToolsMoveGateShared(ctx context.Context, database bun.IDB) error {
+	return lockToolsMoveReaders(ctx, database)
+}
+
+func lockToolsMoveGateExclusive(ctx context.Context, database bun.IDB) error {
+	return lockToolsMoveExclusive(ctx, database)
+}
+
+func lockInstallationPackages(ctx context.Context, database bun.IDB, packages ...string) error {
+	return lockPackageActivations(ctx, database, packages)
+}
+
+func activeToolsMove(ctx context.Context, tx bun.Tx) (bool, error) {
+	var active bool
+	err := tx.NewRaw("SELECT EXISTS(SELECT 1 FROM operation WHERE kind='move_tools_root' AND state IN ('queued','running'))").Scan(ctx, &active)
+	return active, err
 }
 
 // RiverInserter is the subset of a River client used to atomically enqueue an
@@ -172,7 +171,7 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		return fmt.Errorf("enqueue tools move: operation must be a tools root move")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue tools move: lock operation exclusivity: %w", err)
 		}
 		var snapshot struct {
@@ -210,18 +209,14 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 }
 
 // activeAnalysisInstallationHold reports whether any queued or running analysis
-// holds a managed installation. Callers hold LOCK TABLE operation, so a
-// concurrent analysis start cannot insert a hold under them.
+// holds a managed installation. The caller holds the exclusive tools-move gate,
+// which prevents a concurrent analysis start from inserting a hold.
 func activeAnalysisInstallationHold(ctx context.Context, tx bun.Tx) (bool, error) {
-	var held uuid.UUID
-	err := tx.NewRaw("SELECT id FROM operation WHERE kind = 'analyze_source' AND state IN ('queued', 'running') AND analysis_installation_id IS NOT NULL LIMIT 1 FOR UPDATE").Scan(ctx, &held)
-	if err == nil {
-		return true, nil
-	}
-	if err != sql.ErrNoRows {
-		return false, err
-	}
-	return false, nil
+	var held bool
+	err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation WHERE state IN ('queued', 'running') AND
+		EXISTS (SELECT 1 FROM operation_tool_read_hold hold WHERE hold.operation_id=operation.id)
+	)`).Scan(ctx, &held)
+	return held, err
 }
 
 func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(ctx context.Context, expectedToolsRoot string, installation *ToolInstallation, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
@@ -232,11 +227,18 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 		return fmt.Errorf("enqueue installation: operation target must match installation")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue installation: lock tools operations: %w", err)
 		}
+		moving, err := activeToolsMove(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("enqueue installation: check active tools move: %w", err)
+		}
+		if moving {
+			return fmt.Errorf("enqueue installation: tools root move is active")
+		}
 		var currentToolsRoot string
-		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentToolsRoot)
+		err = tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentToolsRoot)
 		if err != nil && err != sql.ErrNoRows {
 			return fmt.Errorf("enqueue installation: read tools directory: %w", err)
 		}
@@ -343,16 +345,18 @@ func (repository *SetupManagerRepository) MarkInstallationFailed(ctx context.Con
 // platform and updates its package's active setting in the same transaction.
 func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
-			return fmt.Errorf("lock operation exclusivity: %w", err)
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("lock tools move gate: %w", err)
 		}
-		var moveID uuid.UUID
-		err := tx.NewRaw("SELECT id FROM operation WHERE kind = 'move_tools_root' AND state IN ('queued', 'running') LIMIT 1 FOR UPDATE").Scan(ctx, &moveID)
-		if err == nil {
+		moving, err := activeToolsMove(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("check active tools root move: %w", err)
+		}
+		if moving {
 			return fmt.Errorf("cannot activate installation during an active tools root move")
 		}
-		if err != sql.ErrNoRows {
-			return fmt.Errorf("check active tools root move: %w", err)
+		if err := lockInstallationPackages(ctx, tx, packageKind); err != nil {
+			return fmt.Errorf("lock active installation: %w", err)
 		}
 		return repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting)
 	})
@@ -361,8 +365,17 @@ func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Conte
 func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx context.Context, id uuid.UUID, packageKind, goos, goarch, activeSetting string) (bool, error) {
 	activated := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("lock tools move gate: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
 			return fmt.Errorf("lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("lock active installations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
 		}
 		var completedAt string
 		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt)
@@ -371,6 +384,13 @@ func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx co
 		}
 		if err != sql.ErrNoRows {
 			return fmt.Errorf("read setup completion: %w", err)
+		}
+		moving, err := activeToolsMove(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("check active tools root move: %w", err)
+		}
+		if moving {
+			return nil
 		}
 		if err := repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting); err != nil {
 			return err
@@ -382,9 +402,6 @@ func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx co
 }
 
 func (repository *SetupManagerRepository) activateInstallationTx(ctx context.Context, tx bun.Tx, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
-		return fmt.Errorf("lock active installation: %w", err)
-	}
 	installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
 	if err != nil {
 		return err
@@ -404,10 +421,17 @@ func (repository *SetupManagerRepository) DeleteInstallation(ctx context.Context
 		return fmt.Errorf("delete installation: filesystem remover is required")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations for installation deletion: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "active-installation:"+packageKind); err != nil {
+		moving, err := activeToolsMove(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("check active tools root move: %w", err)
+		}
+		if moving {
+			return fmt.Errorf("cannot delete installation during an active tools root move")
+		}
+		if err := lockInstallationPackages(ctx, tx, packageKind); err != nil {
 			return fmt.Errorf("lock active installation: %w", err)
 		}
 		installation, err := repository.GetInstallationForUpdate(ctx, tx, id)
@@ -465,7 +489,7 @@ func validInstallationRelativePath(installation *ToolInstallation) bool {
 
 func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("commit tools root move: lock operation exclusivity: %w", err)
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -498,7 +522,7 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 
 func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Context, operationID uuid.UUID, oldRoot, newRoot string) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
+		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("rollback tools root move: lock operation exclusivity: %w", err)
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
@@ -531,9 +555,6 @@ func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Cont
 
 func (repository *SetupManagerRepository) FinishToolsRootMove(ctx context.Context, operationID uuid.UUID) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
-			return fmt.Errorf("finish tools root move: lock operation exclusivity: %w", err)
-		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
 		if err != nil {
 			return err
@@ -583,7 +604,7 @@ func (repository *SetupManagerRepository) ListOperations(ctx context.Context, st
 func (repository *SetupManagerRepository) ListActiveOperationConflictsForUpdate(ctx context.Context, tx bun.Tx, targetInstallationID uuid.UUID) ([]Operation, error) {
 	operations := make([]Operation, 0)
 	if err := tx.NewSelect().Model(&operations).Where("state IN ('queued', 'running')").
-		Where("(kind = 'move_tools_root' OR target_installation_id = ? OR analysis_installation_id = ?)", targetInstallationID, targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
+		Where("(kind = 'move_tools_root' OR target_installation_id = ? OR EXISTS (SELECT 1 FROM operation_tool_read_hold hold WHERE hold.operation_id=operation.id AND hold.installation_id=?))", targetInstallationID, targetInstallationID).For("UPDATE").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list active operation conflicts: %w", err)
 	}
 	return operations, nil
@@ -599,22 +620,38 @@ func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, o
 }
 
 // TransitionOperation serializes read-modify-write operation state changes.
-// The callback runs while the row is locked and is never invoked for a missing
-// operation. An analysis transition takes the shared operation table lock before
-// it locks the row, the order the analysis apply, fail/recovery, start and retry
-// and every root/tool mutation use: locking the row first would make the
-// terminal UPDATE wait for the table ROW EXCLUSIVE it needs while a tools-root
-// mutation holds SHARE ROW EXCLUSIVE and waits for the same row. Analysis keeps
-// the same table guard so its read holds remain serialized with tool mutations.
+// The callback runs while the operation row is locked and is never invoked for a
+// missing operation. Source transitions acquire root, locations and work before
+// the operation row; terminal cleanup occurs in the same transaction.
 func (repository *SetupManagerRepository) TransitionOperation(ctx context.Context, id uuid.UUID, transition func(*Operation) error) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var kind string
-		if err := tx.NewRaw("SELECT kind FROM operation WHERE id = ?", id).Scan(ctx, &kind); err != nil && err != sql.ErrNoRows {
-			return fmt.Errorf("transition operation: read the operation kind: %w", err)
+		var rootID *uuid.UUID
+		if err := tx.NewRaw(`SELECT target_source_root_id FROM operation WHERE id=?`, id).Scan(ctx, &rootID); err != nil {
+			return fmt.Errorf("transition operation: read source root target: %w", err)
 		}
-		if kind == analysisSourceOperationKind || kind == "install" || kind == "move_tools_root" {
-			if err := lockToolsOperations(ctx, tx); err != nil {
-				return fmt.Errorf("transition operation: lock operations: %w", err)
+		if rootID != nil {
+			root := new(SourceRoot)
+			if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, *rootID).Scan(ctx, root); err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("transition operation: lock source root: %w", err)
+			}
+			type heldWork struct{ ID, LocationID uuid.UUID }
+			works := make([]heldWork, 0)
+			if err := tx.NewRaw(`SELECT h.work_id AS id,w.location_id FROM operation_source_work_hold h JOIN source_analysis_work w ON w.id=h.work_id WHERE h.operation_id=? ORDER BY h.work_id`, id).Scan(ctx, &works); err != nil {
+				return fmt.Errorf("transition operation: read held work: %w", err)
+			}
+			locations := append([]heldWork(nil), works...)
+			sort.Slice(locations, func(i, j int) bool { return locations[i].LocationID.String() < locations[j].LocationID.String() })
+			for _, work := range locations {
+				location := new(SourceLocation)
+				if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, work.LocationID, *rootID).Scan(ctx, location); err != nil && err != sql.ErrNoRows {
+					return fmt.Errorf("transition operation: lock held location: %w", err)
+				}
+			}
+			for _, work := range works {
+				row := new(SourceAnalysisWork)
+				if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, work.ID).Scan(ctx, row); err != nil && err != sql.ErrNoRows {
+					return fmt.Errorf("transition operation: lock held work: %w", err)
+				}
 			}
 		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
@@ -624,8 +661,54 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 		if err := transition(operation); err != nil {
 			return err
 		}
+		if operation.State == "failed" || operation.State == "succeeded" {
+			var hasWorkHolds, hasToolHolds, hasExecution bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_source_work_hold WHERE operation_id=?)`, operation.ID).Scan(ctx, &hasWorkHolds); err != nil {
+				return fmt.Errorf("transition operation: check work holds: %w", err)
+			}
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_tool_read_hold WHERE operation_id=?)`, operation.ID).Scan(ctx, &hasToolHolds); err != nil {
+				return fmt.Errorf("transition operation: check tool holds: %w", err)
+			}
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_step WHERE execution_operation_id=?)`, operation.ID).Scan(ctx, &hasExecution); err != nil {
+				return fmt.Errorf("transition operation: check execution triples: %w", err)
+			}
+			if (operation.SourceAnalysisMode != "" || hasExecution) && operation.State == "succeeded" {
+				var unfinished bool
+				if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_step WHERE execution_operation_id=? AND state IN ('queued','running'))`, operation.ID).Scan(ctx, &unfinished); err != nil {
+					return fmt.Errorf("transition normalized source analysis: check unfinished steps: %w", err)
+				}
+				if unfinished {
+					return fmt.Errorf("transition normalized source analysis: selected steps are unfinished")
+				}
+			}
+			if operation.State == "failed" && (operation.SourceAnalysisMode != "" || hasWorkHolds || hasToolHolds || hasExecution) {
+				if operation.SafeError == nil || *operation.SafeError == "" {
+					return fmt.Errorf("transition source operation: a safe error is required")
+				}
+				if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='failed',safe_error=?,skip_reason=NULL,
+					execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
+					WHERE execution_operation_id=? AND state IN ('queued','running')`, *operation.SafeError, operation.ID, operation.ID).Exec(ctx); err != nil {
+					return fmt.Errorf("transition source operation: fail unfinished steps: %w", err)
+				}
+			}
+			if _, err := tx.NewRaw(`UPDATE source_analysis_step SET execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,updated_at=now() WHERE execution_operation_id=?`, operation.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("transition source operation: clear step execution triples: %w", err)
+			}
+			if _, err := tx.NewRaw(`DELETE FROM operation_source_work_hold WHERE operation_id=?`, operation.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("transition source operation: release work holds: %w", err)
+			}
+			if _, err := tx.NewRaw(`DELETE FROM operation_tool_read_hold WHERE operation_id=?`, operation.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("transition source operation: release tool holds: %w", err)
+			}
+			operation.TargetWorkID = nil
+			operation.TargetStep = nil
+			operation.TargetSourceRootID = nil
+			operation.TargetSourceLocationID = nil
+			operation.ToolsReadRequired = false
+			operation.RerunTarget = false
+		}
 		operation.UpdatedAt = time.Now().UTC()
-		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at", "target_work_id", "target_step", "target_source_root_id", "target_source_location_id", "tools_read_required", "rerun_target").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("transition operation: %w", err)
 		}
 		return nil
@@ -638,14 +721,61 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 	if client == nil {
 		return nil, fmt.Errorf("retry operation: River client is required")
 	}
+	// Installation, activation, and deletion retries share package and
+	// installation locks with DeleteInstallation. Capture the target before
+	// opening the transaction so those locks precede the operation row lock.
+	captured, err := repository.GetOperation(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var capturedInstallation *ToolInstallation
+	mutationTarget := captured.Kind == "install" || captured.Kind == "activate" || captured.Kind == "delete"
+	if mutationTarget {
+		if captured.TargetInstallationID == nil {
+			return nil, fmt.Errorf("retry operation: installation target is unavailable")
+		}
+		capturedInstallation, err = repository.GetInstallation(ctx, *captured.TargetInstallationID)
+		if err != nil {
+			return nil, fmt.Errorf("retry operation: installation target is unavailable: %w", err)
+		}
+	}
 	var operation *Operation
-	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockToolsOperations(ctx, tx); err != nil {
-			return fmt.Errorf("lock operation exclusivity: %w", err)
+	err = repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		switch captured.Kind {
+		case "install", "activate", "delete":
+			if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+				return fmt.Errorf("retry operation: lock tools move gate: %w", err)
+			}
+			moving, err := activeToolsMove(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("retry operation: check active tools move: %w", err)
+			}
+			if moving {
+				return fmt.Errorf("retry operation: tools root move is active")
+			}
+			if err := lockInstallationPackages(ctx, tx, capturedInstallation.PackageKind); err != nil {
+				return fmt.Errorf("retry operation: lock installation package: %w", err)
+			}
+			lockedInstallation, err := repository.GetInstallationForUpdate(ctx, tx, *captured.TargetInstallationID)
+			if err != nil {
+				return fmt.Errorf("retry operation: installation target is unavailable: %w", err)
+			}
+			if lockedInstallation.PackageKind != capturedInstallation.PackageKind {
+				return fmt.Errorf("retry operation: installation target changed")
+			}
+		case "move_tools_root":
+			if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
+				return fmt.Errorf("retry operation: lock tools move gate: %w", err)
+			}
 		}
 		locked, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		if locked.Kind != captured.Kind ||
+			(locked.TargetInstallationID == nil) != (captured.TargetInstallationID == nil) ||
+			(locked.TargetInstallationID != nil && *locked.TargetInstallationID != *captured.TargetInstallationID) {
+			return fmt.Errorf("retry operation: operation target changed")
 		}
 		if locked.State != "failed" {
 			return fmt.Errorf("only failed operations can be retried")

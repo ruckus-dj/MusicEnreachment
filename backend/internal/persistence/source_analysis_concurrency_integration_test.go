@@ -40,15 +40,19 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 	installationID := insertAnalysisInstallation(t, ctx, database, "barrier-move")
 	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
 
-	operation := analysisEnqueueOperation(root, location, installationID, nil)
-	err := runOperationLockRace(t, ctx, database,
+	tool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
+	operation := normalizedQueuedAnalysis(t, ctx, inventory, root, location, []persistence.SourceAnalysisToolSelection{tool})
+	err := runQueryRace(t, ctx, database,
+		"SELECT pg_advisory_xact_lock(1297371734, 1)", "pg_advisory_xact_lock_shared",
 		func(ctx context.Context, tx bun.Tx) error {
 			return insertQueuedOperation(ctx, tx, &persistence.Operation{
 				ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-				InputSnapshot: json.RawMessage(`{}`),
+				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
 			})
 		},
-		func(ctx context.Context) error { return enqueueAnalysis(t, ctx, inventory, operation, client) })
+		func(ctx context.Context) error {
+			return enqueueNormalizedAnalysis(t, ctx, inventory, client, operation)
+		})
 	if !errors.Is(err, persistence.ErrToolsRootMoveActive) {
 		t.Fatalf("analysis start with a committed move = %v, want ErrToolsRootMoveActive", err)
 	}
@@ -74,24 +78,16 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 	installationID := insertAnalysisInstallation(t, ctx, database, "barrier-analysis")
 	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
 
+	tool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
+	analysis := normalizedQueuedAnalysis(t, ctx, inventory, root, location, []persistence.SourceAnalysisToolSelection{tool})
+	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, analysis); err != nil {
+		t.Fatalf("enqueue normalized analysis: %v", err)
+	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
 		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
 	}
-	err := runOperationLockRace(t, ctx, database,
-		func(ctx context.Context, tx bun.Tx) error {
-			return insertQueuedOperation(ctx, tx, &persistence.Operation{
-				ID: uuid.New(), Kind: "analyze_source", State: "queued", Stage: "queued",
-				InputSnapshot:          json.RawMessage(`{}`),
-				TargetSourceRootID:     &root.ID,
-				TargetSourceLocationID: &location.ID,
-				AnalysisInstallationID: &installationID,
-			})
-		},
-		func(ctx context.Context) error {
-			return setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client,
-				serviceOperationArgs{OperationID: move.ID}, nil)
-		})
+	err := setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client, serviceOperationArgs{OperationID: move.ID}, nil)
 	if !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {
 		t.Fatalf("tools move with a committed analysis hold = %v, want ErrToolsInstallationHeldByAnalysis", err)
 	}
@@ -124,6 +120,7 @@ func runQueryRace(t *testing.T, ctx context.Context, database *bun.DB, hold, nee
 	locked := make(chan struct{})
 	release := make(chan struct{})
 	holder := make(chan error, 1)
+	holderPID := make(chan int, 1)
 	go func() {
 		tx, err := database.BeginTx(ctx, nil)
 		if err != nil {
@@ -131,6 +128,15 @@ func runQueryRace(t *testing.T, ctx context.Context, database *bun.DB, hold, nee
 			close(locked)
 			return
 		}
+		var pid int
+		if err := tx.NewRaw("SELECT pg_backend_pid()").Scan(ctx, &pid); err != nil {
+			_ = tx.Rollback()
+			holder <- err
+			holderPID <- 0
+			close(locked)
+			return
+		}
+		holderPID <- pid
 		if _, err := tx.ExecContext(ctx, hold); err != nil {
 			_ = tx.Rollback()
 			holder <- err
@@ -159,11 +165,40 @@ func runQueryRace(t *testing.T, ctx context.Context, database *bun.DB, hold, nee
 	actionResult := make(chan error, 1)
 	go func() { actionResult <- action(actionCtx) }()
 	awaitSignal(t, barrier.attempted, "the action to attempt the guarded statement")
+	assertPostgresLockWait(t, actionCtx, database, <-holderPID)
 	close(release)
 	if err := awaitResult(t, holder, "the competing transaction to commit"); err != nil {
 		t.Fatalf("competing transaction: %v", err)
 	}
 	return awaitResult(t, actionResult, "the action to finish")
+}
+
+// assertPostgresLockWait verifies the action's PostgreSQL backend is actually
+// blocked by the holder. A query-hook signal alone only proves that SQL was
+// issued; pg_blocking_pids proves the lock order is what delayed the action.
+func assertPostgresLockWait(t *testing.T, ctx context.Context, database *bun.DB, blockingPID int) {
+	t.Helper()
+	if blockingPID < 1 {
+		t.Fatalf("invalid PostgreSQL lock holder backend id %d", blockingPID)
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked int
+		err := database.NewRaw(`SELECT count(*) FROM pg_stat_activity a
+			WHERE a.wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(a.pid))`, blockingPID).Scan(ctx, &blocked)
+		if err != nil {
+			t.Fatalf("inspect PostgreSQL blocking relation: %v", err)
+		}
+		if blocked > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("action did not block on PostgreSQL backend %d", blockingPID)
+		case <-ticker.C:
+		}
+	}
 }
 
 // queryBarrier signals, once armed, the first query containing needle. It is a

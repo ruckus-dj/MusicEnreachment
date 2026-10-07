@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,6 +33,11 @@ type MoveWorker struct {
 	settings   moveSettings
 	platform   tools.Platform
 	lifecycle  *tools.Lifecycle
+	pending    movePendingDispatcher
+}
+
+type movePendingDispatcher interface {
+	DispatchPending(context.Context) error
 }
 
 type moveSettings interface {
@@ -44,6 +50,10 @@ func NewMoveWorker(repository moveRepository, operations *service.Operations, ru
 		lifecycle = tools.NewLifecycle(nil)
 	}
 	return &MoveWorker{repository: repository, operations: operations, settings: runtimeSettings, platform: platform, lifecycle: lifecycle}
+}
+
+func (worker *MoveWorker) SetPendingDispatcher(dispatcher movePendingDispatcher) {
+	worker.pending = dispatcher
 }
 
 func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Operation) error {
@@ -112,6 +122,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 			return err
 		}
 		worker.operations.Notify(operation.ID)
+		worker.dispatchPending(ctx, operation.ID)
 		if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
 			return err
 		}
@@ -281,6 +292,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 		return err
 	}
 	worker.operations.Notify(operation.ID)
+	worker.dispatchPending(ctx, operation.ID)
 	if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
 		return err
 	}
@@ -980,5 +992,15 @@ func (worker *MoveWorker) fail(ctx context.Context, operation *persistence.Opera
 	if err := worker.operations.Fail(ctx, operation.ID, "move", "The tools directory move failed. The current tools directory is unchanged."); err != nil {
 		return fmt.Errorf("%v; mark move failed: %w", cause, err)
 	}
+	worker.dispatchPending(ctx, operation.ID)
 	return nil
+}
+
+func (worker *MoveWorker) dispatchPending(ctx context.Context, operationID uuid.UUID) {
+	if worker.pending == nil {
+		return
+	}
+	if err := worker.pending.DispatchPending(context.WithoutCancel(ctx)); err != nil {
+		slog.WarnContext(ctx, "pending source analysis dispatch failed after tools root move", "operation", operationID, "cause", err)
+	}
 }

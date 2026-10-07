@@ -22,6 +22,8 @@ export function detail(
     mtime: stamp,
     analysis_state: "not_analyzed",
     probe_status: "audio",
+    matching_eligible: false,
+    steps: [],
     root: {
       enabled: true,
       stale: false,

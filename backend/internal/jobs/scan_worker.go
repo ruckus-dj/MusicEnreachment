@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -52,10 +53,17 @@ const ffprobeExecutableName = "ffprobe"
 // installation and the atomic apply the worker drives after the traversal.
 type scanWorkerRepository interface {
 	service.SourceScanRepository
+	scanDeliveryRepository
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
 	ApplySourceScan(context.Context, persistence.SourceScanApply) error
 	MarkSourceRootUnavailable(context.Context, persistence.SourceScanUnavailable) error
+}
+
+type scanDeliveryRepository interface {
+	StartSourceScanDelivery(context.Context, uuid.UUID, int, int64) error
+	SetSourceScanDeliveryStage(context.Context, uuid.UUID, int, int64, string) error
+	FinishSourceScanDelivery(context.Context, uuid.UUID, int, int64, string, string, string) error
 }
 
 // scanWorkerSettings is the runtime state a scan reloads before it walks: the
@@ -64,6 +72,10 @@ type scanWorkerSettings interface {
 	SetupCompleted(context.Context) (bool, error)
 	GetToolsDirectory(context.Context) (string, bool, error)
 	ReadRuntimeSettings(context.Context) (settings.RuntimeSettings, error)
+}
+
+type sourceAnalysisPendingDispatcher interface {
+	AdmitPending(context.Context, uuid.UUID) error
 }
 
 // SourceScanWorker runs one queued scan of a source root. The River job carries
@@ -81,6 +93,13 @@ type SourceScanWorker struct {
 	platform   settings.PlatformState
 	lifecycle  *tools.Lifecycle
 	newProbe   func(string) (service.SourceProbe, error)
+	pending    sourceAnalysisPendingDispatcher
+}
+
+// SetPendingDispatcher installs the best-effort handoff that starts analysis
+// work made pending by a newly applied scan generation.
+func (worker *SourceScanWorker) SetPendingDispatcher(dispatcher sourceAnalysisPendingDispatcher) {
+	worker.pending = dispatcher
 }
 
 func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanWorkerSettings, platform settings.PlatformState, lifecycle *tools.Lifecycle) *SourceScanWorker {
@@ -114,6 +133,16 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return nil
 	}
+	if job.ID < 1 || operation.Attempt < 1 || operation.RiverJobID == nil || *operation.RiverJobID != job.ID {
+		return fmt.Errorf("source scan delivery identity changed: %w", persistence.ErrSourceAnalysisStale)
+	}
+	delivery, ok := worker.repository.(scanDeliveryRepository)
+	if !ok {
+		return fmt.Errorf("source scan delivery fencing repository is unavailable")
+	}
+	if err := delivery.StartSourceScanDelivery(ctx, operation.ID, operation.Attempt, job.ID); err != nil {
+		return err
+	}
 	snapshot, err := scanSourceSnapshot(operation)
 	if err != nil {
 		slog.Warn("source scan input is invalid", "operation", operation.ID.String(), "cause", err)
@@ -132,9 +161,9 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	// root is in now. Walking or applying again would re-probe the tree and
 	// advance the generation of a snapshot that is already published.
 	if root.LastAppliedOperationID != nil && *root.LastAppliedOperationID == operation.ID {
-		return worker.operations.Succeed(ctx, operation.ID, scanSucceededStage)
+		return worker.finishAndDispatch(ctx, operation, root.ID)
 	}
-	if root.ConfiguredPath != snapshot.ConfiguredPath {
+	if root.ConfiguredPath != snapshot.ConfiguredPath || root.ScanGeneration != snapshot.ScanGeneration {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
 	}
 	if errors.Is(sourcefs.ValidateRootPathSupport(root.ConfiguredPath), service.ErrUnsupportedSourceRoot) {
@@ -146,17 +175,6 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if err := worker.ready(ctx); err != nil {
 		slog.Warn("source scan cannot start", "operation", operation.ID.String(), "cause", err)
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeNotReady)
-	}
-	probe, err := worker.managedProbe(ctx)
-	if err != nil {
-		slog.Warn("source scan has no working managed ffprobe", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeTool)
-	}
-	// Prove descriptor transport before the validator makes any filesystem
-	// access to the source root. SourceScan repeats this check for direct callers.
-	if err := probe.CheckFileTransport(ctx); err != nil {
-		slog.Warn("source scan managed ffprobe file transport failed", "operation", operation.ID.String(), "cause", err)
-		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeTool)
 	}
 	// The root is re-validated against the path the snapshot carries: a path the
 	// operator changed after the enqueue must not publish files of the new path
@@ -181,10 +199,17 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		slog.Warn("source scan path changed after the enqueue", "operation", operation.ID.String())
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafePath)
 	}
-	scan := service.NewSourceScan(worker.repository, probe, worker.operations)
-	if err := scan.Run(ctx, service.SourceScanRequest{
+	analysis := worker.scanAnalysis(ctx, operation, snapshot, job.ID)
+	scan := service.NewSourceScan(worker.repository, scanTransportDeferredProbe{}, scanDeliveryStages{repository: worker.repository, attempt: operation.Attempt, jobID: job.ID}, service.WithSourceScanAnalysis(analysis))
+	scanErr := scan.Run(ctx, service.SourceScanRequest{
 		OperationID: operation.ID, RootID: root.ID, ExpectedConfiguredPath: snapshot.ConfiguredPath,
-	}); err != nil {
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: job.ID,
+		AnalysisTargets: scanAnalysisTargets(snapshot),
+	})
+	if releaseErr := analysis.ReleaseError(); releaseErr != nil {
+		return fmt.Errorf("release source scan tool holds: %w", releaseErr)
+	}
+	if err := scanErr; err != nil {
 		if ctx.Err() != nil {
 			return err
 		}
@@ -210,6 +235,7 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	// without re-applying the generation.
 	if err := worker.repository.ApplySourceScan(ctx, persistence.SourceScanApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: snapshot.ConfiguredPath,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: job.ID, SHA256Enabled: snapshot.SHA256Enabled,
 	}); err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -217,7 +243,31 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 		slog.Warn("source scan apply failed", "operation", operation.ID.String(), "cause", err)
 		return worker.fail(ctx, operation, service.SourceScanStageApplying, scanSafeApply)
 	}
-	return worker.operations.Succeed(ctx, operation.ID, scanSucceededStage)
+	return worker.finishAndDispatch(ctx, operation, root.ID)
+}
+
+// finishAndDispatch commits the scan's terminal success before it wakes the
+// pending analysis admission of its root. The succeeded operation releases the
+// hold the scan kept on the root, so the pending service can admit the work the
+// apply made pending instead of leaving it stranded behind a still-running
+// operation. The wake is fenced by the success commit: a duplicate delivery
+// whose Succeed fails has not committed the terminal state and never dispatches.
+// A failed wake is logged and never returned, so a committed scan is not failed
+// or rerun over a best-effort handoff.
+func (worker *SourceScanWorker) finishAndDispatch(ctx context.Context, operation *persistence.Operation, rootID uuid.UUID) error {
+	delivery, ok := worker.repository.(scanDeliveryRepository)
+	if !ok {
+		return fmt.Errorf("source scan delivery fencing repository is unavailable")
+	}
+	if err := delivery.FinishSourceScanDelivery(ctx, operation.ID, operation.Attempt, scanOperationJobID(operation), "succeeded", scanSucceededStage, ""); err != nil {
+		return err
+	}
+	if worker.pending != nil {
+		if err := worker.pending.AdmitPending(ctx, rootID); err != nil {
+			slog.Warn("source analysis pending dispatch failed after scan apply", "operation", operation.ID.String(), "cause", err)
+		}
+	}
+	return nil
 }
 
 // scanSourceSnapshot decodes the durable snapshot and confirms it describes the
@@ -232,7 +282,8 @@ func scanSourceSnapshot(operation *persistence.Operation) (service.ScanSourceSna
 		return snapshot, fmt.Errorf("decode scan snapshot: %w", err)
 	}
 	if snapshot.SchemaVersion != service.SourceScanSnapshotVersion ||
-		snapshot.SourceRootID != *operation.TargetSourceRootID || snapshot.ConfiguredPath == "" {
+		snapshot.SourceRootID != *operation.TargetSourceRootID || snapshot.ConfiguredPath == "" || snapshot.ScanGeneration < 0 ||
+		snapshot.SHA256Enabled == nil || snapshot.Tools == nil {
 		return snapshot, fmt.Errorf("scan snapshot does not describe its operation")
 	}
 	return snapshot, nil
@@ -260,10 +311,28 @@ func (worker *SourceScanWorker) ready(ctx context.Context) error {
 // the operation transition needs a live context, so a canceled scan leaves the
 // operation for the River retry instead of marking it failed.
 func (worker *SourceScanWorker) fail(ctx context.Context, operation *persistence.Operation, stage, safe string) error {
-	if err := worker.repository.DeleteSourceScanCandidates(context.WithoutCancel(ctx), operation.ID); err != nil {
-		return fmt.Errorf("drop the candidates of the failed scan: %w", err)
+	delivery, ok := worker.repository.(scanDeliveryRepository)
+	if !ok {
+		return fmt.Errorf("source scan delivery fencing repository is unavailable")
 	}
-	return worker.operations.Fail(ctx, operation.ID, stage, safe)
+	return delivery.FinishSourceScanDelivery(context.WithoutCancel(ctx), operation.ID, operation.Attempt, scanOperationJobID(operation), "failed", stage, safe)
+}
+
+func scanOperationJobID(operation *persistence.Operation) int64 {
+	if operation == nil || operation.RiverJobID == nil {
+		return 0
+	}
+	return *operation.RiverJobID
+}
+
+type scanDeliveryStages struct {
+	repository scanDeliveryRepository
+	attempt    int
+	jobID      int64
+}
+
+func (stages scanDeliveryStages) Running(ctx context.Context, operationID uuid.UUID, stage string) error {
+	return stages.repository.SetSourceScanDeliveryStage(ctx, operationID, stages.attempt, stages.jobID, stage)
 }
 
 // recordUnavailableRoot marks the scan's root unavailable before the operation
@@ -273,74 +342,197 @@ func (worker *SourceScanWorker) fail(ctx context.Context, operation *persistence
 func (worker *SourceScanWorker) recordUnavailableRoot(ctx context.Context, operation *persistence.Operation) error {
 	if err := worker.repository.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
 		OperationID: operation.ID, SafeError: service.SourceScanDirectoryUnavailableReason,
+		ExpectedAttempt: operation.Attempt, ExpectedJobID: scanOperationJobID(operation),
 	}); err != nil {
 		return fmt.Errorf("record the unavailable source root: %w", err)
 	}
 	return nil
 }
 
-// managedProbe resolves the active managed ffprobe a scan probes files with and
-// proves it still runs. ffprobe is never resolved from PATH, and a tool that is
-// missing, not the active installation of this platform, or failing its version
-// query is an error: the whole scan fails with one safe reason instead of every
-// file becoming a probe_error.
-func (worker *SourceScanWorker) managedProbe(ctx context.Context) (service.SourceProbe, error) {
-	runtime, err := worker.settings.ReadRuntimeSettings(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the runtime settings: %w", err)
-	}
-	if runtime.ActiveFFmpegInstallation == "" {
-		return nil, fmt.Errorf("no active managed ffmpeg installation is configured")
-	}
-	installationID, err := uuid.Parse(runtime.ActiveFFmpegInstallation)
-	if err != nil {
-		return nil, fmt.Errorf("the active managed ffmpeg installation is invalid")
-	}
-	installation, err := worker.repository.GetInstallation(ctx, installationID)
-	if err != nil {
-		return nil, fmt.Errorf("read the active managed ffmpeg installation: %w", err)
-	}
-	if installation.PackageKind != string(tools.PackageFFmpeg) || installation.State != "ready" || installation.VerifiedAt == nil ||
-		installation.PlatformGOOS != worker.platform.Platform.GOOS || installation.PlatformGOARCH != worker.platform.Platform.GOARCH {
-		return nil, fmt.Errorf("the active managed ffmpeg installation is not ready for this platform")
-	}
-	relative, err := tools.ManagedRelativePath(tools.PackageFFmpeg, installation.ReleaseIdentity)
-	if err != nil || filepath.Clean(installation.RelativePath) != relative {
-		return nil, fmt.Errorf("the active managed ffmpeg installation has an invalid path")
-	}
-	root, exists, err := worker.settings.GetToolsDirectory(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !exists || root == "" {
-		return nil, fmt.Errorf("the managed tools directory is unavailable")
-	}
-	// The installation was verified when it was materialized; running the version
-	// query again proves the executable the scan is about to run still works, so a
-	// tool that was removed or broken later fails the scan up front.
-	if _, err := worker.lifecycle.VerifyInstallation(ctx, root, relative, tools.PackageFFmpeg, installation.ReleaseIdentity, worker.platform.Platform.GOOS); err != nil {
-		return nil, fmt.Errorf("verify the managed ffmpeg installation: %w", err)
-	}
-	executable, err := managedFFProbeExecutable(root, relative, worker.platform.Platform.GOOS)
-	if err != nil {
-		return nil, err
-	}
-	probe, err := worker.newProbe(executable)
-	if err != nil {
-		return nil, err
-	}
-	return probe, nil
-}
+type scanTransportDeferredProbe struct{}
 
-// managedFFProbeExecutable names the ffprobe of a managed ffmpeg package,
-// including the executable suffix the platform adds.
-func managedFFProbeExecutable(root, relative, goos string) (string, error) {
-	for _, name := range tools.ExpectedExecutables(tools.PackageFFmpeg, goos) {
-		if strings.TrimSuffix(name, filepath.Ext(name)) == ffprobeExecutableName {
-			return filepath.Join(root, relative, name), nil
+func (scanTransportDeferredProbe) CheckFileTransport(context.Context) error { return nil }
+
+func scanToolSelection(snapshot service.ScanSourceSnapshot, packageKind, executable string) (persistence.SourceAnalysisToolSelection, bool) {
+	for _, selection := range snapshot.Tools {
+		if selection.PackageKind == packageKind && selection.Executable == executable {
+			return selection, true
 		}
 	}
-	return "", fmt.Errorf("a managed ffmpeg package has no %s executable", ffprobeExecutableName)
+	return persistence.SourceAnalysisToolSelection{}, false
+}
+
+func scanAnalysisTargets(snapshot service.ScanSourceSnapshot) service.SourceAnalysisTarget {
+	targets := service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint
+	if snapshot.SHA256Enabled != nil && *snapshot.SHA256Enabled {
+		targets |= service.SourceAnalysisTargetSHA256
+	}
+	return targets
+}
+
+type scanAnalysisPreparer struct {
+	config      service.SourceAnalysisPreparerConfig
+	operationID uuid.UUID
+	mu          sync.Mutex
+	releaseErr  error
+}
+
+type scanHeldToolPath struct {
+	mu   sync.Mutex
+	path string
+}
+
+func (path *scanHeldToolPath) set(value string) {
+	path.mu.Lock()
+	path.path = value
+	path.mu.Unlock()
+}
+
+func (path *scanHeldToolPath) get() (string, error) {
+	path.mu.Lock()
+	defer path.mu.Unlock()
+	if path.path == "" {
+		return "", fmt.Errorf("source scan tool hold did not provide an executable path")
+	}
+	return path.path, nil
+}
+
+func (preparer *scanAnalysisPreparer) Prepare(ctx context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+	config := preparer.config
+	config.ProbeResult.ID = uuid.New()
+	config.ProbeResult.AppliedOperationID = &preparer.operationID
+	config.FingerprintResult.ID = uuid.New()
+	config.FingerprintResult.AppliedOperationID = preparer.operationID
+	if info, err := request.File.Stat(ctx); err == nil {
+		config.ProbeResult.SizeBytes = info.Size()
+	}
+	return service.NewSourceAnalysisPreparer(config).Prepare(ctx, request)
+}
+
+func (preparer *scanAnalysisPreparer) ReleaseError() error {
+	preparer.mu.Lock()
+	defer preparer.mu.Unlock()
+	return preparer.releaseErr
+}
+
+func (worker *SourceScanWorker) scanAnalysis(ctx context.Context, operation *persistence.Operation, snapshot service.ScanSourceSnapshot, jobID int64) *scanAnalysisPreparer {
+	probe, hasProbe := scanToolSelection(snapshot, string(tools.PackageFFmpeg), ffprobeExecutableName)
+	fpcalc, hasFPCalc := scanToolSelection(snapshot, string(tools.PackageFPCalc), "fpcalc")
+	probePath := &scanHeldToolPath{}
+	fpcalcPath := &scanHeldToolPath{}
+	config := service.SourceAnalysisPreparerConfig{
+		AnalysisPolicy: persistence.SourceAnalysisPolicyVersion,
+		ProbeResult:    persistence.SourceMediaVariant{SizeBytes: 0},
+		FPCalcVersion:  tools.FPCalcVersion{},
+		FingerprintResult: persistence.SourceFingerprintResult{
+			FPCalcVersion: "", VersionBanner: "", AlgorithmNamespace: "chromaprint", ParserContractVersion: 1,
+		},
+	}
+	if hasProbe {
+		if _, ok := scanExpectedExecutable(tools.PackageFFmpeg, probe.Executable, worker.platform.Platform.GOOS); !ok {
+			hasProbe = false
+		}
+		config.FFProbeVersion = probe.VersionBanner
+	}
+	if hasFPCalc {
+		if _, ok := scanExpectedExecutable(tools.PackageFPCalc, fpcalc.Executable, worker.platform.Platform.GOOS); !ok {
+			hasFPCalc = false
+		}
+		config.FPCalcVersion = tools.FPCalcVersion{Version: fpcalc.Version, Banner: fpcalc.VersionBanner}
+		config.FingerprintResult.FPCalcVersion = fpcalc.Version
+		config.FingerprintResult.VersionBanner = fpcalc.VersionBanner
+	}
+	if cache, ok := worker.repository.(service.SourceAnalysisCacheLookup); ok {
+		config.Cache = cache
+	}
+	config.ProbeFactory = func(string) (service.SourceAnalysisProbe, error) {
+		path, err := probePath.get()
+		if err != nil {
+			return nil, err
+		}
+		return tools.NewFFProbe(path)
+	}
+	config.FingerprinterFactory = func(string) (service.SourceAnalysisFingerprinter, error) {
+		path, err := fpcalcPath.get()
+		if err != nil {
+			return nil, err
+		}
+		return tools.NewFPCalc(path)
+	}
+	preparer := &scanAnalysisPreparer{config: config, operationID: operation.ID}
+	config.Hold = func(ctx context.Context, step service.SourceAnalysisStep) (func(), error) {
+		selection, selected := probe, hasProbe
+		targetPath := probePath
+		if step == service.SourceAnalysisFingerprintStep {
+			selection, selected = fpcalc, hasFPCalc
+			targetPath = fpcalcPath
+		}
+		if !selected {
+			return nil, fmt.Errorf("the pinned tool selection is unavailable")
+		}
+		holder, ok := worker.repository.(interface {
+			AcquireSourceScanToolHold(context.Context, uuid.UUID, uuid.UUID, string, int, int64, persistence.SourceAnalysisToolSelection) (persistence.SourceScanToolHold, func() error, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("source scan tool hold repository is unavailable")
+		}
+		held, release, err := holder.AcquireSourceScanToolHold(ctx, operation.ID, snapshot.SourceRootID, snapshot.ConfiguredPath, operation.Attempt, jobID, selection)
+		if err != nil {
+			return nil, err
+		}
+		releaseAfterSetupFailure := func(cause error) (func(), error) {
+			if releaseErr := release(); releaseErr != nil {
+				preparer.mu.Lock()
+				preparer.releaseErr = errors.Join(preparer.releaseErr, releaseErr)
+				preparer.mu.Unlock()
+				cause = errors.Join(cause, releaseErr)
+			}
+			return nil, cause
+		}
+		if held.Installation.PlatformGOOS != worker.platform.Platform.GOOS || held.Installation.PlatformGOARCH != worker.platform.Platform.GOARCH {
+			return releaseAfterSetupFailure(fmt.Errorf("pinned managed tool does not match the worker platform"))
+		}
+		if step == service.SourceAnalysisProbeStep {
+			versions, verifyErr := worker.lifecycle.VerifyInstallation(ctx, held.ToolsRoot, held.Installation.RelativePath, tools.PackageFFmpeg, held.Installation.ReleaseIdentity, worker.platform.Platform.GOOS)
+			actual := versions[filepath.Base(held.ExecutablePath)]
+			if verifyErr != nil || strings.TrimSpace(actual) != selection.VersionBanner || !pinnedFFProbeVersionMatches(actual, selection.Version) {
+				if verifyErr != nil {
+					return releaseAfterSetupFailure(fmt.Errorf("verify pinned managed ffprobe while held: %w", verifyErr))
+				}
+				return releaseAfterSetupFailure(fmt.Errorf("managed ffprobe does not match pinned version metadata"))
+			}
+			transportProbe, probeErr := worker.newProbe(held.ExecutablePath)
+			if probeErr != nil {
+				return releaseAfterSetupFailure(fmt.Errorf("create the pinned managed ffprobe: %w", probeErr))
+			}
+			if err := transportProbe.CheckFileTransport(ctx); err != nil {
+				return releaseAfterSetupFailure(fmt.Errorf("check pinned managed ffprobe transport: %w", err))
+			}
+		}
+		targetPath.set(held.ExecutablePath)
+		return func() {
+			if err := release(); err != nil {
+				preparer.mu.Lock()
+				preparer.releaseErr = errors.Join(preparer.releaseErr, err)
+				preparer.mu.Unlock()
+			}
+		}, nil
+	}
+	preparer.config = config
+	return preparer
+}
+
+func scanExpectedExecutable(kind tools.PackageKind, executable, goos string) (string, bool) {
+	for _, name := range tools.ExpectedExecutables(kind, goos) {
+		base := name
+		if extension := filepath.Ext(name); extension != "" {
+			base = name[:len(name)-len(extension)]
+		}
+		if name == executable || base == executable {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 var _ river.Worker[service.ScanSourceJobArgs] = (*SourceScanWorker)(nil)

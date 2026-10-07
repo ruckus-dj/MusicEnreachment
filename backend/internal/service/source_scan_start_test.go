@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,13 +27,27 @@ var (
 )
 
 type sourceScanSetupFixture struct {
-	completed bool
-	calls     int
+	completed  bool
+	calls      int
+	runtime    settings.RuntimeSettings
+	runtimeErr error
+	sha256     bool
+	sha256Err  error
+	shaCalls   int
 }
 
 func (fixture *sourceScanSetupFixture) SetupCompleted(context.Context) (bool, error) {
 	fixture.calls++
 	return fixture.completed, nil
+}
+
+func (fixture *sourceScanSetupFixture) ReadRuntimeSettings(context.Context) (settings.RuntimeSettings, error) {
+	return fixture.runtime, fixture.runtimeErr
+}
+
+func (fixture *sourceScanSetupFixture) GetSHA256Enabled(context.Context) (bool, error) {
+	fixture.shaCalls++
+	return fixture.sha256, fixture.sha256Err
 }
 
 // riverInserterFixture stands in for the River client of a scan start. The
@@ -67,6 +82,10 @@ type sourceScanStartRepositoryFixture struct {
 func (fixture *sourceScanStartRepositoryFixture) GetSourceRoot(ctx context.Context, id uuid.UUID) (*persistence.SourceRoot, error) {
 	fixture.reads++
 	return fixture.sourceRootRepositoryFixture.GetSourceRoot(ctx, id)
+}
+
+func (*sourceScanStartRepositoryFixture) GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error) {
+	return nil, sql.ErrNoRows
 }
 
 func (fixture *sourceScanStartRepositoryFixture) ListSourceRoots(ctx context.Context) ([]persistence.SourceRoot, error) {
@@ -131,7 +150,8 @@ func supportedScanStartPlatform() settings.PlatformState {
 // path and the snapshot version, and the River job carries nothing but the
 // operation ID the worker reloads everything else from.
 func TestSourceScanStartRecordsOnlyTheRootSnapshotAndTheOperationID(t *testing.T) {
-	fixture := newSourceScanStartFixture(t, &sourceScanSetupFixture{completed: true}, supportedScanStartPlatform())
+	setup := &sourceScanSetupFixture{completed: true}
+	fixture := newSourceScanStartFixture(t, setup, supportedScanStartPlatform())
 
 	operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
 	if err != nil {
@@ -148,10 +168,14 @@ func TestSourceScanStartRecordsOnlyTheRootSnapshotAndTheOperationID(t *testing.T
 	}
 	want := service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: fixture.root.ID,
-		ConfiguredPath: fixture.root.ConfiguredPath,
+		ConfiguredPath: fixture.root.ConfiguredPath, ScanGeneration: fixture.root.ScanGeneration,
+		SHA256Enabled: new(false), Tools: []persistence.SourceAnalysisToolSelection{},
 	}
-	if snapshot != want {
+	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("scan snapshot = %+v, want %+v", snapshot, want)
+	}
+	if setup.shaCalls != 1 {
+		t.Fatalf("SHA-256 policy reads = %d, want one explicit read (including false)", setup.shaCalls)
 	}
 	if len(fixture.repository.operations) != 1 || fixture.repository.operations[0] != operation {
 		t.Fatalf("enqueued operations = %+v, want the returned operation stored once", fixture.repository.operations)
@@ -169,6 +193,39 @@ func TestSourceScanStartRecordsOnlyTheRootSnapshotAndTheOperationID(t *testing.T
 	if fixture.river.calls != 0 {
 		t.Fatalf("the service inserted %d River jobs itself, want the repository to own the insert", fixture.river.calls)
 	}
+}
+
+func TestSourceScanStartPinsSHA256PolicyAndRefusesPolicyReadErrors(t *testing.T) {
+	t.Run("enabled policy is pinned", func(t *testing.T) {
+		setup := &sourceScanSetupFixture{completed: true, sha256: true}
+		fixture := newSourceScanStartFixture(t, setup, supportedScanStartPlatform())
+		operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
+		if err != nil {
+			t.Fatalf("start with SHA-256 enabled: %v", err)
+		}
+		var snapshot service.ScanSourceSnapshot
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
+			t.Fatalf("decode snapshot: %v", err)
+		}
+		if snapshot.SHA256Enabled == nil || !*snapshot.SHA256Enabled {
+			t.Fatalf("snapshot SHA-256 policy = %v, want explicitly true", snapshot.SHA256Enabled)
+		}
+	})
+
+	t.Run("policy read error creates no operation", func(t *testing.T) {
+		setup := &sourceScanSetupFixture{completed: true, sha256Err: errors.New("settings unavailable")}
+		fixture := newSourceScanStartFixture(t, setup, supportedScanStartPlatform())
+		operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
+		if err == nil || !strings.Contains(err.Error(), "read SHA-256 setting") {
+			t.Fatalf("start after policy read failure = %+v, %v; want wrapped setting error", operation, err)
+		}
+		if operation != nil || len(fixture.repository.operations) != 0 || len(fixture.repository.args) != 0 {
+			t.Fatalf("failed policy read created operation/job: result=%+v operations=%d jobs=%d", operation, len(fixture.repository.operations), len(fixture.repository.args))
+		}
+		if setup.shaCalls != 1 {
+			t.Fatalf("SHA-256 policy reads = %d, want one", setup.shaCalls)
+		}
+	})
 }
 
 // TestSourceScanStartRefusesAnUnusablePlatformAndAnUnfinishedSetup covers the

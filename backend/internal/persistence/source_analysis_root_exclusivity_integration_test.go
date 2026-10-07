@@ -29,14 +29,20 @@ func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
 	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-exclusive")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "exclusive")
-	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
-
-	active := analysisEnqueueOperation(root, location, installationID, nil)
-	if err := enqueueAnalysis(t, ctx, inventory, active, client); err != nil {
+	active := normalizedQueuedAnalysis(t, ctx, inventory, root, location, nil)
+	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, active); err != nil {
 		t.Fatalf("enqueue the first analysis: %v", err)
 	}
-	if err := enqueueAnalysis(t, ctx, inventory, analysisEnqueueOperation(root, location, installationID, nil), client); !errors.Is(err, persistence.ErrSourceRootActiveAnalysis) {
+	activeSnapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(active.InputSnapshot)
+	if err != nil {
+		t.Fatalf("decode first analysis snapshot: %v", err)
+	}
+	activeWork, activeLocation, err := inventory.GetNormalizedSourceAnalysisWork(ctx, activeSnapshot.WorkIDs[0])
+	if err != nil {
+		t.Fatalf("read existing analysis work: %v", err)
+	}
+	second := normalizedOperation(t, root, *activeLocation, activeWork, persistence.SourceAnalysisModeBatch, nil, nil, true, false, nil)
+	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, second); !errors.Is(err, persistence.ErrSourceRootActiveAnalysis) {
 		t.Fatalf("second analysis = %v, want ErrSourceRootActiveAnalysis", err)
 	}
 	if err := inventory.CreateSourceScanOperationAndEnqueue(ctx, scanEnqueueOperation(root, uuid.New()), client,
@@ -69,8 +75,10 @@ func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
 		t.Fatalf("analysis River jobs after the refusals = %d, want 1", jobs)
 	}
 
-	setOperationState(t, ctx, database, active.ID, "succeeded")
+	if err := inventory.SettleNormalizedSourceAnalysisOperation(ctx, active.ID, "failed", "recovered", "The source analysis was interrupted."); err != nil {
+		t.Fatalf("settle interrupted normalized analysis: %v", err)
+	}
 	if err := deleteInventoryRoot(ctx, inventory, root.ID); err != nil {
-		t.Fatalf("delete after the active analysis finished: %v", err)
+		t.Fatalf("delete after the active analysis became terminal: %v", err)
 	}
 }

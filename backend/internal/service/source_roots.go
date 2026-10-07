@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -50,6 +51,10 @@ type ManagedPathsReader interface {
 	GetOutputDirectory(context.Context) (string, bool, error)
 }
 
+type sourceRootPendingAdmitter interface {
+	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
+}
+
 // SourceRoot is the operator-facing state of one registered source root. The
 // stale flag and the location count are derived here, so no caller compares
 // inventory_path with configured_path itself or counts rows.
@@ -84,10 +89,17 @@ type SourceRootEdit struct {
 type SourceRoots struct {
 	repository   SourceRootRepository
 	managedPaths ManagedPathsReader
+	pending      sourceRootPendingAdmitter
 }
 
 func NewSourceRoots(repository SourceRootRepository, managedPaths ManagedPathsReader) *SourceRoots {
 	return &SourceRoots{repository: repository, managedPaths: managedPaths}
+}
+
+// SetPendingDispatcher wires best-effort pending analysis admission after an
+// enabled root is committed.
+func (s *SourceRoots) SetPendingDispatcher(dispatcher sourceRootPendingAdmitter) {
+	s.pending = dispatcher
 }
 
 // Create registers a new enabled root. The display name must not be empty and
@@ -165,6 +177,11 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 			return SourceRoot{}, fmt.Errorf("edit source root: %w", ErrSourceRootBusy)
 		}
 		return SourceRoot{}, fmt.Errorf("edit source root: %w", err)
+	}
+	if !current.Enabled && updated.Enabled && s.pending != nil {
+		if _, err := s.pending.AdmitPending(context.WithoutCancel(ctx), id); err != nil {
+			slog.WarnContext(ctx, "pending source analysis admission failed after source root enabled", "root", id, "cause", err)
+		}
 	}
 	return s.Get(ctx, id)
 }

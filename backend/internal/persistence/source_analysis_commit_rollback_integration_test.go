@@ -55,11 +55,8 @@ func TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL(t *testing.T) {
 	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-commit-failure")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "commit-failure")
-	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
-
-	operation := analysisEnqueueOperation(root, location, installationID, nil)
-	requirePostgresError(t, enqueueAnalysis(t, ctx, inventory, operation, client), "P0001", "injected commit failure")
+	operation := normalizedQueuedAnalysis(t, ctx, inventory, root, location, nil)
+	requirePostgresError(t, enqueueNormalizedAnalysis(t, ctx, inventory, client, operation), "P0001", "injected commit failure")
 	if operations := countScanEnqueueRows(t, ctx, database,
 		"SELECT count(*) FROM operation WHERE kind = 'analyze_source'"); operations != 0 {
 		t.Fatalf("analysis operations after the failed commit = %d, want 0", operations)
@@ -87,10 +84,9 @@ func requirePostgresError(t *testing.T, err error, code, messageFragment string)
 	}
 }
 
-// TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL proves the second
-// read hold: an analysis of an already analyzed file pins the current variant in
-// analysis_media_variant_id and in the immutable snapshot, so the variant stays
-// alive until the operation reaches its terminal state.
+// TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL proves that an
+// admitted analysis holds its selected work and that the successful probe result
+// referenced by that work cannot be deleted while the work is retained.
 func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
@@ -101,26 +97,44 @@ func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
 	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-variant-hold")
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
-	installationID := insertAnalysisInstallation(t, ctx, database, "variant-hold")
-	setActiveAnalysisFFmpeg(t, ctx, database, installationID)
 	variantID := insertMediaVariantRow(t, ctx, database, location.SizeBytes, uuid.New())
 	linkLocationVariant(t, ctx, database, location.ID, variantID)
-	location.MediaVariantID = &variantID
-
-	operation := analysisEnqueueOperation(root, location, installationID, &variantID)
-	if err := enqueueAnalysis(t, ctx, inventory, operation, client); err != nil {
+	work := normalizedWork(t, ctx, inventory, root, location, true,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepProbe, State: "pending"},
+	)
+	previousFailure := "previous probe attempt failed"
+	if _, err := database.ExecContext(ctx, `UPDATE source_analysis_step SET state='failed',safe_error=?,success_probe_variant_id=?,success_reuse_origin='executed' WHERE work_id=? AND step='probe'`, previousFailure, variantID, work.ID); err != nil {
+		t.Fatalf("retain the previous probe result on the failed retry target: %v", err)
+	}
+	// The failed probe is an explicit single-step retry target; its successful
+	// result remains selected while the retry holds the work.
+	step := string(persistence.SourceStepProbe)
+	installationID := insertAnalysisInstallation(t, ctx, database, "probe-retry")
+	probeTool := normalizedToolSelection(t, ctx, database, installationID, "ffprobe")
+	operation := normalizedOperation(t, root, location, work, persistence.SourceAnalysisModeSingleStep, &work.ID, &step, true, false, []persistence.SourceAnalysisToolSelection{probeTool})
+	if err := enqueueNormalizedAnalysis(t, ctx, inventory, client, operation); err != nil {
 		t.Fatalf("enqueue a re-analysis: %v", err)
 	}
 	stored, err := persistence.NewSetupManagerRepository(database).GetOperation(ctx, operation.ID)
 	if err != nil {
 		t.Fatalf("read the stored operation: %v", err)
 	}
-	if stored.AnalysisMediaVariantID == nil || *stored.AnalysisMediaVariantID != variantID {
-		t.Fatalf("variant hold = %v, want the current %s", stored.AnalysisMediaVariantID, variantID)
+	storedSnapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(stored.InputSnapshot)
+	if err != nil {
+		t.Fatalf("decode normalized retry snapshot: %v", err)
 	}
-	snapshot := mustDecodeSnapshot(t, stored.InputSnapshot)
-	if snapshot.PreviousVariantID == nil || *snapshot.PreviousVariantID != variantID {
-		t.Fatalf("snapshot previous variant = %v, want %s", snapshot.PreviousVariantID, variantID)
+	if len(storedSnapshot.WorkIDs) != 1 || storedSnapshot.WorkIDs[0] != work.ID || storedSnapshot.TargetWorkID == nil || *storedSnapshot.TargetWorkID != work.ID || storedSnapshot.TargetStep == nil || *storedSnapshot.TargetStep != step || storedSnapshot.RerunTarget == nil || *storedSnapshot.RerunTarget {
+		t.Fatalf("normalized retry snapshot = %+v; want explicit non-rerun probe target for held work %s", storedSnapshot, work.ID)
+	}
+	var heldWorkID uuid.UUID
+	if err := database.NewRaw(`SELECT work_id FROM operation_source_work_hold WHERE operation_id=?`, operation.ID).Scan(ctx, &heldWorkID); err != nil {
+		t.Fatalf("read persisted selected-work hold: %v", err)
+	}
+	if heldWorkID != work.ID {
+		t.Fatalf("persisted work hold = %s, want %s", heldWorkID, work.ID)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM media_variant WHERE id=?`, variantID); err == nil {
+		t.Fatal("deleting the successful probe result referenced by retained work was accepted")
 	}
 	if !mediaVariantExists(t, ctx, database, variantID) {
 		t.Fatal("the held previous variant was removed")

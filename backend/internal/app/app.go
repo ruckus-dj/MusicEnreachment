@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -48,6 +49,10 @@ type scanWorkerRepository struct {
 	*persistence.SourceInventoryRepository
 }
 
+func (repository scanWorkerRepository) GetInstallation(ctx context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
+	return repository.SourceInventoryRepository.GetInstallation(ctx, id)
+}
+
 // analysisWorkerRepository joins the two repositories an analysis worker reads:
 // the operation and managed installation records, and the source inventory whose
 // apply commits the result and both read holds.
@@ -56,9 +61,22 @@ type analysisWorkerRepository struct {
 	*persistence.SourceInventoryRepository
 }
 
-func newOperationServices(repository operationRepository) (*service.Operations, *service.Operations, *riverClientSlot) {
-	client := &riverClientSlot{}
-	operations := service.NewOperationsWithRiver(repository, client)
+func (repository analysisWorkerRepository) GetInstallation(ctx context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
+	return repository.SourceInventoryRepository.GetInstallation(ctx, id)
+}
+
+func (repository analysisWorkerRepository) LookupSourceProbe(ctx context.Context, digest [sha256.Size]byte, version string, policy int) (*persistence.SourceMediaVariant, bool, error) {
+	return repository.SourceInventoryRepository.LookupSourceProbe(ctx, digest, version, policy)
+}
+
+func (repository analysisWorkerRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte, version string) (*persistence.SourceFingerprintResult, bool, error) {
+	return repository.SourceInventoryRepository.LookupSourceFingerprint(ctx, digest, version)
+}
+
+func newOperationServices(repository operationRepository, client *riverClientSlot, analysisRetry interface {
+	RetryOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
+}) (*service.Operations, *service.Operations, *riverClientSlot) {
+	operations := service.NewOperationsWithRiver(repository, client, analysisRetry)
 	return operations, operations, client
 }
 
@@ -111,16 +129,25 @@ func Run(ctx context.Context, config Config) error {
 	}
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient())
-	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository)
+	riverSlot := &riverClientSlot{}
+	sourceInventory := persistence.NewSourceInventoryRepository(db)
+	sourceAnalysis := service.NewSourceAnalysisOperations(
+		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
+		registry, registry, platform, riverSlot,
+	)
+	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
+	operationService.SetPendingDispatcher(sourceAnalysis)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	}, tools.NewLifecycle(nil))
-	installWorker.SetMoveWorker(jobs.NewMoveWorker(setupManagerRepository, operationService, registry, tools.Platform{
+	moveWorker := jobs.NewMoveWorker(setupManagerRepository, operationService, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
-	}, tools.NewLifecycle(nil)))
-	sourceInventory := persistence.NewSourceInventoryRepository(db)
+	}, tools.NewLifecycle(nil))
+	moveWorker.SetPendingDispatcher(sourceAnalysis)
+	installWorker.SetMoveWorker(moveWorker)
 	sourceRoots := service.NewSourceRoots(sourceInventory, registry)
+	sourceRoots.SetPendingDispatcher(sourceAnalysis)
 	scanWorker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
@@ -129,13 +156,9 @@ func Run(ctx context.Context, config Config) error {
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, registry, registry, platform,
 	)
+	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 
-	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
-		setupManagerRepository.RiverJobLiveness, registry); err != nil {
-		return fmt.Errorf("reconcile interrupted operations: %w", err)
-	}
-
-	riverClient, riverListenerPool, err := jobs.StartWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
 		}
@@ -152,13 +175,25 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 	defer riverListenerPool.Close()
+	riverSlot.RiverInserter = riverClient
+
+	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
+		setupManagerRepository.RiverJobLiveness, registry); err != nil {
+		return fmt.Errorf("reconcile interrupted operations: %w", err)
+	}
+	if err := sourceAnalysis.DispatchPending(ctx); err != nil {
+		return fmt.Errorf("dispatch pending source analysis: %w", err)
+	}
+
+	if err := riverClient.Start(ctx); err != nil {
+		return fmt.Errorf("start River: %w", err)
+	}
 	logger.InfoContext(ctx, "River started")
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
 	}()
-	riverSlot.RiverInserter = riverClient
 	toolCatalog := service.NewCatalogService(catalog, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
 	})
@@ -171,7 +206,6 @@ func Run(ctx context.Context, config Config) error {
 	}, riverClient)
 	sourceLocations := service.NewSourceLocations(sourceInventory)
 	sourceScan := service.NewSourceScanOperations(sourceInventory, sourceRoots, registry, platform, riverClient)
-	sourceAnalysis := service.NewSourceAnalysisOperations(persistence.NewSourceAnalysisStartStore(db), registry, registry, platform, riverClient)
 	sourceLocationDetails := service.NewSourceLocationDetails(sourceInventory)
 
 	router := chi.NewRouter()

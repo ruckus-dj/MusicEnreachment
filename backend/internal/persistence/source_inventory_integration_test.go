@@ -225,9 +225,8 @@ func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
 		t.Fatalf("install operation concurrent with a scan: %v", err)
 	}
 
-	// The move interval must stay unbounded, so a move collides with an active
-	// scan in both directions. Finish every active row first: the move also
-	// collides with an active scan (or install) of any root by design.
+	// Tools-free scans do not occupy the tools-move interval. Root exclusivity
+	// remains independent from the tool-reader flag.
 	finishOperation(t, ctx, repository, second.ID)
 	finishOperation(t, ctx, repository, differentRoot.ID)
 	finishOperation(t, ctx, repository, install.ID)
@@ -245,24 +244,19 @@ func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "preflight",
 		InputSnapshot: []byte(`{"old_root":"/tools","new_root":"/new-tools"}`),
 	}
-	if err := repository.CreateOperation(ctx, move); err == nil {
-		t.Fatal("tools root move concurrent with an active scan was accepted")
+	if err := repository.CreateOperation(ctx, move); err != nil {
+		t.Fatalf("tools root move concurrent with a tools-free scan: %v", err)
 	}
 
 	finishOperation(t, ctx, repository, scanBeforeMove.ID)
-	if err := repository.CreateOperation(ctx, move); err != nil {
-		t.Fatalf("tools root move on an idle catalog: %v", err)
-	}
-
-	// With the move active, an active scan of any root must collide too, so the
-	// move really covers the unbounded interval and not only an empty one.
+	// The opposite order also permits a scan that has not acquired tools.
 	scanAgainstMove := &persistence.Operation{
 		ID: uuid.New(), Kind: "scan_source", State: "queued", Stage: "queued",
 		InputSnapshot:      scanSnapshot(other.ID, "/srv/active-scan-other"),
 		TargetSourceRootID: &other.ID,
 	}
-	if err := repository.CreateOperation(ctx, scanAgainstMove); err == nil {
-		t.Fatal("active scan concurrent with a queued tools root move was accepted")
+	if err := repository.CreateOperation(ctx, scanAgainstMove); err != nil {
+		t.Fatalf("tools-free scan concurrent with a queued tools root move: %v", err)
 	}
 }
 

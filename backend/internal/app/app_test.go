@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -14,6 +15,18 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+type appSourceAnalysisRetryer struct {
+	called int
+	target uuid.UUID
+	result *persistence.Operation
+}
+
+func (retryer *appSourceAnalysisRetryer) RetryOperation(_ context.Context, id uuid.UUID) (*persistence.Operation, error) {
+	retryer.called++
+	retryer.target = id
+	return retryer.result, nil
+}
 
 type workerOperationRepository struct {
 	*persistence.SetupManagerRepository
@@ -58,7 +71,7 @@ func TestWorkerTransitionWakesAPISubscriber(t *testing.T) {
 		},
 		installation: &persistence.ToolInstallation{ID: installationID, State: "failed"},
 	}
-	workerOperations, apiOperations, _ := newOperationServices(repository)
+	workerOperations, apiOperations, _ := newOperationServices(repository, &riverClientSlot{}, nil)
 	changed, unsubscribe := apiOperations.Subscribe(operationID)
 	defer unsubscribe()
 	other, unsubscribeOther := apiOperations.Subscribe(uuid.New())
@@ -87,5 +100,41 @@ func TestWorkerTransitionWakesAPISubscriber(t *testing.T) {
 	case <-other:
 		t.Fatal("unrelated operation subscriber was woken")
 	default:
+	}
+}
+
+func TestOperationServicesInjectSourceAnalysisRetryer(t *testing.T) {
+	workID := uuid.New()
+	step := string(persistence.SourceStepSHA256)
+	no := false
+	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
+		Mode:          persistence.SourceAnalysisModeSingleStep,
+		WorkIDs:       []uuid.UUID{workID}, TargetWorkID: &workID, TargetStep: &step,
+		RerunTarget: &no, SHA256Enabled: &no, CacheOnlyReuse: &no,
+		ToolsReadRequired: false, Tools: []persistence.SourceAnalysisToolSelection{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := &persistence.Operation{
+		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "failed", InputSnapshot: snapshot,
+		SourceAnalysisMode: persistence.SourceAnalysisModeSingleStep, TargetWorkID: &workID, TargetStep: &step,
+	}
+	repository := &workerOperationRepository{operation: original}
+	retried := &persistence.Operation{ID: uuid.New(), State: "queued"}
+	retryer := &appSourceAnalysisRetryer{result: retried}
+	slot := &riverClientSlot{}
+	operations, _, returnedSlot := newOperationServices(repository, slot, retryer)
+
+	got, err := operations.Retry(context.Background(), original.ID)
+	if err != nil {
+		t.Fatalf("retry through composed operations service: %v", err)
+	}
+	if got != retried || retryer.called != 1 || retryer.target != original.ID {
+		t.Fatalf("retry result/calls/target = (%p, %d, %s), want (%p, 1, %s)", got, retryer.called, retryer.target, retried, original.ID)
+	}
+	if returnedSlot != slot {
+		t.Fatal("operation services did not retain the shared River client slot")
 	}
 }

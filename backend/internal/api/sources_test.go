@@ -142,6 +142,13 @@ func (repository *sourceAPIRepository) ListSourceLocationsPage(_ context.Context
 	return page, &persistence.SourceLocationCursor{RelativePath: last.RelativePath, ID: last.ID}, nil
 }
 
+// GetInstallation reports no managed tool installation for any id. A scan start
+// treats a missing tool as an absent selection and inventories the root without
+// tool metadata, so the fake never fabricates verified tool provenance.
+func (repository *sourceAPIRepository) GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (repository *sourceAPIRepository) CreateSourceScanOperationAndEnqueue(ctx context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
 	if repository.disabled {
 		return fmt.Errorf("create scan operation: %w", persistence.ErrSourceRootDisabled)

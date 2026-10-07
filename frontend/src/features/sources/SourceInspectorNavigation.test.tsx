@@ -113,7 +113,9 @@ describe("inspector file navigation", () => {
     expect(oldSignal?.aborted).toBe(true);
     expect(oldStream.close).toHaveBeenCalledOnce();
     expect(screen.queryByText(/old failure/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Анализировать" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
+    ).toBeDisabled();
     window.location.hash = "";
   });
 });

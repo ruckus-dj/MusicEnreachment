@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeToOperation } from "../../api/client/operations";
 import {
-  analyzeSourceLocation,
-  dismissOperation,
   getOperation,
   getSourceLocation,
-  retryOperation,
+  rerunSourceFingerprint,
+  retrySourceAnalysisStep,
 } from "../../api/generated/client";
 import type {
   OperationResponse,
@@ -21,7 +20,7 @@ function inspectorFailure(response: {
     return new Error("Файл или каталог не найден: возможно, запись удалили.");
   if (response.status === 409)
     return new Error(
-      `${response.data?.detail || "Анализ отклонён: состояние файла или каталога изменилось, либо выполняется другая операция."} Обновите файл и запустите новый анализ текущего файла.`,
+      `${response.data?.detail || "Запрос отклонён: состояние файла или каталога изменилось, либо выполняется другая операция."} Обновите сведения о файле и повторите доступный этап.`,
     );
   return new Error(
     response.data?.detail || `Сервер вернул ошибку ${response.status}.`,
@@ -63,6 +62,8 @@ export function useSourceInspector(sourceId: string, locationId: string) {
         if (request.signal.aborted || lifetime.current.signal.aborted) return;
         if (active.status !== 200) throw inspectorFailure(active);
         setOperation(active.data);
+      } else {
+        setOperation(undefined);
       }
     } catch (reason) {
       if (!request.signal.aborted && !lifetime.current.signal.aborted)
@@ -93,8 +94,12 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     operation?.state === "queued" || operation?.state === "running";
   useEffect(() => {
     if (!operationId || !pending) return;
+    // Effect-local disposal guard: a late SSE wake-up or an in-flight reread
+    // must never issue a new request or reload the inspector after navigation.
+    let disposed = false;
     let request: AbortController | undefined;
     const read = async () => {
+      if (disposed) return;
       request?.abort();
       const current = new AbortController();
       request = current;
@@ -103,42 +108,58 @@ export function useSourceInspector(sourceId: string, locationId: string) {
           signal: current.signal,
           cache: "no-store",
         });
-        if (current.signal.aborted) return;
+        if (disposed || current.signal.aborted) return;
         if (response.status !== 200) throw inspectorFailure(response);
         apply(response.data);
+        if (disposed) return;
+        // SSE is only a wake-up channel. Every wake re-reads the inspector,
+        // including intermediate updates from independently running steps.
+        void load();
       } catch (reason) {
-        if (!current.signal.aborted) setStreamError(message(reason));
+        if (!disposed && !current.signal.aborted)
+          setStreamError(message(reason));
       }
     };
     const close = subscribeToOperation(
       operationId,
       (snapshot) => {
+        if (disposed) return;
         request?.abort();
         setStreamError("");
         apply(snapshot);
+        void load();
       },
       (reason) => {
+        if (disposed) return;
         setStreamError(reason.message);
         void read();
       },
     );
     void read();
     return () => {
+      disposed = true;
       close();
       request?.abort();
     };
-  }, [operationId, pending, apply]);
+  }, [operationId, pending, apply, load]);
 
+  // Terminal refresh owns its own lifecycle. It must not go through the
+  // subscription wake-up channel: that channel is a no-op when the initial
+  // snapshot is already terminal, and it must not outlive the subscription.
+  // Reloading detail also clears stale active controls.
   useEffect(() => {
     if (!operation) return;
     const terminal =
-      operation.state === "succeeded" || operation.state === "failed";
+      operation.state !== "queued" && operation.state !== "running";
     const key = terminal ? `${operation.id}:${operation.state}` : "";
     if (key && key !== completion.current) void load();
     completion.current = key;
   }, [operation, load]);
 
-  async function action(kind: "start" | "retry" | "dismiss") {
+  async function action(
+    kind: "retry" | "rerun",
+    step?: "sha256" | "probe" | "fingerprint",
+  ) {
     if (!detail || loading || actionRequest.current) return;
     const request = new AbortController();
     actionRequest.current = request;
@@ -146,15 +167,19 @@ export function useSourceInspector(sourceId: string, locationId: string) {
     setError("");
     try {
       switch (kind) {
-        case "start": {
-          const response = await analyzeSourceLocation(
+        case "retry": {
+          if (!step) return;
+          const response = await retrySourceAnalysisStep(
             sourceId,
             locationId,
             {
+              step,
               expected_size_bytes: detail.size_bytes,
               expected_mtime: detail.mtime,
             },
-            { signal: request.signal },
+            {
+              signal: request.signal,
+            },
           );
           if (request.signal.aborted) return;
           if (response.status !== 202) {
@@ -162,29 +187,28 @@ export function useSourceInspector(sourceId: string, locationId: string) {
             throw inspectorFailure(response);
           }
           apply(response.data);
+          void load();
           break;
         }
-        case "retry": {
-          if (!operation) return;
-          const response = await retryOperation(operation.id, {
-            signal: request.signal,
-          });
+        case "rerun": {
+          const response = await rerunSourceFingerprint(
+            sourceId,
+            locationId,
+            {
+              expected_size_bytes: detail.size_bytes,
+              expected_mtime: detail.mtime,
+            },
+            {
+              signal: request.signal,
+            },
+          );
           if (request.signal.aborted) return;
-          if (response.status !== 200) {
+          if (response.status !== 202) {
             void load();
             throw inspectorFailure(response);
           }
           apply(response.data);
-          break;
-        }
-        case "dismiss": {
-          if (!operation) return;
-          const response = await dismissOperation(operation.id, {
-            signal: request.signal,
-          });
-          if (request.signal.aborted) return;
-          if (response.status !== 204) throw inspectorFailure(response);
-          setOperation(undefined);
+          void load();
           break;
         }
       }

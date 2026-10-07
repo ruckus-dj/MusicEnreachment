@@ -1,27 +1,45 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import type { SourceAnalysisStepResponse } from "../../api/generated/client.schemas";
 import { server } from "../../test/server";
-import { SourceInspectorScreen } from "./SourceInspectorScreen";
 import { SourcesScreen } from "./SourcesScreen";
 import {
   detail,
   detailPath,
   observe,
   openInspector,
-  operation,
   result,
   stamp,
 } from "./sourceInspectorTestSupport";
 
-describe("source inspector reads", () => {
-  it("opens a direct nested address when the file exists", async () => {
-    // Given
+function fingerprintStep(
+  overrides: Partial<SourceAnalysisStepResponse> = {},
+): SourceAnalysisStepResponse {
+  return {
+    name: "fingerprint",
+    state: "succeeded",
+    attempt: 1,
+    fingerprint: {
+      value: "old-fingerprint",
+      version: "fpcalc 1.1",
+      algorithm_id: 1,
+      algorithm_namespace: "chromaprint",
+      applied_operation_id: "previous-operation",
+      calculated_at: stamp,
+      duration: 12.5,
+      parser_contract_version: 1,
+      version_banner: "fpcalc version 1.1",
+    },
+    ...overrides,
+  };
+}
+
+describe("source inspector", () => {
+  it("opens a nested address and reads the source location", async () => {
     window.location.hash = "/sources/root-1/locations/file-1";
-    // When
     render(<SourcesScreen />);
     await observe(() => !!screen.queryByText("album/01.flac"));
-    // Then
     expect(
       screen.getByRole("heading", { name: "Инспектор файла" }),
     ).toBeVisible();
@@ -30,44 +48,12 @@ describe("source inspector reads", () => {
     ).toHaveAttribute("href", "#/sources/root-1");
     window.location.hash = "";
   });
-  it("prevents start while detail discovery has not answered", async () => {
-    // Given
-    let release: (response: Response) => void = () => {};
-    const requested = new Promise<void>((resolve) => {
-      server.use(
-        http.get(
-          detailPath,
-          () =>
-            new Promise<Response>((done) => {
-              release = done;
-              resolve();
-            }),
-        ),
-      );
-    });
-    // When
-    render(<SourceInspectorScreen sourceId="root-1" locationId="file-1" />);
-    await requested;
-    // Then
-    expect(screen.getByRole("status")).toHaveTextContent("Загрузка файла");
-    expect(
-      screen.queryByRole("button", { name: "Анализировать" }),
-    ).not.toBeInTheDocument();
-    await act(async () => {
-      release(HttpResponse.json(detail()));
-    });
-    await observe(
-      () => !!screen.queryByRole("button", { name: "Анализировать" }),
-    );
-  });
-  it("shows a missing file instead of a blank inspector when GET returns 404", async () => {
-    // Given
+
+  it("shows a missing file and allows the read to be retried", async () => {
     server.use(
       http.get(detailPath, () => HttpResponse.json({}, { status: 404 })),
     );
-    // When
     await openInspector();
-    // Then
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Файл или каталог не найден",
     );
@@ -75,146 +61,167 @@ describe("source inspector reads", () => {
       screen.getByRole("button", { name: "Повторить загрузку" }),
     ).toBeEnabled();
   });
-  it("keeps start disabled while an active operation snapshot is being discovered", async () => {
-    // Given
-    let release: (response: Response) => void = () => {};
-    let reads = 0;
+
+  it("renders saved technical data and keeps the raw JSON accessible", async () => {
     server.use(
       http.get(detailPath, () =>
         HttpResponse.json(
           detail({
-            active_analysis_operation_id: "analysis-1",
+            result: {
+              ...result,
+              ffprobe_version: "ffprobe 8.0\nbuilt with clang",
+            },
+            steps: [{ name: "probe", state: "succeeded", attempt: 1 }],
           }),
         ),
       ),
     );
-    const requested = new Promise<void>((resolve) => {
-      server.use(
-        http.get("/api/operations/analysis-1", () => {
-          reads += 1;
-          if (reads > 1)
-            return HttpResponse.json(
-              operation({ state: "running", stage: "probing" }),
-            );
-          return new Promise<Response>((done) => {
-            release = done;
-            resolve();
-          });
-        }),
-      );
-    });
-    // When
-    render(<SourceInspectorScreen sourceId="root-1" locationId="file-1" />);
-    await requested;
-    await observe(
-      () => !!screen.queryByRole("button", { name: "Анализировать" }),
-    );
-    // Then
-    expect(
-      screen.getByRole("button", { name: "Анализировать" }),
-    ).toBeDisabled();
-    await act(async () => {
-      release(
-        HttpResponse.json(operation({ state: "running", stage: "probing" })),
-      );
-    });
-    await observe(
-      () => !!screen.queryByText("Чтение технических данных ffprobe."),
-    );
-  });
-  it("offers explicit analysis when the file has no result", async () => {
-    // Given / When
     await openInspector();
-    // Then
-    expect(screen.getByText("Файл ещё не анализировался.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Анализировать" })).toBeEnabled();
-    expect(
-      screen.queryByText("Сохранённый технический результат"),
-    ).not.toBeInTheDocument();
-  });
-  it("shows every stream, untouched tags and accessible raw JSON when analysis succeeded", async () => {
-    // Given
-    const fullVersion =
-      "ffprobe 8.0\nbuilt with clang\nconfiguration: --enable-gpl";
-    server.use(
-      http.get(detailPath, () =>
-        HttpResponse.json(
-          detail({
-            result: { ...result, ffprobe_version: fullVersion },
-            analysis_state: "analyzed",
-          }),
-        ),
-      ),
-    );
-    // When
-    await openInspector();
-    // Then
     expect(screen.getByText(/Анализ от/)).toHaveTextContent(
-      `Анализ от ${new Date(stamp).toLocaleString()} · ffprobe 8.0 · Политика 1`,
+      new Date(stamp).toLocaleString(),
     );
-    expect(screen.getByText("ffprobe 8.0")).toHaveAttribute(
-      "title",
-      fullVersion,
-    );
-    expect(screen.queryByText(/configuration:/)).not.toBeInTheDocument();
-    expect(screen.getByText("3:00:30")).toBeVisible();
-    expect(
-      within(screen.getByRole("region", { name: "Аудиопоток 0" })).getByText(
-        "24 бит",
-      ),
-    ).toBeVisible();
-    expect(
-      within(screen.getByRole("region", { name: "Аудиопоток 3" })).getAllByText(
-        "Неизвестно",
-      ).length,
-    ).toBeGreaterThan(0);
     expect(screen.getByText("First / artist; preserved")).toBeVisible();
     const trigger = screen.getByRole("button", {
       name: "Исходный JSON ffprobe",
     });
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("region", { name: "Исходный JSON ffprobe" }),
-    ).toHaveTextContent('"codec_type": "video"');
+      within(
+        screen.getByRole("region", { name: "Исходный JSON ffprobe" }),
+      ).getByText(/codec_type/),
+    ).toBeVisible();
   });
-  it.each([
-    {
-      enabled: false,
-      stale: false,
-      status: "available" as const,
-      note: "Каталог выключен",
-    },
-    {
-      enabled: true,
-      stale: true,
-      status: "available" as const,
-      note: "Инвентарь устарел",
-    },
-    {
-      enabled: true,
-      stale: false,
-      status: "unavailable" as const,
-      note: "Каталог недоступен",
-    },
-  ])("keeps the result separate and disables start when root is $note", async ({
-    note,
-    ...root
-  }) => {
-    // Given
+
+  it("does not offer an all-in-one analyze action and gates retries on root readiness", async () => {
     server.use(
       http.get(detailPath, () =>
-        HttpResponse.json(detail({ root, result, analysis_state: "analyzed" })),
+        HttpResponse.json(
+          detail({
+            root: {
+              enabled: false,
+              stale: false,
+              status: "available",
+              inventory_path: "/srv/inbox",
+            },
+            steps: [
+              {
+                name: "sha256",
+                state: "failed",
+                attempt: 1,
+                safe_error: "hash failed",
+              },
+            ],
+          }),
+        ),
       ),
     );
-    // When
     await openInspector();
-    // Then
-    expect(screen.getByText(new RegExp(note))).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Повторить анализ" }),
+      screen.queryByRole("button", { name: "Анализировать" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Повторить этап «SHA-256»" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not fabricate successful state for steps absent from the persisted response", async () => {
+    await openInspector();
+    const steps = screen.getAllByRole("listitem");
+    expect(steps).toHaveLength(3);
+    for (const step of steps) {
+      expect(step).toHaveTextContent("Состояние: Загрузка");
+    }
+    expect(screen.queryByText("Завершено")).not.toBeInTheDocument();
+  });
+
+  it("offers a fingerprint rerun for a succeeded result saved under an older version", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            active_fpcalc_version: "fpcalc 1.2",
+            steps: [fingerprintStep()],
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+    expect(screen.getByText("old-fingerprint").parentElement).toHaveTextContent(
+      "Отпечаток: old-fingerprint",
+    );
+    expect(
+      screen.getByText(/Версия fpcalc результата: fpcalc 1.1/),
+    ).toHaveTextContent("Активная версия fpcalc: fpcalc 1.2");
+    expect(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps a retained fingerprint after a failure but does not offer a rerun", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            active_fpcalc_version: "fpcalc 1.2",
+            steps: [
+              fingerprintStep({
+                state: "failed",
+                safe_error: "fpcalc завершился с ошибкой",
+              }),
+            ],
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+    expect(screen.getByText("old-fingerprint").parentElement).toHaveTextContent(
+      "Отпечаток: old-fingerprint",
+    );
+    expect(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
     ).toBeDisabled();
-    expect(screen.getByText("matroska")).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: "Повторить этап «Акустический отпечаток»",
+      }),
+    ).toBeEnabled();
+  });
+
+  it("does not offer a rerun when the saved result already uses the active version", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            active_fpcalc_version: "fpcalc 1.1",
+            steps: [fingerprintStep()],
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+    expect(
+      screen.queryByText(/Активная версия fpcalc: fpcalc/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
+    ).toBeDisabled();
+  });
+
+  it("does not treat an unknown active version as a version change", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(detail({ steps: [fingerprintStep()] })),
+      ),
+    );
+    await openInspector();
+    expect(
+      screen.queryByText(/Активная версия fpcalc: fpcalc/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Активная версия fpcalc недоступна."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
+    ).toBeDisabled();
   });
 });

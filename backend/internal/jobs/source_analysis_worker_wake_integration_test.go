@@ -5,6 +5,8 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,10 +17,11 @@ import (
 
 // TestSourceAnalysisFailureWakesSubscriberPostgreSQL arms a real subscriber
 // before the failing action and proves the worker wakes it only after the
-// failure and the release of both read holds are committed: at the wake the
-// re-read operation is failed with no holds and the previous variant is still
-// linked. The disabled root makes the worker fail before probing, so this wake is
-// the failure notification itself and not an earlier stage transition.
+// failed step and release of its work and managed-tool read holds are committed:
+// at the authoritative re-read batch bookkeeping succeeded with no holds and
+// the previous variant is still linked. Removing the source file makes a normal
+// step failure occur after the delivery starts, so this wake is the failure
+// notification itself and not an earlier stage transition.
 func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
@@ -26,34 +29,48 @@ func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 	defer cancel()
 
 	previous := fixture.insertLinkedPreviousVariant(t, ctx)
-	operation := fixture.insertQueuedAnalysisWithPrevious(t, ctx, previous)
-	if _, err := fixture.database.ExecContext(ctx, "UPDATE source_root SET enabled = false WHERE id = ?", fixture.root.ID); err != nil {
-		t.Fatalf("disable the root: %v", err)
+	operation := fixture.startScheduled(t, ctx)
+	if err := os.Remove(filepath.Join(fixture.source, "album", "track.flac")); err != nil {
+		t.Fatalf("remove the source file: %v", err)
 	}
 
-	// The subscriber is armed before the failing delivery and never polls.
+	// Keep a subscription armed across the delivery. Every wake is only a hint;
+	// intermediate running/probing notifications require a fresh snapshot and
+	// another subscription rather than being mistaken for terminal data.
 	wake, unsubscribe := fixture.operations.Subscribe(operation.ID)
-	defer unsubscribe()
-
-	awaitRiverCompletion(t, ctx, fixture.events, fixture.deliver(t, ctx, operation.ID))
-
-	select {
-	case <-wake:
-	case <-ctx.Done():
-		t.Fatalf("no wake after the committed failure: %v", ctx.Err())
+	defer func() { unsubscribe() }()
+	if _, err := fixture.database.ExecContext(ctx, "UPDATE river_job SET state='available', scheduled_at=now() WHERE id=?", *operation.RiverJobID); err != nil {
+		t.Fatalf("make the admitted delivery available: %v", err)
 	}
-	stored := fixture.readOperation(t, ctx, operation.ID)
-	if stored.State != "failed" || stored.Stage != service.SourceAnalysisStageQueued {
-		t.Fatalf("operation at wake = %s/%s, want failed/queued", stored.State, stored.Stage)
-	}
-	requireScanDispatchSafeError(t, stored, analysisSafeDisabled)
-	requireAnalysisHolds(t, stored, nil, nil)
-	location, err := fixture.inventory.GetSourceLocation(ctx, fixture.root.ID, fixture.track.ID)
-	if err != nil {
-		t.Fatalf("read the analyzed location: %v", err)
-	}
-	if location.MediaVariantID == nil || *location.MediaVariantID != previous {
-		t.Fatalf("previous variant link = %v, want the unchanged %s", location.MediaVariantID, previous)
+	awaitRiverCompletion(t, ctx, fixture.events, *operation.RiverJobID)
+	for {
+		stored := fixture.readOperation(t, ctx, operation.ID)
+		if stored.State == "succeeded" {
+			if stored.Stage != service.SourceAnalysisStageApplying {
+				t.Fatalf("operation at terminal snapshot = succeeded/%s, want succeeded/applying", stored.Stage)
+			}
+			requireAnalysisStepSafeError(t, ctx, fixture, operation.ID, persistence.SourceStepProbe, "The source file is unavailable. The previous result is unchanged.")
+			requireAnalysisHolds(t, ctx, fixture, operation.ID, nil, nil)
+			location, err := fixture.inventory.GetSourceLocation(ctx, fixture.root.ID, fixture.track.ID)
+			if err != nil {
+				t.Fatalf("read the analyzed location: %v", err)
+			}
+			if location.MediaVariantID == nil || *location.MediaVariantID != previous {
+				t.Fatalf("previous variant link = %v, want the unchanged %s", location.MediaVariantID, previous)
+			}
+			return
+		}
+		if stored.State == "failed" {
+			t.Fatalf("batch bookkeeping state = failed/%s; want succeeded with a failed probe step", stored.Stage)
+		}
+		select {
+		case <-wake:
+			previousUnsubscribe := unsubscribe
+			wake, unsubscribe = fixture.operations.Subscribe(operation.ID)
+			previousUnsubscribe()
+		case <-ctx.Done():
+			t.Fatalf("no wake before terminal snapshot; operation remains %s/%s: %v", stored.State, stored.Stage, ctx.Err())
+		}
 	}
 }
 
@@ -79,38 +96,4 @@ func (fixture *analysisDispatchFixture) insertLinkedPreviousVariant(t *testing.T
 	}
 	fixture.track.MediaVariantID = &variant.ID
 	return variant.ID
-}
-
-// insertQueuedAnalysisWithPrevious inserts one queued analysis whose snapshot and
-// both read holds pin the fixture's location and the previous variant.
-func (fixture *analysisDispatchFixture) insertQueuedAnalysisWithPrevious(t *testing.T, ctx context.Context, previous uuid.UUID) *persistence.Operation {
-	t.Helper()
-	snapshot, err := json.Marshal(persistence.SourceAnalysisSnapshot{
-		SchemaVersion:          persistence.SourceAnalysisSnapshotVersion,
-		SourceRootID:           fixture.root.ID,
-		SourceLocationID:       fixture.track.ID,
-		ConfiguredPath:         fixture.root.ConfiguredPath,
-		InventoryPath:          fixture.root.ConfiguredPath,
-		RelativePath:           fixture.track.RelativePath,
-		SizeBytes:              fixture.track.SizeBytes,
-		Mtime:                  fixture.track.Mtime,
-		PreviousVariantID:      &previous,
-		AnalysisPolicyVersion:  persistence.SourceAnalysisPolicyVersion,
-		AnalysisInstallationID: fixture.installationID,
-	})
-	if err != nil {
-		t.Fatalf("marshal the analysis snapshot: %v", err)
-	}
-	operation := &persistence.Operation{
-		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "queued", Stage: service.SourceAnalysisStageQueued, Attempt: 1,
-		InputSnapshot:          snapshot,
-		TargetSourceRootID:     &fixture.root.ID,
-		TargetSourceLocationID: &fixture.track.ID,
-		AnalysisInstallationID: &fixture.installationID,
-		AnalysisMediaVariantID: &previous,
-	}
-	if _, err := fixture.database.NewInsert().Model(operation).Exec(ctx); err != nil {
-		t.Fatalf("insert the queued analysis: %v", err)
-	}
-	return operation
 }
