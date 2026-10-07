@@ -106,7 +106,7 @@ startup reconciliation также ищет pending независимо от ori
 
 Managed argv: `-json -- ABSOLUTE_SERVER_SOURCE_PATH`, без shell, PATH, client paths/version или `-length`. Server-resolved pathname + before/after stat соответствует owner trusted-filesystem contract. Descriptor-only fpcalc не требуется и не является blocker. Absolute path **не блокирует secondary local/network references**; sandbox или single-primary-file guarantee не заявляются; новый sandbox/demuxer policy не вводится.
 
-Nonzero exit/empty/malformed output не success. Bounded capture, cancellation, reap; compressed algorithm сохраняется с namespace, header validation не выдаётся за full payload validation. Reported duration — stream/container duration, не processed fingerprint length. Actual Chromaprint version и build library identifiers сохраняются из `-version`. Проверенные upstream сведения: [техническая записка](../../reports/plan07-fpcalc-upstream-notes.md).
+Nonzero exit/empty/malformed output не success. Bounded capture, cancellation, reap; compressed algorithm сохраняется с namespace, header validation не выдаётся за full payload validation. `fpcalc` вызывается без аргумента длины и использует встроенную длительность по умолчанию (первые 120 секунд); отдельный лимит со стороны приложения/backend не добавляется, но full-file fingerprint не обещается. Reported duration в JSON остаётся длительностью stream/container, а не фактической длиной обработанной части fingerprint. Actual Chromaprint version и build library identifiers сохраняются из `-version`. Проверенные upstream сведения: [техническая записка](../../reports/plan07-fpcalc-upstream-notes.md).
 
 ## 8. Migration и rollback
 
