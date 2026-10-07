@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,6 +18,10 @@ import (
 )
 
 func TestVerifyAbsoluteSourceStillCurrentDetectsReplacedInventoryRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow renaming an inventory root while an open descendant file handle exists")
+	}
+
 	ctx := context.Background()
 	parent := t.TempDir()
 	rootPath := filepath.Join(parent, "inventory")

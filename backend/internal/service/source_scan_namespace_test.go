@@ -4,12 +4,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 )
 
 func TestSourceScanAbandonsPreparationWhenRootNamespaceIsReplaced(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow renaming a source root while preparation holds open descendant file handles")
+	}
+
 	fixture := newSourceScanFixture(t)
 	fixture.write(t, "album/track.flac", "audio bytes")
 	pinnedPath := fixture.root.ConfiguredPath
