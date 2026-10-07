@@ -1,10 +1,11 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../../test/server";
 import {
   detail,
   detailPath,
+  InspectorStream,
   openInspector,
   operation,
   responseFor,
@@ -319,6 +320,7 @@ describe("source inspector step controls", () => {
     );
     await screen.findByText("Состояние: Выполняется");
     expect(screen.getByText("old-fingerprint")).toBeVisible();
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
 
     const failedDetail = responseFor(detailPath);
     phase = "failed";
@@ -536,6 +538,7 @@ describe("source inspector step controls", () => {
       screen.getByRole("button", { name: "Повторно вычислить отпечаток" }),
     );
     await screen.findByText("Состояние: Выполняется");
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
     const subscription = stream();
 
     phase = "succeeded";
