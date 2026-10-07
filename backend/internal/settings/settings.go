@@ -54,7 +54,7 @@ type musicBrainzVerificationStore interface {
 }
 
 type runtimeUpdateStore interface {
-	UpdateRuntime(context.Context, string, map[string]string) error
+	UpdateRuntime(context.Context, string, string, map[string]string) error
 }
 
 type Platform struct{ GOOS, GOARCH string }
@@ -102,6 +102,7 @@ type RuntimeUpdate struct {
 	ToolsDirectory             *string
 	ExpectedToolsDirectory     *string
 	OutputDirectory            *string
+	ExpectedOutputDirectory    *string
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization *string
 	PublicationFormat          *string
@@ -331,15 +332,22 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 	if len(values) == 0 {
 		return nil
 	}
-	if update.ToolsDirectory != nil {
-		if update.ExpectedToolsDirectory == nil {
-			return fmt.Errorf("tools directory update requires an expected current root")
+	if store, ok := r.store.(runtimeUpdateStore); ok {
+		if (update.ToolsDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil) &&
+			(update.ExpectedToolsDirectory == nil || update.ExpectedOutputDirectory == nil) {
+			return fmt.Errorf("runtime path updates require expected current roots")
 		}
-		store, ok := r.store.(runtimeUpdateStore)
-		if !ok {
-			return fmt.Errorf("tools directory updates require transactional runtime settings storage")
+		expectedTools, expectedOutput := "", ""
+		if update.ExpectedToolsDirectory != nil {
+			expectedTools = *update.ExpectedToolsDirectory
 		}
-		return store.UpdateRuntime(ctx, *update.ExpectedToolsDirectory, values)
+		if update.ExpectedOutputDirectory != nil {
+			expectedOutput = *update.ExpectedOutputDirectory
+		}
+		return store.UpdateRuntime(ctx, expectedTools, expectedOutput, values)
+	}
+	if update.ToolsDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil {
+		return fmt.Errorf("runtime path updates require transactional settings storage")
 	}
 	return r.store.SetMany(ctx, values)
 }

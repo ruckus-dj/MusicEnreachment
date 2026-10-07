@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -44,23 +45,72 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 	if len(values) == 0 {
 		return nil
 	}
+	values = cloneSettingValues(values)
+	_, toolsChange := values["tools_directory"]
+	_, outputChange := values["output_directory"]
+	_, caseChange := values["output_case_sensitive"]
+	_, unicodeChange := values["output_unicode_normalization"]
+	runtimeChange := toolsChange || outputChange || caseChange || unicodeChange
+	expectedTools, expectedOutput := "", ""
+	expectedToolsCanonical, expectedOutputCanonical := "", ""
+	if runtimeChange {
+		if err := canonicalizeRuntimeRootValues(values); err != nil {
+			return err
+		}
+		var err error
+		expectedTools, expectedOutput, err = r.readRuntimeRoots(ctx)
+		if err != nil {
+			return err
+		}
+		expectedToolsCanonical, err = canonicalizeOptionalPersistedPath(expectedTools)
+		if err != nil {
+			return fmt.Errorf("tools_directory: %w", err)
+		}
+		expectedOutputCanonical, err = canonicalizeOptionalPersistedPath(expectedOutput)
+		if err != nil {
+			return fmt.Errorf("output_directory: %w", err)
+		}
+	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, rootChange := values["tools_directory"]; rootChange {
+		packages := activeSettingPackages(values)
+		if toolsChange {
+			packages = []string{"ffmpeg", "fpcalc"}
+		}
+		if runtimeChange {
 			if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 				return fmt.Errorf("lock tools move gate: %w", err)
 			}
-			if err := rejectActiveRootMove(ctx, tx); err != nil {
-				return err
+		} else if len(packages) > 0 {
+			if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+				return fmt.Errorf("lock tools move gate: %w", err)
 			}
-			if err := lockInstallationPackages(ctx, tx, activeSettingPackages(values)...); err != nil {
+		}
+		if len(packages) > 0 {
+			if err := lockInstallationPackages(ctx, tx, packages...); err != nil {
 				return fmt.Errorf("lock active installations: %w", err)
 			}
-			var current string
-			err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name='tools_directory'").Scan(ctx, &current)
-			if err != nil && err != sql.ErrNoRows {
-				return fmt.Errorf("read tools directory: %w", err)
+		}
+		if runtimeChange {
+			storedTools, storedOutput, caseSensitive, err := readRuntimeRoots(ctx, tx)
+			if err != nil {
+				return err
 			}
-			if current != values["tools_directory"] {
+			if storedTools != expectedTools || storedOutput != expectedOutput {
+				return fmt.Errorf("runtime directories changed while settings were being validated")
+			}
+			currentTools, currentOutput := expectedToolsCanonical, expectedOutputCanonical
+			nextTools, nextOutput := currentTools, currentOutput
+			if value, ok := values["tools_directory"]; ok {
+				nextTools = value
+			}
+			if value, ok := values["output_directory"]; ok {
+				nextOutput = value
+			}
+			caseSensitive = runtimeCaseSensitivity(values, caseSensitive)
+			if toolsChange && nextTools != currentTools {
+				if err := rejectActiveRootMove(ctx, tx); err != nil {
+					return err
+				}
 				var installationID string
 				err = tx.NewRaw("SELECT id FROM tool_installation LIMIT 1 FOR UPDATE").Scan(ctx, &installationID)
 				if err == nil {
@@ -78,15 +128,11 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 					return fmt.Errorf("check active tools operations: %w", err)
 				}
 			}
-		} else {
-			packages := activeSettingPackages(values)
-			if len(packages) > 0 {
-				if err := lockToolsMoveGateShared(ctx, tx); err != nil {
-					return fmt.Errorf("lock tools move gate: %w", err)
-				}
-				if err := lockInstallationPackages(ctx, tx, packages...); err != nil {
-					return fmt.Errorf("lock active installations: %w", err)
-				}
+			if err := validateRuntimeRootPair(nextTools, nextOutput, caseSensitive); err != nil {
+				return err
+			}
+			if err := validateOutputAgainstActiveMoves(ctx, tx, nextOutput, caseSensitive); err != nil {
+				return err
 			}
 		}
 		if err := lockMusicBrainzIfNeeded(ctx, tx, values); err != nil {
@@ -109,6 +155,72 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 		}
 		return nil
 	})
+}
+
+func cloneSettingValues(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
+}
+
+func canonicalizeRuntimeRootValues(values map[string]string) error {
+	for _, name := range []string{"tools_directory", "output_directory"} {
+		value, ok := values[name]
+		if !ok || value == "" {
+			continue
+		}
+		canonical, err := canonicalizePersistedPath(value)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		values[name] = canonical
+	}
+	return nil
+}
+
+func canonicalizeOptionalPersistedPath(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	return canonicalizePersistedPath(value)
+}
+
+// canonicalizePersistedPath resolves symlinks in the existing path prefix before
+// a path is admitted. It runs before opening the settings transaction.
+func canonicalizePersistedPath(value string) (string, error) {
+	if !filepath.IsAbs(value) {
+		return "", fmt.Errorf("runtime directory is not an absolute path")
+	}
+	path := filepath.Clean(value)
+	for existing := path; ; existing = filepath.Dir(existing) {
+		if resolved, err := filepath.EvalSymlinks(existing); err == nil {
+			relative, relativeErr := filepath.Rel(existing, path)
+			if relativeErr == nil && relative != "." {
+				return filepath.Join(resolved, relative), nil
+			}
+			return resolved, nil
+		}
+		if existing == filepath.Dir(existing) {
+			break
+		}
+	}
+	return path, nil
+}
+
+func (r *SettingsRepository) readRuntimeRoots(ctx context.Context) (string, string, error) {
+	var roots struct {
+		Tools  string `bun:"tools_directory"`
+		Output string `bun:"output_directory"`
+	}
+	if err := r.db.NewRaw(`SELECT
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name = 'tools_directory'), '') AS tools_directory,
+		COALESCE(MAX(setting_value) FILTER (WHERE setting_name = 'output_directory'), '') AS output_directory
+		FROM app_setting WHERE setting_name IN ('tools_directory', 'output_directory')`).Scan(ctx, &roots); err != nil {
+		return "", "", fmt.Errorf("read runtime directories before settings update: %w", err)
+	}
+	return roots.Tools, roots.Output, nil
 }
 
 func activeSettingPackages(values map[string]string) []string {
@@ -147,24 +259,36 @@ func rejectActiveRootMove(ctx context.Context, tx bun.Tx) error {
 
 // UpdateRuntime serializes a direct tools-root change with every tools
 // mutation. expectedToolsRoot is empty when no root is currently configured.
-func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoot string, values map[string]string) error {
+func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoot, expectedOutputRoot string, values map[string]string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations: %w", err)
 		}
-		if err := rejectActiveRootMove(ctx, tx); err != nil {
+		currentTools, currentOutput, caseSensitive, err := readRuntimeRoots(ctx, tx)
+		if err != nil {
 			return err
 		}
-		var currentRoot string
-		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "tools_directory").Scan(ctx, &currentRoot)
-		if err != nil && err != sql.ErrNoRows {
-			return fmt.Errorf("read tools directory: %w", err)
-		}
-		if currentRoot != expectedToolsRoot {
+		if currentTools != expectedToolsRoot {
 			return fmt.Errorf("tools directory changed since runtime update was prepared")
 		}
-		nextRoot := values["tools_directory"]
-		if nextRoot != currentRoot {
+		if currentOutput != expectedOutputRoot {
+			return fmt.Errorf("output directory changed since runtime update was prepared")
+		}
+		nextTools, nextOutput := currentTools, currentOutput
+		if value, ok := values["tools_directory"]; ok {
+			nextTools = value
+		}
+		if value, ok := values["output_directory"]; ok {
+			nextOutput = value
+		}
+		caseSensitive = runtimeCaseSensitivity(values, caseSensitive)
+		if nextTools != currentTools {
+			if err := rejectActiveRootMove(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockInstallationPackages(ctx, tx, activeSettingPackages(values)...); err != nil {
+				return fmt.Errorf("lock active installations: %w", err)
+			}
 			var installationID string
 			err := tx.NewRaw("SELECT id FROM tool_installation LIMIT 1 FOR UPDATE").Scan(ctx, &installationID)
 			if err == nil {
@@ -182,8 +306,139 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 				return fmt.Errorf("check active tools operations: %w", err)
 			}
 		}
+		if err := validateRuntimeRootPair(nextTools, nextOutput, caseSensitive); err != nil {
+			return err
+		}
+		if err := validateOutputAgainstActiveMoves(ctx, tx, nextOutput, caseSensitive); err != nil {
+			return err
+		}
 		return setManyTx(ctx, tx, values)
 	})
+}
+
+func runtimeCaseSensitivity(values map[string]string, current bool) bool {
+	if value, ok := values["output_case_sensitive"]; ok {
+		return value != "false"
+	}
+	return current
+}
+
+func readRuntimeRoots(ctx context.Context, tx bun.Tx) (toolsRoot, outputRoot string, caseSensitive bool, resultErr error) {
+	caseSensitive = true
+	for _, setting := range []struct {
+		name   string
+		target *string
+	}{{"tools_directory", &toolsRoot}, {"output_directory", &outputRoot}} {
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", setting.name).Scan(ctx, setting.target)
+		if err != nil && err != sql.ErrNoRows {
+			return "", "", false, fmt.Errorf("read %s: %w", setting.name, err)
+		}
+	}
+	var storedCase string
+	err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "output_case_sensitive").Scan(ctx, &storedCase)
+	if err != nil && err != sql.ErrNoRows {
+		return "", "", false, fmt.Errorf("read output filesystem semantics: %w", err)
+	}
+	if err == nil && storedCase == "false" {
+		caseSensitive = false
+	}
+	return toolsRoot, outputRoot, caseSensitive, nil
+}
+
+func validateRuntimeRootPair(toolsRoot, outputRoot string, caseSensitive bool) error {
+	for _, root := range []string{toolsRoot, outputRoot} {
+		if root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root) {
+			return fmt.Errorf("runtime directory is not a normalized absolute path")
+		}
+	}
+	if toolsRoot != "" && outputRoot != "" && persistedPathsOverlap(toolsRoot, outputRoot, caseSensitive) {
+		return fmt.Errorf("tools directory overlaps with output directory")
+	}
+	return nil
+}
+
+func validateOutputAgainstActiveMoves(ctx context.Context, tx bun.Tx, outputRoot string, caseSensitive bool) error {
+	if outputRoot == "" {
+		return nil
+	}
+	var snapshots []struct {
+		InputSnapshot []byte `bun:"input_snapshot"`
+	}
+	if err := tx.NewRaw("SELECT input_snapshot FROM operation WHERE kind = 'move_tools_root' AND state IN ('queued', 'running') ORDER BY id").Scan(ctx, &snapshots); err != nil {
+		return fmt.Errorf("read active tools root moves: %w", err)
+	}
+	for _, row := range snapshots {
+		var snapshot struct {
+			OldRoot string `json:"old_root"`
+			NewRoot string `json:"new_root"`
+		}
+		if err := json.Unmarshal(row.InputSnapshot, &snapshot); err != nil || snapshot.OldRoot == "" || snapshot.NewRoot == "" {
+			return fmt.Errorf("active tools root move has an invalid snapshot")
+		}
+		if persistedPathsOverlap(outputRoot, snapshot.OldRoot, caseSensitive) || persistedPathsOverlap(outputRoot, snapshot.NewRoot, caseSensitive) {
+			return fmt.Errorf("output directory overlaps with an active tools root move")
+		}
+	}
+	return nil
+}
+
+// persistedPathsOverlap compares already-normalized local paths without doing
+// filesystem work inside a database transaction. Case behavior comes from the
+// persisted output filesystem probe; symlink resolution is performed before
+// paths enter runtime settings or a move snapshot.
+func persistedPathsOverlap(first, second string, caseSensitive bool) bool {
+	first, second = filepath.Clean(first), filepath.Clean(second)
+	if first == "." || second == "." {
+		return false
+	}
+	firstVolume, firstPath := filepath.VolumeName(first), first[len(filepath.VolumeName(first)):]
+	secondVolume, secondPath := filepath.VolumeName(second), second[len(filepath.VolumeName(second)):]
+	if !pathPartEqual(firstVolume, secondVolume, caseSensitive) {
+		return false
+	}
+	firstParts := pathParts(firstPath)
+	secondParts := pathParts(secondPath)
+	return pathPartsContain(firstParts, secondParts, caseSensitive) || pathPartsContain(secondParts, firstParts, caseSensitive)
+}
+
+func pathParts(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool { return r == filepath.Separator })
+}
+
+func pathPartEqual(first, second string, caseSensitive bool) bool {
+	if caseSensitive {
+		return first == second
+	}
+	return strings.EqualFold(first, second)
+}
+
+func pathPartsContain(parent, child []string, caseSensitive bool) bool {
+	if len(parent) > len(child) {
+		return false
+	}
+	for index := range parent {
+		if !pathPartEqual(parent[index], child[index], caseSensitive) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateToolsMoveRootsAgainstOutput(ctx context.Context, tx bun.Tx, oldRoot, newRoot string) error {
+	toolsRoot, outputRoot, caseSensitive, err := readRuntimeRoots(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if toolsRoot != oldRoot && toolsRoot != newRoot {
+		return fmt.Errorf("tools directory no longer matches the move snapshot")
+	}
+	if err := validateRuntimeRootPair(oldRoot, outputRoot, caseSensitive); err != nil {
+		return err
+	}
+	if err := validateRuntimeRootPair(newRoot, outputRoot, caseSensitive); err != nil {
+		return fmt.Errorf("move target %w", err)
+	}
+	return nil
 }
 
 func setManyTx(ctx context.Context, tx bun.Tx, values map[string]string) error {

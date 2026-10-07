@@ -189,6 +189,22 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		if currentRoot != snapshot.OldRoot {
 			return fmt.Errorf("enqueue tools move: tools directory changed since preflight")
 		}
+		moving, err := activeToolsMove(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("enqueue tools move: check active root move: %w", err)
+		}
+		if moving {
+			return fmt.Errorf("enqueue tools move: a tools root move is already active")
+		}
+		var moveSnapshot struct {
+			NewRoot string `json:"new_root"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &moveSnapshot); err != nil || moveSnapshot.NewRoot == "" {
+			return fmt.Errorf("enqueue tools move: invalid target root")
+		}
+		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, snapshot.OldRoot, moveSnapshot.NewRoot); err != nil {
+			return fmt.Errorf("enqueue tools move: %w", err)
+		}
 		held, err := activeAnalysisInstallationHold(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("enqueue tools move: check active analysis holds: %w", err)
@@ -499,6 +515,16 @@ func (repository *SetupManagerRepository) CommitToolsRootMove(ctx context.Contex
 		if operation.Kind != "move_tools_root" || operation.State != "running" {
 			return fmt.Errorf("tools root move operation is not running")
 		}
+		var snapshot struct {
+			OldRoot string `json:"old_root"`
+			NewRoot string `json:"new_root"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.OldRoot != oldRoot || snapshot.NewRoot != newRoot {
+			return fmt.Errorf("tools root move snapshot changed before switch")
+		}
+		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, oldRoot, newRoot); err != nil {
+			return fmt.Errorf("switch tools root: %w", err)
+		}
 		var currentRoot string
 		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ? FOR UPDATE", "tools_directory").Scan(ctx, &currentRoot); err != nil {
 			return fmt.Errorf("read current tools directory: %w", err)
@@ -532,6 +558,9 @@ func (repository *SetupManagerRepository) RollbackToolsRootMove(ctx context.Cont
 		if operation.Kind != "move_tools_root" || operation.State != "running" ||
 			(operation.Stage != "switched" && operation.Stage != "rollback_pending") {
 			return fmt.Errorf("tools root move is not ready for rollback")
+		}
+		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, oldRoot, newRoot); err != nil {
+			return fmt.Errorf("rollback tools root: %w", err)
 		}
 		var currentRoot string
 		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ? FOR UPDATE", "tools_directory").Scan(ctx, &currentRoot); err != nil {
@@ -784,6 +813,15 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 			if err := verifyToolsOperationRootForRetry(ctx, tx, locked); err != nil {
 				return err
 			}
+			if locked.Kind == "move_tools_root" {
+				moving, err := activeToolsMove(ctx, tx)
+				if err != nil {
+					return fmt.Errorf("retry operation: check active root move: %w", err)
+				}
+				if moving {
+					return fmt.Errorf("retry operation: another tools root move is active")
+				}
+			}
 		}
 		previousStage := locked.Stage
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
@@ -848,6 +886,9 @@ func verifyToolsOperationRootForRetry(ctx context.Context, tx bun.Tx, operation 
 		}
 		if currentRoot != snapshot.OldRoot && currentRoot != snapshot.NewRoot {
 			return fmt.Errorf("retry operation: tools directory no longer matches the move snapshot")
+		}
+		if err := validateToolsMoveRootsAgainstOutput(ctx, tx, snapshot.OldRoot, snapshot.NewRoot); err != nil {
+			return fmt.Errorf("retry operation: %w", err)
 		}
 	}
 	return nil

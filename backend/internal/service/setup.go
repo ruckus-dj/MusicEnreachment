@@ -187,6 +187,15 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 	if err != nil {
 		return fmt.Errorf("get output directory: %w", err)
 	}
+	expectedTools, expectedOutput := currentTools, currentOutput
+	if !hasTools {
+		expectedTools = ""
+	}
+	if !hasOutput {
+		expectedOutput = ""
+	}
+	update.ExpectedToolsDirectory = &expectedTools
+	update.ExpectedOutputDirectory = &expectedOutput
 	if toolsDirectory != "" {
 		normalized, err := settings.NormalizePath(toolsDirectory)
 		if err != nil {
@@ -207,13 +216,8 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 				return fmt.Errorf("tools directory cannot change while installations exist; use the move operation")
 			}
 		}
-		expectedTools := currentTools
-		if !hasTools {
-			expectedTools = ""
-		}
 		currentTools, hasTools = normalized, true
 		update.ToolsDirectory = &normalized
-		update.ExpectedToolsDirectory = &expectedTools
 	}
 	if outputDirectory != "" {
 		normalized, err := settings.NormalizePath(outputDirectory)

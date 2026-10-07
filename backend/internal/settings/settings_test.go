@@ -27,7 +27,7 @@ func (store *recordingStore) SetMany(ctx context.Context, values map[string]stri
 	return store.memoryStore.SetMany(ctx, values)
 }
 
-func (store *recordingStore) UpdateRuntime(ctx context.Context, _ string, values map[string]string) error {
+func (store *recordingStore) UpdateRuntime(ctx context.Context, _, _ string, values map[string]string) error {
 	return store.SetMany(ctx, values)
 }
 
@@ -350,8 +350,8 @@ func TestUpdateRuntimeWritesSuppliedFieldsTogetherAndLeavesNilFields(t *testing.
 	uncleanOutput := output + "/../output"
 	err = registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{
 		ToolsDirectory: &uncleanTools, OutputDirectory: &uncleanOutput,
-		ExpectedToolsDirectory: pointer(""),
-		OutputCaseSensitive:    &caseSensitive, OutputUnicodeNormalization: &unicodeNormalization,
+		ExpectedToolsDirectory: pointer(""), ExpectedOutputDirectory: pointer(""),
+		OutputCaseSensitive: &caseSensitive, OutputUnicodeNormalization: &unicodeNormalization,
 		PublicationFormat: &format,
 	})
 	if err != nil || store.setManyCalls != 1 {

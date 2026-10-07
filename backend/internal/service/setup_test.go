@@ -238,7 +238,7 @@ func (store *recordingRuntimeStore) SetMany(ctx context.Context, values map[stri
 	return store.memoryStore.SetMany(ctx, values)
 }
 
-func (store *recordingRuntimeStore) UpdateRuntime(ctx context.Context, _ string, values map[string]string) error {
+func (store *recordingRuntimeStore) UpdateRuntime(ctx context.Context, _, _ string, values map[string]string) error {
 	return store.SetMany(ctx, values)
 }
 
