@@ -129,7 +129,7 @@ describe("source inspector", () => {
     const steps = screen.getAllByRole("listitem");
     expect(steps).toHaveLength(3);
     for (const step of steps) {
-      expect(step).toHaveTextContent("Состояние: Загрузка");
+      expect(step).toHaveTextContent("Состояние: Не запрошено");
     }
     expect(screen.queryByText("Завершено")).not.toBeInTheDocument();
   });

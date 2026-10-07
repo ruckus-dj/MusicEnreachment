@@ -628,6 +628,10 @@ export function SettingsScreen() {
                 />{" "}
                 Вычислять SHA-256
               </label>
+              <p className="sources-note">
+                Настройка применяется к последующим анализам. Её изменение не
+                удаляет сохранённые результаты и не запускает массовый пересчёт.
+              </p>
               <AppButton
                 isDisabled={busy}
                 onPress={() =>

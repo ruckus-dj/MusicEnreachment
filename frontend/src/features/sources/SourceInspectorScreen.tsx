@@ -40,11 +40,8 @@ export function SourceInspectorScreen({
       return [
         name,
         {
-          // Missing work remains unknown; it must not look like a successful step.
-          state:
-            current?.state === "not_requested"
-              ? "pending"
-              : (current?.state ?? "loading"),
+          // Absent work is not a loading state: the API has no requested step yet.
+          state: current?.state ?? "not_requested",
           safeError: current?.safe_error,
           skipReason: current?.skip_reason,
         },
@@ -165,15 +162,6 @@ export function SourceInspectorScreen({
                 {detail.root.safe_error}
               </p>
             )}
-            {detail.probe_status !== "audio" && (
-              <p className="sources-note">
-                Анализ недоступен:{" "}
-                {detail.probe_status === "no_audio"
-                  ? "нет аудиодорожки"
-                  : "ошибка проверки"}
-                . {detail.safe_error}
-              </p>
-            )}
           </section>
           <section className="sources-panel" aria-labelledby="analysis-title">
             <h2 id="analysis-title">Технический анализ</h2>
@@ -216,7 +204,16 @@ export function SourceInspectorScreen({
             fingerprintRerunAvailable={fingerprintRerunAvailable}
             onRerunFingerprint={() => void inspector.action("rerun")}
             activeFingerprintVersion={activeFingerprintVersion}
-            matching={{ eligible: detail.matching_eligible }}
+            matching={{
+              eligible: detail.matching_eligible,
+              reason: !detail.matching_eligible
+                ? detail.result?.streams?.length === 0
+                  ? "Не поддерживается для файла без аудиопотоков"
+                  : detail.result?.streams && detail.result.streams.length > 1
+                    ? "Не поддерживается для файла с несколькими аудиопотоками"
+                    : undefined
+                : undefined,
+            }}
           />
         </>
       )}

@@ -1,10 +1,11 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../../test/server";
 import {
   detail,
   detailPath,
+  InspectorStream,
   observe,
   openInspector,
   operation,
@@ -55,7 +56,9 @@ describe("source inspector operation wake-ups", () => {
     const initialOperation = responseFor("/api/operations/step-op");
     await openInspector();
     await initialOperation;
-    await observe(() => !!screen.queryByText(/Состояние: Выполняется/));
+    await observe(() =>
+      screen.getByRole("status").textContent?.includes("Этап анализа"),
+    );
     const previousDetailReads = detailReads;
     const previousOperationReads = operationReads;
     phase = 1;
@@ -109,5 +112,53 @@ describe("source inspector operation wake-ups", () => {
       () => !screen.queryByText(/Сохранение результата этапа анализа/),
     );
     expect(reads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("recovers the disconnect notice after REST refresh and an EventSource open", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({ active_analysis_operation_id: "recover-op" }),
+        ),
+      ),
+      http.get("/api/operations/recover-op", () =>
+        HttpResponse.json(
+          operation({
+            id: "recover-op",
+            state: "running",
+            kind: "analyze_source",
+            stage: "hashing",
+          }),
+        ),
+      ),
+    );
+    const initialOperation = responseFor("/api/operations/recover-op");
+    await openInspector();
+    await initialOperation;
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
+
+    const afterDisconnect = responseFor("/api/operations/recover-op");
+    await act(async () => {
+      stream().dispatchEvent(new Event("error"));
+      await afterDisconnect;
+    });
+    expect(
+      screen.getByText(
+        /Поток событий прерван\. Соединение восстановится автоматически/,
+      ),
+    ).toBeVisible();
+
+    const afterReconnect = responseFor("/api/operations/recover-op");
+    await act(async () => {
+      stream().dispatchEvent(new Event("open"));
+      await afterReconnect;
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByText(
+          /Поток событий прерван\. Соединение восстановится автоматически/,
+        ),
+      ).not.toBeInTheDocument(),
+    );
   });
 });

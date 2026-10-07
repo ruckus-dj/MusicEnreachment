@@ -4,6 +4,7 @@ import { SourceTechnicalResult } from "./SourceTechnicalResult";
 
 export type SourceAnalysisStepName = "sha256" | "probe" | "fingerprint";
 export type SourceAnalysisStepState =
+  | "not_requested"
   | "loading"
   | "queued"
   | "running"
@@ -53,6 +54,8 @@ const stepNames: ReadonlyArray<{
 
 function stateLabel(state: SourceAnalysisStepState): string {
   switch (state) {
+    case "not_requested":
+      return "Не запрошено";
     case "loading":
       return "Загрузка";
     case "queued":
@@ -170,7 +173,8 @@ export function SourceAnalysisSteps({
               )}
               {!hasSuccess &&
                 step.state !== "failed" &&
-                step.state !== "skipped" && (
+                step.state !== "skipped" &&
+                step.state !== "not_requested" && (
                   <p className="sources-note">
                     Успешный результат этапа отсутствует.
                   </p>

@@ -423,6 +423,46 @@ describe("SettingsScreen", () => {
     );
   });
 
+  it.each([
+    true,
+    false,
+  ])("persists the SHA-256 setting (%s) across an inspector-style screen remount", async (enabled) => {
+    let persisted = !enabled;
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, sha256_enabled: persisted },
+        }),
+      ),
+      http.put("/api/settings/sha256", async ({ request }) => {
+        const body = (await request.json()) as { enabled: boolean };
+        persisted = body.enabled;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const first = render(<SettingsScreen />);
+    const toggle = await screen.findByLabelText("Вычислять SHA-256");
+    expect(toggle).toHaveProperty("checked", !enabled);
+    fireEvent.click(toggle);
+    const saved = nextResponseFor("/api/settings/sha256", "PUT");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить SHA-256" }));
+    await saved;
+    await waitFor(() => expect(toggle).toHaveProperty("checked", enabled));
+    expect(
+      screen.getByText(
+        /не удаляет сохранённые результаты и не запускает массовый пересчёт/,
+      ),
+    ).toBeVisible();
+
+    first.unmount();
+    render(<SettingsScreen />);
+    expect(await screen.findByLabelText("Вычислять SHA-256")).toHaveProperty(
+      "checked",
+      enabled,
+    );
+  });
+
   it("does not invent a SHA-256 value while settings are loading", async () => {
     let releaseSettings!: () => void;
     const settingsReady = new Promise<void>((resolve) => {
