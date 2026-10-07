@@ -997,10 +997,13 @@ describe("SettingsScreen", () => {
     );
     render(<SettingsScreen />);
     await screen.findByRole("button", { name: "Повторить операцию op-1" });
-    const stream = TestEventSource.instances.find((item) =>
-      item.url.includes("op-1"),
-    );
-    expect(stream).toBeTruthy();
+    const stream = await waitFor(() => {
+      const found = TestEventSource.instances.find((item) =>
+        item.url.includes("op-1"),
+      );
+      expect(found).toBeTruthy();
+      return found as TestEventSource;
+    });
     const woke = nextResponseFor("/api/operations/op-1", "GET");
     await act(async () => {
       stream?.dispatchEvent(new Event("open"));

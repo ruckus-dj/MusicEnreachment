@@ -52,7 +52,8 @@ func Open(t *testing.T) *bun.DB {
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
 	registerResource(name)
-	database := openPool(databaseURL(t, name))
+	databaseURL := databaseURL(t, name)
+	database := openPool(databaseURL)
 	if err := database.PingContext(context.Background()); err != nil {
 		_ = database.Close()
 		t.Fatalf("connect to isolated PostgreSQL database: %v", err)
