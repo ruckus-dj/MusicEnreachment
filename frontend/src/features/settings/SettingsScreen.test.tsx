@@ -888,8 +888,213 @@ describe("SettingsScreen", () => {
       "Перенос отклонён",
     );
     expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Проверить перенос" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    expect(
+      await screen.findByText("Управляемых файлов: 2"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText("Текущий Tools directory:").parentElement,
     ).toHaveTextContent("/srv/tools");
+  });
+
+  it("invalidates a move token on every input edit, including removeOld true to false and reverting the path", async () => {
+    const preflights: Array<Record<string, unknown>> = [];
+    const submissions: unknown[] = [];
+    const starts = vi.fn(async ({ request }: { request: Request }) => {
+      submissions.push(await request.json());
+      return json(operation);
+    });
+    server.use(
+      http.post("/api/tools/move/preflight", async ({ request }) => {
+        preflights.push((await request.json()) as Record<string, unknown>);
+        return json({
+          preflight_token: `move-token-${preflights.length}`,
+          conflicts: ["/srv/new-tools/conflict"],
+          managed_file_count: 3,
+        });
+      }),
+      http.post("/api/tools/move", starts),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const path = within(dialog).getByLabelText("Новый Tools directory");
+    const removeOld = within(dialog).getByRole("checkbox");
+    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    fireEvent.click(removeOld);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await screen.findByText("Управляемых файлов: 3");
+    expect(dialog).toHaveTextContent("Исходный каталог: /srv/tools");
+    expect(dialog).toHaveTextContent("Каталог назначения: /srv/new-tools");
+    expect(dialog).toHaveTextContent("Удалить прежние управляемые файлы: Да");
+    expect(dialog).toHaveTextContent("Конфликтов: 1");
+    expect(dialog).toHaveTextContent("/srv/new-tools/conflict");
+
+    // The dangerous true -> false edit invalidates immediately; toggling back
+    // cannot resurrect the first token.
+    fireEvent.click(removeOld);
+    expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(removeOld);
+    expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+
+    // Editing the path and reverting it also requires a brand-new preflight.
+    fireEvent.change(path, { target: { value: "/srv/other-tools" } });
+    fireEvent.change(path, { target: { value: "/srv/new-tools" } });
+    expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await waitFor(() => expect(preflights).toHaveLength(2));
+    await screen.findByText("Управляемых файлов: 3");
+    expect(preflights[1]).toEqual({
+      new_tools_directory: "/srv/new-tools",
+      remove_old_files: true,
+    });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await waitFor(() => expect(preflights).toHaveLength(3));
+    await screen.findByText("Управляемых файлов: 3");
+    expect(preflights[2]).toEqual({
+      new_tools_directory: "/srv/new-tools",
+      remove_old_files: false,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Подтвердить перенос" }),
+    );
+    await waitFor(() => expect(starts).toHaveBeenCalledTimes(1));
+    expect(submissions).toEqual([
+      {
+        preflight_token: "move-token-3",
+        confirmed_conflicts: ["/srv/new-tools/conflict"],
+      },
+    ]);
+    expect(preflights[0]).toEqual({
+      new_tools_directory: "/srv/new-tools",
+      remove_old_files: true,
+    });
+  });
+
+  it("ignores move preflight responses from edited inputs, older requests, and closed dialog sessions", async () => {
+    const requests: Array<{
+      body: Record<string, unknown>;
+      respond: (response: Response) => void;
+    }> = [];
+    server.use(
+      http.post("/api/tools/move/preflight", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        return await new Promise<Response>((resolve) => {
+          requests.push({ body, respond: resolve });
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    const trigger = await screen.findByRole("button", {
+      name: "Перенести каталог",
+    });
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    let dialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    const path = within(dialog).getByLabelText("Новый Tools directory");
+    fireEvent.change(path, { target: { value: "/srv/first" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await waitFor(() => expect(requests).toHaveLength(1));
+
+    fireEvent.change(path, { target: { value: "/srv/second" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests.map(({ body }) => body.new_tools_directory)).toEqual([
+      "/srv/first",
+      "/srv/second",
+    ]);
+
+    await act(async () => {
+      requests[1].respond(
+        json({
+          preflight_token: "new-token",
+          conflicts: [],
+          managed_file_count: 2,
+        }),
+      );
+    });
+    expect(
+      await screen.findByText("Управляемых файлов: 2"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      requests[0].respond(
+        json({
+          preflight_token: "old-token",
+          conflicts: [],
+          managed_file_count: 99,
+        }),
+      );
+    });
+    expect(screen.getByText("Управляемых файлов: 2")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Управляемых файлов: 99"),
+    ).not.toBeInTheDocument();
+
+    // A valid response from a prior opening must not populate a reopened dialog.
+    fireEvent.change(path, { target: { value: "/srv/third" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Проверить перенос" }),
+    );
+    await waitFor(() => expect(requests).toHaveLength(3));
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).not.toBeDisabled());
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Перенос Tools directory" });
+    await act(async () => {
+      requests[2].respond(
+        json({
+          preflight_token: "closed-token",
+          conflicts: [],
+          managed_file_count: 88,
+        }),
+      );
+    });
+    expect(
+      screen.queryByText("Управляемых файлов: 88"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Подтвердить перенос" }),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Новый Tools directory")).toHaveValue(
+      "/srv/third",
+    );
   });
 
   it("refreshes Settings and inventories after a move operation succeeds", async () => {

@@ -51,6 +51,10 @@ type InstallPlan = { kind: Kind; release: string; plan: InstallPreflightBody };
 type MovePlan = {
   directory: string;
   removeOld: boolean;
+  sourceDirectory: string;
+  inputRevision: number;
+  sessionRevision: number;
+  requestRevision: number;
   plan: MovePreflightBody;
 };
 
@@ -121,21 +125,54 @@ export function SettingsScreen() {
   const installDialogRef = useRef<HTMLDialogElement>(null);
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
+  const moveDirectoryRef = useRef("");
+  const removeOldRef = useRef(false);
+  const moveInputRevision = useRef(0);
+  const moveSessionRevision = useRef(0);
+  const moveRequestRevision = useRef(0);
+  const movePendingRequest = useRef(0);
 
-  const syncForm = useCallback((fresh: SetupStateBody) => {
-    setState(fresh);
-    const settings = fresh.settings;
-    setOutput(settings.output_directory);
-    setFormat(settings.publication_format === "source" ? "source" : "mka");
-    setMode(
-      settings.musicbrainz_mode === "self-hosted" ? "self-hosted" : "public",
-    );
-    setBaseURL(settings.musicbrainz_base_url);
-    setLrclib(settings.lrclib_enabled);
-    setSha256Enabled(settings.sha256_enabled);
-    setLogLevel(settings.log_level as UpdateLogLevelBodyLevel);
-    setMoveDirectory(settings.tools_directory);
+  const invalidateMovePlan = useCallback(() => {
+    moveRequestRevision.current += 1;
+    const hadPendingRequest = movePendingRequest.current !== 0;
+    movePendingRequest.current = 0;
+    setMovePlan(undefined);
+    if (hadPendingRequest) setBusy(false);
   }, []);
+  const setMoveDirectoryValue = useCallback(
+    (directory: string) => {
+      moveDirectoryRef.current = directory;
+      moveInputRevision.current += 1;
+      invalidateMovePlan();
+      setMoveDirectory(directory);
+    },
+    [invalidateMovePlan],
+  );
+  function setRemoveOldValue(remove: boolean) {
+    removeOldRef.current = remove;
+    moveInputRevision.current += 1;
+    invalidateMovePlan();
+    setRemoveOld(remove);
+  }
+
+  const syncForm = useCallback(
+    (fresh: SetupStateBody) => {
+      setState(fresh);
+      const settings = fresh.settings;
+      setOutput(settings.output_directory);
+      setFormat(settings.publication_format === "source" ? "source" : "mka");
+      setMode(
+        settings.musicbrainz_mode === "self-hosted" ? "self-hosted" : "public",
+      );
+      setBaseURL(settings.musicbrainz_base_url);
+      setLrclib(settings.lrclib_enabled);
+      setSha256Enabled(settings.sha256_enabled);
+      setLogLevel(settings.log_level as UpdateLogLevelBodyLevel);
+      if (moveDirectoryRef.current !== settings.tools_directory)
+        setMoveDirectoryValue(settings.tools_directory);
+    },
+    [setMoveDirectoryValue],
+  );
 
   const refreshState = useCallback(async () => {
     const response = successful(await getSettings({ cache: "no-store" }), 200);
@@ -291,6 +328,8 @@ export function SettingsScreen() {
     }
   }
   function closeMoveDialog() {
+    moveSessionRevision.current += 1;
+    invalidateMovePlan();
     const dialog = moveDialogRef.current;
     if (dialog?.open) dialog.close();
     else {
@@ -414,32 +453,77 @@ export function SettingsScreen() {
     }
   }
   async function preflightMove() {
+    const directory = moveDirectoryRef.current;
+    const removeOldFiles = removeOldRef.current;
+    const inputRevision = moveInputRevision.current;
+    const sessionRevision = moveSessionRevision.current;
+    const requestRevision = ++moveRequestRevision.current;
+    movePendingRequest.current = requestRevision;
+    const sourceDirectory = state?.settings.tools_directory || "";
     setBusy(true);
     setError("");
     try {
       const response = successful(
         await preflightToolsRootMove({
-          new_tools_directory: moveDirectory,
-          remove_old_files: removeOld,
+          new_tools_directory: directory,
+          remove_old_files: removeOldFiles,
         }),
         200,
       );
-      setMovePlan({ directory: moveDirectory, removeOld, plan: response.data });
+      if (
+        requestRevision !== moveRequestRevision.current ||
+        inputRevision !== moveInputRevision.current ||
+        sessionRevision !== moveSessionRevision.current ||
+        !moveDialog
+      )
+        return;
+      setMovePlan({
+        directory,
+        removeOld: removeOldFiles,
+        sourceDirectory,
+        inputRevision,
+        sessionRevision,
+        requestRevision,
+        plan: {
+          ...response.data,
+          conflicts: [...(response.data.conflicts || [])],
+        },
+      });
     } catch (reason) {
-      setError(message(reason));
+      if (
+        requestRevision === moveRequestRevision.current &&
+        inputRevision === moveInputRevision.current &&
+        sessionRevision === moveSessionRevision.current &&
+        moveDialog
+      )
+        setError(message(reason));
     } finally {
-      setBusy(false);
+      if (movePendingRequest.current === requestRevision) {
+        movePendingRequest.current = 0;
+        setBusy(false);
+      }
     }
   }
   async function confirmMove() {
-    if (!movePlan) return;
+    if (
+      !movePlan ||
+      movePlan.inputRevision !== moveInputRevision.current ||
+      movePlan.sessionRevision !== moveSessionRevision.current ||
+      movePlan.requestRevision !== moveRequestRevision.current ||
+      movePlan.directory !== moveDirectoryRef.current ||
+      movePlan.removeOld !== removeOldRef.current
+    ) {
+      invalidateMovePlan();
+      return;
+    }
+    const confirmedPlan = movePlan;
     setBusy(true);
     setError("");
     try {
       const response = successful(
         await startToolsRootMove({
-          preflight_token: movePlan.plan.preflight_token,
-          confirmed_conflicts: movePlan.plan.conflicts || [],
+          preflight_token: confirmedPlan.plan.preflight_token,
+          confirmed_conflicts: [...(confirmedPlan.plan.conflicts || [])],
         }),
         200,
       );
@@ -450,6 +534,7 @@ export function SettingsScreen() {
       setMovePlan(undefined);
       closeMoveDialog();
     } catch (reason) {
+      invalidateMovePlan();
       setError(message(reason));
     } finally {
       setBusy(false);
@@ -693,6 +778,8 @@ export function SettingsScreen() {
                 isDisabled={!platformReady || busy}
                 onPress={(event) => {
                   dialogReturnFocusRef.current = event.target as HTMLElement;
+                  moveSessionRevision.current += 1;
+                  moveInputRevision.current += 1;
                   setMovePlan(undefined);
                   setMoveDialog(true);
                 }}
@@ -924,14 +1011,14 @@ export function SettingsScreen() {
             Новый Tools directory
             <input
               value={moveDirectory}
-              onChange={(event) => setMoveDirectory(event.target.value)}
+              onChange={(event) => setMoveDirectoryValue(event.target.value)}
             />
           </label>
           <label className="settings-inline">
             <input
               type="checkbox"
               checked={removeOld}
-              onChange={(event) => setRemoveOld(event.target.checked)}
+              onChange={(event) => setRemoveOldValue(event.target.checked)}
             />{" "}
             Удалить прежние управляемые файлы после успешного переноса
           </label>
@@ -941,7 +1028,18 @@ export function SettingsScreen() {
             </AppButton>
           ) : (
             <>
+              <p>
+                Исходный каталог: <code>{movePlan.sourceDirectory}</code>
+              </p>
+              <p>
+                Каталог назначения: <code>{movePlan.directory}</code>
+              </p>
+              <p>
+                Удалить прежние управляемые файлы:{" "}
+                {movePlan.removeOld ? "Да" : "Нет"}
+              </p>
               <p>Управляемых файлов: {movePlan.plan.managed_file_count}</p>
+              <p>Конфликтов: {movePlan.plan.conflicts?.length || 0}</p>
               <ConflictList conflicts={movePlan.plan.conflicts || []} />
               <AppButton isDisabled={busy} onPress={() => void confirmMove()}>
                 Подтвердить перенос
