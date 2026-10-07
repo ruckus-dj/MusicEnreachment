@@ -285,6 +285,132 @@ describe("SettingsScreen", () => {
     expect(window.location.hash).not.toBe("#/setup");
   });
 
+  it("keeps the initial-load retry visible and focused through repeated refusals", async () => {
+    let settingsReads = 0;
+    let markRetryRequested!: () => void;
+    const retryRequested = new Promise<void>((resolve) => {
+      markRetryRequested = resolve;
+    });
+    let releaseRetry!: (response: Response) => void;
+    const retryResponse = new Promise<Response>((resolve) => {
+      releaseRetry = resolve;
+    });
+    server.use(
+      http.get("/api/settings", () => {
+        settingsReads += 1;
+        if (settingsReads === 1) return HttpResponse.json({}, { status: 503 });
+        if (settingsReads === 2) {
+          markRetryRequested();
+          return retryResponse;
+        }
+        return json(settings);
+      }),
+    );
+
+    render(<SettingsScreen />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("503");
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(screen.queryByLabelText("Output directory")).not.toBeInTheDocument();
+
+    const retry = screen.getByRole("button", { name: "Повторить загрузку" });
+    retry.focus();
+    await pressEnter(retry);
+    await retryRequested;
+    expect(
+      screen.getByRole("button", { name: "Повторить загрузку" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await act(async () => {
+      releaseRetry(HttpResponse.json({}, { status: 503 }));
+      await retryResponse;
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Повторить загрузку" }),
+      ).toBeEnabled(),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("503");
+
+    server.use(http.get("/api/settings", () => json(settings)));
+    fireEvent.click(screen.getByRole("button", { name: "Повторить загрузку" }));
+    expect(await screen.findByLabelText("Output directory")).toHaveValue(
+      "/srv/music",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Повторить загрузку" }),
+    ).toBeNull();
+  });
+
+  it.each([
+    "installations",
+    "operations",
+  ] as const)("retries the initial load when %s fails without exposing partial settings", async (failedRequest) => {
+    let failedOnce = false;
+    if (failedRequest === "installations") {
+      server.use(
+        http.get("/api/tools/installations", ({ request }) => {
+          const kind = new URL(request.url).searchParams.get("package_kind");
+          if (kind === "ffmpeg" && !failedOnce) {
+            failedOnce = true;
+            return HttpResponse.json({}, { status: 503 });
+          }
+          return json({
+            installations: [activeFF, inactiveFF, activeFP].filter(
+              (item) => item.package_kind === kind,
+            ),
+          });
+        }),
+      );
+    } else {
+      server.use(
+        http.get("/api/operations", () => {
+          if (!failedOnce) {
+            failedOnce = true;
+            return HttpResponse.json({}, { status: 503 });
+          }
+          return json({ operations: [] });
+        }),
+      );
+    }
+
+    render(<SettingsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("503");
+    expect(screen.queryByLabelText("Output directory")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Повторить загрузку" }));
+    expect(await screen.findByLabelText("Output directory")).toHaveValue(
+      "/srv/music",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Повторить загрузку" }),
+    ).toBeNull();
+  });
+
+  it("ignores initial-load responses after unmount", async () => {
+    let markSettingsRequested!: () => void;
+    const settingsRequested = new Promise<void>((resolve) => {
+      markSettingsRequested = resolve;
+    });
+    let releaseSettings!: (response: Response) => void;
+    const settingsResponse = new Promise<Response>((resolve) => {
+      releaseSettings = resolve;
+    });
+    server.use(
+      http.get("/api/settings", () => {
+        markSettingsRequested();
+        return settingsResponse;
+      }),
+    );
+    const view = render(<SettingsScreen />);
+    await settingsRequested;
+    view.unmount();
+    await act(async () => {
+      releaseSettings(json(settings));
+      await settingsResponse;
+    });
+  });
+
   it("automatically loads catalogs after the initial operations request completes", async () => {
     let releaseOperations!: () => void;
     const operationsGate = new Promise<void>((resolve) => {
@@ -314,7 +440,6 @@ describe("SettingsScreen", () => {
     );
 
     render(<SettingsScreen />);
-    expect(await screen.findByText("/srv/tools")).toBeTruthy();
     await operationsRequested;
     expect(catalogRequests).toEqual([]);
 
@@ -323,6 +448,9 @@ describe("SettingsScreen", () => {
       await operationsGate;
     });
 
+    expect(await screen.findByLabelText("Output directory")).toHaveValue(
+      "/srv/music",
+    );
     expect(
       await screen.findByRole("option", { name: /ffmpeg-release/ }),
     ).toBeTruthy();
@@ -577,8 +705,9 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps server SHA-256 state on a rejected save and restores it on refresh", async () => {
+  it("keeps a rejected SHA-256 draft across refresh while refreshing the server snapshot", async () => {
     const saved = vi.fn();
+    const reads = vi.fn();
     server.use(
       http.put("/api/settings/sha256", () => {
         saved();
@@ -586,6 +715,10 @@ describe("SettingsScreen", () => {
           { detail: "Не удалось сохранить" },
           { status: 500 },
         );
+      }),
+      http.get("/api/settings", () => {
+        reads();
+        return json(settings);
       }),
     );
     render(<SettingsScreen />);
@@ -604,7 +737,436 @@ describe("SettingsScreen", () => {
       );
       await refreshed;
     });
-    expect(toggle).toBeChecked();
+    expect(toggle).not.toBeChecked();
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText("Есть несохранённые изменения SHA-256."),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves a dirty publication draft when LRCLIB is saved and read back", async () => {
+    let enabled = true;
+    server.use(
+      http.put("/api/settings/lrclib", async ({ request }) => {
+        enabled = ((await request.json()) as { enabled: boolean }).enabled;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, lrclib_enabled: enabled },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("Output directory"), {
+      target: { value: "/draft-output" },
+    });
+    fireEvent.click(screen.getByLabelText("LRCLIB включён"));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить LRCLIB" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("LRCLIB включён")).not.toBeChecked(),
+    );
+    expect(screen.getByLabelText("Output directory")).toHaveValue(
+      "/draft-output",
+    );
+    expect(
+      screen.getByText("Есть несохранённые изменения публикации."),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves dirty MusicBrainz settings when a tool operation completes", async () => {
+    let operationState = "running";
+    let markOperationLoaded!: () => void;
+    const operationLoaded = new Promise<void>((resolve) => {
+      markOperationLoaded = resolve;
+    });
+    common({
+      operations: [{ ...operation, kind: "install", state: "running" }],
+    });
+    server.use(
+      http.get("/api/operations/:id", () => {
+        const snapshot = json({
+          ...operation,
+          kind: "install",
+          state: operationState,
+        });
+        if (operationState === "running") markOperationLoaded();
+        return snapshot;
+      }),
+    );
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("MusicBrainz mode"), {
+      target: { value: "self-hosted" },
+    });
+    fireEvent.change(screen.getByLabelText("MusicBrainz base URL"), {
+      target: { value: "https://draft.example" },
+    });
+    await waitFor(() =>
+      expect(TestEventSource.instances.length).toBeGreaterThan(0),
+    );
+    await operationLoaded;
+    await screen.findByText(/install: running/);
+    operationState = "succeeded";
+    const settingsRefresh = nextResponseFor("/api/settings", "GET");
+    await act(async () => {
+      TestEventSource.instances[0].dispatchEvent(
+        new Event("operation-changed"),
+      );
+      await settingsRefresh;
+    });
+    expect(screen.getByLabelText("MusicBrainz mode")).toHaveValue(
+      "self-hosted",
+    );
+    expect(screen.getByLabelText("MusicBrainz base URL")).toHaveValue(
+      "https://draft.example",
+    );
+    expect(
+      screen.getByText("Есть несохранённые изменения MusicBrainz."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps dirty move inputs and remove-old policy during an unrelated refresh", async () => {
+    render(<SettingsScreen />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Перенести каталог" }),
+    );
+    const path = screen.getByLabelText("Новый Tools directory");
+    fireEvent.change(path, { target: { value: "/srv/unsaved-tools" } });
+    const removeOld = screen.getByLabelText(
+      "Удалить прежние управляемые файлы после успешного переноса",
+    );
+    fireEvent.click(removeOld);
+    const refreshed = nextResponseFor("/api/settings", "GET");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Обновить состояние" }),
+      );
+      await refreshed;
+    });
+    expect(path).toHaveValue("/srv/unsaved-tools");
+    expect(removeOld).toBeChecked();
+  });
+
+  it("invalidates pending and confirmed move plans when the server source root changes without replacing the destination draft", async () => {
+    let reads = 0;
+    let sourceDirectory = "/srv/tools";
+    let operationState = "running";
+    let markOperationLoaded!: () => void;
+    const operationLoaded = new Promise<void>((resolve) => {
+      markOperationLoaded = resolve;
+    });
+    let releasePreflight!: (response: Response) => void;
+    let preflightStarted!: () => void;
+    const pendingPreflight = new Promise<void>((resolve) => {
+      preflightStarted = resolve;
+    });
+    let preflightCalls = 0;
+    common({
+      operations: [{ ...operation, kind: "install", state: "running" }],
+    });
+    server.use(
+      http.get("/api/operations", () =>
+        json({
+          operations:
+            operationState === "running"
+              ? [{ ...operation, kind: "install", state: "running" }]
+              : [],
+        }),
+      ),
+      http.get("/api/settings", () => {
+        reads += 1;
+        return json({
+          ...settings,
+          settings: { ...settings.settings, tools_directory: sourceDirectory },
+        });
+      }),
+      http.post("/api/tools/move/preflight", () => {
+        preflightCalls += 1;
+        if (preflightCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            releasePreflight = resolve;
+            preflightStarted();
+          });
+        }
+        return json({
+          preflight_token: `source-token-${preflightCalls}`,
+          conflicts: [],
+          managed_file_count: 1,
+        });
+      }),
+      http.get("/api/operations/:id", () => {
+        const snapshot = json({
+          ...operation,
+          kind: "install",
+          state: operationState,
+        });
+        if (operationState === "running") markOperationLoaded();
+        return snapshot;
+      }),
+    );
+    const initialOperationSnapshot = nextResponseFor(
+      "/api/operations/op-1",
+      "GET",
+    );
+    render(<SettingsScreen />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Перенести каталог" }),
+    );
+    const moveDialog = screen.getByRole("dialog", {
+      name: "Перенос Tools directory",
+    });
+    await operationLoaded;
+    await initialOperationSnapshot;
+    await screen.findByText(/install: running/);
+    const path = screen.getByLabelText("Новый Tools directory");
+    fireEvent.change(path, { target: { value: "/srv/destination-draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await pendingPreflight;
+
+    sourceDirectory = "/srv/tools-external-change";
+    operationState = "succeeded";
+    const changedSource = nextResponseFor("/api/settings", "GET");
+    await act(async () => {
+      TestEventSource.instances[0].dispatchEvent(
+        new Event("operation-changed"),
+      );
+      await changedSource;
+    });
+    await act(async () => {
+      releasePreflight(
+        json({
+          preflight_token: "late-old-source-token",
+          conflicts: [],
+          managed_file_count: 1,
+        }),
+      );
+    });
+    expect(path).toHaveValue("/srv/destination-draft");
+    expect(
+      within(moveDialog).queryByRole("button", {
+        name: "Подтвердить перенос",
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Проверить перенос" }));
+    await within(moveDialog).findByText("/srv/tools-external-change");
+    const confirmMove = within(moveDialog).getByRole("button", {
+      name: "Подтвердить перенос",
+    });
+    await waitFor(() => expect(confirmMove).toBeEnabled());
+    sourceDirectory = "/srv/tools-newer-external-change";
+    const changedAgain = nextResponseFor("/api/settings", "GET");
+    const manualRefresh = screen.getByRole("button", {
+      name: "Обновить состояние",
+    });
+    expect(manualRefresh).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(manualRefresh);
+      await changedAgain;
+    });
+    expect(path).toHaveValue("/srv/destination-draft");
+    expect(
+      within(moveDialog).queryByRole("button", {
+        name: "Подтвердить перенос",
+      }),
+    ).not.toBeInTheDocument();
+    // Initial load, operation success, and manual refresh each read Settings.
+    expect(reads).toBe(3);
+  });
+
+  it("preserves edit-and-revert revisions across a pending PUT and readback", async () => {
+    let releaseSave!: () => void;
+    let releaseRead!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let reads = 0;
+    let readbackStarted!: () => void;
+    const readbackRequest = new Promise<void>((resolve) => {
+      readbackStarted = resolve;
+    });
+    server.use(
+      http.put("/api/settings/runtime", async () => {
+        await saveGate;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", async () => {
+        reads += 1;
+        if (reads > 1) {
+          readbackStarted();
+          await readGate;
+          return json({
+            ...settings,
+            settings: { ...settings.settings, output_directory: "/submitted" },
+          });
+        }
+        return json(settings);
+      }),
+    );
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/submitted" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить публикацию" }),
+    );
+    await waitFor(() => expect(reads).toBe(1));
+    fireEvent.change(output, { target: { value: "/srv/music" } });
+    releaseSave();
+    await readbackRequest;
+    fireEvent.change(output, { target: { value: "/temporary-edit" } });
+    fireEvent.change(output, { target: { value: "/srv/music" } });
+    const readbackCompleted = nextResponseFor("/api/settings", "GET");
+    releaseRead();
+    await act(async () => {
+      await readbackCompleted;
+    });
+    await screen.findByText("Настройки публикации сохранены.");
+    await waitFor(() => expect(output).toHaveValue("/srv/music"));
+    expect(
+      screen.getByText("Есть несохранённые изменения публикации."),
+    ).toBeInTheDocument();
+  });
+
+  it("serializes operation and save settings reads while preserving unrelated drafts", async () => {
+    let reads = 0;
+    let activeReads = 0;
+    let maximumActiveReads = 0;
+    let releaseOperationRefresh!: () => void;
+    let operationRefreshStarted!: () => void;
+    const operationRefreshGate = new Promise<void>((resolve) => {
+      releaseOperationRefresh = resolve;
+    });
+    const operationRefreshRequest = new Promise<void>((resolve) => {
+      operationRefreshStarted = resolve;
+    });
+    const save = vi.fn(() => new HttpResponse(null, { status: 204 }));
+    let operationState = "running";
+    let markOperationLoaded!: () => void;
+    const operationLoaded = new Promise<void>((resolve) => {
+      markOperationLoaded = resolve;
+    });
+    let markTerminalOperationsLoaded!: () => void;
+    const terminalOperationsLoaded = new Promise<void>((resolve) => {
+      markTerminalOperationsLoaded = resolve;
+    });
+    common({
+      operations: [{ ...operation, kind: "install", state: "running" }],
+    });
+    server.use(
+      http.put("/api/settings/log-level", save),
+      http.get("/api/operations", () => {
+        if (operationState === "succeeded") markTerminalOperationsLoaded();
+        return json({
+          operations:
+            operationState === "running"
+              ? [{ ...operation, kind: "install", state: "running" }]
+              : [],
+        });
+      }),
+      http.get("/api/settings", async () => {
+        reads += 1;
+        const read = reads;
+        activeReads += 1;
+        maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+        try {
+          if (read === 2) {
+            operationRefreshStarted();
+            await operationRefreshGate;
+          }
+          return json({
+            ...settings,
+            settings: {
+              ...settings.settings,
+              output_directory: settings.settings.output_directory,
+              log_level: read >= 3 ? "debug" : "info",
+            },
+          });
+        } finally {
+          activeReads -= 1;
+        }
+      }),
+      http.get("/api/operations/:id", () => {
+        const snapshot = json({
+          ...operation,
+          kind: "install",
+          state: operationState,
+        });
+        if (operationState === "running") markOperationLoaded();
+        return snapshot;
+      }),
+    );
+    const initialOperationSnapshot = nextResponseFor(
+      "/api/operations/op-1",
+      "GET",
+    );
+    render(<SettingsScreen />);
+    await screen.findByLabelText("Output directory");
+    await operationLoaded;
+    await initialOperationSnapshot;
+    await screen.findByText(/install: running/);
+    operationState = "succeeded";
+    await act(async () => {
+      TestEventSource.instances[0].dispatchEvent(
+        new Event("operation-changed"),
+      );
+      await Promise.resolve();
+    });
+    await operationRefreshRequest;
+
+    const output = screen.getByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/unsaved-output" } });
+    fireEvent.change(screen.getByLabelText("Log level"), {
+      target: { value: "debug" },
+    });
+    const saveResponse = nextResponseFor("/api/settings/log-level", "PUT");
+    fireEvent.click(screen.getByRole("button", { name: "Применить уровень" }));
+    await saveResponse;
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+      releaseOperationRefresh();
+      await terminalOperationsLoaded;
+    });
+    await waitFor(() => expect(reads).toBe(3));
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "Операция op-1" })).toBeNull(),
+    );
+    await screen.findByText("Уровень журнала применён.");
+
+    expect(reads).toBe(3);
+    expect(output).toHaveValue("/unsaved-output");
+    expect(screen.getByLabelText("Log level")).toHaveValue("debug");
+    expect(screen.getByText("Уровень журнала применён.")).toBeInTheDocument();
+    expect(maximumActiveReads).toBe(1);
+  });
+
+  it("distinguishes an accepted mutation from a failed server readback", async () => {
+    const put = vi.fn(() => new HttpResponse(null, { status: 204 }));
+    let reads = 0;
+    server.use(
+      http.put("/api/settings/lrclib", put),
+      http.get("/api/settings", () => {
+        reads += 1;
+        return reads === 1
+          ? json(settings)
+          : HttpResponse.json({ detail: "read failed" }, { status: 500 });
+      }),
+    );
+    render(<SettingsScreen />);
+    fireEvent.click(await screen.findByLabelText("LRCLIB включён"));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить LRCLIB" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "приняты сервером",
+    );
+    expect(
+      screen.queryByText("Настройка LRCLIB сохранена."),
+    ).not.toBeInTheDocument();
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("LRCLIB включён")).not.toBeChecked();
   });
 
   it("sends log-level change to backend and rereads it", async () => {

@@ -58,6 +58,97 @@ type MovePlan = {
   plan: MovePreflightBody;
 };
 
+type SectionDraft<T> = {
+  value: T | undefined;
+  baseline: T | undefined;
+  revision: number;
+};
+
+function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
+  const [draft, setDraft] = useState<SectionDraft<T>>({
+    value: undefined,
+    baseline: undefined,
+    revision: 0,
+  });
+  const current = useRef(draft);
+  const pendingRevision = useRef<number | undefined>(undefined);
+  const update = useCallback((value: T) => {
+    const next = {
+      ...current.current,
+      value,
+      revision: current.current.revision + 1,
+    };
+    current.current = next;
+    setDraft(next);
+  }, []);
+  const sync = useCallback(
+    (value: T) => {
+      const previous = current.current;
+      const pristine =
+        pendingRevision.current === undefined &&
+        (previous.value === undefined ||
+          (previous.baseline !== undefined &&
+            equal(previous.value, previous.baseline)));
+      const next = {
+        ...previous,
+        baseline: value,
+        value: pristine ? value : previous.value,
+      };
+      current.current = next;
+      setDraft(next);
+    },
+    [equal],
+  );
+  const capture = useCallback(
+    () => ({
+      value: current.current.value,
+      revision: current.current.revision,
+    }),
+    [],
+  );
+  const beginSave = useCallback((revision: number) => {
+    pendingRevision.current = revision;
+  }, []);
+  const endSave = useCallback(() => {
+    pendingRevision.current = undefined;
+  }, []);
+  const acknowledge = useCallback((value: T, revision: number) => {
+    const previous = current.current;
+    const next = {
+      ...previous,
+      baseline: value,
+      value: previous.revision === revision ? value : previous.value,
+    };
+    current.current = next;
+    setDraft(next);
+  }, []);
+  const dirty =
+    draft.value !== undefined &&
+    draft.baseline !== undefined &&
+    !equal(draft.value, draft.baseline);
+  return {
+    value: draft.value,
+    dirty,
+    update,
+    sync,
+    capture,
+    beginSave,
+    endSave,
+    acknowledge,
+  };
+}
+
+type PublicationDraft = {
+  output: string;
+  format: UpdateSettingsBodyPublicationFormat;
+};
+const samePublication = (left: PublicationDraft, right: PublicationDraft) =>
+  left.output === right.output && left.format === right.format;
+const sameMusicBrainz = (
+  left: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
+  right: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
+) => left.mode === right.mode && left.baseURL === right.baseURL;
+
 function message(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
   return "Не удалось выполнить запрос.";
@@ -98,14 +189,12 @@ export function SettingsScreen() {
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [operations, setOperations] = useState<OperationResponse[]>([]);
-  const [output, setOutput] = useState("");
-  const [format, setFormat] =
-    useState<UpdateSettingsBodyPublicationFormat>("mka");
-  const [mode, setMode] = useState<UpdateMusicBrainzBodyMode>("public");
-  const [baseURL, setBaseURL] = useState("");
-  const [lrclib, setLrclib] = useState(true);
-  const [sha256Enabled, setSha256Enabled] = useState<boolean>();
-  const [logLevel, setLogLevel] = useState<UpdateLogLevelBodyLevel>("info");
+  const publication = useSectionDraft<PublicationDraft>(samePublication);
+  const musicBrainz = useSectionDraft(sameMusicBrainz);
+  const lrclib = useSectionDraft<boolean>();
+  const sha256 = useSectionDraft<boolean>();
+  const logLevel = useSectionDraft<UpdateLogLevelBodyLevel>();
+  const settingsQueue = useRef<Promise<void>>(Promise.resolve());
   const [selectedRelease, setSelectedRelease] = useState<
     Partial<Record<Kind, string>>
   >({});
@@ -116,21 +205,28 @@ export function SettingsScreen() {
   const [movePlan, setMovePlan] = useState<MovePlan>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [installDialogError, setInstallDialogError] = useState("");
   const [moveDialogError, setMoveDialogError] = useState("");
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
+  const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const installDialogAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
+  const screenLoadInFlight = useRef(false);
+  const mountedRef = useRef(true);
+  const mountGeneration = useRef(0);
+  const screenLoadGeneration = useRef(0);
   const installDialogRef = useRef<HTMLDialogElement>(null);
   const moveDialogRef = useRef<HTMLDialogElement>(null);
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
   const dialogFocusRestorePending = useRef(false);
   const moveDirectoryRef = useRef("");
+  const moveDirectoryBaseline = useRef<string | undefined>(undefined);
   const removeOldRef = useRef(false);
   const moveInputRevision = useRef(0);
   const moveSessionRevision = useRef(0);
@@ -171,68 +267,164 @@ export function SettingsScreen() {
     setRemoveOld(remove);
   }
 
+  const readSettings = useCallback(() => {
+    const request = settingsQueue.current.then(() =>
+      getSettings({ cache: "no-store" }),
+    );
+    settingsQueue.current = request.then(
+      () => undefined,
+      () => undefined,
+    );
+    return request;
+  }, []);
+
   const syncForm = useCallback(
-    (fresh: SetupStateBody) => {
+    (fresh: SetupStateBody, ack?: (fresh: SetupStateBody) => void) => {
+      if (!mountedRef.current) return;
       setState(fresh);
       const settings = fresh.settings;
-      setOutput(settings.output_directory);
-      setFormat(settings.publication_format === "source" ? "source" : "mka");
-      setMode(
-        settings.musicbrainz_mode === "self-hosted" ? "self-hosted" : "public",
-      );
-      setBaseURL(settings.musicbrainz_base_url);
-      setLrclib(settings.lrclib_enabled);
-      setSha256Enabled(settings.sha256_enabled);
-      setLogLevel(settings.log_level as UpdateLogLevelBodyLevel);
-      if (moveDirectoryRef.current !== settings.tools_directory)
-        setMoveDirectoryValue(settings.tools_directory);
+      publication.sync({
+        output: settings.output_directory,
+        format: settings.publication_format === "source" ? "source" : "mka",
+      });
+      musicBrainz.sync({
+        mode:
+          settings.musicbrainz_mode === "self-hosted"
+            ? "self-hosted"
+            : "public",
+        baseURL: settings.musicbrainz_base_url,
+      });
+      lrclib.sync(settings.lrclib_enabled);
+      sha256.sync(settings.sha256_enabled);
+      logLevel.sync(settings.log_level as UpdateLogLevelBodyLevel);
+      if (
+        moveDirectoryBaseline.current !== undefined &&
+        moveDirectoryBaseline.current !== settings.tools_directory
+      ) {
+        invalidateMovePlan();
+      }
+      if (
+        moveDirectoryBaseline.current === undefined ||
+        moveDirectoryRef.current === moveDirectoryBaseline.current
+      ) {
+        if (moveDirectoryRef.current !== settings.tools_directory)
+          setMoveDirectoryValue(settings.tools_directory);
+      }
+      moveDirectoryBaseline.current = settings.tools_directory;
+      ack?.(fresh);
     },
-    [setMoveDirectoryValue],
+    [
+      setMoveDirectoryValue,
+      publication.sync,
+      musicBrainz.sync,
+      lrclib.sync,
+      sha256.sync,
+      logLevel.sync,
+      invalidateMovePlan,
+    ],
   );
 
-  const refreshState = useCallback(async () => {
-    const response = successful(await getSettings({ cache: "no-store" }), 200);
-    syncForm(response.data);
-    return response.data;
-  }, [syncForm]);
+  const refreshState = useCallback(
+    async (
+      ack?: (fresh: SetupStateBody) => void,
+      isCurrent: () => boolean = () => mountedRef.current,
+    ) => {
+      const generation = mountGeneration.current;
+      const response = successful(await readSettings(), 200);
+      if (
+        !mountedRef.current ||
+        mountGeneration.current !== generation ||
+        !isCurrent()
+      )
+        return response.data;
+      syncForm(response.data, ack);
+      return response.data;
+    },
+    [readSettings, syncForm],
+  );
 
-  const refreshInstallations = useCallback(async () => {
-    const [ffmpeg, fpcalc] = await Promise.all([
-      listInstallations({ package_kind: "ffmpeg" }),
-      listInstallations({ package_kind: "fpcalc" }),
-    ]);
-    successful(ffmpeg, 200);
-    successful(fpcalc, 200);
-    setInstallations([
-      ...((ffmpeg.data as InstallationsBody).installations || []),
-      ...((fpcalc.data as InstallationsBody).installations || []),
-    ]);
-  }, []);
+  const refreshInstallations = useCallback(
+    async (isCurrent: () => boolean = () => mountedRef.current) => {
+      const generation = mountGeneration.current;
+      const [ffmpeg, fpcalc] = await Promise.all([
+        listInstallations({ package_kind: "ffmpeg" }),
+        listInstallations({ package_kind: "fpcalc" }),
+      ]);
+      successful(ffmpeg, 200);
+      successful(fpcalc, 200);
+      if (
+        !mountedRef.current ||
+        mountGeneration.current !== generation ||
+        !isCurrent()
+      )
+        return;
+      setInstallations([
+        ...((ffmpeg.data as InstallationsBody).installations || []),
+        ...((fpcalc.data as InstallationsBody).installations || []),
+      ]);
+    },
+    [],
+  );
 
-  const refreshOperations = useCallback(async () => {
-    const response = successful(await listOperations(), 200);
-    const active = (response.data.operations || []).filter(activeOperation);
-    setOperations(active);
-    return active;
-  }, []);
+  const refreshOperations = useCallback(
+    async (isCurrent: () => boolean = () => mountedRef.current) => {
+      const generation = mountGeneration.current;
+      const response = successful(await listOperations(), 200);
+      const active = (response.data.operations || []).filter(activeOperation);
+      if (
+        !mountedRef.current ||
+        mountGeneration.current !== generation ||
+        !isCurrent()
+      )
+        return active;
+      setOperations(active);
+      return active;
+    },
+    [],
+  );
 
   const loadScreen = useCallback(async () => {
+    if (!mountedRef.current || screenLoadInFlight.current) return;
+    screenLoadInFlight.current = true;
+    const generation = ++screenLoadGeneration.current;
+    const isCurrent = () =>
+      mountedRef.current && screenLoadGeneration.current === generation;
     setBusy(true);
-    setError("");
+    setInitialLoadComplete(false);
     try {
-      await Promise.all([
-        refreshState(),
-        refreshInstallations(),
-        refreshOperations(),
+      const results = await Promise.allSettled([
+        refreshState(undefined, isCurrent),
+        refreshInstallations(isCurrent),
+        refreshOperations(isCurrent),
       ]);
+      const failure = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (failure) throw failure.reason;
+      if (isCurrent()) {
+        setLoadError("");
+        setInitialLoadComplete(true);
+      }
     } catch (reason) {
-      setError(message(reason));
+      if (isCurrent()) setLoadError(message(reason));
     } finally {
-      setBusy(false);
-      setInitialLoadComplete(true);
+      if (isCurrent()) {
+        screenLoadInFlight.current = false;
+        setBusy(false);
+      }
     }
   }, [refreshInstallations, refreshOperations, refreshState]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      mountGeneration.current += 1;
+      screenLoadGeneration.current += 1;
+      screenLoadInFlight.current = false;
+    };
+  }, []);
   useEffect(() => {
     heading.current?.focus();
     void loadScreen();
@@ -268,9 +460,15 @@ export function SettingsScreen() {
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
+  useEffect(() => {
+    if (loadError) loadErrorAlert.current?.focus();
+  }, [loadError]);
 
   const requestCatalog = useCallback(async () => {
-    if (catalogRequestInFlight.current) return;
+    if (!mountedRef.current || catalogRequestInFlight.current) return;
+    const generation = mountGeneration.current;
+    const isCurrent = () =>
+      mountedRef.current && mountGeneration.current === generation;
     catalogRequestInFlight.current = true;
     setCatalogBusy(true);
     setCatalogError("");
@@ -281,6 +479,7 @@ export function SettingsScreen() {
       ]);
       successful(ffmpeg, 200);
       successful(fpcalc, 200);
+      if (!isCurrent()) return;
       setCatalog({
         ffmpeg: ffmpeg.data as CatalogBody,
         fpcalc: fpcalc.data as CatalogBody,
@@ -289,10 +488,10 @@ export function SettingsScreen() {
       localStorage.setItem(catalogCheckedKey, timestamp);
       setCheckedAt(timestamp);
     } catch (reason) {
-      setCatalogError(message(reason));
+      if (isCurrent()) setCatalogError(message(reason));
     } finally {
       catalogRequestInFlight.current = false;
-      setCatalogBusy(false);
+      if (isCurrent()) setCatalogBusy(false);
     }
   }, []);
 
@@ -306,45 +505,89 @@ export function SettingsScreen() {
     }
   }, [checkedAt, initialLoadComplete, requestCatalog, state]);
 
-  async function mutate<T extends { status: number }>(
-    action: () => Promise<T>,
+  async function mutate<
+    T extends { status: number },
+    C extends { revision: number },
+  >(
+    action: (saved: C) => Promise<T>,
     status: T["status"],
     successText: string,
+    capture: () => C,
+    acknowledge: (fresh: SetupStateBody, revision: number) => void,
+    beginDraftSave: (revision: number) => void,
+    endDraftSave: () => void,
   ) {
+    const savedDraft = capture();
+    beginDraftSave(savedDraft.revision);
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const response = await action();
+      const response = await action(savedDraft);
       successful(response, status);
-      await refreshState();
+      try {
+        await refreshState((fresh) => acknowledge(fresh, savedDraft.revision));
+      } catch (reason) {
+        throw new Error(
+          `Настройки приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
+        );
+      }
       setNotice(successText);
     } catch (reason) {
       setError(message(reason));
     } finally {
+      endDraftSave();
       setBusy(false);
     }
   }
 
   async function checkMusicBrainz() {
+    const savedDraft = musicBrainz.capture();
+    const payload = savedDraft.value;
+    if (!payload) return;
+    musicBrainz.beginSave(savedDraft.revision);
     setBusy(true);
     setError("");
     setNotice("");
     try {
       const saved = await updateMusicbrainzSettings({
-        mode,
-        base_url: mode === "public" ? "" : baseURL,
+        mode: payload.mode,
+        base_url: payload.mode === "public" ? "" : payload.baseURL,
       });
       successful(saved, 204);
-      await refreshState();
+      try {
+        await refreshState((fresh) =>
+          musicBrainz.acknowledge(
+            {
+              mode:
+                fresh.settings.musicbrainz_mode === "self-hosted"
+                  ? "self-hosted"
+                  : "public",
+              baseURL: fresh.settings.musicbrainz_base_url,
+            },
+            savedDraft.revision,
+          ),
+        );
+      } catch (reason) {
+        throw new Error(
+          `Настройки MusicBrainz приняты сервером, но не удалось подтвердить их чтением: ${message(reason)}`,
+        );
+      }
       const checked = successful(await checkSettingsMusicbrainz(), 200);
-      await refreshState();
+      try {
+        await refreshState();
+      } catch (reason) {
+        throw new Error(
+          `MusicBrainz сохранён и проверен, но не удалось подтвердить состояние чтением: ${message(reason)}`,
+        );
+      }
       if (!checked.data.success)
         throw new Error(checked.data.error || "MusicBrainz недоступен.");
       setNotice("MusicBrainz проверен.");
     } catch (reason) {
       setError(message(reason));
     } finally {
+      musicBrainz.endSave();
       setBusy(false);
     }
   }
@@ -593,6 +836,7 @@ export function SettingsScreen() {
   async function confirmMove() {
     if (
       !movePlan ||
+      movePlan.sourceDirectory !== state?.settings.tools_directory ||
       movePlan.inputRevision !== moveInputRevision.current ||
       movePlan.sessionRevision !== moveSessionRevision.current ||
       movePlan.requestRevision !== moveRequestRevision.current ||
@@ -678,10 +922,20 @@ export function SettingsScreen() {
         возвращают приложение в мастер.
       </p>
       {busy && <p role="status">Выполняется запрос…</p>}
-      {!state && !error && (
+      {!initialLoadComplete && !loadError && (
         <p role="status">Загрузка настроек и состояния сервера…</p>
       )}
-      {state && (
+      {loadError && (
+        <>
+          <p ref={loadErrorAlert} tabIndex={-1} role="alert">
+            Не удалось загрузить настройки и состояние сервера: {loadError}
+          </p>
+          <AppButton isDisabled={busy} onPress={() => void loadScreen()}>
+            Повторить загрузку
+          </AppButton>
+        </>
+      )}
+      {initialLoadComplete && state && (
         <>
           <section
             aria-labelledby="health-title"
@@ -716,35 +970,66 @@ export function SettingsScreen() {
               <label>
                 Output directory
                 <input
-                  value={output}
-                  onChange={(event) => setOutput(event.target.value)}
+                  value={publication.value?.output ?? ""}
+                  onChange={(event) =>
+                    publication.update({
+                      output: event.target.value,
+                      format: publication.value?.format ?? "mka",
+                    })
+                  }
                 />
               </label>
               <label>
                 Publication format
                 <select
-                  value={format}
+                  value={publication.value?.format ?? "mka"}
                   onChange={(event) =>
-                    setFormat(
-                      event.target.value as UpdateSettingsBodyPublicationFormat,
-                    )
+                    publication.update({
+                      output: publication.value?.output ?? "",
+                      format: event.target
+                        .value as UpdateSettingsBodyPublicationFormat,
+                    })
                   }
                 >
                   <option value="source">Исходный формат</option>
                   <option value="mka">MKA remux</option>
                 </select>
               </label>
+              {publication.dirty && (
+                <p>Есть несохранённые изменения публикации.</p>
+              )}
               <AppButton
                 isDisabled={busy}
                 onPress={() =>
                   void mutate(
-                    () =>
-                      updateSettings({
-                        output_directory: output,
-                        publication_format: format,
-                      }),
+                    (savedDraft) => {
+                      const saved = savedDraft.value;
+                      return updateSettings({
+                        output_directory:
+                          saved?.output ?? state.settings.output_directory,
+                        publication_format:
+                          saved?.format ??
+                          (state.settings.publication_format === "source"
+                            ? "source"
+                            : "mka"),
+                      });
+                    },
                     204,
                     "Настройки публикации сохранены.",
+                    publication.capture,
+                    (fresh, revision) =>
+                      publication.acknowledge(
+                        {
+                          output: fresh.settings.output_directory,
+                          format:
+                            fresh.settings.publication_format === "source"
+                              ? "source"
+                              : "mka",
+                        },
+                        revision,
+                      ),
+                    publication.beginSave,
+                    publication.endSave,
                   )
                 }
               >
@@ -759,21 +1044,29 @@ export function SettingsScreen() {
               <label>
                 MusicBrainz mode
                 <select
-                  value={mode}
+                  value={musicBrainz.value?.mode ?? "public"}
                   onChange={(event) =>
-                    setMode(event.target.value as UpdateMusicBrainzBodyMode)
+                    musicBrainz.update({
+                      mode: event.target.value as UpdateMusicBrainzBodyMode,
+                      baseURL: musicBrainz.value?.baseURL ?? "",
+                    })
                   }
                 >
                   <option value="public">Public</option>
                   <option value="self-hosted">Self-hosted</option>
                 </select>
               </label>
-              {mode === "self-hosted" && (
+              {musicBrainz.value?.mode === "self-hosted" && (
                 <label>
                   MusicBrainz base URL
                   <input
-                    value={baseURL}
-                    onChange={(event) => setBaseURL(event.target.value)}
+                    value={musicBrainz.value?.baseURL ?? ""}
+                    onChange={(event) =>
+                      musicBrainz.update({
+                        mode: musicBrainz.value?.mode ?? "public",
+                        baseURL: event.target.value,
+                      })
+                    }
                   />
                 </label>
               )}
@@ -781,6 +1074,9 @@ export function SettingsScreen() {
                 Последняя проверка:{" "}
                 {state.settings.musicbrainz_verified_at || "не проверено"}
               </p>
+              {musicBrainz.dirty && (
+                <p>Есть несохранённые изменения MusicBrainz.</p>
+              )}
               <AppButton
                 isDisabled={busy}
                 onPress={() => void checkMusicBrainz()}
@@ -790,18 +1086,31 @@ export function SettingsScreen() {
               <label className="settings-inline">
                 <input
                   type="checkbox"
-                  checked={lrclib}
-                  onChange={(event) => setLrclib(event.target.checked)}
+                  checked={lrclib.value ?? state.settings.lrclib_enabled}
+                  onChange={(event) => lrclib.update(event.target.checked)}
                 />{" "}
                 LRCLIB включён
               </label>
+              {lrclib.dirty && <p>Есть несохранённые изменения LRCLIB.</p>}
               <AppButton
                 isDisabled={busy}
                 onPress={() =>
                   void mutate(
-                    () => updateLrclibSetting({ enabled: lrclib }),
+                    (savedDraft) =>
+                      updateLrclibSetting({
+                        enabled:
+                          savedDraft.value ?? state.settings.lrclib_enabled,
+                      }),
                     204,
                     "Настройка LRCLIB сохранена.",
+                    lrclib.capture,
+                    (fresh, revision) =>
+                      lrclib.acknowledge(
+                        fresh.settings.lrclib_enabled,
+                        revision,
+                      ),
+                    lrclib.beginSave,
+                    lrclib.endSave,
                   )
                 }
               >
@@ -810,8 +1119,8 @@ export function SettingsScreen() {
               <label className="settings-inline">
                 <input
                   type="checkbox"
-                  checked={sha256Enabled ?? state.settings.sha256_enabled}
-                  onChange={(event) => setSha256Enabled(event.target.checked)}
+                  checked={sha256.value ?? state.settings.sha256_enabled}
+                  onChange={(event) => sha256.update(event.target.checked)}
                 />{" "}
                 Вычислять SHA-256
               </label>
@@ -819,16 +1128,26 @@ export function SettingsScreen() {
                 Настройка применяется к последующим анализам. Её изменение не
                 удаляет сохранённые результаты и не запускает массовый пересчёт.
               </p>
+              {sha256.dirty && <p>Есть несохранённые изменения SHA-256.</p>}
               <AppButton
                 isDisabled={busy}
                 onPress={() =>
                   void mutate(
-                    () =>
+                    (savedDraft) =>
                       updateSha256Setting({
-                        enabled: sha256Enabled ?? state.settings.sha256_enabled,
+                        enabled:
+                          savedDraft.value ?? state.settings.sha256_enabled,
                       }),
                     204,
                     "Настройка SHA-256 сохранена.",
+                    sha256.capture,
+                    (fresh, revision) =>
+                      sha256.acknowledge(
+                        fresh.settings.sha256_enabled,
+                        revision,
+                      ),
+                    sha256.beginSave,
+                    sha256.endSave,
                   )
                 }
               >
@@ -843,9 +1162,11 @@ export function SettingsScreen() {
               <label>
                 Log level
                 <select
-                  value={logLevel}
+                  value={logLevel.value ?? "info"}
                   onChange={(event) =>
-                    setLogLevel(event.target.value as UpdateLogLevelBodyLevel)
+                    logLevel.update(
+                      event.target.value as UpdateLogLevelBodyLevel,
+                    )
                   }
                 >
                   <option value="debug">debug</option>
@@ -854,13 +1175,29 @@ export function SettingsScreen() {
                   <option value="error">error</option>
                 </select>
               </label>
+              {logLevel.dirty && (
+                <p>Есть несохранённые изменения уровня журнала.</p>
+              )}
               <AppButton
                 isDisabled={busy}
                 onPress={() =>
                   void mutate(
-                    () => updateLogLevel({ level: logLevel }),
+                    (savedDraft) =>
+                      updateLogLevel({
+                        level:
+                          savedDraft.value ??
+                          (state.settings.log_level as UpdateLogLevelBodyLevel),
+                      }),
                     204,
                     "Уровень журнала применён.",
+                    logLevel.capture,
+                    (fresh, revision) =>
+                      logLevel.acknowledge(
+                        fresh.settings.log_level as UpdateLogLevelBodyLevel,
+                        revision,
+                      ),
+                    logLevel.beginSave,
+                    logLevel.endSave,
                   )
                 }
               >
