@@ -95,8 +95,9 @@ URL.
 The approved configuration model keeps environment variables limited to startup
 bootstrap: `DATABASE_URL` plus optional `HTTP_BIND_ADDRESS` (an IP address,
 default `0.0.0.0`) and `HTTP_PORT` (an integer from `1` through `65535`, default
-`8080`). All other settings—including log level and external API keys—belong to
-the runtime UI and PostgreSQL rather than environment variables or config files.
+`8080`). All other settings—including the SHA-256 toggle, log level and external
+API keys—belong to the runtime UI and PostgreSQL rather than environment
+variables or config files.
 
 Compose persists downloaded tools at `/var/lib/melotrove/tools` in the
 `tools-data` volume. The image contains no bundled audio tools. Setup downloads
@@ -113,9 +114,9 @@ current supported instance platform, requires an absolute writable tools path,
 an absolute **empty** writable output path, an explicit publication format, and FFmpeg and Chromaprint
 versions that were downloaded and verified. Completing Setup is
 irreversible: a later configuration problem is shown as configuration health in
-Settings and does not reopen Setup. Settings also edits runtime/provider/logging
-configuration and manages verified tool versions through explicit download,
-activation, deletion, and tools-root move operations.
+Settings and does not reopen Setup. Settings also edits runtime, provider,
+logging and SHA-256 configuration and manages verified tool versions through
+explicit download, activation, deletion, and tools-root move operations.
 
 The tools root may contain unrelated files. MeloTrove writes and removes only
 exact paths for managed versions recorded in PostgreSQL (`ffmpeg/<version>/` and
@@ -165,47 +166,87 @@ incomplete, the instance platform is unsupported or mismatched, the root is
 disabled, or another scan of the same root is already active. The walk reads the
 tree directly, does not follow symlinks and cannot leave the root.
 
-The managed `ffprobe` then answers one question only: whether the file contains
-at least one audio stream. It runs on regular files whose extension matches one
-of the thirteen approved audio extensions listed in
-[Deployment and first setup](docs/design/deployment.md); the extension comparison
-ignores case, while the stored relative path keeps the exact case of the file on
-disk. A file without an audio
-stream stays in the inventory with its own status. A failed probe becomes a
-problem of that file with a safe reason, does not stop the rest of the scan, and
-is checked again on the next scan, while a file that a successful probe already
-answered is not probed again until it changes. The scan itself records only that
-status: no fingerprint (`fpcalc`), no SHA-256, no tags, codec or duration, and no
-publication.
+After a scan completes successfully, every new or changed location is analyzed
+automatically through the managed tools; a separate **Analyze** action is not
+needed for a normal file. Results may be prepared privately during traversal, but
+nothing is published unless the whole scan succeeded; a failed, interrupted or
+canceled scan neither publishes partial analysis nor replaces the inventory. Analysis has
+three independent steps, each storing its own success, actual version and
+provenance:
 
-A separate, explicit **Analyze** action on one `audio` location reads that file
-directly through the managed `ffprobe` and stores a technical result on the
-location. The result contains the container format and duration, every audio
-stream in stream-index order with its codec, profile, sample rate, sample format,
-bits per sample, channels, channel layout, bit rate and duration, the tags
-observed in the source (names uppercased, every value kept as its own entry and
-never split on `;` or `/`), and the unmodified `ffprobe` JSON. Non-audio streams
-such as an attached picture stay in that raw JSON. The result also records the
-analysis policy version, the `ffprobe` version that produced it, and the time of
-the analysis; an unknown technical value is shown as unknown, never as zero.
+- **SHA-256** — the global SHA-256 setting is a typed runtime setting in
+  PostgreSQL edited through Settings, enabled by default, with no environment
+  variable. When enabled it computes the digest for new and changed files,
+  including files with no audio stream, so an already known digest can reuse an
+  existing analysis instead of analyzing the bytes again. When disabled the step
+  is skipped neutrally and does not block `ffprobe` or `fpcalc`. Enabling it does
+  not backfill unchanged locations that have no digest and starts no mass
+  rehash; an absent digest is stored as `NULL`. Only a current computed digest is
+  used for reuse: a new location with the same digest joins the same media
+  identity, and an out-of-date digest is never reused. The setting is sampled when
+  a scan operation is created, so work already requested keeps its policy.
+- **`ffprobe`** — one full probe collects all technical data in a single run on a
+  regular file whose extension matches one of the thirteen approved audio
+  extensions listed in [Deployment and first setup](docs/design/deployment.md);
+  the extension comparison ignores case, while the stored relative path keeps the
+  exact case of the file on disk. The result contains the container format and
+  duration, every audio stream in stream-index order with its codec, profile,
+  sample rate, sample format, bits per sample, channels, channel layout, bit rate
+  and duration, the tags observed in the source (names uppercased, every value
+  kept as its own entry and never split on `;` or `/`), and the unmodified
+  `ffprobe` JSON. Non-audio streams such as an attached picture stay in that raw
+  JSON. The result also records the analysis policy version, the `ffprobe`
+  version that produced it, and the time of the analysis; an unknown technical
+  value is shown as unknown, never as zero. A file without an audio stream stays
+  in the inventory with its own status. A failed probe becomes a problem of that
+  file with a safe reason, does not stop the other steps, and is rechecked on the
+  next scan; a file whose successful probe is still current is not probed again.
+  A transition from `probe_error` to `audio` at unchanged size and mtime still
+  starts the first automatic analysis.
+- **Chromaprint (`fpcalc`)** — the managed `fpcalc` runs without an explicit
+  length argument and uses its built-in default of the first 120 seconds. The
+  application adds no other limit and does not claim the fingerprint covers the
+  whole file.
 
-Analysis is read-only and in place. This slice has no staged mode, no work
-directory, and no SHA-256 setting, and it never runs automatically: registering a
-root or scanning it does not start an analysis. It is started only for a single
-file that has an `audio` status, on an enabled root with a current inventory,
-after Setup is complete and a managed FFmpeg package is ready, through the same
-explicit action. Repeating the analysis re-reads the source file and replaces the
-stored result; the source bytes are never created, changed or deleted. A failure
-(for example, the file became unreadable between the read that provided its
-identity and the analysis) leaves the previous valid result and its timestamp in
-place, reports a safe reason on the operation, and changes neither the inventory
-nor the availability of the root. After the file changes on disk and a successful
-scan observes the new size or mtime, the stored result no longer describes the
-location and is unlinked from it until a new analysis is requested. Deleting a
-root removes only that root's inventory rows; source files on disk and the
-managed output library stay untouched. Fingerprint (`fpcalc`), SHA-256 exact
-deduplication, staged mode, automatic analysis of new files, incoming grouping
-and publication remain later work.
+SHA is computed first and its digest is looked up against saved probe results; on
+a cache miss the missing full `ffprobe` and `fpcalc` runs may execute in parallel.
+A successful fingerprint obtained before the probe settles is kept even when the
+probe fails and remains reusable by `(SHA-256, fpcalc version)`; a matching
+`(SHA-256, fpcalc version)` pair reuses the stored fingerprint without running
+`fpcalc` again. Fingerprint is not an identity: it participates in matching only
+for a file whose selected successful current `ffprobe` confirmed exactly one
+audio stream. A file with zero or several audio streams keeps its fingerprint and
+provenance for reuse, while matching eligibility is shown neutrally as
+unsupported/skipped, not as an error, and no retry is offered for that
+eligibility.
+
+Each step keeps its independently saved success, so an error in one step does not
+discard the successful results of the others. The safe error is recorded on the
+failed step, and the operator can retry exactly that step without repeating the
+successful siblings. When the stored successful fingerprint was produced by a
+different active `fpcalc` version, the operator can explicitly rerun only the
+fingerprint of the current location with the current active `fpcalc`; while it
+runs, and if it fails, the previous successful fingerprint and its provenance
+remain readable. Activating another `fpcalc` version does not by itself reprocess
+existing results.
+
+Analysis reads the source read-only and in place, and applies the same freshness
+criterion as scan: a location is current when its observed size and mtime match.
+The current implementation is `in_place` only. Staged mode with a work directory
+and its setting are not implemented in this slice. Automatic analysis never
+creates, changes or deletes a file below a source root; the source bytes are
+never modified. After the file changes on disk and a successful scan observes the
+new size or mtime, the stored results no longer describe the location and are
+replaced by a new analysis. Deleting a root removes only that root's inventory
+rows; source files on disk and the managed output library stay untouched.
+
+Outside this slice remain: scheduled scans, automatic retry/backoff, a full
+re-analysis button, staged mode and work directory, incoming groups, matching
+itself with AcoustID and MusicBrainz, confidence, the local library and
+publication. The single-audio-stream check exists only as the matching gate; no
+grouping, matching or publication runs. No shipped operation deletes a source
+file; deleting a source file after a successful publication remains a later,
+explicitly enabled setting.
 
 Only a fully successful traversal replaces the inventory. A new, changed or
 deleted path appears after such a scan, while an unavailable root, a failed,
