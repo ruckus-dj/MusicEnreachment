@@ -87,7 +87,7 @@ export function AppShell() {
           ? "setup-shell"
           : route === "/sources"
             ? "sources-screen sources-shell min-h-screen p-3"
-            : "min-h-screen bg-stone-100 p-3 text-stone-900"
+            : "settings-screen settings-shell min-h-screen p-3"
       }
     >
       <header className="flex items-center justify-between border-b border-stone-300 pb-3">

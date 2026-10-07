@@ -1,4 +1,5 @@
 .settings-screen {
+  --settings-canvas: #f2f3ef;
   --settings-line: #d7ded5;
   --settings-surface: #fff;
   --settings-raised: #f7f8f5;
@@ -14,6 +15,7 @@
 }
 @media (prefers-color-scheme: dark) {
   .settings-screen {
+    --settings-canvas: #111512;
     --settings-line: #354138;
     --settings-surface: #191e1a;
     --settings-raised: #222923;
@@ -26,6 +28,11 @@
     --settings-error-soft: #3a2425;
   }
 }
+/* The shell shares the Settings token scope so the canvas, header and
+   navigation stay legible in both themes instead of inheriting the light
+   Tailwind stone canvas. Mirrors the sources-shell/setup-shell pattern. */
+.settings-shell { background: var(--settings-canvas); }
+.settings-shell header { background: var(--settings-surface); border-color: var(--settings-line); }
 .settings-screen h1 { font-size: 20px; line-height: 26px; font-weight: 650; }
 .settings-screen h2 { font-size: 14px; line-height: 20px; font-weight: 600; }
 .settings-screen .settings-panel, .settings-screen .setup-tool { margin: 10px 0; padding: 10px; border: 1px solid var(--settings-line); border-radius: 5px; background: var(--settings-surface); }

@@ -280,3 +280,47 @@ describe("AppShell sources routing", () => {
     expect(await screen.findByText("Managed tools")).toBeVisible();
   });
 });
+describe("AppShell themed shell", () => {
+  it("uses the themed Settings shell for the settings route", async () => {
+    window.location.hash = "/settings";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/settings", () => HttpResponse.json(completedState)),
+      http.get("/api/tools/installations", () =>
+        HttpResponse.json({ installations: [] }),
+      ),
+      http.get("/api/operations", () => HttpResponse.json({ operations: [] })),
+    );
+    render(<AppShell />);
+    await screen.findByText("Managed tools");
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass("settings-screen", "settings-shell");
+    expect(main).not.toHaveClass("bg-stone-100");
+  });
+  it("uses the themed Settings shell for the completed landing route", async () => {
+    server.use(http.get("/api/setup", () => HttpResponse.json(completedState)));
+    render(<AppShell />);
+    await screen.findByText("Приложение готово к настройке.");
+    expect(screen.getByRole("main")).toHaveClass("settings-shell");
+  });
+  it("keeps the setup shell for an incomplete instance", async () => {
+    server.use(http.get("/api/setup", () => HttpResponse.json(state)));
+    render(<AppShell />);
+    await screen.findByRole("heading", { name: "Первый запуск" });
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass("setup-shell");
+    expect(main).not.toHaveClass("settings-shell");
+  });
+  it("keeps the sources shell for the sources route", async () => {
+    window.location.hash = "/sources";
+    server.use(
+      http.get("/api/setup", () => HttpResponse.json(completedState)),
+      http.get("/api/sources", () => HttpResponse.json({ sources: [] })),
+    );
+    render(<AppShell />);
+    await screen.findByRole("heading", { level: 1, name: "Источники" });
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass("sources-screen", "sources-shell");
+    expect(main).not.toHaveClass("settings-shell");
+  });
+});
