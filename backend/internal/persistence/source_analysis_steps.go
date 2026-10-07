@@ -309,6 +309,15 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 			WHERE work_id=? AND step='probe' AND step_attempt=?`, result.ID, apply.OperationID, locked.Work.ID, apply.StepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source probe: persist step: %w", err)
 		}
+		if canonicalID != nil {
+			canonical := new(SourceMediaVariant)
+			if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, *canonicalID).Scan(ctx, canonical); err != nil {
+				return fmt.Errorf("apply source probe: read canonical digest: %w", err)
+			}
+			if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, apply.FFProbeVersion, apply.AnalysisPolicy, result.ID); err != nil {
+				return fmt.Errorf("apply source probe: register cache: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -489,6 +498,7 @@ func (repository *SourceInventoryRepository) CleanupSourceMediaVariants(ctx cont
 		AND NOT EXISTS (SELECT 1 FROM source_location l WHERE l.media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM operation o WHERE o.analysis_media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id)
+		AND NOT EXISTS (SELECT 1 FROM media_probe_cache c WHERE c.result_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold h JOIN source_analysis_step s ON s.work_id=h.work_id
 			WHERE h.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
 			AND (s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id))`, bun.List(ids)).Exec(ctx); err != nil {
@@ -561,6 +571,17 @@ func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceSt
 			applied_operation_id=src.applied_operation_id, audio_stream_count=src.audio_stream_count
 			FROM media_variant src WHERE dst.id=? AND dst.ffprobe_version IS NULL AND src.id=?`, canonical.ID, *probeStep.SuccessProbeVariantID).Exec(ctx); err != nil {
 			return err
+		}
+	}
+	if probeStep.SuccessProbeVariantID != nil {
+		probe := new(SourceMediaVariant)
+		if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, *probeStep.SuccessProbeVariantID).Scan(ctx, probe); err != nil {
+			return err
+		}
+		if probe.FFProbeVersion != nil && probe.AnalysisPolicyVersion != nil {
+			if err := registerSourceProbeCache(ctx, tx, canonical.SourceSHA256, *probe.FFProbeVersion, *probe.AnalysisPolicyVersion, probe.ID); err != nil {
+				return err
+			}
 		}
 	}
 	var fingerprintStep SourceAnalysisStep

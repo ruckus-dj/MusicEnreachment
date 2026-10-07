@@ -4,6 +4,7 @@ package persistence_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -106,6 +107,12 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply SHA-256: %v", err)
 	}
+	var lookupDigest [sha256.Size]byte
+	copy(lookupDigest[:], digest)
+	cachedProbe, found, err := repository.LookupSourceProbe(ctx, lookupDigest, probe.FFProbeVersion, probe.AnalysisPolicy)
+	if err != nil || !found || cachedProbe.ID != probeResult.ID {
+		t.Fatalf("probe cache after SHA promotion = %+v, %v, %v; want original selected result %s", cachedProbe, found, err, probeResult.ID)
+	}
 	if canonical.FFProbeVersion == nil || *canonical.FFProbeVersion != probe.FFProbeVersion || canonical.AppliedOperationID == nil || *canonical.AppliedOperationID != operation.ID {
 		t.Fatalf("returned canonical digest omitted promoted probe provenance: %+v", canonical)
 	}
@@ -198,6 +205,71 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	}
 	if _, err := repository.ApplySourceSHA256(ctx, shaApply); !errors.Is(err, persistence.ErrSourceAnalysisStale) {
 		t.Fatalf("stale SHA delivery = %v, want ErrSourceAnalysisStale", err)
+	}
+}
+
+func TestSourceProbeCacheRegistersWhenSHACompletesFirstWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, repository, "/srv/probe-cache-sha-first")
+	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 4096, probeMtime())
+	establishInventory(t, ctx, database, root)
+	installation := insertAnalysisInstallation(t, ctx, database, "probe-cache-sha-first")
+	operation := insertRunningAnalysisOperation(t, ctx, database, root, location, installation, nil)
+	jobID := int64(9191)
+	if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).Set("river_job_id=?", jobID).Where("id=?", operation.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	work := &persistence.SourceAnalysisWork{
+		ID: uuid.New(), LocationID: location.ID, SourceRootID: root.ID,
+		ConfiguredPath: root.ConfiguredPath, InventoryPath: *root.InventoryPath,
+		RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: location.Mtime,
+		SHA256Enabled: true, OriginScanOperationID: uuid.New(),
+	}
+	if err := repository.StoreSourceAnalysisWork(ctx, work, []persistence.SourceAnalysisStepInput{
+		{Step: persistence.SourceStepSHA256, State: "pending"},
+		{Step: persistence.SourceStepProbe, State: "pending"},
+	}); err != nil {
+		t.Fatalf("store work: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES(?,?)`, operation.ID, work.ID); err != nil {
+		t.Fatalf("hold work: %v", err)
+	}
+	claim := func(step persistence.SourceStepName) int {
+		t.Helper()
+		attempt, err := repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{
+			WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt,
+			JobID: jobID, Step: step,
+		})
+		if err != nil {
+			t.Fatalf("claim %s: %v", step, err)
+		}
+		return attempt
+	}
+	digest := sha256.Sum256([]byte("probe cache SHA-first fixture"))
+	if _, err := repository.ApplySourceSHA256(ctx, persistence.SourceSHA256Apply{
+		WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt,
+		JobID: jobID, StepAttempt: claim(persistence.SourceStepSHA256), SHA256: digest[:],
+		CalculatedAt: time.Now().UTC().Truncate(time.Microsecond), Algorithm: "SHA-256",
+	}); err != nil {
+		t.Fatalf("apply SHA-256: %v", err)
+	}
+	probe := persistence.SourceProbeApply{
+		WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt,
+		JobID: jobID, StepAttempt: claim(persistence.SourceStepProbe), SizeBytes: location.SizeBytes,
+		AnalysisPolicy: persistence.SourceAnalysisPolicyVersion, FFProbeVersion: "7.1.2",
+		FFProbeJSON:  json.RawMessage(`{"format":{"format_name":"flac"}}`),
+		ObservedTags: json.RawMessage(`{"ARTIST":["fixture"]}`), InspectedAt: time.Now().UTC().Truncate(time.Microsecond), AudioStreamCount: 1,
+	}
+	selected, err := repository.ApplySourceProbe(ctx, probe)
+	if err != nil {
+		t.Fatalf("apply probe: %v", err)
+	}
+	cached, found, err := repository.LookupSourceProbe(ctx, digest, probe.FFProbeVersion, probe.AnalysisPolicy)
+	if err != nil || !found || cached.ID != selected.ID {
+		t.Fatalf("probe cache after SHA-first apply = %+v, %v, %v; want selected result %s", cached, found, err, selected.ID)
 	}
 }
 
