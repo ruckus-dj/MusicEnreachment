@@ -153,6 +153,84 @@ func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOper
 	}
 }
 
+func TestNormalizedSourceAnalysisGuardsOperationSourceSelectorsAfterAdmissionWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+
+	for _, mode := range []string{string(persistence.SourceAnalysisModeBatch), string(persistence.SourceAnalysisModeSingleStep)} {
+		t.Run(string(mode), func(t *testing.T) {
+			root := createInventoryRoot(t, ctx, repository, "/srv/source-selector-"+string(mode))
+			otherRoot := createInventoryRoot(t, ctx, repository, "/srv/source-selector-other-"+string(mode))
+			location := insertAnalysisLocation(t, ctx, database, root.ID, "selected.flac", 1024, probeMtime())
+			otherLocation := insertAnalysisLocation(t, ctx, database, root.ID, "other.flac", 1024, probeMtime())
+			foreignLocation := insertAnalysisLocation(t, ctx, database, otherRoot.ID, "foreign.flac", 1024, probeMtime())
+			establishInventory(t, ctx, database, root)
+			establishInventory(t, ctx, database, otherRoot)
+			stepInput := persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"}
+			if mode == persistence.SourceAnalysisModeSingleStep {
+				safeError := "previous SHA attempt failed"
+				stepInput = persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "failed", SafeError: &safeError}
+			}
+			work := normalizedWork(t, ctx, repository, root, location, true, stepInput)
+			var targetWorkID *uuid.UUID
+			var targetStep *string
+			if mode == persistence.SourceAnalysisModeSingleStep {
+				step := string(persistence.SourceStepSHA256)
+				targetWorkID, targetStep = &work.ID, &step
+			}
+			operation := normalizedOperation(t, root, location, work, mode, targetWorkID, targetStep, true, false, nil)
+			if err := repository.CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx, operation, client, service.SourceAnalysisJobArgs{OperationID: operation.ID}, nil); err != nil {
+				t.Fatalf("admit %s analysis: %v", mode, err)
+			}
+
+			if _, err := database.ExecContext(ctx, `UPDATE operation SET target_source_root_id=? WHERE id=?`, otherRoot.ID, operation.ID); err == nil {
+				t.Fatalf("%s operation accepted a root selector unrelated to its held work", mode)
+			}
+			if mode == persistence.SourceAnalysisModeBatch {
+				if _, err := database.ExecContext(ctx, `UPDATE operation SET target_source_location_id=? WHERE id=?`, location.ID, operation.ID); err == nil {
+					t.Fatal("batch operation accepted a single-location selector")
+				}
+			} else {
+				for _, mismatch := range []struct {
+					name       string
+					rootID     uuid.UUID
+					locationID uuid.UUID
+				}{
+					{name: "same-root different location", rootID: root.ID, locationID: otherLocation.ID},
+					{name: "foreign-root location", rootID: otherRoot.ID, locationID: foreignLocation.ID},
+				} {
+					t.Run(mismatch.name, func(t *testing.T) {
+						if _, err := database.ExecContext(ctx, `UPDATE operation SET target_source_root_id=?,target_source_location_id=? WHERE id=?`, mismatch.rootID, mismatch.locationID, operation.ID); err == nil {
+							t.Fatal("single-step operation accepted a location selector unrelated to its held work")
+						}
+					})
+				}
+			}
+
+			foreignWork := normalizedWork(t, ctx, repository, otherRoot, foreignLocation, true,
+				persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"})
+			if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+				if _, err := tx.NewRaw(`INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES (?,?)`, operation.ID, foreignWork.ID).Exec(ctx); err != nil {
+					return err
+				}
+				if _, err := tx.NewRaw(`UPDATE operation SET input_snapshot=jsonb_set(input_snapshot,'{work_ids}',input_snapshot->'work_ids'||jsonb_build_array(?::text)) WHERE id=?`, foreignWork.ID, operation.ID).Exec(ctx); err != nil {
+					return err
+				}
+				if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='queued',execution_operation_id=?,execution_operation_attempt=?,execution_job_id=? WHERE work_id=? AND step='sha256'`, operation.ID, operation.Attempt, *operation.RiverJobID, foreignWork.ID).Exec(ctx); err != nil {
+					return err
+				}
+				_, err := tx.NewRaw(`SET CONSTRAINTS source_analysis_step_membership_guard IMMEDIATE`).Exec(ctx)
+				return err
+			}); err == nil {
+				t.Fatalf("%s execution accepted held work from another root", mode)
+			}
+		})
+	}
+}
+
 func TestNormalizedSourceAnalysisTerminalReleasesToolAndWorkHoldsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)

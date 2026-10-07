@@ -103,6 +103,9 @@ func TestSourceScanToolHoldsUseVerifiedSelectionsWithPostgreSQL(t *testing.T) {
 	if !activeFlag {
 		t.Fatal("active scan with tool holds has tools_read_required=false")
 	}
+	if _, err := database.NewRaw(`UPDATE operation SET tools_read_required=false WHERE id=?`, operation.ID).Exec(ctx); err == nil {
+		t.Fatal("SQL guard accepted an active scan whose tool-read flag disagreed with its holds")
+	}
 
 	blockedMove := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
@@ -131,6 +134,20 @@ func TestSourceScanToolHoldsUseVerifiedSelectionsWithPostgreSQL(t *testing.T) {
 	}
 	if releasedFlag {
 		t.Fatal("scan tool release left tools_read_required=true")
+	}
+	if _, err := database.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id,installation_id) VALUES (?,?)`, operation.ID, selections[0].InstallationID).Exec(ctx); err == nil {
+		t.Fatal("SQL guard accepted a scan tool hold without setting tools_read_required")
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO operation_tool_read_hold(operation_id,installation_id) VALUES (?,?)`, operation.ID, selections[0].InstallationID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`UPDATE operation SET tools_read_required=true,state='succeeded',stage='succeeded',finished_at=now() WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+			return err
+		}
+		return nil
+	}); err == nil {
+		t.Fatal("SQL guard accepted terminal scan retaining a tool hold")
 	}
 	if _, err := database.NewRaw(`UPDATE operation SET state='succeeded', stage='succeeded', finished_at=now() WHERE id=?`, operation.ID).Exec(ctx); err != nil {
 		t.Fatalf("finish scan after releasing tool holds: %v", err)

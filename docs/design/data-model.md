@@ -125,3 +125,25 @@
 
 River — PostgreSQL-backed очередь фоновых операций; его внутренние таблицы не
 являются частью целевой модели медиатеки.
+
+## Дополнение: физическое сопоставление source-analysis (аудит 2026-10-07)
+
+Следующая таблица дополняет физическое отображение текущей реализации и уже
+описанной целевой модели. Она не меняет концептуальный DBML и не вводит новые
+пользовательские состояния.
+
+| Текущее физическое представление | Целевое представление и инвариант | Миграция / статус |
+| --- | --- | --- |
+| `source_root`, `source_location`, `media_variant` | Root/location содержат актуальный inventory; `media_variant` хранит результаты probe и nullable SHA identity. Успешные результаты имеют явное происхождение, а отсутствующие не заполняются фиктивными значениями. | `20261006000000_automatic_source_analysis`; additive к базовой схеме. |
+| `media_probe_cache`, `media_fingerprint_cache` | Cache association связывает актуальный digest с конкретным сохранённым результатом и версией инструмента; cache не становится selected result автоматически. Первый успешный insert — concurrency-протокол, а не SQL-защита от изменения строки после вставки. | Probe cache — `20261014000000_source_probe_cache`; fingerprint cache — `20261006000000_automatic_source_analysis`. |
+| `media_fingerprint_result`, `media_fingerprint_cache`, `source_analysis_work`, `source_analysis_step` | Fingerprint и cache отделены от текущей работы; work фиксирует location identity, а `(work_id, step)` — независимое текущее состояние каждого шага. Execution operation/attempt/job существует либо полностью, либо отсутствует. | Базовые таблицы — `20261006000000`; nullable input snapshot — `20261010000000`. `20261015000000_source_analysis_guard_closure` закрывает SQL `CHECK`-инвариант для каждого частичного подмножества execution triple, включая nullable `attempt`. |
+| `operation.source_analysis_mode`, target selectors, `operation_source_work_hold`, `operation_tool_read_hold` | Batch/single-step snapshot выбирает work и шаги; отложенные guards связывают каждый execution и каждый удерживаемый work с root/location selectors операции. Tool read-флаг соответствует наличию фактического hold; terminal settlement освобождает holds и execution атомарно. | Normalized операции/guards — `20261007000000`, selected-step guard — `20261013000000`; окончательное закрытие selector/hold guards — `20261015000000_source_analysis_guard_closure`. |
+| Snapshot `operation.input_snapshot`, выбранные cache associations и provenance UUID | Snapshot фиксирует admission inputs, а UUID provenance указывает на операцию, но не удерживает её строку и не заменяет work/tool hold. Правило «первый успешный cache insert побеждает» — протокол записи/конкуренции, а не SQL-инвариант неизменяемости победителя. | Текущая реализация в snapshot/persistence и `media_*_cache`; не считать cache winner защищённым одним лишь уникальным ключом от последующего `UPDATE`. |
+| Исторические схемы до нормализованного анализа | Conceptual DBML остаётся без изменений; миграции только добавляют текущую физическую форму и guards, не переписывая ранее применённые migrations. | Down `20261015000000` восстанавливает только прежние constraint/function definitions и отказывает на небезопасном partial triple. Down plan07 migration цепочки также остаются guarded preflight rollback, а не destructive откат с потерей текущих результатов. |
+
+Для deferred scan tool holds `tools_read_required` является изменяемым отражением
+наличия `operation_tool_read_hold`: admission scan может иметь `false` при tools,
+записанных в snapshot; захват/освобождение hold и изменение флага завершаются в
+одной транзакции. Guard проверяет их итоговое совпадение и отсутствие hold у
+terminal operation, но не требует создавать scan hold для каждого snapshot tool и
+не приравнивает snapshot-флаг к изменяемому полю операции.

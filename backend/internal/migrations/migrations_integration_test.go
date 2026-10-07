@@ -211,6 +211,130 @@ func TestObsoleteAnalysisHoldsMigrationSchemaAndPreflightWithPostgreSQL(t *testi
 	})
 }
 
+func TestSourceAnalysisGuardClosureMigrationWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	name := "20261015000000"
+	migration := migrationNamed(t, collection, name)
+
+	t.Run("unsafe partial triple refuses upgrade before DDL", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, name))
+		rootID := newVariantRoot(t, ctx, database, "/srv/guard-closure-preflight")
+		locationID := newVariantLocation(t, ctx, database, rootID, "partial.flac")
+		workID := insertGuardClosureWork(t, ctx, database, rootID, locationID)
+		operationID, jobID := uuid.New(), int64(812)
+		snapshot := `{"schema_version":1,"mode":"batch","work_ids":["` + workID.String() + `"],"selected_steps":[{"work_id":"` + workID.String() + `","step":"sha256"}],"tools":[],"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false,"tools_read_required":false}`
+		if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,input_snapshot)
+			VALUES (?, 'sha256','pending','{"sha256_enabled":true,"cache_only_reuse":false,"rerun_target":false}'::jsonb)`, workID); err != nil {
+			t.Fatalf("insert normalized pending step: %v", err)
+		}
+		if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.NewRaw(`INSERT INTO operation
+				(id,kind,state,stage,input_snapshot,target_source_root_id,attempt,river_job_id,source_analysis_mode,tools_read_required,rerun_target)
+				VALUES (?, 'analyze_source','queued','queued',?::jsonb,?,1,?,'batch',false,false)`, operationID, snapshot, rootID, jobID).Exec(ctx); err != nil {
+				return err
+			}
+			if _, err := tx.NewRaw(`INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES (?,?)`, operationID, workID).Exec(ctx); err != nil {
+				return err
+			}
+			if _, err := tx.NewRaw(`UPDATE source_analysis_step
+				SET execution_operation_id=?,execution_operation_attempt=NULL,execution_job_id=?
+				WHERE work_id=? AND step='sha256'`, operationID, jobID, workID).Exec(ctx); err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("insert preflight-compatible legacy partial triple: %v", err)
+		}
+		migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+		if _, err := migrator.Migrate(ctx); err == nil {
+			t.Fatal("migration with a partial execution triple succeeded")
+		}
+		definition := constraintDefinition(t, database, "source_analysis_step_execution_all_or_none")
+		if strings.Contains(definition, "execution_operation_attempt IS NOT NULL") {
+			t.Fatalf("failed migration changed the existing execution constraint: %s", definition)
+		}
+	})
+
+	t.Run("all partial triple combinations are rejected and rollback restores prior guards", func(t *testing.T) {
+		testpostgres.Reset(t, database)
+		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, name))
+		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+		rootID := newVariantRoot(t, ctx, database, "/srv/guard-closure-partials")
+		combinations := []struct {
+			name                        string
+			operationID, attempt, jobID bool
+		}{
+			{name: "operation id", operationID: true},
+			{name: "attempt", attempt: true},
+			{name: "job id", jobID: true},
+			{name: "operation id and attempt", operationID: true, attempt: true},
+			{name: "operation id and job id", operationID: true, jobID: true},
+			{name: "attempt and job id", attempt: true, jobID: true},
+		}
+		for index, combination := range combinations {
+			t.Run(combination.name, func(t *testing.T) {
+				locationID := newVariantLocation(t, ctx, database, rootID, "partial-"+uuid.NewString()+".flac")
+				workID := insertGuardClosureWork(t, ctx, database, rootID, locationID)
+				var operationID, attempt, jobID any
+				if combination.operationID {
+					operationID = uuid.New()
+				}
+				if combination.attempt {
+					attempt = index + 1
+				}
+				if combination.jobID {
+					jobID = int64(index + 1)
+				}
+				if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step
+					(work_id,step,state,execution_operation_id,execution_operation_attempt,execution_job_id)
+					VALUES (?, 'sha256','pending',?,?,?)`, workID, operationID, attempt, jobID); err == nil {
+					t.Fatalf("partial execution triple (%s) was accepted", combination.name)
+				}
+			})
+		}
+		locationID := newVariantLocation(t, ctx, database, rootID, "zero-attempt-"+uuid.NewString()+".flac")
+		workID := insertGuardClosureWork(t, ctx, database, rootID, locationID)
+		if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step
+			(work_id,step,state,execution_operation_id,execution_operation_attempt,execution_job_id)
+			VALUES (?, 'sha256','pending',?,0,1)`, workID, uuid.New()); err == nil {
+			t.Fatal("complete execution triple with attempt zero was accepted")
+		}
+		definition := constraintDefinition(t, database, "source_analysis_step_execution_all_or_none")
+		if !strings.Contains(definition, "execution_operation_attempt IS NOT NULL") {
+			t.Fatalf("strict execution constraint is missing its non-NULL attempt check: %s", definition)
+		}
+		rollbackMigration(t, ctx, database, migration)
+		definition = constraintDefinition(t, database, "source_analysis_step_execution_all_or_none")
+		if strings.Contains(definition, "execution_operation_attempt IS NOT NULL") {
+			t.Fatalf("prior execution constraint was not restored on rollback: %s", definition)
+		}
+		var functionDefinition string
+		if err := database.NewRaw(`SELECT pg_get_functiondef('check_source_analysis_step_membership()'::regprocedure)`).Scan(ctx, &functionDefinition); err != nil {
+			t.Fatalf("read restored step membership function: %v", err)
+		}
+		if strings.Contains(functionDefinition, "source selectors") {
+			t.Fatalf("new step membership guard remains after rollback: %s", functionDefinition)
+		}
+	})
+}
+
+func insertGuardClosureWork(t *testing.T, ctx context.Context, database *bun.DB, rootID, locationID uuid.UUID) uuid.UUID {
+	t.Helper()
+	workID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_work
+		(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id)
+		SELECT ?,l.id,l.source_root_id,r.configured_path,COALESCE(r.inventory_path,r.configured_path),l.relative_path,l.size_bytes,l.mtime,true,?
+		FROM source_location l JOIN source_root r ON r.id=l.source_root_id WHERE l.id=? AND l.source_root_id=?`,
+		workID, uuid.New(), locationID, rootID); err != nil {
+		t.Fatalf("insert guard-closure work: %v", err)
+	}
+	return workID
+}
+
 func mustMigrations(t *testing.T) *migrate.Migrations {
 	t.Helper()
 	collection, err := migrations.Collection()

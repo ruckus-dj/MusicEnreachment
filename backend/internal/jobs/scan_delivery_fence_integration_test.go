@@ -17,6 +17,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
@@ -43,7 +44,7 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	}
 	operation := &persistence.Operation{ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued",
 		Stage: service.SourceScanStageQueued, InputSnapshot: raw, TargetSourceRootID: &root.ID, Attempt: 2,
-		RiverJobID: int64Pointer(202), ToolsReadRequired: true}
+		RiverJobID: int64Pointer(202)}
 	if err := manager.CreateOperation(ctx, operation); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,13 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.NewRaw("INSERT INTO operation_tool_read_hold (operation_id, installation_id) VALUES (?, ?)", operation.ID, installation.ID).Exec(ctx); err != nil {
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("INSERT INTO operation_tool_read_hold (operation_id, installation_id) VALUES (?, ?)", operation.ID, installation.ID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw("UPDATE operation SET tools_read_required=true WHERE id=?", operation.ID).Exec(ctx)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{{
