@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Input,
   Label,
@@ -72,10 +72,14 @@ export function SetupManager({
       : "",
   );
   const [pending, setPending] = useState(false);
+  const [toolsBlocked, setToolsBlocked] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
+  const updateToolsBlocked = useCallback((blocked: boolean) => {
+    setToolsBlocked(blocked);
+  }, []);
   function navigate(next: number) {
     setError("");
     setNotice("");
@@ -196,7 +200,7 @@ export function SetupManager({
               </p>
             </div>
           )}
-          {step === 2 && <SetupTools onActivated={refresh} />}
+          {step === 2 && <SetupTools onBlockedChange={updateToolsBlocked} />}
           {step === 3 && (
             <RadioGroup
               value={format}
@@ -302,7 +306,10 @@ export function SetupManager({
               Назад
             </AppButton>
             {step !== 4 && (
-              <AppButton isDisabled={pending} onPress={advance}>
+              <AppButton
+                isDisabled={pending || (step === 2 && toolsBlocked)}
+                onPress={advance}
+              >
                 {step === 5 ? "Завершить Setup" : "Продолжить"}
               </AppButton>
             )}
@@ -325,8 +332,9 @@ export function SetupManager({
           )}
           {step === 2 && (
             <p>
-              FFmpeg включает ffmpeg и ffprobe в одной установке. Выбирайте
-              проверенные версии обоих пакетов, а затем явно активируйте их.
+              FFmpeg включает ffmpeg и ffprobe в одной установке. Выберите
+              версию каждого пакета; первая успешно проверенная версия
+              активируется автоматически.
             </p>
           )}
           {step === 3 && (

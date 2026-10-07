@@ -91,6 +91,9 @@ func TestSetupManagerPersistenceWithPostgreSQL(t *testing.T) {
 	if err != nil || ready.State != "ready" || ready.VerifiedAt == nil {
 		t.Fatalf("ready installation = %#v, %v", ready, err)
 	}
+	if err := settings.New(persistence.NewSettingsRepository(database), nil).CompleteSetup(ctx); err != nil {
+		t.Fatalf("complete setup before retry history scenario: %v", err)
+	}
 
 	snapshot, err := json.Marshal(map[string]string{"target_identity": "ffmpeg:btbn:7.1:linux:amd64"})
 	if err != nil {
@@ -165,6 +168,9 @@ func TestActivateInstallationWithPostgreSQL(t *testing.T) {
 	}
 	if err := activations.Activate(ctx, "ffmpeg", unready.ID); err == nil {
 		t.Fatal("activation accepted an unready installation")
+	}
+	if err := settings.New(persistence.NewSettingsRepository(database), nil).CompleteSetup(ctx); err != nil {
+		t.Fatalf("complete setup before explicit activation: %v", err)
 	}
 	if err := activations.Activate(ctx, "ffmpeg", ready.ID); err != nil {
 		t.Fatalf("activate ready installation: %v", err)
@@ -374,6 +380,9 @@ func TestDeleteInstallationWithPostgreSQL(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := settings.New(persistence.NewSettingsRepository(database), nil).CompleteSetup(ctx); err != nil {
+		t.Fatalf("complete setup before explicit activation: %v", err)
 	}
 
 	if err := repository.ActivateInstallation(ctx, ready.ID, "ffmpeg", "linux", "amd64", settings.ActiveFFmpegInstallationKey); err != nil {

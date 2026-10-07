@@ -51,6 +51,20 @@ func installBackup(staging string, name string) string {
 	return filepath.Join(staging, "backups", name)
 }
 
+func refuseUnjournaledInstallBackups(staging string) error {
+	entries, err := os.ReadDir(filepath.Join(staging, "backups"))
+	if err == nil {
+		if len(entries) > 0 {
+			return fmt.Errorf("installation backups exist without ownership journal")
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect unjournaled installation backups: %w", err)
+	}
+	return nil
+}
+
 func sameInstallPaths(first, second []string) bool {
 	if len(first) != len(second) {
 		return false
@@ -73,7 +87,7 @@ func loadInstallPublication(staging string, operation *persistence.Operation, in
 		return nil, fmt.Errorf("inspect installation publication: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Size() > 16<<10 {
-		return nil, fmt.Errorf("installation publication has an invalid file type or size")
+		return nil, fmt.Errorf("%w: installation publication has an invalid file type or size", errInvalidInstallPublicationEvidence)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -81,27 +95,27 @@ func loadInstallPublication(staging string, operation *persistence.Operation, in
 	}
 	var publication installPublication
 	if err := json.Unmarshal(raw, &publication); err != nil {
-		return nil, fmt.Errorf("decode installation publication: %w", err)
+		return nil, fmt.Errorf("%w: decode installation publication: %w", errInvalidInstallPublicationEvidence, err)
 	}
 	expected := tools.ExpectedExecutables(snapshot.PackageKind, goos)
 	if publication.OperationID != operation.ID || publication.InstallationID != installation.ID ||
 		publication.Root != root || publication.PackageKind != snapshot.PackageKind ||
 		publication.Release != snapshot.ReleaseIdentity ||
 		(publication.Mode != "" && publication.Mode != "rollback") || len(publication.Files) != len(expected) {
-		return nil, fmt.Errorf("installation publication identity changed")
+		return nil, fmt.Errorf("%w: installation publication identity changed", errInvalidInstallPublicationEvidence)
 	}
 	confirmed := append([]string(nil), snapshot.ConfirmedConflicts...)
 	sort.Strings(confirmed)
 	if !sameInstallPaths(publication.Confirmed, confirmed) {
-		return nil, fmt.Errorf("installation publication conflicts changed")
+		return nil, fmt.Errorf("%w: installation publication conflicts changed", errInvalidInstallPublicationEvidence)
 	}
 	for index, name := range expected {
 		file := publication.Files[index]
 		if file.Name != name || len(file.SHA256) != 64 {
-			return nil, fmt.Errorf("installation publication executable identity changed")
+			return nil, fmt.Errorf("%w: installation publication executable identity changed", errInvalidInstallPublicationEvidence)
 		}
 		if _, err := hex.DecodeString(file.SHA256); err != nil {
-			return nil, fmt.Errorf("installation publication executable digest is invalid")
+			return nil, fmt.Errorf("%w: installation publication executable digest is invalid", errInvalidInstallPublicationEvidence)
 		}
 	}
 	return &publication, nil
@@ -197,17 +211,16 @@ func (worker *InstallationWorker) resumeInstallPublication(ctx context.Context, 
 		}
 		return worker.rollbackInstallPublication(ctx, operation, installation, root, staging, publication)
 	}
-	if err := worker.operations.Running(ctx, operation.ID, "files_materialized"); err != nil {
+	if err := worker.operations.RunningForDelivery(ctx, operation, "files_materialized"); err != nil {
 		return err
 	}
 	versionsJSON, err := json.Marshal(versions)
 	if err != nil {
 		return err
 	}
-	if err := worker.repository.MarkInstallationReady(ctx, installation.ID, versionsJSON, time.Now().UTC()); err != nil {
-		return err
-	}
-	installation.State = "ready"
+	installation.ExecutableVersions = versionsJSON
+	verifiedAt := time.Now().UTC()
+	installation.VerifiedAt = &verifiedAt
 	return worker.finish(ctx, operation, installation, root, snapshot)
 }
 
@@ -281,6 +294,34 @@ func (worker *InstallationWorker) rollbackInstallPublication(ctx context.Context
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := worker.operations.RunningForDelivery(ctx, operation, "materialize"); err != nil {
+		return err
+	}
+	if err := worker.rollbackInstallFiles(ctx, root, staging, publication); err != nil {
+		return err
+	}
+	if operation.RiverJobID == nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installation.ID {
+		return fmt.Errorf("rollback installation publication: delivery identity is unavailable")
+	}
+	changed, err := worker.repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID,
+		installation.ID, "materialize", safeInstallationError("materialize"))
+	if err != nil {
+		return err
+	}
+	if changed {
+		worker.operations.Notify(operation.ID)
+		installation.State = "failed"
+	}
+	return nil
+}
+
+// rollbackInstallFiles performs only ownership-checked filesystem rollback. It
+// deliberately makes no operation state transition so recovery and queued retry
+// staging retirement can use it safely.
+func (worker *InstallationWorker) rollbackInstallFiles(ctx context.Context, root, staging string, publication *installPublication) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	relative, err := tools.ManagedRelativePath(publication.PackageKind, publication.Release)
 	if err != nil {
 		return err
@@ -316,14 +357,5 @@ func (worker *InstallationWorker) rollbackInstallPublication(ctx context.Context
 			return err
 		}
 	}
-	if installation.State == "preparing" {
-		if err := worker.repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
-			return err
-		}
-		installation.State = "failed"
-	}
-	if err := worker.operations.Fail(ctx, operation.ID, "materialize", safeInstallationError("materialize")); err != nil {
-		return err
-	}
-	return tools.CleanupOperationStaging(root, operation.ID)
+	return nil
 }

@@ -15,6 +15,7 @@ import (
 const (
 	toolsCoordinationNamespace int32 = 0x4d545256 // "MTRV"
 	toolsMoveGateKey           int32 = 1
+	setupCompletionLockKey     int32 = 2
 	toolsPackageLockBase       int32 = 100
 )
 

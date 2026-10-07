@@ -9,12 +9,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
 type multipleOperationRepository struct {
@@ -45,6 +43,14 @@ func (repository *multipleOperationRepository) TransitionOperation(ctx context.C
 		return err
 	}
 	return transition(operation)
+}
+
+func (repository *multipleOperationRepository) FailUndeliveredInstallationRecovery(ctx context.Context, id uuid.UUID, attempt int, snapshot json.RawMessage, stage, safe string) (bool, error) {
+	operation, err := repository.GetOperation(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return (&workerRepository{operation: operation}).FailUndeliveredInstallationRecovery(ctx, id, attempt, snapshot, stage, safe)
 }
 
 type recordedSetupActivation struct {
@@ -88,7 +94,7 @@ func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T)
 				t.Fatal(err)
 			}
 			operation := &persistence.Operation{
-				ID: operationID, Kind: "install", State: "running", Stage: "materialize",
+				ID: operationID, Kind: "install", State: "running", Stage: "materialize", Attempt: 1, RiverJobID: workerDeliveryID(),
 				InputSnapshot: snapshot, TargetInstallationID: &installationID,
 			}
 			installation := &persistence.ToolInstallation{
@@ -96,6 +102,7 @@ func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T)
 				SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: "fpcalc/" + release, State: "preparing",
 			}
 			repository := &setupActivationRepository{workerRepository: &workerRepository{operation: operation, installation: installation}}
+			repository.setupCompleted = test.setupComplete
 			staging, err := tools.EnsureOperationStaging(root, operationID)
 			if err != nil {
 				t.Fatal(err)
@@ -161,15 +168,8 @@ func TestReconcilePublishedInstallBeforeReadyHonorsSetupActivation(t *testing.T)
 				if len(repository.calls) != 0 {
 					t.Fatalf("completed Setup unexpectedly activated an installation: %#v", repository.calls)
 				}
-			} else {
-				if len(repository.calls) != 1 {
-					t.Fatalf("incomplete Setup activation calls = %#v; want exactly one", repository.calls)
-				}
-				call := repository.calls[0]
-				if call.installationID != installationID || call.packageKind != string(tools.PackageFPCalc) ||
-					call.goos != "linux" || call.goarch != "amd64" || call.setting != settings.ActiveFPCalcInstallationKey {
-					t.Fatalf("setup activation call = %#v; want installation/package/platform/fpcalc-setting match", call)
-				}
+			} else if len(repository.calls) != 0 {
+				t.Fatalf("finalization unexpectedly invoked separate setup activation: %#v", repository.calls)
 			}
 			if repository.activated != !test.setupComplete {
 				t.Fatalf("active-selection mutation = %v; setup complete=%v", repository.activated, test.setupComplete)
@@ -205,7 +205,7 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
-		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
+		ID: operationID, Kind: "install", State: "running", Stage: "materialize", Attempt: 1, RiverJobID: workerDeliveryID(),
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
 	installation := &persistence.ToolInstallation{
@@ -289,7 +289,8 @@ func TestReconcileUnverifiedPublishedInstallRollsBackOwnershipAndRetryReusesTarg
 	worker := jobs.NewInstallationWorker(repository, operations,
 		workerCatalog{release: tools.Release{Identity: releaseIdentity, Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root, completed: true}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}); err != nil {
+	repository.setupCompleted = true
+	if err := worker.Work(context.Background(), workerJob(operationID)); err != nil {
 		t.Fatalf("run retry after publication rollback: %v", err)
 	}
 	if operation.State != "succeeded" || installation.State != "ready" || repository.installation.ID != installationID {
@@ -317,7 +318,7 @@ func TestReconcileInvalidInstallPublicationFailsLocallyAndContinues(t *testing.T
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
-		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
+		ID: operationID, Kind: "install", State: "running", Stage: "materialize", Attempt: 1, RiverJobID: workerDeliveryID(),
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
 	untouched := &persistence.Operation{ID: untouchedID, Kind: "install", State: "queued", Stage: "materialize"}
@@ -374,7 +375,7 @@ func TestReconcileInterruptedInstallMarksPreparingTargetFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
-		ID: operationID, Kind: "install", State: "running", Stage: "materialize",
+		ID: operationID, Kind: "install", State: "running", Stage: "materialize", Attempt: 1, RiverJobID: workerDeliveryID(),
 		InputSnapshot: snapshot, TargetInstallationID: &installationID,
 	}
 	installation := &persistence.ToolInstallation{ID: installationID, State: "preparing"}

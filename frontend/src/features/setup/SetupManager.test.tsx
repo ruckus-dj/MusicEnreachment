@@ -437,7 +437,7 @@ describe("SetupManager", () => {
     expect(localStorage.getItem("melotrove.setup.operation")).toBeNull();
   });
 
-  it("runs all six steps against server state with both verified installs", async () => {
+  it("runs all six steps with the first verified tool package versions autoactivated", async () => {
     let current = state();
     const packages: Record<
       string,
@@ -505,17 +505,6 @@ describe("SetupManager", () => {
           stage: completedKind === installing ? "verified" : "download",
         }),
       ),
-      http.post("/api/tools/installations/:id/activate", ({ params }) => {
-        const kind = String(params.id);
-        packages[kind].active = true;
-        current = state({
-          ...current.settings,
-          [kind === "ffmpeg"
-            ? "active_ffmpeg_installation_id"
-            : "active_fpcalc_installation_id"]: kind,
-        });
-        return new HttpResponse(null, { status: 204 });
-      }),
       http.put(
         "/api/setup/musicbrainz",
         () => new HttpResponse(null, { status: 204 }),
@@ -562,30 +551,29 @@ describe("SetupManager", () => {
         package_kind: kind,
         release_identity: "1.0",
         state: "ready",
-        active: false,
+        active: true,
         created_at: "2026-09-28T00:00:00Z",
         source_name: "trusted",
         executable_versions: { [kind]: "1.0" },
       };
+      current = state({
+        ...current.settings,
+        [kind === "ffmpeg"
+          ? "active_ffmpeg_installation_id"
+          : "active_fpcalc_installation_id"]: kind,
+      });
       completedKind = kind;
       await act(async () => {
         TestEventSource.instances.at(-1)?.dispatchEvent(new Event("open"));
       });
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Активировать 1.0" }),
-        ).toBeVisible(),
+      await waitFor(async () =>
+        expect(await screen.findAllByText("1.0: Активна")).toHaveLength(
+          kind === "ffmpeg" ? 1 : 2,
+        ),
       );
-      await click("Активировать 1.0");
-      await waitFor(() =>
-        expect(
-          current.settings[
-            kind === "ffmpeg"
-              ? "active_ffmpeg_installation_id"
-              : "active_fpcalc_installation_id"
-          ],
-        ).toBe(kind),
-      );
+      expect(
+        screen.queryByRole("button", { name: /Активировать/ }),
+      ).not.toBeInTheDocument();
     }
     await click("Продолжить");
     await waitFor(() => expect(heading("Публикация")).toBeVisible());
@@ -776,7 +764,7 @@ describe("SetupManager", () => {
                   id: "ff-ready",
                   package_kind: "ffmpeg",
                   state: "ready",
-                  active: false,
+                  active: true,
                   release_identity: "8.0",
                   source_name: "trusted",
                   created_at: operation.created_at,
@@ -835,11 +823,7 @@ describe("SetupManager", () => {
     await act(async () => {
       stream.dispatchEvent(new Event("operation-changed"));
     });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Активировать 8.0" }),
-      ).toBeVisible(),
-    );
+    expect(await screen.findByText("8.0: Активна")).toBeVisible();
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
     expect(stream.close).toHaveBeenCalled();
   });
@@ -1119,7 +1103,7 @@ describe("SetupManager", () => {
       id: "ff-ready",
       package_kind: "ffmpeg",
       state: "ready",
-      active: false,
+      active: true,
       release_identity: "8.0",
       source_name: "trusted",
       created_at: operation.created_at,
@@ -1167,7 +1151,7 @@ describe("SetupManager", () => {
       operation.id,
     );
     fireEvent.click(retryRefresh);
-    await screen.findByRole("button", { name: "Активировать 8.0" });
+    await screen.findByText("8.0: Активна");
     expect(installationRequests).toBe(3);
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
     expect(TestEventSource.instances[0].close).toHaveBeenCalledOnce();
@@ -1198,7 +1182,7 @@ describe("SetupManager", () => {
                     id: "ff-ready",
                     package_kind: "ffmpeg",
                     state: "ready",
-                    active: false,
+                    active: true,
                     release_identity: "8.0",
                     source_name: "trusted",
                     created_at: operation.created_at,
@@ -1233,9 +1217,8 @@ describe("SetupManager", () => {
     );
     first.unmount();
     renderSetup(state(paths));
-    await selectVersion("ffmpeg", "8.0");
     expect(TestEventSource.instances).toHaveLength(2);
-    await screen.findByRole("button", { name: "Активировать 8.0" });
+    await screen.findByText("8.0: Активна");
     expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
   });
 

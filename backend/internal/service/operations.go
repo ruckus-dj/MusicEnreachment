@@ -25,6 +25,10 @@ type OperationRepository interface {
 	DeleteSucceededBefore(context.Context, time.Time) error
 }
 
+type operationDeliveryTransitionRepository interface {
+	TransitionOperationForDelivery(context.Context, uuid.UUID, int, int64, func(*persistence.Operation) error) (bool, error)
+}
+
 type OperationSnapshot struct {
 	ID                     uuid.UUID
 	Kind                   string
@@ -172,6 +176,62 @@ func operationSnapshot(operation *persistence.Operation) OperationSnapshot {
 }
 func (s *Operations) Running(ctx context.Context, id uuid.UUID, stage string) error {
 	return s.transition(ctx, id, "running", stage, "", nil)
+}
+
+// RunningForDelivery and its siblings fence stale River deliveries by the
+// durable operation attempt and job ID. They are used by installation workers,
+// whose job args intentionally contain only the operation ID.
+func (s *Operations) RunningForDelivery(ctx context.Context, operation *persistence.Operation, stage string) error {
+	return s.transitionForDelivery(ctx, operation, "running", stage, "", nil)
+}
+
+func (s *Operations) ProgressForDelivery(ctx context.Context, operation *persistence.Operation, stage string, completed int64, total *int64) error {
+	return s.transitionForDelivery(ctx, operation, "running", stage, "", func(o *persistence.Operation) {
+		o.BytesCompleted, o.BytesTotal = completed, total
+	})
+}
+
+func (s *Operations) FailForDelivery(ctx context.Context, operation *persistence.Operation, stage, safe string) error {
+	if safe == "" {
+		return fmt.Errorf("operation failures require a safe error")
+	}
+	return s.transitionForDelivery(ctx, operation, "failed", stage, safe, nil)
+}
+
+func (s *Operations) transitionForDelivery(ctx context.Context, expected *persistence.Operation, state, stage, safe string, modify func(*persistence.Operation)) error {
+	if expected == nil || expected.RiverJobID == nil {
+		return fmt.Errorf("operation delivery identity is unavailable")
+	}
+	repository, ok := s.repository.(operationDeliveryTransitionRepository)
+	if !ok {
+		return fmt.Errorf("operation delivery fencing is unavailable")
+	}
+	now := s.now()
+	changed, err := repository.TransitionOperationForDelivery(ctx, expected.ID, expected.Attempt, *expected.RiverJobID, func(operation *persistence.Operation) error {
+		if operation.State == "succeeded" || operation.State == "failed" {
+			return fmt.Errorf("operation is already final")
+		}
+		operation.State, operation.Stage = state, stage
+		if state == "running" && operation.StartedAt == nil {
+			operation.StartedAt = &now
+		}
+		if state == "failed" {
+			operation.SafeError = &safe
+			operation.FinishedAt = &now
+		}
+		if modify != nil {
+			modify(operation)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return fmt.Errorf("operation delivery is no longer current")
+	}
+	s.notify(expected.ID)
+	return nil
 }
 func (s *Operations) Progress(ctx context.Context, id uuid.UUID, stage string, completed int64, total *int64) error {
 	return s.transition(ctx, id, "running", stage, "", func(o *persistence.Operation) { o.BytesCompleted = completed; o.BytesTotal = total })

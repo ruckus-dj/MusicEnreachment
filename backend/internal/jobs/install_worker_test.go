@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -26,8 +27,21 @@ type workerRepository struct {
 	operation           *persistence.Operation
 	installation        *persistence.ToolInstallation
 	activated           bool
+	setupCompleted      bool
 	readyError          error
 	readyCommittedError error
+}
+
+func workerDeliveryID() *int64 {
+	id := int64(1)
+	return &id
+}
+
+func workerJob(operationID uuid.UUID) *river.Job[service.OperationJobArgs] {
+	return &river.Job[service.OperationJobArgs]{
+		JobRow: &rivertype.JobRow{ID: 1},
+		Args:   service.OperationJobArgs{OperationID: operationID},
+	}
 }
 
 func (repository *workerRepository) CreateOperation(context.Context, *persistence.Operation) error {
@@ -61,6 +75,18 @@ func (repository *workerRepository) TransitionOperation(_ context.Context, id uu
 	return transition(operation)
 }
 
+func (repository *workerRepository) TransitionOperationForDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, transition func(*persistence.Operation) error) (bool, error) {
+	operation := repository.operation
+	if operation == nil || operation.ID != id || operation.Kind != "install" || operation.Attempt != attempt ||
+		operation.RiverJobID == nil || *operation.RiverJobID != jobID {
+		return false, nil
+	}
+	if err := transition(operation); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (*workerRepository) DismissOperation(context.Context, uuid.UUID) error      { return nil }
 func (*workerRepository) DeleteSucceededBefore(context.Context, time.Time) error { return nil }
 
@@ -92,6 +118,84 @@ func (repository *workerRepository) MarkInstallationFailed(_ context.Context, id
 	}
 	installation.State = "failed"
 	return nil
+}
+
+func (repository *workerRepository) FinalizeInstallation(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, installationID uuid.UUID, _, _, _, _ string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
+	if repository.operation == nil || repository.operation.ID != operationID || repository.operation.Kind != "install" || repository.operation.Attempt != attempt ||
+		repository.operation.RiverJobID == nil || *repository.operation.RiverJobID != jobID ||
+		repository.operation.TargetInstallationID == nil || *repository.operation.TargetInstallationID != installationID {
+		return false, nil
+	}
+	if repository.operation.State == "succeeded" {
+		return repository.installation != nil && repository.installation.ID == installationID && repository.installation.State == "ready", nil
+	}
+	if repository.operation.State == "failed" {
+		return false, nil
+	}
+	if repository.readyError != nil {
+		return false, repository.readyError
+	}
+	installation, err := repository.GetInstallation(context.Background(), installationID)
+	if err != nil {
+		return false, err
+	}
+	installation.State = "ready"
+	installation.ExecutableVersions = versions
+	installation.VerifiedAt = &verifiedAt
+	if repository.readyCommittedError != nil {
+		return false, repository.readyCommittedError
+	}
+	repository.operation.State = "succeeded"
+	repository.operation.Stage = "succeeded"
+	if !repository.setupCompleted {
+		repository.activated = true
+	}
+	return true, nil
+}
+
+func (repository *workerRepository) FailInstallationDelivery(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, installationID uuid.UUID, stage, safe string) (bool, error) {
+	if repository.operation == nil || repository.operation.ID != operationID || repository.operation.Attempt != attempt ||
+		repository.operation.RiverJobID == nil || *repository.operation.RiverJobID != jobID ||
+		repository.operation.TargetInstallationID == nil || *repository.operation.TargetInstallationID != installationID ||
+		repository.operation.State == "succeeded" || repository.operation.State == "failed" {
+		return false, nil
+	}
+	installation, err := repository.GetInstallation(context.Background(), installationID)
+	if err != nil {
+		return false, err
+	}
+	installation.State = "failed"
+	repository.operation.State, repository.operation.Stage = "failed", stage
+	repository.operation.SafeError = &safe
+	return true, nil
+}
+
+func (repository *workerRepository) FailOrphanedInstallationRecovery(_ context.Context, operationID uuid.UUID, attempt int, installationID uuid.UUID, stage, safe string) (bool, error) {
+	operation := repository.operation
+	if operation == nil || operation.ID != operationID || operation.Kind != "install" || operation.Attempt != attempt ||
+		operation.RiverJobID != nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installationID ||
+		operation.State == "succeeded" || operation.State == "failed" {
+		return false, nil
+	}
+	if repository.installation == nil || repository.installation.ID != installationID {
+		return false, errors.New("missing installation")
+	}
+	repository.installation.State = "failed"
+	operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
+	return true, nil
+}
+
+func (repository *workerRepository) FailUndeliveredInstallationRecovery(_ context.Context, operationID uuid.UUID, attempt int, inputSnapshot json.RawMessage, stage, safe string) (bool, error) {
+	operation := repository.operation
+	if operation == nil || operation.ID != operationID || operation.Kind != "install" || operation.Attempt != attempt ||
+		operation.RiverJobID != nil || operation.TargetInstallationID != nil ||
+		(operation.State != "queued" && operation.State != "running") || string(operation.InputSnapshot) != string(inputSnapshot) {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
+	operation.FinishedAt, operation.UpdatedAt = &now, now
+	return true, nil
 }
 
 func (repository *workerRepository) ActivateInstallationDuringSetup(_ context.Context, id uuid.UUID, _, _, _, _ string) (bool, error) {
@@ -199,7 +303,7 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: operationID, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: operationID, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: release.Identity, RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -208,7 +312,7 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 	operations := service.NewOperations(repository)
 	worker := jobs.NewInstallationWorker(repository, operations, workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}
+	job := workerJob(operationID)
 
 	if err := worker.Work(ctx, job); err != nil {
 		t.Fatal(err)
@@ -245,7 +349,7 @@ func TestInstallationWorkerPinsWritesToSnapshotRootAcrossRootRead(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: raw, TargetInstallationID: &installationID}
+			operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: raw, TargetInstallationID: &installationID}
 			installation := &persistence.ToolInstallation{ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing"}
 			repository := &workerRepository{operation: operation, installation: installation}
 			runtime := &rootReadFlipSettings{root: oldRoot}
@@ -257,7 +361,7 @@ func TestInstallationWorkerPinsWritesToSnapshotRootAcrossRootRead(t *testing.T) 
 			worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 				workerCatalog{release: tools.Release{Identity: "v1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 				runtime, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+			if err := worker.Work(context.Background(), workerJob(id)); err != nil {
 				t.Fatal(err)
 			}
 			if changeBeforeRead {
@@ -323,7 +427,7 @@ func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
 			if test.stage == "materialize" {
 				state = "running"
 			}
-			operation := &persistence.Operation{ID: id, Kind: "install", State: state, Stage: test.stage, InputSnapshot: raw, TargetInstallationID: &installationID}
+			operation := &persistence.Operation{ID: id, Kind: "install", State: state, Stage: test.stage, Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: raw, TargetInstallationID: &installationID}
 			installation := &persistence.ToolInstallation{
 				ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 				SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -333,7 +437,7 @@ func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
 			worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 				workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 				workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+			if err := worker.Work(context.Background(), workerJob(id)); err != nil {
 				t.Fatal(err)
 			}
 			if operation.State != test.want {
@@ -362,7 +466,7 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: operationID, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: operationID, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: release.Identity, RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -372,7 +476,7 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc")), checksum: strings.Repeat("0", 64)},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
 
-	if err := worker.Work(ctx, &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}); err != nil {
+	if err := worker.Work(ctx, workerJob(operationID)); err != nil {
 		t.Fatal(err)
 	}
 	if operation.State != "failed" || installation.State != "failed" || operation.SafeError == nil {
@@ -401,7 +505,7 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: id, Kind: "install", State: "running", Stage: "download", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "running", Stage: "download", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -410,7 +514,7 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: tools.Release{Identity: "v1.6.1"}},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+	if err := worker.Work(context.Background(), workerJob(id)); err != nil {
 		t.Fatal(err)
 	}
 	if operation.State != "failed" {
@@ -453,7 +557,7 @@ func TestInstallationWorkerCleanupNeverUsesCurrentRootForUntrustedOrStaleSnapsho
 				installationState = "failed"
 			}
 			operation := &persistence.Operation{
-				ID: id, Kind: "install", State: test.state, Stage: "download", InputSnapshot: snapshot,
+				ID: id, Kind: "install", State: test.state, Stage: "download", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot,
 				TargetInstallationID: &installationID,
 			}
 			installation := &persistence.ToolInstallation{
@@ -481,7 +585,7 @@ func TestInstallationWorkerCleanupNeverUsesCurrentRootForUntrustedOrStaleSnapsho
 				pinnedMarker = writeStagingMarker(pinnedRoot)
 			}
 
-			if err := worker.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}); err != nil {
+			if err := worker.Work(context.Background(), workerJob(id)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(currentMarker); err != nil {
@@ -516,7 +620,7 @@ func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "preparing",
@@ -527,7 +631,7 @@ func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: release, archive: archive},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(ffmpegWorkerRunner{}))
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	job := workerJob(id)
 	if err := worker.Work(context.Background(), job); err == nil {
 		t.Fatal("ready write should fail after both executables are published")
 	}
@@ -574,7 +678,7 @@ func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -587,7 +691,7 @@ func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T)
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	job := workerJob(id)
 	if err := worker.Work(context.Background(), job); err == nil {
 		t.Fatal("expected lost ready response")
 	}
@@ -620,7 +724,7 @@ func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -630,7 +734,7 @@ func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T)
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	job := workerJob(id)
 	if err := worker.Work(context.Background(), job); err == nil {
 		t.Fatal("ready write should fail after publication")
 	}
@@ -677,7 +781,7 @@ func TestInstallationWorkerResumesConfirmedBackupBeforeLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
+	operation := &persistence.Operation{ID: id, Kind: "install", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "fpcalc", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "chromaprint", ReleaseIdentity: "v1.6.1", RelativePath: "fpcalc/v1.6.1", State: "preparing",
@@ -687,7 +791,7 @@ func TestInstallationWorkerResumesConfirmedBackupBeforeLink(t *testing.T) {
 	worker := jobs.NewInstallationWorker(repository, service.NewOperations(repository),
 		workerCatalog{release: release, archive: zipWithExecutable(t, "fpcalc", []byte("fpcalc"))},
 		workerSettings{root: root}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(workerCommandRunner{}))
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: id}}
+	job := workerJob(id)
 	if err := worker.Work(context.Background(), job); err == nil {
 		t.Fatal("ready write should fail after confirmed publication")
 	}

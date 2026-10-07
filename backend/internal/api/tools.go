@@ -230,6 +230,9 @@ func registerTools(api huma.API, dependencies Dependencies, tokens *preflightTok
 		OperationID: "activate-tool-installation", Method: http.MethodPost, Path: "/tools/installations/{installation_id}/activate",
 		Summary: "Activate a verified tool package", Tags: []string{"Tools"},
 	}, func(ctx context.Context, input *InstallationActionInput) (*struct{}, error) {
+		if err := requireSetupComplete(ctx, dependencies.Setup); err != nil {
+			return nil, err
+		}
 		if err := requireSupportedPlatform(ctx, dependencies.Setup); err != nil {
 			return nil, err
 		}

@@ -122,6 +122,10 @@ func lockInstallationPackages(ctx context.Context, database bun.IDB, packages ..
 	return lockPackageActivations(ctx, database, packages)
 }
 
+func lockSetupCompletion(ctx context.Context, database bun.IDB) error {
+	return advisoryXactLock(ctx, database, false, toolsCoordinationNamespace, setupCompletionLockKey)
+}
+
 func activeToolsMove(ctx context.Context, tx bun.Tx) (bool, error) {
 	var active bool
 	err := tx.NewRaw("SELECT EXISTS(SELECT 1 FROM operation WHERE kind='move_tools_root' AND state IN ('queued','running'))").Scan(ctx, &active)
@@ -246,6 +250,12 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue installation: lock tools operations: %w", err)
 		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue installation: lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, installation.PackageKind); err != nil {
+			return fmt.Errorf("enqueue installation: lock package: %w", err)
+		}
 		moving, err := activeToolsMove(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("enqueue installation: check active tools move: %w", err)
@@ -260,6 +270,9 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 		}
 		if currentToolsRoot != expectedToolsRoot {
 			return fmt.Errorf("enqueue installation: tools directory changed since preflight")
+		}
+		if err := repository.checkInitialInstallationAdmission(ctx, tx, installation.PackageKind, uuid.Nil, uuid.Nil); err != nil {
+			return err
 		}
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
@@ -371,8 +384,17 @@ func (repository *SetupManagerRepository) ActivateInstallation(ctx context.Conte
 		if moving {
 			return fmt.Errorf("cannot activate installation during an active tools root move")
 		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("lock setup completion: %w", err)
+		}
 		if err := lockInstallationPackages(ctx, tx, packageKind); err != nil {
 			return fmt.Errorf("lock active installation: %w", err)
+		}
+		var completedAt string
+		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt); err == sql.ErrNoRows {
+			return fmt.Errorf("explicit activation is available only after setup completion")
+		} else if err != nil {
+			return fmt.Errorf("read setup completion: %w", err)
 		}
 		return repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting)
 	})
@@ -384,7 +406,7 @@ func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx co
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools move gate: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
+		if err := lockSetupCompletion(ctx, tx); err != nil {
 			return fmt.Errorf("lock setup completion: %w", err)
 		}
 		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
@@ -408,6 +430,20 @@ func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx co
 		if moving {
 			return nil
 		}
+		if err := refuseOtherReadyInstallationTx(ctx, tx, packageKind, id); err != nil {
+			return fmt.Errorf("refuse ambiguous ready installations: %w", err)
+		}
+		var currentID string
+		err = tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", activeSetting).Scan(ctx, &currentID)
+		if err == nil {
+			// A second successful selection is never silently substituted during
+			// the one-time wizard. Re-delivery of the selected ID is idempotent.
+			activated = currentID == id.String()
+			return nil
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("read active installation: %w", err)
+		}
 		if err := repository.activateInstallationTx(ctx, tx, id, packageKind, goos, goarch, activeSetting); err != nil {
 			return err
 		}
@@ -415,6 +451,266 @@ func (repository *SetupManagerRepository) ActivateInstallationDuringSetup(ctx co
 		return nil
 	})
 	return activated, err
+}
+
+// FinalizeInstallation atomically records verified readiness, performs the
+// one-time Setup activation when still appropriate, and settles only the
+// current River delivery. Verification and filesystem cleanup happen outside
+// this transaction.
+func (repository *SetupManagerRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
+	settled := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("finalize installation: lock tools move gate: %w", err)
+		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("finalize installation: lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("finalize installation: lock package selections: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("finalize installation: lock MusicBrainz configuration: %w", err)
+		}
+		installation, err := repository.GetInstallationForUpdate(ctx, tx, installationID)
+		if err != nil {
+			return err
+		}
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "install" || operation.State == "failed" || operation.State == "succeeded" ||
+			operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID ||
+			operation.TargetInstallationID == nil || *operation.TargetInstallationID != installationID {
+			return fmt.Errorf("finalize installation: delivery is no longer current")
+		}
+		if installation.PackageKind != packageKind || installation.PlatformGOOS != goos || installation.PlatformGOARCH != goarch {
+			return fmt.Errorf("finalize installation: target does not match the verified package")
+		}
+		var completedAt string
+		completionErr := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt)
+		if completionErr != nil && completionErr != sql.ErrNoRows {
+			return fmt.Errorf("read setup completion: %w", completionErr)
+		}
+		if completionErr == sql.ErrNoRows {
+			if err := refuseOtherReadyInstallationTx(ctx, tx, packageKind, installationID); err != nil {
+				return fmt.Errorf("refuse second ready installation during setup: %w", err)
+			}
+		}
+		if installation.State == "preparing" {
+			if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).
+				Set("state = 'ready'").Set("executable_versions = ?", versions).Set("verified_at = ?", verifiedAt).
+				Set("updated_at = ?", verifiedAt).Where("id = ?", installationID).Where("state = 'preparing'").Exec(ctx); err != nil {
+				return fmt.Errorf("mark installation ready: %w", err)
+			}
+		} else if installation.State != "ready" {
+			return fmt.Errorf("finalize installation: target is not preparing or ready")
+		}
+		if completionErr == sql.ErrNoRows {
+			var activeID string
+			err = tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", activeSetting).Scan(ctx, &activeID)
+			if err == sql.ErrNoRows {
+				if err := repository.activateInstallationTx(ctx, tx, installationID, packageKind, goos, goarch, activeSetting); err != nil {
+					return err
+				}
+			} else if err != nil {
+				return fmt.Errorf("read active installation: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("read setup completion: %w", err)
+		}
+		now := time.Now().UTC()
+		operation.State = "succeeded"
+		operation.Stage = "succeeded"
+		operation.FinishedAt = &now
+		operation.UpdatedAt = now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("settle installation operation: %w", err)
+		}
+		settled = true
+		return nil
+	})
+	return settled, err
+}
+
+func readyInstallationsCountTx(ctx context.Context, tx bun.Tx, packageKind string, exclude *uuid.UUID) (int, error) {
+	query := tx.NewSelect().Model((*ToolInstallation)(nil)).Where("package_kind = ?", packageKind).Where("state = ?", "ready")
+	if exclude != nil {
+		query = query.Where("id <> ?", *exclude)
+	}
+	count, err := query.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count ready %s installations: %w", packageKind, err)
+	}
+	return count, nil
+}
+
+func refuseOtherReadyInstallationTx(ctx context.Context, tx bun.Tx, packageKind string, id uuid.UUID) error {
+	count, err := readyInstallationsCountTx(ctx, tx, packageKind, &id)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("another ready %s installation already exists", packageKind)
+	}
+	return nil
+}
+
+func refuseAmbiguousReadyInstallationsTx(ctx context.Context, tx bun.Tx, packageKind string) error {
+	count, err := readyInstallationsCountTx(ctx, tx, packageKind, nil)
+	if err != nil {
+		return err
+	}
+	if count > 1 {
+		return fmt.Errorf("multiple ready %s installations exist", packageKind)
+	}
+	return nil
+}
+
+// FailInstallationDelivery atomically fails only the installation and operation
+// still owned by this delivery. A stale delivery must not fail a retried target.
+func (repository *SetupManagerRepository) FailInstallationDelivery(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, stage, safe string) (bool, error) {
+	return repository.failInstallationDelivery(ctx, operationID, attempt, &riverJobID, installationID, stage, safe, false)
+}
+
+// FailOrphanedInstallationRecovery fails a legacy installation operation that
+// has no River job identity. Recovery is allowed only while the persisted row
+// still matches the snapshot identity and remains an orphaned active operation.
+func (repository *SetupManagerRepository) FailOrphanedInstallationRecovery(ctx context.Context, operationID uuid.UUID, attempt int, installationID uuid.UUID, stage, safe string) (bool, error) {
+	return repository.failInstallationDelivery(ctx, operationID, attempt, nil, installationID, stage, safe, true)
+}
+
+// FailUndeliveredInstallationRecovery fails only an active legacy operation
+// that has neither a River delivery nor a target installation. Its snapshot is
+// compared under the operation lock so recovery cannot settle a replaced row.
+func (repository *SetupManagerRepository) FailUndeliveredInstallationRecovery(ctx context.Context, operationID uuid.UUID, attempt int, inputSnapshot json.RawMessage, stage, safe string) (bool, error) {
+	changed := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("fail undelivered installation recovery: lock tools move gate: %w", err)
+		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("fail undelivered installation recovery: lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("fail undelivered installation recovery: lock package selections: %w", err)
+		}
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "install" || (operation.State != "queued" && operation.State != "running") ||
+			operation.Attempt != attempt || operation.RiverJobID != nil || operation.TargetInstallationID != nil ||
+			string(operation.InputSnapshot) != string(inputSnapshot) {
+			return nil
+		}
+		now := time.Now().UTC()
+		operation.State, operation.Stage, operation.SafeError = "failed", stage, &safe
+		operation.FinishedAt, operation.UpdatedAt = &now, now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("settle undelivered installation operation: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func (repository *SetupManagerRepository) failInstallationDelivery(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID *int64, installationID uuid.UUID, stage, safe string, orphanRecovery bool) (bool, error) {
+	changed := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
+			return fmt.Errorf("fail installation delivery: lock tools move gate: %w", err)
+		}
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("fail installation delivery: lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("fail installation delivery: lock package selections: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("fail installation delivery: lock MusicBrainz configuration: %w", err)
+		}
+		installation, err := repository.GetInstallationForUpdate(ctx, tx, installationID)
+		if err != nil {
+			return err
+		}
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "install" || operation.State == "failed" || operation.State == "succeeded" ||
+			operation.Attempt != attempt ||
+			operation.TargetInstallationID == nil || *operation.TargetInstallationID != installationID {
+			return nil
+		}
+		if orphanRecovery {
+			if (operation.State != "queued" && operation.State != "running") || operation.RiverJobID != nil {
+				return nil
+			}
+		} else if operation.RiverJobID == nil || *operation.RiverJobID != *riverJobID {
+			return nil
+		}
+		if installation.State == "preparing" {
+			if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).Set("state = 'failed'").Set("updated_at = now()").
+				Where("id = ?", installationID).Where("state = 'preparing'").Exec(ctx); err != nil {
+				return fmt.Errorf("mark installation failed: %w", err)
+			}
+		} else if installation.State != "failed" && (!orphanRecovery || installation.State != "ready") {
+			return fmt.Errorf("fail installation delivery: target is not preparing or failed")
+		}
+		now := time.Now().UTC()
+		operation.State, operation.Stage = "failed", stage
+		operation.SafeError = &safe
+		operation.FinishedAt, operation.UpdatedAt = &now, now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("settle failed installation operation: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+// checkInitialInstallationAdmission runs while the setup-completion and target
+// package locks are held. Preparing and failed rows are deliberately not
+// reservations: only a ready version or a queued/running install owns the slot.
+func (repository *SetupManagerRepository) checkInitialInstallationAdmission(ctx context.Context, tx bun.Tx, packageKind string, excludeOperationID, excludeInstallationID uuid.UUID) error {
+	var completed bool
+	if err := tx.NewRaw("SELECT EXISTS(SELECT 1 FROM app_setting WHERE setting_name = ?)", "setup_completed_at").Scan(ctx, &completed); err != nil {
+		return fmt.Errorf("check setup completion: %w", err)
+	}
+	if completed {
+		return nil
+	}
+	var readyCount int
+	readyQuery := tx.NewSelect().Model((*ToolInstallation)(nil)).Where("package_kind = ?", packageKind).Where("state = 'ready'")
+	if excludeInstallationID != uuid.Nil {
+		readyQuery.Where("id <> ?", excludeInstallationID)
+	}
+	if err := readyQuery.ColumnExpr("count(*)").Scan(ctx, &readyCount); err != nil {
+		return fmt.Errorf("check ready package installations: %w", err)
+	}
+	if readyCount > 1 {
+		return fmt.Errorf("initial setup has multiple ready %s installations and requires owner resolution", packageKind)
+	}
+	if readyCount == 1 {
+		return fmt.Errorf("initial setup already has a successful %s installation", packageKind)
+	}
+	activeQuery := tx.NewSelect().Model((*Operation)(nil)).Where("operation.kind = 'install'").Where("operation.state IN ('queued', 'running')").Where("installation.package_kind = ?", packageKind).
+		Join("JOIN tool_installation AS installation ON installation.id = operation.target_installation_id")
+	if excludeOperationID != uuid.Nil {
+		activeQuery.Where("operation.id <> ?", excludeOperationID)
+	}
+	active, err := activeQuery.Exists(ctx)
+	if err != nil {
+		return fmt.Errorf("check active package installation: %w", err)
+	}
+	if active {
+		return fmt.Errorf("an installation for %s is already queued or running", packageKind)
+	}
+	return nil
 }
 
 func (repository *SetupManagerRepository) activateInstallationTx(ctx context.Context, tx bun.Tx, id uuid.UUID, packageKind, goos, goarch, activeSetting string) error {
@@ -744,6 +1040,31 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 	})
 }
 
+// TransitionOperationForDelivery applies an installation-worker transition
+// only while the operation still names that River job and attempt.
+func (repository *SetupManagerRepository) TransitionOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, transition func(*Operation) error) (bool, error) {
+	changed := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "install" || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+			return nil
+		}
+		if err := transition(operation); err != nil {
+			return err
+		}
+		operation.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("transition operation delivery: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
 // RetryOperationAndEnqueue locks the failed operation, preserves its immutable
 // target installation and snapshot, and atomically creates its next River job.
 func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.Context, id uuid.UUID, client RiverInserter, args river.JobArgs, options *river.InsertOpts) (*Operation, error) {
@@ -774,6 +1095,11 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		case "install", "activate", "delete":
 			if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 				return fmt.Errorf("retry operation: lock tools move gate: %w", err)
+			}
+			if captured.Kind == "install" {
+				if err := lockSetupCompletion(ctx, tx); err != nil {
+					return fmt.Errorf("retry operation: lock setup completion: %w", err)
+				}
 			}
 			moving, err := activeToolsMove(ctx, tx)
 			if err != nil {
@@ -808,6 +1134,11 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		}
 		if locked.State != "failed" {
 			return fmt.Errorf("only failed operations can be retried")
+		}
+		if locked.Kind == "install" && locked.TargetInstallationID != nil {
+			if err := repository.checkInitialInstallationAdmission(ctx, tx, capturedInstallation.PackageKind, locked.ID, *locked.TargetInstallationID); err != nil {
+				return fmt.Errorf("retry operation: %w", err)
+			}
 		}
 		if locked.Kind == "install" || locked.Kind == "move_tools_root" {
 			if err := verifyToolsOperationRootForRetry(ctx, tx, locked); err != nil {

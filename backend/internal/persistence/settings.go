@@ -575,7 +575,7 @@ func (r *SettingsRepository) CompleteSetupOnce(ctx context.Context, value string
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools move gate: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "setup-completion"); err != nil {
+		if err := lockSetupCompletion(ctx, tx); err != nil {
 			return fmt.Errorf("lock setup completion: %w", err)
 		}
 		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
@@ -583,6 +583,18 @@ func (r *SettingsRepository) CompleteSetupOnce(ctx context.Context, value string
 		}
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "musicbrainz-config"); err != nil {
 			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+		}
+		var completedAt string
+		completionErr := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt)
+		if completionErr != nil && completionErr != sql.ErrNoRows {
+			return fmt.Errorf("read setup completion: %w", completionErr)
+		}
+		if completionErr == sql.ErrNoRows {
+			for _, kind := range []string{"ffmpeg", "fpcalc"} {
+				if err := refuseAmbiguousReadyInstallationsTx(ctx, tx, kind); err != nil {
+					return fmt.Errorf("complete setup: %w", err)
+				}
+			}
 		}
 		_, err := tx.NewInsert().Model(&AppSetting{Name: "setup_completed_at", Value: value}).
 			On("CONFLICT (setting_name) DO NOTHING").Exec(ctx)
@@ -600,11 +612,29 @@ func (r *SettingsRepository) CompleteSetupIfCurrent(ctx context.Context, expecte
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools move gate: %w", err)
 		}
-		// Match activation's ordering: completion, package activation, then rows.
+		// Match install admission and activation: completion, package locks, then rows.
 		// The MusicBrainz lock also protects absent/default configuration keys.
-		for _, name := range []string{"setup-completion", "active-installation:ffmpeg", "active-installation:fpcalc", "musicbrainz-config"} {
+		if err := lockSetupCompletion(ctx, tx); err != nil {
+			return fmt.Errorf("lock setup completion: %w", err)
+		}
+		if err := lockInstallationPackages(ctx, tx, "ffmpeg", "fpcalc"); err != nil {
+			return fmt.Errorf("lock active installations: %w", err)
+		}
+		for _, name := range []string{"musicbrainz-config"} {
 			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", name); err != nil {
 				return fmt.Errorf("lock setup requirement %q: %w", name, err)
+			}
+		}
+		var completedAt string
+		completionErr := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "setup_completed_at").Scan(ctx, &completedAt)
+		if completionErr != nil && completionErr != sql.ErrNoRows {
+			return fmt.Errorf("read setup completion: %w", completionErr)
+		}
+		if completionErr == sql.ErrNoRows {
+			for _, kind := range []string{"ffmpeg", "fpcalc"} {
+				if err := refuseAmbiguousReadyInstallationsTx(ctx, tx, kind); err != nil {
+					return fmt.Errorf("complete setup: %w", err)
+				}
 			}
 		}
 		// Active IDs and their records stay locked until completion commits.

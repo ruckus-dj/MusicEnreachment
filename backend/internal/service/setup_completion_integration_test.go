@@ -59,8 +59,8 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 		if err := installations.MarkInstallationReady(ctx, installation.ID, required.versions, clock()); err != nil {
 			t.Fatal(err)
 		}
-		if err := installations.ActivateInstallation(ctx, installation.ID, required.kind, "linux", "amd64", required.key); err != nil {
-			t.Fatal(err)
+		if activated, err := installations.ActivateInstallationDuringSetup(ctx, installation.ID, required.kind, "linux", "amd64", required.key); err != nil || !activated {
+			t.Fatalf("activate setup fixture installation: activated=%t err=%v", activated, err)
 		}
 	}
 	return setup, registry, store

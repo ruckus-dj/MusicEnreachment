@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,9 +22,16 @@ type interruptedOperationRepository interface {
 	ListOperations(context.Context, ...string) ([]persistence.Operation, error)
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
-	MarkInstallationReady(context.Context, uuid.UUID, json.RawMessage, time.Time) error
-	MarkInstallationFailed(context.Context, uuid.UUID) error
-	ActivateInstallationDuringSetup(context.Context, uuid.UUID, string, string, string, string) (bool, error)
+	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, json.RawMessage, time.Time) (bool, error)
+	FailInstallationDelivery(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string) (bool, error)
+}
+
+type orphanedInstallationRecovery interface {
+	FailOrphanedInstallationRecovery(context.Context, uuid.UUID, int, uuid.UUID, string, string) (bool, error)
+}
+
+type undeliveredInstallationRecovery interface {
+	FailUndeliveredInstallationRecovery(context.Context, uuid.UUID, int, json.RawMessage, string, string) (bool, error)
 }
 
 type interruptedOperationSettings interface {
@@ -77,119 +85,220 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		return fmt.Errorf("list active operations for recovery: %w", err)
 	}
 	for index := range active {
-		operation := &active[index]
-		live := false
-		if operation.RiverJobID != nil {
-			live, err = isLive(ctx, operation.RiverJobID)
-			if err != nil {
-				return fmt.Errorf("check River job for operation %s: %w", operation.ID, err)
-			}
-		}
-		if live {
-			continue
-		}
-		if operation.Kind == service.SourceScanOperationKind {
-			if err := recoverInterruptedSourceScan(ctx, repository, operations, operation); err != nil {
-				return err
-			}
-			continue
-		}
-		if operation.Kind == service.SourceAnalysisOperationKind {
-			if err := recoverInterruptedSourceAnalysis(ctx, repository, operation); err != nil {
-				return err
-			}
-			continue
-		}
-		if operation.Kind == "install" {
-			var snapshot service.InstallInputSnapshot
-			if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 2 || snapshot.ToolsRoot == "" {
-				if operation.TargetInstallationID != nil {
-					if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
-						return fmt.Errorf("mark legacy installation failed: %w", err)
+		if err := func() error {
+			operation := &active[index]
+			var unlock func()
+			if operation.Kind == "install" {
+				unlock = lockInstallationExecution(operation.ID)
+				defer func() {
+					if unlock != nil {
+						unlock()
 					}
+				}()
+				operation, err = repository.GetOperation(ctx, operation.ID)
+				if err != nil {
+					return fmt.Errorf("reload installation %s for recovery: %w", active[index].ID, err)
 				}
-				if err := operations.Fail(ctx, operation.ID, operation.Stage, "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation."); err != nil {
-					return fmt.Errorf("fail installation without a pinned tools directory: %w", err)
+			}
+			live := false
+			if operation.RiverJobID != nil {
+				live, err = isLive(ctx, operation.RiverJobID)
+				if err != nil {
+					return fmt.Errorf("check River job for operation %s: %w", operation.ID, err)
 				}
-				continue
 			}
-			currentRoot, exists, err := runtimeSettings.GetToolsDirectory(ctx)
-			if err != nil {
-				return fmt.Errorf("read tools directory while recovering installation %s: %w", operation.ID, err)
+			if live {
+				return nil
 			}
-			if !exists || currentRoot != snapshot.ToolsRoot {
-				if operation.TargetInstallationID != nil {
-					if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
-						return fmt.Errorf("mark stale-root installation failed: %w", err)
+			if operation.Kind == service.SourceScanOperationKind {
+				if err := recoverInterruptedSourceScan(ctx, repository, operations, operation); err != nil {
+					return err
+				}
+				return nil
+			}
+			if operation.Kind == service.SourceAnalysisOperationKind {
+				if err := recoverInterruptedSourceAnalysis(ctx, repository, operation); err != nil {
+					return err
+				}
+				return nil
+			}
+			if operation.Kind == "install" {
+				var snapshot service.InstallInputSnapshot
+				if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SchemaVersion != 2 || snapshot.ToolsRoot == "" {
+					_, err := failInterruptedInstallation(ctx, repository, operations, operation, "The installation snapshot predates tools-directory pinning and cannot be safely recovered. Start a new installation.")
+					if err != nil {
+						return fmt.Errorf("fail installation without a pinned tools directory: %w", err)
 					}
+					return nil
 				}
-				if err := operations.Fail(ctx, operation.ID, operation.Stage, "The tools directory changed since this installation was queued. Start a new installation."); err != nil {
-					return fmt.Errorf("fail installation with a stale tools directory: %w", err)
+				currentRoot, exists, err := runtimeSettings.GetToolsDirectory(ctx)
+				if err != nil {
+					return fmt.Errorf("read tools directory while recovering installation %s: %w", operation.ID, err)
 				}
-				continue
-			}
-			publicationExists, err := hasInstallPublicationEvidence(ctx, operation, runtimeSettings)
-			if errors.Is(err, errInvalidInstallPublicationEvidence) {
-				if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
-					return fmt.Errorf("fail operation with invalid publication evidence: %w", err)
+				if !exists || currentRoot != snapshot.ToolsRoot {
+					if _, err := failInterruptedInstallation(ctx, repository, operations, operation, "The tools directory changed since this installation was queued. Start a new installation."); err != nil {
+						return fmt.Errorf("fail installation with a stale tools directory: %w", err)
+					}
+					return nil
 				}
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("inspect installation publication for %s: %w", operation.ID, err)
-			}
-			if publicationExists || operationStageAfterRetries(operation.Stage) == "files_materialized" {
-				completed, err := reconcileMaterializedInstallation(ctx, repository, operations, operation, runtimeSettings, lifecycle)
+				publicationExists, err := hasInstallPublicationEvidence(ctx, operation, runtimeSettings)
 				if errors.Is(err, errInvalidInstallPublicationEvidence) {
 					if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
 						return fmt.Errorf("fail operation with invalid publication evidence: %w", err)
 					}
-					continue
+					return nil
 				}
 				if err != nil {
-					return fmt.Errorf("recover published installation %s: %w", operation.ID, err)
+					return fmt.Errorf("inspect installation publication for %s: %w", operation.ID, err)
 				}
-				if completed {
-					continue
+				if publicationExists || operationStageAfterRetries(operation.Stage) == "files_materialized" {
+					completed, err := reconcileMaterializedInstallation(ctx, repository, operations, operation, runtimeSettings, lifecycle)
+					if errors.Is(err, errInvalidInstallPublicationEvidence) {
+						if err := failInvalidInstallPublication(ctx, repository, operations, operation); err != nil {
+							return fmt.Errorf("fail operation with invalid publication evidence: %w", err)
+						}
+						return nil
+					}
+					if err != nil {
+						return fmt.Errorf("recover published installation %s: %w", operation.ID, err)
+					}
+					if completed {
+						return nil
+					}
+				}
+				if !publicationExists && operationStageAfterRetries(operation.Stage) != "files_materialized" {
+					staging := filepath.Join(snapshot.ToolsRoot, ".staging", operation.ID.String())
+					if err := refuseUnjournaledInstallBackups(staging); err != nil {
+						return fmt.Errorf("refuse unsafe installation staging for %s: %w", operation.ID, err)
+					}
+					if err := tools.CleanupOperationStaging(snapshot.ToolsRoot, operation.ID); err != nil {
+						return fmt.Errorf("clean interrupted installation %s staging: %w", operation.ID, err)
+					}
 				}
 			}
-		}
-
-		preserveMoveStaging := operation.Kind == "move_tools_root" && moveNeedsRollbackOnRetry(operation.Stage)
-		root, err := interruptedOperationStagingRoot(ctx, operation, runtimeSettings)
-		if err != nil {
-			return fmt.Errorf("resolve staging root for operation %s: %w", operation.ID, err)
-		}
-		if root != "" && !preserveMoveStaging {
-			if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
-				return fmt.Errorf("clean interrupted operation %s staging: %w", operation.ID, err)
+			preserveMoveStaging := operation.Kind == "move_tools_root" && moveNeedsRollbackOnRetry(operation.Stage)
+			root, err := interruptedOperationStagingRoot(ctx, operation, runtimeSettings)
+			if err != nil {
+				return fmt.Errorf("resolve staging root for operation %s: %w", operation.ID, err)
 			}
-		}
-		if operation.TargetInstallationID != nil {
-			if err := markPreparingInstallationFailed(ctx, repository, *operation.TargetInstallationID); err != nil {
-				return fmt.Errorf("mark interrupted installation failed: %w", err)
+			if root != "" && !preserveMoveStaging && operation.Kind != "install" {
+				if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
+					return fmt.Errorf("clean interrupted operation %s staging: %w", operation.ID, err)
+				}
 			}
+			safeError := "The operation was interrupted. Retry the operation."
+			if operation.Kind == "move_tools_root" && moveWasSwitched(operation.Stage) {
+				safeError = "The tools directory move was interrupted after switching roots. Retry the move to restore the previous tools directory."
+			}
+			if operation.Kind == "install" {
+				if _, err := failInterruptedInstallation(ctx, repository, operations, operation, safeError); err != nil {
+					return fmt.Errorf("mark interrupted installation failed: %w", err)
+				}
+				return nil
+			}
+			if err := operations.Fail(ctx, operation.ID, operation.Stage, safeError); err != nil {
+				return fmt.Errorf("mark interrupted operation failed: %w", err)
+			}
+			return nil
+		}(); err != nil {
+			return err
 		}
-		safeError := "The operation was interrupted. Retry the operation."
-		if operation.Kind == "move_tools_root" && moveWasSwitched(operation.Stage) {
-			safeError = "The tools directory move was interrupted after switching roots. Retry the move to restore the previous tools directory."
-		}
-		if err := operations.Fail(ctx, operation.ID, operation.Stage, safeError); err != nil {
-			return fmt.Errorf("mark interrupted operation failed: %w", err)
-		}
+	}
+	if err := cleanupTerminalInstallations(ctx, repository, runtimeSettings); err != nil {
+		return err
 	}
 	return nil
 }
 
-func markPreparingInstallationFailed(ctx context.Context, repository interruptedOperationRepository, id uuid.UUID) error {
-	installation, err := repository.GetInstallation(ctx, id)
+func cleanupTerminalInstallations(ctx context.Context, repository interruptedOperationRepository, runtimeSettings interruptedOperationSettings) error {
+	terminal, err := repository.ListOperations(ctx, "succeeded", "failed")
 	if err != nil {
-		return err
+		return fmt.Errorf("list terminal installations for cleanup: %w", err)
 	}
-	if installation.State != "preparing" {
-		return nil
+	for index := range terminal {
+		listed := &terminal[index]
+		if listed.Kind != "install" {
+			continue
+		}
+		unlock := lockInstallationExecution(listed.ID)
+		operation, err := repository.GetOperation(ctx, listed.ID)
+		if err != nil {
+			unlock()
+			return fmt.Errorf("reload terminal installation %s: %w", listed.ID, err)
+		}
+		if operation.State != "succeeded" && operation.State != "failed" {
+			unlock()
+			continue
+		}
+		worker := &InstallationWorker{repository: repository, platform: tools.Platform{}}
+		// Installation metadata determines platform identity during terminal
+		// cleanup; no executable is verified or activated here.
+		if operation.TargetInstallationID != nil {
+			installation, getErr := repository.GetInstallation(ctx, *operation.TargetInstallationID)
+			if getErr != nil {
+				unlock()
+				return fmt.Errorf("load terminal installation target %s: %w", operation.ID, getErr)
+			}
+			worker.platform = tools.Platform{GOOS: installation.PlatformGOOS, GOARCH: installation.PlatformGOARCH}
+		}
+		getRoot, exists, rootErr := runtimeSettings.GetToolsDirectory(ctx)
+		if rootErr != nil {
+			unlock()
+			return fmt.Errorf("read tools directory for terminal installation %s: %w", operation.ID, rootErr)
+		}
+		var snapshot service.InstallInputSnapshot
+		if exists && getRoot != "" && json.Unmarshal(operation.InputSnapshot, &snapshot) == nil && snapshot.ToolsRoot == getRoot {
+			if cleanupErr := worker.cleanupTerminalInstallation(ctx, operation); cleanupErr != nil {
+				unlock()
+				if errors.Is(cleanupErr, errInvalidInstallPublicationEvidence) {
+					slog.WarnContext(ctx, "terminal installation staging was preserved because its publication evidence is invalid",
+						"operation", operation.ID)
+					continue
+				}
+				return fmt.Errorf("clean terminal installation %s: %w", operation.ID, cleanupErr)
+			}
+		}
+		unlock()
 	}
-	return repository.MarkInstallationFailed(ctx, id)
+	return nil
+}
+
+func failInterruptedInstallation(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation, safe string) (bool, error) {
+	if operation.TargetInstallationID == nil {
+		if operation.RiverJobID != nil {
+			return false, fmt.Errorf("installation delivery identity is unavailable")
+		}
+		recovery, ok := repository.(undeliveredInstallationRecovery)
+		if !ok {
+			return false, fmt.Errorf("undelivered installation recovery is unavailable")
+		}
+		changed, err := recovery.FailUndeliveredInstallationRecovery(ctx, operation.ID, operation.Attempt, operation.InputSnapshot, operation.Stage, safe)
+		if err != nil {
+			return false, err
+		}
+		if changed {
+			operations.Notify(operation.ID)
+		}
+		return changed, nil
+	}
+	var changed bool
+	var err error
+	if operation.RiverJobID == nil {
+		recovery, ok := repository.(orphanedInstallationRecovery)
+		if !ok {
+			return false, fmt.Errorf("installation recovery identity is unavailable")
+		}
+		changed, err = recovery.FailOrphanedInstallationRecovery(ctx, operation.ID, operation.Attempt, *operation.TargetInstallationID, operation.Stage, safe)
+	} else {
+		changed, err = repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, *operation.TargetInstallationID, operation.Stage, safe)
+	}
+	if err != nil {
+		return false, err
+	}
+	if changed {
+		operations.Notify(operation.ID)
+	}
+	return changed, nil
 }
 
 // recoverInterruptedSourceScan finishes one orphaned scan. A generation that the
@@ -279,19 +388,9 @@ func hasInstallPublicationEvidence(ctx context.Context, operation *persistence.O
 }
 
 func failInvalidInstallPublication(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation) error {
-	if operation.TargetInstallationID != nil {
-		installation, err := repository.GetInstallation(ctx, *operation.TargetInstallationID)
-		if err != nil {
-			return err
-		}
-		if installation.State == "preparing" {
-			if err := repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
-				return err
-			}
-		}
-	}
-	return operations.Fail(ctx, operation.ID, operation.Stage,
+	_, err := failInterruptedInstallation(ctx, repository, operations, operation,
 		"The interrupted tool operation has invalid publication evidence. Resolve the installation before retrying the operation.")
+	return err
 }
 
 func reconcileMaterializedInstallation(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, operation *persistence.Operation, runtimeSettings interruptedOperationSettings, lifecycle *tools.Lifecycle) (bool, error) {
@@ -328,6 +427,17 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 	publication, err := loadInstallPublication(staging, operation, installation, snapshot, root, installation.PlatformGOOS)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", errInvalidInstallPublicationEvidence, err)
+	}
+	if operation.State == "queued" && publication != nil {
+		worker := &InstallationWorker{repository: repository, platform: tools.Platform{GOOS: installation.PlatformGOOS, GOARCH: installation.PlatformGOARCH}}
+		if err := worker.retireQueuedInstallStaging(ctx, operation, installation, root, staging, publication); err != nil {
+			return false, err
+		}
+		staging, err = tools.EnsureOperationStaging(root, operation.ID)
+		if err != nil {
+			return false, err
+		}
+		publication = nil
 	}
 	if publication == nil && !filesMaterialized {
 		return false, nil
@@ -366,32 +476,34 @@ func reconcileMaterializedInstallation(ctx context.Context, repository interrupt
 		}
 		return true, worker.rollbackInstallPublication(ctx, operation, installation, root, staging, publication)
 	}
-	if installation.State != "ready" {
-		versionsJSON, err := json.Marshal(versions)
-		if err != nil {
-			return false, err
-		}
-		if err := repository.MarkInstallationReady(ctx, installation.ID, versionsJSON, time.Now().UTC()); err != nil {
-			return false, err
-		}
-	}
-	setupComplete, err := runtimeSettings.SetupCompleted(ctx)
+	versionsJSON, err := json.Marshal(versions)
 	if err != nil {
 		return false, err
 	}
-	if !setupComplete {
-		activeSetting := settings.ActiveFFmpegInstallationKey
-		if snapshot.PackageKind == tools.PackageFPCalc {
-			activeSetting = settings.ActiveFPCalcInstallationKey
-		}
-		if _, err := repository.ActivateInstallationDuringSetup(ctx, installation.ID, string(snapshot.PackageKind), installation.PlatformGOOS, installation.PlatformGOARCH, activeSetting); err != nil {
-			return false, err
-		}
+	installation.ExecutableVersions = versionsJSON
+	verifiedAt := time.Now().UTC()
+	if installation.VerifiedAt != nil {
+		verifiedAt = *installation.VerifiedAt
 	}
-	if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
+	activeSetting := settings.ActiveFFmpegInstallationKey
+	if snapshot.PackageKind == tools.PackageFPCalc {
+		activeSetting = settings.ActiveFPCalcInstallationKey
+	}
+	if operation.RiverJobID == nil {
+		return false, fmt.Errorf("installation recovery: River job identity is unavailable")
+	}
+	finalized, err := repository.FinalizeInstallation(ctx, operation.ID, operation.Attempt, *operation.RiverJobID,
+		installation.ID, string(snapshot.PackageKind), installation.PlatformGOOS, installation.PlatformGOARCH,
+		activeSetting, versionsJSON, verifiedAt)
+	if err != nil {
 		return false, err
 	}
-	if err := operations.Succeed(ctx, operation.ID, "succeeded"); err != nil {
+	if !finalized {
+		// A concurrent retry now owns the operation's shared staging directory.
+		return true, nil
+	}
+	operations.Notify(operation.ID)
+	if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
 		return false, err
 	}
 	return true, nil

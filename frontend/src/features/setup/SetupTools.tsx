@@ -9,7 +9,6 @@ import {
   SelectValue,
 } from "react-aria-components";
 import {
-  activateToolInstallation,
   listInstallations,
   listOperations,
   listToolCatalog,
@@ -43,9 +42,9 @@ function savedIds(): string[] {
 }
 
 export function SetupTools({
-  onActivated,
+  onBlockedChange,
 }: {
-  onActivated: () => Promise<unknown>;
+  onBlockedChange?: (blocked: boolean) => void;
 }) {
   const [ids, setIds] = useState(savedIds);
   const initialIds = useRef(ids);
@@ -72,9 +71,21 @@ export function SetupTools({
   const mounted = useRef(true);
   const alert = useRef<HTMLParagraphElement>(null);
   const operationsAlert = useRef<HTMLParagraphElement>(null);
+  const readyByKind = (kind: Kind) =>
+    installations.filter(
+      (item) => item.package_kind === kind && item.state === "ready",
+    );
+  const legacyConflict = kinds.some((kind) => readyByKind(kind).length > 1);
+  const legacyError = legacyConflict
+    ? "Найдено несколько готовых версий одного пакета. Первичная настройка инструментов остановлена. Не удаляйте и не переключайте версии; обратитесь к администратору для проверки состояния Setup."
+    : "";
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
+  useEffect(() => {
+    if (legacyError) alert.current?.focus();
+    onBlockedChange?.(Boolean(legacyError));
+  }, [legacyError, onBlockedChange]);
   useEffect(() => {
     if (operationsError) operationsAlert.current?.focus();
   }, [operationsError]);
@@ -150,9 +161,9 @@ export function SetupTools({
         listToolCatalog({ package_kind: "fpcalc" }),
       ]);
       if (installed.status !== 200) throw setupError(installed);
+      setInstallations(installed.data.installations || []);
       if (ffmpeg.status !== 200) throw setupError(ffmpeg);
       if (fpcalc.status !== 200) throw setupError(fpcalc);
-      setInstallations(installed.data.installations || []);
       setCatalog({ ffmpeg: ffmpeg.data, fpcalc: fpcalc.data });
     } catch (reason) {
       setError(errorMessage(reason));
@@ -164,7 +175,10 @@ export function SetupTools({
     void load();
   }, [load]);
 
-  async function start(plan: InstallPreflightBody) {
+  async function start(plan: InstallPreflightBody, kind: Kind) {
+    if (readyByKind(kind).length) {
+      throw new Error("Для этого пакета уже есть готовая версия.");
+    }
     const response = await startToolInstall({
       preflight_token: plan.preflight_token,
       confirmed_conflicts: plan.conflicts || [],
@@ -184,6 +198,9 @@ export function SetupTools({
     setError("");
     setPreflight(undefined);
     try {
+      if (readyByKind(kind).length) {
+        throw new Error("Для этого пакета уже есть готовая версия.");
+      }
       const identity = selected[kind];
       if (!identity) throw new Error("Выберите версию.");
       const response = await preflightToolInstall({
@@ -193,7 +210,7 @@ export function SetupTools({
       if (response.status !== 200) throw setupError(response);
       if (response.data.conflicts?.length)
         setPreflight({ kind, plan: response.data });
-      else await start(response.data);
+      else await start(response.data, kind);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -205,23 +222,7 @@ export function SetupTools({
     setPending(true);
     setError("");
     try {
-      await start(preflight.plan);
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setPending(false);
-    }
-  }
-  async function activate(item: InstallationResponse, kind: Kind) {
-    setPending(true);
-    setError("");
-    try {
-      const response = await activateToolInstallation(item.id, {
-        package_kind: kind,
-      });
-      if (response.status !== 204) throw setupError(response);
-      await onActivated();
-      await loadInstallations();
+      await start(preflight.plan, preflight.kind);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -230,75 +231,66 @@ export function SetupTools({
   }
   return (
     <div>
-      <AppButton isDisabled={pending} onPress={load}>
-        Обновить каталог
-      </AppButton>
+      {!legacyConflict && (
+        <AppButton isDisabled={pending} onPress={load}>
+          Обновить каталог
+        </AppButton>
+      )}
       {kinds.map((kind) => (
         <div key={kind} className="setup-tool">
           <h3>{kind}</h3>
-          <p>{catalog[kind]?.notice}</p>
-          <Select
-            value={selected[kind] || null}
-            placeholder="Выберите версию"
-            isDisabled={pending || !catalog[kind]?.releases?.length}
-            onChange={(key) => {
-              setSelected((previous) => ({
-                ...previous,
-                [kind]: key === null ? "" : String(key),
-              }));
-              setPreflight(undefined);
-            }}
-          >
-            <Label>Версия {kind}</Label>
-            <Button className="setup-select-trigger">
-              <SelectValue />
-              <span aria-hidden="true">▾</span>
-            </Button>
-            <Popover className="setup-select-popover">
-              <ListBox items={catalog[kind]?.releases || []}>
-                {(release) => (
-                  <ListBoxItem
-                    id={release.identity}
-                    textValue={`${release.identity} (${release.source})`}
-                  >
-                    {release.identity} ({release.source})
-                  </ListBoxItem>
-                )}
-              </ListBox>
-            </Popover>
-          </Select>
-          <AppButton
-            isDisabled={pending || !selected[kind]}
-            onPress={() => {
-              void install(kind);
-            }}
-          >
-            Проверить установку {kind}
-          </AppButton>
-          {installations
-            .filter(
-              (item) => item.package_kind === kind && item.state === "ready",
-            )
-            .map((item) => (
-              <div key={item.id}>
-                {item.release_identity}{" "}
-                {item.active ? (
-                  "Активна"
-                ) : (
-                  <AppButton
-                    isDisabled={pending}
-                    onPress={() => {
-                      void activate(item, kind);
-                    }}
-                  >
-                    Активировать {item.release_identity}
-                  </AppButton>
-                )}
-              </div>
-            ))}
+          {legacyConflict ? null : readyByKind(kind).length ? (
+            readyByKind(kind).map((item) => (
+              <p key={item.id} role="status">
+                {item.release_identity}: {item.active ? "Активна" : "Готова"}
+              </p>
+            ))
+          ) : (
+            <>
+              <p>{catalog[kind]?.notice}</p>
+              <Select
+                value={selected[kind] || null}
+                placeholder="Выберите версию"
+                isDisabled={pending || !catalog[kind]?.releases?.length}
+                onChange={(key) => {
+                  setSelected((previous) => ({
+                    ...previous,
+                    [kind]: key === null ? "" : String(key),
+                  }));
+                  setPreflight(undefined);
+                }}
+              >
+                <Label>Версия {kind}</Label>
+                <Button className="setup-select-trigger">
+                  <SelectValue />
+                  <span aria-hidden="true">▾</span>
+                </Button>
+                <Popover className="setup-select-popover">
+                  <ListBox items={catalog[kind]?.releases || []}>
+                    {(release) => (
+                      <ListBoxItem
+                        id={release.identity}
+                        textValue={`${release.identity} (${release.source})`}
+                      >
+                        {release.identity} ({release.source})
+                      </ListBoxItem>
+                    )}
+                  </ListBox>
+                </Popover>
+              </Select>
+              <AppButton
+                isDisabled={pending || !selected[kind]}
+                onPress={() => {
+                  void install(kind);
+                }}
+              >
+                Проверить установку {kind}
+              </AppButton>
+            </>
+          )}
         </div>
       ))}
-      {preflight?.plan.conflicts?.length ? (
+      {!legacyConflict && preflight?.plan.conflicts?.length ? (
         <fieldset aria-label="Подтверждение конфликтов">
           <legend>Перезапись только следующих файлов:</legend>
           <ul>
@@ -332,9 +324,9 @@ export function SetupTools({
           onFinished={forget}
         />
       ))}
-      {error && (
+      {(error || legacyError) && (
         <p ref={alert} tabIndex={-1} role="alert">
-          {error}
+          {error || legacyError}
         </p>
       )}
       {operationsError && (

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
@@ -34,6 +35,8 @@ type workerOperationRepository struct {
 	installation *persistence.ToolInstallation
 }
 
+func appWorkerDeliveryID() *int64 { id := int64(1); return &id }
+
 func (repository *workerOperationRepository) GetOperation(_ context.Context, _ uuid.UUID) (*persistence.Operation, error) {
 	return repository.operation, nil
 }
@@ -47,6 +50,31 @@ func (repository *workerOperationRepository) TransitionOperation(_ context.Conte
 		return context.Canceled
 	}
 	return transition(repository.operation)
+}
+
+func (repository *workerOperationRepository) TransitionOperationForDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, transition func(*persistence.Operation) error) (bool, error) {
+	operation := repository.operation
+	if operation == nil || operation.ID != id || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != jobID {
+		return false, nil
+	}
+	if err := transition(operation); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (repository *workerOperationRepository) FailInstallationDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, target uuid.UUID, stage, safe string) (bool, error) {
+	op := repository.operation
+	if op == nil || op.ID != id || op.Attempt != attempt || op.RiverJobID == nil || *op.RiverJobID != jobID ||
+		op.TargetInstallationID == nil || *op.TargetInstallationID != target || op.State == "failed" || op.State == "succeeded" {
+		return false, nil
+	}
+	if repository.installation == nil || repository.installation.ID != target {
+		return false, context.Canceled
+	}
+	repository.installation.State = "failed"
+	op.State, op.Stage, op.SafeError = "failed", stage, &safe
+	return true, nil
 }
 
 type workerSettingsStore struct {
@@ -67,6 +95,7 @@ func TestWorkerTransitionWakesAPISubscriber(t *testing.T) {
 	repository := &workerOperationRepository{
 		operation: &persistence.Operation{
 			ID: operationID, Kind: "install", State: "queued", Stage: "queued",
+			Attempt: 1, RiverJobID: appWorkerDeliveryID(),
 			InputSnapshot: []byte("{"), TargetInstallationID: &installationID,
 		},
 		installation: &persistence.ToolInstallation{ID: installationID, State: "failed"},
@@ -82,7 +111,7 @@ func TestWorkerTransitionWakesAPISubscriber(t *testing.T) {
 		settings.New(workerSettingsStore{root: t.TempDir()}, nil), tools.Platform{}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	job := &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operationID}}
+	job := &river.Job[service.OperationJobArgs]{JobRow: &rivertype.JobRow{ID: 1}, Args: service.OperationJobArgs{OperationID: operationID}}
 	if err := worker.Work(ctx, job); err != nil {
 		t.Fatalf("worker transition: %v", err)
 	}

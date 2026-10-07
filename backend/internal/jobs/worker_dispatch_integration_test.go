@@ -167,6 +167,7 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 		wantStage             string
 		wantInstallationState string
 		wantSucceededAtPause  bool
+		wantStagingClean      bool
 		wantPublishedAtPause  bool
 	}{
 		{name: "resolve_catalog", pauseIn: "resolve", wantStage: "resolve", wantInstallationState: "preparing"},
@@ -177,8 +178,8 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 		{name: "materialize_executable_verification", pauseIn: "runner", runnerCall: 1, wantStage: "materialize", wantInstallationState: "preparing"},
 		{name: "verify_published_executable", pauseIn: "runner", runnerCall: 2, wantStage: "materialize", wantInstallationState: "preparing", wantPublishedAtPause: true},
 		{name: "publication_before_ready_commit", pauseStage: "files_materialized", wantStage: "files_materialized", wantInstallationState: "preparing", wantPublishedAtPause: true},
-		{name: "ready_transaction_committed", pauseIn: "ready_commit", wantStage: "files_materialized", wantInstallationState: "ready", wantPublishedAtPause: true},
-		{name: "cleanup_before_retry_ack", pauseIn: "success_commit", wantStage: "succeeded", wantInstallationState: "ready", wantSucceededAtPause: true, wantPublishedAtPause: true},
+		{name: "ready_transaction_committed", pauseIn: "ready_commit", wantStage: "succeeded", wantInstallationState: "ready", wantSucceededAtPause: true, wantPublishedAtPause: true},
+		{name: "cleanup_before_retry_ack", pauseIn: "success_commit", wantStage: "succeeded", wantInstallationState: "ready", wantSucceededAtPause: true, wantStagingClean: true, wantPublishedAtPause: true},
 	}
 
 	for index, interruption := range cases {
@@ -200,14 +201,19 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 			case "ready_commit":
 				boundaryRepository.readyGate = gate
 			case "success_commit":
-				boundaryRepository.successGate = gate
+				// The worker wrapper pauses after Work has completed cleanup, just
+				// before returning to River to acknowledge the delivery.
 			default:
 				boundaryRepository.stage, boundaryRepository.stageGate = interruption.pauseStage, gate
 			}
 
 			operations := service.NewOperations(boundaryRepository)
 			worker := NewInstallationWorker(boundaryRepository, operations, catalog, runtimeSettings, platform, tools.NewLifecycle(runner))
-			session := newDispatchRiverSession(t, ctx, databaseURL, database, worker)
+			var riverWorker river.Worker[service.OperationJobArgs] = worker
+			if interruption.pauseIn == "success_commit" {
+				riverWorker = &postWorkBarrier{InstallationWorker: worker, gate: gate}
+			}
+			session := newDispatchRiverSession(t, ctx, databaseURL, database, riverWorker)
 			events, cancelEvents := session.client.Subscribe(river.EventKindJobCompleted)
 			defer cancelEvents()
 			operation := enqueueInstall(t, ctx, repository, session.client, root, release)
@@ -246,7 +252,7 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 			}
 			staging := filepath.Join(root, ".staging", operation.ID.String())
 			_, stagingErr := os.Lstat(staging)
-			if interruption.wantSucceededAtPause && !os.IsNotExist(stagingErr) {
+			if interruption.wantStagingClean && !os.IsNotExist(stagingErr) {
 				t.Fatalf("staging remains at post-cleanup barrier: %v", stagingErr)
 			}
 
@@ -879,6 +885,39 @@ func (repository *riverBoundaryRepository) TransitionOperation(ctx context.Conte
 	return nil
 }
 
+func (repository *riverBoundaryRepository) TransitionOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, transition func(*persistence.Operation) error) (bool, error) {
+	var gate *dispatchBarrier
+	changed, err := repository.SetupManagerRepository.TransitionOperationForDelivery(ctx, id, attempt, riverJobID, func(operation *persistence.Operation) error {
+		if err := transition(operation); err != nil {
+			return err
+		}
+		switch {
+		case repository.stageGate != nil && operation.Stage == repository.stage:
+			gate = repository.stageGate
+		case repository.successGate != nil && operation.State == "succeeded":
+			gate = repository.successGate
+		}
+		return nil
+	})
+	if err == nil && changed && gate != nil {
+		err = gate.pause(ctx)
+	}
+	return changed, err
+}
+
+func (repository *riverBoundaryRepository) FinalizeInstallation(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, installationID uuid.UUID, packageKind, goos, goarch, activeSetting string, versions json.RawMessage, verifiedAt time.Time) (bool, error) {
+	finalized, err := repository.SetupManagerRepository.FinalizeInstallation(ctx, operationID, attempt, riverJobID, installationID, packageKind, goos, goarch, activeSetting, versions, verifiedAt)
+	if err != nil || !finalized {
+		return finalized, err
+	}
+	if repository.readyGate != nil {
+		err = repository.readyGate.pause(ctx)
+	} else if repository.successGate != nil {
+		err = repository.successGate.pause(ctx)
+	}
+	return finalized, err
+}
+
 func (repository *riverBoundaryRepository) MarkInstallationReady(ctx context.Context, id uuid.UUID, versions json.RawMessage, verifiedAt time.Time) error {
 	if err := repository.SetupManagerRepository.MarkInstallationReady(ctx, id, versions, verifiedAt); err != nil {
 		return err
@@ -921,7 +960,7 @@ type dispatchRiverSession struct {
 	stopped      bool
 }
 
-func newDispatchRiverSession(t *testing.T, ctx context.Context, databaseURL string, database *bun.DB, worker *InstallationWorker) *dispatchRiverSession {
+func newDispatchRiverSession(t *testing.T, ctx context.Context, databaseURL string, database *bun.DB, worker river.Worker[service.OperationJobArgs]) *dispatchRiverSession {
 	t.Helper()
 	client, listenerPool := startDispatchRiver(t, databaseURL, database, worker)
 	session := &dispatchRiverSession{client: client, listenerPool: listenerPool}
@@ -997,7 +1036,7 @@ func newDispatchCatalog(t *testing.T, release string) *dispatchCatalog {
 }
 
 func startDispatchRiver(t *testing.T, databaseURL string, database *bun.DB,
-	worker *InstallationWorker) (*river.Client[*sql.Tx], *pgxpool.Pool) {
+	worker river.Worker[service.OperationJobArgs]) (*river.Client[*sql.Tx], *pgxpool.Pool) {
 	t.Helper()
 	client, listenerPool, err := StartWithWorkers(context.Background(), databaseURL, database.DB, func(workers *river.Workers) {
 		river.AddWorker(workers, worker)
@@ -1006,6 +1045,18 @@ func startDispatchRiver(t *testing.T, databaseURL string, database *bun.DB,
 		t.Fatalf("start River worker client with production dispatcher: %v", err)
 	}
 	return client, listenerPool
+}
+
+type postWorkBarrier struct {
+	*InstallationWorker
+	gate *dispatchBarrier
+}
+
+func (worker *postWorkBarrier) Work(ctx context.Context, job *river.Job[service.OperationJobArgs]) error {
+	if err := worker.InstallationWorker.Work(ctx, job); err != nil {
+		return err
+	}
+	return worker.gate.pause(ctx)
 }
 
 func stopRiverClient(t *testing.T, client *river.Client[*sql.Tx]) {

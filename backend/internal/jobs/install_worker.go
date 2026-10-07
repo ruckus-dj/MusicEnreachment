@@ -22,9 +22,8 @@ import (
 type installRepository interface {
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
-	MarkInstallationReady(context.Context, uuid.UUID, json.RawMessage, time.Time) error
-	MarkInstallationFailed(context.Context, uuid.UUID) error
-	ActivateInstallationDuringSetup(context.Context, uuid.UUID, string, string, string, string) (bool, error)
+	FinalizeInstallation(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string, string, string, json.RawMessage, time.Time) (bool, error)
+	FailInstallationDelivery(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string) (bool, error)
 }
 
 type installCatalog interface {
@@ -35,7 +34,6 @@ type installCatalog interface {
 
 type setupSettings interface {
 	GetToolsDirectory(context.Context) (string, bool, error)
-	SetupCompleted(context.Context) (bool, error)
 }
 
 type InstallationWorker struct {
@@ -75,11 +73,23 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		}
 		return worker.moveWorker.Work(ctx, operation)
 	}
-	if operation.State == "succeeded" || operation.State == "failed" {
-		if operation.State == "failed" && operation.Kind == "install" {
-			return worker.cleanupFailedRedelivery(ctx, operation)
-		}
+	if operation.Kind != "install" {
+		return fmt.Errorf("operation is not an installation")
+	}
+	unlock := lockInstallationExecution(operationID)
+	defer unlock()
+	// The operation may have been retried while this delivery waited for the
+	// process-local filesystem fence. All later decisions use durable state.
+	operation, err = worker.repository.GetOperation(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	if operation.Kind == "install" && (operation.RiverJobID == nil || *operation.RiverJobID != job.ID) {
+		// A delivery from before a retry must not run against the newer attempt.
 		return nil
+	}
+	if operation.State == "succeeded" || operation.State == "failed" {
+		return worker.cleanupTerminalInstallation(ctx, operation)
 	}
 	if operation.Kind != "install" || operation.TargetInstallationID == nil {
 		return fmt.Errorf("operation is not an installation")
@@ -110,9 +120,16 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 
 	if installation.State == "ready" {
-		if _, err := worker.lifecycle.VerifyInstallation(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS); err != nil {
+		versions, err := worker.lifecycle.VerifyInstallation(ctx, root, installation.RelativePath, snapshot.PackageKind, snapshot.ReleaseIdentity, worker.platform.GOOS)
+		if err != nil {
 			return worker.failWithStaging(ctx, operation, installation, "verify", err, snapshot.ToolsRoot)
 		}
+		installation.ExecutableVersions, err = json.Marshal(versions)
+		if err != nil {
+			return err
+		}
+		verifiedAt := time.Now().UTC()
+		installation.VerifiedAt = &verifiedAt
 		return worker.finish(ctx, operation, installation, root, snapshot)
 	}
 	staging, err := tools.EnsureOperationStaging(root, operation.ID)
@@ -124,15 +141,30 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		return err
 	}
 	if publication != nil {
-		return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
+		if operation.State == "queued" {
+			if err := worker.retireQueuedInstallStaging(ctx, operation, installation, root, staging, publication); err != nil {
+				return err
+			}
+			staging, err = tools.EnsureOperationStaging(root, operation.ID)
+			if err != nil {
+				return err
+			}
+		} else {
+			return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
+		}
 	}
-	if installation.State == "failed" && operation.State == "running" {
+	if operation.State == "queued" {
+		if err := refuseUnjournaledInstallBackups(staging); err != nil {
+			return err
+		}
 		if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
 			return err
 		}
-		return worker.operations.Fail(ctx, operation.ID, operation.Stage, safeInstallationError(operation.Stage))
 	}
-	if err := worker.operations.Running(ctx, operation.ID, "resolve"); err != nil {
+	if installation.State == "failed" && operation.State == "running" {
+		return worker.fail(ctx, operation, installation, operation.Stage, fmt.Errorf("installation target is failed"))
+	}
+	if err := worker.operations.RunningForDelivery(ctx, operation, "resolve"); err != nil {
 		return err
 	}
 	release, err := worker.catalog.Resolve(ctx, snapshot.PackageKind, worker.platform, snapshot.ReleaseIdentity)
@@ -147,16 +179,10 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if err != nil {
 		return worker.failWithStaging(ctx, operation, installation, "download", err, snapshot.ToolsRoot)
 	}
-	cleanupOnFailure := true
-	defer func() {
-		if cleanupOnFailure {
-			_ = tools.CleanupOperationStaging(root, operation.ID)
-		}
-	}()
 	archivePaths := make([]string, 0, len(snapshot.ArtifactIdentities))
 	var downloadedBytes int64
 	for index, identity := range snapshot.ArtifactIdentities {
-		if err := worker.operations.Running(ctx, operation.ID, "download"); err != nil {
+		if err := worker.operations.RunningForDelivery(ctx, operation, "download"); err != nil {
 			return err
 		}
 		archivePath := filepath.Join(staging, fmt.Sprintf("artifact-%d", index))
@@ -168,7 +194,7 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		artifact, count, downloadErr := worker.catalog.Download(ctx, snapshot.PackageKind, worker.platform, snapshot.ReleaseIdentity, identity.Name, archive, func(current int64) {
 			if current-lastProgress >= 1<<20 {
 				lastProgress = current
-				_ = worker.operations.Progress(ctx, operation.ID, "download", downloadedBytes+current, nil)
+				_ = worker.operations.ProgressForDelivery(ctx, operation, "download", downloadedBytes+current, nil)
 			}
 		})
 		closeErr := archive.Close()
@@ -195,11 +221,11 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 			return worker.failWithStaging(ctx, operation, installation, "verify", err, snapshot.ToolsRoot)
 		}
 		downloadedBytes += count
-		_ = worker.operations.Progress(ctx, operation.ID, "download", downloadedBytes, nil)
+		_ = worker.operations.ProgressForDelivery(ctx, operation, "download", downloadedBytes, nil)
 		archivePaths = append(archivePaths, archivePath)
 	}
 
-	if err := worker.operations.Running(ctx, operation.ID, "extract"); err != nil {
+	if err := worker.operations.RunningForDelivery(ctx, operation, "extract"); err != nil {
 		return err
 	}
 	extracted := filepath.Join(staging, "extracted")
@@ -223,14 +249,14 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		}
 	}
 
-	if err := worker.operations.Running(ctx, operation.ID, "materialize"); err != nil {
+	if err := worker.operations.RunningForDelivery(ctx, operation, "materialize"); err != nil {
 		return err
 	}
 	candidateRoot := filepath.Join(staging, "candidate")
 	_, _, err = worker.lifecycle.Materialize(ctx, extracted, candidateRoot, snapshot.PackageKind, snapshot.ReleaseIdentity, tools.MaterializeOptions{
 		GOOS: worker.platform.GOOS, GOARCH: worker.platform.GOARCH,
 		Progress: func(copied int64) {
-			_ = worker.operations.Progress(ctx, operation.ID, "materialize", downloadedBytes+copied, nil)
+			_ = worker.operations.ProgressForDelivery(ctx, operation, "materialize", downloadedBytes+copied, nil)
 		},
 	})
 	if err != nil {
@@ -240,28 +266,33 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 	if err != nil {
 		return worker.failWithStaging(ctx, operation, installation, "materialize", err, snapshot.ToolsRoot)
 	}
-	cleanupOnFailure = false
 	return worker.resumeInstallPublication(ctx, operation, installation, snapshot, root, staging, publication)
 }
 
 func (worker *InstallationWorker) finish(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, root string, snapshot service.InstallInputSnapshot) error {
-	completed, err := worker.settings.SetupCompleted(ctx)
+	activeSetting := settings.ActiveFFmpegInstallationKey
+	if snapshot.PackageKind == tools.PackageFPCalc {
+		activeSetting = settings.ActiveFPCalcInstallationKey
+	}
+	verifiedAt := time.Now().UTC()
+	if installation.VerifiedAt != nil {
+		verifiedAt = *installation.VerifiedAt
+	}
+	if operation.RiverJobID == nil {
+		return fmt.Errorf("finalize installation: River job identity is unavailable")
+	}
+	finalized, err := worker.repository.FinalizeInstallation(ctx, operation.ID, operation.Attempt, *operation.RiverJobID,
+		installation.ID, string(snapshot.PackageKind), worker.platform.GOOS, worker.platform.GOARCH,
+		activeSetting, installation.ExecutableVersions, verifiedAt)
 	if err != nil {
 		return err
 	}
-	if !completed {
-		activeSetting := settings.ActiveFFmpegInstallationKey
-		if snapshot.PackageKind == tools.PackageFPCalc {
-			activeSetting = settings.ActiveFPCalcInstallationKey
-		}
-		if _, err := worker.repository.ActivateInstallationDuringSetup(ctx, installation.ID, string(snapshot.PackageKind), worker.platform.GOOS, worker.platform.GOARCH, activeSetting); err != nil {
-			return err
-		}
+	if !finalized {
+		// Staging is shared by retries; a stale delivery cannot safely remove it.
+		return nil
 	}
+	worker.operations.Notify(operation.ID)
 	if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
-		return err
-	}
-	if err := worker.operations.Succeed(ctx, operation.ID, "succeeded"); err != nil {
 		return err
 	}
 	return nil
@@ -272,28 +303,42 @@ func (worker *InstallationWorker) fail(ctx context.Context, operation *persisten
 		return cause
 	}
 	slog.Warn("tool operation failed", "operation", operation.ID.String(), "stage", stage, "cause", cause)
-	if installation.State == "preparing" {
-		if err := worker.repository.MarkInstallationFailed(ctx, installation.ID); err != nil {
-			return fmt.Errorf("%v; mark installation failed: %w", cause, err)
-		}
+	if operation.RiverJobID == nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installation.ID {
+		return fmt.Errorf("fail installation delivery: immutable delivery target is unavailable")
 	}
-	if err := worker.operations.Fail(ctx, operation.ID, stage, safeInstallationError(stage)); err != nil {
-		return fmt.Errorf("%v; mark operation failed: %w", cause, err)
+	changed, err := worker.repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, installation.ID, stage, safeInstallationError(stage))
+	if err != nil {
+		return fmt.Errorf("%v; mark installation delivery failed: %w", cause, err)
+	}
+	if changed {
+		worker.operations.Notify(operation.ID)
 	}
 	return nil
 }
 
 func (worker *InstallationWorker) failWithStaging(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, stage string, cause error, root string) error {
-	if err := worker.fail(ctx, operation, installation, stage, cause); err != nil {
-		return err
+	if ctx.Err() != nil {
+		return cause
 	}
-	if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
-		return fmt.Errorf("clean operation staging: %w", err)
+	if operation.RiverJobID == nil || operation.TargetInstallationID == nil || *operation.TargetInstallationID != installation.ID {
+		return fmt.Errorf("fail installation delivery: immutable delivery target is unavailable")
+	}
+	changed, err := worker.repository.FailInstallationDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, installation.ID, stage, safeInstallationError(stage))
+	if err != nil {
+		return fmt.Errorf("%v; mark installation delivery failed: %w", cause, err)
+	}
+	if changed {
+		worker.operations.Notify(operation.ID)
+		if root != "" {
+			if err := tools.CleanupOperationStaging(root, operation.ID); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-func (worker *InstallationWorker) cleanupFailedRedelivery(ctx context.Context, operation *persistence.Operation) error {
+func (worker *InstallationWorker) cleanupTerminalInstallation(ctx context.Context, operation *persistence.Operation) error {
 	if operation.TargetInstallationID == nil {
 		return nil
 	}
@@ -308,6 +353,41 @@ func (worker *InstallationWorker) cleanupFailedRedelivery(ctx context.Context, o
 	root, err := validatedInstallToolsRoot(snapshot)
 	if err != nil {
 		return nil
+	}
+	staging := filepath.Join(root, ".staging", operation.ID.String())
+	publication, err := loadInstallPublication(staging, operation, installation, snapshot, root, worker.platform.GOOS)
+	if err != nil {
+		return err
+	}
+	if publication != nil {
+		if operation.State == "succeeded" {
+			return tools.CleanupOperationStaging(root, operation.ID)
+		}
+		if err := worker.rollbackInstallFiles(ctx, root, staging, publication); err != nil {
+			return err
+		}
+		if err := os.Remove(installPublicationPath(staging)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := refuseUnjournaledInstallBackups(staging); err != nil {
+		return err
+	}
+	// A failed operation without a publication journal can own only private
+	// archives/candidate files. Backups without their journal are never inferred.
+	return tools.CleanupOperationStaging(root, operation.ID)
+}
+
+func (worker *InstallationWorker) retireQueuedInstallStaging(ctx context.Context, operation *persistence.Operation, installation *persistence.ToolInstallation, root, staging string, publication *installPublication) error {
+	publication.Mode = "rollback"
+	if err := saveInstallPublication(staging, publication); err != nil {
+		return err
+	}
+	if err := worker.rollbackInstallFiles(ctx, root, staging, publication); err != nil {
+		return err
+	}
+	if err := os.Remove(installPublicationPath(staging)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return tools.CleanupOperationStaging(root, operation.ID)
 }
