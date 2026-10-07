@@ -19,8 +19,8 @@ import (
 // operation row were both written. The transaction must take both rows with it,
 // so a commit-time failure never leaves an orphan operation or River job.
 func TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -92,8 +92,8 @@ func requirePostgresError(t *testing.T, err error, code, messageFragment string)
 // analysis_media_variant_id and in the immutable snapshot, so the variant stays
 // alive until the operation reaches its terminal state.
 func TestSourceAnalysisEnqueueHoldsPreviousVariantWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

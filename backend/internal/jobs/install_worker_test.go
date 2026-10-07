@@ -185,6 +185,7 @@ func (workerCommandRunner) Run(_ context.Context, executable string, args ...str
 }
 
 func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	operationID := uuid.New()
 	installationID := uuid.New()
@@ -227,6 +228,7 @@ func TestInstallationWorkerDownloadsVerifiesMaterializesAndActivatesDuringSetup(
 }
 
 func TestInstallationWorkerPinsWritesToSnapshotRootAcrossRootRead(t *testing.T) {
+	t.Parallel()
 	for _, changeBeforeRead := range []bool{true, false} {
 		name := "root_changes_after_read"
 		if changeBeforeRead {
@@ -283,6 +285,7 @@ func TestInstallationWorkerPinsWritesToSnapshotRootAcrossRootRead(t *testing.T) 
 }
 
 func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		stage     string
@@ -345,6 +348,7 @@ func TestInstallationWorkerRequiresExactConflictConfirmation(t *testing.T) {
 }
 
 func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	operationID := uuid.New()
 	installationID := uuid.New()
@@ -380,6 +384,7 @@ func TestInstallationWorkerStoresOnlySafeFailureAndAllowsUserRetry(t *testing.T)
 }
 
 func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T) {
+	t.Parallel()
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	staging := filepath.Join(root, ".staging", id.String())
@@ -417,6 +422,7 @@ func TestInstallationWorkerClearsInterruptedStagingOnResolveFailure(t *testing.T
 }
 
 func TestInstallationWorkerCleanupNeverUsesCurrentRootForUntrustedOrStaleSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		state         string
@@ -500,6 +506,7 @@ func (ffmpegWorkerRunner) Run(_ context.Context, executable string, args ...stri
 }
 
 func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
+	t.Parallel()
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
@@ -557,6 +564,7 @@ func TestInstallationWorkerResumesPartiallyPublishedFFmpeg(t *testing.T) {
 }
 
 func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T) {
+	t.Parallel()
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
@@ -602,6 +610,7 @@ func TestInstallationWorkerRecoversCommittedReadyAfterLostResponse(t *testing.T)
 }
 
 func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T) {
+	t.Parallel()
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
@@ -650,6 +659,7 @@ func TestInstallationWorkerDoesNotAdoptIdenticalUnknownFileOnRetry(t *testing.T)
 }
 
 func TestInstallationWorkerResumesConfirmedBackupBeforeLink(t *testing.T) {
+	t.Parallel()
 	id, installationID := uuid.New(), uuid.New()
 	root := t.TempDir()
 	target := filepath.Join(root, "fpcalc", "v1.6.1", "fpcalc")

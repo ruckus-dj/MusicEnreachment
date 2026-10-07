@@ -19,8 +19,8 @@ import (
 // table lock before it inserts anything, because the move rewrites the global
 // tools root those analyses pinned.
 func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)

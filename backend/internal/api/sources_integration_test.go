@@ -29,6 +29,7 @@ func sourceTimePointer(value time.Time) *time.Time { return &value }
 // decides, and the file preservation of a deletion are PostgreSQL behaviour, not
 // properties of a fake.
 func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, _ := openAPTransitionDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
@@ -204,6 +205,7 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 // keep serving the stored root while every mutation and a scan are refused with
 // the existing 503 before they reach the repository, so the rows stay identical.
 func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, _ := openAPTransitionDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

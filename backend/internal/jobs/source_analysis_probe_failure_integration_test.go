@@ -35,7 +35,7 @@ func TestSourceAnalysisWorkerProbeFailurePostgreSQL(t *testing.T) {
 
 			// The pinned ffprobe keeps answering -version but fails the technical
 			// probe itself.
-			t.Setenv("ANALYSIS_PROBE_FAIL", mode)
+			configureAnalysisProbe(t, fixture.helperPath, mode)
 			failed := fixture.start(t, ctx)
 			awaitRiverCompletion(t, ctx, fixture.events, *failed.RiverJobID)
 

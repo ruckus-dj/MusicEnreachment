@@ -10,22 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
@@ -187,6 +181,7 @@ func (fixture sourceApplicationFixture) request(t *testing.T, method, path, body
 // of the source surface before the first-run Setup is complete: every route
 // answers 409 and the platform guard never gets a chance to mask it.
 func TestApplicationSourcesEndpointsRequireSetup(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceApplicationFixture(t, startSourceApplicationDatabase(t))
 	id := uuid.NewString()
 	for _, request := range []struct{ method, path, body string }{
@@ -210,6 +205,7 @@ func TestApplicationSourcesEndpointsRequireSetup(t *testing.T) {
 // mutation guard on a setup-complete instance whose platform is diagnostic: the
 // refusal is the platform 503, not the disabled root and not the setup 409.
 func TestApplicationSourcesEndpointsRefuseScanOnAMismatchedPlatform(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceApplicationFixture(t, startSourceApplicationDatabase(t))
 	if err := fixture.registry.CompleteSetup(context.Background()); err != nil {
 		t.Fatalf("complete the first-run setup: %v", err)
@@ -240,6 +236,7 @@ func TestApplicationSourcesEndpointsRefuseScanOnAMismatchedPlatform(t *testing.T
 // the composed worker, page the published inventory, then delete with the
 // server-verified confirmation and prove the deletion touched no source file.
 func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceApplicationFixture(t, startSourceApplicationDatabase(t))
 	fixture.provisionManagedFFprobe(t)
 	if err := fixture.registry.CompleteSetup(context.Background()); err != nil {
@@ -344,21 +341,21 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SCANNING_PROBE_VERSION", release)
-	t.Setenv("SCANNING_PROBE_NO_AUDIO", "1")
 	names := tools.ExpectedExecutables(tools.PackageFFmpeg, fixture.platform.Platform.GOOS)
 	target := filepath.Join(directory, names[0])
-	build := exec.Command("go", "build", "-o", target, "../jobs/testdata/scanningprobe")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatalf("build the managed probe fixture: %v", err)
-	}
-	contents, err := os.ReadFile(target)
+	source, err := cachedAppScanProbe()
 	if err != nil {
-		t.Fatalf("read the managed probe fixture: %v", err)
+		t.Fatalf("prepare the managed probe fixture: %v", err)
+	}
+	configuration := struct {
+		Version string `json:"version"`
+		NoAudio bool   `json:"no_audio"`
+	}{Version: release, NoAudio: true}
+	if err := copyAppScanProbe(source, target, configuration); err != nil {
+		t.Fatalf("write the managed %s: %v", names[0], err)
 	}
 	for _, name := range names[1:] {
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
+		if err := copyAppScanProbe(source, filepath.Join(directory, name), configuration); err != nil {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}
@@ -439,32 +436,9 @@ func startSourceApplicationDatabase(t *testing.T) testContainer {
 	t.Helper()
 	startup, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	container, err := postgres.Run(startup, "postgres:17",
-		postgres.WithDatabase("source_application_test"),
-		postgres.WithUsername("postgres"), postgres.WithPassword("postgres"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(60*time.Second),
-		))
-	if err != nil {
-		t.Fatalf("start PostgreSQL Testcontainer: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := container.Terminate(context.Background()); err != nil {
-			t.Errorf("terminate PostgreSQL Testcontainer: %v", err)
-		}
-	})
-	databaseURL, err := container.ConnectionString(startup, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	databaseSQL, err := sql.Open("pgx", databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = databaseSQL.Close() })
-	database := bun.NewDB(databaseSQL, pgdialect.New())
-	t.Cleanup(func() { _ = database.Close() })
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
+	databaseSQL := database.DB
 
 	driver := riverdatabasesql.NewWithPgxListener(databaseSQL, mustRiverListener(t, databaseURL))
 	migrator, err := rivermigrate.New(driver, nil)

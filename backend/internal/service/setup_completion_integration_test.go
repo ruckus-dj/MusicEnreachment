@@ -67,8 +67,7 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 }
 
 func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -165,6 +164,7 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 }
 
 func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	for _, change := range []string{"musicbrainz identity", "runtime setting", "active installation verification", "output no longer empty"} {
 		t.Run(change, func(t *testing.T) {
@@ -245,6 +245,7 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 }
 
 func TestCompleteHTTPRequiresCurrentMusicBrainzResponse(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	for _, response := range []struct {
 		name, body string
@@ -293,9 +294,9 @@ func TestCompleteHTTPRequiresCurrentMusicBrainzResponse(t *testing.T) {
 }
 
 func TestCompletePreservesOriginalTimestamp(t *testing.T) {
+	t.Parallel()
 	// Given: a reachable endpoint and a clock advanced after initial completion.
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
 			t.Error(err)

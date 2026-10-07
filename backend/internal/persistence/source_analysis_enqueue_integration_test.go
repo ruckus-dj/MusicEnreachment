@@ -23,8 +23,7 @@ import (
 // job, and an enqueue whose operation insert fails takes the already inserted
 // job with it, so no River job survives without the operation that owns it.
 func TestSourceAnalysisEnqueueCommitsAndRollsBackWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
@@ -100,8 +99,7 @@ func TestSourceAnalysisEnqueueCommitsAndRollsBackWithPostgreSQL(t *testing.T) {
 // moved, yet activating another ready version stays permitted and cannot change
 // the immutable snapshot of either queued analysis.
 func TestSourceAnalysisEnqueueSharesInstallationAcrossRootsWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)

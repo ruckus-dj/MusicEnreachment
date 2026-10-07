@@ -21,6 +21,7 @@ import (
 // replaced the variant makes an older failed retry a conflict; and an apply
 // whose terminal update fails leaves the previous variant linked.
 func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()

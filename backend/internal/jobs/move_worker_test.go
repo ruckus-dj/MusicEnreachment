@@ -114,6 +114,7 @@ func (runner moveCommandRunner) Run(_ context.Context, executable string, args .
 }
 
 func TestMoveWorkerCopiesOnlyManagedFilesAndKeepsUnknownData(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
 	ops := service.NewOperations(repository)
@@ -140,6 +141,7 @@ func TestMoveWorkerCopiesOnlyManagedFilesAndKeepsUnknownData(t *testing.T) {
 }
 
 func TestMoveWorkerRestoresRootsAndConfirmedConflictsOnVerificationFailure(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
 	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository), moveWorkerSettings{root: oldRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{failName: "ffprobe"}))
@@ -165,6 +167,7 @@ func TestMoveWorkerRestoresRootsAndConfirmedConflictsOnVerificationFailure(t *te
 }
 
 func TestMoveWorkerCanRemoveOnlyOldManagedFilesAfterSwitch(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, _ := newMoveFixture(t, false, true)
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
 	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository), moveWorkerSettings{root: oldRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
@@ -186,6 +189,7 @@ func TestMoveWorkerCanRemoveOnlyOldManagedFilesAfterSwitch(t *testing.T) {
 }
 
 func TestMoveWorkerResumesAfterCleanupBeforeSuccessRecord(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, _ := newMoveFixture(t, false, true)
 	repository := &moveWorkerRepository{
 		workerRepository: &workerRepository{operation: operation, installation: installation},
@@ -211,6 +215,7 @@ func TestMoveWorkerResumesAfterCleanupBeforeSuccessRecord(t *testing.T) {
 }
 
 func TestMoveWorkerRestoresOldRootWhenPostSwitchCleanupFails(t *testing.T) {
+	t.Parallel()
 	oldRoot, _, operation, installation, snapshot := newMoveFixture(t, false, true)
 	repository := &moveWorkerRepository{
 		workerRepository: &workerRepository{operation: operation, installation: installation},
@@ -240,6 +245,7 @@ func TestMoveWorkerRestoresOldRootWhenPostSwitchCleanupFails(t *testing.T) {
 }
 
 func TestMoveWorkerFinishesInterruptedRollback(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	operation.State, operation.Stage = "running", "rolled_back"
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
@@ -262,6 +268,7 @@ func TestMoveWorkerFinishesInterruptedRollback(t *testing.T) {
 }
 
 func TestReconcilePartialMovePublicationRestoresConfirmedTargetOnRetry(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
 	operation.State, operation.Stage = "running", "commit_targets"
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
@@ -363,6 +370,7 @@ func TestReconcilePartialMovePublicationRestoresConfirmedTargetOnRetry(t *testin
 }
 
 func TestReconcilePostSwitchMovePreservesStagingAndRetryRollsBack(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	repository := &moveWorkerRepository{
 		workerRepository: &workerRepository{operation: operation, installation: installation},
@@ -429,6 +437,7 @@ func TestReconcilePostSwitchMovePreservesStagingAndRetryRollsBack(t *testing.T) 
 }
 
 func TestMoveWorkerResumesPendingRollbackBeforeFilesystemChanges(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	operation.State, operation.Stage = "running", "rollback_pending"
 	seedMovePublication(t, newRoot, operation.ID, snapshot, true)
@@ -449,6 +458,7 @@ func TestMoveWorkerResumesPendingRollbackBeforeFilesystemChanges(t *testing.T) {
 }
 
 func TestMoveWorkerRollbackPreservesByteIdenticalTargetAddedAfterCommitStage(t *testing.T) {
+	t.Parallel()
 	oldRoot, _, operation, installation, snapshot := newMoveFixture(t, false, false)
 	operation.State, operation.Stage = "running", "commit_targets"
 	unknownTarget := snapshot.Files[0].TargetPath
@@ -485,6 +495,7 @@ func TestMoveWorkerRollbackPreservesByteIdenticalTargetAddedAfterCommitStage(t *
 }
 
 func TestInstallationWorkerRollsBackPublishedTargetAfterResumedVerificationFailure(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
 	operation.State, operation.Stage = "running", "commit_targets"
 	staging := seedMovePublication(t, newRoot, operation.ID, snapshot, true)
@@ -517,6 +528,7 @@ func TestInstallationWorkerRollsBackPublishedTargetAfterResumedVerificationFailu
 }
 
 func TestInstallationWorkerResumesRollbackAfterEachConfirmedOriginalRestore(t *testing.T) {
+	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
 	secondConflict := snapshot.Files[1].TargetPath
 	if err := os.WriteFile(secondConflict, []byte("second confirmed unknown target"), 0o644); err != nil {
@@ -569,6 +581,7 @@ func TestInstallationWorkerResumesRollbackAfterEachConfirmedOriginalRestore(t *t
 }
 
 func TestInstallationWorkerRedeliveryCleansInterruptedOldSourceRestoreTemporary(t *testing.T) {
+	t.Parallel()
 	for _, checkpoint := range []string{
 		"original_journaled", "original_linked", "source_allocated", "partial_copy", "copy_complete", "ready_recorded",
 		"source_removed", "source_published", "before_old_root_transaction", "rolled_back",
@@ -743,6 +756,7 @@ func TestInstallationWorkerRedeliveryCleansInterruptedOldSourceRestoreTemporary(
 }
 
 func TestInstallationWorkerOldSourceStagingCollisionPreservesUnknownData(t *testing.T) {
+	t.Parallel()
 	for _, collisionIndex := range []int{0, 1} {
 		t.Run(fmt.Sprintf("source_%d", collisionIndex), func(t *testing.T) {
 			// Given the two independent queued-move collision images from R5.
@@ -796,6 +810,7 @@ func dispatchMove(t *testing.T, repository *moveWorkerRepository, root string) e
 }
 
 func TestInstallationWorkerPreparesSourceWitnessesBeforeSwitch(t *testing.T) {
+	t.Parallel()
 	// Given a queued move whose root transaction observes the actual disk state.
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	initialSources := make([]os.FileInfo, len(snapshot.Files))
@@ -869,6 +884,7 @@ func TestInstallationWorkerPreparesSourceWitnessesBeforeSwitch(t *testing.T) {
 }
 
 func TestInstallationWorkerFailsBeforeSwitchForUnprovenWitness(t *testing.T) {
+	t.Parallel()
 	for _, index := range []int{0, 1} {
 		for _, witnessKind := range []string{"original", "copy"} {
 			for _, collisionKind := range []string{"equal_bytes", "directory"} {
@@ -959,6 +975,7 @@ func TestInstallationWorkerFailsBeforeSwitchForUnprovenWitness(t *testing.T) {
 }
 
 func TestInstallationWorkerPreservesIndependentSourceAfterRootSwitch(t *testing.T) {
+	t.Parallel()
 	for _, index := range []int{0, 1} {
 		t.Run(fmt.Sprintf("source_%d", index), func(t *testing.T) {
 			// Given an independent operator inode replacing a source after switch.
@@ -1008,6 +1025,7 @@ func TestInstallationWorkerPreservesIndependentSourceAfterRootSwitch(t *testing.
 }
 
 func TestInstallationWorkerPreservesSourceWhenOwnershipEvidenceIsMissing(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		content string
 		intent  bool
@@ -1076,6 +1094,7 @@ func TestInstallationWorkerPreservesSourceWhenOwnershipEvidenceIsMissing(t *test
 }
 
 func TestInstallationWorkerResumesSourceCleanupAfterEachUnlink(t *testing.T) {
+	t.Parallel()
 	for _, removed := range []int{0, 1, 2} {
 		t.Run(fmt.Sprintf("after_%d_unlinks", removed), func(t *testing.T) {
 			// Given a real switched image with immutable ownership witnesses.
@@ -1131,6 +1150,7 @@ func TestInstallationWorkerResumesSourceCleanupAfterEachUnlink(t *testing.T) {
 }
 
 func TestInstallationWorkerPreservesAliasOfPreparedRestoreWitness(t *testing.T) {
+	t.Parallel()
 	// Given an operator alias of a prepared copy after source publication.
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	operation.State, operation.Stage = "running", "rollback_pending"
@@ -1181,6 +1201,7 @@ func TestInstallationWorkerPreservesAliasOfPreparedRestoreWitness(t *testing.T) 
 }
 
 func TestInstallationWorkerFailsSafelyForAliasedPartialWitness(t *testing.T) {
+	t.Parallel()
 	// Given a pre-switch copy that became aliased before its interrupted write.
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, true)
 	operation.State, operation.Stage = "running", "prepare_restore"
@@ -1231,6 +1252,7 @@ func TestInstallationWorkerFailsSafelyForAliasedPartialWitness(t *testing.T) {
 }
 
 func TestInstallationWorkerRejectsUnknownOldSourceRestoreEvidence(t *testing.T) {
+	t.Parallel()
 	for _, checkpoint := range []string{"restore_pending", "source_published", "rolled_back"} {
 		for _, spoof := range []string{"equal_bytes", "directory_marker"} {
 			t.Run(checkpoint+"/"+spoof, func(t *testing.T) {
@@ -1316,6 +1338,7 @@ func TestInstallationWorkerRejectsUnknownOldSourceRestoreEvidence(t *testing.T) 
 }
 
 func TestInstallationWorkerPreservesReusedWitnessInodeNumber(t *testing.T) {
+	t.Parallel()
 	// Given an old cleanup record whose device/inode number now names another
 	// incarnation. Seed the reused numbers directly, without timing inode reuse.
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
@@ -1359,6 +1382,7 @@ func TestInstallationWorkerPreservesReusedWitnessInodeNumber(t *testing.T) {
 }
 
 func TestInstallationWorkerRestorationPreservesOperatorHardlinkAlias(t *testing.T) {
+	t.Parallel()
 	// Given an operator hardlink to a source that changes after the root switch.
 	oldRoot, _, operation, installation, snapshot := newMoveFixture(t, false, true)
 	source := snapshot.Files[0].SourcePath
@@ -1394,6 +1418,7 @@ func TestInstallationWorkerRestorationPreservesOperatorHardlinkAlias(t *testing.
 }
 
 func TestInstallationWorkerPreservesByteEqualUnknownConfirmedRestoreTemporary(t *testing.T) {
+	t.Parallel()
 	// Given a confirmed backup and an independent, byte-equal restore temporary.
 	_, newRoot, operation, installation, snapshot := newMoveFixture(t, true, false)
 	operation.State, operation.Stage = "running", "rollback_pending"
@@ -1432,6 +1457,7 @@ func TestInstallationWorkerPreservesByteEqualUnknownConfirmedRestoreTemporary(t 
 }
 
 func TestInstallationWorkerRedeliveryCleansInterruptedRestoreTemporary(t *testing.T) {
+	t.Parallel()
 	for _, restoredCount := range []int{1, 2} {
 		t.Run(fmt.Sprintf("after_%d_confirmed_originals", restoredCount), func(t *testing.T) {
 			oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, false)
@@ -1531,6 +1557,7 @@ func TestInstallationWorkerRedeliveryCleansInterruptedRestoreTemporary(t *testin
 }
 
 func TestInstallationWorkerRollbackDoesNotAdoptByteIdenticalUnknownConflictTarget(t *testing.T) {
+	t.Parallel()
 	_, newRoot, operation, installation, snapshot := newMoveFixture(t, true, false)
 	operation.State, operation.Stage = "running", "rollback_pending"
 	staging := seedMovePublication(t, newRoot, operation.ID, snapshot, true)
@@ -1623,6 +1650,7 @@ type jobsMovePublicationFile struct {
 }
 
 func TestInstallationWorkerRedeliveryCleansSucceededMoveStaging(t *testing.T) {
+	t.Parallel()
 	_, newRoot, operation, installation, _ := newMoveFixture(t, false, false)
 	operation.State, operation.Stage = "succeeded", "succeeded"
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: newRoot}
@@ -1650,6 +1678,7 @@ func TestInstallationWorkerRedeliveryCleansSucceededMoveStaging(t *testing.T) {
 }
 
 func TestInstallationWorkerSurfacesAndRecoversSucceededMoveCleanupFailure(t *testing.T) {
+	t.Parallel()
 	_, newRoot, operation, installation, _ := newMoveFixture(t, false, false)
 	operation.State, operation.Stage = "succeeded", "succeeded"
 	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: newRoot}

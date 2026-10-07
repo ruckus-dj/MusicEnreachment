@@ -25,8 +25,8 @@ const unavailableSafeReason = "The configured source directory is unavailable or
 // inventory, and the rescan clears the reason and preserves the identity of an
 // unchanged file.
 func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/unavailable")
@@ -110,8 +110,8 @@ func TestSourceRootUnavailableKeepsInventoryWithPostgreSQL(t *testing.T) {
 // older operation's late report nor the operation that installed the generation
 // may overwrite the available state.
 func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/superseded")
@@ -145,8 +145,8 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 // through the real retry transaction, then fails before it starts its traversal,
 // which is how an unreadable root is reported.
 func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -201,8 +201,8 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 // the SQL check cannot enforce: a reason that is non-NULL but empty is not a
 // usable message, so the repository refuses it before any write.
 func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/empty-reason")
@@ -223,8 +223,8 @@ func TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL(t *testing.T) {
 // targeted update only applies to a scan of a root: an operation without a
 // source root target is refused.
 func TestSourceRootUnavailableRejectsNonScanOperationWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/non-scan")
@@ -276,8 +276,8 @@ func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, ope
 // observation and an edit that moved the root to another path each supersede
 // that observation and are never overwritten by it.
 func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/start-unavailable")
@@ -350,8 +350,8 @@ func TestSourceRootUnavailableForRootGuardsANewerResultWithPostgreSQL(t *testing
 // boundary the start path relies on: an empty reason and a missing root id are
 // refused before any write.
 func TestSourceRootUnavailableForRootRequiresAReasonAndARootWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/start-boundary")

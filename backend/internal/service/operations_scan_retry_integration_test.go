@@ -19,8 +19,8 @@ import (
 // to be discovered there, drop the candidates of the failed attempt and be
 // delivered under the scan job kind instead of the generic operation kind.
 func TestScanRetryThroughTheOperationsServiceWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	inventory := persistence.NewSourceInventoryRepository(database)

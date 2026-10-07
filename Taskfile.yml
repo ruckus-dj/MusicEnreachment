@@ -63,11 +63,18 @@ tasks:
       - go build -o ../build/backend/ ./cmd/server
 
   test:
-    desc: Run backend and frontend tests
+    desc: Run backend, frontend, and tools tests concurrently
+    deps: [go:test, frontend:test, tools:test]
+
+  frontend:test:
+    internal: true
     deps: [frontend:install]
     cmds:
-      - task: go:test
       - npm --prefix frontend run test
+
+  tools:test:
+    internal: true
+    cmds:
       - node --test tools/check-generated.test.mjs
 
   migrate:rollback:
@@ -80,7 +87,7 @@ tasks:
     internal: true
     dir: backend
     cmds:
-      - go test -tags=integration ./...
+      - go test -tags=integration -count=1 -p 8 -parallel 8 ./...
 
   format:
     desc: Apply Go and frontend formatting

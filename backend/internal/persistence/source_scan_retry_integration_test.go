@@ -122,8 +122,8 @@ func holdSourceScanRetryRootDeletion(ctx context.Context, database *bun.DB, root
 // attempt before it enqueues the next traversal under the scan kind, and leaves
 // the previous successful inventory exactly as it was.
 func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -211,8 +211,8 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 // the cleanup and the enqueue are one transaction, so the failed operation keeps
 // its state and its candidates and no job is left behind.
 func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -249,8 +249,8 @@ func TestSourceScanRetryIsAtomicWithPostgreSQL(t *testing.T) {
 // and an operation that is not a scan. None of them may insert a job, change the
 // operation or drop the candidates of the failed attempt.
 func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)
@@ -322,8 +322,8 @@ func TestSourceScanRetryRefusalsWithPostgreSQL(t *testing.T) {
 // before it reads anything: the retry cannot pass the deletion and must refuse
 // the scan instead of resurrecting a job for a root that is gone.
 func TestSourceScanRetrySerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	repository := persistence.NewSetupManagerRepository(database)

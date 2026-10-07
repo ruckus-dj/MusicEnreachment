@@ -19,8 +19,8 @@ import (
 const sourceInventoryMigrationName = "20261003000000"
 
 func TestSourceInventorySchemaWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 
@@ -149,8 +149,8 @@ func TestSourceInventorySchemaWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceScanCandidatesFollowOperationWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/candidate-incoming", "Candidates")
@@ -185,8 +185,8 @@ func TestSourceScanCandidatesFollowOperationWithPostgreSQL(t *testing.T) {
 }
 
 func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/active-scan-incoming", "ActiveScan")
@@ -267,8 +267,8 @@ func TestActiveSourceScanUniquenessWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceRootDeletionSetsOperationTargetToNullWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	repository := persistence.NewSetupManagerRepository(database)
 	ctx := context.Background()
 	root := createSourceRoot(t, ctx, repository, database, "/srv/terminal-incoming", "Terminal")
@@ -291,6 +291,7 @@ func TestSourceRootDeletionSetsOperationTargetToNullWithPostgreSQL(t *testing.T)
 }
 
 func TestSourceInventoryRollbackWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	collection, err := migrations.Collection()
 	if err != nil {

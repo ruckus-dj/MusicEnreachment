@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -77,8 +76,8 @@ func (factory *recordingScanProbeFactory) New(string) (service.SourceProbe, erro
 // only a root directory the worker cannot access is recorded as unavailable,
 // which the next successful scan restores.
 func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -310,25 +309,22 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 // and seek responses let the real transport gate verify its full witness.
 func writeScanDispatchFFmpeg(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SettingsRepository, toolsRoot string) {
 	t.Helper()
-	t.Setenv("SCANNING_PROBE_VERSION", "1.6.1")
-	t.Setenv("SCANNING_PROBE_LOG", filepath.Join(toolsRoot, "probe-log"))
 	directory := filepath.Join(toolsRoot, "ffmpeg", "1.6.1")
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatalf("create the managed ffmpeg directory: %v", err)
 	}
 	names := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
 	target := filepath.Join(directory, names[0])
-	build := exec.Command("go", "build", "-o", target, "./testdata/scanningprobe")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatalf("build the scan probe helper: %v", err)
-	}
-	contents, err := os.ReadFile(target)
+	source, err := cachedFakeProgram("scanningprobe")
 	if err != nil {
-		t.Fatalf("read the scan probe helper: %v", err)
+		t.Fatalf("prepare scan probe helper: %v", err)
+	}
+	configuration := scanningProbeConfig{Version: "1.6.1", LogPath: filepath.Join(toolsRoot, "probe-log")}
+	if err := copyFakeExecutable(source, target, configuration); err != nil {
+		t.Fatalf("write the managed %s: %v", names[0], err)
 	}
 	for _, name := range names[1:] {
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
+		if err := copyFakeExecutable(source, filepath.Join(directory, name), configuration); err != nil {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}

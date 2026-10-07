@@ -41,8 +41,7 @@ type sourceAnalysisStartIntegration struct {
 func newSourceAnalysisStartIntegration(t *testing.T, completeSetup, activate bool) sourceAnalysisStartIntegration {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	client := openSourceScanRiver(t, database)
 	registry := settings.New(persistence.NewSettingsRepository(database), nil)
 	if completeSetup {

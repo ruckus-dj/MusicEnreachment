@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -37,17 +36,16 @@ func buildAnalysisProbeExecutables(t *testing.T, toolsRoot string) string {
 	}
 	names := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
 	target := filepath.Join(directory, names[0])
-	build := exec.Command("go", "build", "-o", target, "./testdata/analysisprobe")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatalf("build the analysis probe helper: %v", err)
-	}
-	contents, err := os.ReadFile(target)
+	source, err := cachedFakeProgram("analysisprobe")
 	if err != nil {
-		t.Fatalf("read the analysis probe helper: %v", err)
+		t.Fatalf("prepare analysis probe helper: %v", err)
+	}
+	configuration := analysisProbeConfig{LogPath: filepath.Join(toolsRoot, "probe-log")}
+	if err := copyFakeExecutable(source, target, configuration); err != nil {
+		t.Fatalf("write the managed %s: %v", names[0], err)
 	}
 	for _, name := range names[1:] {
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
+		if err := copyFakeExecutable(source, filepath.Join(directory, name), configuration); err != nil {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}

@@ -20,8 +20,8 @@ import (
 // It must return the old state (no result, still-active operation), never a mixed
 // view containing neither.
 func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)
@@ -61,8 +61,8 @@ func TestSourceLocationDetailIsOneSnapshotAcrossAnalysisApplyWithPostgreSQL(t *t
 // snapshot and reached the variant query. The read must neither lock the row nor
 // fail because the concurrent unlink/delete committed.
 func TestSourceLocationDetailSurvivesConcurrentOrphanVariantDeleteWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx, cancel := context.WithTimeout(context.Background(), analysisRaceTimeout)
 	defer cancel()
 	inventory := persistence.NewSourceInventoryRepository(database)

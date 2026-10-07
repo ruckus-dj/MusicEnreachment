@@ -13,8 +13,7 @@ import (
 )
 
 func TestInitializePlatformRollsBackBothKeysWhenSecondInsertFails(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	if _, err := database.ExecContext(ctx, "ALTER TABLE app_setting ADD CONSTRAINT reject_goarch CHECK (setting_name <> 'instance.goarch')"); err != nil {
 		t.Fatal(err)
@@ -32,8 +31,7 @@ func TestInitializePlatformRollsBackBothKeysWhenSecondInsertFails(t *testing.T) 
 }
 
 func TestInitializePlatformDoesNotCompletePartialPlatform(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSettingsRepository(database)
 	if err := repository.Set(ctx, settings.PlatformGOOSKey, "linux"); err != nil {
@@ -53,8 +51,7 @@ func TestInitializePlatformDoesNotCompletePartialPlatform(t *testing.T) {
 }
 
 func TestInitializePlatformConcurrentStartsKeepOnePlatform(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSettingsRepository(database)
 	registry := settings.New(repository, nil)
@@ -92,8 +89,7 @@ func TestInitializePlatformConcurrentStartsKeepOnePlatform(t *testing.T) {
 }
 
 func TestMusicBrainzVerificationRejectsStaleIdentityWithSameValues(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	registry := settings.New(persistence.NewSettingsRepository(database), nil)
 	if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", "https://mb.example.com"); err != nil {
@@ -117,8 +113,7 @@ func TestMusicBrainzVerificationRejectsStaleIdentityWithSameValues(t *testing.T)
 }
 
 func TestMusicBrainzConcurrentConfigChangeCannotKeepOldVerification(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	registry := settings.New(persistence.NewSettingsRepository(database), nil)
 	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {

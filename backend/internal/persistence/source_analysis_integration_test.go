@@ -22,8 +22,7 @@ import (
 // is a no-op, and every disagreement with the immutable snapshot is refused with
 // nothing written.
 func TestSourceAnalysisApplyWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -95,8 +94,7 @@ func TestSourceAnalysisApplyWithPostgreSQL(t *testing.T) {
 // location rows, and the held previous variant must all still match the
 // immutable input snapshot, and a mismatch writes nothing.
 func TestSourceAnalysisSnapshotFencesWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -190,8 +188,7 @@ func TestSourceAnalysisSnapshotFencesWithPostgreSQL(t *testing.T) {
 // a held variant survives an unrelated orphan cleanup while its analysis is
 // active, and a successful replacement clears the hold and removes it.
 func TestSourceAnalysisVariantHoldWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -265,8 +262,7 @@ func TestSourceAnalysisVariantHoldWithPostgreSQL(t *testing.T) {
 // rolls back. The inserted variant disappears, the previous variant and its link
 // and result survive, the operation stays running, and both read holds remain.
 func TestSourceAnalysisLateFailureRollsBackWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -318,8 +314,8 @@ func TestSourceAnalysisLateFailureRollsBackWithPostgreSQL(t *testing.T) {
 // configured-path change invalidates every link of the previous path, and a
 // failed apply leaves both inventory and links untouched.
 func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -500,8 +496,8 @@ func TestSourceScanReconcilesVariantLinksWithPostgreSQL(t *testing.T) {
 // active analysis blocks the deletion and keeps its variant, and typed reads are
 // scoped to the owning root.
 func TestSourceAnalysisDeletionCleanupWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 

@@ -34,8 +34,7 @@ type analysisRetryFixture struct {
 func newAnalysisRetryFixture(t *testing.T, withPrevious bool) analysisRetryFixture {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-retry")

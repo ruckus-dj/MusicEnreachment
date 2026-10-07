@@ -96,8 +96,8 @@ func requireSourceScanGeneration(t *testing.T, ctx context.Context, inventory *p
 // only the file whose probe failed, and a scan that fails leaves both the
 // inventory and the candidate table as they were.
 func TestSourceScanInventoryRoundTripWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	operations := service.NewOperations(persistence.NewSetupManagerRepository(database))

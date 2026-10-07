@@ -20,6 +20,7 @@ import (
 // linked. The disabled root makes the worker fail before probing, so this wake is
 // the failure notification itself and not an earlier stage transition.
 func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

@@ -26,8 +26,7 @@ type analysisRaceFixture struct {
 func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, path)
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
@@ -48,6 +47,7 @@ func newAnalysisRaceFixture(t *testing.T, path string) analysisRaceFixture {
 // the query barrier) before the competing transaction commits, so the refusal
 // is decided at the transaction boundary, not by scheduling.
 func TestSourceAnalysisStartRacesRootMutationsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	run := func(t *testing.T, path string, compete func(context.Context, bun.Tx, analysisRaceFixture) error, want error) {
 		t.Helper()

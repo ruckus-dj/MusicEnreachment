@@ -18,8 +18,8 @@ import (
 )
 
 func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)

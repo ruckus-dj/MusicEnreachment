@@ -15,8 +15,8 @@ import (
 )
 
 func TestSourceScanDeliveryFencesMutationsWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, inventory, "/srv/scan-delivery-fence")

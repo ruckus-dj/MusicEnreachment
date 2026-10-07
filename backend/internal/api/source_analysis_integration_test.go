@@ -23,6 +23,7 @@ import (
 // variant read and the active-analysis discovery are PostgreSQL behaviour, not
 // properties of a fake.
 func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, _ := openAPTransitionDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

@@ -31,6 +31,7 @@ import (
 )
 
 func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openAPTransitionDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

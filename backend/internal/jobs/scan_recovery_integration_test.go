@@ -30,6 +30,7 @@ import (
 // walks the tree again, and a redelivery of an applied scan is a no-op. The
 // install policy the same recovery runs is asserted unchanged at the end.
 func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -279,6 +280,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 }
 
 func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, _ := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx := context.Background()

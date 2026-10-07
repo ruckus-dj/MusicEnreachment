@@ -38,8 +38,7 @@ type sourceScanStartIntegration struct {
 func newSourceScanStartIntegration(t *testing.T, platform settings.PlatformState, completeSetup bool) sourceScanStartIntegration {
 	t.Helper()
 	ctx := context.Background()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	client := openSourceScanRiver(t, database)
 	registry := settings.New(persistence.NewSettingsRepository(database), nil)
 	if completeSetup {
@@ -166,6 +165,7 @@ func scanSourceJobs(t *testing.T, ctx context.Context, database *bun.DB) int {
 // describe the root and nothing else, the start writes no inventory, and the
 // source directory is left exactly as the operator has it.
 func TestSourceScanStartEnqueuesTheOperationAndItsJobWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
 	track := filepath.Join(fixture.source, "album", "track.flac")
@@ -240,6 +240,7 @@ func TestSourceScanStartEnqueuesTheOperationAndItsJobWithPostgreSQL(t *testing.T
 // operation nor a job, and the root accepts a new scan once the first one is
 // terminal.
 func TestSourceScanStartRefusesASecondScanOfTheSameRootWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
 
@@ -287,6 +288,7 @@ func TestSourceScanStartRefusesASecondScanOfTheSameRootWithPostgreSQL(t *testing
 // longer exists. None of them may leave an operation, a job or a reverted root
 // behind.
 func TestSourceScanStartRefusesDisabledRootUnfinishedSetupAndAnUnusableInstance(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
 
@@ -362,6 +364,7 @@ func TestSourceScanStartRefusesDisabledRootUnfinishedSetupAndAnUnusableInstance(
 // insert of a real start: the refusal must leave neither an operation nor a job,
 // and it must release the root so the next start succeeds.
 func TestSourceScanStartRollsBackAFailedRiverInsertWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
 	unreachable := errors.New("River is unreachable")
@@ -401,6 +404,7 @@ func TestSourceScanStartRollsBackAFailedRiverInsertWithPostgreSQL(t *testing.T) 
 // outcome is decided by the lock and not by scheduling: a scan is never
 // recorded for a deleted root, and a root with an active scan is never deleted.
 func TestSourceScanStartSerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
 

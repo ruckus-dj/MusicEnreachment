@@ -48,8 +48,8 @@ type analysisDispatchFixture struct {
 func newAnalysisDispatchFixture(t *testing.T) analysisDispatchFixture {
 	t.Helper()
 	ctx := context.Background()
-	database, databaseURL := openDispatchDatabase(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
+	databaseURL := testpostgres.URL(t, database)
 	settingsRepository := persistence.NewSettingsRepository(database)
 	toolsRoot := t.TempDir()
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
@@ -59,7 +59,6 @@ func newAnalysisDispatchFixture(t *testing.T) analysisDispatchFixture {
 		t.Fatalf("initialize the instance platform: %v", err)
 	}
 	probeLog := filepath.Join(toolsRoot, "probe-log")
-	t.Setenv("ANALYSIS_PROBE_LOG", probeLog)
 	installationID, helperPath := writeAnalysisDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot, platform)
 
 	setup := persistence.NewSetupManagerRepository(database)

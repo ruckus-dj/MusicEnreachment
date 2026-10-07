@@ -16,8 +16,8 @@ import (
 )
 
 func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, repository, "/srv/step-apply")
@@ -202,8 +202,8 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	root := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-cleanup")
@@ -312,8 +312,8 @@ func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T
 }
 
 func TestConcurrentSourceSHA256ApplyUsesOneCanonicalVariantWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewSourceInventoryRepository(database)
 	digest := make([]byte, 32)

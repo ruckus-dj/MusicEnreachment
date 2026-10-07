@@ -22,6 +22,7 @@ import (
 // duplicate worker delivery re-reads nothing; and an analysis whose real River
 // delivery is still scheduled is preserved.
 func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	t.Run("interrupted before commit", func(t *testing.T) {
 		fixture := newAnalysisDispatchFixture(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

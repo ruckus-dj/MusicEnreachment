@@ -22,8 +22,7 @@ import (
 // sees. An activation that commits after the enqueue cannot touch the queued
 // snapshot, which is covered by the immutable-snapshot tests.
 func TestSourceAnalysisEnqueueFencesActiveInstallationUnderLockWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)

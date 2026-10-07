@@ -25,8 +25,8 @@ const sourceRootPathPlatformMigration = "20261004000000"
 // runtime filesystem: "C:\\Music" is a valid Windows path that cannot exist on
 // this Unix runner.
 func TestSourceRootConfiguredPathPlatformsWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 
@@ -55,6 +55,7 @@ func TestSourceRootConfiguredPathPlatformsWithPostgreSQL(t *testing.T) {
 // group, so Rollback removes exactly that pair and leaves the schema otherwise
 // intact. It proves the down migration restores the POSIX-only check.
 func TestSourceRootConfiguredPathConstraintRollbackWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database := testpostgres.Open(t)
 	testpostgres.Reset(t, database)
 	ctx := context.Background()

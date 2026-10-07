@@ -14,6 +14,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,22 @@ import (
 // release is the release identity the fixture installs; the version line must
 // echo it for the lifecycle's read-only verification to accept the executable.
 const release = "1.6.1"
+
+type config struct {
+	LogPath string `json:"log_path"`
+	Fail    string `json:"fail"`
+}
+
+func readConfig() config {
+	file, err := os.Open(os.Args[0] + ".json")
+	if err != nil {
+		return config{}
+	}
+	defer file.Close()
+	var result config
+	_ = json.NewDecoder(file).Decode(&result)
+	return result
+}
 
 func main() {
 	for _, argument := range os.Args[1:] {
@@ -40,13 +57,14 @@ func main() {
 		writeSeekWitnessPackets()
 		return
 	}
-	if path := os.Getenv("ANALYSIS_PROBE_LOG"); path != "" {
+	configuration := readConfig()
+	if path := configuration.LogPath; path != "" {
 		if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			_, _ = file.WriteString("probe\n")
 			_ = file.Close()
 		}
 	}
-	switch os.Getenv("ANALYSIS_PROBE_FAIL") {
+	switch configuration.Fail {
 	case "nonzero":
 		os.Exit(3)
 	case "malformed":

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,12 +14,30 @@ import (
 
 const seekPackets = `{"packets":[{"pts_time":"8.0","data_hash":"SHA256:0000000000000000000000000000000000000000000000000000000000000000"},{"pts_time":"0.0","data_hash":"SHA256:1111111111111111111111111111111111111111111111111111111111111111"}]}`
 
+type config struct {
+	Version string `json:"version"`
+	LogPath string `json:"log_path"`
+	NoAudio bool   `json:"no_audio"`
+}
+
+func readConfig() config {
+	file, err := os.Open(os.Args[0] + ".json")
+	if err != nil {
+		return config{}
+	}
+	defer file.Close()
+	var result config
+	_ = json.NewDecoder(file).Decode(&result)
+	return result
+}
+
 func main() {
+	configuration := readConfig()
 	for _, argument := range os.Args[1:] {
 		switch argument {
 		case "-version":
 			name := strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0]))
-			version := os.Getenv("SCANNING_PROBE_VERSION")
+			version := configuration.Version
 			if version == "" {
 				version = "1.6.1"
 			}
@@ -33,7 +52,7 @@ func main() {
 		}
 	}
 
-	if path := os.Getenv("SCANNING_PROBE_LOG"); path != "" {
+	if path := configuration.LogPath; path != "" {
 		if file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			_, _ = file.WriteString("probe\n")
 			_ = file.Close()
@@ -44,10 +63,10 @@ func main() {
 	case strings.Contains(string(data), "unreadable") || strings.Contains(string(data), "broken"):
 		_, _ = os.Stderr.WriteString("the probe failed\n")
 		os.Exit(1)
-	case os.Getenv("SCANNING_PROBE_NO_AUDIO") == "1" || strings.Contains(string(data), "video only"):
-		_, _ = os.Stdout.WriteString(`{"streams":[{"codec_type":"video"}]}`)
+	case configuration.NoAudio || strings.Contains(string(data), "video only"):
+		_, _ = os.Stdout.WriteString(`{"format":{},"streams":[{"codec_type":"video"}]}`)
 	default:
-		_, _ = os.Stdout.WriteString(`{"streams":[{"codec_type":"audio"}]}`)
+		_, _ = os.Stdout.WriteString(`{"format":{},"streams":[{"codec_type":"audio"}]}`)
 	}
 }
 

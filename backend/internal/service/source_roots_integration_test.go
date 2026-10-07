@@ -39,8 +39,7 @@ func (repository *sourceRootDeleteBarrier) DeleteSourceRoot(ctx context.Context,
 
 func newSourceRootsIntegration(t *testing.T) sourceRootsIntegration {
 	t.Helper()
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	database := testpostgres.OpenMigrated(t)
 	inventory := persistence.NewSourceInventoryRepository(database)
 	tools, output := t.TempDir(), t.TempDir()
 	return sourceRootsIntegration{
@@ -108,6 +107,7 @@ func writeSourceFile(t *testing.T, path, contents string) {
 }
 
 func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	integration := newSourceRootsIntegration(t)
 	source, otherSource := t.TempDir(), t.TempDir()
@@ -211,6 +211,7 @@ func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceRootEditRacesActiveScanWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	integration := newSourceRootsIntegration(t)
 	source, otherSource := t.TempDir(), t.TempDir()
@@ -286,6 +287,7 @@ func holdActiveScan(ctx context.Context, database *bun.DB, rootID uuid.UUID, loc
 }
 
 func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	integration := newSourceRootsIntegration(t)
 	source := t.TempDir()
@@ -328,6 +330,7 @@ func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
 }
 
 func TestSourceRootDeletionRechecksConfirmationAfterServiceReadWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"path patch", "scan inventory change"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
@@ -391,6 +394,7 @@ func TestSourceRootDeletionRechecksConfirmationAfterServiceReadWithPostgreSQL(t 
 // table lock before a competing root PATCH or scan inventory apply. Once deletion
 // commits, the waiting writer must observe the missing root, never recreate it.
 func TestSourceRootDeletionSerializesWritersWithPostgreSQL(t *testing.T) {
+	t.Parallel()
 	for _, writer := range []string{"path patch", "scan inventory apply"} {
 		t.Run(writer, func(t *testing.T) {
 			baseCtx := context.Background()

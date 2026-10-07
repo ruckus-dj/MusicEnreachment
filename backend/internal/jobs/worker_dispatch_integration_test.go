@@ -37,6 +37,7 @@ import (
 )
 
 func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -142,6 +143,7 @@ func TestInstallationWorkerRiverDispatchPostgreSQL(t *testing.T) {
 }
 
 func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -346,6 +348,7 @@ func TestInstallationWorkerRiverStageInterruptionRecoveryPostgreSQL(t *testing.T
 }
 
 func TestMoveWorkerRiverInterruptionRecoveryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -500,6 +503,7 @@ func TestMoveWorkerRiverInterruptionRecoveryPostgreSQL(t *testing.T) {
 }
 
 func TestMoveWorkerRiverSwitchAndCleanupInterruptionRecoveryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -621,6 +625,7 @@ func TestMoveWorkerRiverSwitchAndCleanupInterruptionRecoveryPostgreSQL(t *testin
 }
 
 func TestMoveWorkerRiverRecoversPublishedTargetBeforeOwnershipJournalPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -1175,6 +1180,7 @@ func dispatchZipWithExecutable(t *testing.T, name string, contents []byte) []byt
 var _ river.Worker[service.OperationJobArgs] = (*InstallationWorker)(nil)
 
 func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
+	t.Parallel()
 	database, databaseURL := openDispatchDatabase(t)
 	testpostgres.ResetAndMigrate(t, database)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

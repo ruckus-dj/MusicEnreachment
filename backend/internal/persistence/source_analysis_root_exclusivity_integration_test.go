@@ -20,8 +20,8 @@ import (
 // while a display-name edit is accepted and a root deletion succeeds once the
 // analysis is terminal.
 func TestSourceAnalysisEnqueueRootExclusivityWithPostgreSQL(t *testing.T) {
-	database := testpostgres.Open(t)
-	testpostgres.ResetAndMigrate(t, database)
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
