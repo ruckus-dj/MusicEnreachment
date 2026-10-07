@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -121,23 +122,28 @@ func TestParseFPCalcJSONAndVersion(t *testing.T) {
 
 func TestFPCalcFingerprintRunnerArgumentsAndExit(t *testing.T) {
 	process := &fakeFPCalcProcess{stdout: `{"duration":1,"fingerprint":"` + upstreamFingerprint + `"}`}
-	probe, _ := NewFPCalc("/managed/fpcalc")
-	probe.start = func(_ context.Context, executable string, args []string) (fpcalcProcess, error) {
-		if executable != "/managed/fpcalc" || !reflect.DeepEqual(args, []string{"-json", "--", "/server/source.wav"}) {
-			t.Fatalf("invocation %q %#v", executable, args)
+	executable := filepath.Join(t.TempDir(), "fpcalc")
+	source := filepath.Join(t.TempDir(), "source.wav")
+	probe, err := NewFPCalc(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe.start = func(_ context.Context, gotExecutable string, args []string) (fpcalcProcess, error) {
+		if gotExecutable != executable || !reflect.DeepEqual(args, []string{"-json", "--", source}) {
+			t.Fatalf("invocation %q %#v", gotExecutable, args)
 		}
 		return process, nil
 	}
-	if _, err := probe.Fingerprint(context.Background(), "/server/source.wav"); err != nil {
+	if _, err := probe.Fingerprint(context.Background(), source); err != nil {
 		t.Fatal(err)
 	}
 	if !process.waited {
 		t.Fatal("process was not reaped")
 	}
 	process = &fakeFPCalcProcess{stdout: "fpcalc version 1.6.1 (FFmpeg Lavc62.11.100)"}
-	probe.start = func(_ context.Context, executable string, args []string) (fpcalcProcess, error) {
-		if executable != "/managed/fpcalc" || !reflect.DeepEqual(args, []string{"-version"}) {
-			t.Fatalf("version invocation %q %#v", executable, args)
+	probe.start = func(_ context.Context, gotExecutable string, args []string) (fpcalcProcess, error) {
+		if gotExecutable != executable || !reflect.DeepEqual(args, []string{"-version"}) {
+			t.Fatalf("version invocation %q %#v", gotExecutable, args)
 		}
 		return process, nil
 	}
@@ -146,13 +152,16 @@ func TestFPCalcFingerprintRunnerArgumentsAndExit(t *testing.T) {
 	}
 	process = &fakeFPCalcProcess{stdout: `{"duration":1,"fingerprint":"` + upstreamFingerprint + `"}`, waitErr: errors.New("exit 1")}
 	probe.start = func(context.Context, string, []string) (fpcalcProcess, error) { return process, nil }
-	if _, err := probe.Fingerprint(context.Background(), "/server/source.wav"); err == nil {
+	if _, err := probe.Fingerprint(context.Background(), source); err == nil {
 		t.Fatal("accepted nonzero exit")
 	}
 }
 
 func TestFPCalcTimeoutAndOutputBounds(t *testing.T) {
-	probe, _ := NewFPCalc("/managed/fpcalc")
+	probe, err := NewFPCalc(filepath.Join(t.TempDir(), "fpcalc"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	probe.timeout = 10 * time.Millisecond
 	process := &fakeFPCalcProcess{block: true}
 	probe.start = func(context.Context, string, []string) (fpcalcProcess, error) { return process, nil }
@@ -180,7 +189,10 @@ func TestFPCalcTimeoutAndOutputBounds(t *testing.T) {
 // context is canceled there. run must still kill and reap exactly one child and
 // report the cancellation.
 func TestFPCalcCancelsWhileWaitingAfterPipesClose(t *testing.T) {
-	probe, _ := NewFPCalc("/managed/fpcalc")
+	probe, err := NewFPCalc(filepath.Join(t.TempDir(), "fpcalc"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	process := &pipeClosingFPCalcProcess{
 		stdout:      io.NopCloser(strings.NewReader(`{"duration":1,"fingerprint":"` + upstreamFingerprint + `"}`)),
 		stderr:      io.NopCloser(strings.NewReader("")),
@@ -277,7 +289,10 @@ func TestFPCalcRequiresAbsoluteExecutableAndInput(t *testing.T) {
 	if _, err := NewFPCalc("fpcalc"); err == nil {
 		t.Fatal("accepted relative executable")
 	}
-	probe, _ := NewFPCalc("/managed/fpcalc")
+	probe, err := NewFPCalc(filepath.Join(t.TempDir(), "fpcalc"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := probe.Fingerprint(context.Background(), "client-url"); err == nil {
 		t.Fatal("accepted relative source")
 	}
