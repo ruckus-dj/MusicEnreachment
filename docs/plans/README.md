@@ -8,13 +8,14 @@
 
 ## Следующий этап
 
-- [План 08: согласование Settings и Setup с дизайном](todo/08-settings-and-setup-design-corrections.md)
-  — IN PROGRESS: scoped confirmation переноса, доступные ошибки диалогов, сохранность
-  черновиков, retry загрузки, темы и backend-инварианты каталогов/initial Setup.
-  Реализация начата 2026-10-08; итоговая приёмка не выполнена.
-  Новых продуктовых решений план не вводит.
+Следующий этап не выбран; новые продуктовые решения здесь не утверждаются.
 
 ## Завершено
+
+- [План 08: согласование Settings и Setup с дизайном](done/08-settings-and-setup-design-corrections.md)
+  — COMPLETE (2026-10-08): C01–C08, полный `task verify`, реальные Setup/move,
+  browser UX и [независимая приёмка](../reports/plan08-independent-review-2026-10-08.md).
+  Binary provenance и платформенные/browser ограничения раскрыты в отчётах.
 
 - [План 07: автоматический поэтапный анализ](done/07-automatic-source-analysis.md)
   — COMPLETE (2026-10-07): полный `task verify`, реальный PostgreSQL/River прогон
