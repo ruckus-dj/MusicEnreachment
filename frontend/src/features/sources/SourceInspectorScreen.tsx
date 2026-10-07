@@ -168,11 +168,11 @@ export function SourceInspectorScreen({
             {busy && <p role="status">Выполняется запрос…</p>}
             {pending && (
               <p role="status">
-                {operation?.stage === "applying"
-                  ? "Сохранение результата этапа анализа."
-                  : operation?.stage === "probing"
-                    ? "Чтение технических данных ffprobe."
-                    : "Этап анализа поставлен в очередь."}
+                {operation?.state === "queued"
+                  ? "Этап анализа поставлен в очередь."
+                  : operation?.stage === "applying"
+                    ? "Сохранение результата этапа анализа."
+                    : "Выполняется этап анализа файла."}
               </p>
             )}
             {streamError && pending && (

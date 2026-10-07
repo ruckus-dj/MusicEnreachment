@@ -56,9 +56,8 @@ describe("source inspector operation wake-ups", () => {
     const initialOperation = responseFor("/api/operations/step-op");
     await openInspector();
     await initialOperation;
-    await observe(() =>
-      screen.getByRole("status").textContent?.includes("Этап анализа"),
-    );
+    await screen.findByText("Выполняется этап анализа файла.");
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
     const previousDetailReads = detailReads;
     const previousOperationReads = operationReads;
     phase = 1;

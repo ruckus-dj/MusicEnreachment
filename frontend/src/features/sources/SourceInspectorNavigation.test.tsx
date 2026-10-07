@@ -88,7 +88,7 @@ describe("inspector file navigation", () => {
     window.location.hash = "/sources/root-1/locations/file-1";
     render(<SourcesScreen />);
     await observe(
-      () => !!screen.queryByText("Чтение технических данных ffprobe."),
+      () => !!screen.queryByText("Выполняется этап анализа файла."),
     );
     const oldStream = stream();
     hold = true;

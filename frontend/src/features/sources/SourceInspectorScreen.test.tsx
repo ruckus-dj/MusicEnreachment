@@ -9,6 +9,7 @@ import {
   detailPath,
   observe,
   openInspector,
+  operation,
   result,
   stamp,
 } from "./sourceInspectorTestSupport";
@@ -36,6 +37,36 @@ function fingerprintStep(
 }
 
 describe("source inspector", () => {
+  it.each([
+    "probing",
+    "future-running-stage",
+  ])("describes a fingerprint-only running operation neutrally at stage %s", async (stage) => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            active_analysis_operation_id: "analysis-1",
+            steps: [fingerprintStep({ state: "running" })],
+          }),
+        ),
+      ),
+      http.get("/api/operations/analysis-1", () =>
+        HttpResponse.json(operation({ state: "running", stage })),
+      ),
+    );
+    await openInspector();
+    expect(
+      await screen.findByText("Выполняется этап анализа файла."),
+    ).toBeVisible();
+    expect(screen.getByText("old-fingerprint")).toBeVisible();
+    expect(
+      screen.queryByText("Чтение технических данных ffprobe."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Этап анализа поставлен в очередь."),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens a nested address and reads the source location", async () => {
     window.location.hash = "/sources/root-1/locations/file-1";
     render(<SourcesScreen />);
