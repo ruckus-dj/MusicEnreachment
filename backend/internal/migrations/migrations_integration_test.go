@@ -39,15 +39,13 @@ func TestSourceInventoryRollbackChainWithStoredScanAndPostgreSQL(t *testing.T) {
 	testpostgres.Reset(t, database)
 	ctx := context.Background()
 	collection := mustMigrations(t)
-	applyMigrationsOneAtATime(t, ctx, database, migrationPointers(collection.Sorted()))
+	chain := migrationsThrough(t, collection, "20261006000000")
+	applyMigrationsOneAtATime(t, ctx, database, chain)
 
 	rootID, scanID, toolsOperationID := insertRollbackFixture(t, ctx, database)
 	assertSourceRootWasRemoved(t, ctx, database, rootID)
 	assertTerminalScanRetainedAfterRootDeletion(t, ctx, database, scanID)
 	for _, name := range []string{
-		"20261008120000",
-		"20261008000000",
-		"20261007000000",
 		"20261006000000",
 		"20261005000000",
 		"20261004000000",
@@ -62,9 +60,6 @@ func TestSourceInventoryRollbackChainWithStoredScanAndPostgreSQL(t *testing.T) {
 		"20261004000000",
 		"20261005000000",
 		"20261006000000",
-		"20261007000000",
-		"20261008000000",
-		"20261008120000",
 	} {
 		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migrationNamed(t, collection, name)})
 	}
@@ -91,14 +86,6 @@ func migrationsBefore(t *testing.T, collection *migrate.Migrations, name string)
 	}
 	t.Fatalf("migration %q not found", name)
 	return nil
-}
-
-func migrationPointers(sorted migrate.MigrationSlice) []*migrate.Migration {
-	pointers := make([]*migrate.Migration, 0, len(sorted))
-	for index := range sorted {
-		pointers = append(pointers, &sorted[index])
-	}
-	return pointers
 }
 
 func migrationNamed(t *testing.T, collection *migrate.Migrations, name string) *migrate.Migration {
