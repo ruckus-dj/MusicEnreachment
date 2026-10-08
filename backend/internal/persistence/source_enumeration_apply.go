@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -23,6 +24,9 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		if !validSourceEnumerationScope(scope) {
 			return fmt.Errorf("apply source enumeration: invalid unreadable scope")
 		}
+	}
+	if len(apply.Scopes) > 0 && apply.FailureSafeError == "" {
+		return fmt.Errorf("apply source enumeration: unreadable scopes require a safe failure reason")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		rootID, err := operationTargetSourceRoot(ctx, tx, apply.OperationID)
@@ -187,6 +191,15 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		}
 		if _, err := rootUpdate.Exec(ctx); err != nil {
 			return fmt.Errorf("apply source enumeration: update root inventory: %w", err)
+		}
+		if len(apply.Scopes) > 0 {
+			failure := apply.FailureSafeError
+			operation.SafeError = &failure
+			operation.Stage = "traversing"
+			operation.UpdatedAt = time.Now().UTC()
+			if _, err := tx.NewUpdate().Model(operation).Column("safe_error", "stage", "updated_at").WherePK().Exec(ctx); err != nil {
+				return fmt.Errorf("apply source enumeration: record unreadable-scope outcome: %w", err)
+			}
 		}
 		return nil
 	})

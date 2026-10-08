@@ -158,7 +158,11 @@ func Run(ctx context.Context, config Config) error {
 	)
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkers(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
+	sourceFileConcurrency, err := registry.GetSourceFileConcurrency(ctx)
+	if err != nil {
+		return fmt.Errorf("read source file concurrency: %w", err)
+	}
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
 		}
@@ -166,11 +170,11 @@ func Run(ctx context.Context, config Config) error {
 		// the Setup, the root and the managed tools itself, so a scan that can no
 		// longer run fails with a safe reason instead of staying queued forever.
 		river.AddWorker(workers, scanWorker)
-		// A queued analysis is registered for the same reason; it is served by
-		// its own single-worker queue.
+		// A queued analysis is registered for the same reason; queue concurrency
+		// is initialized from the source-file setting and bounded live by worker.
 		river.AddWorker(workers, analysisWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
-	}, jobs.NewCleanupPeriodicJob())
+	}, sourceFileConcurrency, jobs.NewCleanupPeriodicJob())
 	if err != nil {
 		return err
 	}

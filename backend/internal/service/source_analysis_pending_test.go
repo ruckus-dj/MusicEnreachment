@@ -28,7 +28,7 @@ func TestPendingStepsContainsOnlyEnumeratedPendingSteps(t *testing.T) {
 	}
 }
 
-func TestRetainedPendingStepKeepsOriginalPinAndSeparatesNeverAdmittedWork(t *testing.T) {
+func TestRetainedPendingStepKeepsOnlyIntentAndSeparatesNeverAdmittedWork(t *testing.T) {
 	workID := uuid.New()
 	stepName := string(persistence.SourceStepFingerprint)
 	rerun, shaEnabled, cacheOnly := false, true, false
@@ -59,8 +59,8 @@ func TestRetainedPendingStepKeepsOriginalPinAndSeparatesNeverAdmittedWork(t *tes
 		t.Fatalf("ordinary=%+v intents=%+v malformed=%+v", ordinary, intents, malformed)
 	}
 	selection, version := retainedCacheSelection(intents[0].Snapshot, persistence.SourceStepFingerprint)
-	if selection != original || version != original.Version {
-		t.Fatalf("retained cache selection=%+v version=%q, want original pin %+v", selection, version, original)
+	if selection != (persistence.SourceAnalysisToolSelection{}) || version != "" {
+		t.Fatalf("retained cache selection=%+v version=%q, want no durable tool pin", selection, version)
 	}
 	if got := intents[0].Snapshot.CacheOnlyReuse; got == nil || *got {
 		t.Fatal("ordinary pinned-tool selection was not retained")

@@ -89,11 +89,15 @@ func TestSourceAnalysisStartupRecoveryPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode live normalized snapshot: %v", err)
 		}
-		if len(snapshot.WorkIDs) != 1 || snapshot.ToolsReadRequired != true || len(snapshot.Tools) != 1 ||
-			snapshot.Tools[0].InstallationID != fixture.installationID || snapshot.Tools[0].PackageKind != "ffmpeg" ||
-			snapshot.Tools[0].Executable != "ffprobe" || snapshot.Tools[0].RelativePath != filepath.Join("ffmpeg", analysisDispatchRelease) ||
-			snapshot.Tools[0].Version != analysisDispatchRelease || snapshot.Tools[0].VersionBanner != "ffprobe version "+analysisDispatchRelease {
-			t.Fatalf("live admission selectors = %+v, want its selected work and pinned installation", snapshot)
+		if len(snapshot.WorkIDs) != 1 || len(snapshot.Tools) != 0 {
+			t.Fatalf("live durable admission intent = %+v, want selected work and no runtime tools", snapshot)
+		}
+		if len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0].InstallationID != fixture.installationID ||
+			operation.SourceAnalysisTools[0].PackageKind != "ffmpeg" || operation.SourceAnalysisTools[0].Executable != "ffprobe" ||
+			operation.SourceAnalysisTools[0].RelativePath != filepath.Join("ffmpeg", analysisDispatchRelease) ||
+			operation.SourceAnalysisTools[0].Version != analysisDispatchRelease ||
+			operation.SourceAnalysisTools[0].VersionBanner != "ffprobe version "+analysisDispatchRelease {
+			t.Fatalf("live runtime admission selectors = %+v, want the selected ffprobe installation", operation.SourceAnalysisTools)
 		}
 		requireAnalysisHolds(t, ctx, fixture, stored.ID, []uuid.UUID{fixture.installationID}, snapshot.WorkIDs)
 		var selected persistence.SourceAnalysisStep
@@ -132,6 +136,10 @@ func (fixture *analysisDispatchFixture) createOrphanAnalysis(t *testing.T, ctx c
 	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
 		Mode:          persistence.SourceAnalysisModeBatch, WorkIDs: []uuid.UUID{work.ID},
+		SelectedSteps: []persistence.SourceAnalysisStepSelection{
+			{WorkID: work.ID, Step: persistence.SourceStepSHA256},
+			{WorkID: work.ID, Step: persistence.SourceStepProbe},
+		},
 		SHA256Enabled: &shaEnabled, RerunTarget: &rerun, CacheOnlyReuse: &cacheOnly,
 		ToolsReadRequired: true, Tools: []persistence.SourceAnalysisToolSelection{probe},
 	})
@@ -140,10 +148,11 @@ func (fixture *analysisDispatchFixture) createOrphanAnalysis(t *testing.T, ctx c
 	}
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "queued", Stage: service.SourceAnalysisStageQueued, Attempt: 1,
-		SourceAnalysisMode: persistence.SourceAnalysisModeBatch,
-		InputSnapshot:      snapshot,
-		TargetSourceRootID: &fixture.root.ID,
-		ToolsReadRequired:  true,
+		SourceAnalysisMode:  persistence.SourceAnalysisModeBatch,
+		InputSnapshot:       snapshot,
+		TargetSourceRootID:  &fixture.root.ID,
+		ToolsReadRequired:   true,
+		SourceAnalysisTools: []persistence.SourceAnalysisToolSelection{probe},
 	}
 	if err := fixture.inventory.CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx, operation, fixture.client,
 		service.SourceAnalysisJobArgs{OperationID: operation.ID},

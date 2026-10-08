@@ -65,6 +65,13 @@ func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(
 	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, scopes)); err != nil {
 		t.Fatalf("repeat second enumeration apply: %v", err)
 	}
+	var partiallyApplied persistence.Operation
+	if err := database.NewSelect().Model(&partiallyApplied).Where("id = ?", second.ID).Scan(ctx); err != nil {
+		t.Fatalf("read operation outcome after unreadable-scope apply: %v", err)
+	}
+	if partiallyApplied.Stage != "traversing" || partiallyApplied.SafeError == nil || *partiallyApplied.SafeError == "" {
+		t.Fatalf("unreadable-scope outcome was not persisted with the reconciliation: %+v", partiallyApplied)
+	}
 	unchanged := readLocation(t, ctx, database, root.ID, "outside.flac")
 	if unchanged.ProbeStatus != "probe_error" || unchanged.SafeError == nil || *unchanged.SafeError != "earlier failure" {
 		t.Fatalf("unchanged location lost prior failure state: %+v", unchanged)
@@ -258,5 +265,6 @@ func enumerationApply(operation *persistence.Operation, root *persistence.Source
 	return persistence.SourceEnumerationApply{
 		OperationID: operation.ID, ExpectedConfiguredPath: root.ConfiguredPath, ExpectedAttempt: operation.Attempt,
 		ExpectedJobID: *operation.RiverJobID, SHA256Enabled: true, Scopes: scopes,
+		FailureSafeError: "The source directory could not be read completely. The previous inventory is unchanged.",
 	}
 }

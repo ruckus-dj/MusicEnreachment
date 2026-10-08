@@ -53,13 +53,13 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 		t.Fatalf("probes after the duplicate delivery = %d, want no second probe", probes)
 	}
 
-	// A missing managed ffprobe fails only the probe step; batch bookkeeping still
-	// succeeds and the successful new SHA identity is committed independently.
+	// A missing managed ffprobe fails the batch while the successful new SHA
+	// identity is still committed independently.
 	fixture.changeSourceBytes(t, ctx, "fresh bytes without a probe cache")
 	fixture.removeFFProbe(t)
 	failed := fixture.start(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *failed.RiverJobID)
-	assertOperationStage(t, ctx, fixture.setup, failed.ID, "succeeded", service.SourceAnalysisStageApplying)
+	assertOperationStage(t, ctx, fixture.setup, failed.ID, "failed", service.SourceAnalysisStageApplying)
 	requireAnalysisStepSafeError(t, ctx, fixture, failed.ID, persistence.SourceStepProbe, analysisSafeProbe)
 	requireAnalysisHolds(t, ctx, fixture, failed.ID, nil, nil)
 	failedVariant := fixture.requireLinkedVariant(t, ctx)
@@ -89,22 +89,22 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// Batch operations are not retried as a whole after one step failed; the
 	// failed step remains independently retryable.
 	jobsBeforeRetry := fixture.countJobs(t, ctx, failed.ID)
-	if _, err := fixture.operations.Retry(ctx, failed.ID); err == nil || err.Error() != "only failed operations can be retried" {
-		t.Fatalf("retry of a succeeded batch = %v, want failed-operation refusal", err)
+	if _, err := fixture.operations.Retry(ctx, failed.ID); err == nil || err.Error() != "retry operation: source analysis batch operations cannot be retried" {
+		t.Fatalf("retry of a failed file batch = %v, want exact-step retry requirement", err)
 	}
-	assertOperationStage(t, ctx, fixture.setup, failed.ID, "succeeded", service.SourceAnalysisStageApplying)
+	assertOperationStage(t, ctx, fixture.setup, failed.ID, "failed", service.SourceAnalysisStageApplying)
 	requireAnalysisHolds(t, ctx, fixture, failed.ID, nil, nil)
 	if jobs := fixture.countJobs(t, ctx, failed.ID); jobs != jobsBeforeRetry {
 		t.Fatalf("River jobs for the refused retry = %d, want the unchanged %d", jobs, jobsBeforeRetry)
 	}
 
-	// A missing-tool batch still succeeds while retaining a failed probe step. Once
-	// the managed executable is restored, retry that step through the step API.
+	// A missing-tool batch fails while retaining a failed probe step. Once the
+	// managed executable is restored, retry that step through the step API.
 	fixture.changeSourceBytes(t, ctx, "fresh bytes for explicit step retry")
 	fixture.removeFFProbe(t)
 	retryable := fixture.start(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *retryable.RiverJobID)
-	assertOperationStage(t, ctx, fixture.setup, retryable.ID, "succeeded", service.SourceAnalysisStageApplying)
+	assertOperationStage(t, ctx, fixture.setup, retryable.ID, "failed", service.SourceAnalysisStageApplying)
 	requireAnalysisStepSafeError(t, ctx, fixture, retryable.ID, persistence.SourceStepProbe, analysisSafeProbe)
 	fixture.restoreFFProbe(t)
 	analysis := service.NewSourceAnalysisOperations(
@@ -145,14 +145,14 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	dropFailingAnalysisApplyTrigger(t, ctx, fixture.database)
 
 	// A deleted active installation makes the failed step impossible to retry; the
-	// refusal leaves the succeeded batch state, its attempt and its holds. The
+	// refusal leaves the failed batch state, its attempt and its holds. The
 	// managed tool is removed before the job is queued, so the worker fails on the
 	// missing installation instead of racing the delivery.
 	fixture.changeSourceBytes(t, ctx, "fresh bytes for deleted-installation refusal")
 	fixture.removeFFProbe(t)
 	deleted := fixture.start(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *deleted.RiverJobID)
-	assertOperationStage(t, ctx, fixture.setup, deleted.ID, "succeeded", service.SourceAnalysisStageApplying)
+	assertOperationStage(t, ctx, fixture.setup, deleted.ID, "failed", service.SourceAnalysisStageApplying)
 	requireAnalysisStepSafeError(t, ctx, fixture, deleted.ID, persistence.SourceStepProbe, analysisSafeProbe)
 	beforeAttempt := fixture.readOperation(t, ctx, deleted.ID).Attempt
 	jobsBeforeDeleteRetry := fixture.countJobs(t, ctx, deleted.ID)
@@ -165,7 +165,7 @@ func TestSourceAnalysisWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	}); !errors.Is(err, service.ErrSourceAnalysisToolUnavailable) {
 		t.Fatalf("retry with a deleted installation = %v, want %v", err, service.ErrSourceAnalysisToolUnavailable)
 	}
-	assertOperationStage(t, ctx, fixture.setup, deleted.ID, "succeeded", service.SourceAnalysisStageApplying)
+	assertOperationStage(t, ctx, fixture.setup, deleted.ID, "failed", service.SourceAnalysisStageApplying)
 	after := fixture.readOperation(t, ctx, deleted.ID)
 	requireAnalysisHolds(t, ctx, fixture, deleted.ID, nil, nil)
 	if after.Attempt != beforeAttempt {

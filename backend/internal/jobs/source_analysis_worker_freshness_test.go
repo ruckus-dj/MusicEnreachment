@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -115,6 +116,8 @@ func TestSourceAnalysisWorkerRecoversSameRunningDeliveryWithoutTerminalSettlemen
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "running", Attempt: 4,
 		RiverJobID: int64Pointer(82), TargetSourceRootID: &rootID,
+		SourceAnalysisMode: persistence.SourceAnalysisModeBatch,
+		InputSnapshot:      mustAnalysisRecoverySnapshot(t),
 	}
 	repository := &interruptedDeliveryRepository{operation: operation}
 	dispatcher := &recoveredRootDispatcher{}
@@ -134,6 +137,23 @@ func TestSourceAnalysisWorkerRecoversSameRunningDeliveryWithoutTerminalSettlemen
 	if dispatcher.calls != 1 || dispatcher.rootID != rootID {
 		t.Fatalf("pending dispatcher = (%d calls, %s), want one admission for %s", dispatcher.calls, dispatcher.rootID, rootID)
 	}
+}
+
+func mustAnalysisRecoverySnapshot(t *testing.T) json.RawMessage {
+	t.Helper()
+	rerun := false
+	workID := uuid.New()
+	raw, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
+		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
+		Mode:          persistence.SourceAnalysisModeBatch,
+		WorkIDs:       []uuid.UUID{workID},
+		RerunTarget:   &rerun,
+		SelectedSteps: []persistence.SourceAnalysisStepSelection{{WorkID: workID, Step: persistence.SourceStepSHA256}},
+	})
+	if err != nil {
+		t.Fatalf("encode interrupted analysis snapshot: %v", err)
+	}
+	return raw
 }
 
 func int64Pointer(value int64) *int64 { return &value }

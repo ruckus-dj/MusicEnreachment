@@ -14,6 +14,9 @@ import (
 // currently recorded on the operation. A late delivery is read-only.
 func (repository *SourceInventoryRepository) StartSourceScanDelivery(ctx context.Context, operationID uuid.UUID, attempt int, jobID int64) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("start source scan delivery: lock output admission gate: %w", err)
+		}
 		operation, err := scanDeliveryForUpdate(ctx, tx, operationID, attempt, jobID)
 		if err != nil {
 			return err

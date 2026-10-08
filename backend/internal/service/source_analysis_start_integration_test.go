@@ -110,8 +110,7 @@ func TestSourceAnalysisRetryStepEnqueuesNormalizedWorkWithPostgreSQL(t *testing.
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
 		Mode:          persistence.SourceAnalysisModeSingleStep, WorkIDs: []uuid.UUID{fixture.work.ID},
 		TargetWorkID: &fixture.work.ID, TargetStep: stored.TargetStep,
-		SHA256Enabled: boolPointer(true), RerunTarget: boolPointer(false), CacheOnlyReuse: boolPointer(false),
-		Tools: []persistence.SourceAnalysisToolSelection{},
+		RerunTarget: boolPointer(false),
 	}
 	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("stored snapshot = %+v, want %+v", snapshot, want)

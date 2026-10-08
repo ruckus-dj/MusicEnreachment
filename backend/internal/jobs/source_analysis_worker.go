@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ type analysisWorkerRepository interface {
 	service.SourceAnalysisRepository
 	service.SourceAnalysisCacheLookup
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
+	StartNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string, string) (*persistence.Operation, []persistence.SourceAnalysisToolSelection, string, error)
 	ListNormalizedSourceAnalysisExecution(context.Context, uuid.UUID, int, int64) ([]persistence.SourceAnalysisExecution, error)
 	GetNormalizedSourceAnalysisWork(context.Context, uuid.UUID) (*persistence.SourceAnalysisWork, *persistence.SourceLocation, error)
 	ClaimSourceAnalysisStep(context.Context, persistence.SourceStepClaim) (int, error)
@@ -48,6 +50,10 @@ type analysisWorkerRepository interface {
 type analysisWorkerSettings interface {
 	SetupCompleted(context.Context) (bool, error)
 	GetToolsDirectory(context.Context) (string, bool, error)
+}
+
+type sourceFileConcurrencyReader interface {
+	GetSourceFileConcurrency(context.Context) (int, error)
 }
 
 // pendingDispatcher admits the next queued batch for a source root after a
@@ -69,11 +75,55 @@ type SourceAnalysisWorker struct {
 	preparer             service.SourceAnalysisPreparing
 	verifyFFProbeVersion func(context.Context, string) (string, error)
 	pendingDispatcher    pendingDispatcher
+	fileLimiter          *sourceFileLimiter
+}
+
+// sourceFileLimiter is shared by all River deliveries handled by this worker.
+// The limit is read before each admission attempt, so runtime setting changes
+// affect waiting files without imposing a process-wide hard-coded ceiling.
+type sourceFileLimiter struct {
+	mu      sync.Mutex
+	active  int
+	changed chan struct{}
+}
+
+func (limiter *sourceFileLimiter) acquire(ctx context.Context, getLimit func(context.Context) (int, error)) (func(), error) {
+	for {
+		limit, err := getLimit(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if limit < 1 {
+			return nil, fmt.Errorf("source file concurrency must be positive")
+		}
+		limiter.mu.Lock()
+		if limiter.changed == nil {
+			limiter.changed = make(chan struct{})
+		}
+		if limiter.active < limit {
+			limiter.active++
+			limiter.mu.Unlock()
+			return func() {
+				limiter.mu.Lock()
+				limiter.active--
+				close(limiter.changed)
+				limiter.changed = make(chan struct{})
+				limiter.mu.Unlock()
+			}, nil
+		}
+		changed := limiter.changed
+		limiter.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-changed:
+		}
+	}
 }
 
 func NewSourceAnalysisWorker(repository analysisWorkerRepository, operations *service.Operations, toolsDirectory service.ToolsDirectoryReader, runtimeSettings analysisWorkerSettings, platform settings.PlatformState) *SourceAnalysisWorker {
 	return &SourceAnalysisWorker{repository: repository, operations: operations, toolsDirectory: toolsDirectory,
-		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener()}
+		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener(), fileLimiter: new(sourceFileLimiter)}
 }
 
 // WithPreparer makes the step engine replaceable in deterministic worker tests.
@@ -104,6 +154,9 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	if operation.RiverJobID == nil || *operation.RiverJobID != job.ID {
 		return nil // Stale delivery: it owns no current execution fence.
 	}
+	if err != nil {
+		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
+	}
 	delivery := persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: job.ID}
 	if operation.State == "running" {
 		rootID := operation.TargetSourceRootID
@@ -125,17 +178,33 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 		worker.wakePending(ctx, operation)
 		return nil
 	}
-	if err != nil || operation.State != "queued" {
+	if operation.State != "queued" {
 		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeInvalidInput)
 	}
 	if err := worker.ready(ctx); err != nil {
 		slog.Warn("source analysis cannot start", "operation", operation.ID, "cause", err)
 		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeNotReady)
 	}
-	if err := worker.operations.Running(ctx, operation.ID, service.SourceAnalysisStageProbing); err != nil {
+	admittedOperation := operation
+	operation, selections, processingMode, err := worker.repository.StartNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, worker.platform.Platform.GOOS, worker.platform.Platform.GOARCH)
+	if err != nil {
+		if errors.Is(err, persistence.ErrSourceAnalysisStale) {
+			// A delivery that still owns the operation fence can become stale
+			// before it acquires its work/root holds (for example, the root was
+			// disabled after admission). Recover that exact delivery instead of
+			// leaving it queued forever. Recovery intentionally does not wake
+			// pending admission: the same unchanged work would immediately loop.
+			return worker.recoverStaleDelivery(ctx, admittedOperation, delivery)
+		}
 		return err
 	}
-	operation.State = "running"
+	snapshot.Tools = selections
+	snapshot.ToolsReadRequired = len(selections) != 0
+	cacheOnly := false
+	snapshot.CacheOnlyReuse = &cacheOnly
+	if processingMode != "in_place" {
+		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageProbing, "Staged source analysis is unavailable until staged processing is supported.")
+	}
 	// A batch only owns the queued execution triples written at admission. It never
 	// expands to newly-pending steps and never revisits source scans.
 	executions, err := worker.repository.ListNormalizedSourceAnalysisExecution(ctx, operation.ID, operation.Attempt, job.ID)
@@ -147,11 +216,31 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	}
 	var singleFailure *sourceAnalysisStepFailure
 	groups := groupSourceAnalysisExecutions(executions)
+	results := make(chan error, len(groups))
 	for _, group := range groups {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := worker.runWorkGroup(ctx, operation, snapshot, job.ID, group); err != nil {
+		group := group
+		go func() {
+			getLimit := func(ctx context.Context) (int, error) {
+				if reader, ok := worker.runtimeSettings.(sourceFileConcurrencyReader); ok {
+					limit, readErr := reader.GetSourceFileConcurrency(ctx)
+					if readErr != nil {
+						return 0, fmt.Errorf("read source file concurrency: %w", readErr)
+					}
+					return limit, nil
+				}
+				return len(groups), nil
+			}
+			release, acquireErr := worker.fileLimiter.acquire(ctx, getLimit)
+			if acquireErr != nil {
+				results <- acquireErr
+				return
+			}
+			defer release()
+			results <- worker.runWorkGroup(ctx, operation, snapshot, job.ID, group)
+		}()
+	}
+	for _, group := range groups {
+		if err := <-results; err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
@@ -162,7 +251,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 			if !errors.As(err, &stepFailure) {
 				return err
 			}
-			if snapshot.Mode == persistence.SourceAnalysisModeSingleStep {
+			if singleFailure == nil {
 				singleFailure = stepFailure
 			}
 			slog.Warn("source analysis work delivery failed", "operation", operation.ID, "work", group[0].Work.ID, "cause", err)
@@ -200,7 +289,6 @@ func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, op
 		recovered.TargetSourceRootID = rootID
 	}
 	worker.operations.Notify(operation.ID)
-	worker.wakePending(ctx, recovered)
 	return nil
 }
 

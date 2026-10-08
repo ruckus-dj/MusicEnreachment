@@ -364,9 +364,24 @@ func normalizedOperation(t *testing.T, root *persistence.SourceRoot, location pe
 		tools = []persistence.SourceAnalysisToolSelection{}
 	}
 	cacheOnly := false
+	var selectedSteps []persistence.SourceAnalysisStepSelection
+	if mode == persistence.SourceAnalysisModeBatch {
+		if shaEnabled {
+			selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: work.ID, Step: persistence.SourceStepSHA256})
+		}
+		for _, tool := range tools {
+			switch tool.PackageKind {
+			case "ffmpeg":
+				selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: work.ID, Step: persistence.SourceStepProbe})
+			case "fpcalc":
+				selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: work.ID, Step: persistence.SourceStepFingerprint})
+			}
+		}
+	}
 	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
 		Mode:          mode, WorkIDs: []uuid.UUID{work.ID}, TargetWorkID: targetWorkID, TargetStep: targetStep,
+		SelectedSteps: selectedSteps,
 		SHA256Enabled: &shaEnabled, RerunTarget: &rerun, CacheOnlyReuse: &cacheOnly,
 		ToolsReadRequired: len(tools) > 0, Tools: tools,
 	})
@@ -377,7 +392,7 @@ func normalizedOperation(t *testing.T, root *persistence.SourceRoot, location pe
 		ID: uuid.New(), Kind: "analyze_source", State: "queued", Stage: "queued",
 		InputSnapshot: snapshot, Attempt: 1, SourceAnalysisMode: mode,
 		TargetSourceRootID: &root.ID, ToolsReadRequired: len(tools) > 0, RerunTarget: rerun,
-		TargetWorkID: targetWorkID, TargetStep: targetStep,
+		TargetWorkID: targetWorkID, TargetStep: targetStep, SourceAnalysisTools: tools,
 	}
 	if mode == persistence.SourceAnalysisModeSingleStep {
 		operation.TargetSourceLocationID = &location.ID

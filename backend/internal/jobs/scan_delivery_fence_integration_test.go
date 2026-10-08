@@ -17,7 +17,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/uptrace/bun"
 )
 
 func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
@@ -29,15 +28,11 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	settingStore := persistence.NewSettingsRepository(database)
 	toolsRoot := t.TempDir()
 	setRuntimeRoots(t, ctx, settingStore, toolsRoot)
-	writeScanDispatchFFmpeg(t, ctx, database, settingStore, toolsRoot)
 	root := &persistence.SourceRoot{ID: uuid.New(), ConfiguredPath: t.TempDir(), DisplayName: "Music", Enabled: true}
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
-	shaEnabled := true
-	snapshot := service.ScanSourceSnapshot{SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
-		ConfiguredPath: root.ConfiguredPath, ScanGeneration: 0, SHA256Enabled: &shaEnabled,
-		Tools: []persistence.SourceAnalysisToolSelection{}}
+	snapshot := service.ScanSourceSnapshot{SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -46,19 +41,6 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 		Stage: service.SourceScanStageQueued, InputSnapshot: raw, TargetSourceRootID: &root.ID, Attempt: 2,
 		RiverJobID: int64Pointer(202)}
 	if err := manager.CreateOperation(ctx, operation); err != nil {
-		t.Fatal(err)
-	}
-	installation, err := manager.GetInstallation(ctx, mustActiveFFmpegID(t, ctx, settingStore))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw("INSERT INTO operation_tool_read_hold (operation_id, installation_id) VALUES (?, ?)", operation.ID, installation.ID).Exec(ctx); err != nil {
-			return err
-		}
-		_, err := tx.NewRaw("UPDATE operation SET tools_read_required=true WHERE id=?", operation.ID).Exec(ctx)
-		return err
-	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := inventory.ReplaceSourceScanCandidates(ctx, operation.ID, []persistence.SourceScanCandidateInput{{
@@ -83,14 +65,10 @@ func TestSourceScanDeliveryFencePreservesCurrentRetryPostgreSQL(t *testing.T) {
 	if err := database.NewRaw("SELECT * FROM operation WHERE id = ?", operation.ID).Scan(ctx, &current); err != nil {
 		t.Fatal(err)
 	}
-	if current.State != "queued" || current.Attempt != 2 || current.RiverJobID == nil || *current.RiverJobID != 202 || !current.ToolsReadRequired {
+	if current.State != "queued" || current.Attempt != 2 || current.RiverJobID == nil || *current.RiverJobID != 202 {
 		t.Fatalf("current attempt was changed by stale finish: %+v", current)
 	}
 	requireScanDispatchCandidates(t, ctx, database, operation.ID, 1)
-	var holds int
-	if err := database.NewRaw("SELECT count(*) FROM operation_tool_read_hold WHERE operation_id = ?", operation.ID).Scan(ctx, &holds); err != nil || holds != 1 {
-		t.Fatalf("tool holds = %d, read error = %v; want the current hold intact", holds, err)
-	}
 }
 
 func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) {
@@ -110,14 +88,11 @@ func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) 
 	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
 		t.Fatal(err)
 	}
-	selection := persistence.SourceAnalysisToolSelection{InstallationID: uuid.New(), PackageKind: "ffmpeg", RelativePath: "ffmpeg/1.6.1", Executable: "ffprobe", Version: "1.6.1", VersionBanner: "ffprobe version 1.6.1"}
-	shaEnabled := true
-	// A failed historical attempt pins generation 1 and the approved SHA/tools.
+	// A failed historical attempt retains only its root identity.
 	if _, err := database.NewRaw("UPDATE source_root SET scan_generation = 1 WHERE id = ?", root.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := service.ScanSourceSnapshot{SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
-		ConfiguredPath: root.ConfiguredPath, ScanGeneration: 1, SHA256Enabled: &shaEnabled, Tools: []persistence.SourceAnalysisToolSelection{selection}}
+	snapshot := service.ScanSourceSnapshot{SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -160,8 +135,8 @@ func TestHistoricalSourceScanRetryUsesCurrentGenerationPostgreSQL(t *testing.T) 
 	if err := json.Unmarshal(retried.InputSnapshot, &refreshed); err != nil {
 		t.Fatal(err)
 	}
-	if refreshed.ScanGeneration != 2 || refreshed.SHA256Enabled == nil || !*refreshed.SHA256Enabled || len(refreshed.Tools) != 1 || refreshed.Tools[0] != selection {
-		t.Fatalf("refreshed retry snapshot = %+v, want generation 2 and unchanged approved SHA/tools", refreshed)
+	if refreshed.SourceRootID != root.ID || refreshed.SchemaVersion != service.SourceScanSnapshotVersion {
+		t.Fatalf("refreshed retry snapshot = %+v, want minimal root identity", refreshed)
 	}
 	if retried.Attempt != 2 || retried.RiverJobID == nil || retried.State != "queued" {
 		t.Fatalf("retry record = %+v, want queued attempt 2 with its new River job", retried)

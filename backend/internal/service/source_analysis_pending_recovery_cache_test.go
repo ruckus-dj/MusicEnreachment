@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -28,6 +30,40 @@ type pendingRecoveryCacheRepositoryFixture struct {
 	failures       []persistence.SourceAnalysisStepSelection
 	reused         []persistence.SourceAnalysisStepSelection
 	fpVersions     []string
+}
+
+type pendingBatchAdmissionFixture struct {
+	*pendingRecoveryCacheRepositoryFixture
+}
+
+func (repository *pendingBatchAdmissionFixture) CreateNormalizedSourceAnalysisOperationAndEnqueue(_ context.Context, operation *persistence.Operation, _ persistence.RiverInserter, _ river.JobArgs, _ *river.InsertOpts) error {
+	snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(operation.InputSnapshot)
+	if err != nil {
+		return err
+	}
+	repository.created = append(repository.created, operation)
+	for _, selection := range snapshot.SelectedSteps {
+		rows := repository.steps[selection.WorkID]
+		remaining := rows[:0]
+		for _, row := range rows {
+			if row.Step != string(selection.Step) {
+				remaining = append(remaining, row)
+			}
+		}
+		repository.steps[selection.WorkID] = remaining
+	}
+	return nil
+}
+
+func (repository *pendingBatchAdmissionFixture) ListPendingSourceAnalysisWork(ctx context.Context, rootID uuid.UUID) ([]persistence.SourceAnalysisPendingWork, error) {
+	works, err := repository.pendingRecoveryCacheRepositoryFixture.ListPendingSourceAnalysisWork(ctx, rootID)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(works, func(i, j int) bool {
+		return works[i].Work.ID.String() < works[j].Work.ID.String()
+	})
+	return works, nil
 }
 
 var _ sourceAnalysisPendingRepository = (*pendingRecoveryCacheRepositoryFixture)(nil)
@@ -108,7 +144,75 @@ func (repository *pendingRecoveryCacheRepositoryFixture) ReusePendingSourceAnaly
 	return changed, nil
 }
 
-func TestRetainedRecoveryCacheHitPrecedesUnavailableSiblingTool(t *testing.T) {
+func TestPendingSourceAnalysisAdmitsOneBatchPerWorkWithExactSteps(t *testing.T) {
+	rootPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := uuid.New()
+	tool := persistence.SourceAnalysisToolSelection{
+		PackageKind: "fpcalc", InstallationID: uuid.New(), RelativePath: "fpcalc/1.5.0",
+		Executable: "fpcalc", Version: "1.5.0", VersionBanner: "fpcalc version 1.5.0",
+	}
+	base := &pendingRecoveryCacheRepositoryFixture{
+		sourceAnalysisStartRepositoryFixture: sourceAnalysisStartRepositoryFixture{operations: map[uuid.UUID]*persistence.Operation{}},
+		steps:                                map[uuid.UUID][]persistence.SourceAnalysisStep{},
+		details:                              map[uuid.UUID]*persistence.SourceLocationDetailSnapshot{},
+	}
+	base.installation = &persistence.ToolInstallation{
+		ID: tool.InstallationID, PackageKind: tool.PackageKind, State: "ready", RelativePath: tool.RelativePath,
+		PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()),
+		ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.5.0"}`),
+	}
+	fixture := &pendingBatchAdmissionFixture{pendingRecoveryCacheRepositoryFixture: base}
+	wantSteps := map[uuid.UUID]persistence.SourceStepName{}
+	for index, step := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepFingerprint} {
+		filePath := filepath.Join(rootPath, string(rune('a'+index))+".flac")
+		if err := os.WriteFile(filePath, []byte("audio "+string(rune('1'+index))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		work := pendingWork(rootID, rootPath, filepath.Base(filePath), info.Size(), info.ModTime().UTC().Truncate(time.Microsecond), true)
+		workID, locationID := uuid.New(), uuid.New()
+		work.Work.ID, work.Work.LocationID = workID, locationID
+		work.Location.ID = locationID
+		wantSteps[workID] = step
+		work.Steps = nil
+		work.Steps = append(work.Steps, persistence.SourceAnalysisStep{WorkID: workID, Step: string(step), State: "pending"})
+		fixture.works = append(fixture.works, work)
+		fixture.steps[workID] = append([]persistence.SourceAnalysisStep(nil), work.Steps...)
+		fixture.details[workID] = &persistence.SourceLocationDetailSnapshot{Root: &work.Root, Location: &work.Location, Work: &work.Work}
+	}
+	service := NewSourceAnalysisOperations(fixture, sourceAnalysisStartSetupFixture(true), sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{
+		ActiveFPCalcInstallation: tool.InstallationID.String(),
+	}), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
+
+	if _, err := service.AdmitPending(context.Background(), rootID); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.created) != 2 {
+		t.Fatalf("admitted %d operations, want one per pending work item; prerequisite failures: %+v; pending: %+v", len(fixture.created), fixture.failures, fixture.steps)
+	}
+	for index, operation := range fixture.created {
+		snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(operation.InputSnapshot)
+		if err != nil {
+			t.Fatalf("decode admitted operation %d: %v", index, err)
+		}
+		if len(snapshot.WorkIDs) != 1 || len(snapshot.SelectedSteps) != 1 {
+			t.Errorf("operation %d selected work/steps = %v/%v, want exactly one work and one selected step", index, snapshot.WorkIDs, snapshot.SelectedSteps)
+			continue
+		}
+		wantStep, exists := wantSteps[snapshot.WorkIDs[0]]
+		if !exists || snapshot.SelectedSteps[0] != (persistence.SourceAnalysisStepSelection{WorkID: snapshot.WorkIDs[0], Step: wantStep}) {
+			t.Errorf("operation %d selected work/steps = %v/%v, want exact step %q for its work", index, snapshot.WorkIDs, snapshot.SelectedSteps, wantStep)
+		}
+	}
+}
+
+func TestRetainedRecoveryUsesCurrentToolsAndAdmitsOneRemainingStep(t *testing.T) {
 	rootPath, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -161,32 +265,36 @@ func TestRetainedRecoveryCacheHitPrecedesUnavailableSiblingTool(t *testing.T) {
 			SHAVariant: &persistence.SourceMediaVariant{SourceSHA256: rawSHA[:]},
 		}
 	}
+	fixture.normalizedWork = &fixture.works[0].Work
+	fixture.normalizedLocation = &fixture.works[0].Location
 	fixture.probeCacheHit = false
-	fixture.installation = &persistence.ToolInstallation{ID: toolProbe.InstallationID, PackageKind: "ffmpeg", State: "ready", RelativePath: toolProbe.RelativePath}
-	service := NewSourceAnalysisOperations(fixture, sourceAnalysisStartSetupFixture(true), sourceAnalysisStartRuntimeFixture{}, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
+	fixture.installation = &persistence.ToolInstallation{ID: toolProbe.InstallationID, PackageKind: "ffmpeg", State: "ready", RelativePath: toolProbe.RelativePath,
+		PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"ffprobe":"ffprobe version 8"}`)}
+	service := NewSourceAnalysisOperations(fixture, sourceAnalysisStartSetupFixture(true), sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{
+		ActiveFFmpegInstallation: toolProbe.InstallationID.String(), ActiveFPCalcInstallation: toolFP.InstallationID.String(),
+	}), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
 
 	operation, err := service.AdmitPending(context.Background(), rootID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if operation == nil || len(fixture.created) != 1 {
-		t.Fatalf("operation=%+v admitted=%d, want the remaining probe step admitted", operation, len(fixture.created))
+	if operation == nil || len(fixture.created) != 2 {
+		t.Fatalf("operation=%+v admitted=%d, want both independently eligible probe steps admitted", operation, len(fixture.created))
 	}
-	if fixture.fpLookups != 1 {
-		t.Errorf("fingerprint cache lookups=%d, want one pinned-version lookup", fixture.fpLookups)
+	for _, created := range fixture.created {
+		var intent persistence.SourceAnalysisOperationSnapshot
+		if err := json.Unmarshal(created.InputSnapshot, &intent); err != nil || len(intent.WorkIDs) != 1 || intent.TargetStep == nil || *intent.TargetStep != string(persistence.SourceStepProbe) {
+			t.Fatalf("admitted operation does not contain singleton probe intent: %+v, %v", intent, err)
+		}
 	}
-	if fixture.probeLookups != 1 {
-		t.Errorf("probe cache lookups=%d, want the original intent's single lookup", fixture.probeLookups)
+	if fixture.fpLookups != 0 || fixture.probeLookups != 0 || len(fixture.fpVersions) != 0 {
+		t.Errorf("retained intent performed cache lookup from absent durable pins: fp=%d probe=%d versions=%v", fixture.fpLookups, fixture.probeLookups, fixture.fpVersions)
 	}
-	if len(fixture.fpVersions) != 1 || fixture.fpVersions[0] != toolFP.Version {
-		t.Errorf("fingerprint cache versions=%v, want retained pinned version %q", fixture.fpVersions, toolFP.Version)
+	if len(fixture.failures) != 1 || fixture.failures[0] != (persistence.SourceAnalysisStepSelection{WorkID: fixture.works[1].Work.ID, Step: persistence.SourceStepFingerprint}) {
+		t.Errorf("failed pending steps=%+v, want only unavailable current fpcalc step", fixture.failures)
 	}
-	if len(fixture.failures) != 0 {
-		t.Errorf("failed pending steps=%+v, want no prerequisite failures", fixture.failures)
-	}
-	fpWorkID := fixture.works[1].Work.ID
-	if len(fixture.reused) != 1 || fixture.reused[0] != (persistence.SourceAnalysisStepSelection{WorkID: fpWorkID, Step: persistence.SourceStepFingerprint}) {
-		t.Errorf("reused tuples=%+v, want fingerprint cache reuse for %s", fixture.reused, fpWorkID)
+	if len(fixture.reused) != 0 {
+		t.Errorf("reused tuples=%+v, want no reuse based on historical tool pins", fixture.reused)
 	}
 	for _, work := range fixture.works {
 		if len(fixture.steps[work.Work.ID]) == 0 {
@@ -197,7 +305,10 @@ func TestRetainedRecoveryCacheHitPrecedesUnavailableSiblingTool(t *testing.T) {
 		}
 	}
 	var snapshot persistence.SourceAnalysisOperationSnapshot
-	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.Mode != persistence.SourceAnalysisModeSingleStep || snapshot.TargetStep == nil || *snapshot.TargetStep != string(persistence.SourceStepProbe) {
+	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.Mode != persistence.SourceAnalysisModeSingleStep || snapshot.TargetStep == nil || *snapshot.TargetStep != string(persistence.SourceStepProbe) || len(snapshot.Tools) != 0 {
 		t.Errorf("admitted snapshot=%+v decode error=%v, want the exact remaining probe step", snapshot, err)
+	}
+	if len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0].InstallationID != toolProbe.InstallationID {
+		t.Errorf("transient current tool selection=%+v, want active ffprobe %s", operation.SourceAnalysisTools, toolProbe.InstallationID)
 	}
 }

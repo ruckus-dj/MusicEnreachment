@@ -34,6 +34,13 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 	if err != nil {
 		return fmt.Errorf("admit source analysis: %w", err)
 	}
+	// Tool identities exist only for this transaction. Durable snapshots keep
+	// explicit work/step intent; active tool selections are transient admission
+	// metadata and are re-resolved for each delivery.
+	snapshot.Tools = append([]SourceAnalysisToolSelection(nil), operation.SourceAnalysisTools...)
+	snapshot.ToolsReadRequired = operation.ToolsReadRequired
+	cacheOnly := false
+	snapshot.CacheOnlyReuse = &cacheOnly
 	if operation.State != "queued" || operation.TargetSourceRootID == nil || *operation.TargetSourceRootID == uuid.Nil || operation.Attempt < 0 {
 		return fmt.Errorf("admit source analysis: queued operation and source root are required")
 	}
@@ -53,6 +60,9 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		return fmt.Errorf("admit source analysis: read configured root for coordination: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("admit source analysis: lock output admission gate: %w", err)
+		}
 		if snapshot.ToolsReadRequired {
 			if err := lockToolsMoveReaders(ctx, tx); err != nil {
 				return fmt.Errorf("admit source analysis: lock tools-root readers: %w", err)
@@ -136,8 +146,16 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 			if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? FOR UPDATE`, item.ID, root.ID).Scan(ctx, work); err != nil {
 				return fmt.Errorf("admit source analysis: lock selected work %s: %w", item.ID, ErrSourceAnalysisStale)
 			}
+			var activeHold bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM operation_source_work_hold h
+				JOIN operation o ON o.id=h.operation_id
+				WHERE h.work_id=? AND o.state IN ('queued','running'))`, item.ID).Scan(ctx, &activeHold); err != nil {
+				return fmt.Errorf("admit source analysis: check active work hold: %w", err)
+			}
+			if activeHold {
+				return fmt.Errorf("admit source analysis: %w", ErrSourceRootActiveAnalysis)
+			}
 			if work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
-				work.SHA256Enabled != *snapshot.SHA256Enabled ||
 				location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes ||
 				!sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 				return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisStale)
@@ -314,12 +332,12 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 }
 
 // activeSourceRootMutationExists is called only after locking the source root.
-// That per-root lock serializes this check with every scan and analysis
-// admission without taking a table-wide operation lock.
+// A scan is root-exclusive; analyses are admitted independently and deduplicated
+// by their locked work/step fences.
 func activeSourceRootMutationExists(ctx context.Context, tx bun.IDB, rootID uuid.UUID) (string, bool, error) {
 	var kind string
 	err := tx.NewRaw(`SELECT kind FROM operation
-		WHERE target_source_root_id = ? AND kind IN ('scan_source', 'analyze_source')
+		WHERE target_source_root_id = ? AND kind = 'scan_source'
 		AND state IN ('queued', 'running') LIMIT 1`, rootID).Scan(ctx, &kind)
 	if err == sql.ErrNoRows {
 		return "", false, nil

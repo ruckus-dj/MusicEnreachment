@@ -15,71 +15,69 @@ func TestDecodeSourceAnalysisOperationSnapshotRequiresExactTargetStep(t *testing
 	}
 }
 
-func TestDecodeSourceAnalysisSnapshotRequiresExplicitCacheOnlyForUnpinnedProbe(t *testing.T) {
-	snapshot := validSingleStepSnapshot()
-	if _, err := decodeSnapshotForTest(t, snapshot); err == nil {
-		t.Fatal("probe without a pinned tool or cache-only intent was accepted")
+func TestDecodeSourceAnalysisSnapshotContainsOnlyDurableIntent(t *testing.T) {
+	snapshot := validSingleStepSnapshotWithTool()
+	raw := marshalSnapshotForTest(t, snapshot)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
 	}
-	cacheOnly := true
-	snapshot.CacheOnlyReuse = &cacheOnly
-	snapshot.CacheOnlyFFProbeVersion = "ffprobe-7.1"
-	if _, err := decodeSnapshotForTest(t, snapshot); err != nil {
-		t.Fatalf("explicit cache-only probe selection: %v", err)
+	for _, forbidden := range []string{"tools", "tools_read_required", "sha256_enabled", "cache_only_reuse"} {
+		if _, exists := fields[forbidden]; exists {
+			t.Fatalf("runtime field %q was serialized: %s", forbidden, raw)
+		}
+	}
+	if _, err := DecodeSourceAnalysisOperationSnapshot(raw); err != nil {
+		t.Fatalf("minimal durable intent rejected: %v", err)
+	}
+	for _, forbidden := range []string{"tools", "tools_read_required", "sha256_enabled", "cache_only_reuse"} {
+		legacy := append(raw[:len(raw)-1], []byte(`,"`+forbidden+`":true}`)...)
+		if _, err := DecodeSourceAnalysisOperationSnapshot(legacy); err == nil {
+			t.Errorf("legacy runtime field %q was accepted", forbidden)
+		}
 	}
 }
 
-func TestDecodeSourceAnalysisBatchSelectedSteps(t *testing.T) {
-	workA, workB := uuid.New(), uuid.New()
-	sha, rerun, cacheOnly := true, false, false
+func TestDecodeSourceAnalysisBatchRequiresExplicitWorkSelection(t *testing.T) {
+	workID := uuid.New()
+	rerun := false
 	base := SourceAnalysisOperationSnapshot{
 		SchemaVersion: SourceAnalysisOperationSnapshotVersion, Mode: SourceAnalysisModeBatch,
-		WorkIDs: []uuid.UUID{workA, workB}, SHA256Enabled: &sha, RerunTarget: &rerun, CacheOnlyReuse: &cacheOnly,
+		WorkIDs: []uuid.UUID{workID}, RerunTarget: &rerun,
+		SelectedSteps: []SourceAnalysisStepSelection{{WorkID: workID, Step: SourceStepSHA256}},
 	}
-	base.SelectedSteps = []SourceAnalysisStepSelection{{WorkID: workA, Step: SourceStepSHA256}, {WorkID: workB, Step: SourceStepProbe}}
 	if _, err := decodeSnapshotForTest(t, base); err != nil {
-		t.Fatalf("valid exact selection rejected: %v", err)
+		t.Fatalf("valid work selection rejected: %v", err)
 	}
-	tests := []struct {
-		name string
-		edit func(*SourceAnalysisOperationSnapshot)
-	}{
-		{"duplicate tuple", func(s *SourceAnalysisOperationSnapshot) {
-			s.SelectedSteps = append(s.SelectedSteps, s.SelectedSteps[0])
-		}},
-		{"invalid step", func(s *SourceAnalysisOperationSnapshot) { s.SelectedSteps[0].Step = "other" }},
-		{"missing work", func(s *SourceAnalysisOperationSnapshot) { s.SelectedSteps = s.SelectedSteps[:1] }},
-		{"unselected pinned work", func(s *SourceAnalysisOperationSnapshot) { s.SelectedSteps[0].WorkID = uuid.New() }},
-		{"disabled sha", func(s *SourceAnalysisOperationSnapshot) { disabled := false; s.SHA256Enabled = &disabled }},
+	base.WorkIDs = append(base.WorkIDs, uuid.New())
+	if _, err := decodeSnapshotForTest(t, base); err == nil {
+		t.Fatal("batch with multiple work items was accepted")
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			snapshot := base
-			snapshot.SelectedSteps = append([]SourceAnalysisStepSelection(nil), base.SelectedSteps...)
-			test.edit(&snapshot)
-			if _, err := decodeSnapshotForTest(t, snapshot); err == nil {
-				t.Fatal("invalid selected_steps accepted")
-			}
-		})
+	base.WorkIDs = base.WorkIDs[:1]
+	base.SelectedSteps = nil
+	if _, err := decodeSnapshotForTest(t, base); err == nil {
+		t.Fatal("batch without explicit selected steps was accepted")
 	}
-	var rawFields map[string]json.RawMessage
-	encoded := marshalSnapshotForTest(t, base)
-	if err := json.Unmarshal(encoded, &rawFields); err != nil {
-		t.Fatal(err)
+}
+
+func TestDecodeSourceAnalysisBatchRetainsSelectedStepIntent(t *testing.T) {
+	workID := uuid.New()
+	rerun := false
+	snapshot := SourceAnalysisOperationSnapshot{
+		SchemaVersion: SourceAnalysisOperationSnapshotVersion, Mode: SourceAnalysisModeBatch,
+		WorkIDs: []uuid.UUID{workID}, RerunTarget: &rerun,
+		SelectedSteps: []SourceAnalysisStepSelection{{WorkID: workID, Step: SourceStepProbe}},
 	}
-	for _, selection := range []string{"null", "[]"} {
-		rawFields["selected_steps"] = json.RawMessage(selection)
-		raw, err := json.Marshal(rawFields)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := DecodeSourceAnalysisOperationSnapshot(raw); err == nil {
-			t.Fatalf("explicit %s selected_steps accepted", selection)
-		}
+	decoded, err := decodeSnapshotForTest(t, snapshot)
+	if err != nil {
+		t.Fatalf("decode batch intent: %v", err)
 	}
-	single := validSingleStepSnapshotWithTool()
-	single.SelectedSteps = []SourceAnalysisStepSelection{{WorkID: single.WorkIDs[0], Step: SourceStepProbe}}
-	if _, err := decodeSnapshotForTest(t, single); err == nil {
-		t.Fatal("single-step operation accepted selected_steps")
+	if len(decoded.SelectedSteps) != 1 || decoded.SelectedSteps[0] != snapshot.SelectedSteps[0] {
+		t.Fatalf("selected steps = %+v, want %+v", decoded.SelectedSteps, snapshot.SelectedSteps)
+	}
+	snapshot.SelectedSteps[0].Step = "unknown"
+	if _, err := decodeSnapshotForTest(t, snapshot); err == nil {
+		t.Fatal("invalid selected step was accepted")
 	}
 }
 
@@ -141,22 +139,12 @@ func TestDecodeSourceAnalysisOperationSnapshotValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "cache-only probe requires version",
-			prepare: func() json.RawMessage {
-				snapshot := validSingleStepSnapshot()
-				cacheOnly := true
-				snapshot.CacheOnlyReuse = &cacheOnly
-				return marshalSnapshotForTest(t, snapshot)
-			},
-			wantErr: true,
-		},
-		{
 			name:    "malformed JSON",
 			prepare: func() json.RawMessage { return json.RawMessage(`{"schema_version":`) },
 			wantErr: true,
 		},
 		{
-			name: "unknown fields remain ignored",
+			name: "unrelated future fields remain ignored",
 			prepare: func() json.RawMessage {
 				raw := marshalSnapshotForTest(t, validSingleStepSnapshotWithTool())
 				return append(raw[:len(raw)-1], []byte(`,"future_field":true}`)...)

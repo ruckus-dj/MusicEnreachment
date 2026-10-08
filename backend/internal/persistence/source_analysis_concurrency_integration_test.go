@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -119,6 +120,9 @@ func runQueryRace(t *testing.T, ctx context.Context, database *bun.DB, hold, nee
 	database.AddQueryHook(barrier)
 	locked := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHolder := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseHolder()
 	holder := make(chan error, 1)
 	holderPID := make(chan int, 1)
 	go func() {
@@ -164,9 +168,23 @@ func runQueryRace(t *testing.T, ctx context.Context, database *bun.DB, hold, nee
 	defer cancel()
 	actionResult := make(chan error, 1)
 	go func() { actionResult <- action(actionCtx) }()
-	awaitSignal(t, barrier.attempted, "the action to attempt the guarded statement")
+	select {
+	case <-barrier.attempted:
+	case actionErr := <-actionResult:
+		releaseHolder()
+		if holderErr := awaitResult(t, holder, "the competing transaction to release after early action exit"); holderErr != nil {
+			return fmt.Errorf("competing transaction after early action exit: %w", holderErr)
+		}
+		if actionErr == nil {
+			return errors.New("the action finished before attempting the guarded statement")
+		}
+		return fmt.Errorf("action finished before attempting the guarded statement: %w", actionErr)
+	case <-actionCtx.Done():
+		releaseHolder()
+		return fmt.Errorf("the action did not attempt the guarded statement: %w", actionCtx.Err())
+	}
 	assertPostgresLockWait(t, actionCtx, database, <-holderPID)
-	close(release)
+	releaseHolder()
 	if err := awaitResult(t, holder, "the competing transaction to commit"); err != nil {
 		t.Fatalf("competing transaction: %v", err)
 	}

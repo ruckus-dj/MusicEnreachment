@@ -96,7 +96,7 @@ func TestRetryStepUsesInheritedSHASelectionAndExactFailedStep(t *testing.T) {
 		t.Fatalf("operation=%+v, admitted=%d", operation, len(repository.created))
 	}
 	var snapshot persistence.SourceAnalysisOperationSnapshot
-	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SHA256Enabled == nil || !*snapshot.SHA256Enabled {
+	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.SHA256Enabled != nil {
 		t.Fatalf("snapshot=%+v, decode error=%v", snapshot, err)
 	}
 }
@@ -121,7 +121,7 @@ func TestRetryStepRejectsSucceededAndMismatchedWork(t *testing.T) {
 	}
 }
 
-func TestToolStepsPinOnlyTheirSelectedManagedExecutable(t *testing.T) {
+func TestToolStepsUseOnlyTheirSelectedManagedExecutableTransiently(t *testing.T) {
 	for _, test := range []struct {
 		step, packageKind, executable, banner, version string
 		runtimeKey                                     func(uuid.UUID) settings.RuntimeSettings
@@ -160,15 +160,27 @@ func TestToolStepsPinOnlyTheirSelectedManagedExecutable(t *testing.T) {
 			if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 				t.Fatal(err)
 			}
-			if len(snapshot.Tools) != 1 || snapshot.Tools[0].PackageKind != test.packageKind || snapshot.Tools[0].Executable != test.executable ||
-				snapshot.Tools[0].InstallationID != installationID || snapshot.Tools[0].RelativePath != installation.RelativePath ||
-				snapshot.Tools[0].Version != test.version || snapshot.Tools[0].VersionBanner != test.banner {
-				t.Fatalf("pinned tool = %+v", snapshot.Tools)
+			wantTool := persistence.SourceAnalysisToolSelection{PackageKind: test.packageKind, InstallationID: installationID, RelativePath: installation.RelativePath, Executable: test.executable, Version: test.version, VersionBanner: test.banner}
+			if len(snapshot.Tools) != 0 || len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0] != wantTool {
+				t.Fatalf("durable tools=%+v transient tools=%+v, want no pins and current tool %+v", snapshot.Tools, operation.SourceAnalysisTools, wantTool)
 			}
 			if len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != workID || operation.TargetWorkID == nil || *operation.TargetWorkID != workID {
 				t.Fatalf("single-step target = %+v / %v", snapshot.WorkIDs, operation.TargetWorkID)
 			}
 		})
+	}
+}
+
+func TestSelectedToolsTreatsMissingInstallationAsUnavailable(t *testing.T) {
+	analysis := NewSourceAnalysisOperations(
+		&sourceAnalysisStartRepositoryFixture{},
+		sourceAnalysisStartSetupFixture(true),
+		sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{ActiveFPCalcInstallation: uuid.NewString()}),
+		settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}},
+		sourceAnalysisStartRiverFixture{},
+	)
+	if _, err := analysis.selectedTools(context.Background(), persistence.SourceStepFingerprint); !errors.Is(err, ErrSourceAnalysisToolUnavailable) {
+		t.Fatalf("missing installation error=%v, want unavailable tool", err)
 	}
 }
 
@@ -208,15 +220,16 @@ func TestFingerprintRetryAndRerunDoNotDependOnProbeOrMatchingEligibility(t *test
 			if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 				t.Fatal(err)
 			}
-			if snapshot.ToolsReadRequired != true || len(snapshot.Tools) != 1 || snapshot.Tools[0].Executable != "fpcalc" || snapshot.Tools[0].PackageKind != "fpcalc" || snapshot.RerunTarget == nil || *snapshot.RerunTarget != test.rerun {
+			if len(snapshot.Tools) != 0 || len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0].Executable != "fpcalc" || operation.SourceAnalysisTools[0].PackageKind != "fpcalc" || snapshot.RerunTarget == nil || *snapshot.RerunTarget != test.rerun {
 				t.Fatalf("fingerprint operation snapshot = %+v", snapshot)
 			}
 		})
 	}
 }
 
-func TestRetryOperationReusesFailedSnapshotWithoutCurrentToolSettings(t *testing.T) {
+func TestRetryOperationUsesCurrentToolsWithoutPersistingToolPins(t *testing.T) {
 	rootID, locationID, workID, oldToolID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	currentToolID := uuid.New()
 	step := string(persistence.SourceStepFingerprint)
 	rerun, shaEnabled, cacheOnly := false, true, false
 	tool := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: oldToolID, RelativePath: "fpcalc/old", Executable: "fpcalc", Version: "1.5.1", VersionBanner: "fpcalc version 1.5.1"}
@@ -239,11 +252,14 @@ func TestRetryOperationReusesFailedSnapshotWithoutCurrentToolSettings(t *testing
 	root := &persistence.SourceRoot{ID: rootID, Enabled: true, ConfiguredPath: "/music", InventoryPath: new("/music"), Status: persistence.SourceRootStatusAvailable}
 	location := &persistence.SourceLocation{ID: locationID, SourceRootID: rootID, RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime}
 	work := &persistence.SourceAnalysisWork{ID: workID, SourceRootID: rootID, LocationID: locationID, ConfiguredPath: "/music", InventoryPath: "/music", RelativePath: "track.flac", SizeBytes: 123, Mtime: mtime, SHA256Enabled: true}
+	currentTool := persistence.SourceAnalysisToolSelection{PackageKind: "fpcalc", InstallationID: currentToolID, RelativePath: "fpcalc/current", Executable: "fpcalc", Version: "1.6.1", VersionBanner: "fpcalc version 1.6.1"}
 	repository := &sourceAnalysisStartRepositoryFixture{operations: map[uuid.UUID]*persistence.Operation{original.ID: original},
 		normalizedWork: work, normalizedLocation: location,
 		detail: &persistence.SourceLocationDetailSnapshot{Root: root, Location: location, Work: work},
+		installation: &persistence.ToolInstallation{ID: currentToolID, PackageKind: "fpcalc", State: "ready", RelativePath: currentTool.RelativePath,
+			PlatformGOOS: "linux", PlatformGOARCH: "amd64", VerifiedAt: new(time.Now()), ExecutableVersions: []byte(`{"fpcalc":"fpcalc version 1.6.1"}`)},
 	}
-	changedCurrent := sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{ActiveFPCalcInstallation: uuid.NewString(), ActiveFFmpegInstallation: uuid.NewString()})
+	changedCurrent := sourceAnalysisStartRuntimeFixture(settings.RuntimeSettings{ActiveFPCalcInstallation: currentToolID.String(), ActiveFFmpegInstallation: uuid.NewString()})
 	analysis := NewSourceAnalysisOperations(repository, sourceAnalysisStartSetupFixture(true), changedCurrent, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, sourceAnalysisStartRiverFixture{})
 	operation, err := analysis.RetryOperation(context.Background(), original.ID)
 	if err != nil {
@@ -253,14 +269,15 @@ func TestRetryOperationReusesFailedSnapshotWithoutCurrentToolSettings(t *testing
 	if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.SHA256Enabled == nil || !*snapshot.SHA256Enabled || snapshot.TargetStep == nil || *snapshot.TargetStep != step ||
-		snapshot.RerunTarget == nil || *snapshot.RerunTarget || len(snapshot.Tools) != 1 || snapshot.Tools[0] != tool ||
-		snapshot.CacheOnlyReuse == nil || *snapshot.CacheOnlyReuse || snapshot.CacheOnlyFPCalcVersion != "" ||
+	if snapshot.SHA256Enabled != nil || snapshot.TargetStep == nil || *snapshot.TargetStep != step ||
+		snapshot.RerunTarget == nil || *snapshot.RerunTarget || len(snapshot.Tools) != 0 ||
+		snapshot.CacheOnlyReuse != nil || snapshot.CacheOnlyFPCalcVersion != "" ||
 		len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != workID ||
-		operation.TargetWorkID == nil || *operation.TargetWorkID != workID || !operation.ToolsReadRequired || operation.ToolsReadRequired != snapshot.ToolsReadRequired ||
+		operation.TargetWorkID == nil || *operation.TargetWorkID != workID || !operation.ToolsReadRequired ||
 		operation.TargetSourceRootID == nil || *operation.TargetSourceRootID != rootID || operation.TargetSourceLocationID == nil || *operation.TargetSourceLocationID != locationID ||
+		len(operation.SourceAnalysisTools) != 1 || operation.SourceAnalysisTools[0] != currentTool ||
 		original.TargetSourceRootID != nil || original.TargetSourceLocationID != nil || original.TargetWorkID != nil || original.TargetStep != nil {
-		t.Fatalf("retry operation/snapshot changed pinned inputs: operation=%+v snapshot=%+v", operation, snapshot)
+		t.Fatalf("retry operation/snapshot did not use current transient tool context: operation=%+v snapshot=%+v", operation, snapshot)
 	}
 }
 

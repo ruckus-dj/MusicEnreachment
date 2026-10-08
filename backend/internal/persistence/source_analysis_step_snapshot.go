@@ -19,8 +19,8 @@ func ProjectSourceAnalysisStepSnapshot(snapshot SourceAnalysisOperationSnapshot,
 	if workID == uuid.Nil || !validSourceStep(step) {
 		return nil, fmt.Errorf("project source analysis step snapshot: valid work and step are required")
 	}
-	if snapshot.SHA256Enabled == nil || snapshot.CacheOnlyReuse == nil || snapshot.RerunTarget == nil {
-		return nil, fmt.Errorf("project source analysis step snapshot: explicit SHA, cache-only, and rerun selections are required")
+	if snapshot.RerunTarget == nil {
+		return nil, fmt.Errorf("project source analysis step snapshot: explicit rerun intent is required")
 	}
 	if !containsSourceWork(snapshot.WorkIDs, workID) {
 		return nil, fmt.Errorf("project source analysis step snapshot: work is not in the immutable selection")
@@ -32,28 +32,7 @@ func ProjectSourceAnalysisStepSnapshot(snapshot SourceAnalysisOperationSnapshot,
 	projected := SourceAnalysisOperationSnapshot{
 		SchemaVersion: SourceAnalysisOperationSnapshotVersion, Mode: SourceAnalysisModeSingleStep,
 		WorkIDs: []uuid.UUID{workID}, TargetWorkID: &workID, TargetStep: sourceAnalysisStringPointer(string(step)),
-		RerunTarget: sourceAnalysisBoolPointer(rerun), SHA256Enabled: sourceAnalysisBoolPointer(*snapshot.SHA256Enabled),
-		CacheOnlyReuse: sourceAnalysisBoolPointer(*snapshot.CacheOnlyReuse),
-	}
-	switch step {
-	case SourceStepProbe:
-		projected.CacheOnlyFFProbeVersion = snapshot.CacheOnlyFFProbeVersion
-		for _, tool := range snapshot.Tools {
-			if tool.PackageKind == "ffmpeg" && tool.Executable == "ffprobe" {
-				projected.Tools = append(projected.Tools, tool)
-			}
-		}
-	case SourceStepFingerprint:
-		projected.CacheOnlyFPCalcVersion = snapshot.CacheOnlyFPCalcVersion
-		for _, tool := range snapshot.Tools {
-			if tool.PackageKind == "fpcalc" && tool.Executable == "fpcalc" {
-				projected.Tools = append(projected.Tools, tool)
-			}
-		}
-	}
-	projected.ToolsReadRequired = len(projected.Tools) != 0
-	if step == SourceStepSHA256 {
-		projected.CacheOnlyReuse = sourceAnalysisBoolPointer(false)
+		RerunTarget: sourceAnalysisBoolPointer(rerun),
 	}
 	encoded, err := json.Marshal(sourceAnalysisStepSnapshot{SourceAnalysisOperationSnapshot: projected, AnalysisPolicyVersion: SourceAnalysisPolicyVersion})
 	if err != nil {
@@ -73,9 +52,12 @@ func DecodeRetainedSourceAnalysisStepInput(step SourceAnalysisStep, work SourceA
 	if err := json.Unmarshal(step.InputSnapshot, &input); err != nil {
 		return SourceAnalysisOperationSnapshot{}, fmt.Errorf("decode retained source analysis step input: %w", err)
 	}
-	if snapshot.Mode != SourceAnalysisModeSingleStep || len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != work.ID || snapshot.TargetWorkID == nil || *snapshot.TargetWorkID != work.ID || snapshot.TargetStep == nil || *snapshot.TargetStep != step.Step || snapshot.SHA256Enabled == nil || *snapshot.SHA256Enabled != work.SHA256Enabled || input.AnalysisPolicyVersion != SourceAnalysisPolicyVersion {
+	if snapshot.Mode != SourceAnalysisModeSingleStep || len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != work.ID || snapshot.TargetWorkID == nil || *snapshot.TargetWorkID != work.ID || snapshot.TargetStep == nil || *snapshot.TargetStep != step.Step || input.AnalysisPolicyVersion != SourceAnalysisPolicyVersion {
 		return SourceAnalysisOperationSnapshot{}, fmt.Errorf("decode retained source analysis step input: identity or immutable policy does not match")
 	}
+	shaEnabled, cacheOnly := work.SHA256Enabled, false
+	snapshot.SHA256Enabled = &shaEnabled
+	snapshot.CacheOnlyReuse = &cacheOnly
 	return snapshot, nil
 }
 

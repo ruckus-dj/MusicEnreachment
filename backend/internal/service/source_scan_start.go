@@ -2,15 +2,12 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -40,16 +37,11 @@ var ErrSourceScanDisabled = errors.New("source root is disabled")
 // without them.
 var ErrSourceScanNotReady = errors.New("source scan requires a completed setup on a supported instance platform")
 
-// ScanSourceSnapshot is the immutable input of a scan operation: the root and
-// configured path, the sampled SHA-256 policy and the exact verified managed
-// tool selections available when the scan was queued.
+// ScanSourceSnapshot contains only the identity needed to reload the current
+// source root when a queued scan is delivered.
 type ScanSourceSnapshot struct {
-	SchemaVersion  int                                       `json:"schema_version"`
-	SourceRootID   uuid.UUID                                 `json:"source_root_id"`
-	ConfiguredPath string                                    `json:"configured_path"`
-	ScanGeneration int64                                     `json:"scan_generation"`
-	SHA256Enabled  *bool                                     `json:"sha256_enabled"`
-	Tools          []persistence.SourceAnalysisToolSelection `json:"tools"`
+	SchemaVersion int       `json:"schema_version"`
+	SourceRootID  uuid.UUID `json:"source_root_id"`
 }
 
 // ScanSourceJobArgs carries only the durable operation ID. The worker reloads
@@ -66,7 +58,6 @@ func (ScanSourceJobArgs) Kind() string { return SourceScanJobKind }
 // decides, under the root lock, whether the root may be scanned at all.
 type SourceScanStartRepository interface {
 	GetSourceRoot(context.Context, uuid.UUID) (*persistence.SourceRoot, error)
-	GetInstallation(context.Context, uuid.UUID) (*persistence.ToolInstallation, error)
 	CreateSourceScanOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
 	MarkSourceRootUnavailableForRoot(context.Context, persistence.SourceRootUnavailable) error
 }
@@ -82,11 +73,6 @@ type SourceScanPathValidator interface {
 // *settings.Registry implements it.
 type SourceScanSetup interface {
 	SetupCompleted(context.Context) (bool, error)
-}
-
-type sourceScanRuntime interface {
-	ReadRuntimeSettings(context.Context) (settings.RuntimeSettings, error)
-	GetSHA256Enabled(context.Context) (bool, error)
 }
 
 // SourceScanOperations starts scans of registered source roots. A start never
@@ -123,7 +109,7 @@ func (s *SourceScanOperations) Start(ctx context.Context, rootID uuid.UUID) (*pe
 	if err := s.ready(ctx); err != nil {
 		return nil, err
 	}
-	path, err := s.paths.ValidateSourcePath(ctx, root.ConfiguredPath, &root.ID)
+	_, err = s.paths.ValidateSourcePath(ctx, root.ConfiguredPath, &root.ID)
 	if err != nil {
 		// Only a directory the validator proved inaccessible is recorded on the
 		// root: a managed-path overlap, a duplicate configured path and a failed
@@ -135,78 +121,8 @@ func (s *SourceScanOperations) Start(ctx context.Context, rootID uuid.UUID) (*pe
 		}
 		return nil, fmt.Errorf("scan source root: %w", err)
 	}
-	registry, ok := s.setup.(sourceScanRuntime)
-	if !ok {
-		return nil, fmt.Errorf("scan source root: runtime settings are unavailable")
-	}
-	runtime, err := registry.ReadRuntimeSettings(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("scan source root: read runtime settings: %w", err)
-	}
-	shaEnabled, err := registry.GetSHA256Enabled(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("scan source root: read SHA-256 setting: %w", err)
-	}
-	selections := make([]persistence.SourceAnalysisToolSelection, 0, 2)
-	for _, selected := range []struct{ id, packageKind, executable string }{
-		{runtime.ActiveFFmpegInstallation, string(tools.PackageFFmpeg), "ffprobe"},
-		{runtime.ActiveFPCalcInstallation, string(tools.PackageFPCalc), "fpcalc"},
-	} {
-		if selected.id == "" {
-			continue
-		}
-		id, parseErr := uuid.Parse(selected.id)
-		if parseErr != nil {
-			continue
-		}
-		installation, getErr := s.repository.GetInstallation(ctx, id)
-		if getErr != nil {
-			if errors.Is(getErr, sql.ErrNoRows) {
-				continue
-			}
-			return nil, fmt.Errorf("scan source root: read selected tool installation: %w", getErr)
-		}
-		if installation == nil || installation.ID != id {
-			continue
-		}
-		if installation.PackageKind != selected.packageKind || installation.State != "ready" || installation.VerifiedAt == nil ||
-			installation.PlatformGOOS != s.platform.Platform.GOOS || installation.PlatformGOARCH != s.platform.Platform.GOARCH {
-			continue
-		}
-		var versions map[string]string
-		if json.Unmarshal(installation.ExecutableVersions, &versions) != nil {
-			continue
-		}
-		banner, ok := tools.VerifiedExecutableVersion(versions, tools.PackageKind(selected.packageKind), selected.executable, installation.PlatformGOOS)
-		if !ok {
-			continue
-		}
-		relative, pathErr := tools.ManagedRelativePath(tools.PackageKind(selected.packageKind), installation.ReleaseIdentity)
-		if pathErr != nil || relative != installation.RelativePath {
-			continue
-		}
-		version := ""
-		if selected.executable == "fpcalc" {
-			parsed, parseErr := tools.ParseFPCalcVersion(banner)
-			if parseErr != nil {
-				continue
-			}
-			version, banner = parsed.Version, parsed.Banner
-		} else {
-			fields := strings.Fields(banner)
-			if len(fields) < 3 || fields[0] != "ffprobe" || fields[1] != "version" {
-				continue
-			}
-			version = fields[2]
-		}
-		selections = append(selections, persistence.SourceAnalysisToolSelection{
-			PackageKind: selected.packageKind, InstallationID: installation.ID, RelativePath: relative,
-			Executable: selected.executable, Version: version, VersionBanner: banner,
-		})
-	}
 	snapshot, err := json.Marshal(ScanSourceSnapshot{
-		SchemaVersion: SourceScanSnapshotVersion, SourceRootID: root.ID, ConfiguredPath: path,
-		ScanGeneration: root.ScanGeneration, SHA256Enabled: &shaEnabled, Tools: selections,
+		SchemaVersion: SourceScanSnapshotVersion, SourceRootID: root.ID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scan source root: encode the snapshot: %w", err)

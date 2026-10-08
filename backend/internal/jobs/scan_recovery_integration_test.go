@@ -45,6 +45,9 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	}
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
 	registry := settings.New(settingsRepository, nil)
+	if err := registry.SetSHA256Enabled(ctx, false); err != nil {
+		t.Fatalf("disable SHA-256 before the first enumeration: %v", err)
+	}
 	platform := settings.PlatformState{Platform: settings.Platform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}}
 	writeScanDispatchFFmpeg(t, ctx, database, settingsRepository, toolsRoot)
 
@@ -81,8 +84,9 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	assertOperationStage(t, ctx, setupManager, first.ID, "succeeded", "succeeded")
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 1)
 	installed := readScanDispatchLocations(t, ctx, database, root.ID)
-	if count := scanDispatchProbeCount(t, probes); count != 3 {
-		t.Fatalf("probes after the first scan = %d, want one per approved file", count)
+	requireScanRecoverySHASetting(t, ctx, database, root.ID, "album/track.flac", false)
+	if count := scanDispatchProbeCount(t, probes); count != 0 {
+		t.Fatalf("probes after the first scan = %d, want enumeration to defer per-file analysis", count)
 	}
 
 	// Given a queued scan whose process left stored candidates behind and died
@@ -108,6 +112,9 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	}
 
 	// Given the failed scan is retried through the production retry...
+	if err := registry.SetSHA256Enabled(ctx, true); err != nil {
+		t.Fatalf("enable SHA-256 before retry enumeration: %v", err)
+	}
 	retried, err := operations.Retry(ctx, queued.ID)
 	if err != nil {
 		t.Fatalf("retry the interrupted scan: %v", err)
@@ -116,11 +123,12 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	awaitRiverCompletion(t, ctx, events, *retried.RiverJobID)
 
 	// Then the retry walks the tree again: the file the interrupted attempt never
-	// reached is in the inventory, and the dropped candidates played no part.
+	// reached is inventoried as not yet analyzed, and the dropped candidates played no part.
 	assertOperationStage(t, ctx, setupManager, queued.ID, "succeeded", "succeeded")
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 2)
 	installed = readScanDispatchLocations(t, ctx, database, root.ID)
-	requireScanDispatchStatus(t, installed, "album/retry.flac", persistence.SourceProbeStatusAudio)
+	requireScanDispatchStatus(t, installed, "album/retry.flac", persistence.SourceProbeStatusNotAnalyzed)
+	requireScanRecoverySHASetting(t, ctx, database, root.ID, "album/retry.flac", true)
 
 	// Given a scan that was interrupted while traversing and had already stored
 	// candidates of a file the applied generation does not contain...
@@ -165,6 +173,43 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 3)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), appliedLocations)
 
+	// Given a process that died after applying a traversal with an unreadable
+	// subtree, the atomically persisted outcome remains a failure on redelivery.
+	writeScanDispatchFile(t, filepath.Join(source, "album", "partial.flac"), "audio bytes")
+	partiallyApplied := createScanDispatchOperation(t, ctx, setupManager, inventory, first.InputSnapshot, root.ID, root.ConfiguredPath)
+	attachScanRecoveryJob(t, ctx, database, riverClient, partiallyApplied, false)
+	partialCandidates := scanRecoveryCandidates(t, source, "album/partial.flac", "album/retry.flac", "album/second.flac")
+	for index := range partialCandidates {
+		partialCandidates[index].ProbeStatus = persistence.SourceProbeStatusNotAnalyzed
+		partialCandidates[index].SafeError = nil
+	}
+	appendScanRecoveryCandidates(t, ctx, inventory, partiallyApplied.ID, partialCandidates...)
+	operationBeforePartialApply := readScanDispatchOperation(t, ctx, setupManager, partiallyApplied.ID)
+	if err := operations.Running(ctx, partiallyApplied.ID, service.SourceScanStageApplying); err != nil {
+		t.Fatalf("mark partial scan running before apply: %v", err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, persistence.SourceEnumerationApply{
+		OperationID: partiallyApplied.ID, ExpectedConfiguredPath: root.ConfiguredPath,
+		ExpectedAttempt: operationBeforePartialApply.Attempt, ExpectedJobID: *operationBeforePartialApply.RiverJobID,
+		Scopes:           []persistence.SourceEnumerationScope{{Kind: "subtree", RelativePath: "album"}},
+		FailureSafeError: scanSafeTraversal,
+	}); err != nil {
+		t.Fatalf("apply partial unreadable scan: %v", err)
+	}
+	partialLocations := readScanDispatchLocations(t, ctx, database, root.ID)
+	// Requeue the original delivery. Its persisted job ID is part of the apply
+	// fence; inserting a new job here would leave a running operation pointing at
+	// the already-completed job and the worker would correctly reject the mismatch.
+	if _, err := database.DB.ExecContext(ctx, `UPDATE river_job SET state='available', scheduled_at=now(), finalized_at=NULL WHERE id=$1`, *operationBeforePartialApply.RiverJobID); err != nil {
+		t.Fatalf("requeue the partially applied scan delivery: %v", err)
+	}
+	awaitRiverCompletion(t, ctx, events, *operationBeforePartialApply.RiverJobID)
+	assertOperationStage(t, ctx, setupManager, partiallyApplied.ID, "failed", service.SourceScanStageTraversing)
+	requireScanDispatchSafeError(t, readScanDispatchOperation(t, ctx, setupManager, partiallyApplied.ID), scanSafeTraversal)
+	requireScanDispatchCandidates(t, ctx, database, partiallyApplied.ID, 0)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), partialLocations)
+
 	// Given a delivered scan whose generation an earlier delivery already applied
 	// and whose operation never reported the success...
 	writeScanDispatchFile(t, filepath.Join(source, "album", "delivery.flac"), "audio bytes")
@@ -172,7 +217,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	attachScanRecoveryJob(t, ctx, database, riverClient, redelivered, false)
 	appendScanRecoveryCandidates(t, ctx, inventory, redelivered.ID, scanRecoveryCandidates(t, source, append(tree, "album/delivery.flac")...)...)
 	applyScanGeneration(t, ctx, setupManager, operations, inventory, redelivered.ID, root.ConfiguredPath)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
 	redeliveredLocations := readScanDispatchLocations(t, ctx, database, root.ID)
 	probesBeforeDelivery := scanDispatchProbeCount(t, probes)
 	// Startup recovery recognizes the committed generation and makes the
@@ -186,7 +231,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	// apply, and the installed inventory is untouched.
 	assertOperationStage(t, ctx, setupManager, redelivered.ID, "succeeded", "succeeded")
 	requireScanDispatchCandidates(t, ctx, database, redelivered.ID, 0)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), redeliveredLocations)
 	if count := scanDispatchProbeCount(t, probes); count != probesBeforeDelivery {
 		t.Fatalf("probes during the redelivery = %d, want no second traversal", count)
@@ -226,7 +271,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	if err != nil || failedInstallation.State != "failed" {
 		t.Fatalf("interrupted installation = %#v, lookup error %v; want failed", failedInstallation, err)
 	}
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), redeliveredLocations)
 
 	// A pre-pinning install snapshot cannot borrow the current setting as its
@@ -282,8 +327,22 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 
 	// Then the scan is left to its own worker and the inventory is untouched.
 	assertOperationStage(t, ctx, setupManager, live.ID, "queued", service.SourceScanStageQueued)
-	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 4)
+	requireScanDispatchGeneration(t, ctx, inventory, root.ID, 5)
 	requireScanDispatchLocations(t, readScanDispatchLocations(t, ctx, database, root.ID), redeliveredLocations)
+}
+
+func requireScanRecoverySHASetting(t *testing.T, ctx context.Context, database *bun.DB, rootID uuid.UUID, relativePath string, want bool) {
+	t.Helper()
+	var got bool
+	if err := database.NewRaw(`SELECT work.sha256_enabled
+		FROM source_analysis_work AS work
+		JOIN source_location AS location ON location.id=work.location_id
+		WHERE location.source_root_id=? AND location.relative_path=?`, rootID, relativePath).Scan(ctx, &got); err != nil {
+		t.Fatalf("read SHA-256 policy for %q: %v", relativePath, err)
+	}
+	if got != want {
+		t.Fatalf("SHA-256 policy for %q = %t, want %t", relativePath, got, want)
+	}
 }
 
 func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreSQL(t *testing.T) {

@@ -195,8 +195,7 @@ func TestSourceScanRetryReenqueuesANewTraversalWithPostgreSQL(t *testing.T) {
 		t.Fatalf("decode the stored snapshot %s: %v", stored.InputSnapshot, err)
 	}
 	wantSnapshot := service.ScanSourceSnapshot{
-		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID, ConfiguredPath: root.ConfiguredPath,
-		ScanGeneration: root.ScanGeneration, SHA256Enabled: boolPointer(false), Tools: []persistence.SourceAnalysisToolSelection{},
+		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
 	}
 	if !reflect.DeepEqual(snapshot, wantSnapshot) {
 		t.Fatalf("stored snapshot after the retry = %+v, want %+v preserved", snapshot, wantSnapshot)

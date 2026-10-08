@@ -41,6 +41,9 @@ func (repository *SourceInventoryRepository) CreateSourceScanOperationAndEnqueue
 		return fmt.Errorf("enqueue source scan: operation must be a scan of a source root")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue source scan: lock output admission gate: %w", err)
+		}
 		root := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
 			if err == sql.ErrNoRows {

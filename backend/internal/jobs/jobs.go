@@ -43,6 +43,20 @@ func StartWithWorkers(ctx context.Context, databaseURL string, database *sql.DB,
 // PrepareWithWorkers constructs an unstarted client so recovery can enqueue
 // durable work before any worker begins consuming it.
 func PrepareWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+	return prepareWithWorkers(ctx, databaseURL, database, register, 1, periodicJobs...)
+}
+
+// PrepareWithWorkersAndAnalysisConcurrency configures River's source-analysis
+// queue from the runtime setting. A shared in-worker limiter remains the live
+// authority if that setting changes before process restart.
+func PrepareWithWorkersAndAnalysisConcurrency(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), maxWorkers int, periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
+	if maxWorkers < 1 {
+		return nil, nil, fmt.Errorf("source file concurrency must be positive")
+	}
+	return prepareWithWorkers(ctx, databaseURL, database, register, maxWorkers, periodicJobs...)
+}
+
+func prepareWithWorkers(ctx context.Context, databaseURL string, database *sql.DB, register func(*river.Workers), analysisWorkers int, periodicJobs ...*river.PeriodicJob) (*river.Client[*sql.Tx], *pgxpool.Pool, error) {
 	if database == nil {
 		return nil, nil, fmt.Errorf("start River: database pool is required")
 	}
@@ -71,11 +85,9 @@ func PrepareWithWorkers(ctx context.Context, databaseURL string, database *sql.D
 	}
 	client, err := river.NewClient(driver, &river.Config{
 		Workers: workers,
-		// Preserve the fixed orchestration concurrency; individual analysis steps
-		// can execute concurrently within one delivery.
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:          {MaxWorkers: 1},
-			service.SourceAnalysisQueue: {MaxWorkers: 1},
+			service.SourceAnalysisQueue: {MaxWorkers: analysisWorkers},
 		},
 		PeriodicJobs: periodicJobs,
 	})

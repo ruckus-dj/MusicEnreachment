@@ -357,6 +357,43 @@ func TestSourceAnalysisGuardClosureMigrationWithPostgreSQL(t *testing.T) {
 	})
 }
 
+func TestPerFileSourceAnalysisRejectsUnselectedBatchExecutionStep(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	migration := migrationNamed(t, collection, "20261018000000")
+	testpostgres.Reset(t, database)
+	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, migration.Name))
+	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+
+	rootID := newVariantRoot(t, ctx, database, "/srv/per-file-unselected-step")
+	locationID := newVariantLocation(t, ctx, database, rootID, "unselected.flac")
+	workID := insertGuardClosureWork(t, ctx, database, rootID, locationID)
+	operationID, jobID := uuid.New(), int64(913)
+	snapshot := `{"schema_version":1,"mode":"batch","work_ids":["` + workID.String() + `"],"selected_steps":[{"work_id":"` + workID.String() + `","step":"sha256"}],"rerun_target":false}`
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state,input_snapshot)
+		VALUES (?, 'probe','pending','{"rerun_target":false}'::jsonb)`, workID); err != nil {
+		t.Fatalf("insert unselected step: %v", err)
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`INSERT INTO operation
+			(id,kind,state,stage,input_snapshot,target_source_root_id,attempt,river_job_id,source_analysis_mode,tools_read_required,rerun_target)
+			VALUES (?, 'analyze_source','queued','queued',?::jsonb,?,1,?,'batch',false,false)`, operationID, snapshot, rootID, jobID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES (?,?)`, operationID, workID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`UPDATE source_analysis_step
+			SET execution_operation_id=?,execution_operation_attempt=1,execution_job_id=?
+			WHERE work_id=? AND step='probe'`, operationID, jobID, workID).Exec(ctx)
+		return err
+	}); err == nil {
+		t.Fatal("batch execution for a step absent from selected_steps was accepted")
+	}
+}
+
 func insertGuardClosureWork(t *testing.T, ctx context.Context, database *bun.DB, rootID, locationID uuid.UUID) uuid.UUID {
 	t.Helper()
 	workID := uuid.New()

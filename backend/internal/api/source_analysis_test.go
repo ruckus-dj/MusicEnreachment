@@ -55,7 +55,7 @@ func TestRetrySourceAnalysisStepUsesExplicitFailedStep(t *testing.T) {
 	}
 	var snapshot persistence.SourceAnalysisOperationSnapshot
 	stored := fixture.operations.operations[operation.ID]
-	if err := json.Unmarshal(stored.InputSnapshot, &snapshot); err != nil || snapshot.Mode != persistence.SourceAnalysisModeSingleStep || snapshot.TargetStep == nil || *snapshot.TargetStep != "sha256" || snapshot.TargetWorkID == nil || *snapshot.TargetWorkID != work.ID || snapshot.SHA256Enabled == nil || !*snapshot.SHA256Enabled {
+	if err := json.Unmarshal(stored.InputSnapshot, &snapshot); err != nil || snapshot.Mode != persistence.SourceAnalysisModeSingleStep || snapshot.TargetStep == nil || *snapshot.TargetStep != "sha256" || snapshot.TargetWorkID == nil || *snapshot.TargetWorkID != work.ID || snapshot.SHA256Enabled != nil || len(snapshot.Tools) != 0 {
 		t.Fatalf("snapshot = %+v, decode error = %v", snapshot, err)
 	}
 }

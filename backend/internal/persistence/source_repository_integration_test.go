@@ -772,11 +772,8 @@ func deleteInventoryRoot(ctx context.Context, inventory *persistence.SourceInven
 func newSourceScanOperation(t *testing.T, ctx context.Context, database *bun.DB, root *persistence.SourceRoot, state string) *persistence.Operation {
 	t.Helper()
 	repository := persistence.NewSetupManagerRepository(database)
-	shaEnabled := true
 	snapshot, err := json.Marshal(service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
-		ConfiguredPath: root.ConfiguredPath, ScanGeneration: root.ScanGeneration,
-		SHA256Enabled: &shaEnabled, Tools: []persistence.SourceAnalysisToolSelection{},
 	})
 	if err != nil {
 		t.Fatalf("encode scan snapshot: %v", err)

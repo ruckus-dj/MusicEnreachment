@@ -152,6 +152,9 @@ func (repository *SourceInventoryRepository) ClaimSourceAnalysisStep(ctx context
 	}
 	var attempt int
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("claim source analysis step: output admission gate: %w", err)
+		}
 		locked, err := lockSourceAnalysisStep(ctx, tx, claim.WorkID, claim.OperationID, claim.OperationAttempt, claim.JobID, claim.Step)
 		if err != nil {
 			return fmt.Errorf("claim source analysis step: %w", err)
@@ -165,6 +168,9 @@ func (repository *SourceInventoryRepository) ClaimSourceAnalysisStep(ctx context
 		snapshot, err := ValidateSourceAnalysisOperationContract(&locked.Operation)
 		if err != nil {
 			return fmt.Errorf("claim source analysis step: %w", err)
+		}
+		if snapshot.Mode == SourceAnalysisModeBatch && (len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != claim.WorkID) {
+			return fmt.Errorf("claim source analysis step: batch must pin exactly the claimed work item")
 		}
 		if locked.Step.ExecutionOperationID == nil || *locked.Step.ExecutionOperationID != claim.OperationID ||
 			locked.Step.ExecutionOperationAttempt == nil || *locked.Step.ExecutionOperationAttempt != claim.OperationAttempt ||
@@ -294,6 +300,9 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 				if scanErr := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_variant WHERE id=? AND size_bytes=? AND ffprobe_version=? AND ffprobe_json=?::jsonb AND observed_tags=?::jsonb AND analysis_policy_version=? AND inspected_at=? AND applied_operation_id=? AND audio_stream_count=?)`, id, apply.SizeBytes, apply.FFProbeVersion, apply.FFProbeJSON, apply.ObservedTags, apply.AnalysisPolicy, apply.InspectedAt, apply.OperationID, apply.AudioStreamCount).Scan(ctx, &matches); scanErr == nil && matches {
 					result = new(SourceMediaVariant)
 					if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, id).Scan(ctx, result); err == nil {
+						if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, apply.AudioStreamCount); err != nil {
+							return fmt.Errorf("apply source probe: persist location probe status: %w", err)
+						}
 						return nil
 					}
 				}
@@ -341,6 +350,9 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 			if _, err := tx.NewRaw(`UPDATE source_location SET media_variant_id=?, updated_at=now() WHERE id=?`, result.ID, locked.Location.ID).Exec(ctx); err != nil {
 				return fmt.Errorf("apply source probe: link probe result: %w", err)
 			}
+		}
+		if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, apply.AudioStreamCount); err != nil {
+			return fmt.Errorf("apply source probe: persist location probe status: %w", err)
 		}
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='succeeded', success_probe_variant_id=?, success_reuse_origin='executed', safe_error=NULL,
 			execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL, last_operation_id=?, updated_at=now()
@@ -514,8 +526,14 @@ func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Contex
 			AND result.id=? AND result.size_bytes=?`, digest, ffprobeVersion, ffprobeVersion, policy, resultID, locked.Work.SizeBytes).Scan(ctx, selected); err != nil {
 			return fmt.Errorf("reuse source probe: cache result does not match current digest, size, version, and policy: %w", err)
 		}
+		if selected.AudioStreamCount == nil {
+			return fmt.Errorf("reuse source probe: cached result has no audio stream count")
+		}
 		if err := checkSourceStepApplyFence(locked, capturedStepAttempt); err != nil {
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == capturedStepAttempt && sameUUID(locked.Step.LastOperationID, claim.OperationID) && sameUUID(locked.Step.SuccessProbeVariantID, resultID) {
+				if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, *selected.AudioStreamCount); err != nil {
+					return fmt.Errorf("reuse source probe: persist location probe status: %w", err)
+				}
 				return nil
 			}
 			return fmt.Errorf("reuse source probe: %w", ErrSourceAnalysisStale)
@@ -527,6 +545,9 @@ func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Contex
 			execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
 			WHERE work_id=? AND step='probe' AND step_attempt=?`, resultID, claim.OperationID, claim.WorkID, capturedStepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("reuse source probe: select cached result: %w", err)
+		}
+		if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, *selected.AudioStreamCount); err != nil {
+			return fmt.Errorf("reuse source probe: persist location probe status: %w", err)
 		}
 		return nil
 	})
@@ -570,6 +591,12 @@ func (repository *SourceInventoryRepository) FailSourceAnalysisStep(ctx context.
 			execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL,
 			last_operation_id=?, updated_at=now() WHERE work_id=? AND step=?`, failure.SafeError, failure.OperationID, failure.WorkID, failure.Step).Exec(ctx); err != nil {
 			return fmt.Errorf("fail source analysis step: persist failure: %w", err)
+		}
+		if failure.Step == SourceStepProbe {
+			if _, err := tx.NewRaw(`UPDATE source_location SET probe_status='probe_error',safe_error=?,updated_at=now()
+				WHERE id=? AND probe_status='not_analyzed'`, failure.SafeError, locked.Location.ID).Exec(ctx); err != nil {
+				return fmt.Errorf("fail source analysis step: persist location probe status: %w", err)
+			}
 		}
 		return nil
 	})
@@ -708,6 +735,18 @@ func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceSt
 }
 
 func sameUUID(left *uuid.UUID, right uuid.UUID) bool { return left != nil && *left == right }
+
+func probeStatus(audioStreamCount int) string {
+	if audioStreamCount > 0 {
+		return "audio"
+	}
+	return "no_audio"
+}
+
+func updateSourceLocationProbeStatus(ctx context.Context, tx bun.IDB, locationID uuid.UUID, audioStreamCount int) error {
+	_, err := tx.NewRaw(`UPDATE source_location SET probe_status=?,safe_error=NULL,updated_at=now() WHERE id=?`, probeStatus(audioStreamCount), locationID).Exec(ctx)
+	return err
+}
 
 func sameFingerprintResult(left *SourceFingerprintResult, right SourceFingerprintResult) bool {
 	return left.ID == right.ID && left.FPCalcVersion == right.FPCalcVersion && left.VersionBanner == right.VersionBanner && left.AlgorithmNamespace == right.AlgorithmNamespace && left.AlgorithmID == right.AlgorithmID && left.Fingerprint == right.Fingerprint && left.ReportedDuration == right.ReportedDuration && sourceAnalysisMtime(left.CalculatedAt).Equal(sourceAnalysisMtime(right.CalculatedAt)) && left.ParserContractVersion == right.ParserContractVersion && left.AppliedOperationID == right.AppliedOperationID

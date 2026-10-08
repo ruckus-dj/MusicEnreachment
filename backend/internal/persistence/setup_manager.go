@@ -56,15 +56,17 @@ type Operation struct {
 	TargetStep        *string    `bun:"target_step,nullzero"`
 	ToolsReadRequired bool       `bun:"tools_read_required"`
 	RerunTarget       bool       `bun:"rerun_target"`
-	Attempt           int        `bun:"attempt"`
-	BytesCompleted    int64      `bun:"bytes_completed"`
-	BytesTotal        *int64     `bun:"bytes_total,nullzero"`
-	SafeError         *string    `bun:"safe_error,nullzero"`
-	RiverJobID        *int64     `bun:"river_job_id,nullzero"`
-	CreatedAt         time.Time  `bun:"created_at,nullzero"`
-	StartedAt         *time.Time `bun:"started_at,nullzero"`
-	FinishedAt        *time.Time `bun:"finished_at,nullzero"`
-	UpdatedAt         time.Time  `bun:"updated_at,nullzero"`
+	// SourceAnalysisTools is admission-only resolved context and is never stored.
+	SourceAnalysisTools []SourceAnalysisToolSelection `bun:"-"`
+	Attempt             int                           `bun:"attempt"`
+	BytesCompleted      int64                         `bun:"bytes_completed"`
+	BytesTotal          *int64                        `bun:"bytes_total,nullzero"`
+	SafeError           *string                       `bun:"safe_error,nullzero"`
+	RiverJobID          *int64                        `bun:"river_job_id,nullzero"`
+	CreatedAt           time.Time                     `bun:"created_at,nullzero"`
+	StartedAt           *time.Time                    `bun:"started_at,nullzero"`
+	FinishedAt          *time.Time                    `bun:"finished_at,nullzero"`
+	UpdatedAt           time.Time                     `bun:"updated_at,nullzero"`
 }
 
 type SetupManagerRepository struct {
@@ -98,6 +100,15 @@ func (repository *SetupManagerRepository) CreateOperation(ctx context.Context, o
 func (repository *SetupManagerRepository) CreateOperationWith(ctx context.Context, database bun.IDB, operation *Operation) error {
 	if operation.Attempt == 0 {
 		operation.Attempt = 1
+	}
+	if operation.State == "queued" {
+		if operation.Kind == "move_tools_root" {
+			if err := lockOutputAdmissionGateExclusive(ctx, database); err != nil {
+				return fmt.Errorf("lock output admission gate: %w", err)
+			}
+		} else if err := AcquireOutputAdmissionGate(ctx, database); err != nil {
+			return fmt.Errorf("lock output admission gate: %w", err)
+		}
 	}
 	if operation.Kind == "move_tools_root" && operation.State == "queued" {
 		if err := lockToolsMoveGateExclusive(ctx, database); err != nil {
@@ -146,6 +157,15 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 		return fmt.Errorf("enqueue operation: River client is required")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var gateErr error
+		if operation != nil && operation.Kind == "move_tools_root" && operation.State == "queued" {
+			gateErr = lockOutputAdmissionGateExclusive(ctx, tx)
+		} else {
+			gateErr = AcquireOutputAdmissionGate(ctx, tx)
+		}
+		if gateErr != nil {
+			return fmt.Errorf("enqueue operation: lock output admission gate: %w", gateErr)
+		}
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
 			return fmt.Errorf("insert River job: %w", err)
@@ -175,6 +195,9 @@ func (repository *SetupManagerRepository) CreateToolsMoveOperationAndEnqueue(ctx
 		return fmt.Errorf("enqueue tools move: operation must be a tools root move")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockOutputAdmissionGateExclusive(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue tools move: lock output admission gate: %w", err)
+		}
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue tools move: lock operation exclusivity: %w", err)
 		}
@@ -247,6 +270,9 @@ func (repository *SetupManagerRepository) CreateInstallationOperationAndEnqueue(
 		return fmt.Errorf("enqueue installation: operation target must match installation")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("enqueue installation: lock output admission gate: %w", err)
+		}
 		if err := lockToolsMoveGateShared(ctx, tx); err != nil {
 			return fmt.Errorf("enqueue installation: lock tools operations: %w", err)
 		}
@@ -950,6 +976,9 @@ func (repository *SetupManagerRepository) UpdateOperation(ctx context.Context, o
 // the operation row; terminal cleanup occurs in the same transaction.
 func (repository *SetupManagerRepository) TransitionOperation(ctx context.Context, id uuid.UUID, transition func(*Operation) error) error {
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("transition operation: lock output admission gate: %w", err)
+		}
 		var rootID *uuid.UUID
 		if err := tx.NewRaw(`SELECT target_source_root_id FROM operation WHERE id=?`, id).Scan(ctx, &rootID); err != nil {
 			return fmt.Errorf("transition operation: read source root target: %w", err)
@@ -1045,6 +1074,9 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 func (repository *SetupManagerRepository) TransitionOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, transition func(*Operation) error) (bool, error) {
 	changed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("transition operation delivery: lock output admission gate: %w", err)
+		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
@@ -1091,6 +1123,13 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 	}
 	var operation *Operation
 	err = repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if captured.Kind == "move_tools_root" {
+			if err := lockOutputAdmissionGateExclusive(ctx, tx); err != nil {
+				return fmt.Errorf("retry operation: lock output admission gate: %w", err)
+			}
+		} else if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("retry operation: lock output admission gate: %w", err)
+		}
 		switch captured.Kind {
 		case "install", "activate", "delete":
 			if err := lockToolsMoveGateShared(ctx, tx); err != nil {

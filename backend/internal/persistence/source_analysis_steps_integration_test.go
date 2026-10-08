@@ -60,6 +60,10 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply probe: %v", err)
 	}
+	var probeStatus string
+	if err := database.NewRaw(`SELECT probe_status FROM source_location WHERE id=?`, location.ID).Scan(ctx, &probeStatus); err != nil || probeStatus != "audio" {
+		t.Fatalf("location probe status = %q, %v; want audio", probeStatus, err)
+	}
 	if duplicate, err := repository.ApplySourceProbe(ctx, probe); err != nil || duplicate.ID != probeResult.ID {
 		t.Fatalf("idempotent probe apply = %v, %v; want result %s", duplicate, err, probeResult.ID)
 	}
@@ -448,6 +452,16 @@ func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T
 			}); err != nil {
 				t.Fatalf("fail exact-step retry: %v", err)
 			}
+			if step == persistence.SourceStepProbe {
+				var probeStatus string
+				if err := database.NewRaw(`SELECT probe_status FROM source_location WHERE id=?`, location.ID).Scan(ctx, &probeStatus); err != nil || probeStatus != "audio" {
+					t.Fatalf("location probe status = %q, %v; want retained audio result", probeStatus, err)
+				}
+				var safeError string
+				if err := database.NewRaw(`SELECT safe_error FROM source_analysis_step WHERE work_id=? AND step=?`, work.ID, step).Scan(ctx, &safeError); err != nil || safeError != "retry failed" {
+					t.Fatalf("probe retry safe error = %q, %v", safeError, err)
+				}
+			}
 			var retained uuid.UUID
 			if err := database.NewRaw(`SELECT `+column+` FROM source_analysis_step WHERE work_id=? AND step=?`, work.ID, step).Scan(ctx, &retained); err != nil || retained != selectedID {
 				t.Fatalf("failed retry selected %s, %v; want retained prior result %s", retained, err, selectedID)
@@ -456,6 +470,63 @@ func TestFailedAnalysisStepRetryRetainsPriorSelectionWithPostgreSQL(t *testing.T
 				t.Fatalf("settle failed exact-step retry: %v", err)
 			}
 		})
+	}
+}
+
+func TestSuccessfulProbeRetryClearsPriorProbeFailureWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	root := createInventoryRoot(t, ctx, repository, "/srv/probe-retry-status")
+	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 1024, probeMtime())
+	if _, err := database.NewRaw(`UPDATE source_location SET probe_status='not_analyzed',safe_error=NULL WHERE id=?`, location.ID).Exec(ctx); err != nil {
+		t.Fatalf("set initial unanalysed probe state: %v", err)
+	}
+	establishInventory(t, ctx, database, root)
+	work := normalizedWork(t, ctx, repository, root, location, false,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepProbe, State: "pending"},
+	)
+	probeTool := insertVerifiedAnalysisTool(t, ctx, database, "ffmpeg", "ffprobe", "7.1.2", "ffprobe version 7.1.2")
+	targetStep := string(persistence.SourceStepProbe)
+	failedFixture := newAnalysisStepFixture(t, ctx, database, repository, client, root, location, work,
+		persistence.SourceAnalysisModeBatch, nil, nil, false, []persistence.SourceAnalysisToolSelection{probeTool})
+	failedAttempt := failedFixture.claim(persistence.SourceStepProbe)
+	if err := repository.FailSourceAnalysisStep(ctx, persistence.SourceStepFailure{
+		WorkID: work.ID, OperationID: failedFixture.operation.ID, OperationAttempt: failedFixture.operation.Attempt,
+		JobID: *failedFixture.operation.RiverJobID, StepAttempt: failedAttempt, Step: persistence.SourceStepProbe, SafeError: "ffprobe failed",
+	}); err != nil {
+		t.Fatalf("fail initial probe: %v", err)
+	}
+	if err := repository.SettleNormalizedSourceAnalysisOperation(ctx, failedFixture.operation.ID, "failed", "probe", "ffprobe failed"); err != nil {
+		t.Fatalf("settle failed initial probe: %v", err)
+	}
+	var failedStatus string
+	if err := database.NewRaw(`SELECT probe_status FROM source_location WHERE id=?`, location.ID).Scan(ctx, &failedStatus); err != nil || failedStatus != "probe_error" {
+		t.Fatalf("location after failed probe = %q, %v; want probe_error", failedStatus, err)
+	}
+
+	retryFixture := newAnalysisStepFixture(t, ctx, database, repository, client, root, location, work,
+		persistence.SourceAnalysisModeSingleStep, &work.ID, &targetStep, false, []persistence.SourceAnalysisToolSelection{probeTool})
+	attempt := retryFixture.claim(persistence.SourceStepProbe)
+	_, err := repository.ApplySourceProbe(ctx, persistence.SourceProbeApply{
+		WorkID: work.ID, OperationID: retryFixture.operation.ID, OperationAttempt: retryFixture.operation.Attempt,
+		JobID: *retryFixture.operation.RiverJobID, StepAttempt: attempt, SizeBytes: location.SizeBytes,
+		AnalysisPolicy: persistence.SourceAnalysisPolicyVersion, FFProbeVersion: "7.1.2",
+		FFProbeJSON: json.RawMessage(`{"format":{"format_name":"flac"}}`), ObservedTags: json.RawMessage(`{}`),
+		InspectedAt: time.Now().UTC().Truncate(time.Microsecond), AudioStreamCount: 1,
+	})
+	if err != nil {
+		t.Fatalf("apply successful probe retry: %v", err)
+	}
+	var status string
+	var safeError *string
+	if err := database.NewRaw(`SELECT probe_status,safe_error FROM source_location WHERE id=?`, location.ID).Scan(ctx, &status, &safeError); err != nil {
+		t.Fatalf("read location after successful probe retry: %v", err)
+	}
+	if status != "audio" || safeError != nil {
+		t.Fatalf("location after successful probe retry = status %q, error %v; want audio and no error", status, safeError)
 	}
 }
 

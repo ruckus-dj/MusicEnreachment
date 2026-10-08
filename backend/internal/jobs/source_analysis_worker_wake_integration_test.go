@@ -18,7 +18,7 @@ import (
 // TestSourceAnalysisFailureWakesSubscriberPostgreSQL arms a real subscriber
 // before the failing action and proves the worker wakes it only after the
 // failed step and release of its work and managed-tool read holds are committed:
-// at the authoritative re-read batch bookkeeping succeeded with no holds and
+// at the authoritative re-read batch bookkeeping failed with no holds and
 // the previous variant is still linked. Removing the source file makes a normal
 // step failure occur after the delivery starts, so this wake is the failure
 // notification itself and not an earlier stage transition.
@@ -45,9 +45,9 @@ func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 	awaitRiverCompletion(t, ctx, fixture.events, *operation.RiverJobID)
 	for {
 		stored := fixture.readOperation(t, ctx, operation.ID)
-		if stored.State == "succeeded" {
+		if stored.State == "failed" {
 			if stored.Stage != service.SourceAnalysisStageApplying {
-				t.Fatalf("operation at terminal snapshot = succeeded/%s, want succeeded/applying", stored.Stage)
+				t.Fatalf("operation at terminal snapshot = failed/%s, want failed/applying", stored.Stage)
 			}
 			requireAnalysisStepSafeError(t, ctx, fixture, operation.ID, persistence.SourceStepProbe, "The source file is unavailable. The previous result is unchanged.")
 			requireAnalysisHolds(t, ctx, fixture, operation.ID, nil, nil)
@@ -60,8 +60,8 @@ func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 			}
 			return
 		}
-		if stored.State == "failed" {
-			t.Fatalf("batch bookkeeping state = failed/%s; want succeeded with a failed probe step", stored.Stage)
+		if stored.State == "succeeded" {
+			t.Fatalf("batch bookkeeping state = succeeded/%s; want failed with a failed probe step", stored.Stage)
 		}
 		select {
 		case <-wake:

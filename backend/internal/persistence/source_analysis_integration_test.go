@@ -286,11 +286,8 @@ func createRunningAnalysisScan(
 	root *persistence.SourceRoot,
 ) *persistence.Operation {
 	t.Helper()
-	shaEnabled := true
 	snapshot, err := json.Marshal(service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: root.ID,
-		ConfiguredPath: root.ConfiguredPath, ScanGeneration: root.ScanGeneration,
-		SHA256Enabled: &shaEnabled, Tools: []persistence.SourceAnalysisToolSelection{},
 	})
 	if err != nil {
 		t.Fatalf("encode scan snapshot: %v", err)

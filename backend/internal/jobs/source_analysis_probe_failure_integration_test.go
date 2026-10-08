@@ -19,7 +19,7 @@ import (
 // apply. The managed ffprobe still answers its -version query (so the pinned
 // installation verifies) but its technical response fails: once with a nonzero
 // exit and once with malformed JSON. In both cases the worker fails the analysis
-// at the probing stage with the safe probe reason, keeps the previous variant
+// at the applying stage with the safe probe reason, keeps the previous variant
 // linked, commits no new probe result, releases its work and managed-tool read
 // holds, and really ran the probe.
 func TestSourceAnalysisWorkerProbeFailurePostgreSQL(t *testing.T) {
@@ -48,9 +48,9 @@ func TestSourceAnalysisWorkerProbeFailurePostgreSQL(t *testing.T) {
 			failed := fixture.start(t, ctx)
 			awaitRiverCompletion(t, ctx, fixture.events, *failed.RiverJobID)
 
-			// Batch operations finish bookkeeping successfully; the individual
-			// probe step retains the actionable failure.
-			assertOperationStage(t, ctx, fixture.setup, failed.ID, "succeeded", service.SourceAnalysisStageApplying)
+			// The batch continues applying sibling steps, then reports failure
+			// because its probe step failed.
+			assertOperationStage(t, ctx, fixture.setup, failed.ID, "failed", service.SourceAnalysisStageApplying)
 			requireAnalysisStepSafeError(t, ctx, fixture, failed.ID, persistence.SourceStepProbe, "managed ffprobe could not analyze the source file")
 			requireAnalysisHolds(t, ctx, fixture, failed.ID, nil, nil)
 			linked := fixture.requireLinkedVariant(t, ctx)

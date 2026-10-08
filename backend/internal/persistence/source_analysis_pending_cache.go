@@ -142,6 +142,9 @@ func (repository *SourceInventoryRepository) ReusePendingSourceAnalysisCache(
 			if !associated || cached.SizeBytes != work.SizeBytes {
 				return nil
 			}
+			if cached.AudioStreamCount == nil {
+				return nil
+			}
 			update = tx.NewUpdate().Table("source_analysis_step").Set("state='succeeded'").
 				Set("success_probe_variant_id=?", variantOrFingerprintID).Set("success_reuse_origin='sha256'")
 		case SourceStepFingerprint:
@@ -177,6 +180,15 @@ func (repository *SourceInventoryRepository) ReusePendingSourceAnalysisCache(
 			return fmt.Errorf("reuse pending source analysis cache: count selected result: %w", err)
 		}
 		reused = count == 1
+		if reused && step == SourceStepProbe {
+			var audioStreamCount int
+			if err := tx.NewRaw(`SELECT audio_stream_count FROM media_variant WHERE id=?`, variantOrFingerprintID).Scan(ctx, &audioStreamCount); err != nil {
+				return fmt.Errorf("reuse pending source analysis cache: read cached probe status: %w", err)
+			}
+			if err := updateSourceLocationProbeStatus(ctx, tx, location.ID, audioStreamCount); err != nil {
+				return fmt.Errorf("reuse pending source analysis cache: persist location probe status: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {

@@ -97,6 +97,7 @@ type SourceEnumerationApply struct {
 	ExpectedJobID          int64
 	SHA256Enabled          bool
 	Scopes                 []SourceEnumerationScope
+	FailureSafeError       string
 }
 
 // SourceScanUnavailable names a scan that found its registered directory

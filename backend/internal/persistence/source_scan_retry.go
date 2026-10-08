@@ -20,19 +20,14 @@ import (
 const sourceScanOperationKind = "scan_source"
 
 type sourceScanSnapshot struct {
-	SchemaVersion  int                           `json:"schema_version"`
-	SourceRootID   uuid.UUID                     `json:"source_root_id"`
-	ConfiguredPath string                        `json:"configured_path"`
-	ScanGeneration int64                         `json:"scan_generation"`
-	SHA256Enabled  *bool                         `json:"sha256_enabled"`
-	Tools          []SourceAnalysisToolSelection `json:"tools"`
+	SchemaVersion int       `json:"schema_version"`
+	SourceRootID  uuid.UUID `json:"source_root_id"`
 }
 
 func decodeSourceScanSnapshot(input json.RawMessage) (sourceScanSnapshot, error) {
 	var snapshot sourceScanSnapshot
 	if err := json.Unmarshal(input, &snapshot); err != nil ||
-		snapshot.SchemaVersion != 3 || snapshot.SourceRootID == uuid.Nil || snapshot.ConfiguredPath == "" ||
-		snapshot.ScanGeneration < 0 || snapshot.SHA256Enabled == nil || snapshot.Tools == nil {
+		snapshot.SchemaVersion != 3 || snapshot.SourceRootID == uuid.Nil {
 		return sourceScanSnapshot{}, fmt.Errorf("invalid immutable snapshot")
 	}
 	return snapshot, nil
@@ -67,6 +62,9 @@ func (repository *SetupManagerRepository) RetrySourceScanOperationAndEnqueue(ctx
 	}
 	var operation *Operation
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("retry source scan: lock output admission gate: %w", err)
+		}
 		captured := new(Operation)
 		if err := tx.NewSelect().Model(captured).Where("id = ?", id).Scan(ctx); err != nil {
 			return fmt.Errorf("retry source scan: read operation: %w", err)
@@ -99,19 +97,11 @@ func (repository *SetupManagerRepository) RetrySourceScanOperationAndEnqueue(ctx
 		if !scanOperationMatchesCapture(captured, locked, rootID) {
 			return fmt.Errorf("retry source scan: operation changed while acquiring the source root lock")
 		}
-		if root.ConfiguredPath != snapshot.ConfiguredPath {
-			return fmt.Errorf("retry source scan: the source root path changed since the scan snapshot")
-		}
-		// The retry keeps the operator-approved path and tool pins from the
-		// original snapshot, but starts from the root's current generation. A
-		// different scan may have advanced the inventory while this operation
-		// was failed; retrying the immutable old generation would be stale.
-		snapshot.ScanGeneration = root.ScanGeneration
-		updatedSnapshot, err := json.Marshal(snapshot)
+		minimalSnapshot, err := json.Marshal(snapshot)
 		if err != nil {
-			return fmt.Errorf("retry source scan: update snapshot generation: %w", err)
+			return fmt.Errorf("retry source scan: encode minimal snapshot: %w", err)
 		}
-		locked.InputSnapshot = updatedSnapshot
+		locked.InputSnapshot = minimalSnapshot
 		locked.TargetSourceRootID = &root.ID
 		if !root.Enabled {
 			return fmt.Errorf("retry source scan: the root %q is disabled: %w", root.DisplayName, ErrSourceRootDisabled)

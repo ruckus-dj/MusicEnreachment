@@ -185,8 +185,12 @@ func (s *SourceAnalysisOperations) RetryOperation(ctx context.Context, originalI
 	if err != nil || currentWork.ID != work.ID || currentWork.SourceRootID != work.SourceRootID || currentWork.LocationID != work.LocationID {
 		return nil, fmt.Errorf("retry source analysis operation: normalized work is no longer current: %w", ErrSourceAnalysisStale)
 	}
-	step := *snapshot.TargetStep
-	return s.enqueueFromSnapshot(ctx, snapshot, step, false, detail.Root.ID, detail.Location.ID)
+	step := persistence.SourceStepName(*snapshot.TargetStep)
+	tools, err := s.selectedTools(ctx, step)
+	if err != nil {
+		return nil, err
+	}
+	return s.enqueueSingleStep(ctx, detail, currentWork, step, false, tools)
 }
 
 func (s *SourceAnalysisOperations) enqueueSingleStep(ctx context.Context, detail *persistence.SourceLocationDetailSnapshot, work *persistence.SourceAnalysisWork, step persistence.SourceStepName, rerun bool, pinnedTools []persistence.SourceAnalysisToolSelection) (*persistence.Operation, error) {
@@ -209,7 +213,7 @@ func (s *SourceAnalysisOperations) enqueueSingleStep(ctx context.Context, detail
 		InputSnapshot: raw, Attempt: 1, SourceAnalysisMode: snapshot.Mode,
 		TargetSourceRootID: &detail.Root.ID, TargetSourceLocationID: &detail.Location.ID,
 		TargetWorkID: &work.ID, TargetStep: &stepValue,
-		ToolsReadRequired: snapshot.ToolsReadRequired, RerunTarget: rerun,
+		ToolsReadRequired: snapshot.ToolsReadRequired, RerunTarget: rerun, SourceAnalysisTools: pinnedTools,
 	}
 	return s.admit(ctx, operation)
 }
@@ -219,25 +223,34 @@ func (s *SourceAnalysisOperations) enqueueFromSnapshot(ctx context.Context, snap
 	if snapshot.TargetWorkID == nil {
 		return nil, fmt.Errorf("encode source analysis retry snapshot: exact work is required")
 	}
+	work, _, err := s.repository.GetNormalizedSourceAnalysisWork(ctx, *snapshot.TargetWorkID)
+	if err != nil {
+		return nil, fmt.Errorf("read current source analysis work for retry: %w", err)
+	}
+	if work == nil {
+		return nil, fmt.Errorf("read current source analysis work for retry: %w", ErrSourceAnalysisStale)
+	}
+	shaEnabled, cacheOnly := work.SHA256Enabled, false
+	snapshot.SHA256Enabled, snapshot.CacheOnlyReuse = &shaEnabled, &cacheOnly
+	if persistence.SourceStepName(step) == persistence.SourceStepProbe || persistence.SourceStepName(step) == persistence.SourceStepFingerprint {
+		snapshot.Tools, err = s.selectedTools(ctx, persistence.SourceStepName(step))
+		if err != nil {
+			return nil, err
+		}
+		snapshot.ToolsReadRequired = len(snapshot.Tools) != 0
+	}
 	projected, err := persistence.ProjectSourceAnalysisStepSnapshot(snapshot, *snapshot.TargetWorkID, persistence.SourceStepName(step))
 	if err != nil {
 		return nil, fmt.Errorf("project source analysis retry snapshot: %w", err)
 	}
-	snapshot, err = persistence.DecodeSourceAnalysisOperationSnapshot(projected)
-	if err != nil {
-		return nil, fmt.Errorf("decode source analysis retry snapshot: %w", err)
-	}
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("encode source analysis retry snapshot: %w", err)
-	}
+	raw := projected
 	targetStep := step
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued", Stage: SourceAnalysisStageQueued,
 		InputSnapshot: raw, Attempt: 1, SourceAnalysisMode: snapshot.Mode,
 		TargetSourceRootID: &rootID, TargetSourceLocationID: &locationID,
 		TargetWorkID: snapshot.TargetWorkID, TargetStep: &targetStep,
-		ToolsReadRequired: snapshot.ToolsReadRequired, RerunTarget: rerun,
+		ToolsReadRequired: snapshot.ToolsReadRequired, RerunTarget: rerun, SourceAnalysisTools: snapshot.Tools,
 	}
 	return s.admit(ctx, operation)
 }
@@ -273,7 +286,7 @@ func (s *SourceAnalysisOperations) selectedTools(ctx context.Context, step persi
 	if err != nil {
 		return nil, fmt.Errorf("read selected source analysis installation: %w: %w", ErrSourceAnalysisToolUnavailable, err)
 	}
-	if installation.ID != id || installation.PackageKind != packageKind || installation.State != "ready" ||
+	if installation == nil || installation.ID != id || installation.PackageKind != packageKind || installation.State != "ready" ||
 		installation.PlatformGOOS != s.platform.Platform.GOOS || installation.PlatformGOARCH != s.platform.Platform.GOARCH || installation.VerifiedAt == nil {
 		return nil, fmt.Errorf("selected source analysis installation is not verified for this platform: %w", ErrSourceAnalysisToolUnavailable)
 	}

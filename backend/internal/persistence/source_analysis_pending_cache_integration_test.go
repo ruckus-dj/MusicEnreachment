@@ -46,6 +46,9 @@ func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
 	if _, err := database.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_sha_variant_id=?,success_reuse_origin='executed' WHERE work_id=? AND step='sha256'`, shaVariantID, work.ID).Exec(ctx); err != nil {
 		t.Fatalf("select current SHA step result: %v", err)
 	}
+	if _, err := database.NewRaw(`UPDATE source_location SET probe_status='not_analyzed' WHERE id=?`, location.ID).Exec(ctx); err != nil {
+		t.Fatalf("reset probe status before cache reuse: %v", err)
+	}
 	probeVersion := "ffprobe 8.0"
 	analysisPolicy, audioStreams := persistence.SourceAnalysisPolicyVersion, 1
 	probeVariant := &persistence.SourceMediaVariant{
@@ -87,6 +90,10 @@ func TestReusePendingSourceAnalysisCacheWithPostgreSQL(t *testing.T) {
 	}
 	if probeState != "succeeded" || selected != probeVariantID || origin != "sha256" || lastOperation != nil {
 		t.Fatalf("probe selection = state %q, id %s, origin %q, last operation %v", probeState, selected, origin, lastOperation)
+	}
+	var probeStatus string
+	if err := database.NewRaw(`SELECT probe_status FROM source_location WHERE id=?`, location.ID).Scan(ctx, &probeStatus); err != nil || probeStatus != "audio" {
+		t.Fatalf("probe status after cache reuse = %q, %v; want audio", probeStatus, err)
 	}
 	var retainedProvenance uuid.UUID
 	var retainedInspection time.Time

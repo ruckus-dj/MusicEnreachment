@@ -109,6 +109,21 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   I04 cutover. `task verify` passed locally. Native platform matrix and deployment
   smoke remain CI-only and are not claimed locally.
 
+- **I04 — implementation complete locally (2026-10-09):** production scan now
+  enumerates/stat-checks only, reconciles inaccessible locations, and admits
+  singleton file operations. Operation/step snapshots contain identifiers and
+  explicit step intent rather than tool/settings snapshots. Fenced execution
+  resolves current mode/tools and replaces admission tool holds; admissions and
+  claims take the shared output gate first. PostgreSQL guards enforce per-work
+  exclusivity and exact step membership. Independent step successes remain
+  available when a file operation fails. Scan recovery preserves the durable
+  unreadable-observation outcome. `task verify` passed, including PostgreSQL/River
+  integration and builds. The analysis queue starts with the typed concurrency
+  setting; live increases beyond its startup capacity require the later settings
+  integration before UI exposure. Production staged execution remains fail-closed
+  until I06; output reset/journal remains unavailable until I09. Native platform
+  matrix and deployment smoke were not run locally.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

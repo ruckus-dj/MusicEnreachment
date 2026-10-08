@@ -8,11 +8,9 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
-// TestWorkerSafeReasonsClassifyPlatformErrors pins the current worker's safe
-// platform-error classification: an instance platform that cannot run work is
-// refused at the worker's platform gate and reported with the actionable
-// not-ready reason, never as an unsupported source root. The unsupported-root
-// reason stays separate and actionable so an operator sees the local-path fix.
+// TestWorkerSafeReasonsClassifyPlatformErrors pins analysis-worker platform
+// validation and keeps an unsupported source root distinct and actionable. Scan
+// enumeration does not depend on the instance's managed analysis tools.
 func TestWorkerSafeReasonsClassifyPlatformErrors(t *testing.T) {
 	ctx := context.Background()
 	unusable := settings.PlatformState{
@@ -25,11 +23,7 @@ func TestWorkerSafeReasonsClassifyPlatformErrors(t *testing.T) {
 	if err := (&SourceAnalysisWorker{platform: unusable}).ready(ctx); err == nil {
 		t.Fatal("analysis worker accepted an unusable platform")
 	}
-	if err := (&SourceScanWorker{platform: unusable}).ready(ctx); err == nil {
-		t.Fatal("scan worker accepted an unusable platform")
-	}
-
-	for name, reason := range map[string]string{"scan": scanSafeNotReady, "analysis": analysisSafeNotReady} {
+	for name, reason := range map[string]string{"analysis": analysisSafeNotReady} {
 		if !strings.Contains(reason, "supported server platform") {
 			t.Errorf("%s not-ready reason = %q, want actionable platform guidance", name, reason)
 		}

@@ -22,6 +22,7 @@ func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 	testpostgres.ResetAndMigrate(t, database)
 
 	rootID, scanID, moveID := uuid.New(), uuid.New(), uuid.New()
+	otherRootID, otherScanID := uuid.New(), uuid.New()
 	installationID := uuid.New()
 	rootPath := "/srv/tools-reader-exclusion-" + rootID.String()
 	if _, err := database.ExecContext(ctx, `
@@ -44,10 +45,57 @@ func TestSourceToolsReaderExclusionWithPostgreSQL(t *testing.T) {
 		scanID, `{"schema_version":3,"source_root_id":"`+rootID.String()+`","configured_path":"`+rootPath+`","scan_generation":1,"sha256_enabled":false,"tools":[]}`, rootID); err != nil {
 		t.Fatalf("insert active tools-free scan: %v", err)
 	}
+	// Reader exclusion uses durable operation selectors rather than snapshot tool
+	// arrays, and readers on separate roots may coexist.
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name)
+		VALUES (?, ?, 'Second tools reader')`, otherRootID, "/srv/tools-reader-exclusion-"+otherRootID.String()); err != nil {
+		t.Fatalf("insert second source root: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO operation
+		(id, kind, state, stage, input_snapshot, target_source_root_id, tools_read_required)
+		VALUES (?, 'scan_source', 'running', 'scanning', '{}', ?, false)`, otherScanID, otherRootID); err != nil {
+		t.Fatalf("insert second tools-free scan: %v", err)
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?,?)`, otherScanID, installationID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=true WHERE id=?`, otherScanID)
+		return err
+	}); err != nil {
+		t.Fatalf("enable second scan reader with its tool hold: %v", err)
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation_tool_read_hold(operation_id, installation_id) VALUES (?, ?)`, scanID, installationID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=true WHERE id=?`, scanID)
+		return err
+	}); err != nil {
+		t.Fatalf("enable first scan reader alongside distinct-root reader: %v", err)
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM operation_tool_read_hold WHERE operation_id=?`, scanID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=false WHERE id=?`, scanID)
+		return err
+	}); err != nil {
+		t.Fatalf("disable first scan reader and remove its tool hold: %v", err)
+	}
+	if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM operation_tool_read_hold WHERE operation_id=?`, otherScanID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE operation SET tools_read_required=false WHERE id=?`, otherScanID)
+		return err
+	}); err != nil {
+		t.Fatalf("disable second scan reader and remove its tool hold: %v", err)
+	}
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO operation (id, kind, state, stage, input_snapshot)
 		VALUES (?, 'move_tools_root', 'running', 'moving', '{"schema_version":1,"old_root":"/srv/tools"}'::jsonb)`, moveID); err != nil {
-		t.Fatalf("insert active tools move alongside tools-free scan: %v", err)
+		t.Fatalf("insert active tools move alongside tools-free scans: %v", err)
 	}
 	assertOperationCount(t, ctx, database, "active scan and move", scanID, moveID)
 

@@ -201,9 +201,17 @@ func (fixture *analysisDispatchFixture) startWithSchedule(t *testing.T, ctx cont
 			Version: analysisDispatchRelease, VersionBanner: "fpcalc version " + analysisDispatchRelease,
 		})
 	}
+	selectedSteps := []persistence.SourceAnalysisStepSelection{
+		{WorkID: fixture.work.ID, Step: persistence.SourceStepSHA256},
+		{WorkID: fixture.work.ID, Step: persistence.SourceStepProbe},
+	}
+	if fixture.fpcalcID != uuid.Nil {
+		selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: fixture.work.ID, Step: persistence.SourceStepFingerprint})
+	}
 	rawSnapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{
 		SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
 		Mode:          persistence.SourceAnalysisModeBatch, WorkIDs: []uuid.UUID{fixture.work.ID},
+		SelectedSteps: selectedSteps,
 		SHA256Enabled: &shaEnabled, RerunTarget: &rerun, CacheOnlyReuse: &cacheOnly,
 		ToolsReadRequired: true, Tools: selectedTools,
 	})
@@ -214,6 +222,7 @@ func (fixture *analysisDispatchFixture) startWithSchedule(t *testing.T, ctx cont
 		ID: uuid.New(), Kind: service.SourceAnalysisOperationKind, State: "queued", Stage: service.SourceAnalysisStageQueued,
 		InputSnapshot: rawSnapshot, Attempt: 1, SourceAnalysisMode: persistence.SourceAnalysisModeBatch,
 		TargetSourceRootID: &fixture.root.ID, ToolsReadRequired: true,
+		SourceAnalysisTools: selectedTools,
 	}
 	insertOptions := &river.InsertOpts{Queue: service.SourceAnalysisQueue}
 	if scheduled {

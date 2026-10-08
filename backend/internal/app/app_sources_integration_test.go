@@ -35,16 +35,18 @@ import (
 // repositories, services and worker constructors app.Run installs, down to the
 // shared persistence.SetupManagerRepository.
 type sourceApplicationFixture struct {
-	database   *bun.DB
-	store      *persistence.SettingsRepository
-	registry   *settings.Registry
-	platform   settings.PlatformState
-	operations *service.Operations
-	roots      *service.SourceRoots
-	inventory  *persistence.SourceInventoryRepository
-	installer  *persistence.SetupManagerRepository
-	worker     *jobs.SourceScanWorker
-	router     http.Handler
+	database       *bun.DB
+	store          *persistence.SettingsRepository
+	registry       *settings.Registry
+	platform       settings.PlatformState
+	operations     *service.Operations
+	sourceAnalysis *service.SourceAnalysisOperations
+	roots          *service.SourceRoots
+	inventory      *persistence.SourceInventoryRepository
+	installer      *persistence.SetupManagerRepository
+	worker         *jobs.SourceScanWorker
+	analysis       *jobs.SourceAnalysisWorker
+	router         http.Handler
 }
 
 func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicationFixture {
@@ -72,27 +74,38 @@ func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicati
 	inventory := persistence.NewSourceInventoryRepository(database)
 	roots := service.NewSourceRoots(inventory, registry)
 	scan := service.NewSourceScanOperations(inventory, roots, registry, platform, tc.riverClient)
+	sourceAnalysis := service.NewSourceAnalysisOperations(
+		analysisWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
+		registry, registry, platform, tc.riverClient,
+	)
 	worker := jobs.NewSourceScanWorker(
 		scanWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
 		operations, roots, registry, platform, tools.NewLifecycle(nil),
 	)
+	analysisWorker := jobs.NewSourceAnalysisWorker(
+		analysisWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
+		operations, registry, registry, platform,
+	)
+	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 
 	setupDependency := api.HandlerWithDependencies(api.Dependencies{
 		Setup:           service.NewSetup(store, registry, platform, setupManager, nil),
 		SourceRoots:     roots,
 		SourceLocations: service.NewSourceLocations(inventory),
 		SourceScan:      scan,
+		SourceAnalysis:  sourceAnalysis,
 		Operations:      operations,
 	})
 
 	return sourceApplicationFixture{
 		database: database, store: store, registry: registry, platform: platform,
-		operations: operations,
-		roots:      roots,
-		inventory:  inventory,
-		installer:  setupManager,
-		worker:     worker,
-		router:     setupDependency,
+		operations:     operations,
+		sourceAnalysis: sourceAnalysis,
+		roots:          roots,
+		inventory:      inventory,
+		installer:      setupManager,
+		worker:         worker, analysis: analysisWorker,
+		router: setupDependency,
 	}
 }
 
@@ -107,6 +120,7 @@ func (fixture *sourceApplicationFixture) switchPlatform(t *testing.T, platform s
 		SourceRoots:     fixture.roots,
 		SourceLocations: service.NewSourceLocations(fixture.inventory),
 		SourceScan:      service.NewSourceScanOperations(fixture.inventory, fixture.roots, fixture.registry, platform, nil),
+		SourceAnalysis:  fixture.sourceAnalysis,
 		Operations:      fixture.operations,
 	})
 }
@@ -431,6 +445,31 @@ func (fixture sourceApplicationFixture) runScan(t *testing.T, rootID uuid.UUID) 
 	}
 	if err := fixture.worker.Work(context.Background(), job); err != nil {
 		t.Fatalf("the production scan worker failed: %v", err)
+	}
+	if _, err := fixture.sourceAnalysis.AdmitPending(t.Context(), rootID); err != nil {
+		t.Fatalf("admit per-file source analysis after enumeration: %v", err)
+	}
+	for range 10 {
+		var analysisOperation persistence.Operation
+		err := fixture.database.NewSelect().Model(&analysisOperation).
+			Where("kind = ? AND target_source_root_id = ? AND state IN (?, ?)", service.SourceAnalysisOperationKind, rootID, "queued", "running").
+			Order("created_at DESC").Limit(1).Scan(t.Context())
+		if err == sql.ErrNoRows {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read the queued per-file analysis operation: %v", err)
+		}
+		if analysisOperation.RiverJobID == nil {
+			t.Fatalf("per-file analysis operation has no River job: %+v", analysisOperation)
+		}
+		analysisJob := &river.Job[service.SourceAnalysisJobArgs]{
+			JobRow: &rivertype.JobRow{ID: *analysisOperation.RiverJobID},
+			Args:   service.SourceAnalysisJobArgs{OperationID: analysisOperation.ID},
+		}
+		if err := fixture.analysis.Work(context.Background(), analysisJob); err != nil {
+			t.Fatalf("the per-file source analysis worker failed: %v", err)
+		}
 	}
 }
 

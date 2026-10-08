@@ -27,7 +27,7 @@ func TestPendingSourceAnalysisFingerprintTracksPolicyAndRemainingSteps(t *testin
 	}
 }
 
-func TestRetainedRecoveryGroupsExactStepsAndOriginalToolPins(t *testing.T) {
+func TestRetainedRecoveryKeepsExactIntentAndAdmitsOneStepAtATime(t *testing.T) {
 	owner, workID, rootID := uuid.New(), uuid.New(), uuid.New()
 	shaEnabled, rerun, cacheOnly := true, false, false
 	ffprobe := persistence.SourceAnalysisToolSelection{
@@ -58,44 +58,37 @@ func TestRetainedRecoveryGroupsExactStepsAndOriginalToolPins(t *testing.T) {
 	}
 
 	group := retainedRecoveryGroup([]retainedSourceAnalysisIntent{probe, fingerprint, otherOwner, newIntent}, owner)
-	snapshot, ok := retainedRecoveryBatchSnapshot(group)
-	if !ok {
-		t.Fatal("compatible pending steps from the same durable owner should form a batch")
+	if len(group) != 2 {
+		t.Fatalf("recovery group = %+v; want only the two owned tuples", group)
 	}
-	if len(snapshot.WorkIDs) != 1 || snapshot.WorkIDs[0] != workID || len(snapshot.SelectedSteps) != 2 {
-		t.Fatalf("batch selection = work %v steps %v; want only the two recovered tuples", snapshot.WorkIDs, snapshot.SelectedSteps)
+	if _, ok := retainedRecoveryBatchSnapshot(group); ok {
+		t.Fatal("multiple retained steps were combined into a batch; they must be separately admitted")
 	}
-	if snapshot.SelectedSteps[0].Step == snapshot.SelectedSteps[1].Step || snapshot.SelectedSteps[0].WorkID != workID || snapshot.SelectedSteps[1].WorkID != workID {
-		t.Fatalf("batch selected unexpected tuples: %+v", snapshot.SelectedSteps)
-	}
-	if len(snapshot.Tools) != 2 || snapshot.Tools[0] == snapshot.Tools[1] {
-		t.Fatalf("batch tools = %+v, want both distinct original pins", snapshot.Tools)
-	}
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := persistence.DecodeSourceAnalysisOperationSnapshot(raw)
-	if err != nil {
-		t.Fatalf("decode exact recovery batch snapshot: %v", err)
-	}
-	if len(decoded.SelectedSteps) != 2 || len(decoded.WorkIDs) != 1 || decoded.WorkIDs[0] != workID {
-		t.Fatalf("decoded exact batch selection = %+v", decoded)
-	}
-	for _, want := range []persistence.SourceAnalysisToolSelection{ffprobe, fpcalc} {
-		found := false
-		for _, got := range snapshot.Tools {
-			found = found || got == want
+	for _, intent := range group {
+		if intent.Snapshot.TargetWorkID == nil || *intent.Snapshot.TargetWorkID != workID || intent.Snapshot.TargetStep == nil || *intent.Snapshot.TargetStep != intent.Step.Step {
+			t.Errorf("retained intent lost exact tuple identity: %+v", intent)
 		}
-		if !found {
-			t.Errorf("batch omitted retained tool pin %+v", want)
+		wantExecutable := "ffprobe"
+		if intent.Step.Step == string(persistence.SourceStepFingerprint) {
+			wantExecutable = "fpcalc"
+		}
+		if !intent.Snapshot.ToolsReadRequired || len(intent.Snapshot.Tools) != 1 || intent.Snapshot.Tools[0].Executable != wantExecutable {
+			t.Errorf("retained intent transient tool selection = %+v, want current %s", intent.Snapshot.Tools, wantExecutable)
+		}
+		raw, err := json.Marshal(intent.Snapshot)
+		if err != nil {
+			t.Fatalf("marshal retained intent: %v", err)
+		}
+		var durable map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &durable); err != nil {
+			t.Fatalf("decode durable retained intent: %v", err)
+		}
+		if _, exists := durable["tools"]; exists {
+			t.Errorf("retained intent serialized transient tool selections: %s", raw)
 		}
 	}
 	if len(retainedRecoveryGroup([]retainedSourceAnalysisIntent{probe, fingerprint, otherOwner}, uuid.New())) != 0 {
 		t.Fatal("different durable owners were grouped")
-	}
-	if _, ok := retainedRecoveryBatchSnapshot([]retainedSourceAnalysisIntent{probe, otherOwner}); ok {
-		t.Fatal("steps from different durable owners formed a batch")
 	}
 	if len(group) != 2 {
 		t.Fatalf("group included an unrelated or never-admitted pending step: %+v", group)

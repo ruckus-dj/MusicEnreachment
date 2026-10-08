@@ -9,7 +9,7 @@ import (
 
 func TestSameSourceAnalysisStepInputRequiresExactRetainedSelection(t *testing.T) {
 	snapshot := validSingleStepSnapshotWithTool()
-	work := SourceAnalysisWork{ID: snapshot.WorkIDs[0], SHA256Enabled: *snapshot.SHA256Enabled}
+	work := SourceAnalysisWork{ID: snapshot.WorkIDs[0]}
 	left, err := ProjectSourceAnalysisStepSnapshot(snapshot, work.ID, SourceStepProbe)
 	if err != nil {
 		t.Fatal(err)
@@ -17,13 +17,14 @@ func TestSameSourceAnalysisStepInputRequiresExactRetainedSelection(t *testing.T)
 	if !sameSourceAnalysisStepInput(left, left, work, string(SourceStepProbe)) {
 		t.Fatal("identical retained inputs differ")
 	}
-	snapshot.Tools[0].InstallationID = uuid.New()
-	right, err := ProjectSourceAnalysisStepSnapshot(snapshot, work.ID, SourceStepProbe)
-	if err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(left, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if sameSourceAnalysisStepInput(left, right, work, string(SourceStepProbe)) {
-		t.Fatal("a different executable pin was accepted as the retained input")
+	for _, forbidden := range []string{"tools", "sha256_enabled", "cache_only_reuse", "tools_read_required"} {
+		if _, exists := fields[forbidden]; exists {
+			t.Fatalf("runtime field %q persisted in step intent", forbidden)
+		}
 	}
 	if sameSourceAnalysisStepInput(left, nil, work, string(SourceStepProbe)) {
 		t.Fatal("missing retained input was accepted")
@@ -53,7 +54,7 @@ func TestProjectSourceAnalysisStepSnapshotPinsOnlyRelevantInputs(t *testing.T) {
 	if err := json.Unmarshal(projected, &projectedInput); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Tools) != 0 || decoded.ToolsReadRequired || decoded.TargetStep == nil || *decoded.TargetStep != string(SourceStepSHA256) || decoded.SelectedSteps != nil || decoded.CacheOnlyFFProbeVersion != "" || decoded.CacheOnlyFPCalcVersion != "" || projectedInput.AnalysisPolicyVersion != SourceAnalysisPolicyVersion || decoded.CacheOnlyReuse == nil || *decoded.CacheOnlyReuse {
+	if decoded.TargetStep == nil || *decoded.TargetStep != string(SourceStepSHA256) || projectedInput.AnalysisPolicyVersion != SourceAnalysisPolicyVersion {
 		t.Fatalf("SHA projection retained irrelevant inputs: %+v", decoded)
 	}
 
@@ -74,7 +75,7 @@ func TestProjectSourceAnalysisStepSnapshotPinsOnlyRelevantInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Tools) != 1 || decoded.Tools[0] != tool || decoded.CacheOnlyFPCalcVersion != "1.5" || decoded.CacheOnlyFFProbeVersion != "" || decoded.CacheOnlyReuse == nil || *decoded.CacheOnlyReuse || decoded.RerunTarget == nil || !*decoded.RerunTarget {
+	if decoded.RerunTarget == nil || !*decoded.RerunTarget {
 		t.Fatalf("fingerprint projection has unrelated inputs or lost rerun intent: %+v", decoded)
 	}
 }
@@ -100,8 +101,8 @@ func TestDecodeRetainedSourceAnalysisStepInputStrictlyValidatesIntent(t *testing
 	if err != nil {
 		t.Fatalf("decode valid retained input: %v", err)
 	}
-	if decoded.SHA256Enabled == nil || !*decoded.SHA256Enabled || decoded.RerunTarget == nil || !*decoded.RerunTarget || decoded.CacheOnlyReuse == nil || *decoded.CacheOnlyReuse {
-		t.Fatalf("explicit retained booleans changed meaning: %+v", decoded)
+	if decoded.RerunTarget == nil || !*decoded.RerunTarget {
+		t.Fatalf("explicit rerun intent changed meaning: %+v", decoded)
 	}
 
 	for name, input := range map[string]json.RawMessage{
@@ -128,12 +129,12 @@ func TestDecodeRetainedSourceAnalysisStepInputStrictlyValidatesIntent(t *testing
 			}
 			return encoded
 		}(),
-		"nil explicit booleans": func() json.RawMessage {
+		"nil rerun intent": func() json.RawMessage {
 			var value map[string]any
 			if err := json.Unmarshal(raw, &value); err != nil {
 				t.Fatal(err)
 			}
-			value["rerun_target"], value["sha256_enabled"], value["cache_only_reuse"] = nil, nil, nil
+			value["rerun_target"] = nil
 			encoded, marshalErr := json.Marshal(value)
 			if marshalErr != nil {
 				t.Fatal(marshalErr)

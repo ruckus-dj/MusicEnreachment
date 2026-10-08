@@ -251,29 +251,30 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 		}
 	})
 
-	t.Run("root_exclusivity_covers_scan_and_analysis", func(t *testing.T) {
-		scanRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-1")
-		insertOperation(t, ctx, database, &persistence.Operation{
+	t.Run("scan_exclusivity_is_preserved_and_analyses_are_per_work", func(t *testing.T) {
+		rootID := newVariantRoot(t, ctx, database, "/srv/variant-exclusive")
+		scanSnapshot := json.RawMessage(`{"schema_version":3,"source_root_id":"` + rootID.String() + `","configured_path":"/srv/variant-exclusive","scan_generation":1,"sha256_enabled":false,"tools":[]}`)
+		scanID := insertOperation(t, ctx, database, &persistence.Operation{
 			Kind: "scan_source", State: "queued", Stage: "queued",
-			TargetSourceRootID: &scanRoot,
+			InputSnapshot: scanSnapshot, TargetSourceRootID: &rootID,
 		})
-		scanLocation := newVariantLocation(t, ctx, database, scanRoot, "album/track.flac")
-		requireRootConflict(t, tryHeldBatchAnalysis(t, ctx, database, scanRoot, scanLocation))
-
-		analysisRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-2")
-		analysisLocation := newVariantLocation(t, ctx, database, analysisRoot, "album/track.flac")
-		insertHeldBatchAnalysis(t, ctx, database, analysisRoot, analysisLocation)
-		requireRootConflict(t, tryHeldBatchAnalysis(t, ctx, database, analysisRoot, analysisLocation))
-
-		// Independent roots stay independent for batch analysis as well as scans.
-		otherScanRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-3")
-		insertOperation(t, ctx, database, &persistence.Operation{
+		requireRootConflict(t, tryOperation(t, ctx, database, &persistence.Operation{
 			Kind: "scan_source", State: "queued", Stage: "queued",
-			TargetSourceRootID: &otherScanRoot,
-		})
-		otherAnalysisRoot := newVariantRoot(t, ctx, database, "/srv/variant-exclusive-4")
-		otherAnalysisLocation := newVariantLocation(t, ctx, database, otherAnalysisRoot, "album/track.flac")
-		insertHeldBatchAnalysis(t, ctx, database, otherAnalysisRoot, otherAnalysisLocation)
+			InputSnapshot: scanSnapshot, TargetSourceRootID: &rootID,
+		}))
+		if _, err := database.ExecContext(ctx, `UPDATE operation
+			SET state='succeeded',stage='succeeded',finished_at=now(),updated_at=now() WHERE id=?`, scanID); err != nil {
+			t.Fatalf("finish the source scan: %v", err)
+		}
+
+		locationA := newVariantLocation(t, ctx, database, rootID, "album/a.flac")
+		locationB := newVariantLocation(t, ctx, database, rootID, "album/b.flac")
+		_, workA := insertHeldBatchAnalysis(t, ctx, database, rootID, locationA)
+		if err := tryHeldBatchAnalysis(t, ctx, database, rootID, locationB); err != nil {
+			t.Fatalf("distinct work under an active analysis root was rejected: %v", err)
+		}
+		requireViolation(t, tryHoldExistingWork(ctx, database, rootID, workA),
+			"operation_source_work_hold_one_active_work")
 	})
 
 	t.Run("install_and_move_constraints_unaffected", func(t *testing.T) {
@@ -606,8 +607,8 @@ func storeHeldBatchAnalysis(ctx context.Context, database *bun.DB, rootID, locat
 		return uuid.Nil, uuid.Nil, err
 	}
 	snapshot, err := json.Marshal(map[string]any{
-		"schema_version": 1, "mode": "batch", "work_ids": []uuid.UUID{workID}, "tools": []any{},
-		"sha256_enabled": true, "cache_only_reuse": false, "rerun_target": false, "tools_read_required": false,
+		"schema_version": 1, "mode": "batch", "work_ids": []uuid.UUID{workID},
+		"selected_steps": []map[string]any{{"work_id": workID, "step": "sha256"}}, "rerun_target": false,
 	})
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
@@ -630,6 +631,29 @@ func storeHeldBatchAnalysis(ctx context.Context, database *bun.DB, rootID, locat
 		return err
 	})
 	return operationID, workID, err
+}
+
+func tryHoldExistingWork(ctx context.Context, database *bun.DB, rootID, workID uuid.UUID) error {
+	operationID := uuid.New()
+	snapshot, err := json.Marshal(map[string]any{
+		"schema_version": 1, "mode": "batch", "work_ids": []uuid.UUID{workID},
+		"selected_steps": []map[string]any{{"work_id": workID, "step": "sha256"}}, "rerun_target": false,
+	})
+	if err != nil {
+		return err
+	}
+	return database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation := &persistence.Operation{
+			ID: operationID, Kind: "analyze_source", State: "queued", Stage: "queued",
+			InputSnapshot: snapshot, TargetSourceRootID: &rootID,
+			SourceAnalysisMode: "batch", Attempt: 1,
+		}
+		if _, err := tx.NewInsert().Model(operation).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO operation_source_work_hold(operation_id,work_id) VALUES (?,?)`, operationID, workID)
+		return err
+	})
 }
 
 func tryOperation(t *testing.T, ctx context.Context, database *bun.DB, operation *persistence.Operation) error {
@@ -668,6 +692,7 @@ func requireRootConflict(t *testing.T, err error) {
 		t.Fatal("a second active operation on one root was accepted")
 	}
 	if !strings.Contains(err.Error(), "operation_one_active_source_root_operation") &&
+		!strings.Contains(err.Error(), "operation_one_active_source_root_scan") &&
 		!strings.Contains(err.Error(), "operation_active_tools_operations_exclusive") {
 		t.Fatalf("error = %v, want the active-root guard", err)
 	}

@@ -261,8 +261,8 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	if err := json.Unmarshal(rerunRow.InputSnapshot, &rerunSnapshot); err != nil {
 		t.Fatalf("decode fingerprint rerun snapshot: %v", err)
 	}
-	if rerunSnapshot.TargetStep == nil || *rerunSnapshot.TargetStep != string(persistence.SourceStepFingerprint) || len(rerunSnapshot.Tools) != 1 || rerunSnapshot.Tools[0].InstallationID != activeFP || rerunSnapshot.Tools[0].Version != "1.6.0" {
-		t.Fatalf("fingerprint rerun snapshot did not pin active tool only: %+v", rerunSnapshot)
+	if rerunSnapshot.TargetStep == nil || *rerunSnapshot.TargetStep != string(persistence.SourceStepFingerprint) || len(rerunSnapshot.Tools) != 0 || rerunSnapshot.RerunTarget == nil || !*rerunSnapshot.RerunTarget {
+		t.Fatalf("fingerprint rerun snapshot did not preserve minimal explicit intent: %+v", rerunSnapshot)
 	}
 	if err := operations.Running(ctx, rerun.ID, "fingerprinting"); err != nil {
 		t.Fatalf("mark fingerprint rerun running: %v", err)
@@ -311,8 +311,8 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	if err := json.Unmarshal(retryFingerprintRow.InputSnapshot, &retryFingerprintSnapshot); err != nil {
 		t.Fatalf("decode exact fingerprint retry snapshot: %v", err)
 	}
-	if retryFingerprintSnapshot.TargetStep == nil || *retryFingerprintSnapshot.TargetStep != string(persistence.SourceStepFingerprint) || len(retryFingerprintSnapshot.Tools) != 1 || retryFingerprintSnapshot.Tools[0].InstallationID != activeFP || retryFingerprintSnapshot.RerunTarget == nil || *retryFingerprintSnapshot.RerunTarget {
-		t.Fatalf("fingerprint retry did not select only the failed step/current tool: %+v", retryFingerprintSnapshot)
+	if retryFingerprintSnapshot.TargetStep == nil || *retryFingerprintSnapshot.TargetStep != string(persistence.SourceStepFingerprint) || len(retryFingerprintSnapshot.Tools) != 0 || retryFingerprintSnapshot.RerunTarget == nil || *retryFingerprintSnapshot.RerunTarget {
+		t.Fatalf("fingerprint retry did not preserve exact failed-step intent without tool pins: %+v", retryFingerprintSnapshot)
 	}
 	assertSettled := func(id uuid.UUID) {
 		t.Helper()
@@ -391,8 +391,8 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(successfulRerunRow.InputSnapshot)
-	if err != nil || len(snapshot.Tools) != 1 || snapshot.Tools[0].InstallationID != newActiveFP || !successfulRerunRow.RerunTarget {
-		t.Fatalf("successful rerun pinned inputs = %+v, %v", snapshot, err)
+	if err != nil || len(snapshot.Tools) != 0 || !successfulRerunRow.RerunTarget || snapshot.TargetStep == nil || *snapshot.TargetStep != "fingerprint" {
+		t.Fatalf("successful rerun minimal intent = %+v, %v", snapshot, err)
 	}
 	completeFingerprint(successfulRerunRow, "1.7.0", "synthetic-successful-rerun")
 
@@ -432,7 +432,7 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	probeSnapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(probeRow.InputSnapshot)
-	if err != nil || len(probeSnapshot.Tools) != 1 || probeSnapshot.Tools[0].Executable != "ffprobe" || probeSnapshot.Tools[0].InstallationID != ffmpegID {
+	if err != nil || len(probeSnapshot.Tools) != 0 || probeSnapshot.TargetStep == nil || *probeSnapshot.TargetStep != "probe" {
 		t.Fatalf("probe-only retry inputs = %+v, %v", probeSnapshot, err)
 	}
 	if err := operations.Running(ctx, probeRow.ID, "probing"); err != nil {
@@ -484,7 +484,7 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	if _, err := analysis.ApplySourceProbe(ctx, persistence.SourceProbeApply{
 		WorkID: work.ID, OperationID: probeRow.ID, OperationAttempt: probeRow.Attempt, JobID: *probeRow.RiverJobID,
 		StepAttempt: probeAttempt, SizeBytes: location.SizeBytes, AnalysisPolicy: persistence.SourceAnalysisPolicyVersion,
-		FFProbeVersion: probeSnapshot.Tools[0].Version, FFProbeJSON: json.RawMessage(technicalResultFixture),
+		FFProbeVersion: "ffprobe version 6.1.1", FFProbeJSON: json.RawMessage(technicalResultFixture),
 		ObservedTags: json.RawMessage(`{"TITLE":["Song"]}`), InspectedAt: time.Now().UTC(), AudioStreamCount: 2,
 	}); err != nil {
 		t.Fatal(err)

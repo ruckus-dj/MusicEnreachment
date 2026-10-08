@@ -451,18 +451,12 @@ func publishTestRoot(t *testing.T, ctx context.Context, db *bun.DB, path string)
 
 func publishTestScan(t *testing.T, ctx context.Context, db *bun.DB, rootID uuid.UUID, policies ...bool) *Operation {
 	t.Helper()
-	shaEnabled := true
-	if len(policies) > 0 {
-		shaEnabled = policies[0]
-	}
 	root, err := NewSourceInventoryRepository(db).GetSourceRoot(ctx, rootID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := json.Marshal(sourceScanSnapshot{
 		SchemaVersion: SourceScanSnapshotVersion, SourceRootID: root.ID,
-		ConfiguredPath: root.ConfiguredPath, ScanGeneration: root.ScanGeneration,
-		SHA256Enabled: &shaEnabled, Tools: []SourceAnalysisToolSelection{},
 	})
 	if err != nil {
 		t.Fatal(err)

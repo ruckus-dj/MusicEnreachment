@@ -37,17 +37,24 @@ func TestSourceAnalysisWorkerRunsSHAThenCombinedGroupPostgreSQL(t *testing.T) {
 			operation := fixture.start(t, ctx)
 			awaitRiverCompletion(t, ctx, fixture.events, *operation.RiverJobID)
 
-			assertOperationStage(t, ctx, fixture.setup, operation.ID, "succeeded", service.SourceAnalysisStageApplying)
+			wantState := "succeeded"
+			if test.probeFails {
+				wantState = "failed"
+			}
+			assertOperationStage(t, ctx, fixture.setup, operation.ID, wantState, service.SourceAnalysisStageApplying)
 			requireAnalysisHolds(t, ctx, fixture, operation.ID, nil, nil)
 			var snapshot persistence.SourceAnalysisOperationSnapshot
 			if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 				t.Fatalf("decode admitted tool pins: %v", err)
 			}
-			if len(snapshot.Tools) != 2 {
-				t.Fatalf("pinned analysis tools = %+v, want exactly ffprobe and fpcalc", snapshot.Tools)
+			if len(snapshot.Tools) != 0 {
+				t.Fatalf("durable analysis snapshot contains runtime tool selections: %+v", snapshot.Tools)
+			}
+			if len(operation.SourceAnalysisTools) != 2 {
+				t.Fatalf("runtime analysis tool selections = %+v, want exactly ffprobe and fpcalc", operation.SourceAnalysisTools)
 			}
 			pinned := map[string]uuid.UUID{}
-			for _, tool := range snapshot.Tools {
+			for _, tool := range operation.SourceAnalysisTools {
 				pinned[tool.Executable] = tool.InstallationID
 			}
 			if pinned["ffprobe"] != fixture.installationID || pinned["fpcalc"] != fixture.fpcalcID {

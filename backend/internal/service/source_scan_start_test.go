@@ -168,14 +168,12 @@ func TestSourceScanStartRecordsOnlyTheRootSnapshotAndTheOperationID(t *testing.T
 	}
 	want := service.ScanSourceSnapshot{
 		SchemaVersion: service.SourceScanSnapshotVersion, SourceRootID: fixture.root.ID,
-		ConfiguredPath: fixture.root.ConfiguredPath, ScanGeneration: fixture.root.ScanGeneration,
-		SHA256Enabled: new(false), Tools: []persistence.SourceAnalysisToolSelection{},
 	}
 	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("scan snapshot = %+v, want %+v", snapshot, want)
 	}
-	if setup.shaCalls != 1 {
-		t.Fatalf("SHA-256 policy reads = %d, want one explicit read (including false)", setup.shaCalls)
+	if setup.shaCalls != 0 {
+		t.Fatalf("SHA-256 policy reads = %d, want no historical setting read", setup.shaCalls)
 	}
 	if len(fixture.repository.operations) != 1 || fixture.repository.operations[0] != operation {
 		t.Fatalf("enqueued operations = %+v, want the returned operation stored once", fixture.repository.operations)
@@ -195,8 +193,8 @@ func TestSourceScanStartRecordsOnlyTheRootSnapshotAndTheOperationID(t *testing.T
 	}
 }
 
-func TestSourceScanStartPinsSHA256PolicyAndRefusesPolicyReadErrors(t *testing.T) {
-	t.Run("enabled policy is pinned", func(t *testing.T) {
+func TestSourceScanStartStoresOnlyRootIdentity(t *testing.T) {
+	t.Run("settings are not copied into scan intent", func(t *testing.T) {
 		setup := &sourceScanSetupFixture{completed: true, sha256: true}
 		fixture := newSourceScanStartFixture(t, setup, supportedScanStartPlatform())
 		operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
@@ -207,23 +205,23 @@ func TestSourceScanStartPinsSHA256PolicyAndRefusesPolicyReadErrors(t *testing.T)
 		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil {
 			t.Fatalf("decode snapshot: %v", err)
 		}
-		if snapshot.SHA256Enabled == nil || !*snapshot.SHA256Enabled {
-			t.Fatalf("snapshot SHA-256 policy = %v, want explicitly true", snapshot.SHA256Enabled)
+		if snapshot.SourceRootID != fixture.root.ID || snapshot.SchemaVersion != service.SourceScanSnapshotVersion {
+			t.Fatalf("scan intent = %+v, want current root identity only", snapshot)
 		}
 	})
 
-	t.Run("policy read error creates no operation", func(t *testing.T) {
+	t.Run("unavailable historical policy does not block enumeration", func(t *testing.T) {
 		setup := &sourceScanSetupFixture{completed: true, sha256Err: errors.New("settings unavailable")}
 		fixture := newSourceScanStartFixture(t, setup, supportedScanStartPlatform())
 		operation, err := fixture.scans.Start(context.Background(), fixture.root.ID)
-		if err == nil || !strings.Contains(err.Error(), "read SHA-256 setting") {
-			t.Fatalf("start after policy read failure = %+v, %v; want wrapped setting error", operation, err)
+		if err != nil {
+			t.Fatalf("start with an unavailable historical setting: %v", err)
 		}
-		if operation != nil || len(fixture.repository.operations) != 0 || len(fixture.repository.args) != 0 {
-			t.Fatalf("failed policy read created operation/job: result=%+v operations=%d jobs=%d", operation, len(fixture.repository.operations), len(fixture.repository.args))
+		if operation == nil || len(fixture.repository.operations) != 1 || len(fixture.repository.args) != 1 {
+			t.Fatalf("scan did not enqueue: result=%+v operations=%d jobs=%d", operation, len(fixture.repository.operations), len(fixture.repository.args))
 		}
-		if setup.shaCalls != 1 {
-			t.Fatalf("SHA-256 policy reads = %d, want one", setup.shaCalls)
+		if setup.shaCalls != 0 {
+			t.Fatalf("SHA-256 policy reads = %d, want none", setup.shaCalls)
 		}
 	})
 }
