@@ -1,31 +1,32 @@
-# План 09 — предлагаемая декомпозиция реализации staged source analysis
+# План 09 — план реализации staged source analysis
 
-**Дата:** 2026-10-08. **Статус: техническое предложение подготовлено; ожидает
-явного одобрения владельца.** Это не разрешение начинать implementation. Требования
-зафиксированы в [решениях владельца](../todo/09-staged-source-analysis-owner-decisions.md);
-технические варианты и open issues — в [контракте D03–D05](../todo/09-staged-source-analysis-contract.md).
+**Дата:** 2026-10-08. **Статус: одобрен владельцем 2026-10-08; реализация
+разрешена.** Требования зафиксированы в
+[решениях владельца](09-staged-source-analysis-owner-decisions.md);
+технические варианты и детали — в [контракте D03–D05](09-staged-source-analysis-contract.md).
 Фактическая карта текущего исполнения: [D01](../../reports/plan09-execution-map-2026-10-08.md).
 Публикация вне области плана. План не создаёт продуктовые defaults сверх уже
 одобренного processing concurrency default 4. Cache contract уже решён владельцем:
 один последний успешный fingerprint на SHA, версия инструмента — provenance, не
-часть cache identity. Технические предложения ниже всё ещё требуют approval.
+часть cache identity. Технические решения в контракте одобрены; новые
+непредусмотренные продуктовые решения требуют отдельного согласования.
 
 ## Перед началом
 
-Реализация может начаться только после:
+Условия начала выполнения:
 
-- явного owner approval контракта и последовательного implementation plan;
+- явное owner approval контракта и последовательного implementation plan получено
+  2026-10-08 («В остальном ок, давай пробовать») с уточнением UI смены output;
 - разрешения оставшихся технических вопросов в ходе review до соответствующих
   зависимых commits: имена/layout/API и физическая migration strategy. Upgrade
   compatibility для опубликованных данных не требуется: это unpublished
   prototype, squash допустим, но не обязателен;
-- независимого архитектурного review: выполнено 2026-10-08
+- независимое архитектурное review выполнено 2026-10-08
   ([отчёт](../../reports/plan09-independent-review-2026-10-08.md)); этот review
-  не является owner approval.
+  не заменяло owner approval.
 
 D02 сценарии, cache policy, reset scope и crash/recovery предложения внесены в
-контракт. Сценарии — текстовая проработка для review, не отдельная фиксация их
-owner acceptance. Продуктовых блокеров в записанных решениях сейчас не осталось;
+одобренный контракт. Продуктовых блокеров в записанных решениях сейчас не осталось;
 новый обнаруженный конфликт нужно вынести владельцу, а не разрешать молча.
 
 Если решение блокирует только отдельный этап, его нельзя «решать» реализацией или
@@ -123,14 +124,15 @@ owner acceptance. Продуктовых блокеров в записанны�
 - [x] Owner resolved fingerprint cache semantics: single latest success per SHA,
       tool version is provenance only; version-keyed schema requires refactor.
 - [x] D02 scenarios, reset coordination/journal, crash/recovery and cleanup
-      proposals are documented in the contract. These are proposals, not proof of
-      owner acceptance or implementation.
+      are documented in the owner-approved contract; this is not proof of
+      implementation.
 - [x] Independent review performed 2026-10-08
-      ([report](../../reports/plan09-independent-review-2026-10-08.md)); this is not
-      final owner approval.
-- [ ] Technical proposal and implementation plan receive explicit owner approval.
-- [ ] Owner explicitly approves implementation scope; only then move this plan to
-      `todo/` and authorize implementation.
+      ([report](../../reports/plan09-independent-review-2026-10-08.md)); independent
+      review did not substitute for owner approval.
+- [x] Contract and implementation plan explicitly approved by owner 2026-10-08
+      («В остальном ок, давай пробовать»), with output-change UI clarification.
+- [x] Implementation scope approved; plan moved to `todo/` and implementation
+      authorized.
 - [ ] Per commit: `task verify` and all applicable CI, with runtime/CI limits
       reported accurately.
 - [ ] Final acceptance confirms no source mutation, no non-owned/live cleanup,
