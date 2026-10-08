@@ -23,6 +23,12 @@ scan. Это актуальные решения, но не описание у�
 - Пропавший/нечитаемый файл теряет location; недоступная область root/collection/
   subtree теряет locations этой области. Root, collections и SHA analyses
   сохраняются; rediscovery может переиспользовать SHA cache.
+- На каждый уникальный SHA-256 существует только один последний успешный
+  fingerprint result. Версия `fpcalc` хранится как provenance, без version-keyed
+  retained history. Когда нужен пересчёт, используется текущий выбранный fpcalc;
+  прежний успех сохраняется во время running/failed rerun и заменяется лишь
+  успешным новым результатом. Существующая version-keyed физическая схема требует
+  refactor и не является доставленной реализацией.
 - Output path обязателен в Initial setup, его нельзя очистить после сохранения,
   но можно изменить. Создаваемые служебные области `analysis`, `publication`,
   `checks`, `media` имеют пока лишь предложенные имена/layout. Смена пути сначала
