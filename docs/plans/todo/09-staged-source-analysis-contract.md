@@ -141,20 +141,21 @@ labels обязательны для proposal review. Проверить desktop
    обработкой, не eligible. Ошибка удаления сохраняет ownership и не меняет
    analysis success. Возможна множественность eligible копий без quota/TTL.
 
-### SHA/cache и unresolved product semantics
+### SHA/cache — решение владельца от 2026-10-08
 
-SHA — независимый запрашиваемый step; не создавать hash backfill для неизменённых
-файлов. Когда digest известен, он может участвовать в reuse; текущая схема уже
-хранит SHA variants и fingerprint results с версией/provenance. **Review blocker:
-владелец решил, что независимые анализы актуальны по SHA, это кэш/текущее состояние,
-не история, но текущий контракт не определяет, как версия `fpcalc` сосуществует
-с правилом «сохраняется текущее состояние, не snapshot прошлого»: сохранять
-несколько fingerprint результатов на один SHA/version (version-keyed cache) или
-ровно один текущий fingerprint на SHA?** Нельзя молча выбрать вариант. До ответа
-зафиксировать DB uniqueness, reuse и cleanup behavior как неразрешённый семантический
-вопрос; implementation этого cache-dependent шага не готов к старту. Аналогичное
-решение не требуется для тех. probe только если текущая модель его ограничивает;
-предложение не устанавливает новую версионную policy.
+SHA — независимый запрашиваемый step; hash backfill для неизменённых файлов не
+создаётся. На один уникальный SHA существует ровно один последний успешный
+fingerprint. Версия `fpcalc` сохраняется как provenance, но не является частью
+cache identity и не образует retained history. Если текущий выбранный `fpcalc`
+требует пересчёта, прежний результат остаётся текущим/доступным, пока повтор
+работает или завершается ошибкой; только успешный новый результат атомарно
+заменяет его. Никакой промежуточный failed/running status не затирает последнюю
+successful result row. При первом вычислении успешного результата ещё нет. Этот
+контракт supersede-ит version-keyed reuse в текущем коде/физической схеме: schema
+refactor необходим, и историческая схема не считается уже доставленной. Прежние
+успешные fingerprint и успешные sibling steps сохраняются при ошибке probe или
+fingerprint rerun; ошибки шагов остаются независимыми. Текущий выбранный инструмент
+проверяется при execution/retry, а не фиксируется старой cache identity.
 
 ### Artifact ownership, fencing и crash matrix
 
@@ -229,12 +230,11 @@ fail-safe; оператор устраняет причину и делает р
   работы видят новое значение. Удаление root остаётся запрещённым при активных
   задачах и удаляет очередь/locations; physical source/audio bytes не удаляет.
 
-Миграционный путь: для prototype нет опубликованных данных/совместимости, но это
-не разрешение squash. Предложить reversible add-column/backfill migration;
-down migration должна отказать/требовать удаления staged state, если данные нельзя
-безопасно свести к старой схеме. Не писать destructive down как будто он
-автоматически допустим. Отдельно определить upgrade clean DB и существующего
-fixture; авторитетное решение перед DDL.
+Миграционный путь: это unpublished prototype; совместимость с историческими
+опубликованными данными не требуется. Squash миграций разрешён, но не обязателен;
+точную стратегию выбрать в implementation review. Не представлять legacy
+backfill/upgrade path как продуктовое требование и не добавлять destructive down
+без явного описания его поведения.
 
 ### Operation admission и output reset
 
@@ -251,15 +251,31 @@ root из актуальной БД при выполнении и retry (реш
 смене mode не переписываются.
 
 Output reset требует двухфазного пользовательского flow, но не двухфазного
-применения: сначала валидировать кандидат path без side effect, затем в одной
-транзакции взять output/admission gate, перепроверить candidate/active operations,
-запретить reset при любой queued/running task, очистить/invalidate queued jobs и
-все DB refs на старый output, обновить setting и создать logical subdirectories
-с согласованной filesystem/DB compensation strategy. **Filesystem mkdir не
-атомарен с DB commit**: определить безопасный порядок и recovery journal до
-реализации. Старые физические файлы не удалять. При DB rollback старый setting и
-ссылки остаются валидны; созданные пустые области могут оставаться только при
-доказанной безопасности, иначе убрать только их owned dirs. При reset сохранить
+применения: сначала validate-only кандидата path; затем exclusive global
+output/admission gate. Все operation admissions и queued-to-running worker claims
+берут тот же cross-process gate shared, в едином порядке до reset-token/root/
+operation/domain rows. Reset под exclusive gate проверяет отсутствие незавершённого
+reset token, перечитывает setting и active operations; любая queued/running задача
+запрещает reset. Gate удерживается через filesystem steps и DB commit, поэтому
+между проверкой и инвалидацией не может проскочить admission/claim. При crash lock
+освобождается, но durable `preparing` token заставляет admission/claim отказывать
+до startup recovery. Предложенный cross-process primitive — PostgreSQL advisory
+lock; точный вариант подтвердить при implementation review. В одной DB transaction
+обновить setting и инвалидировать все queue/tasks и все DB refs старого output;
+не ограничиваться staging/publication refs. Старые физические файлы не удалять.
+
+Filesystem mkdir не атомарен с DB commit. Предлагаемый recoverable journal:
+создать reset token в `preparing` после захвата gate; до DB transaction создавать
+только отсутствующие logical directories эксклюзивно и сохранять точный список
+каталогов, созданных этим token (не присваивать существующие). Одна DB transaction
+меняет setting, инвалидирует все queue/tasks и старые output refs и помечает token
+`committed`. После commit token finalized. При обычном rollback удалять лишь
+записанные token-owned каталоги, если они всё ещё пусты, затем закрыть token.
+При startup recovery `preparing` без commit marker означает rollback: сохранить
+старое setting/refs и удалить только доказанно owned пустые dirs; `committed`
+означает finalize без удаления paths. Если ownership или пустота не доказаны,
+оставить каталог и предъявить recovery error оператору. Старые физические файлы
+не трогать. При reset сохранить
 local artists/releases/tracks/metadata, source links, inventory/analyses; очистить
 только output-owned publication/staging references и связанные queue/task state.
 Scope «очистить очередь/задачи» уже одобрен владельцем как **все** queue/tasks и
@@ -308,21 +324,71 @@ env var. Standalone deployment обеспечивает, чтобы настро
 path существовал/был writable внутри процесса. Compose/readme описывают host path
 только как mount source, runtime использует container path.
 
-## 5. Блокирующие review-вопросы
+## 5. Оставшиеся технические review details
 
-1. Fingerprint cache: несколько результатов на один SHA, индексированных версией,
-   или единственный актуальный результат — требуется явное решение; см. D04.
-2. Output reset: техническая реализация invalidation rows и конфликт с job
-   history / reconciler. Продуктовый scope уже решён владельцем — очищаются
-   **все** queue/tasks; не переоткрывать.
-3. Filesystem mkdir против DB setting reset: compensation/owner journal, включая
-   crash в каждом порядке. Не полагаться на distributed transaction.
-4. Точные физические directory names, artifact table/columns/state names и API
-   endpoint shape — технический review до реализации.
-5. Cleanup error visibility и bulk-operation sync/async форма — API/UI detail;
-   не менять базовое правило: analysis success сохраняется, artifact не теряет
-   ownership.
+Точные physical directory/table/column/state/API names, migration strategy
+(squash разрешён, не обязателен), cleanup operation response shape и реализация
+reset journal выбираются при technical review до соответствующих implementation
+commits. Это не новые продуктовые блокеры. Reset scope **все** queue/tasks и все
+старые output DB refs фиксирован; cache policy решена владельцем (один последний
+успешный результат на SHA, fpcalc version — provenance). Если review обнаружит
+реальное противоречие, его нужно вернуть владельцу; не объявлять proposal полностью
+approved заранее.
 
-До закрытия вопроса 1 связанные cache schema/reuse decisions блокируют
-соответствующий implementation commit; остальные этапы могут продолжаться только
-если не фиксируют этот вариант.
+## 6. D02 — сценарная матрица и техническая сверка
+
+Матрица завершает сценарную проработку D02; она не является финальным owner
+acceptance технического предложения. Root «disabled» отсутствует. Work-path в отдельных
+сценариях означает выбранный writable output и его `analysis` area: отдельная
+work-directory/path setting не вводится. Режимы, root lifecycle, cache и output
+reset scope следуют решениям владельца; locks, ownership records и recovery ниже —
+технические предложения, а не описание текущего кода.
+
+| Сценарий | Ожидаемый результат | Сохраняемое состояние / действие |
+| --- | --- | --- |
+| Новый SSD root / in-place | Mode обязательно выбран; scan enumerate/stat-only и создаёт per-file jobs; tools читают source | Read-only source, ручной scan; нет default и scan-time analysis |
+| Новый HDD/NAS root / staged | То же явное создание; один последовательный audio copy на file; запрошенные шаги используют copy | Без второго path setting, квот и in-place fallback |
+| Существующий root, смена mode | Будущая работа читает текущий mode при execution/retry; уже запущенная завершает выбранный путь | Не переписывать старые операции/результаты; mode не сериализуется в job |
+| Root/source недоступен при scan | Нет analysis для невидимых файлов; locations недоступной области удаляются по owner rule, root/collections/SHA analyses остаются | Показать server path/actionable error; восстановить диск и вручную scan; disable недоступен |
+| Source исчезает или unreadable между stat и open/copy | Delivery fail/stale, incomplete result не применяется; успешный sibling сохраняется | Rediscovery/ручной retry; source bytes не изменять |
+| Source size/mtime меняется при copy или перед apply | Отбросить copy/result и fenced apply; не заменять прежний analysis | Retry вручную после исправления; текущесть — owner-approved size/mtime, не stronger threat model |
+| Невалидный/недоступный/non-writable output | Validate отклоняет до setting/reset mutation; staged copy не начинается/падает без fallback | Сохранить старое setting/refs и dirty draft; actionable inline error |
+| ENOSPC, short read/write, partial copy | Copy не становится ready и не передаётся tools; preparation failure отдельно от tool failure | Предыдущие step successes остаются; восстановить место и вручную retry; без quota/limit |
+| ffprobe/fpcalc частичный успех, multi/no audio | Независимые step results сохраняются; fingerprint может быть успешен без matching eligibility | Retry только failed step; matching gate не затирает provenance/success |
+| SHA setting on/off; digest hit/miss | Off пропускает SHA, не tools; on только новые/изменённые/explicit retry; известный digest участвует в lookup | Нет backfill неизменённых файлов; toggle сохраняет digest/analyses |
+| Fingerprint SHA hit / сменился selected fpcalc | Одна cache запись на SHA; reuse при актуальном результате, иначе вычислить current selected tool | Running/failed rerun оставляет прежний success; replace только по success; нет version history/backfill |
+| Manual retry одного шага; partial success | Duplicates suppressed; retry reuses valid retained copy либо пересоздаёт отсутствующую | Не запускать/перезаписывать успешных siblings; нет timer auto retry |
+| Active tools/settings сменились при queued/running/retry | Worker читает актуальные БД settings/selected tool; operation args не содержат полный конфиг | Retry использует current selection; live process безопасно завершает текущую работу, provenance сохраняет факт инструмента |
+| Restart: row/mkdir/partial copy/ready/tools/step commit | Startup recovery проверяет DB ownership row, exact path и delivery fence; живой River delivery не orphan-ится | Пригодная copy retained; отсутствующая/stale ссылка снимается; cleanup только после fence invalidation |
+| Crash после шагов success, до terminal/cleanup | DB result и fence authoritative; copy сохраняется до success всех requested steps | Явная cleanup позже; cleanup error не превращает analysis в failure |
+| Bulk cleanup: missing/permission/live/foreign artifact | Только зарегистрированные eligible rows, item-by-item fenced unlink; missing reconcile, I/O error сохраняет ownership | Не сканировать директорию для выбора; повторить «Очистить» после исправления |
+| Output reset, queued/running task или гонка worker claim | Любая active task запрещает reset; admission и queued-to-running claim берут shared cross-process output gate, reset — exclusive gate в одном lock order; durable preparing token блокирует новую admission/claim после crash до recovery | Никакой частичной инвалидации при отказе; queued job тоже active; admission не может проскочить между проверкой и commit |
+| Output reset: path valid, active tasks отсутствуют | Validate-only → exclusive gate → reread setting/active tasks → одна DB tx меняет setting и инвалидирует ВСЕ queue/tasks и ВСЕ DB refs старого output | Сохраняются local entities/source links/inventory/analyses; старые physical files остаются unmanaged; no republish |
+| Reset mkdir/DB error/crash между filesystem и commit | Durable reset token (`preparing`, exact owned-dir manifest, `committed` marker). Создать эксклюзивно только отсутствующие dirs; DB tx меняет setting, invalidates all queue/tasks+old refs и помечает committed. Rollback/recovery удаляет только manifest dirs доказанно пустые; committed token только finalized | До commit старое setting/refs живы; никогда не удалять старые/foreign files. При сомнительном ownership оставить dirs и показать recovery error; нет distributed transaction |
+| Root removal | Только без active root operations; удалить queued root work/locations | Source bytes/root analyses/collections остаются; disable не предлагать |
+
+### Текстовое сопоставление D03 с доступными mock screenshots (не visual/browser review)
+
+В каталоге реально присутствуют `sources-1440.png`, `settings-1280.png`,
+`sources-375.png`, `settings-375.png` (также desktop Sources/Settings по 1280/1440
+и промежуточные размеры). Имена и список файлов проверены; screenshot pixels здесь
+не проходили самостоятельный visual review. Из макетов можно только сформулировать
+текстовую точку сравнения: Sources содержит root cards с путём/status/actions,
+Settings — группы инструментов; узкий layout сводит контент в одну колонку. Эти
+экранные состояния не показывают staged mode/output reset/concurrency. В glob
+каталога нет Sources/Settings dark screenshots; есть только unrelated
+`v2-match-dark-draft.png` и `v2-release-dark-draft.png`. Это не доказывает
+непроверенность иных внешних артефактов, но полный dark visual review не заявляется.
+Будущий UI review должен проверить canvas/ink/status tokens и статус текстом, не
+только цветом, по фактическим light/dark screenshots.
+
+Текстовый mock flow: Sources → Add root → выбрать один незаполненный mode radio
+(submit disabled без выбора) → server path → save и manual scan → per-file
+operation/status → partial success, retry only failed step → all-success cleanup
+eligible → Settings: validate new output → queued/running task блокирует reset →
+подтвердить reset после settlement → readback, при ошибке сохранить draft → явно
+запустить bulk cleanup. На 375px flow предполагает вертикальные кнопки, переносы
+строк, inline errors и focus restoration/keyboard controls; доступность этих
+элементов в UI не проверялась. Это textual mock flow, не визуальная оценка screenshot
+pixels, не browser run, не новый screenshot и не claim implemented. Финальный UI
+acceptance остаётся отдельным этапом.

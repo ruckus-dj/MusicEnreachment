@@ -10,16 +10,21 @@
 
 Текущий этап — [план 09: проработка staged source analysis](todo/09-staged-source-analysis-design.md),
 дополненный [решениями владельца от 2026-10-08](todo/09-staged-source-analysis-owner-decisions.md).
-Статус: D01 выполнен как factual map на `959c680`; D03–D05 описаны предложением
-контракта, D06 — отдельным implementation proposal. D02-сценарии и независимое
-review/явное owner approval остаются. Приложение не реализовано; proposal NOT
-READY, implementation не начата.
+Статус: D01 factual map на `959c680`; D02 scenarios и D03–D05 технические
+предложения собраны в контракте, D06 — в implementation proposal. Cache policy,
+reset scope и root lifecycle заданы решениями владельца; физическая схема/API и
+reset recovery остаются техническими предложениями. Независимое ревью выполнено,
+но финальное явное owner approval контракта и плана ожидается. UI screenshot
+сопоставление текстовое: полноценный visual/browser review не проводился и dark
+Sources/Settings screenshots в проверенном каталоге не обнаружены. Приложение не
+реализовано; реализация не начата.
 
 - [Контракт D03–D05](todo/09-staged-source-analysis-contract.md) — UI-flow,
-  lifecycle, DB/API/deployment proposal с открытыми review-вопросами.
+  lifecycle, D02 scenario matrix, DB/API/deployment proposal и технические детали
+  для review; это не owner acceptance и не implementation evidence.
 - [Implementation proposal](to-decompose/09-staged-source-analysis-implementation-proposal.md)
-  — последовательные маленькие commits, зависимости, verification и CI; не готов
-  к реализации до explicit approval.
+  — последовательные маленькие commits, зависимости, reset interlock/journal,
+  bulk cleanup и verification; ожидает explicit owner approval до реализации.
 - [D01 execution map](../reports/plan09-execution-map-2026-10-08.md) — фактический
   code map, не требования и не свидетельство поставки staged mode.
 
