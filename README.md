@@ -25,8 +25,8 @@ MeloTrove, never by a path on the browser workstation. The current slice reads a
 source directly. Staged processing is not implemented. The owner-approved
 direction for plan 09 is per-root staged mode whose temporary audio copies live
 under the required managed output path, without a separate work-directory setting
-or mount; the technical contract and implementation sequence for it remain an
-unapproved proposal. Source roots and
+or mount; the technical contract and implementation plan are owner-approved, and
+staged mode is not yet implemented. Source roots and
 runtime paths are database-backed settings, not environment variables. An
 unavailable source or an interrupted scan must not erase the last successfully
 observed inventory or existing managed publications.

@@ -8,23 +8,31 @@
 
 ## Следующий этап
 
-Текущий этап — [план 09: реализация staged source analysis](todo/09-staged-source-analysis-implementation-plan.md),
-дополненный [решениями владельца от 2026-10-08](todo/09-staged-source-analysis-owner-decisions.md).
-Статус: документационная проработка и независимое ревью завершены; контракт и
-implementation plan одобрены владельцем 2026-10-08. Реализация начинается с I01.
+Текущий этап — [план 10: реализация staged source analysis](todo/10-staged-source-analysis.md),
+продолжающий завершённую проработку [плана 09](done/09-staged-source-analysis-design.md).
+Статус: проектирование (план 09) завершено, независимое ревью проведено; контракт и
+implementation plan одобрены владельцем 2026-10-08; реализация активна, начиная с I01.
 UI screenshot сопоставление текстовое: полноценный visual/browser review не
 проводился и dark Sources/Settings screenshots в проверенном каталоге не
 обнаружены.
 
-- [Контракт D03–D05](todo/09-staged-source-analysis-contract.md) — одобренная
-  техническая спецификация UI-flow, lifecycle, DB/API/deployment.
-- [Implementation plan](todo/09-staged-source-analysis-implementation-plan.md)
+- [Контракт D03–D05](todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05)
+  — одобренная техническая спецификация UI-flow, lifecycle, DB/API/deployment.
+- [Решения владельца от 2026-10-08](todo/10-staged-source-analysis.md#appendix-a-owner-decisions)
+  — зафиксированные продуктовые решения по staged source analysis.
+- [Implementation plan](todo/10-staged-source-analysis.md)
   — последовательные небольшие этапы, зависимости, reset interlock/journal,
   bulk cleanup и verification; одобрен к реализации.
 - [D01 execution map](../reports/plan09-execution-map-2026-10-08.md) — фактический
   code map, не требования и не свидетельство поставки staged mode.
 
 ## Завершено
+
+- [План 09: проектирование staged source analysis](done/09-staged-source-analysis-design.md)
+  — COMPLETE (2026-10-08): документационная проработка D01–D06 и независимое ревью;
+  контракт D03–D05 и implementation plan одобрены владельцем
+  ([отчёт](../reports/plan09-independent-review-2026-10-08.md)). Приложение ещё не
+  реализовано; исполнение продолжает план 10.
 
 - [План 08: согласование Settings и Setup с дизайном](done/08-settings-and-setup-design-corrections.md)
   — COMPLETE (2026-10-08): C01–C08, полный `task verify`, реальные Setup/move,
