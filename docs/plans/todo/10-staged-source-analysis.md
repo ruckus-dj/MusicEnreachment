@@ -81,7 +81,7 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   callers in this commit. `task verify` passed before commit; migration/application
   behavior beyond schema constraints remains for later stages.
 
-- **I02 — implementation complete locally (2026-10-08; not committed):** source
+- **I02 — complete (commit `9d1471e`, 2026-10-08):** source
   root creation requires an explicit valid processing mode; mode edits apply only
   to future work. Repository reads now include the mode on both single-root and
   list paths, and a name/path edit that omits mode preserves a concurrent mode
@@ -91,6 +91,23 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   frontend tests, and frontend/backend builds all completed successfully. The
   frontend build emitted its large-chunk-size warning. Native platform matrix,
   deployment smoke, and other CI-only checks were not run locally.
+
+- **I03 — implementation complete locally (2026-10-08):** added an
+  observation-capable stat-only traversal, with root/subtree/file unreadable scopes,
+  cancellation and visitor-error aborts, and pinned-root namespace confirmation.
+  Transactional apply filters candidates from unreadable scopes before reconciling
+  all unseen locations; a root-level unreadable observation marks the root
+  unavailable and removes all root locations, while preserving
+  `last_successful_scan_at`. Candidate clearing is fenced atomically by operation, delivery, root
+  and configured path. Unchanged work is preserved; changed work retirement uses
+  the existing active-hold/artifact restrictions and does not delete SHA cache
+  rows, enqueue River jobs, or admit work. A repeated successful apply is
+  idempotent. Integration coverage checks unavailable-root state, retained
+  successful-scan time, root-scope pruning, subtree filtering/pruning, mismatched-root candidate
+  fencing, idempotence and owned-artifact retirement restrictions. The existing
+  `Run` and scan-worker wiring remain unchanged; this is preparation only, not the
+  I04 cutover. `task verify` passed locally. Native platform matrix and deployment
+  smoke remain CI-only and are not claimed locally.
 
 ## Cross-commit dependency notes
 

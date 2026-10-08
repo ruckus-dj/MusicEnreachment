@@ -116,6 +116,29 @@ func (repository *SourceInventoryRepository) DeleteSourceScanCandidatesForDelive
 	})
 }
 
+// DeleteSourceScanCandidatesForRootDelivery validates the root captured by a
+// traversal before clearing its previous candidates. This is deliberately
+// separate from the legacy delivery fence used by the existing scan pipeline.
+func (repository *SourceInventoryRepository) DeleteSourceScanCandidatesForRootDelivery(ctx context.Context, operationID, rootID uuid.UUID, configuredPath string, attempt int, jobID int64) error {
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		root := new(SourceRoot)
+		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, rootID).Scan(ctx, root); err != nil {
+			return fmt.Errorf("delete root-fenced source scan candidates: lock root: %w", err)
+		}
+		operation, err := scanDeliveryForUpdate(ctx, tx, operationID, attempt, jobID)
+		if err != nil {
+			return err
+		}
+		if operation.State != "running" || operation.TargetSourceRootID == nil || *operation.TargetSourceRootID != rootID || root.ConfiguredPath != configuredPath {
+			return fmt.Errorf("delete root-fenced source scan candidates: delivery target changed: %w", ErrSourceAnalysisStale)
+		}
+		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", operationID).Exec(ctx); err != nil {
+			return fmt.Errorf("delete root-fenced source scan candidates: %w", err)
+		}
+		return nil
+	})
+}
+
 func (repository *SourceInventoryRepository) AppendSourceScanCandidatesForDelivery(ctx context.Context, operationID uuid.UUID, attempt int, jobID int64, batch []SourceScanCandidateInput) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		operation, err := scanDeliveryForUpdate(ctx, tx, operationID, attempt, jobID)

@@ -249,6 +249,13 @@ func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidatesForDeliver
 	return nil
 }
 
+func (fixture *sourceScanRepositoryFixture) DeleteSourceScanCandidatesForRootDelivery(ctx context.Context, operationID, rootID uuid.UUID, configuredPath string, attempt int, jobID int64) error {
+	if fixture.root == nil || fixture.root.ID != rootID || fixture.root.ConfiguredPath != configuredPath {
+		return fmt.Errorf("delete source scan candidates: unexpected root")
+	}
+	return fixture.DeleteSourceScanCandidatesForDelivery(ctx, operationID, attempt, jobID)
+}
+
 func (fixture *sourceScanRepositoryFixture) AppendSourceScanCandidatesForDelivery(_ context.Context, operationID uuid.UUID, attempt int, jobID int64, batch []persistence.SourceScanCandidateInput) error {
 	if attempt != 1 || jobID != 11 {
 		return fmt.Errorf("append source scan candidates: unexpected delivery identity %d/%d", attempt, jobID)

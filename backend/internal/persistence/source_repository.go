@@ -15,8 +15,10 @@ import (
 // SourceRootStatusAvailable marks a root whose configured path was readable at
 // the last completed attempt. The other two values come from the schema check.
 const (
-	SourceRootStatusAvailable   = "available"
-	SourceRootStatusUnavailable = "unavailable"
+	SourceRootStatusAvailable              = "available"
+	SourceRootStatusUnavailable            = "unavailable"
+	SourceProbeStatusNotAnalyzed           = "not_analyzed"
+	SourceEnumerationRootUnavailableReason = "The configured source directory is unavailable or no longer readable."
 )
 
 // ErrSourceRootActiveScan reports an edit, a deletion or a scan start refused
@@ -77,6 +79,24 @@ type SourceScanApply struct {
 	ExpectedAttempt        int
 	ExpectedJobID          int64
 	SHA256Enabled          *bool
+}
+
+// SourceEnumerationScope is one unreadable portion of an enumeration. The root
+// scope has an empty path; all other paths are root-relative slash paths.
+type SourceEnumerationScope struct {
+	RelativePath string
+	Kind         string
+}
+
+// SourceEnumerationApply carries only the observations that could not be stored
+// in candidate rows. Candidate rows remain the durable source of file facts.
+type SourceEnumerationApply struct {
+	OperationID            uuid.UUID
+	ExpectedConfiguredPath string
+	ExpectedAttempt        int
+	ExpectedJobID          int64
+	SHA256Enabled          bool
+	Scopes                 []SourceEnumerationScope
 }
 
 // SourceScanUnavailable names a scan that found its registered directory
