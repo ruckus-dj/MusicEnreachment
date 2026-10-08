@@ -1,5 +1,51 @@
 # Требования
 
+## Уточнение владельца от 2026-10-08: источники и output
+
+Этот датированный блок уточняет и в противоречиях supersede-ит нижеследующие
+исторические требования о выборе in-place/staged и автоматическом анализе после
+scan. Это актуальные решения, но не описание уже реализованного поведения.
+Текущая реализация и физическая модель требуют отдельного refactor; приложение
+пока не реализует этот контракт.
+
+- При добавлении source root режим выбирается явно, без default; выбор и
+  объяснение находятся в Sources. Смена режима влияет только на будущую работу.
+  Root можно только добавить/удалить: «выключить» нельзя. Добавление запускает
+  ручной scan; automatic/periodic scan — будущая область. Удаление запрещено при
+  активных root operations, снимает queued work и locations, не удаляя source
+  bytes и сохраняя analyses/collections.
+- Scan только перечисляет, делает stat кандидатов и ставит отдельные per-file
+  processing jobs. Он не копирует, не probe-ит и не хеширует. Job хранит только
+  type/IDs/explicit intent; прочие значения читаются из актуальной БД при
+  выполнении/retry. Нет истории. Анализы актуальны по SHA; publication state —
+  текущее состояние, не snapshot. Неизменённые по size/mtime файлы не ставятся
+  повторно автоматически; failed processing повторяется вручную без дубликатов.
+- Пропавший/нечитаемый файл теряет location; недоступная область root/collection/
+  subtree теряет locations этой области. Root, collections и SHA analyses
+  сохраняются; rediscovery может переиспользовать SHA cache.
+- Output path обязателен в Initial setup, его нельзя очистить после сохранения,
+  но можно изменить. Создаваемые служебные области `analysis`, `publication`,
+  `checks`, `media` имеют пока лишь предложенные имена/layout. Смена пути сначала
+  валидирует новый, запрещена при любых active tasks, очищает jobs и DB refs
+  старых publications/staging; старые physical files остаются unmanaged. Локальные
+  artists/releases/tracks/metadata, source links, inventory и analyses сохраняются;
+  auto-republish нет. Source/publication entity не должен оставаться валидным без
+  необходимой связи. Нынешняя схема/код нуждаются в refactor.
+- Staged AUDIO copy удерживается до успеха всех запрошенных шагов, имеет tracked
+  DB identity/path и повторно используется при retry/restart, пока пригодна;
+  missing copy ref удаляется и copy создаётся при необходимости. Cleanup failure
+  не означает analysis failure; массовая очередь ожидающей очистки и действие
+  «Очистить» допустимы, удаляются только eligible copies, не используемые live и
+  не относящиеся к незавершённой работе. Нет квот/произвольного размера/fallback
+  in-place; ENOSPC — preparation error с ручным retry.
+- File processing concurrency настраивается независимо от provider RPS, default
+  4. AcoustID RPS 3 не утверждён и требует официального исследования позднее.
+- Publication staging предусматривает extraction audio, optional container,
+  новые tags и atomic file replacement. Его реализация вне плана 09.
+
+Совместимость старых данных не нужна: проект — unpublished prototype. Squash
+migrations допустим, но не обязателен.
+
 ## Контекст продукта
 
 MeloTrove — серверное web-приложение для персональной или небольшой общей
