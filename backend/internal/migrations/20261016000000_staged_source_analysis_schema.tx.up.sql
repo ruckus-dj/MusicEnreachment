@@ -2,12 +2,14 @@ ALTER TABLE source_root
     ADD COLUMN processing_mode text NOT NULL DEFAULT 'in_place'
         CHECK (processing_mode IN ('in_place', 'staged'));
 
--- Artifact rows are the ownership registry for staged copies. Paths are relative
--- to the managed output directory; filesystem creation/validation is implemented
--- by the later staged-preparation stage.
+-- Artifact rows are the ownership registry for staged copies. Keep their work
+-- reference restrictive so stale-work cleanup cannot discard filesystem ownership;
+-- explicit output reset/reconciliation must remove artifact references first.
+-- Paths are relative to the managed output directory; filesystem
+-- creation/validation is implemented by the later staged-preparation stage.
 CREATE TABLE source_analysis_artifact (
     id uuid PRIMARY KEY,
-    work_id uuid NOT NULL REFERENCES source_analysis_work(id) ON DELETE CASCADE,
+    work_id uuid NOT NULL REFERENCES source_analysis_work(id) ON DELETE RESTRICT,
     relative_output_path text NOT NULL UNIQUE CHECK (
         relative_output_path <> ''
         AND relative_output_path !~ '(^/|(^|/)\.\.?(/|$))'
