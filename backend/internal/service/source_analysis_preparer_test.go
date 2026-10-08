@@ -418,6 +418,15 @@ func TestSourceAnalysisPreparerTargetMasksAndFingerprintCacheBypass(t *testing.T
 	config := preparerConfig()
 	cache := &preparerCache{}
 	config.Cache = cache
+	existing := sha256.Sum256([]byte("previous"))
+	priorFingerprint := config.FingerprintResult
+	priorFingerprint.SourceSHA256 = existing[:]
+	priorFingerprint.FPCalcVersion = "1.2.2"
+	priorFingerprint.Fingerprint = "previous-result"
+	priorFingerprint.VersionBanner = "fpcalc version 1.2.2"
+	cache.fingerprintLookup = func(context.Context, [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
+		return &priorFingerprint, true, nil
+	}
 	var probeCalls, fingerprintCalls atomic.Int32
 	config.ProbeFactory = func(string) (SourceAnalysisProbe, error) {
 		probeCalls.Add(1)
@@ -439,12 +448,11 @@ func TestSourceAnalysisPreparerTargetMasksAndFingerprintCacheBypass(t *testing.T
 	if probeOnly.Probe.State != SourceAnalysisSucceeded || probeOnly.SHA256.State != SourceAnalysisNotRequested || probeOnly.Fingerprint.State != SourceAnalysisNotRequested || probeCalls.Load() != 1 || fingerprintCalls.Load() != 0 {
 		t.Fatalf("probe-only mask was not respected: %#v", probeOnly)
 	}
-	existing := sha256.Sum256([]byte("previous"))
 	fingerprintOnly := preparer.Prepare(context.Background(), SourceAnalysisPrepareRequest{
 		File: file, ServerPath: "/server/audio.flac", ExistingSHA256: &existing,
 		Targets: SourceAnalysisTargetFingerprint, BypassFingerprintCache: true,
 	})
-	if fingerprintOnly.Fingerprint.State != SourceAnalysisSucceeded || fingerprintOnly.SHA256.State != SourceAnalysisNotRequested || fingerprintOnly.Probe.State != SourceAnalysisNotRequested || probeCalls.Load() != 1 || fingerprintCalls.Load() != 1 {
+	if fingerprintOnly.Fingerprint.State != SourceAnalysisSucceeded || fingerprintOnly.Fingerprint.Result == nil || fingerprintOnly.Fingerprint.Result.Fingerprint != "fresh" || fingerprintOnly.SHA256.State != SourceAnalysisNotRequested || fingerprintOnly.Probe.State != SourceAnalysisNotRequested || probeCalls.Load() != 1 || fingerprintCalls.Load() != 1 {
 		t.Fatalf("fingerprint-only mask was not respected: %#v", fingerprintOnly)
 	}
 	if cache.probeCalls.Load() != 0 || cache.fingerprintCalls.Load() != 0 {

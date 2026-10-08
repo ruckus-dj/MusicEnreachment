@@ -98,7 +98,7 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 				!artifactOwnedByFence(artifact, fence) || (artifact.State != SourceAnalysisArtifactAcquiring && artifact.State != SourceAnalysisArtifactReady) {
 				return fmt.Errorf("acquire source analysis artifact: artifact identity is already owned or incompatible")
 			}
-			return nil
+			return bindAcquiredArtifact(ctx, tx, artifact, operation, fence)
 		}
 		if readErr != sql.ErrNoRows {
 			return fmt.Errorf("acquire source analysis artifact: read existing artifact: %w", readErr)
@@ -114,7 +114,7 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 		if _, err := tx.NewInsert().Model(artifact).Exec(ctx); err != nil {
 			return fmt.Errorf("acquire source analysis artifact: insert ownership record: %w", err)
 		}
-		return nil
+		return bindAcquiredArtifact(ctx, tx, artifact, operation, fence)
 	})
 	if err != nil {
 		return nil, err
@@ -155,6 +155,9 @@ func (repository *SourceAnalysisArtifactRepository) MarkReady(ctx context.Contex
 			artifact.SourceSizeBytes != work.SizeBytes || !sourceAnalysisMtime(artifact.SourceMtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 			return fmt.Errorf("mark source analysis artifact ready: artifact ownership or source identity mismatch")
 		}
+		if err := requireCurrentArtifactBinding(ctx, tx, artifactID, fence); err != nil {
+			return fmt.Errorf("mark source analysis artifact ready: %w", err)
+		}
 		if copiedBytes != artifact.SourceSizeBytes {
 			return fmt.Errorf("mark source analysis artifact ready: copied length %d does not match expected length %d", copiedBytes, artifact.SourceSizeBytes)
 		}
@@ -194,6 +197,13 @@ func (repository *SourceAnalysisArtifactRepository) ForgetUncreated(ctx context.
 		}
 		if artifact.WorkID != work.ID || !artifactOwnedByFence(artifact, fence) || artifact.State != SourceAnalysisArtifactAcquiring {
 			return fmt.Errorf("forget uncreated source analysis artifact: artifact is not an acquiring row owned by this delivery")
+		}
+		if err := requireCurrentArtifactBinding(ctx, tx, artifactID, fence); err != nil {
+			return fmt.Errorf("forget uncreated source analysis artifact: %w", err)
+		}
+		if _, err := tx.NewRaw(`DELETE FROM source_analysis_work_artifact_binding WHERE work_id=? AND artifact_id=? AND borrower_operation_id=? AND borrower_operation_attempt=? AND borrower_job_id=?`,
+			work.ID, artifactID, fence.OperationID, fence.OperationAttempt, fence.JobID).Exec(ctx); err != nil {
+			return fmt.Errorf("forget uncreated source analysis artifact: delete binding: %w", err)
 		}
 		if _, err := tx.NewRaw(`DELETE FROM source_analysis_artifact WHERE id=? AND state='acquiring' AND owner_operation_id=? AND owner_operation_attempt=? AND owner_job_id=?`,
 			artifactID, fence.OperationID, fence.OperationAttempt, fence.JobID).Exec(ctx); err != nil {

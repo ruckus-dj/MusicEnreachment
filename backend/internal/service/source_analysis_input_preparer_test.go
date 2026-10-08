@@ -53,6 +53,138 @@ func TestSourceAnalysisInputPreparerCopiesOneBorrowedSourceAndClosesWithoutDelet
 	}
 }
 
+func TestSourceAnalysisInputPreparerReusesReadyArtifactWithoutBorrowingSource(t *testing.T) {
+	fixture := newInputPreparerFixture(t, nil)
+	artifact := &persistence.SourceAnalysisArtifact{
+		ID: fixture.artifactID, WorkID: fixture.work.ID,
+		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
+		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
+	}
+	if err := os.MkdirAll(filepath.Dir(fixture.finalPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.finalPath(), []byte(fixture.contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.artifacts.binding = artifact
+
+	input, err := fixture.preparer.Prepare(context.Background(), fixture.fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	if input.ArtifactID == nil || *input.ArtifactID != fixture.artifactID {
+		t.Fatalf("prepared artifact = %v, want retained %s", input.ArtifactID, fixture.artifactID)
+	}
+	if fixture.source.borrowCount != 0 || fixture.artifacts.acquireCalls != 0 || fixture.artifacts.readyCalls != 0 {
+		t.Fatalf("retained artifact was recopied: source borrows=%d acquire=%d ready=%d", fixture.source.borrowCount, fixture.artifacts.acquireCalls, fixture.artifacts.readyCalls)
+	}
+	if err := input.Validate(context.Background()); err != nil {
+		t.Fatalf("validate retained artifact: %v", err)
+	}
+}
+
+func TestSourceAnalysisInputPreparerInvalidatesMissingBindingAndAcquiresFreshArtifact(t *testing.T) {
+	fixture := newInputPreparerFixture(t, nil)
+	old := &persistence.SourceAnalysisArtifact{
+		ID: fixture.artifactID, WorkID: fixture.work.ID,
+		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
+		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
+	}
+	fixture.artifacts.binding = old
+	newID := uuid.New()
+	fixture.artifacts.artifactID = newID
+	fixture.preparer.newID = func() uuid.UUID { return newID }
+	input, err := fixture.preparer.Prepare(context.Background(), fixture.fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	if input.ArtifactID == nil || *input.ArtifactID != newID {
+		t.Fatalf("prepared artifact = %v, want fresh acquisition %s", input.ArtifactID, newID)
+	}
+	if fixture.artifacts.invalidateCalls != 1 || fixture.artifacts.binding != old {
+		t.Fatalf("missing artifact invalidation: calls=%d old binding preserved=%t", fixture.artifacts.invalidateCalls, fixture.artifacts.binding == old)
+	}
+	if fixture.artifacts.acquireCalls != 1 || fixture.artifacts.readyCalls != 1 {
+		t.Fatalf("fresh acquisition transitions: acquire=%d ready=%d", fixture.artifacts.acquireCalls, fixture.artifacts.readyCalls)
+	}
+}
+
+func TestSourceAnalysisInputPreparerReplacesStaleAcquiringBindingAfterCrash(t *testing.T) {
+	fixture := newInputPreparerFixture(t, nil)
+	// A crash left an interrupted acquiring copy registered as the work binding.
+	// Even though the abandoned file is full length, acquiring is never treated
+	// as ready from length alone: the preparer must acquire a fresh artifact.
+	staleID := uuid.New()
+	stale := &persistence.SourceAnalysisArtifact{
+		ID: staleID, WorkID: fixture.work.ID,
+		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())),
+		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
+		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactAcquiring,
+	}
+	fixture.artifacts.binding = stale
+	stalePath := filepath.Join(fixture.outputPath, "analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), staleID.String())
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stalePath, []byte(fixture.contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := fixture.preparer.Prepare(context.Background(), fixture.fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	if input.ArtifactID == nil || *input.ArtifactID != fixture.artifactID {
+		t.Fatalf("prepared artifact = %v, want fresh acquisition %s", input.ArtifactID, fixture.artifactID)
+	}
+	if fixture.artifacts.bindCalls != 0 || fixture.artifacts.acquireCalls != 1 || fixture.artifacts.readyCalls != 1 {
+		t.Fatalf("stale acquiring transitions: bind=%d acquire=%d ready=%d", fixture.artifacts.bindCalls, fixture.artifacts.acquireCalls, fixture.artifacts.readyCalls)
+	}
+	if fixture.artifacts.binding != stale {
+		t.Fatalf("stale acquiring binding row was replaced")
+	}
+	got, err := os.ReadFile(stalePath)
+	if err != nil || string(got) != fixture.contents {
+		t.Fatalf("stale acquiring bytes were not preserved: error=%v", err)
+	}
+	if info, err := os.Stat(fixture.finalPath()); err != nil || info.Size() != fixture.work.SizeBytes {
+		t.Fatalf("fresh artifact not written full size: info=%v error=%v", info, err)
+	}
+}
+
+func TestSourceAnalysisInputPreparerDoesNotReuseReadyArtifactAfterSourceChanges(t *testing.T) {
+	fixture := newInputPreparerFixture(t, nil)
+	artifact := &persistence.SourceAnalysisArtifact{
+		ID: fixture.artifactID, WorkID: fixture.work.ID,
+		RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())),
+		SourceSizeBytes:    fixture.work.SizeBytes, SourceMtime: fixture.work.Mtime,
+		OwnerOperationID: uuid.New(), OwnerOperationAttempt: 1, OwnerJobID: 70, State: persistence.SourceAnalysisArtifactReady,
+	}
+	if err := os.MkdirAll(filepath.Dir(fixture.finalPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.finalPath(), []byte(fixture.contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.artifacts.binding = artifact
+	path := filepath.Join(fixture.sourcePath, "audio.bin")
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
+		t.Fatal("Prepare reused retained artifact after source identity changed")
+	}
+	if fixture.artifacts.bindCalls != 0 || fixture.artifacts.acquireCalls != 0 || fixture.source.borrowCount != 0 {
+		t.Fatalf("stale retained artifact was used: bind=%d acquire=%d source borrows=%d", fixture.artifacts.bindCalls, fixture.artifacts.acquireCalls, fixture.source.borrowCount)
+	}
+}
+
 func TestSourceAnalysisInputPreparerUsesExecutionModeInsteadOfCurrentRootMode(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
 	// The current root is staged, but this already-running execution was pinned
@@ -200,7 +332,7 @@ func TestSourceAnalysisInputPreparerForgetsRowButPreservesCollisionBytes(t *test
 	}
 }
 
-func TestSourceAnalysisInputPreparerRetainsArtifactWhenSourceIdentityMismatches(t *testing.T) {
+func TestSourceAnalysisInputPreparerRejectsMismatchedSourceBeforeAcquiring(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
 	future := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(filepath.Join(fixture.sourcePath, "audio.bin"), future, future); err != nil {
@@ -209,11 +341,13 @@ func TestSourceAnalysisInputPreparerRetainsArtifactWhenSourceIdentityMismatches(
 	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
 		t.Fatal("Prepare accepted a source with a different observed mtime")
 	}
-	if fixture.artifacts.forgetCalls != 0 || fixture.artifacts.readyCalls != 0 {
-		t.Fatalf("mismatch transitions: forget=%d ready=%d", fixture.artifacts.forgetCalls, fixture.artifacts.readyCalls)
+	// The retained source is validated before any artifact is acquired, so a
+	// mismatch fails safely without creating an orphaned copy or ownership row.
+	if fixture.artifacts.acquireCalls != 0 || fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
+		t.Fatalf("mismatch transitions: acquire=%d ready=%d forget=%d", fixture.artifacts.acquireCalls, fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
 	}
-	if _, err := os.Stat(fixture.finalPath()); err != nil {
-		t.Fatalf("mismatched source artifact was not retained: %v", err)
+	if _, err := os.Stat(fixture.finalPath()); !os.IsNotExist(err) {
+		t.Fatalf("mismatched source created an artifact at path: %v", err)
 	}
 }
 
@@ -383,11 +517,13 @@ func TestSourceAnalysisInputPreparerRejectsSourceSymlink(t *testing.T) {
 	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
 		t.Fatal("Prepare accepted a symlinked source file")
 	}
-	if fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
-		t.Fatalf("symlink transitions: ready=%d forget=%d", fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
+	// The retained source is validated before any artifact is acquired, so the
+	// symlink is rejected without creating an orphaned copy or ownership row.
+	if fixture.artifacts.acquireCalls != 0 || fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
+		t.Fatalf("symlink transitions: acquire=%d ready=%d forget=%d", fixture.artifacts.acquireCalls, fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
 	}
-	if _, err := os.Stat(fixture.finalPath()); err != nil {
-		t.Fatalf("symlink failure artifact was not retained: %v", err)
+	if _, err := os.Stat(fixture.finalPath()); !os.IsNotExist(err) {
+		t.Fatalf("symlink failure created an artifact at path: %v", err)
 	}
 }
 
@@ -468,24 +604,53 @@ func (repository *inputPreparerRepository) GetSourceRoot(context.Context, uuid.U
 }
 
 type inputArtifactRepository struct {
-	rootID      uuid.UUID
-	workID      uuid.UUID
-	artifactID  uuid.UUID
-	fence       persistence.SourceAnalysisArtifactFence
-	size        int64
-	mtime       time.Time
-	readyCalls  int
-	forgetCalls int
-	readyErr    error
+	rootID          uuid.UUID
+	workID          uuid.UUID
+	artifactID      uuid.UUID
+	fence           persistence.SourceAnalysisArtifactFence
+	size            int64
+	mtime           time.Time
+	readyCalls      int
+	forgetCalls     int
+	readyErr        error
+	acquireCalls    int
+	bindCalls       int
+	invalidateCalls int
+	binding         *persistence.SourceAnalysisArtifact
 }
 
 func (repository *inputArtifactRepository) Acquire(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisArtifact, error) {
+	repository.acquireCalls++
 	if id != repository.artifactID || fence != repository.fence {
 		return nil, errors.New("unexpected acquire")
 	}
 	return &persistence.SourceAnalysisArtifact{ID: id, WorkID: repository.workID, RelativeOutputPath: filepath.ToSlash(filepath.Join("analysis", "staging", repository.rootID.String(), repository.workID.String(), id.String())),
 		SourceSizeBytes: repository.size, SourceMtime: repository.mtime, OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt, OwnerJobID: fence.JobID,
 		State: persistence.SourceAnalysisArtifactAcquiring}, nil
+}
+
+func (repository *inputArtifactRepository) GetBinding(context.Context, uuid.UUID) (*persistence.SourceAnalysisArtifact, error) {
+	return repository.binding, nil
+}
+func (repository *inputArtifactRepository) ListRetained(context.Context, uuid.UUID) ([]*persistence.SourceAnalysisArtifact, error) {
+	if repository.binding == nil {
+		return nil, nil
+	}
+	return []*persistence.SourceAnalysisArtifact{repository.binding}, nil
+}
+func (repository *inputArtifactRepository) BindRetained(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisArtifact, error) {
+	repository.bindCalls++
+	if repository.binding == nil || repository.binding.ID != id || fence != repository.fence {
+		return nil, errors.New("unexpected retained bind")
+	}
+	return repository.binding, nil
+}
+func (repository *inputArtifactRepository) InvalidateBinding(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence) error {
+	repository.invalidateCalls++
+	if repository.binding == nil || repository.binding.ID != id || fence != repository.fence {
+		return errors.New("unexpected retained invalidation")
+	}
+	return nil
 }
 func (repository *inputArtifactRepository) MarkReady(_ context.Context, id uuid.UUID, fence persistence.SourceAnalysisArtifactFence, _ int64) (*persistence.SourceAnalysisArtifact, error) {
 	repository.readyCalls++

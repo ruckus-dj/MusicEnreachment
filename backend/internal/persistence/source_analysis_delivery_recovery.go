@@ -54,6 +54,9 @@ func recoverInterruptedNormalizedSourceAnalysis(
 		return fmt.Errorf("recover source analysis: read held work: %w", err)
 	}
 	return db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("recover source analysis: lock output admission gate: %w", err)
+		}
 		rootIDs := make(map[uuid.UUID]struct{}, len(held)+1)
 		if captured.TargetSourceRootID != nil {
 			rootIDs[*captured.TargetSourceRootID] = struct{}{}
@@ -126,11 +129,23 @@ func recoverInterruptedNormalizedSourceAnalysis(
 		if live {
 			return nil
 		}
+		var artifactWorkIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT work_id FROM source_analysis_work_artifact_binding
+			WHERE borrower_operation_id=? AND borrower_operation_attempt=? AND borrower_job_id=?`,
+			operationID, delivery.Attempt, delivery.JobID).Scan(ctx, &artifactWorkIDs); err != nil {
+			return fmt.Errorf("recover source analysis: list delivery artifact bindings: %w", err)
+		}
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='pending',safe_error=NULL,skip_reason=NULL,
 			execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
 			WHERE execution_operation_id=? AND execution_operation_attempt=? AND execution_job_id=? AND state IN ('queued','running')`,
 			operationID, operationID, operation.Attempt, *operation.RiverJobID).Exec(ctx); err != nil {
 			return fmt.Errorf("recover source analysis: reset interrupted steps: %w", err)
+		}
+		if err := releaseSourceAnalysisArtifactBindings(ctx, tx, operationID, delivery); err != nil {
+			return fmt.Errorf("recover source analysis: release artifact bindings: %w", err)
+		}
+		if err := makeCompletedSourceAnalysisArtifactsCleanupEligible(ctx, tx, artifactWorkIDs); err != nil {
+			return fmt.Errorf("recover source analysis: %w", err)
 		}
 		if _, err := tx.NewRaw(`DELETE FROM operation_source_work_hold WHERE operation_id=?`, operationID).Exec(ctx); err != nil {
 			return fmt.Errorf("recover source analysis: release work holds: %w", err)

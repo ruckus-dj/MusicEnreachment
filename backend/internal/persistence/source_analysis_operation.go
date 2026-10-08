@@ -57,6 +57,9 @@ func (repository *SourceInventoryRepository) settleNormalizedSourceAnalysisOpera
 		return fmt.Errorf("settle source analysis: valid terminal state, stage, and safe error are required")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("settle source analysis: lock output admission gate: %w", err)
+		}
 		var rootID *uuid.UUID
 		if err := tx.NewRaw(`SELECT target_source_root_id FROM operation WHERE id=?`, operationID).Scan(ctx, &rootID); err != nil {
 			return fmt.Errorf("settle source analysis: read root target: %w", err)
@@ -116,13 +119,56 @@ func (repository *SourceInventoryRepository) settleNormalizedSourceAnalysisOpera
 				return fmt.Errorf("settle source analysis: fail unfinished steps: %w", err)
 			}
 		} else {
-			var unfinished bool
-			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM source_analysis_step WHERE execution_operation_id=? AND state IN ('queued','running'))`, operationID).Scan(ctx, &unfinished); err != nil {
-				return fmt.Errorf("settle source analysis: check unfinished steps: %w", err)
+			snapshot, err := DecodeSourceAnalysisOperationSnapshot(operation.InputSnapshot)
+			if err != nil {
+				return fmt.Errorf("settle source analysis: decode selected steps: %w", err)
 			}
-			if unfinished {
-				return fmt.Errorf("settle source analysis: cannot succeed while selected steps remain queued or running")
+			selected := snapshot.SelectedSteps
+			if snapshot.TargetStep != nil && snapshot.TargetWorkID != nil {
+				selected = []SourceAnalysisStepSelection{{WorkID: *snapshot.TargetWorkID, Step: SourceStepName(*snapshot.TargetStep)}}
 			}
+			selectedIncomplete := false
+			for _, selection := range selected {
+				var complete bool
+				if err := tx.NewRaw(`SELECT EXISTS (
+					SELECT 1 FROM source_analysis_step
+					WHERE work_id=? AND step=? AND state='succeeded'
+				)`, selection.WorkID, selection.Step).Scan(ctx, &complete); err != nil {
+					return fmt.Errorf("settle source analysis: check selected step: %w", err)
+				}
+				if !complete {
+					selectedIncomplete = true
+					break
+				}
+			}
+			if selectedIncomplete {
+				state = "failed"
+				stage = "incomplete"
+				safeError = "One or more requested analysis steps remain incomplete. Retry the failed steps."
+				if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='failed', safe_error=COALESCE(safe_error, ?), skip_reason=NULL,
+					execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,
+					last_operation_id=?,updated_at=now()
+					WHERE execution_operation_id=? AND state IN ('queued','running')`, safeError, operationID, operationID).Exec(ctx); err != nil {
+					return fmt.Errorf("settle source analysis: fail incomplete selected steps: %w", err)
+				}
+			}
+		}
+		deliveryToRelease := SourceAnalysisOperationDelivery{Attempt: operation.Attempt}
+		if delivery != nil {
+			deliveryToRelease = *delivery
+		} else if operation.RiverJobID != nil {
+			deliveryToRelease.JobID = *operation.RiverJobID
+		}
+		var releasedArtifactWorkIDs []uuid.UUID
+		if state == "succeeded" {
+			if err := tx.NewRaw(`SELECT work_id FROM source_analysis_work_artifact_binding
+				WHERE borrower_operation_id=? AND borrower_operation_attempt=? AND borrower_job_id=?`,
+				operationID, deliveryToRelease.Attempt, deliveryToRelease.JobID).Scan(ctx, &releasedArtifactWorkIDs); err != nil {
+				return fmt.Errorf("settle source analysis: list delivery artifact bindings: %w", err)
+			}
+		}
+		if err := releaseSourceAnalysisArtifactBindings(ctx, tx, operationID, deliveryToRelease); err != nil {
+			return fmt.Errorf("settle source analysis: release artifact bindings: %w", err)
 		}
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,updated_at=now()
 			WHERE execution_operation_id=?`, operationID).Exec(ctx); err != nil {
@@ -133,6 +179,11 @@ func (repository *SourceInventoryRepository) settleNormalizedSourceAnalysisOpera
 		}
 		if _, err := tx.NewRaw(`DELETE FROM operation_tool_read_hold WHERE operation_id=?`, operationID).Exec(ctx); err != nil {
 			return fmt.Errorf("settle source analysis: release tool holds: %w", err)
+		}
+		if state == "succeeded" && len(releasedArtifactWorkIDs) > 0 {
+			if err := makeCompletedSourceAnalysisArtifactsCleanupEligible(ctx, tx, releasedArtifactWorkIDs); err != nil {
+				return fmt.Errorf("settle source analysis: %w", err)
+			}
 		}
 		now := time.Now().UTC()
 		operation.State = state

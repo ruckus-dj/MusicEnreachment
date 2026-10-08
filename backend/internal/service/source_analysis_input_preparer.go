@@ -28,6 +28,13 @@ type sourceAnalysisArtifactRepository interface {
 	ForgetUncreated(context.Context, uuid.UUID, persistence.SourceAnalysisArtifactFence) error
 }
 
+type retainedSourceAnalysisArtifactRepository interface {
+	GetBinding(context.Context, uuid.UUID) (*persistence.SourceAnalysisArtifact, error)
+	ListRetained(context.Context, uuid.UUID) ([]*persistence.SourceAnalysisArtifact, error)
+	BindRetained(context.Context, uuid.UUID, persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisArtifact, error)
+	InvalidateBinding(context.Context, uuid.UUID, persistence.SourceAnalysisArtifactFence) error
+}
+
 type sourceAnalysisOutputDirectoryReader interface {
 	GetOutputDirectory(context.Context) (string, bool, error)
 }
@@ -157,6 +164,15 @@ func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fe
 	}
 	if !configured || outputPath == "" || !filepath.IsAbs(outputPath) {
 		return nil, fmt.Errorf("prepare source analysis input: managed output directory is not configured")
+	}
+	if retained, ok := preparer.artifacts.(retainedSourceAnalysisArtifactRepository); ok {
+		input, reusable, retainErr := preparer.prepareRetained(ctx, retained, fence, work, root, outputPath)
+		if retainErr != nil {
+			return nil, retainErr
+		}
+		if reusable {
+			return input, nil
+		}
 	}
 	artifactID := preparer.newID()
 	artifact, err := preparer.artifacts.Acquire(ctx, artifactID, fence)
@@ -351,6 +367,147 @@ type outputReadAdapter struct{ sourcefs.OutputFile }
 
 func (file outputReadAdapter) Borrow(ctx context.Context, callback func(*os.File) error) error {
 	return file.BorrowRead(ctx, callback)
+}
+
+func (preparer *SourceAnalysisInputPreparer) prepareRetained(
+	ctx context.Context,
+	repository retainedSourceAnalysisArtifactRepository,
+	fence persistence.SourceAnalysisArtifactFence,
+	work *persistence.SourceAnalysisWork,
+	root *persistence.SourceRoot,
+	outputPath string,
+) (*SourceAnalysisPreparedInput, bool, error) {
+	if err := preparer.validateRetainedSource(ctx, work); err != nil {
+		return nil, false, fmt.Errorf("prepare source analysis input: validate retained artifact source: %w", err)
+	}
+	binding, err := repository.GetBinding(ctx, work.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("prepare source analysis input: read retained artifact binding: %w", err)
+	}
+	artifact := binding
+	if artifact == nil {
+		registered, err := repository.ListRetained(ctx, work.ID)
+		if err != nil {
+			return nil, false, fmt.Errorf("prepare source analysis input: list retained artifacts: %w", err)
+		}
+		if len(registered) == 0 {
+			return nil, false, nil
+		}
+		artifact = registered[0]
+	}
+	if artifact == nil {
+		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact registry returned an empty record")
+	}
+	if artifact.State == persistence.SourceAnalysisArtifactAcquiring {
+		// Acquisition revalidates creator and borrower liveness before replacing
+		// an interrupted copy; length alone never establishes readiness.
+		return nil, false, nil
+	}
+	if artifact.State != persistence.SourceAnalysisArtifactReady {
+		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact is not ready")
+	}
+	bound, err := repository.BindRetained(ctx, artifact.ID, fence)
+	if err != nil {
+		return nil, false, fmt.Errorf("prepare source analysis input: bind retained artifact: %w", err)
+	}
+	if bound == nil || bound.ID != artifact.ID || bound.WorkID != work.ID || bound.State != persistence.SourceAnalysisArtifactReady {
+		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact binding returned an invalid owner")
+	}
+	expectedPath := filepath.ToSlash(filepath.Join("analysis", "staging", root.ID.String(), work.ID.String(), artifact.ID.String()))
+	if bound.RelativeOutputPath != expectedPath || bound.SourceSizeBytes != work.SizeBytes || !sameSourceMtime(bound.SourceMtime, work.Mtime) {
+		return nil, false, fmt.Errorf("prepare source analysis input: retained artifact identity does not match current work")
+	}
+
+	pinnedRoot, err := preparer.sourceOpen.OpenRoot(ctx, outputPath)
+	if err != nil {
+		if isMissingSourceAnalysisArtifact(err) {
+			return preparer.invalidateMissingRetained(ctx, repository, artifact.ID, fence)
+		}
+		return nil, false, fmt.Errorf("open retained managed output: %w", err)
+	}
+	file, err := sourcefs.OpenRegularAt(ctx, pinnedRoot, bound.RelativeOutputPath)
+	if err != nil {
+		_ = pinnedRoot.Close()
+		if isMissingSourceAnalysisArtifact(err) {
+			return preparer.invalidateMissingRetained(ctx, repository, artifact.ID, fence)
+		}
+		return nil, false, fmt.Errorf("open retained staged artifact: %w", err)
+	}
+	info, err := file.Stat(ctx)
+	if err != nil {
+		_ = file.Close()
+		_ = pinnedRoot.Close()
+		return nil, false, fmt.Errorf("stat retained staged artifact: %w", err)
+	}
+	if info == nil || !info.Mode().IsRegular() || info.Size() != work.SizeBytes {
+		_ = file.Close()
+		_ = pinnedRoot.Close()
+		return preparer.invalidateMissingRetained(ctx, repository, artifact.ID, fence)
+	}
+	if err := verifyOutputFileNamespace(ctx, preparer.sourceOpen, outputPath, bound.RelativeOutputPath, info); err != nil {
+		_ = file.Close()
+		_ = pinnedRoot.Close()
+		if isMissingSourceAnalysisArtifact(err) {
+			return preparer.invalidateMissingRetained(ctx, repository, artifact.ID, fence)
+		}
+		return nil, false, fmt.Errorf("verify retained artifact namespace: %w", err)
+	}
+	input := &SourceAnalysisPreparedInput{
+		File: file, ServerPath: filepath.Join(outputPath, filepath.FromSlash(bound.RelativeOutputPath)),
+		ArtifactID: &bound.ID,
+		close:      func() error { return errors.Join(file.Close(), pinnedRoot.Close()) },
+	}
+	input.validate = func(ctx context.Context) error {
+		current, err := file.Stat(ctx)
+		if err != nil {
+			return err
+		}
+		if current == nil || !current.Mode().IsRegular() || current.Size() != work.SizeBytes || !os.SameFile(info, current) {
+			return fmt.Errorf("retained staged artifact changed")
+		}
+		return verifyOutputFileNamespace(ctx, preparer.sourceOpen, outputPath, bound.RelativeOutputPath, info)
+	}
+	return input, true, nil
+}
+
+func (preparer *SourceAnalysisInputPreparer) validateRetainedSource(ctx context.Context, work *persistence.SourceAnalysisWork) error {
+	pinnedRoot, err := preparer.sourceOpen.OpenRoot(ctx, work.InventoryPath)
+	if err != nil {
+		return fmt.Errorf("open pinned inventory root: %w", err)
+	}
+	defer func() { _ = pinnedRoot.Close() }()
+	file, err := sourcefs.OpenRegularAt(ctx, pinnedRoot, work.RelativePath)
+	if err != nil {
+		return fmt.Errorf("open pinned inventory file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat(ctx)
+	if err != nil {
+		return fmt.Errorf("stat source analysis input: %w", err)
+	}
+	if !matchesSourceIdentity(info, work.SizeBytes, work.Mtime) {
+		return fmt.Errorf("source analysis input changed")
+	}
+	if err := verifySourceNamespace(ctx, preparer.sourceOpen, pinnedRoot, work.InventoryPath); err != nil {
+		return err
+	}
+	return verifySourceFileNamespace(ctx, pinnedRoot, work.RelativePath, info)
+}
+
+func (preparer *SourceAnalysisInputPreparer) invalidateMissingRetained(
+	ctx context.Context,
+	repository retainedSourceAnalysisArtifactRepository,
+	artifactID uuid.UUID,
+	fence persistence.SourceAnalysisArtifactFence,
+) (*SourceAnalysisPreparedInput, bool, error) {
+	if err := repository.InvalidateBinding(ctx, artifactID, fence); err != nil {
+		return nil, false, fmt.Errorf("invalidate missing retained source analysis artifact: %w", err)
+	}
+	return nil, false, nil
+}
+
+func isMissingSourceAnalysisArtifact(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err)
 }
 
 func copySourceOnce(ctx context.Context, source sourcefs.RegularFile, destination sourcefs.OutputFile, expectedSize int64) (int64, error) {

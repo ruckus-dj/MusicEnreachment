@@ -149,6 +149,18 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   passed, including integration tests and builds. Retained-copy adoption and
   cleanup remain I07–I08; native platform CI and deployment smoke were not run.
 
+- **I07 — retained-copy retry and recovery complete locally (2026-10-09):**
+  added a fenced borrower binding separate from immutable artifact provenance.
+  Ready copies are validated and reused without recopying source bytes; missing
+  copies and orphaned acquiring bindings allow fresh acquisition without removing
+  old registry ownership or files. Exact delivery settlement/recovery releases
+  borrowers. Current-operation success uses its explicit requested steps;
+  accumulated copy obligations separately govern cleanup eligibility, including
+  recovery after all results commit before terminal settlement. Live deliveries
+  and stale-fence isolation have regression coverage. `task verify` passed.
+  Explicit deletion remains I08; no automatic unlink was introduced. Native
+  platform CI and deployment smoke were not run.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation
