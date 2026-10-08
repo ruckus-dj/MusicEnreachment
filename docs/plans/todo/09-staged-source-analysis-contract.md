@@ -38,9 +38,10 @@ approval ещё не получен, документ остаётся пред�
   fallback в in-place.
 - Output обязателен в Initial Setup и остаётся non-empty setting: его можно
   изменить, нельзя очистить. Перед reset валидируется новый путь; reset запрещён
-  при любых активных задачах; при разрешённом reset queue/tasks и DB references
-  старого output атомарно инвалидируются, но старые файлы не удаляются и остаются
-  unmanaged. Сохраняются локальные entities, source links, inventory и analyses;
+  при running/claimed исполнении (включая гонку claim), тогда как поставленная в
+  очередь работа не блокирует reset; при разрешённом reset queue/tasks и DB
+  references старого output атомарно инвалидируются, но старые файлы не удаляются
+  и остаются unmanaged. Сохраняются локальные entities, source links, inventory и analyses;
   автоматического republish нет.
 - Области output автоматически создаются; одобренные логические названия:
   `analysis`, `publication`, `checks`, `media`. Точные физические имена/layout —
@@ -64,9 +65,10 @@ server/container path, существующий source path validator прове
 
 Settings показывает обязательный output path (очистка запрещена), действие
 «Проверить новый путь» и отдельное подтверждение «Сменить output». Новое значение
-не применяется до успешной проверки и атомарного reset; при queued/running задачах
-кнопка disabled с перечнем причины/активности и повторным readback. Draft формы не
-подменяет сохранённое значение. Изменение concurrency показывается отдельно,
+не применяется до успешной проверки и атомарного reset; при running/claimed
+исполнении кнопка disabled с перечнем причины/активности и повторным readback,
+а поставленная в очередь работа не блокирует reset и очищается в транзакции. Draft
+формы не подменяет сохранённое значение. Изменение concurrency показывается отдельно,
 не связывается с RPS и остаётся DB-backed setting; значение 4 — одобренная
 начальная настройка. Интерфейс не представляет число как пользовательскую квоту.
 
@@ -226,9 +228,11 @@ fail-safe; оператор устраняет причину и делает р
   snapshot, output config и source file bytes в `operation.input_snapshot` не
   добавляются. Для безопасности immutable identity (root/location/work ID,
   explicit retry intent) и attempt/job fence не являются copied config.
-- Root mode updates блокируются/сериализуются с admission на root; только новые
-  работы видят новое значение. Удаление root остаётся запрещённым при активных
-  задачах и удаляет очередь/locations; physical source/audio bytes не удаляет.
+- Root mode updates блокируются/сериализуются с admission на root: выбор mode
+  сериализован. Уже начатое исполнение сохраняет выбранный для него mode, а
+  queued/retry работа читает текущий mode из БД при execution; admitted mode не
+  персистится. Удаление root остаётся запрещённым при активных задачах и удаляет
+  очередь/locations; physical source/audio bytes не удаляет.
 
 Миграционный путь: это unpublished prototype; совместимость с историческими
 опубликованными данными не требуется. Squash миграций разрешён, но не обязателен;
@@ -255,8 +259,10 @@ Output reset требует двухфазного пользовательск�
 output/admission gate. Все operation admissions и queued-to-running worker claims
 берут тот же cross-process gate shared, в едином порядке до reset-token/root/
 operation/domain rows. Reset под exclusive gate проверяет отсутствие незавершённого
-reset token, перечитывает setting и active operations; любая queued/running задача
-запрещает reset. Gate удерживается через filesystem steps и DB commit, поэтому
+reset token, перечитывает setting и running/claimed исполнение; running/claimed
+исполнение, включая гонку queued-to-running claim, запрещает reset, а поставленная
+в очередь работа не блокирует его и инвалидируется в той же транзакции. Gate
+удерживается через filesystem steps и DB commit, поэтому
 между проверкой и инвалидацией не может проскочить admission/claim. При crash lock
 освобождается, но durable `preparing` token заставляет admission/claim отказывать
 до startup recovery. Предложенный cross-process primitive — PostgreSQL advisory
@@ -362,8 +368,8 @@ reset scope следуют решениям владельца; locks, ownership
 | Restart: row/mkdir/partial copy/ready/tools/step commit | Startup recovery проверяет DB ownership row, exact path и delivery fence; живой River delivery не orphan-ится | Пригодная copy retained; отсутствующая/stale ссылка снимается; cleanup только после fence invalidation |
 | Crash после шагов success, до terminal/cleanup | DB result и fence authoritative; copy сохраняется до success всех requested steps | Явная cleanup позже; cleanup error не превращает analysis в failure |
 | Bulk cleanup: missing/permission/live/foreign artifact | Только зарегистрированные eligible rows, item-by-item fenced unlink; missing reconcile, I/O error сохраняет ownership | Не сканировать директорию для выбора; повторить «Очистить» после исправления |
-| Output reset, queued/running task или гонка worker claim | Любая active task запрещает reset; admission и queued-to-running claim берут shared cross-process output gate, reset — exclusive gate в одном lock order; durable preparing token блокирует новую admission/claim после crash до recovery | Никакой частичной инвалидации при отказе; queued job тоже active; admission не может проскочить между проверкой и commit |
-| Output reset: path valid, active tasks отсутствуют | Validate-only → exclusive gate → reread setting/active tasks → одна DB tx меняет setting и инвалидирует ВСЕ queue/tasks и ВСЕ DB refs старого output | Сохраняются local entities/source links/inventory/analyses; старые physical files остаются unmanaged; no republish |
+| Output reset, running/claimed исполнение или гонка worker claim | Running/claimed исполнение (включая гонку claim) запрещает reset, тогда как поставленная в очередь работа — нет; admission и queued-to-running claim берут shared cross-process output gate, reset — exclusive gate в одном lock order; durable preparing token блокирует новую admission/claim после crash до recovery | Никакой частичной инвалидации при отказе; queued работа очищается транзакционно и не блокирует reset; admission не может проскочить между проверкой и commit |
+| Output reset: path valid, running/claimed исполнение отсутствует | Validate-only → exclusive gate → reread setting/running-or-claimed execution → одна DB tx меняет setting и инвалидирует ВСЕ queue/tasks и ВСЕ DB refs старого output | Сохраняются local entities/source links/inventory/analyses; старые physical files остаются unmanaged; no republish |
 | Reset mkdir/DB error/crash между filesystem и commit | Durable reset token (`preparing`, exact owned-dir manifest, `committed` marker). Создать эксклюзивно только отсутствующие dirs; DB tx меняет setting, invalidates all queue/tasks+old refs и помечает committed. Rollback/recovery удаляет только manifest dirs доказанно пустые; committed token только finalized | До commit старое setting/refs живы; никогда не удалять старые/foreign files. При сомнительном ownership оставить dirs и показать recovery error; нет distributed transaction |
 | Root removal | Только без active root operations; удалить queued root work/locations | Source bytes/root analyses/collections остаются; disable не предлагать |
 
@@ -385,7 +391,7 @@ Settings — группы инструментов; узкий layout своди
 Текстовый mock flow: Sources → Add root → выбрать один незаполненный mode radio
 (submit disabled без выбора) → server path → save и manual scan → per-file
 operation/status → partial success, retry only failed step → all-success cleanup
-eligible → Settings: validate new output → queued/running task блокирует reset →
+eligible → Settings: validate new output → running/claimed исполнение блокирует reset →
 подтвердить reset после settlement → readback, при ошибке сохранить draft → явно
 запустить bulk cleanup. На 375px flow предполагает вертикальные кнопки, переносы
 строк, inline errors и focus restoration/keyboard controls; доступность этих
