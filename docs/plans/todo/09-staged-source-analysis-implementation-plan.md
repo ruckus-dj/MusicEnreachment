@@ -66,6 +66,21 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
 | I11 — Sources/Settings UI | `frontend/src/features/sources/` (root create/edit, scan list, inspector, cleanup) and `frontend/src/features/settings/SettingsScreen.tsx`; reuse existing operation REST reread/SSE wake-up. Accessible loading/error/dirty/retry/reset flow. | I10. Safe intermediate: no fake mode default, no unsupported actions; current features remain usable. | RTL/accessibility coverage in full gate; review light/dark desktop + 375px action retention; browser CI/manual evidence as explicitly reported. |
 | I12 — integration acceptance | Integration fixtures for source tree, DB/River, real managed tools; deployment fixture; docs/status update and independent reviewer. No application behavior additions beyond approved contract. | I01–I11 complete. | `task verify`; GitHub native platform matrix, PostgreSQL/River integration and Compose deployment smoke; real runtime staged vs in-place; source bytes unchanged; artifact ownership/recovery evidence; independent acceptance report. |
 
+## Progress
+
+- **I01 — complete:** added an additive migration with an
+  `in_place` transitional DB default and a check-constrained per-root mode, a
+  typed positive integer `source_file_concurrency` runtime setting (default 4),
+  and an owned-artifact registry skeleton. The artifact row records work identity,
+  source size/mtime, a relative managed-output path, the creating delivery fence,
+  and acquisition/readiness/cleanup states. Relative paths avoid persisting an
+  output-root snapshot; linking the work and operation fence prevents orphan
+  ownership references. No filesystem behavior or worker integration is included
+  here; those belong to I05. The mode DB default is transitional only, so I02 can
+  make service/API creation require an explicit mode without disrupting existing
+  callers in this commit. `task verify` passed before commit; migration/application
+  behavior beyond schema constraints remains for later stages.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

@@ -16,6 +16,41 @@ import (
 
 const inventoryMigration = "20261003000000"
 
+func TestStagedSourceAnalysisSchemaConstraintsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	testpostgres.Reset(t, database)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	applyMigrationsOneAtATime(t, ctx, database, migrationPointers(collection.Sorted()))
+
+	rootID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name)
+		VALUES (?, '/srv/staged-schema', 'staged schema')`, rootID); err != nil {
+		t.Fatalf("insert root using transitional mode default: %v", err)
+	}
+	var mode string
+	if err := database.NewRaw(`SELECT processing_mode FROM source_root WHERE id=?`, rootID).Scan(ctx, &mode); err != nil || mode != "in_place" {
+		t.Fatalf("transitional processing mode = %q, %v; want in_place", mode, err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE source_root SET processing_mode='unknown' WHERE id=?`, rootID); err == nil {
+		t.Fatal("accepted unsupported source processing mode")
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_root (id, configured_path, display_name, processing_mode)
+		VALUES (?, '/srv/staged-schema-invalid', 'invalid mode', 'unknown')`, uuid.New()); err == nil {
+		t.Fatal("accepted unsupported processing mode on insert")
+	}
+
+	if !columnExists(t, database, "source_analysis_artifact", "source_size_bytes") ||
+		!columnExists(t, database, "source_analysis_artifact", "source_mtime") ||
+		!columnExists(t, database, "source_analysis_artifact", "relative_output_path") {
+		t.Fatal("staged artifact identity/owned-path schema is incomplete")
+	}
+	if !constraintExists(t, database, "source_root_processing_mode_check") {
+		t.Fatal("source root processing mode constraint is missing")
+	}
+}
+
 func TestSourceInventoryMigrationRollsBackWithStoredScanAndReappliesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.Open(t)

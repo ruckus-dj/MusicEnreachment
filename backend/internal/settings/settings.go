@@ -31,6 +31,7 @@ const (
 	ActiveFFmpegInstallationKey   = "active_ffmpeg_installation_id"
 	ActiveFPCalcInstallationKey   = "active_fpcalc_installation_id"
 	SetupCompletedAtKey           = "setup_completed_at"
+	SourceFileConcurrencyKey      = "source_file_concurrency"
 )
 
 type Store interface {
@@ -82,6 +83,7 @@ type ConfigurationHealth struct {
 }
 
 type RuntimeSettings struct {
+	SourceFileConcurrency      int
 	ToolsDirectory             string
 	OutputDirectory            string
 	PublicationFormat          string
@@ -487,6 +489,21 @@ func (r *Registry) GetSHA256Enabled(ctx context.Context) (bool, error) {
 	return value, err
 }
 
+// GetSourceFileConcurrency returns the maximum number of files processed at once.
+func (r *Registry) GetSourceFileConcurrency(ctx context.Context) (int, error) {
+	value, _, err := readSetting(ctx, r.store, sourceFileConcurrencySetting)
+	return value, err
+}
+
+// SetSourceFileConcurrency validates and stores the per-file processing limit.
+func (r *Registry) SetSourceFileConcurrency(ctx context.Context, concurrency int) error {
+	value, err := serializeSetting(sourceFileConcurrencySetting, concurrency)
+	if err != nil {
+		return err
+	}
+	return r.store.Set(ctx, SourceFileConcurrencyKey, value)
+}
+
 func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
 	tools, _, err := readSetting(ctx, r.store, toolsRootSetting)
 	if err != nil {
@@ -539,7 +556,12 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	fileConcurrency, _, err := readSetting(ctx, r.store, sourceFileConcurrencySetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	return RuntimeSettings{
+		SourceFileConcurrency:      fileConcurrency,
 		ToolsDirectory:             tools,
 		OutputDirectory:            output,
 		PublicationFormat:          format,

@@ -167,9 +167,10 @@ func timeDefinition(name string, mutable bool) settingDefinition[time.Time] {
 }
 
 var (
-	defaultPublic = "public"
-	defaultInfo   = "info"
-	defaultTrue   = true
+	defaultPublic          = "public"
+	defaultInfo            = "info"
+	defaultTrue            = true
+	defaultFileConcurrency = 4
 
 	platformOSSetting      = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
 	platformArchSetting    = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
@@ -192,6 +193,17 @@ var (
 	sha256Setting = settingDefinition[bool]{
 		name: SHA256EnabledKey, kind: "bool", parse: strconv.ParseBool,
 		serialize: strconv.FormatBool, defaultVal: &defaultTrue, mutable: true,
+	}
+	sourceFileConcurrencySetting = settingDefinition[int]{
+		name: SourceFileConcurrencyKey, kind: "int",
+		parse: strconv.Atoi, serialize: strconv.Itoa,
+		validate: func(value int) error {
+			if value < 1 {
+				return fmt.Errorf("source file concurrency must be positive")
+			}
+			return nil
+		},
+		defaultVal: &defaultFileConcurrency, mutable: true,
 	}
 	logSetting = settingDefinition[string]{
 		name: LogLevelKey, kind: "enum", parse: parseLevel,
@@ -225,5 +237,5 @@ var registeredSettings = []registeredSetting{
 	outputCaseSetting, outputUnicodeSetting, publicationSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
-	activeFFmpegSetting, activeFPCalcSetting, setupCompletedSetting,
+	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting, setupCompletedSetting,
 }

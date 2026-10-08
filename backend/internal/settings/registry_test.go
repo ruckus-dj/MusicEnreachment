@@ -28,6 +28,7 @@ func TestRegistryDefinesEveryTypedSetting(t *testing.T) {
 		LogLevelKey:                   {"enum", true, true},
 		ActiveFFmpegInstallationKey:   {"uuid", false, true},
 		ActiveFPCalcInstallationKey:   {"uuid", false, true},
+		SourceFileConcurrencyKey:      {"int", true, true},
 		SetupCompletedAtKey:           {"timestamp", false, false},
 	}
 	for _, definition := range registeredSettings {

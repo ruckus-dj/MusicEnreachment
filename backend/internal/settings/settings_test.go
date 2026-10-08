@@ -93,6 +93,27 @@ func TestPlatformInitializationIsAtomic(t *testing.T) {
 	}
 }
 
+func TestSourceFileConcurrencyDefaultAndValidation(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+
+	concurrency, err := registry.GetSourceFileConcurrency(ctx)
+	if err != nil || concurrency != 4 {
+		t.Fatalf("default concurrency = %d, %v; want 4", concurrency, err)
+	}
+	if err := registry.SetSourceFileConcurrency(ctx, 7); err != nil {
+		t.Fatalf("set concurrency: %v", err)
+	}
+	concurrency, err = registry.GetSourceFileConcurrency(ctx)
+	if err != nil || concurrency != 7 {
+		t.Fatalf("stored concurrency = %d, %v; want 7", concurrency, err)
+	}
+	if err := registry.SetSourceFileConcurrency(ctx, 0); err == nil {
+		t.Fatal("accepted non-positive concurrency")
+	}
+}
+
 func TestUnsupportedPlatformReturnsImmediate(t *testing.T) {
 	store := newMemoryStore()
 	registry := settings.New(store, nil)
