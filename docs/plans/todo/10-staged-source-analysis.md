@@ -124,6 +124,17 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   until I06; output reset/journal remains unavailable until I09. Native platform
   matrix and deployment smoke were not run locally.
 
+- **I05 — acquisition capability complete locally (2026-10-09):** added the
+  focused artifact repository and safe writable output capability. Acquisition
+  creates an exclusively owned staged file, performs one size-bounded sequential
+  copy, verifies source/output namespace and file identity, and marks readiness
+  under the delivery fence. Partial failures retain registered artifacts;
+  collisions preserve foreign files. Tests cover cancellation, sync/write and
+  readiness failures, zero-length inputs, growth and namespace replacement.
+  `task verify` passed. This capability remains unwired until I06; retained reuse,
+  cleanup and reset are not implemented by this stage. Native platform CI remains
+  outstanding.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation
