@@ -25,6 +25,7 @@ func (repository *SourceInventoryRepository) ListNormalizedSourceAnalysisExecuti
 	}, 0)
 	err := repository.db.NewSelect().TableExpr("source_analysis_step AS s").ColumnExpr("s.work_id, s.step").
 		Where("s.execution_operation_id = ? AND s.execution_operation_attempt = ? AND s.execution_job_id = ? AND s.state = 'queued'", operationID, operationAttempt, jobID).
+		Where("EXISTS (SELECT 1 FROM source_analysis_work w WHERE w.id=s.work_id AND w.current_location_id IS NOT NULL AND w.current_location_id=w.location_id)").
 		OrderExpr("s.work_id, s.step").Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("list normalized source analysis execution: %w", err)
@@ -55,7 +56,8 @@ func (repository *SourceInventoryRepository) ListNormalizedSourceAnalysisExecuti
 
 func (repository *SourceInventoryRepository) GetNormalizedSourceAnalysisWork(ctx context.Context, workID uuid.UUID) (*SourceAnalysisWork, *SourceLocation, error) {
 	work := new(SourceAnalysisWork)
-	if err := repository.db.NewSelect().Model(work).Where("id = ?", workID).Scan(ctx); err != nil {
+	if err := repository.db.NewSelect().Model(work).Where("id = ?", workID).
+		Where("current_location_id IS NOT NULL AND current_location_id=location_id").Scan(ctx); err != nil {
 		return nil, nil, fmt.Errorf("read normalized source analysis work: %w", err)
 	}
 	location := new(SourceLocation)

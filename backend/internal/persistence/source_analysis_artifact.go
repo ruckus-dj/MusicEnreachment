@@ -71,10 +71,9 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 		if err != nil {
 			return fmt.Errorf("acquire source analysis artifact: %w", err)
 		}
-		if root.ProcessingMode != "staged" || !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath ||
+		if !sourceAnalysisArtifactOwnerCurrent(work, root, location) ||
 			work.SourceRootID != root.ID || work.LocationID != location.ID || work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
-			location.SourceRootID != root.ID || location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes ||
-			!sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
+			location.SourceRootID != root.ID {
 			return fmt.Errorf("acquire source analysis artifact: %w", ErrSourceAnalysisStale)
 		}
 		if operation.Kind != analysisSourceOperationKind || operation.State != "running" || operation.Attempt != fence.OperationAttempt || operation.RiverJobID == nil || *operation.RiverJobID != fence.JobID || operation.SourceAnalysisMode == "" {
@@ -82,6 +81,13 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 		}
 		if err := verifySourceAnalysisArtifactExecution(ctx, tx, fence); err != nil {
 			return err
+		}
+		execution, err := getSourceAnalysisWorkExecution(ctx, tx, fence)
+		if err != nil {
+			return fmt.Errorf("acquire source analysis artifact: %w", err)
+		}
+		if execution.ProcessingMode != "staged" {
+			return fmt.Errorf("acquire source analysis artifact: execution was not started in staged mode")
 		}
 
 		artifact = new(SourceAnalysisArtifact)
@@ -133,6 +139,13 @@ func (repository *SourceAnalysisArtifactRepository) MarkReady(ctx context.Contex
 		}
 		if err := verifySourceAnalysisArtifactExecution(ctx, tx, fence); err != nil {
 			return err
+		}
+		execution, err := getSourceAnalysisWorkExecution(ctx, tx, fence)
+		if err != nil {
+			return fmt.Errorf("mark source analysis artifact ready: %w", err)
+		}
+		if execution.ProcessingMode != "staged" {
+			return fmt.Errorf("mark source analysis artifact ready: execution was not started in staged mode")
 		}
 		artifact = new(SourceAnalysisArtifact)
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_artifact WHERE id=? FOR UPDATE`, artifactID).Scan(ctx, artifact); err != nil {
@@ -203,8 +216,8 @@ func artifactOwnedByFence(artifact *SourceAnalysisArtifact, fence SourceAnalysis
 }
 
 func sourceAnalysisArtifactOwnerCurrent(work *SourceAnalysisWork, root *SourceRoot, location *SourceLocation) bool {
-	return root.ProcessingMode == "staged" && root.Enabled && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
-		work.SourceRootID == root.ID && work.ConfiguredPath == root.ConfiguredPath && work.InventoryPath == *root.InventoryPath && work.LocationID == location.ID &&
+	return root.Enabled && !root.Stale() && root.InventoryPath != nil && *root.InventoryPath == root.ConfiguredPath &&
+		work.SourceRootID == root.ID && work.ConfiguredPath == root.ConfiguredPath && work.InventoryPath == *root.InventoryPath && work.CurrentLocationID != nil && *work.CurrentLocationID == work.LocationID && *work.CurrentLocationID == location.ID &&
 		location.SourceRootID == root.ID && location.RelativePath == work.RelativePath && location.SizeBytes == work.SizeBytes &&
 		sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime))
 }
@@ -216,7 +229,7 @@ func lockSourceAnalysisArtifactOwner(ctx context.Context, tx bun.Tx, fence Sourc
 		return nil, nil, nil, nil, fmt.Errorf("lock output admission gate: %w", err)
 	}
 	initial := new(SourceAnalysisWork)
-	if err := tx.NewSelect().Model(initial).Column("source_root_id").Where("id=?", fence.WorkID).Scan(ctx); err != nil {
+	if err := tx.NewSelect().Model(initial).Column("source_root_id", "current_location_id").Where("id=?", fence.WorkID).Where("current_location_id IS NOT NULL AND current_location_id=location_id").Scan(ctx); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("read work identity: %w", err)
 	}
 	root := new(SourceRoot)
@@ -224,11 +237,11 @@ func lockSourceAnalysisArtifactOwner(ctx context.Context, tx bun.Tx, fence Sourc
 		return nil, nil, nil, nil, fmt.Errorf("lock source root: %w", err)
 	}
 	location := new(SourceLocation)
-	if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=(SELECT location_id FROM source_analysis_work WHERE id=?) AND source_root_id=? FOR UPDATE`, fence.WorkID, root.ID).Scan(ctx, location); err != nil {
+	if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, *initial.CurrentLocationID, root.ID).Scan(ctx, location); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("lock source location: %w", err)
 	}
 	work := new(SourceAnalysisWork)
-	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? AND location_id=? FOR UPDATE`, fence.WorkID, root.ID, location.ID).Scan(ctx, work); err != nil {
+	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? AND current_location_id=? AND current_location_id=location_id FOR UPDATE`, fence.WorkID, root.ID, location.ID).Scan(ctx, work); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("lock source analysis work: %w", err)
 	}
 	operation := new(Operation)

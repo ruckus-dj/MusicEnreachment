@@ -340,6 +340,7 @@ func validateCurrentAnalysisWork(detail *persistence.SourceLocationDetailSnapsho
 	work, root, location := detail.Work, detail.Root, detail.Location
 	if location.SizeBytes != expectedSize || !analysisMtime(location.Mtime).Equal(analysisMtime(expectedMtime)) ||
 		work.SizeBytes != expectedSize || !analysisMtime(work.Mtime).Equal(analysisMtime(expectedMtime)) ||
+		work.CurrentLocationID == nil || *work.CurrentLocationID != work.LocationID || *work.CurrentLocationID != location.ID ||
 		work.LocationID != location.ID || work.SourceRootID != root.ID || work.RelativePath != location.RelativePath ||
 		work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
 		location.SourceRootID != root.ID {

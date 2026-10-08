@@ -135,6 +135,20 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   cleanup and reset are not implemented by this stage. Native platform CI remains
   outstanding.
 
+- **I06 — implementation complete locally (2026-10-09):** production workers
+  acquire one shared input per file in either captured execution mode. Optional
+  SHA, probe and fingerprint preserve independent outcomes; runners are joined
+  before input closure and each publication validates the input. Fingerprints
+  have one current successful row per SHA, stable canonical identity and winning
+  provenance; successful replacement/promotion preserves newer results and
+  failures preserve the previous success. Immutable execution origins and retired
+  work tombstones preserve artifact ownership without blocking reconciliation.
+  Fingerprint publication/retirement transactions share a gate before domain row
+  locks to prevent shared-result promotion/cleanup deadlocks. Populated migration,
+  rollback, shared-input and concurrency regressions are covered. `task verify`
+  passed, including integration tests and builds. Retained-copy adoption and
+  cleanup remain I07–I08; native platform CI and deployment smoke were not run.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

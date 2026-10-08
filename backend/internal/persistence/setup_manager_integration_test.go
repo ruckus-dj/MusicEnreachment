@@ -1116,6 +1116,109 @@ func TestRepositoryStateTransitionsWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestDismissOperationPreservesExecutionProvenanceWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fixture := newNormalizedWorkOperation(t, "/srv/dismiss-operation-provenance", true,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
+	repository := persistence.NewSetupManagerRepository(fixture.database)
+	jobID := int64(1)
+	finishedAt := time.Now().UTC()
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "failed", Stage: "failed",
+		InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:dismiss:linux:amd64"}`),
+		SafeError:     stringPointer("safe failure"), RiverJobID: &jobID, FinishedAt: &finishedAt,
+	}
+	if err := repository.CreateOperation(ctx, operation); err != nil {
+		t.Fatalf("create failed operation: %v", err)
+	}
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO source_analysis_work_execution
+		(work_id,operation_id,operation_attempt,job_id,processing_mode) VALUES (?,?,1,?,'staged')`,
+		fixture.work.ID, operation.ID, jobID); err != nil {
+		t.Fatalf("insert operation execution: %v", err)
+	}
+	artifactID := uuid.New()
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
+		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
+		VALUES (?,?,?,?,?,?,1,?,'ready')`, artifactID, fixture.work.ID, "analysis/staging/provenance",
+		fixture.work.SizeBytes, fixture.work.Mtime, operation.ID, jobID); err != nil {
+		t.Fatalf("insert execution artifact: %v", err)
+	}
+	if err := repository.DismissOperation(ctx, operation.ID); err == nil || err.Error() != "only failed operations can be dismissed" {
+		t.Fatalf("dismiss provenance-bearing operation error = %v; want existing refusal", err)
+	}
+	if _, err := repository.GetOperation(ctx, operation.ID); err != nil {
+		t.Fatalf("failed operation was removed: %v", err)
+	}
+	var artifactCount, executionCount int
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE id=?`, artifactID).Scan(ctx, &artifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_work_execution WHERE operation_id=?`, operation.ID).Scan(ctx, &executionCount); err != nil {
+		t.Fatal(err)
+	}
+	if artifactCount != 1 || executionCount != 1 {
+		t.Fatalf("retained provenance rows: artifact=%d execution=%d; want 1 each", artifactCount, executionCount)
+	}
+}
+
+func TestDeleteSucceededBeforeSkipsExecutionProvenanceWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fixture := newNormalizedWorkOperation(t, "/srv/cleanup-operation-provenance", true,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
+	repository := persistence.NewSetupManagerRepository(fixture.database)
+	finishedAt := time.Now().UTC().Add(-48 * time.Hour)
+	jobID := int64(1)
+	retained := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "succeeded", Stage: "complete",
+		InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:retained:linux:amd64"}`),
+		RiverJobID:    &jobID, FinishedAt: &finishedAt,
+	}
+	removable := &persistence.Operation{
+		ID: uuid.New(), Kind: "install", State: "succeeded", Stage: "complete",
+		InputSnapshot: json.RawMessage(`{"target_identity":"fpcalc:test:cleanup:linux:amd64"}`),
+		FinishedAt:    &finishedAt,
+	}
+	if err := repository.CreateOperation(ctx, removable); err != nil {
+		t.Fatalf("create removable operation: %v", err)
+	}
+	if err := repository.CreateOperation(ctx, retained); err != nil {
+		t.Fatalf("create provenance-bearing operation: %v", err)
+	}
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO source_analysis_work_execution
+		(work_id,operation_id,operation_attempt,job_id,processing_mode) VALUES (?,?,1,?,'staged')`,
+		fixture.work.ID, retained.ID, jobID); err != nil {
+		t.Fatalf("insert operation execution: %v", err)
+	}
+	artifactID := uuid.New()
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
+		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
+		VALUES (?,?,?,?,?,?,1,?,'ready')`, artifactID, fixture.work.ID, "analysis/staging/cleanup-provenance",
+		fixture.work.SizeBytes, fixture.work.Mtime, retained.ID, jobID); err != nil {
+		t.Fatalf("insert execution artifact: %v", err)
+	}
+	if err := repository.DeleteSucceededBefore(ctx, time.Now().UTC().Add(-24*time.Hour)); err != nil {
+		t.Fatalf("cleanup succeeded operations: %v", err)
+	}
+	if _, err := repository.GetOperation(ctx, retained.ID); err != nil {
+		t.Fatalf("provenance-bearing operation was removed: %v", err)
+	}
+	if _, err := repository.GetOperation(ctx, removable.ID); err == nil {
+		t.Fatal("unreferenced succeeded operation was not cleaned up")
+	}
+	var artifactCount, executionCount int
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE id=?`, artifactID).Scan(ctx, &artifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM source_analysis_work_execution WHERE operation_id=?`, retained.ID).Scan(ctx, &executionCount); err != nil {
+		t.Fatal(err)
+	}
+	if artifactCount != 1 || executionCount != 1 {
+		t.Fatalf("retained provenance rows: artifact=%d execution=%d; want 1 each", artifactCount, executionCount)
+	}
+}
+
 func createReadyInstallation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, packageKind, goos, goarch, release string) *persistence.ToolInstallation {
 	t.Helper()
 	installation := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: goos, PlatformGOARCH: goarch, SourceName: "test", ReleaseIdentity: release, RelativePath: packageKind + "/" + release, State: "preparing"}

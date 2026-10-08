@@ -227,8 +227,12 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 		locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
 		operationID, workID := insertHeldBatchAnalysis(t, ctx, database, rootID, locationID)
 
-		requireViolation(t, execError(ctx, database, "DELETE FROM source_location WHERE id = ?", locationID),
-			"operation_source_work_hold_work_id_fkey")
+		deleteErr := execError(ctx, database, "DELETE FROM source_location WHERE id = ?", locationID)
+		var postgresErr pgdriver.Error
+		if !errors.As(deleteErr, &postgresErr) || postgresErr.Field('C') != "P0001" ||
+			!strings.Contains(deleteErr.Error(), "active source analysis work cannot be retired") {
+			t.Fatalf("delete active analysis location error = %v, want active-work retirement guard", deleteErr)
+		}
 
 		if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM operation_source_work_hold WHERE operation_id = ? AND work_id = ?", operationID, workID); err != nil {

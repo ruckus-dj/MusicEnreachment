@@ -40,7 +40,7 @@ type analysisWorkerRepository interface {
 	ApplySourceProbe(context.Context, persistence.SourceProbeApply) (*persistence.SourceMediaVariant, error)
 	ApplySourceFingerprint(context.Context, persistence.SourceFingerprintApply) (*persistence.SourceFingerprintResult, error)
 	ReuseSourceProbe(context.Context, persistence.SourceStepClaim, int, uuid.UUID, string, int) (*persistence.SourceMediaVariant, error)
-	ReuseSourceFingerprint(context.Context, persistence.SourceStepClaim, int, string) (*persistence.SourceFingerprintResult, error)
+	ReuseSourceFingerprint(context.Context, persistence.SourceStepClaim, int) (*persistence.SourceFingerprintResult, error)
 	FailSourceAnalysisStep(context.Context, persistence.SourceStepFailure) error
 	SettleNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string, string, string) error
 	RecoverNormalizedSourceAnalysisDelivery(context.Context, uuid.UUID, persistence.SourceAnalysisOperationDelivery, string) error
@@ -73,6 +73,7 @@ type SourceAnalysisWorker struct {
 	platform             settings.PlatformState
 	opener               sourcefs.Opener
 	preparer             service.SourceAnalysisPreparing
+	inputPreparer        service.SourceAnalysisInputPreparing
 	verifyFFProbeVersion func(context.Context, string) (string, error)
 	pendingDispatcher    pendingDispatcher
 	fileLimiter          *sourceFileLimiter
@@ -129,6 +130,12 @@ func NewSourceAnalysisWorker(repository analysisWorkerRepository, operations *se
 // WithPreparer makes the step engine replaceable in deterministic worker tests.
 func (worker *SourceAnalysisWorker) WithPreparer(preparer service.SourceAnalysisPreparing) *SourceAnalysisWorker {
 	worker.preparer = preparer
+	return worker
+}
+
+// WithInputPreparer wires the single per-work source input lifecycle.
+func (worker *SourceAnalysisWorker) WithInputPreparer(preparer service.SourceAnalysisInputPreparing) *SourceAnalysisWorker {
+	worker.inputPreparer = preparer
 	return worker
 }
 
@@ -202,9 +209,6 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	snapshot.ToolsReadRequired = len(selections) != 0
 	cacheOnly := false
 	snapshot.CacheOnlyReuse = &cacheOnly
-	if processingMode != "in_place" {
-		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageProbing, "Staged source analysis is unavailable until staged processing is supported.")
-	}
 	// A batch only owns the queued execution triples written at admission. It never
 	// expands to newly-pending steps and never revisits source scans.
 	executions, err := worker.repository.ListNormalizedSourceAnalysisExecution(ctx, operation.ID, operation.Attempt, job.ID)
@@ -216,9 +220,15 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	}
 	var singleFailure *sourceAnalysisStepFailure
 	groups := groupSourceAnalysisExecutions(executions)
-	results := make(chan error, len(groups))
-	for _, group := range groups {
-		group := group
+	type groupResult struct {
+		index int
+		err   error
+	}
+	results := make(chan groupResult, len(groups))
+	groupCtx, cancelGroups := context.WithCancel(ctx)
+	defer cancelGroups()
+	for index, group := range groups {
+		index, group := index, group
 		go func() {
 			getLimit := func(ctx context.Context) (int, error) {
 				if reader, ok := worker.runtimeSettings.(sourceFileConcurrencyReader); ok {
@@ -230,31 +240,52 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 				}
 				return len(groups), nil
 			}
-			release, acquireErr := worker.fileLimiter.acquire(ctx, getLimit)
+			release, acquireErr := worker.fileLimiter.acquire(groupCtx, getLimit)
 			if acquireErr != nil {
-				results <- acquireErr
+				results <- groupResult{index: index, err: acquireErr}
 				return
 			}
 			defer release()
-			results <- worker.runWorkGroup(ctx, operation, snapshot, job.ID, group)
+			results <- groupResult{index: index, err: worker.runWorkGroup(groupCtx, operation, snapshot, job.ID, group, processingMode)}
 		}()
 	}
-	for _, group := range groups {
-		if err := <-results; err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+	groupErrors := make([]error, len(groups))
+	var fatalErr error
+	for range groups {
+		result := <-results
+		err := result.err
+		groupErrors[result.index] = err
+		if err != nil {
+			var stepFailure *sourceAnalysisStepFailure
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, persistence.ErrSourceAnalysisStale) || !errors.As(err, &stepFailure) {
+				if fatalErr == nil {
+					fatalErr = err
+					cancelGroups()
+				}
 			}
-			if errors.Is(err, persistence.ErrSourceAnalysisStale) {
-				return worker.recoverStaleDelivery(ctx, operation, delivery)
-			}
+		}
+	}
+	// Every group has exited and released its limiter hold before delivery
+	// recovery can clear the durable work holds.
+	if fatalErr != nil {
+		if errors.Is(fatalErr, context.Canceled) || errors.Is(fatalErr, context.DeadlineExceeded) {
+			return fatalErr
+		}
+		if errors.Is(fatalErr, persistence.ErrSourceAnalysisStale) {
+			return worker.recoverStaleDelivery(ctx, operation, delivery)
+		}
+		return fatalErr
+	}
+	for index, err := range groupErrors {
+		if err != nil {
 			var stepFailure *sourceAnalysisStepFailure
 			if !errors.As(err, &stepFailure) {
-				return err
+				continue
 			}
 			if singleFailure == nil {
 				singleFailure = stepFailure
 			}
-			slog.Warn("source analysis work delivery failed", "operation", operation.ID, "work", group[0].Work.ID, "cause", err)
+			slog.Warn("source analysis work delivery failed", "operation", operation.ID, "work", groups[index][0].Work.ID, "cause", err)
 		}
 		worker.operations.Notify(operation.ID)
 	}
@@ -292,22 +323,12 @@ func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, op
 	return nil
 }
 
-func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution) error {
+func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution, fixtureMode string) error {
 	if len(executions) == 0 {
 		return nil
 	}
 	workID := executions[0].Work.ID
 	claims := make(map[persistence.SourceStepName]int, len(executions))
-	var failures []error
-	claim := func(execution persistence.SourceAnalysisExecution) error {
-		step := persistence.SourceStepName(execution.Step.Step)
-		attempt, err := worker.repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{WorkID: workID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step})
-		if err != nil {
-			return err
-		}
-		claims[step] = attempt
-		return nil
-	}
 	byStep := make(map[persistence.SourceStepName]persistence.SourceAnalysisExecution, len(executions))
 	for _, execution := range executions {
 		byStep[persistence.SourceStepName(execution.Step.Step)] = execution
@@ -315,62 +336,133 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	ordered := make([]persistence.SourceStepName, 0, len(executions))
 	for _, step := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
 		if _, ok := byStep[step]; ok {
+			attempt, err := worker.repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{WorkID: workID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step})
+			if err != nil {
+				return err
+			}
+			claims[step] = attempt
 			ordered = append(ordered, step)
 		}
 	}
-	var newDigest *[32]byte
-	for _, step := range ordered {
-		if err := claim(byStep[step]); err != nil {
+	fence := persistence.SourceAnalysisArtifactFence{WorkID: workID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID}
+	registry, ok := any(worker.repository).(interface {
+		GetSourceAnalysisWorkExecution(context.Context, persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisWorkExecution, error)
+	})
+	mode := ""
+	if ok {
+		execution, err := registry.GetSourceAnalysisWorkExecution(ctx, fence)
+		if err != nil {
 			return err
 		}
-		if step == persistence.SourceStepSHA256 {
-			prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, byStep[step], claims, []persistence.SourceStepName{step}, nil)
-			if file != nil {
-				defer func() { _ = file.Close() }()
-			}
-			if root != nil {
-				defer func() { _ = root.Close() }()
-			}
-			if err != nil {
-				var stepFailure *sourceAnalysisStepFailure
-				if errors.As(err, &stepFailure) {
-					failures = append(failures, err)
-					continue
-				}
-				return err
-			}
-			digest, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[step], claims[step], work, step, prepared)
-			if applyErr != nil {
-				failures = append(failures, applyErr)
-			} else {
-				newDigest = digest
-			}
+		if execution == nil || execution.WorkID != workID || execution.ProcessingMode == "" {
+			return fmt.Errorf("source analysis execution mode is unavailable")
 		}
-	}
-	// Claims for non-SHA steps are fenced independently before the shared prepare.
-	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
-		if _, ok := byStep[step]; ok {
-			if _, exists := claims[step]; !exists {
-				if err := claim(byStep[step]); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	var existing *[32]byte
-	if _, hasSHA := byStep[persistence.SourceStepSHA256]; hasSHA {
-		existing = newDigest
+		mode = execution.ProcessingMode
 	} else {
-		existing = executions[0].ExistingSHA256
+		// A fixture-only fallback preserves old direct worker construction. The
+		// production repository implements the fenced execution registry.
+		mode = fixtureMode
 	}
-	steps := make([]persistence.SourceStepName, 0, 2)
-	for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
-		if _, ok := byStep[step]; ok {
+	if worker.inputPreparer == nil {
+		if ok {
+			return fmt.Errorf("source analysis input preparer is unavailable")
+		}
+		// Test fixtures predating input preparation can continue exercising the
+		// in-place engine. Production composition always supplies this capability.
+		return worker.runLegacyInPlaceGroup(ctx, operation, snapshot, jobID, executions, claims, ordered)
+	}
+	input, err := worker.inputPreparer.PrepareMode(ctx, fence, mode)
+	if err != nil {
+		return worker.failClaimedSteps(ctx, operation, jobID, executions, claims, "The source file could not be prepared for analysis.")
+	}
+	defer func() { _ = input.Close() }()
+	steps := make([]persistence.SourceStepName, 0, len(ordered))
+	for _, step := range ordered {
+		if step != persistence.SourceStepSHA256 {
 			steps = append(steps, step)
 		}
 	}
-	if len(steps) > 0 {
-		prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, byStep[steps[0]], claims, steps, existing)
+	var failures []error
+	var toolConfig service.SourceAnalysisPreparerConfig
+	toolConfigErr := error(nil)
+	if len(steps) != 0 {
+		toolConfig, toolConfigErr = worker.preparerConfig(ctx, snapshot, &executions[0].Work, operation.ID, operation.Attempt, jobID, steps...)
+	}
+	preparer := worker.preparer
+	if preparer == nil {
+		preparer = service.NewSourceAnalysisPreparer(toolConfig)
+	}
+	if toolConfigErr != nil {
+		for _, step := range steps {
+			failures = append(failures, worker.failStep(ctx, operation, byStep[step], step, claims[step], jobID, "The selected managed analysis tool is unavailable."))
+		}
+		steps = nil
+	}
+	var digest *[32]byte
+	if _, hasSHA := byStep[persistence.SourceStepSHA256]; hasSHA {
+		prepared := preparer.Prepare(ctx, service.SourceAnalysisPrepareRequest{File: input.File, Targets: service.SourceAnalysisTargetSHA256})
+		if err := input.Validate(ctx); err != nil {
+			failures = append(failures, worker.failStep(ctx, operation, byStep[persistence.SourceStepSHA256], persistence.SourceStepSHA256, claims[persistence.SourceStepSHA256], jobID, "The source file changed. Start a new analysis."))
+		} else {
+			computed, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[persistence.SourceStepSHA256], claims[persistence.SourceStepSHA256], &executions[0].Work, persistence.SourceStepSHA256, prepared)
+			if applyErr != nil {
+				failures = append(failures, applyErr)
+			} else {
+				digest = computed
+			}
+		}
+	} else {
+		digest = executions[0].ExistingSHA256
+	}
+	type stepOutcome struct {
+		step     persistence.SourceStepName
+		prepared service.SourceAnalysisPreparation
+	}
+	outcomes := make(chan stepOutcome, len(steps))
+	for _, step := range steps {
+		step := step
+		go func() {
+			request := service.SourceAnalysisPrepareRequest{File: input.File, ServerPath: input.ServerPath, Targets: analysisTargets(step), ExistingSHA256: digest}
+			if step == persistence.SourceStepFingerprint && snapshot.Mode == persistence.SourceAnalysisModeSingleStep && operation.RerunTarget && snapshot.TargetStep != nil && *snapshot.TargetStep == string(persistence.SourceStepFingerprint) {
+				request.BypassFingerprintCache = true
+			}
+			outcomes <- stepOutcome{step: step, prepared: preparer.Prepare(ctx, request)}
+		}()
+	}
+	for range steps {
+		outcome := <-outcomes // Join every runner before releasing the prepared input.
+		if err := input.Validate(ctx); err != nil {
+			failures = append(failures, worker.failStep(ctx, operation, byStep[outcome.step], outcome.step, claims[outcome.step], jobID, "The source file changed. Start a new analysis."))
+			continue
+		}
+		_, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[outcome.step], claims[outcome.step], &executions[0].Work, outcome.step, outcome.prepared)
+		if applyErr != nil {
+			failures = append(failures, applyErr)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(failures...)
+}
+
+func (worker *SourceAnalysisWorker) failClaimedSteps(ctx context.Context, operation *persistence.Operation, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, safe string) error {
+	var failures []error
+	for _, execution := range executions {
+		step := persistence.SourceStepName(execution.Step.Step)
+		if attempt := claims[step]; attempt > 0 {
+			failures = append(failures, worker.failStep(ctx, operation, execution, step, attempt, jobID, safe))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (worker *SourceAnalysisWorker) runLegacyInPlaceGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, steps []persistence.SourceStepName) error {
+	// Compatibility path is restricted to un-wired test workers; deployment uses
+	// one shared SourceAnalysisPreparedInput via WithInputPreparer.
+	var failures []error
+	for _, step := range steps {
+		prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, executions[0], claims, []persistence.SourceStepName{step}, executions[0].ExistingSHA256)
 		if file != nil {
 			defer func() { _ = file.Close() }()
 		}
@@ -378,21 +470,12 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 			defer func() { _ = root.Close() }()
 		}
 		if err != nil {
-			var stepFailure *sourceAnalysisStepFailure
-			if errors.As(err, &stepFailure) {
-				failures = append(failures, err)
-				for _, sibling := range steps[1:] {
-					failures = append(failures, worker.failStep(ctx, operation, byStep[sibling], sibling, claims[sibling], jobID, stepFailure.safeError))
-				}
-				return errors.Join(failures...)
-			}
-			return err
+			failures = append(failures, err)
+			continue
 		}
-		for _, step := range steps {
-			_, applyErr := worker.applyPreparedStep(ctx, operation, snapshot, jobID, byStep[step], claims[step], work, step, prepared)
-			if applyErr != nil {
-				failures = append(failures, applyErr)
-			}
+		_, err = worker.applyPreparedStep(ctx, operation, snapshot, jobID, executions[0], claims[step], work, step, prepared)
+		if err != nil {
+			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
@@ -513,7 +596,7 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 			return nil, worker.persistStepFailure(ctx, failure)
 		}
 		if prepared.Fingerprint.State == service.SourceAnalysisCacheHit {
-			_, err = worker.repository.ReuseSourceFingerprint(ctx, persistence.SourceStepClaim{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step}, attempt, prepared.Fingerprint.Result.FPCalcVersion)
+			_, err = worker.repository.ReuseSourceFingerprint(ctx, persistence.SourceStepClaim{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step}, attempt)
 			return nil, err
 		}
 		_, err = worker.repository.ApplySourceFingerprint(ctx, persistence.SourceFingerprintApply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Result: *prepared.Fingerprint.Result})

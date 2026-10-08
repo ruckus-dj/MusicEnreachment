@@ -75,8 +75,8 @@ func TestReadSourceLocationDetailIncludesSelectedAnalysisAndBatchHoldWithPostgre
 		t.Fatal(err)
 	}
 	fingerprintID := uuid.New()
-	if _, err := database.ExecContext(ctx, `INSERT INTO media_fingerprint_result(id,fpcalc_version,version_banner,algorithm_namespace,algorithm_id,fingerprint,reported_duration,calculated_at,applied_operation_id,parser_contract_version)
-		VALUES(?,'1.5.1','fpcalc 1.5.1','chromaprint',1,'AQID',42,now(),?,1)`, fingerprintID, operation.ID); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO media_fingerprint_result(id,fpcalc_version,version_banner,algorithm_namespace,algorithm_id,fingerprint,reported_duration,calculated_at,applied_operation_id,parser_contract_version,winning_result_id)
+		VALUES(?,'1.5.1','fpcalc 1.5.1','chromaprint',1,'AQID',42,now(),?,1,?)`, fingerprintID, operation.ID, fingerprintID); err != nil {
 		t.Fatal(err)
 	}
 	stepRows := []persistence.SourceAnalysisStep{

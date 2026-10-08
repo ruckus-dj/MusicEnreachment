@@ -40,11 +40,11 @@ func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPost
 		}
 	})
 
-	t.Run("staged root releases admitted tool holds", func(t *testing.T) {
+	t.Run("staged root resolves current tools and records staged execution", func(t *testing.T) {
 		database := testpostgres.OpenMigrated(t)
 		ctx := context.Background()
 		repository := persistence.NewSourceInventoryRepository(database)
-		root, operation, _ := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-staged")
+		root, operation, admissionTool := queuedToolAnalysis(t, ctx, database, repository, "/srv/analysis-delivery-staged")
 		if _, err := database.NewRaw(`UPDATE source_root SET processing_mode='staged' WHERE id=?`, root.ID).Exec(ctx); err != nil {
 			t.Fatalf("switch source root to staged mode: %v", err)
 		}
@@ -54,10 +54,18 @@ func TestStartNormalizedSourceAnalysisDeliveryReplacesAdmissionToolHoldsWithPost
 		if err != nil {
 			t.Fatalf("start staged source analysis delivery: %v", err)
 		}
-		if started.State != "running" || mode != "staged" || len(selections) != 0 || started.ToolsReadRequired {
+		if started.State != "running" || mode != "staged" || len(selections) != 1 ||
+			selections[0].PackageKind != "ffmpeg" || selections[0].InstallationID != admissionTool.InstallationID || !started.ToolsReadRequired {
 			t.Fatalf("staged delivery = state %q, mode %q, selections %+v, tools_read_required %t", started.State, mode, selections, started.ToolsReadRequired)
 		}
-		assertDeliveryToolHolds(t, ctx, database, operation.ID)
+		assertDeliveryToolHolds(t, ctx, database, operation.ID, admissionTool.InstallationID)
+		var stagedExecutions int
+		if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work_execution WHERE operation_id=? AND processing_mode='staged'`, operation.ID).Scan(ctx, &stagedExecutions); err != nil {
+			t.Fatalf("read staged execution records: %v", err)
+		}
+		if stagedExecutions != 1 {
+			t.Fatalf("staged execution records = %d, want 1", stagedExecutions)
+		}
 	})
 }
 

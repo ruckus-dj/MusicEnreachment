@@ -122,7 +122,7 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		selectedWorks := make([]selectedWork, 0, len(workIDs))
 		for _, workID := range workIDs {
 			var locationID uuid.UUID
-			if err := tx.NewRaw(`SELECT location_id FROM source_analysis_work WHERE id=? AND source_root_id=?`, workID, root.ID).Scan(ctx, &locationID); err != nil {
+			if err := tx.NewRaw(`SELECT current_location_id FROM source_analysis_work WHERE id=? AND source_root_id=? AND current_location_id IS NOT NULL AND current_location_id=location_id`, workID, root.ID).Scan(ctx, &locationID); err != nil {
 				return fmt.Errorf("admit source analysis: read selected location: %w", ErrSourceAnalysisStale)
 			}
 			selectedWorks = append(selectedWorks, selectedWork{ID: workID, LocationID: locationID})
@@ -155,7 +155,7 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 			if activeHold {
 				return fmt.Errorf("admit source analysis: %w", ErrSourceRootActiveAnalysis)
 			}
-			if work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
+			if work.CurrentLocationID == nil || *work.CurrentLocationID != work.LocationID || *work.CurrentLocationID != location.ID || work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
 				location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes ||
 				!sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 				return fmt.Errorf("admit source analysis: %w", ErrSourceAnalysisStale)
@@ -249,7 +249,7 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 						if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_variant WHERE source_sha256=? AND ffprobe_version=? AND analysis_policy_version=?)`, digest, version, SourceAnalysisPolicyVersion).Scan(ctx, &cached); err != nil {
 							return fmt.Errorf("admit source analysis: check probe cache: %w", err)
 						}
-					} else if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_fingerprint_cache WHERE source_sha256=? AND fpcalc_version=?)`, digest, version).Scan(ctx, &cached); err != nil {
+					} else if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_fingerprint_result WHERE source_sha256=? AND fpcalc_version=?)`, digest, version).Scan(ctx, &cached); err != nil {
 						return fmt.Errorf("admit source analysis: check fingerprint cache: %w", err)
 					}
 					if !cached {

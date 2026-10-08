@@ -61,7 +61,7 @@ func publishPreparedSourceScanAnalysis(ctx context.Context, tx bun.Tx, root Sour
 		}
 
 		var old SourceAnalysisWork
-		err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE location_id=? FOR UPDATE`, location.ID).Scan(ctx, &old)
+		err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=? AND current_location_id=location_id FOR UPDATE`, location.ID).Scan(ctx, &old)
 		hasOld := err == nil
 		if err != nil && err != sql.ErrNoRows {
 			return fmt.Errorf("publish prepared analysis for %q: read current work: %w", candidate.RelativePath, err)
@@ -160,7 +160,7 @@ func lockPreparedScanSHAs(ctx context.Context, tx bun.Tx, root SourceRoot, opera
 			return nil, fmt.Errorf("prepared identity for %q no longer matches the applied location", candidate.RelativePath)
 		}
 		var old SourceAnalysisWork
-		err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE location_id=? FOR UPDATE`, location.ID).Scan(ctx, &old)
+		err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=? AND current_location_id=location_id FOR UPDATE`, location.ID).Scan(ctx, &old)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, fmt.Errorf("lock current work for %q: %w", candidate.RelativePath, err)
 		}
@@ -343,12 +343,7 @@ func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysis
 			if prepared.FingerprintResult.AppliedOperationID != scanOperationID {
 				return fmt.Errorf("new fingerprint provenance does not name the scan operation")
 			}
-			selectedFingerprint, err = insertScanFingerprint(ctx, tx, prepared.FingerprintResult)
-			if err == nil && selectedSHA != nil {
-				if _, err = tx.NewRaw(`INSERT INTO media_fingerprint_cache(source_sha256,fpcalc_version,result_id) VALUES(?,?,?) ON CONFLICT(source_sha256,fpcalc_version) DO NOTHING`, selectedSHA.SourceSHA256, selectedFingerprint.FPCalcVersion, selectedFingerprint.ID).Exec(ctx); err != nil {
-					err = fmt.Errorf("associate fingerprint cache result: %w", err)
-				}
-			}
+			selectedFingerprint, err = insertOrPromoteScanFingerprint(ctx, tx, selectedSHA, prepared.FingerprintResult)
 		}
 		if err != nil {
 			return err
@@ -560,23 +555,27 @@ func sameJSON(left, right json.RawMessage) bool {
 	return reflect.DeepEqual(leftValue, rightValue)
 }
 
-func insertScanFingerprint(ctx context.Context, tx bun.IDB, input *SourceFingerprintResult) (*SourceFingerprintResult, error) {
-	_, err := tx.NewInsert().Model(input).Exec(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("insert fingerprint result: %w", err)
-	}
-	return selectScanFingerprint(ctx, tx, input.ID)
-}
-
 func selectPreparedFingerprintCache(ctx context.Context, tx bun.IDB, digest []byte, version string, input *SourceFingerprintResult) (*SourceFingerprintResult, error) {
 	result := new(SourceFingerprintResult)
-	if err := tx.NewRaw(`SELECT r.* FROM media_fingerprint_cache c JOIN media_fingerprint_result r ON r.id=c.result_id AND r.fpcalc_version=c.fpcalc_version WHERE c.source_sha256=? AND c.fpcalc_version=?`, digest, version).Scan(ctx, result); err != nil {
+	if err := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE source_sha256=? AND fpcalc_version=?`, digest, version).Scan(ctx, result); err != nil {
 		return nil, fmt.Errorf("select prepared fingerprint cache entry: %w", err)
 	}
 	if !sameFingerprintResult(result, *input) {
 		return nil, fmt.Errorf("prepared fingerprint cache result differs from its immutable database identity")
 	}
 	return result, nil
+}
+
+func insertOrPromoteScanFingerprint(ctx context.Context, tx bun.IDB, sha *SourceMediaVariant, input *SourceFingerprintResult) (*SourceFingerprintResult, error) {
+	if sha == nil || len(sha.SourceSHA256) != 32 {
+		input.WinningResultID = input.ID
+		if _, err := tx.NewInsert().Model(input).Exec(ctx); err != nil {
+			return nil, fmt.Errorf("insert fingerprint result without digest: %w", err)
+		}
+		return selectScanFingerprint(ctx, tx, input.ID)
+	}
+	input.SourceSHA256 = append([]byte(nil), sha.SourceSHA256...)
+	return upsertCanonicalFingerprintResult(ctx, tx, sha.SourceSHA256, *input)
 }
 
 func selectScanFingerprint(ctx context.Context, tx bun.IDB, id uuid.UUID) (*SourceFingerprintResult, error) {
@@ -588,20 +587,5 @@ func selectScanFingerprint(ctx context.Context, tx bun.IDB, id uuid.UUID) (*Sour
 }
 
 func removeScanAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID) error {
-	var resultIDs []uuid.UUID
-	if err := tx.NewRaw(`SELECT success_fingerprint_result_id FROM source_analysis_step WHERE work_id=? AND success_fingerprint_result_id IS NOT NULL`, workID).Scan(ctx, &resultIDs); err != nil {
-		return fmt.Errorf("read old fingerprint references: %w", err)
-	}
-	if _, err := tx.NewRaw(`DELETE FROM source_analysis_step WHERE work_id=?`, workID).Exec(ctx); err != nil {
-		return fmt.Errorf("delete old steps: %w", err)
-	}
-	if _, err := tx.NewRaw(`DELETE FROM source_analysis_work WHERE id=?`, workID).Exec(ctx); err != nil {
-		return fmt.Errorf("delete old work: %w", err)
-	}
-	for _, id := range resultIDs {
-		if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return retireSourceAnalysisWork(ctx, tx, workID)
 }

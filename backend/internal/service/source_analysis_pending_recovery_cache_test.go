@@ -120,13 +120,15 @@ func (repository *pendingRecoveryCacheRepositoryFixture) LookupSourceProbe(conte
 	return nil, repository.probeCacheHit, nil
 }
 
-func (repository *pendingRecoveryCacheRepositoryFixture) LookupSourceFingerprint(_ context.Context, _ [sha256.Size]byte, version string) (*persistence.SourceFingerprintResult, bool, error) {
+func (repository *pendingRecoveryCacheRepositoryFixture) LookupSourceFingerprint(_ context.Context, _ [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
 	repository.fpLookups++
-	repository.fpVersions = append(repository.fpVersions, version)
 	return repository.fingerprint, repository.fingerprint != nil, nil
 }
 
-func (repository *pendingRecoveryCacheRepositoryFixture) ReusePendingSourceAnalysisCache(_ context.Context, _ uuid.UUID, workID uuid.UUID, step persistence.SourceStepName, _ uuid.UUID, _ string) (bool, error) {
+func (repository *pendingRecoveryCacheRepositoryFixture) ReusePendingSourceAnalysisCache(_ context.Context, _ uuid.UUID, workID uuid.UUID, step persistence.SourceStepName, _ uuid.UUID, expectedVersion string) (bool, error) {
+	if step == persistence.SourceStepFingerprint {
+		repository.fpVersions = append(repository.fpVersions, expectedVersion)
+	}
 	rows := repository.steps[workID]
 	remaining := rows[:0]
 	changed := false

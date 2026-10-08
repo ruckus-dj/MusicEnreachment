@@ -47,18 +47,11 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 			needsProbe = needsProbe || step == string(SourceStepProbe)
 			needsFingerprint = needsFingerprint || step == string(SourceStepFingerprint)
 		}
-		root := new(SourceRoot)
-		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
-			return fmt.Errorf("start source analysis delivery: lock source root: %w", err)
-		}
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
-			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
-		}
 		packageKinds := make([]string, 0, 2)
-		if root.ProcessingMode == "in_place" && needsProbe {
+		if needsProbe {
 			packageKinds = append(packageKinds, "ffmpeg")
 		}
-		if root.ProcessingMode == "in_place" && needsFingerprint {
+		if needsFingerprint {
 			packageKinds = append(packageKinds, "fpcalc")
 		}
 		if len(packageKinds) > 0 {
@@ -69,27 +62,6 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 				return fmt.Errorf("start source analysis delivery: lock selected packages: %w", err)
 			}
 		}
-		type heldWork struct {
-			WorkID     uuid.UUID `bun:"work_id,type:uuid"`
-			LocationID uuid.UUID `bun:"location_id,type:uuid"`
-		}
-		var works []heldWork
-		if err := tx.NewRaw(`SELECT DISTINCT w.id AS work_id,w.location_id FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE s.execution_operation_id=? AND s.execution_operation_attempt=? AND s.execution_job_id=? AND s.state='queued' AND w.source_root_id=? ORDER BY w.location_id`, operationID, delivery.Attempt, delivery.JobID, root.ID).Scan(ctx, &works); err != nil {
-			return fmt.Errorf("start source analysis delivery: read queued work: %w", err)
-		}
-		for _, work := range works {
-			location := new(SourceLocation)
-			if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, work.LocationID, root.ID).Scan(ctx, location); err != nil {
-				return fmt.Errorf("start source analysis delivery: lock source location: %w", err)
-			}
-			lockedWork := new(SourceAnalysisWork)
-			if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? FOR UPDATE`, work.WorkID, root.ID).Scan(ctx, lockedWork); err != nil {
-				return fmt.Errorf("start source analysis delivery: lock source work: %w", err)
-			}
-			if lockedWork.LocationID != location.ID || lockedWork.ConfiguredPath != root.ConfiguredPath || lockedWork.InventoryPath != *root.InventoryPath || lockedWork.RelativePath != location.RelativePath || lockedWork.SizeBytes != location.SizeBytes || !sourceAnalysisMtime(lockedWork.Mtime).Equal(sourceAnalysisMtime(location.Mtime)) {
-				return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
-			}
-		}
 		for _, required := range []struct {
 			needed                    bool
 			kind, setting, executable string
@@ -97,7 +69,7 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 			{needsProbe, "ffmpeg", "active_ffmpeg_installation_id", "ffprobe"},
 			{needsFingerprint, "fpcalc", "active_fpcalc_installation_id", "fpcalc"},
 		} {
-			if !required.needed || root.ProcessingMode != "in_place" {
+			if !required.needed {
 				continue
 			}
 			var rawID string
@@ -126,7 +98,7 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 			{needsProbe, "ffmpeg", "active_ffmpeg_installation_id", "ffprobe"},
 			{needsFingerprint, "fpcalc", "active_fpcalc_installation_id", "fpcalc"},
 		} {
-			if !required.needed || root.ProcessingMode != "in_place" {
+			if !required.needed {
 				continue
 			}
 			selectionIndex := -1
@@ -172,12 +144,66 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 			}
 			selections[selectionIndex] = SourceAnalysisToolSelection{PackageKind: required.kind, InstallationID: id, RelativePath: installation.RelativePath, Executable: required.executable, Version: version, VersionBanner: banner}
 		}
+		root := new(SourceRoot)
+		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, *operation.TargetSourceRootID).Scan(ctx, root); err != nil {
+			return fmt.Errorf("start source analysis delivery: lock source root: %w", err)
+		}
+		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
+		}
+		type heldWork struct {
+			WorkID     uuid.UUID `bun:"work_id,type:uuid"`
+			LocationID uuid.UUID `bun:"location_id,type:uuid"`
+		}
+		var works []heldWork
+		if err := tx.NewRaw(`SELECT DISTINCT w.id AS work_id,w.current_location_id AS location_id FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE s.execution_operation_id=? AND s.execution_operation_attempt=? AND s.execution_job_id=? AND s.state='queued' AND w.source_root_id=? AND w.current_location_id IS NOT NULL AND w.current_location_id=w.location_id ORDER BY w.current_location_id`, operationID, delivery.Attempt, delivery.JobID, root.ID).Scan(ctx, &works); err != nil {
+			return fmt.Errorf("start source analysis delivery: read queued work: %w", err)
+		}
+		var queuedWorkCount int
+		if err := tx.NewRaw(`SELECT count(DISTINCT w.id) FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id
+			WHERE s.execution_operation_id=? AND s.execution_operation_attempt=? AND s.execution_job_id=? AND s.state='queued' AND w.source_root_id=?`,
+			operationID, delivery.Attempt, delivery.JobID, root.ID).Scan(ctx, &queuedWorkCount); err != nil {
+			return fmt.Errorf("start source analysis delivery: count queued work: %w", err)
+		}
+		if len(works) != queuedWorkCount {
+			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
+		}
+		for _, work := range works {
+			location := new(SourceLocation)
+			if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, work.LocationID, root.ID).Scan(ctx, location); err != nil {
+				return fmt.Errorf("start source analysis delivery: lock source location: %w", err)
+			}
+			lockedWork := new(SourceAnalysisWork)
+			if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? AND source_root_id=? FOR UPDATE`, work.WorkID, root.ID).Scan(ctx, lockedWork); err != nil {
+				return fmt.Errorf("start source analysis delivery: lock source work: %w", err)
+			}
+			if lockedWork.CurrentLocationID == nil || *lockedWork.CurrentLocationID != lockedWork.LocationID || *lockedWork.CurrentLocationID != location.ID || lockedWork.ConfiguredPath != root.ConfiguredPath || lockedWork.InventoryPath != *root.InventoryPath || lockedWork.RelativePath != location.RelativePath || lockedWork.SizeBytes != location.SizeBytes || !sourceAnalysisMtime(lockedWork.Mtime).Equal(sourceAnalysisMtime(location.Mtime)) {
+				return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
+			}
+		}
 		locked := new(Operation)
 		if err := tx.NewRaw(`SELECT * FROM operation WHERE id=? FOR UPDATE`, operationID).Scan(ctx, locked); err != nil {
 			return fmt.Errorf("start source analysis delivery: lock operation: %w", err)
 		}
 		if locked.State != "queued" || locked.Attempt != delivery.Attempt || locked.RiverJobID == nil || *locked.RiverJobID != delivery.JobID {
 			return fmt.Errorf("start source analysis delivery: %w", ErrSourceAnalysisStale)
+		}
+		for _, work := range works {
+			if _, err := tx.NewRaw(`INSERT INTO source_analysis_work_execution
+				(work_id, operation_id, operation_attempt, job_id, processing_mode)
+				VALUES (?, ?, ?, ?, ?) ON CONFLICT (work_id, operation_id, operation_attempt, job_id) DO NOTHING`,
+				work.WorkID, operationID, delivery.Attempt, delivery.JobID, root.ProcessingMode).Exec(ctx); err != nil {
+				return fmt.Errorf("start source analysis delivery: record work execution identity: %w", err)
+			}
+			var recordedMode string
+			if err := tx.NewRaw(`SELECT processing_mode FROM source_analysis_work_execution
+				WHERE work_id=? AND operation_id=? AND operation_attempt=? AND job_id=?`,
+				work.WorkID, operationID, delivery.Attempt, delivery.JobID).Scan(ctx, &recordedMode); err != nil {
+				return fmt.Errorf("start source analysis delivery: verify work execution identity: %w", err)
+			}
+			if recordedMode != root.ProcessingMode {
+				return fmt.Errorf("start source analysis delivery: execution mode was already recorded differently")
+			}
 		}
 		if _, err := tx.NewRaw(`DELETE FROM operation_tool_read_hold WHERE operation_id=?`, operationID).Exec(ctx); err != nil {
 			return fmt.Errorf("start source analysis delivery: replace installation holds: %w", err)
@@ -187,7 +213,7 @@ func (repository *SourceInventoryRepository) StartNormalizedSourceAnalysisDelive
 				return fmt.Errorf("start source analysis delivery: hold installation: %w", err)
 			}
 		}
-		toolsReadRequired := root.ProcessingMode == "in_place" && len(selections) > 0
+		toolsReadRequired := len(selections) > 0
 		if err := tx.NewRaw(`UPDATE operation SET state='running',stage='probing',tools_read_required=?,started_at=now(),updated_at=now() WHERE id=? AND state='queued' AND attempt=? AND river_job_id=? RETURNING *`, toolsReadRequired, operationID, delivery.Attempt, delivery.JobID).Scan(ctx, locked); err != nil {
 			return fmt.Errorf("start source analysis delivery: transition operation: %w", err)
 		}

@@ -104,6 +104,9 @@ func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.Sourc
 		analysisDispatchRepository{SetupManagerRepository: setup, SourceInventoryRepository: inventory},
 		operations, registry, registry, platform,
 	)
+	worker.WithInputPreparer(service.NewSourceAnalysisInputPreparer(
+		inventory, persistence.NewSourceAnalysisArtifactRepository(database), registry, nil, nil,
+	))
 	if preparer != nil {
 		worker.WithPreparer(preparer)
 	}

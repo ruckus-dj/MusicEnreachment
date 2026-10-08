@@ -69,8 +69,8 @@ func (repository analysisWorkerRepository) LookupSourceProbe(ctx context.Context
 	return repository.SourceInventoryRepository.LookupSourceProbe(ctx, digest, version, policy)
 }
 
-func (repository analysisWorkerRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte, version string) (*persistence.SourceFingerprintResult, bool, error) {
-	return repository.SourceInventoryRepository.LookupSourceFingerprint(ctx, digest, version)
+func (repository analysisWorkerRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
+	return repository.SourceInventoryRepository.LookupSourceFingerprint(ctx, digest)
 }
 
 func newOperationServices(repository operationRepository, client *riverClientSlot, analysisRetry interface {
@@ -156,6 +156,9 @@ func Run(ctx context.Context, config Config) error {
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, registry, registry, platform,
 	)
+	analysisWorker.WithInputPreparer(service.NewSourceAnalysisInputPreparer(
+		sourceInventory, persistence.NewSourceAnalysisArtifactRepository(db), registry, nil, nil,
+	))
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 
 	sourceFileConcurrency, err := registry.GetSourceFileConcurrency(ctx)

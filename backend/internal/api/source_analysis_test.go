@@ -31,8 +31,9 @@ func TestRetrySourceAnalysisStepUsesExplicitFailedStep(t *testing.T) {
 	root := fixture.seedAnalysisRoot(t, nil)
 	location := analysisLocation(root.ID, "disc/track.flac", time.Now().UTC())
 	fixture.repository.locations[root.ID] = []persistence.SourceLocation{location}
+	currentLocationID := location.ID
 	work := &persistence.SourceAnalysisWork{
-		ID: uuid.New(), LocationID: location.ID, SourceRootID: root.ID,
+		ID: uuid.New(), LocationID: location.ID, CurrentLocationID: &currentLocationID, SourceRootID: root.ID,
 		ConfiguredPath: root.ConfiguredPath, InventoryPath: *root.InventoryPath,
 		RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: location.Mtime,
 		SHA256Enabled: true,

@@ -25,8 +25,8 @@ func TestRecoveredFingerprintRerunAdmissionUsesOriginalIntentWithPostgreSQL(t *t
 	establishInventory(t, ctx, database, root)
 	priorResultID := uuid.New()
 	if _, err := database.ExecContext(ctx, `INSERT INTO media_fingerprint_result
-		(id,fpcalc_version,version_banner,algorithm_namespace,algorithm_id,fingerprint,reported_duration,calculated_at,applied_operation_id,parser_contract_version)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`, priorResultID, "1.5.1", "fpcalc version 1.5.1", "chromaprint", 1, "AQAA", 180.0, time.Now().UTC(), uuid.New(), 1); err != nil {
+		(id,fpcalc_version,version_banner,algorithm_namespace,algorithm_id,fingerprint,reported_duration,calculated_at,applied_operation_id,parser_contract_version,winning_result_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, priorResultID, "1.5.1", "fpcalc version 1.5.1", "chromaprint", 1, "AQAA", 180.0, time.Now().UTC(), uuid.New(), 1, priorResultID); err != nil {
 		t.Fatalf("insert prior successful fingerprint result: %v", err)
 	}
 	work := normalizedWork(t, ctx, repository, root, location, false)

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
@@ -155,6 +156,65 @@ func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(
 	}
 }
 
+func TestApplySourceEnumerationReplacesCompletedInPlaceWork(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/enumeration-in-place-execution")
+	mtime := probeMtime()
+	first := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, first.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate("track.flac", 5, mtime),
+	}); err != nil {
+		t.Fatalf("store initial enumeration: %v", err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(first, root, nil)); err != nil {
+		t.Fatalf("apply initial enumeration: %v", err)
+	}
+	location := readLocation(t, ctx, database, root.ID, "track.flac")
+	var workID string
+	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE location_id=?`, location.ID).Scan(ctx, &workID); err != nil {
+		t.Fatalf("read original work: %v", err)
+	}
+	completedAnalysisID := uuid.New()
+	if _, err := database.NewRaw(`INSERT INTO operation
+		(id, kind, state, stage, input_snapshot, attempt, river_job_id, created_at, updated_at, finished_at)
+		VALUES (?, 'analyze_source', 'succeeded', 'complete', '{}', 1, 902, now(), now(), now())`, completedAnalysisID).Exec(ctx); err != nil {
+		t.Fatalf("record completed source-analysis operation: %v", err)
+	}
+	if _, err := database.NewRaw(`INSERT INTO source_analysis_work_execution
+		(work_id, operation_id, operation_attempt, job_id, processing_mode)
+		VALUES (?, ?, 1, 902, 'in_place')`, workID, completedAnalysisID).Exec(ctx); err != nil {
+		t.Fatalf("record completed in-place execution: %v", err)
+	}
+	setOperationState(t, ctx, database, first.ID, "succeeded")
+
+	second := newSourceScanOperation(t, ctx, database, root, "running")
+	if err := inventory.ReplaceSourceScanCandidates(ctx, second.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate("track.flac", 6, mtime.Add(time.Second)),
+	}); err != nil {
+		t.Fatalf("store changed enumeration: %v", err)
+	}
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
+		t.Fatalf("apply changed enumeration after completed execution: %v", err)
+	}
+	changed := readLocation(t, ctx, database, root.ID, "track.flac")
+	if changed.ID != location.ID {
+		t.Fatalf("changed file location identity = %s, want in-place location %s", changed.ID, location.ID)
+	}
+	if changed.SizeBytes != 6 || !changed.Mtime.Equal(mtime.Add(time.Second)) || changed.ProbeStatus != persistence.SourceProbeStatusNotAnalyzed {
+		t.Fatalf("changed file was not successfully enumerated: %+v", changed)
+	}
+	var remaining int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=?`, workID).Scan(ctx, &remaining); err != nil {
+		t.Fatalf("count retired work: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("old completed work rows = %d, want 0", remaining)
+	}
+}
+
 func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMutation(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
@@ -180,7 +240,7 @@ func TestDeleteSourceScanCandidatesForRootDeliveryRejectsMismatchedRootWithoutMu
 	}
 }
 
-func TestApplySourceEnumerationDoesNotRetireWorkWithOwnedArtifact(t *testing.T) {
+func TestApplySourceEnumerationRetiresWorkWithOwnedArtifactAsTombstone(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
@@ -197,15 +257,11 @@ func TestApplySourceEnumerationDoesNotRetireWorkWithOwnedArtifact(t *testing.T) 
 		t.Fatalf("apply initial enumeration: %v", err)
 	}
 	location := readLocation(t, ctx, database, root.ID, "track.flac")
-	var workID string
-	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE location_id=?`, location.ID).Scan(ctx, &workID); err != nil {
+	var workID uuid.UUID
+	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=?`, location.ID).Scan(ctx, &workID); err != nil {
 		t.Fatalf("read work identity: %v", err)
 	}
-	if _, err := database.NewRaw(`INSERT INTO source_analysis_artifact
-		(id,work_id,relative_output_path,source_size_bytes,source_mtime,owner_operation_id,owner_operation_attempt,owner_job_id,state)
-		VALUES (gen_random_uuid(),?,'enumeration/owned-copy',?,?,?,?,?,'acquiring')`, workID, 5, mtime, first.ID, first.Attempt, *first.RiverJobID).Exec(ctx); err != nil {
-		t.Fatalf("create owned artifact reference: %v", err)
-	}
+	insertStagedAnalysisArtifact(t, ctx, database, workID, first.ID, first.Attempt, *first.RiverJobID, "enumeration/owned-copy", 5, mtime)
 	setOperationState(t, ctx, database, first.ID, "succeeded")
 
 	second := newSourceScanOperation(t, ctx, database, root, "running")
@@ -214,19 +270,42 @@ func TestApplySourceEnumerationDoesNotRetireWorkWithOwnedArtifact(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("store changed enumeration: %v", err)
 	}
-	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err == nil {
-		t.Fatal("enumeration retired work referenced by an owned artifact")
+	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
+		t.Fatalf("apply changed enumeration with owned artifact: %v", err)
 	}
-	stored := readLocation(t, ctx, database, root.ID, "track.flac")
-	if stored.SizeBytes != 5 || !stored.Mtime.Equal(mtime) {
-		t.Fatalf("failed apply partially changed location: %+v", stored)
+	var tombstoned int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, workID).Scan(ctx, &tombstoned); err != nil {
+		t.Fatalf("read retired work: %v", err)
 	}
-	var retainedWorkID string
-	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE location_id=?`, location.ID).Scan(ctx, &retainedWorkID); err != nil {
-		t.Fatalf("read retained work: %v", err)
+	if tombstoned != 1 {
+		t.Fatalf("retired work tombstone count = %d, want 1", tombstoned)
 	}
-	if retainedWorkID != workID {
-		t.Fatalf("retained work identity = %s, want %s", retainedWorkID, workID)
+	var retainedArtifact int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact
+		WHERE work_id=? AND relative_output_path='enumeration/owned-copy'
+		AND owner_operation_id=? AND owner_operation_attempt=? AND owner_job_id=?`,
+		workID, first.ID, first.Attempt, *first.RiverJobID).Scan(ctx, &retainedArtifact); err != nil {
+		t.Fatalf("read retained artifact: %v", err)
+	}
+	if retainedArtifact != 1 {
+		t.Fatalf("retained artifact count = %d, want 1", retainedArtifact)
+	}
+	var retainedExecution int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work_execution
+		WHERE work_id=? AND operation_id=? AND operation_attempt=? AND job_id=? AND processing_mode='staged'`,
+		workID, first.ID, first.Attempt, *first.RiverJobID).Scan(ctx, &retainedExecution); err != nil {
+		t.Fatalf("read retained execution: %v", err)
+	}
+	if retainedExecution != 1 {
+		t.Fatalf("retained execution count = %d, want 1", retainedExecution)
+	}
+	current := readLocation(t, ctx, database, root.ID, "track.flac")
+	var currentWorkID uuid.UUID
+	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=?`, current.ID).Scan(ctx, &currentWorkID); err != nil {
+		t.Fatalf("read current work: %v", err)
+	}
+	if currentWorkID == workID {
+		t.Fatalf("changed location reused retired work %s", currentWorkID)
 	}
 }
 

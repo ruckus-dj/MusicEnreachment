@@ -17,6 +17,52 @@ import (
 
 const coordinationWaitTimeout = 5 * time.Second
 
+func TestSourceFingerprintMutationGatePrecedesRootLocks(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	root := &SourceRoot{ID: uuid.New(), ConfiguredPath: "/source/fingerprint-gate", DisplayName: "Fingerprint gate", Enabled: true}
+	if err := NewSourceInventoryRepository(database).CreateSourceRoot(ctx, root); err != nil {
+		t.Fatalf("create source root: %v", err)
+	}
+
+	gateRelease, releaseGate := coordinationRelease(t)
+	gateAcquired := make(chan struct{})
+	holder := startCoordinationTransaction(t, database, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return err
+		}
+		close(gateAcquired)
+		<-gateRelease
+		return nil
+	})
+	awaitCoordinationPID(t, holder.pid)
+	awaitCoordinationSignal(t, gateAcquired)
+
+	contender := startCoordinationTransaction(t, database, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return err
+		}
+		var locked SourceRoot
+		return tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, root.ID).Scan(ctx, &locked)
+	})
+	contenderPID := awaitCoordinationPID(t, contender.pid)
+	assertWaitingForPostgresLock(t, database, contenderPID)
+
+	// If the contender took the root row lock before waiting for the advisory
+	// gate, this NOWAIT probe would fail despite the gate holder never locking it.
+	if err := runCoordinationTransaction(database, func(ctx context.Context, tx bun.Tx) error {
+		var locked SourceRoot
+		return tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE NOWAIT`, root.ID).Scan(ctx, &locked)
+	}); err != nil {
+		t.Fatalf("contender locked root before acquiring gate: %v", err)
+	}
+
+	releaseGate()
+	assertTransactionSucceeded(t, holder.done)
+	assertTransactionSucceeded(t, contender.done)
+}
+
 func TestToolsMoveGateWaitsForReadersAndRollbackReleases(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)

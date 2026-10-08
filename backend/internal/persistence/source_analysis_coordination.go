@@ -13,11 +13,20 @@ import (
 // stable, domain-specific values in the second. Do not use hashtext: its key
 // space can overlap unrelated advisory-lock users.
 const (
-	toolsCoordinationNamespace int32 = 0x4d545256 // "MTRV"
-	toolsMoveGateKey           int32 = 1
-	setupCompletionLockKey     int32 = 2
-	toolsPackageLockBase       int32 = 100
+	toolsCoordinationNamespace       int32 = 0x4d545256 // "MTRV"
+	toolsMoveGateKey                 int32 = 1
+	setupCompletionLockKey           int32 = 2
+	sourceFingerprintMutationGateKey int32 = 4
+	toolsPackageLockBase             int32 = 100
 )
+
+// lockSourceFingerprintMutations serializes transactions that can publish,
+// select, or retire digest-keyed fingerprint results. Acquire it before any
+// root, location, work, operation, or step row lock; callers of lower-level
+// promotion/retirement helpers are responsible for holding this gate.
+func lockSourceFingerprintMutations(ctx context.Context, database bun.IDB) error {
+	return advisoryXactLock(ctx, database, false, toolsCoordinationNamespace, sourceFingerprintMutationGateKey)
+}
 
 // lockToolsMoveReaders admits operations that only read/use the configured
 // tools root. A root move takes the matching exclusive gate for its duration.

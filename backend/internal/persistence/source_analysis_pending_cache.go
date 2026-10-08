@@ -26,6 +26,11 @@ func (repository *SourceInventoryRepository) ReusePendingSourceAnalysisCache(
 	}
 	reused := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if step == SourceStepFingerprint {
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return fmt.Errorf("reuse pending source analysis cache: lock fingerprint mutations: %w", err)
+			}
+		}
 		// Resolve the location before taking locks, then acquire locks in the same
 		// root -> location -> work order used by source-analysis admission.
 		var locationID uuid.UUID
@@ -160,7 +165,7 @@ func (repository *SourceInventoryRepository) ReusePendingSourceAnalysisCache(
 				return nil
 			}
 			var associated bool
-			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_fingerprint_cache WHERE source_sha256=? AND fpcalc_version=? AND result_id=?)`, digest, expectedVersion, variantOrFingerprintID).Scan(ctx, &associated); err != nil {
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM media_fingerprint_result WHERE source_sha256=? AND fpcalc_version=? AND id=?)`, digest, expectedVersion, variantOrFingerprintID).Scan(ctx, &associated); err != nil {
 				return fmt.Errorf("reuse pending source analysis cache: verify fingerprint cache association: %w", err)
 			}
 			if !associated {

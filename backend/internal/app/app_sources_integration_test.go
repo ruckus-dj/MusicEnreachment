@@ -57,7 +57,7 @@ func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicati
 
 	store := persistence.NewSettingsRepository(database)
 	registry := settings.New(store, nil)
-	platform, err := registry.InitializePlatform(ctx, settings.Platform{GOOS: "linux", GOARCH: "amd64"})
+	platform, err := registry.InitializePlatform(ctx, settings.CurrentPlatform())
 	if err != nil {
 		t.Fatalf("initialize the instance platform: %v", err)
 	}
@@ -86,6 +86,9 @@ func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicati
 		analysisWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
 		operations, registry, registry, platform,
 	)
+	analysisWorker.WithInputPreparer(service.NewSourceAnalysisInputPreparer(
+		inventory, persistence.NewSourceAnalysisArtifactRepository(database), registry, nil, nil,
+	))
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 
 	setupDependency := api.HandlerWithDependencies(api.Dependencies{

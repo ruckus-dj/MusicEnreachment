@@ -70,6 +70,11 @@ func insertArtifactOwnershipFixture(t *testing.T, ctx context.Context, database 
 func insertSourceAnalysisArtifact(t *testing.T, ctx context.Context, database *bun.DB, workID, operationID uuid.UUID, attempt int, jobID int64, relativePath string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_work_execution
+		(work_id,operation_id,operation_attempt,job_id,processing_mode) VALUES (?,?,?,?,'staged')`,
+		workID, operationID, attempt, jobID); err != nil {
+		t.Fatalf("insert artifact execution identity: %v", err)
+	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_artifact
 		(id, work_id, relative_output_path, source_size_bytes, source_mtime, owner_operation_id, owner_operation_attempt, owner_job_id, state)
 		VALUES (?, ?, ?, 12, now(), ?, ?, ?, 'ready')`, id, workID, relativePath, operationID, attempt, jobID); err != nil {

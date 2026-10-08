@@ -1265,7 +1265,11 @@ func verifyToolsOperationRootForRetry(ctx context.Context, tx bun.Tx, operation 
 }
 
 func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, id uuid.UUID) error {
-	result, err := repository.db.NewDelete().Model((*Operation)(nil)).Where("id = ?", id).Where("state = 'failed'").Exec(ctx)
+	result, err := repository.db.NewDelete().Model((*Operation)(nil)).
+		Where("id = ?", id).
+		Where("state = 'failed'").
+		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("dismiss operation: %w", err)
 	}
@@ -1276,7 +1280,11 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 }
 
 func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Context, before time.Time) error {
-	_, err := repository.db.NewDelete().Model((*Operation)(nil)).Where("state = 'succeeded'").Where("finished_at < ?", before).Exec(ctx)
+	_, err := repository.db.NewDelete().Model((*Operation)(nil)).
+		Where("state = 'succeeded'").
+		Where("finished_at < ?", before).
+		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cleanup succeeded operations: %w", err)
 	}

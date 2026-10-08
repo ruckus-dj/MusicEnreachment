@@ -19,9 +19,10 @@ import (
 // before the failing action and proves the worker wakes it only after the
 // failed step and release of its work and managed-tool read holds are committed:
 // at the authoritative re-read batch bookkeeping failed with no holds and
-// the previous variant is still linked. Removing the source file makes a normal
-// step failure occur after the delivery starts, so this wake is the failure
-// notification itself and not an earlier stage transition.
+// the previous variant is still linked. Removing the source file makes the
+// shared source preparation fail its claimed steps after the delivery starts,
+// so this wake is the failure notification itself and not an earlier stage
+// transition.
 func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 	t.Parallel()
 	fixture := newAnalysisDispatchFixture(t)
@@ -49,7 +50,7 @@ func TestSourceAnalysisFailureWakesSubscriberPostgreSQL(t *testing.T) {
 			if stored.Stage != service.SourceAnalysisStageApplying {
 				t.Fatalf("operation at terminal snapshot = failed/%s, want failed/applying", stored.Stage)
 			}
-			requireAnalysisStepSafeError(t, ctx, fixture, operation.ID, persistence.SourceStepProbe, "The source file is unavailable. The previous result is unchanged.")
+			requireAnalysisStepSafeError(t, ctx, fixture, operation.ID, persistence.SourceStepProbe, "The source file could not be prepared for analysis.")
 			requireAnalysisHolds(t, ctx, fixture, operation.ID, nil, nil)
 			location, err := fixture.inventory.GetSourceLocation(ctx, fixture.root.ID, fixture.track.ID)
 			if err != nil {

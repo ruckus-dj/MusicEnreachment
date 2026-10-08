@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,12 +94,15 @@ func TestSourceAnalysisWorkerRunsSHAThenCombinedGroupPostgreSQL(t *testing.T) {
 }
 
 type recordingAnalysisPreparer struct {
+	mu         sync.Mutex
 	probeFails bool
 	requests   []service.SourceAnalysisPrepareRequest
 }
 
 func (preparer *recordingAnalysisPreparer) Prepare(_ context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+	preparer.mu.Lock()
 	preparer.requests = append(preparer.requests, request)
+	preparer.mu.Unlock()
 	result := service.SourceAnalysisPreparation{
 		SHA256:      service.SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
 		Probe:       service.SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: service.SourceAnalysisStepOutcome{State: service.SourceAnalysisNotRequested}},
@@ -143,23 +147,31 @@ func (preparer *recordingAnalysisPreparer) Prepare(_ context.Context, request se
 
 func (preparer *recordingAnalysisPreparer) assertRequests(t *testing.T) {
 	t.Helper()
-	if len(preparer.requests) != 2 {
-		t.Fatalf("preparer calls = %d, want SHA first and one combined probe/fingerprint call", len(preparer.requests))
+	preparer.mu.Lock()
+	requests := append([]service.SourceAnalysisPrepareRequest(nil), preparer.requests...)
+	preparer.mu.Unlock()
+	if len(requests) != 3 {
+		t.Fatalf("preparer calls = %d, want one SHA call then independent probe and fingerprint calls", len(requests))
 	}
-	if got := preparer.requests[0].Targets; got != service.SourceAnalysisTargetSHA256 || preparer.requests[0].ExistingSHA256 != nil {
-		t.Fatalf("first preparation request = targets %b, existing digest %v; want SHA only and no digest", got, preparer.requests[0].ExistingSHA256)
-	}
-	combined := preparer.requests[1]
-	wantTargets := service.SourceAnalysisTargetProbe | service.SourceAnalysisTargetFingerprint
-	if combined.Targets != wantTargets {
-		t.Fatalf("second preparation targets = %b, want probe|fingerprint %b", combined.Targets, wantTargets)
+	if got := requests[0].Targets; got != service.SourceAnalysisTargetSHA256 || requests[0].ExistingSHA256 != nil {
+		t.Fatalf("first preparation request = targets %b, existing digest %v; want SHA only and no digest", got, requests[0].ExistingSHA256)
 	}
 	wantDigest := sha256.Sum256([]byte("audio bytes"))
-	if combined.ExistingSHA256 == nil || hex.EncodeToString(combined.ExistingSHA256[:]) != hex.EncodeToString(wantDigest[:]) {
-		t.Fatalf("second preparation digest = %v, want SHA-256 of analyzed source", combined.ExistingSHA256)
+	seen := map[service.SourceAnalysisTarget]int{}
+	for _, request := range requests[1:] {
+		if request.Targets != service.SourceAnalysisTargetProbe && request.Targets != service.SourceAnalysisTargetFingerprint {
+			t.Fatalf("independent preparation targets = %b, want exactly one of probe %b or fingerprint %b", request.Targets, service.SourceAnalysisTargetProbe, service.SourceAnalysisTargetFingerprint)
+		}
+		seen[request.Targets]++
+		if request.ExistingSHA256 == nil || hex.EncodeToString(request.ExistingSHA256[:]) != hex.EncodeToString(wantDigest[:]) {
+			t.Fatalf("preparation for targets %b digest = %v, want the shared SHA-256 of analyzed source", request.Targets, request.ExistingSHA256)
+		}
+		if request.Targets == service.SourceAnalysisTargetFingerprint && request.BypassFingerprintCache {
+			t.Fatal("ordinary batch fingerprint preparation unexpectedly bypassed the cache")
+		}
 	}
-	if combined.BypassFingerprintCache {
-		t.Fatal("ordinary batch fingerprint preparation unexpectedly bypassed the cache")
+	if seen[service.SourceAnalysisTargetProbe] != 1 || seen[service.SourceAnalysisTargetFingerprint] != 1 {
+		t.Fatalf("independent preparation targets = %v, want probe once and fingerprint once", seen)
 	}
 }
 

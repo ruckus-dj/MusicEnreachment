@@ -228,6 +228,9 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 // root row lock serializes the check against every operation admission.
 func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Context, id uuid.UUID, confirmedPath string, confirmedLocations int64) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("delete source root: lock fingerprint mutations: %w", err)
+		}
 		root := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", id).Scan(ctx, root); err != nil {
 			return fmt.Errorf("lock source root: %w", err)
@@ -248,6 +251,15 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		}
 		if active {
 			return fmt.Errorf("delete source root: %w", ErrSourceRootActiveScan)
+		}
+		var workIDs []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE source_root_id=? AND current_location_id IS NOT NULL ORDER BY id FOR UPDATE`, id).Scan(ctx, &workIDs); err != nil {
+			return fmt.Errorf("delete source root: list current analysis work: %w", err)
+		}
+		for _, workID := range workIDs {
+			if err := retireSourceAnalysisWork(ctx, tx, workID); err != nil {
+				return fmt.Errorf("delete source root: retain analysis work: %w", err)
+			}
 		}
 		removed, err := tx.NewDelete().Model((*SourceRoot)(nil)).Where("id = ?", id).Exec(ctx)
 		if err != nil {
@@ -345,6 +357,9 @@ func (repository *SourceInventoryRepository) DeleteSourceScanCandidates(ctx cont
 // every candidate was written.
 func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context, apply SourceScanApply) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply source scan: lock fingerprint mutations: %w", err)
+		}
 		rootID, err := operationTargetSourceRoot(ctx, tx, apply.OperationID)
 		if err != nil {
 			if err == sql.ErrNoRows {

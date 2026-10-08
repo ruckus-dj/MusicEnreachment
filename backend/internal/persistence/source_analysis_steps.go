@@ -231,6 +231,9 @@ func (repository *SourceInventoryRepository) ApplySourceSHA256(ctx context.Conte
 	}
 	var canonical *SourceMediaVariant
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply source sha256: lock fingerprint mutations: %w", err)
+		}
 		locked, err := lockSourceAnalysisStep(ctx, tx, apply.WorkID, apply.OperationID, apply.OperationAttempt, apply.JobID, SourceStepSHA256)
 		if err != nil {
 			return fmt.Errorf("apply source sha256: %w", err)
@@ -376,27 +379,25 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 	return result, nil
 }
 
-// ApplySourceFingerprint writes an immutable fingerprint result and records the
-// selected winner. The SHA/version cache uses first-committed-wins semantics.
+// ApplySourceFingerprint updates the current successful fingerprint for a digest
+// and records the stable result identity selected by this work.
 func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.Context, apply SourceFingerprintApply) (*SourceFingerprintResult, error) {
 	if apply.Result.ID == uuid.Nil || apply.Result.FPCalcVersion == "" || apply.Result.VersionBanner == "" || apply.Result.AlgorithmNamespace == "" || apply.Result.AlgorithmID < 0 || apply.Result.AlgorithmID > 255 || apply.Result.Fingerprint == "" || apply.Result.ReportedDuration < 0 || apply.Result.CalculatedAt.IsZero() || apply.Result.ParserContractVersion < 1 {
 		return nil, fmt.Errorf("apply source fingerprint: complete fingerprint provenance is required")
 	}
-	apply.Result.AppliedOperationID = apply.OperationID
 	var selected *SourceFingerprintResult
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply source fingerprint: lock fingerprint mutations: %w", err)
+		}
 		locked, err := lockSourceAnalysisStep(ctx, tx, apply.WorkID, apply.OperationID, apply.OperationAttempt, apply.JobID, SourceStepFingerprint)
 		if err != nil {
 			return fmt.Errorf("apply source fingerprint: %w", err)
 		}
 		if err := checkSourceStepApplyFence(locked, apply.StepAttempt); err != nil {
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == apply.StepAttempt && sameUUID(locked.Step.LastOperationID, apply.OperationID) && locked.Step.SuccessFingerprintResultID != nil {
-				applied := new(SourceFingerprintResult)
-				if scanErr := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, apply.Result.ID).Scan(ctx, applied); scanErr != nil || !sameFingerprintResult(applied, apply.Result) {
-					return fmt.Errorf("apply source fingerprint: %w", ErrSourceAnalysisStale)
-				}
 				selected = new(SourceFingerprintResult)
-				if scanErr := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected); scanErr == nil && selected.ID == apply.Result.ID {
+				if scanErr := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected); scanErr == nil {
 					return nil
 				}
 			}
@@ -405,7 +406,6 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 		if locked.Operation.State != "running" {
 			return fmt.Errorf("apply source fingerprint: %w", ErrSourceAnalysisStale)
 		}
-		previousResultID := locked.Step.SuccessFingerprintResultID
 		var sha []byte
 		var shaStep SourceAnalysisStep
 		if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='sha256'`, locked.Work.ID).Scan(ctx, &shaStep); err != nil && err != sql.ErrNoRows {
@@ -418,24 +418,34 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 			}
 			sha = variant.SourceSHA256
 		}
-		if _, err := tx.NewInsert().Model(&apply.Result).Exec(ctx); err != nil {
-			return fmt.Errorf("apply source fingerprint: insert immutable result: %w", err)
-		}
-		selected = &apply.Result
-		origin := "executed"
+		apply.Result.SourceSHA256 = sha
+		apply.Result.AppliedOperationID = apply.OperationID
+		var previousID *uuid.UUID
 		if len(sha) == 32 {
-			if _, err := tx.NewRaw(`INSERT INTO media_fingerprint_cache(source_sha256,fpcalc_version,result_id) VALUES(?,?,?) ON CONFLICT(source_sha256,fpcalc_version) DO NOTHING`, sha, apply.Result.FPCalcVersion, apply.Result.ID).Exec(ctx); err != nil {
-				return fmt.Errorf("apply source fingerprint: cache result: %w", err)
+			selected, err = upsertCanonicalFingerprintResult(ctx, tx, sha, apply.Result)
+			if err != nil {
+				return fmt.Errorf("apply source fingerprint: %w", err)
 			}
+		} else {
+			if locked.Step.SuccessFingerprintResultID != nil {
+				previousID = new(uuid.UUID)
+				*previousID = *locked.Step.SuccessFingerprintResultID
+			}
+			apply.Result.WinningResultID = apply.Result.ID
+			if _, err := tx.NewInsert().Model(&apply.Result).Exec(ctx); err != nil {
+				return fmt.Errorf("apply source fingerprint: insert result without digest: %w", err)
+			}
+			selected = &apply.Result
 		}
+		origin := "executed"
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='succeeded', success_fingerprint_result_id=?, success_reuse_origin=?, safe_error=NULL,
 			execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL, last_operation_id=?, updated_at=now()
 			WHERE work_id=? AND step='fingerprint' AND step_attempt=?`, selected.ID, origin, apply.OperationID, locked.Work.ID, apply.StepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source fingerprint: persist step: %w", err)
 		}
-		if previousResultID != nil && *previousResultID != selected.ID {
-			if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, *previousResultID); err != nil {
-				return fmt.Errorf("apply source fingerprint: cleanup previous result: %w", err)
+		if previousID != nil && *previousID != selected.ID {
+			if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, *previousID); err != nil {
+				return fmt.Errorf("apply source fingerprint: clean previous result: %w", err)
 			}
 		}
 		return nil
@@ -446,14 +456,16 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 	return selected, nil
 }
 
-// ReuseSourceFingerprint selects an immutable cached result for the current
-// digest/version pair without claiming that fpcalc ran for this operation.
-func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.Context, claim SourceStepClaim, capturedStepAttempt int, fpcalcVersion string) (*SourceFingerprintResult, error) {
-	if claim.Step != SourceStepFingerprint || claim.WorkID == uuid.Nil || claim.OperationID == uuid.Nil || claim.OperationAttempt < 1 || claim.JobID < 1 || capturedStepAttempt < 1 || fpcalcVersion == "" {
-		return nil, fmt.Errorf("reuse source fingerprint: valid fingerprint fence and version are required")
+// ReuseSourceFingerprint selects the current result for the work's current digest.
+func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.Context, claim SourceStepClaim, capturedStepAttempt int) (*SourceFingerprintResult, error) {
+	if claim.Step != SourceStepFingerprint || claim.WorkID == uuid.Nil || claim.OperationID == uuid.Nil || claim.OperationAttempt < 1 || claim.JobID < 1 || capturedStepAttempt < 1 {
+		return nil, fmt.Errorf("reuse source fingerprint: valid fingerprint fence is required")
 	}
 	var selected *SourceFingerprintResult
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("reuse source fingerprint: lock fingerprint mutations: %w", err)
+		}
 		locked, err := lockSourceAnalysisStep(ctx, tx, claim.WorkID, claim.OperationID, claim.OperationAttempt, claim.JobID, SourceStepFingerprint)
 		if err != nil {
 			return fmt.Errorf("reuse source fingerprint: %w", err)
@@ -467,28 +479,23 @@ func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.
 			return fmt.Errorf("reuse source fingerprint: read current digest: %w", err)
 		}
 		selected = new(SourceFingerprintResult)
-		if err := tx.NewRaw(`SELECT r.* FROM media_fingerprint_cache c JOIN media_fingerprint_result r ON r.id=c.result_id AND r.fpcalc_version=c.fpcalc_version WHERE c.source_sha256=? AND c.fpcalc_version=?`, variant.SourceSHA256, fpcalcVersion).Scan(ctx, selected); err != nil {
+		if err := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE source_sha256=?`, variant.SourceSHA256).Scan(ctx, selected); err != nil {
 			return fmt.Errorf("reuse source fingerprint: cached result does not exist: %w", err)
 		}
 		if err := checkSourceStepApplyFence(locked, capturedStepAttempt); err != nil {
-			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == capturedStepAttempt && sameUUID(locked.Step.LastOperationID, claim.OperationID) && sameUUID(locked.Step.SuccessFingerprintResultID, selected.ID) {
-				return nil
+			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == capturedStepAttempt && sameUUID(locked.Step.LastOperationID, claim.OperationID) && locked.Step.SuccessFingerprintResultID != nil {
+				selected = new(SourceFingerprintResult)
+				return tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected)
 			}
 			return fmt.Errorf("reuse source fingerprint: %w", ErrSourceAnalysisStale)
 		}
 		if locked.Operation.State != "running" {
 			return fmt.Errorf("reuse source fingerprint: %w", ErrSourceAnalysisStale)
 		}
-		previousResultID := locked.Step.SuccessFingerprintResultID
 		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='succeeded', success_fingerprint_result_id=?, success_reuse_origin='sha256', safe_error=NULL,
 				execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL, last_operation_id=?, updated_at=now()
 				WHERE work_id=? AND step='fingerprint' AND step_attempt=?`, selected.ID, claim.OperationID, claim.WorkID, capturedStepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("reuse source fingerprint: select cached result: %w", err)
-		}
-		if previousResultID != nil && *previousResultID != selected.ID {
-			if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, *previousResultID); err != nil {
-				return fmt.Errorf("reuse source fingerprint: cleanup previous result: %w", err)
-			}
 		}
 		return nil
 	})
@@ -559,8 +566,8 @@ func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Contex
 
 func deleteUnreferencedSourceFingerprintResult(ctx context.Context, tx bun.IDB, resultID uuid.UUID) error {
 	if _, err := tx.NewRaw(`DELETE FROM media_fingerprint_result AS result WHERE result.id=?
+		AND result.source_sha256 IS NULL
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step AS step WHERE step.success_fingerprint_result_id=result.id)
-		AND NOT EXISTS (SELECT 1 FROM media_fingerprint_cache AS cache WHERE cache.result_id=result.id)
 		AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
 			JOIN source_analysis_step AS step ON step.work_id=hold.work_id
 			WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
@@ -639,7 +646,8 @@ func lockSourceAnalysisStep(ctx context.Context, tx bun.Tx, workID, operationID 
 	if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, &locked.Work); err != nil {
 		return nil, ErrSourceAnalysisStale
 	}
-	if !locked.Root.Enabled || locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
+	if locked.Work.CurrentLocationID == nil || *locked.Work.CurrentLocationID != locked.Work.LocationID || *locked.Work.CurrentLocationID != locked.Location.ID ||
+		!locked.Root.Enabled || locked.Root.Stale() || locked.Root.ConfiguredPath != locked.Work.ConfiguredPath || locked.Root.InventoryPath == nil || *locked.Root.InventoryPath != locked.Work.InventoryPath || locked.Location.RelativePath != locked.Work.RelativePath || locked.Location.SizeBytes != locked.Work.SizeBytes || !sourceAnalysisMtime(locked.Location.Mtime).Equal(sourceAnalysisMtime(locked.Work.Mtime)) {
 		return nil, ErrSourceAnalysisStale
 	}
 	// Operation and step are fenced only after the root/work identity. This
@@ -727,8 +735,22 @@ func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceSt
 		if err := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *fingerprintStep.SuccessFingerprintResultID).Scan(ctx, result); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO media_fingerprint_cache(source_sha256,fpcalc_version,result_id) VALUES(?,?,?) ON CONFLICT(source_sha256,fpcalc_version) DO NOTHING`, canonical.SourceSHA256, result.FPCalcVersion, result.ID).Exec(ctx); err != nil {
+		if len(canonical.SourceSHA256) != 32 || result.SourceSHA256 != nil && string(result.SourceSHA256) != string(canonical.SourceSHA256) {
+			return fmt.Errorf("selected fingerprint result belongs to a different SHA identity")
+		}
+		current, err := upsertCanonicalFingerprintResult(ctx, tx, canonical.SourceSHA256, *result)
+		if err != nil {
 			return err
+		}
+		if current.ID != result.ID {
+			// A digestless result can be shared by other work selections. Move
+			// every reference before attempting to remove the old unknown row.
+			if _, err := tx.NewRaw(`UPDATE source_analysis_step SET success_fingerprint_result_id=? WHERE success_fingerprint_result_id=?`, current.ID, result.ID).Exec(ctx); err != nil {
+				return err
+			}
+			if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, result.ID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

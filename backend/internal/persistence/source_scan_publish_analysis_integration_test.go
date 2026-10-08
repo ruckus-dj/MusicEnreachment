@@ -71,9 +71,9 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	if failedSHA || !failedProbe || !succeededFingerprint {
 		t.Fatalf("independent step states: SHA failed=%v probe failed=%v fingerprint succeeded=%v", failedSHA, failedProbe, succeededFingerprint)
 	}
-	var cacheCount int
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_cache`).Scan(ctx, &cacheCount); err != nil || cacheCount != 1 {
-		t.Fatalf("fingerprint cache count = %d, %v; want only SHA-associated result", cacheCount, err)
+	var currentCount int
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL`).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
+		t.Fatalf("current fingerprint result count = %d, %v; want only SHA-associated result", currentCount, err)
 	}
 
 	// Hashing-disabled fingerprints remain independent and do not acquire a
@@ -93,8 +93,8 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPublishCounts(t, ctx, db, 3, 1, 2, 2)
-	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_cache`).Scan(ctx, &cacheCount); err != nil || cacheCount != 1 {
-		t.Fatalf("disabled-hash cache count = %d, %v; want existing digest cache only", cacheCount, err)
+	if err := db.NewRaw(`SELECT count(*) FROM media_fingerprint_result WHERE source_sha256 IS NOT NULL`).Scan(ctx, &currentCount); err != nil || currentCount != 1 {
+		t.Fatalf("disabled-hash current result count = %d, %v; want existing digest result only", currentCount, err)
 	}
 	var disabledSHAState, disabledSHASkip string
 	if err := db.NewRaw(`SELECT state,skip_reason FROM source_analysis_step WHERE step='sha256' AND work_id IN (SELECT id FROM source_analysis_work WHERE relative_path='c.flac')`).Scan(ctx, &disabledSHAState, &disabledSHASkip); err != nil || disabledSHAState != "skipped" || disabledSHASkip != "disabled" {
@@ -144,13 +144,13 @@ func TestPublishPreparedSourceScanAnalysisDefersMoveBlockedSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldFingerprint := publishTestFingerprint(uuid.New(), op.ID, stamp)
+	oldFingerprint.WinningResultID = oldFingerprint.ID
 	if err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		selected, err := insertScanFingerprint(ctx, tx, oldFingerprint)
-		if err != nil {
+		if _, err := tx.NewInsert().Model(oldFingerprint).Exec(ctx); err != nil {
 			return err
 		}
-		step := SourceAnalysisStep{WorkID: oldWork.ID, Step: string(SourceStepFingerprint), State: "succeeded", SuccessFingerprintResultID: &selected.ID, SuccessReuseOrigin: stringPointer("executed")}
-		_, err = tx.NewInsert().Model(&step).Exec(ctx)
+		step := SourceAnalysisStep{WorkID: oldWork.ID, Step: string(SourceStepFingerprint), State: "succeeded", SuccessFingerprintResultID: &oldFingerprint.ID, SuccessReuseOrigin: stringPointer("executed")}
+		_, err := tx.NewInsert().Model(&step).Exec(ctx)
 		return err
 	}); err != nil {
 		t.Fatal(err)

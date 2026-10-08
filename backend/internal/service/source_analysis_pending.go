@@ -535,12 +535,13 @@ func (s *SourceAnalysisOperations) reusePendingCache(ctx context.Context, works 
 				resultID = result.ID
 			}
 		} else {
-			result, hit, err := repository.LookupSourceFingerprint(ctx, digest, version)
+			result, hit, err := repository.LookupSourceFingerprint(ctx, digest)
 			if err != nil {
 				return false, fmt.Errorf("lookup pending fingerprint cache: %w", err)
 			}
 			if hit && result != nil {
 				resultID = result.ID
+				version = result.FPCalcVersion
 			}
 		}
 		if resultID != uuid.Nil {

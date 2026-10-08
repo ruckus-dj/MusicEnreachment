@@ -89,16 +89,12 @@ func insertStorageWork(t *testing.T, ctx context.Context, database *bun.DB) uuid
 	path := "/srv/step-input-storage-" + uuid.NewString()
 	rootID := newVariantRoot(t, ctx, database, path)
 	locationID := newVariantLocation(t, ctx, database, rootID, "album/track.flac")
-	work := persistence.SourceAnalysisWork{
-		ID: uuid.New(), LocationID: locationID, SourceRootID: rootID,
-		ConfiguredPath: path, InventoryPath: path,
-		RelativePath: "album/track.flac", SizeBytes: 1, Mtime: time.Now().UTC(),
-		OriginScanOperationID: uuid.New(),
-	}
-	if _, err := database.NewInsert().Model(&work).Exec(ctx); err != nil {
+	workID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_work(id,location_id,source_root_id,configured_path,inventory_path,relative_path,size_bytes,mtime,sha256_enabled,origin_scan_operation_id) VALUES(?,?,?,?,?,?,1,?,false,?)`,
+		workID, locationID, rootID, path, path, "album/track.flac", time.Now().UTC(), uuid.New()); err != nil {
 		t.Fatalf("insert analysis work: %v", err)
 	}
-	return work.ID
+	return workID
 }
 
 func assertStorageStepInputIsNull(t *testing.T, ctx context.Context, database *bun.DB, key persistence.SourceAnalysisStep) {

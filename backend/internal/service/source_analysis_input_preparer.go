@@ -32,12 +32,25 @@ type sourceAnalysisOutputDirectoryReader interface {
 	GetOutputDirectory(context.Context) (string, bool, error)
 }
 
-// SourceAnalysisPreparedInput owns handles for one completed staged copy. Close
-// only releases handles; artifact cleanup is deliberately a separate operation.
+// SourceAnalysisPreparedInput pins one source identity and, in staged mode, its
+// completed owned copy. Close releases handles; artifact cleanup is separate.
 type SourceAnalysisPreparedInput struct {
-	File       sourcefs.OutputFile
+	File       sourcefs.RegularFile
 	ServerPath string
+	ArtifactID *uuid.UUID
+	validate   func(context.Context) error
 	close      func() error
+}
+
+type SourceAnalysisInputPreparing interface {
+	PrepareMode(context.Context, persistence.SourceAnalysisArtifactFence, string) (*SourceAnalysisPreparedInput, error)
+}
+
+func (input *SourceAnalysisPreparedInput) Validate(ctx context.Context) error {
+	if input == nil || input.validate == nil {
+		return fmt.Errorf("prepared source analysis input is unavailable")
+	}
+	return input.validate(ctx)
 }
 
 func (input *SourceAnalysisPreparedInput) Close() error {
@@ -74,6 +87,11 @@ func NewSourceAnalysisInputPreparer(repository sourceAnalysisInputRepository, ar
 // fence must identify the currently running delivery; the repository validates
 // it again atomically at acquire and ready transitions.
 func (preparer *SourceAnalysisInputPreparer) Prepare(ctx context.Context, fence persistence.SourceAnalysisArtifactFence) (*SourceAnalysisPreparedInput, error) {
+	return preparer.PrepareMode(ctx, fence, "staged")
+}
+
+// PrepareMode uses the mode captured by the running work execution.
+func (preparer *SourceAnalysisInputPreparer) PrepareMode(ctx context.Context, fence persistence.SourceAnalysisArtifactFence, mode string) (*SourceAnalysisPreparedInput, error) {
 	if fence.WorkID == uuid.Nil || fence.OperationID == uuid.Nil || fence.OperationAttempt <= 0 || fence.JobID <= 0 {
 		return nil, fmt.Errorf("prepare source analysis input: valid delivery fence is required")
 	}
@@ -88,11 +106,50 @@ func (preparer *SourceAnalysisInputPreparer) Prepare(ctx context.Context, fence 
 	if err != nil {
 		return nil, fmt.Errorf("prepare source analysis input: read source root: %w", err)
 	}
-	if root == nil || root.ProcessingMode != "staged" || !root.Enabled || root.Stale() || root.InventoryPath == nil ||
+	if root == nil || !root.Enabled || root.Stale() || root.InventoryPath == nil ||
 		*root.InventoryPath != root.ConfiguredPath || work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
 		work.SourceRootID != root.ID || location.ID != work.LocationID || location.SourceRootID != root.ID ||
 		location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sameSourceMtime(location.Mtime, work.Mtime) {
 		return nil, fmt.Errorf("prepare source analysis input: source work is not current")
+	}
+	if mode == "in_place" {
+		pinnedRoot, openErr := preparer.sourceOpen.OpenRoot(ctx, work.InventoryPath)
+		if openErr != nil {
+			return nil, fmt.Errorf("open pinned inventory root: %w", openErr)
+		}
+		file, openErr := sourcefs.OpenRegularAt(ctx, pinnedRoot, work.RelativePath)
+		if openErr != nil {
+			_ = pinnedRoot.Close()
+			return nil, fmt.Errorf("open pinned inventory file: %w", openErr)
+		}
+		info, statErr := file.Stat(ctx)
+		if statErr != nil || !matchesSourceIdentity(info, work.SizeBytes, work.Mtime) {
+			_ = file.Close()
+			_ = pinnedRoot.Close()
+			if statErr != nil {
+				return nil, fmt.Errorf("stat source analysis input: %w", statErr)
+			}
+			return nil, fmt.Errorf("source analysis input changed")
+		}
+		input := &SourceAnalysisPreparedInput{File: file, ServerPath: filepath.Join(work.InventoryPath, filepath.FromSlash(work.RelativePath))}
+		input.validate = func(ctx context.Context) error {
+			current, err := file.Stat(ctx)
+			if err != nil {
+				return err
+			}
+			if !matchesSourceIdentity(current, work.SizeBytes, work.Mtime) {
+				return fmt.Errorf("source analysis input changed")
+			}
+			if err := verifySourceNamespace(ctx, preparer.sourceOpen, pinnedRoot, work.InventoryPath); err != nil {
+				return err
+			}
+			return verifySourceFileNamespace(ctx, pinnedRoot, work.RelativePath, current)
+		}
+		input.close = func() error { return errors.Join(file.Close(), pinnedRoot.Close()) }
+		return input, nil
+	}
+	if mode != "staged" {
+		return nil, fmt.Errorf("prepare source analysis input: unsupported processing mode")
 	}
 	outputPath, configured, err := preparer.settings.GetOutputDirectory(ctx)
 	if err != nil {
@@ -155,12 +212,22 @@ func (preparer *SourceAnalysisInputPreparer) Prepare(ctx context.Context, fence 
 		return nil, createErr
 	}
 	created := true
+	var sourceRoot sourcefs.Directory
+	var sourceFile sourcefs.RegularFile
 	closeEverything := func() error {
 		var closeErr error
 		if outputFile != nil {
 			closeErr = errors.Join(closeErr, outputFile.Close())
 		}
 		closeErr = errors.Join(closeErr, closeDirs())
+		if sourceFile != nil {
+			closeErr = errors.Join(closeErr, sourceFile.Close())
+			sourceFile = nil
+		}
+		if sourceRoot != nil {
+			closeErr = errors.Join(closeErr, sourceRoot.Close())
+			sourceRoot = nil
+		}
 		return closeErr
 	}
 	failCreated := func(primary error) (*SourceAnalysisPreparedInput, error) {
@@ -170,16 +237,14 @@ func (preparer *SourceAnalysisInputPreparer) Prepare(ctx context.Context, fence 
 		return nil, primary
 	}
 
-	sourceRoot, err := preparer.sourceOpen.OpenRoot(ctx, work.InventoryPath)
+	sourceRoot, err = preparer.sourceOpen.OpenRoot(ctx, work.InventoryPath)
 	if err != nil {
 		return failCreated(fmt.Errorf("open pinned inventory root: %w", err))
 	}
-	defer func() { _ = sourceRoot.Close() }()
-	sourceFile, err := sourcefs.OpenRegularAt(ctx, sourceRoot, work.RelativePath)
+	sourceFile, err = sourcefs.OpenRegularAt(ctx, sourceRoot, work.RelativePath)
 	if err != nil {
 		return failCreated(fmt.Errorf("open pinned inventory file: %w", err))
 	}
-	defer func() { _ = sourceFile.Close() }()
 	before, err := sourceFile.Stat(ctx)
 	if err != nil {
 		return failCreated(fmt.Errorf("stat source before copy: %w", err))
@@ -249,7 +314,43 @@ func (preparer *SourceAnalysisInputPreparer) Prepare(ctx context.Context, fence 
 		return failCreated(fmt.Errorf("mark staged source artifact ready returned an invalid owner"))
 	}
 	created = false
-	return &SourceAnalysisPreparedInput{File: outputFile, ServerPath: filepath.Join(outputPath, filepath.FromSlash(artifact.RelativeOutputPath)), close: closeEverything}, nil
+	input := &SourceAnalysisPreparedInput{File: outputReadAdapter{OutputFile: outputFile}, ServerPath: filepath.Join(outputPath, filepath.FromSlash(artifact.RelativeOutputPath)), ArtifactID: &artifactID, close: closeEverything}
+	input.validate = func(ctx context.Context) error {
+		current, err := sourceFile.Stat(ctx)
+		if err != nil {
+			return err
+		}
+		if !matchesSourceIdentity(current, work.SizeBytes, work.Mtime) {
+			return fmt.Errorf("source analysis input changed")
+		}
+		if err := verifySourceNamespace(ctx, preparer.sourceOpen, sourceRoot, work.InventoryPath); err != nil {
+			return err
+		}
+		if err := verifySourceFileNamespace(ctx, sourceRoot, work.RelativePath, current); err != nil {
+			return err
+		}
+		outputInfo, err := outputFile.Stat(ctx)
+		if err != nil {
+			return err
+		}
+		if !outputInfo.Mode().IsRegular() || outputInfo.Size() != work.SizeBytes || !os.SameFile(destinationInfo, outputInfo) {
+			return fmt.Errorf("staged source artifact changed")
+		}
+		if err := outputRoot.Verify(ctx); err != nil {
+			return err
+		}
+		if err := verifyOutputNamespace(ctx, preparer.outputOpen, outputRoot, outputPath); err != nil {
+			return err
+		}
+		return verifyOutputFileNamespace(ctx, preparer.sourceOpen, outputPath, artifact.RelativeOutputPath, destinationInfo)
+	}
+	return input, nil
+}
+
+type outputReadAdapter struct{ sourcefs.OutputFile }
+
+func (file outputReadAdapter) Borrow(ctx context.Context, callback func(*os.File) error) error {
+	return file.BorrowRead(ctx, callback)
 }
 
 func copySourceOnce(ctx context.Context, source sourcefs.RegularFile, destination sourcefs.OutputFile, expectedSize int64) (int64, error) {

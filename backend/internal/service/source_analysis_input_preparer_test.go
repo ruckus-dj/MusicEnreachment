@@ -27,10 +27,13 @@ func TestSourceAnalysisInputPreparerCopiesOneBorrowedSourceAndClosesWithoutDelet
 	if fixture.artifacts.readyCalls != 1 || fixture.artifacts.forgetCalls != 0 {
 		t.Fatalf("artifact transitions: ready=%d forget=%d", fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
 	}
+	if err := input.Validate(context.Background()); err != nil {
+		t.Fatalf("Validate staged input: %v", err)
+	}
 	if !strings.HasSuffix(input.ServerPath, filepath.Join(fixture.artifactID.String())) {
 		t.Fatalf("unexpected transient server path %q", input.ServerPath)
 	}
-	if err := input.File.BorrowRead(context.Background(), func(file *os.File) error {
+	if err := input.File.Borrow(context.Background(), func(file *os.File) error {
 		copied, err := io.ReadAll(file)
 		if err != nil {
 			return err
@@ -47,6 +50,26 @@ func TestSourceAnalysisInputPreparerCopiesOneBorrowedSourceAndClosesWithoutDelet
 	}
 	if _, err := os.Stat(input.ServerPath); err != nil {
 		t.Fatalf("Close removed staged artifact: %v", err)
+	}
+}
+
+func TestSourceAnalysisInputPreparerUsesExecutionModeInsteadOfCurrentRootMode(t *testing.T) {
+	fixture := newInputPreparerFixture(t, nil)
+	// The current root is staged, but this already-running execution was pinned
+	// as in-place; its selected mode must not be redirected by the root edit.
+	input, err := fixture.preparer.PrepareMode(context.Background(), fixture.fence, "in_place")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close() }()
+	if input.ArtifactID != nil || input.ServerPath != filepath.Join(fixture.sourcePath, "audio.bin") {
+		t.Fatalf("in-place input was redirected: artifact=%v path=%q", input.ArtifactID, input.ServerPath)
+	}
+	if fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
+		t.Fatalf("in-place execution acquired staged artifact: ready=%d forget=%d", fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
+	}
+	if err := input.Validate(context.Background()); err != nil {
+		t.Fatalf("Validate in-place input: %v", err)
 	}
 }
 

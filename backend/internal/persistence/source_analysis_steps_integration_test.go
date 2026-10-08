@@ -102,38 +102,35 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	if err != nil || storedCanonical.FFProbeVersion == nil || *storedCanonical.FFProbeVersion != probe.FFProbeVersion || storedCanonical.AppliedOperationID == nil || *storedCanonical.AppliedOperationID != operation.ID {
 		t.Fatalf("canonical promoted probe provenance = %+v, %v", storedCanonical, err)
 	}
-	// Existing cache winner is immutable, while this work keeps its independently
-	// executed fingerprint selected and replay is an exact no-op.
+	// A digest has one stable current row. A successful calculation promotes its
+	// contents in place while every step continues to reference that identity.
 	winner := &persistence.SourceFingerprintResult{
 		ID: uuid.New(), FPCalcVersion: "1.5.1", VersionBanner: "fpcalc 1.5.1",
 		AlgorithmNamespace: "chromaprint", AlgorithmID: 1, Fingerprint: "111,222",
 		ReportedDuration: 12.5, CalculatedAt: time.Now().UTC().Truncate(time.Microsecond),
-		AppliedOperationID: uuid.New(), ParserContractVersion: 1,
+		AppliedOperationID: uuid.New(), ParserContractVersion: 1, SourceSHA256: digest,
 	}
 	if _, err := database.NewInsert().Model(winner).Exec(ctx); err != nil {
 		t.Fatalf("insert existing fingerprint cache winner: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO media_fingerprint_cache(source_sha256,fpcalc_version,result_id) VALUES(?,?,?)`, digest, winner.FPCalcVersion, winner.ID); err != nil {
-		t.Fatalf("insert existing cache association: %v", err)
 	}
 	fingerprintAttempt := fixture.claim(persistence.SourceStepFingerprint)
 	computed := persistence.SourceFingerprintResult{
 		ID: uuid.New(), FPCalcVersion: winner.FPCalcVersion, VersionBanner: winner.VersionBanner,
 		AlgorithmNamespace: winner.AlgorithmNamespace, AlgorithmID: winner.AlgorithmID,
 		Fingerprint: "333,444", ReportedDuration: 12.5,
-		CalculatedAt: time.Now().UTC().Truncate(time.Microsecond), ParserContractVersion: 1,
+		CalculatedAt: winner.CalculatedAt.Add(time.Second), ParserContractVersion: 1,
 	}
 	fingerprintApply := persistence.SourceFingerprintApply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: fingerprintAttempt, Result: computed}
 	selected, err := repository.ApplySourceFingerprint(ctx, fingerprintApply)
-	if err != nil || selected.ID != computed.ID {
-		t.Fatalf("apply fingerprint = %+v, %v; selected result should remain the executed result", selected, err)
+	if err != nil || selected.ID != winner.ID || selected.Fingerprint != computed.Fingerprint {
+		t.Fatalf("apply fingerprint = %+v, %v; selected result should be the promoted stable identity", selected, err)
 	}
 	if duplicate, err := repository.ApplySourceFingerprint(ctx, fingerprintApply); err != nil || duplicate.ID != selected.ID {
 		t.Fatalf("idempotent fingerprint apply = %+v, %v", duplicate, err)
 	}
 	var cacheResult uuid.UUID
-	if err := database.NewRaw(`SELECT result_id FROM media_fingerprint_cache WHERE source_sha256=? AND fpcalc_version=?`, digest, winner.FPCalcVersion).Scan(ctx, &cacheResult); err != nil || cacheResult != winner.ID {
-		t.Fatalf("cache result = %s, %v; first winner %s was replaced", cacheResult, err, winner.ID)
+	if err := database.NewRaw(`SELECT id FROM media_fingerprint_result WHERE source_sha256=?`, digest).Scan(ctx, &cacheResult); err != nil || cacheResult != winner.ID {
+		t.Fatalf("current fingerprint identity = %s, %v; stable ID %s was replaced", cacheResult, err, winner.ID)
 	}
 	if err := repository.SettleNormalizedSourceAnalysisOperation(ctx, operation.ID, "succeeded", "fingerprint", ""); err != nil {
 		t.Fatalf("finish initial normalized operation: %v", err)
@@ -146,11 +143,11 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 		JobID: *cacheReuseFixture.operation.RiverJobID, Step: persistence.SourceStepFingerprint,
 	}
 	fingerprintAttempt = cacheReuseFixture.claim(persistence.SourceStepFingerprint)
-	reused, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt, winner.FPCalcVersion)
+	reused, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt)
 	if err != nil || reused.ID != winner.ID {
 		t.Fatalf("reuse cached fingerprint = %+v, %v; want first cache winner %s", reused, err, winner.ID)
 	}
-	if duplicate, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt, winner.FPCalcVersion); err != nil || duplicate.ID != winner.ID {
+	if duplicate, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt); err != nil || duplicate.ID != winner.ID {
 		t.Fatalf("idempotent fingerprint reuse = %+v, %v; want cache winner %s", duplicate, err, winner.ID)
 	}
 	if err := repository.SettleNormalizedSourceAnalysisOperation(ctx, cacheReuseFixture.operation.ID, "succeeded", "fingerprint", ""); err != nil {
@@ -181,6 +178,113 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	}
 	if _, err := repository.ApplySourceSHA256(ctx, shaApply); !errors.Is(err, persistence.ErrSourceAnalysisStale) {
 		t.Fatalf("stale SHA delivery = %v, want ErrSourceAnalysisStale", err)
+	}
+}
+
+func TestFingerprintPromotionAndDigestlessRerunSerializeAcrossRootsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	fingerprintTool := insertVerifiedAnalysisTool(t, ctx, database, "fpcalc", "fpcalc", "1.5.1", "fpcalc version 1.5.1")
+
+	rootA := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-promotion-race-a")
+	locationA := insertAnalysisLocation(t, ctx, database, rootA.ID, "track.flac", 2048, probeMtime())
+	establishInventory(t, ctx, database, rootA)
+	workA := normalizedWork(t, ctx, repository, rootA, locationA, true,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"},
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepFingerprint, State: "pending"},
+	)
+	fixtureA := newAnalysisStepFixture(t, ctx, database, repository, client, rootA, locationA, workA,
+		persistence.SourceAnalysisModeBatch, nil, nil, false, []persistence.SourceAnalysisToolSelection{fingerprintTool})
+
+	rootB := createInventoryRoot(t, ctx, repository, "/srv/fingerprint-promotion-race-b")
+	locationB := insertAnalysisLocation(t, ctx, database, rootB.ID, "track.flac", 2048, probeMtime())
+	establishInventory(t, ctx, database, rootB)
+	workB := normalizedWork(t, ctx, repository, rootB, locationB, true,
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepSHA256, State: "pending"},
+		persistence.SourceAnalysisStepInput{Step: persistence.SourceStepFingerprint, State: "pending"},
+	)
+
+	shared := &persistence.SourceFingerprintResult{
+		ID: uuid.New(), WinningResultID: uuid.New(), FPCalcVersion: "1.5.1", VersionBanner: "fpcalc version 1.5.1",
+		AlgorithmNamespace: "chromaprint", AlgorithmID: 1, Fingerprint: "111,222", ReportedDuration: 12,
+		CalculatedAt: time.Now().UTC().Truncate(time.Microsecond), AppliedOperationID: uuid.New(), ParserContractVersion: 1,
+	}
+	shared.WinningResultID = shared.ID
+	if _, err := database.NewInsert().Model(shared).Exec(ctx); err != nil {
+		t.Fatalf("insert shared digestless fingerprint: %v", err)
+	}
+	if _, err := database.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_fingerprint_result_id=?,success_reuse_origin='executed' WHERE work_id=? AND step='fingerprint'`, shared.ID, workB.ID).Exec(ctx); err != nil {
+		t.Fatalf("seed successful fingerprint for explicit rerun: %v", err)
+	}
+	targetStep := string(persistence.SourceStepFingerprint)
+	fixtureB := newAnalysisStepFixture(t, ctx, database, repository, client, rootB, locationB, workB,
+		persistence.SourceAnalysisModeSingleStep, &workB.ID, &targetStep, true, []persistence.SourceAnalysisToolSelection{fingerprintTool})
+	if _, err := database.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_fingerprint_result_id=?,success_reuse_origin='executed',last_operation_id=? WHERE work_id=? AND step='fingerprint'`, shared.ID, fixtureA.operation.ID, workA.ID).Exec(ctx); err != nil {
+		t.Fatalf("select shared fingerprint for promotion: %v", err)
+	}
+	runAttemptB := fixtureB.claim(persistence.SourceStepFingerprint)
+	if _, err := database.NewRaw(`UPDATE source_analysis_step SET success_fingerprint_result_id=? WHERE work_id=? AND step='fingerprint'`, shared.ID, workB.ID).Exec(ctx); err != nil {
+		t.Fatalf("retain shared fingerprint for rerun: %v", err)
+	}
+
+	shaAttemptA := fixtureA.claim(persistence.SourceStepSHA256)
+	digest := make([]byte, sha256.Size)
+	digest[0] = 0x63
+	// A pre-existing canonical row forces promotion to re-point all work
+	// selections away from the digestless result while the rerun tries to retire
+	// that same shared result.
+	canonical := &persistence.SourceFingerprintResult{
+		ID: uuid.New(), WinningResultID: uuid.New(), SourceSHA256: digest,
+		FPCalcVersion: "1.5.1", VersionBanner: "fpcalc version 1.5.1",
+		AlgorithmNamespace: "chromaprint", AlgorithmID: 1, Fingerprint: "000,111", ReportedDuration: 12,
+		CalculatedAt: shared.CalculatedAt.Add(-time.Second), AppliedOperationID: uuid.New(), ParserContractVersion: 1,
+	}
+	canonical.WinningResultID = canonical.ID
+	if _, err := database.NewRaw(`INSERT INTO media_variant (id,size_bytes,source_sha256,sha256_calculated_at,sha256_algorithm,sha256_applied_operation_id) VALUES (?,?,?,?,?,?)`, uuid.New(), workA.SizeBytes, digest, time.Now().UTC().Truncate(time.Microsecond), "SHA-256", fixtureA.operation.ID).Exec(ctx); err != nil {
+		t.Fatalf("insert canonical SHA variant: %v", err)
+	}
+	if _, err := database.NewInsert().Model(canonical).Exec(ctx); err != nil {
+		t.Fatalf("insert existing canonical fingerprint result: %v", err)
+	}
+	promotion := persistence.SourceSHA256Apply{
+		WorkID: workA.ID, OperationID: fixtureA.operation.ID, OperationAttempt: fixtureA.operation.Attempt,
+		JobID: *fixtureA.operation.RiverJobID, StepAttempt: shaAttemptA, SHA256: digest,
+		CalculatedAt: time.Now().UTC().Truncate(time.Microsecond), Algorithm: "SHA-256",
+	}
+	rerun := persistence.SourceFingerprintApply{
+		WorkID: workB.ID, OperationID: fixtureB.operation.ID, OperationAttempt: fixtureB.operation.Attempt,
+		JobID: *fixtureB.operation.RiverJobID, StepAttempt: runAttemptB,
+		Result: persistence.SourceFingerprintResult{
+			ID: uuid.New(), FPCalcVersion: "1.5.1", VersionBanner: "fpcalc version 1.5.1",
+			AlgorithmNamespace: "chromaprint", AlgorithmID: 1, Fingerprint: "333,444", ReportedDuration: 12,
+			CalculatedAt: time.Now().UTC().Add(time.Second).Truncate(time.Microsecond), ParserContractVersion: 1,
+		},
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	go func() {
+		<-start
+		_, err := repository.ApplySourceSHA256(ctx, promotion)
+		results <- err
+	}()
+	go func() {
+		<-start
+		_, err := repository.ApplySourceFingerprint(ctx, rerun)
+		results <- err
+	}()
+	close(start)
+	for range 2 {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("concurrent fingerprint promotion/rerun: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("fingerprint promotion and digestless rerun did not both complete")
+		}
 	}
 }
 
@@ -311,16 +415,13 @@ func TestSourceFingerprintSelectionCleanupAfterRerunsWithPostgreSQL(t *testing.T
 		t.Fatalf("insert SHA cache identity: %v", err)
 	}
 	cached := &persistence.SourceFingerprintResult{
-		ID: uuid.New(), FPCalcVersion: "1.5.1", VersionBanner: "fpcalc 1.5.1",
+		ID: uuid.New(), SourceSHA256: digest, FPCalcVersion: "1.5.1", VersionBanner: "fpcalc 1.5.1",
 		AlgorithmNamespace: "chromaprint", AlgorithmID: 1, Fingerprint: "555,666",
 		ReportedDuration: 12.5, CalculatedAt: time.Now().UTC().Truncate(time.Microsecond),
 		AppliedOperationID: retry.operation.ID, ParserContractVersion: 1,
 	}
 	if _, err := database.NewInsert().Model(cached).Exec(ctx); err != nil {
 		t.Fatalf("insert cache-backed fingerprint: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO media_fingerprint_cache(source_sha256,fpcalc_version,result_id) VALUES(?,?,?)`, digest, cached.FPCalcVersion, cached.ID); err != nil {
-		t.Fatalf("cache fingerprint: %v", err)
 	}
 	if err := repository.SettleNormalizedSourceAnalysisOperation(ctx, retry.operation.ID, "succeeded", "fingerprint", ""); err != nil {
 		t.Fatalf("finish normalized operation: %v", err)

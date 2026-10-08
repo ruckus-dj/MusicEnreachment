@@ -29,6 +29,9 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		return fmt.Errorf("apply source enumeration: unreadable scopes require a safe failure reason")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply source enumeration: lock fingerprint mutations: %w", err)
+		}
 		rootID, err := operationTargetSourceRoot(ctx, tx, apply.OperationID)
 		if err != nil {
 			return fmt.Errorf("apply source enumeration: read operation target: %w", err)
@@ -93,7 +96,7 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 		for _, location := range oldLocations {
 			candidate, seen := candidateByPath[location.RelativePath]
 			var old SourceAnalysisWork
-			err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE location_id=? FOR UPDATE`, location.ID).Scan(ctx, &old)
+			err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &old)
 			if err == sql.ErrNoRows {
 				continue
 			}
@@ -112,7 +115,7 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 			if active > 0 {
 				return fmt.Errorf("apply source enumeration: old analysis work has an active hold")
 			}
-			if err := removeScanAnalysisWork(ctx, tx, old.ID); err != nil {
+			if err := retireSourceAnalysisWork(ctx, tx, old.ID); err != nil {
 				return fmt.Errorf("apply source enumeration: safely retire old analysis work: %w", err)
 			}
 		}
@@ -145,7 +148,7 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 				return fmt.Errorf("apply source enumeration: resolve location %q: %w", candidate.RelativePath, err)
 			}
 			var existing SourceAnalysisWork
-			workErr := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE location_id=?`, locationID).Scan(ctx, &existing)
+			workErr := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=?`, locationID).Scan(ctx, &existing)
 			if workErr == nil && existing.SourceRootID == root.ID && existing.ConfiguredPath == root.ConfiguredPath && existing.InventoryPath == root.ConfiguredPath && existing.RelativePath == candidate.RelativePath && existing.SizeBytes == candidate.SizeBytes && sourceAnalysisMtime(existing.Mtime).Equal(sourceAnalysisMtime(candidate.Mtime)) {
 				continue
 			}
@@ -226,11 +229,33 @@ func discardUnreadableEnumerationCandidates(ctx context.Context, tx bun.Tx, oper
 }
 
 func pruneEnumeratedLocations(ctx context.Context, tx bun.Tx, rootID, operationID uuid.UUID) error {
-	query := `DELETE FROM source_location l WHERE l.source_root_id=? AND NOT EXISTS (
-		SELECT 1 FROM source_scan_candidate c WHERE c.operation_id=? AND c.relative_path=l.relative_path)`
-	args := []any{rootID, operationID}
-	_, err := tx.NewRaw(query, args...).Exec(ctx)
-	return err
+	locations := make([]SourceLocation, 0)
+	if err := tx.NewSelect().Model(&locations).Where("source_root_id=?", rootID).Order("relative_path").For("UPDATE").Scan(ctx); err != nil {
+		return err
+	}
+	for _, location := range locations {
+		var exists bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM source_scan_candidate WHERE operation_id=? AND relative_path=?)`, operationID, location.RelativePath).Scan(ctx, &exists); err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		var workID uuid.UUID
+		err := tx.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=? FOR UPDATE`, location.ID).Scan(ctx, &workID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil {
+			if err := retireSourceAnalysisWork(ctx, tx, workID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.NewDelete().Model((*SourceLocation)(nil)).Where("id=?", location.ID).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func sourceEnumerationPathUnreadable(path string, scopes []SourceEnumerationScope) bool {

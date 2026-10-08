@@ -58,6 +58,8 @@ type SourceMediaVariant struct {
 type SourceFingerprintResult struct {
 	bun.BaseModel         `bun:"table:media_fingerprint_result"`
 	ID                    uuid.UUID `bun:"id,pk,type:uuid"`
+	SourceSHA256          []byte    `bun:"source_sha256,nullzero"`
+	WinningResultID       uuid.UUID `bun:"winning_result_id,type:uuid"`
 	FPCalcVersion         string    `bun:"fpcalc_version"`
 	VersionBanner         string    `bun:"version_banner"`
 	AlgorithmNamespace    string    `bun:"algorithm_namespace"`
@@ -71,17 +73,18 @@ type SourceFingerprintResult struct {
 
 type SourceAnalysisWork struct {
 	bun.BaseModel         `bun:"table:source_analysis_work"`
-	ID                    uuid.UUID `bun:"id,pk,type:uuid"`
-	LocationID            uuid.UUID `bun:"location_id,type:uuid"`
-	SourceRootID          uuid.UUID `bun:"source_root_id,type:uuid"`
-	ConfiguredPath        string    `bun:"configured_path"`
-	InventoryPath         string    `bun:"inventory_path"`
-	RelativePath          string    `bun:"relative_path"`
-	SizeBytes             int64     `bun:"size_bytes"`
-	Mtime                 time.Time `bun:"mtime"`
-	SHA256Enabled         bool      `bun:"sha256_enabled"`
-	OriginScanOperationID uuid.UUID `bun:"origin_scan_operation_id,type:uuid"`
-	CreatedAt             time.Time `bun:"created_at,nullzero"`
+	ID                    uuid.UUID  `bun:"id,pk,type:uuid"`
+	LocationID            uuid.UUID  `bun:"location_id,type:uuid"`
+	CurrentLocationID     *uuid.UUID `bun:"current_location_id,type:uuid,nullzero"`
+	SourceRootID          uuid.UUID  `bun:"source_root_id,type:uuid"`
+	ConfiguredPath        string     `bun:"configured_path"`
+	InventoryPath         string     `bun:"inventory_path"`
+	RelativePath          string     `bun:"relative_path"`
+	SizeBytes             int64      `bun:"size_bytes"`
+	Mtime                 time.Time  `bun:"mtime"`
+	SHA256Enabled         bool       `bun:"sha256_enabled"`
+	OriginScanOperationID uuid.UUID  `bun:"origin_scan_operation_id,type:uuid"`
+	CreatedAt             time.Time  `bun:"created_at,nullzero"`
 }
 
 type SourceAnalysisStep struct {

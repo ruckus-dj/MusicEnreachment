@@ -37,10 +37,10 @@ func (repository *SourceInventoryRepository) LookupSourceProbe(ctx context.Conte
 	return result, true, nil
 }
 
-// LookupSourceFingerprint returns the cache winner's original result unchanged.
-func (repository *SourceInventoryRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte, version string) (*SourceFingerprintResult, bool, error) {
+// LookupSourceFingerprint returns the current successful result for a content digest.
+func (repository *SourceInventoryRepository) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte) (*SourceFingerprintResult, bool, error) {
 	result := new(SourceFingerprintResult)
-	err := repository.db.NewRaw(`SELECT r.* FROM media_fingerprint_cache c JOIN media_fingerprint_result r ON r.id=c.result_id AND r.fpcalc_version=c.fpcalc_version WHERE c.source_sha256=? AND c.fpcalc_version=?`, digest[:], version).Scan(ctx, result)
+	err := repository.db.NewRaw(`SELECT * FROM media_fingerprint_result WHERE source_sha256=?`, digest[:]).Scan(ctx, result)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}

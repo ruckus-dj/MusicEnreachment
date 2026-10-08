@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -45,7 +46,7 @@ type SourceAnalysisFingerprinter interface {
 // content digest. Returned persistence models are preserved as provenance.
 type SourceAnalysisCacheLookup interface {
 	LookupSourceProbe(context.Context, [sha256.Size]byte, string, int) (*persistence.SourceMediaVariant, bool, error)
-	LookupSourceFingerprint(context.Context, [sha256.Size]byte, string) (*persistence.SourceFingerprintResult, bool, error)
+	LookupSourceFingerprint(context.Context, [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error)
 }
 
 type SourceAnalysisOutcomeState string
@@ -162,12 +163,12 @@ func (preparer *SourceAnalysisPreparer) Prepare(ctx context.Context, request Sou
 		}
 	}
 	fingerprintCache := cacheFingerprintResult{}
-	if request.Targets&SourceAnalysisTargetFingerprint != 0 && hasDigest && preparer.config.Cache != nil && preparer.config.FPCalcVersion.Version != "" && !request.BypassFingerprintCache {
-		cached, hit, err := preparer.config.Cache.LookupSourceFingerprint(ctx, digest, preparer.config.FPCalcVersion.Version)
+	if request.Targets&SourceAnalysisTargetFingerprint != 0 && hasDigest && preparer.config.Cache != nil && !request.BypassFingerprintCache {
+		cached, hit, err := preparer.config.Cache.LookupSourceFingerprint(ctx, digest)
 		if err != nil {
 			fingerprintCache.failed = &cacheFailure{message: safeFingerprintCacheError(err)}
 		} else if hit {
-			if cached == nil || cached.FPCalcVersion != preparer.config.FPCalcVersion.Version {
+			if cached == nil || !bytes.Equal(cached.SourceSHA256, digest[:]) || cached.FPCalcVersion == "" || cached.Fingerprint == "" || cached.VersionBanner == "" || cached.AlgorithmNamespace == "" {
 				fingerprintCache.failed = &cacheFailure{message: "source fingerprint cache returned invalid provenance"}
 			} else {
 				fingerprintCache.result = cached

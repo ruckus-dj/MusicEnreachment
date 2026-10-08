@@ -64,7 +64,7 @@ func (fingerprinter *preparerFingerprinter) Fingerprint(ctx context.Context, pat
 
 type preparerCache struct {
 	probeLookup       func(context.Context, [sha256.Size]byte, string, int) (*persistence.SourceMediaVariant, bool, error)
-	fingerprintLookup func(context.Context, [sha256.Size]byte, string) (*persistence.SourceFingerprintResult, bool, error)
+	fingerprintLookup func(context.Context, [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error)
 	probeCalls        atomic.Int32
 	fingerprintCalls  atomic.Int32
 	mu                sync.Mutex
@@ -81,7 +81,7 @@ func (cache *preparerCache) LookupSourceProbe(ctx context.Context, digest [sha25
 	}
 	return cache.probeLookup(ctx, digest, version, policy)
 }
-func (cache *preparerCache) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte, version string) (*persistence.SourceFingerprintResult, bool, error) {
+func (cache *preparerCache) LookupSourceFingerprint(ctx context.Context, digest [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
 	cache.fingerprintCalls.Add(1)
 	cache.mu.Lock()
 	cache.digest = digest
@@ -89,7 +89,7 @@ func (cache *preparerCache) LookupSourceFingerprint(ctx context.Context, digest 
 	if cache.fingerprintLookup == nil {
 		return nil, false, nil
 	}
-	return cache.fingerprintLookup(ctx, digest, version)
+	return cache.fingerprintLookup(ctx, digest)
 }
 
 func (cache *preparerCache) lastDigest() [sha256.Size]byte {
@@ -221,7 +221,7 @@ func TestSourceAnalysisPreparerDoesNotStartRunnersBeforeIndependentCacheLookups(
 		<-releaseProbeLookup
 		return nil, false, nil
 	}
-	cache.fingerprintLookup = func(context.Context, [sha256.Size]byte, string) (*persistence.SourceFingerprintResult, bool, error) {
+	cache.fingerprintLookup = func(context.Context, [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
 		close(fingerprintLookupStarted)
 		<-releaseFingerprintLookup
 		return nil, false, nil
@@ -373,7 +373,7 @@ func TestSourceAnalysisPreparerIndependentCacheHitsPreserveProvenanceAndSuppress
 		InspectedAt: ptr(time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)), AppliedOperationID: ptr(uuid.New()),
 	}
 	fingerprintResult := &persistence.SourceFingerprintResult{
-		ID: uuid.New(), FPCalcVersion: "1.2.3", VersionBanner: "original banner", AlgorithmNamespace: "chromaprint",
+		ID: uuid.New(), SourceSHA256: digest[:], FPCalcVersion: "1.2.3", VersionBanner: "original banner", AlgorithmNamespace: "chromaprint",
 		AlgorithmID: 7, Fingerprint: "original fingerprint", ReportedDuration: 99,
 		CalculatedAt: time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), AppliedOperationID: uuid.New(), ParserContractVersion: 9,
 	}
@@ -384,14 +384,15 @@ func TestSourceAnalysisPreparerIndependentCacheHitsPreserveProvenanceAndSuppress
 			}
 			return probeResult, true, nil
 		},
-		fingerprintLookup: func(_ context.Context, got [sha256.Size]byte, version string) (*persistence.SourceFingerprintResult, bool, error) {
-			if got != digest || version != "1.2.3" {
-				t.Errorf("wrong fingerprint key: digest=%x version=%q", got, version)
+		fingerprintLookup: func(_ context.Context, got [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
+			if got != digest {
+				t.Errorf("wrong fingerprint key: digest=%x", got)
 			}
 			return fingerprintResult, true, nil
 		},
 	}
 	config := preparerConfig()
+	config.FPCalcVersion.Version = "9.9.9" // Cached tool version is provenance, not identity.
 	config.Cache = cache
 	var factories, holds atomic.Int32
 	config.ProbeFactory = func(string) (SourceAnalysisProbe, error) { factories.Add(1); return nil, errors.New("must not build") }
@@ -468,12 +469,12 @@ func TestSourceAnalysisPreparerCacheHitsAreIndependent(t *testing.T) {
 				AudioStreamCount: &streams, FFProbeVersion: ptr("ffprobe 8.0 verified banner"), AnalysisPolicyVersion: ptr(3),
 				FFProbeJSON: []byte(`{"streams":[{"codec_type":"audio"}]}`),
 			}
-			fingerprintResult := &persistence.SourceFingerprintResult{FPCalcVersion: "1.2.3", Fingerprint: "cached"}
+			fingerprintResult := &persistence.SourceFingerprintResult{SourceSHA256: digest[:], FPCalcVersion: "1.2.3", VersionBanner: "fpcalc cached", AlgorithmNamespace: "chromaprint", Fingerprint: "cached"}
 			cache := &preparerCache{
 				probeLookup: func(context.Context, [sha256.Size]byte, string, int) (*persistence.SourceMediaVariant, bool, error) {
 					return probeResult, test.probeHit, nil
 				},
-				fingerprintLookup: func(context.Context, [sha256.Size]byte, string) (*persistence.SourceFingerprintResult, bool, error) {
+				fingerprintLookup: func(context.Context, [sha256.Size]byte) (*persistence.SourceFingerprintResult, bool, error) {
 					return fingerprintResult, test.fingerprintHit, nil
 				},
 			}
