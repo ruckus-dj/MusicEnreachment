@@ -3,7 +3,9 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -125,7 +127,7 @@ func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
 	source, otherSource := t.TempDir(), t.TempDir()
 	newPath := normalizedPath(t, otherSource)
 
-	created, err := integration.roots.Create(ctx, "Music", source)
+	created, err := integration.roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create source root: %v", err)
 	}
@@ -133,7 +135,14 @@ func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
 	if configuredPath != normalizedPath(t, source) || !created.Enabled || created.Stale || created.LocationCount != 0 {
 		t.Fatalf("created root = %+v, want a normalized, enabled root without inventory", created)
 	}
-	if _, err := integration.roots.Create(ctx, "Duplicate", source); err == nil {
+	if created.ProcessingMode != service.SourceProcessingModeInPlace {
+		t.Fatalf("created mode = %q, want explicitly selected in_place", created.ProcessingMode)
+	}
+	listed, err := integration.roots.List(ctx)
+	if err != nil || len(listed) != 1 || listed[0].ProcessingMode != service.SourceProcessingModeInPlace {
+		t.Fatalf("listed roots = %+v, %v; want the created root's in_place mode", listed, err)
+	}
+	if _, err := integration.roots.Create(ctx, "Duplicate", source, "in_place"); err == nil {
 		t.Fatal("a second root with the same configured path was accepted")
 	}
 
@@ -145,6 +154,37 @@ func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
 	if err != nil || scanned.Stale || scanned.ScanGeneration != 1 || scanned.LocationCount != 1 {
 		t.Fatalf("root after its first scan = %+v, %v", scanned, err)
 	}
+
+	// A queued operation remains unchanged, but reads the newly persisted mode
+	// when it eventually executes. Its admission snapshot and existing inventory
+	// are not rewritten by this future-only edit.
+	queued := startScanOperation(t, ctx, integration.database, created.ID, "queued")
+	queuedSnapshot := append([]byte(nil), queued.InputSnapshot...)
+	staged := service.SourceProcessingModeStaged
+	modeChanged, err := integration.roots.Edit(ctx, created.ID, service.SourceRootEdit{ProcessingMode: &staged})
+	if err != nil || modeChanged.ProcessingMode != staged {
+		t.Fatalf("change mode with queued work: %+v, %v; want staged", modeChanged, err)
+	}
+	var queuedState string
+	var persistedSnapshot []byte
+	if err := integration.database.NewRaw("SELECT state, input_snapshot FROM operation WHERE id = ?", queued.ID).
+		Scan(ctx, &queuedState, &persistedSnapshot); err != nil {
+		t.Fatalf("read queued operation after mode change: %v", err)
+	}
+	var compactPersisted, compactQueued bytes.Buffer
+	if err := json.Compact(&compactPersisted, persistedSnapshot); err != nil {
+		t.Fatalf("queued operation snapshot is invalid JSON: %v", err)
+	}
+	if err := json.Compact(&compactQueued, queuedSnapshot); err != nil {
+		t.Fatalf("captured operation snapshot is invalid JSON: %v", err)
+	}
+	if queuedState != "queued" || !bytes.Equal(compactPersisted.Bytes(), compactQueued.Bytes()) {
+		t.Fatalf("mode edit rewrote queued operation: state=%q snapshot=%s, want queued and unchanged %s", queuedState, persistedSnapshot, queuedSnapshot)
+	}
+	if current, err := integration.roots.Get(ctx, created.ID); err != nil || current.LocationCount != 1 || current.ScanGeneration != 1 {
+		t.Fatalf("existing inventory after mode change = %+v, %v; want unchanged results", current, err)
+	}
+	finishScanOperation(t, ctx, integration.database, queued.ID)
 
 	active := startScanOperation(t, ctx, integration.database, created.ID, "running")
 
@@ -222,12 +262,77 @@ func TestSourceRootEditContractWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestSourceRootModeEditSerializesOnRootRowWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	baseCtx := context.Background()
+	integration := newSourceRootsIntegration(t)
+	created, err := integration.roots.Create(baseCtx, "Music", t.TempDir(), service.SourceProcessingModeInPlace)
+	if err != nil {
+		t.Fatalf("create source root: %v", err)
+	}
+
+	lockCtx, cancelLock := context.WithTimeout(baseCtx, 10*time.Second)
+	defer cancelLock()
+	transaction, err := integration.database.BeginTx(lockCtx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	var backendPID int
+	if err := transaction.NewRaw("SELECT pg_backend_pid() FROM source_root WHERE id = ? FOR UPDATE", created.ID).
+		Scan(lockCtx, &backendPID); err != nil {
+		t.Fatalf("lock source root row: %v", err)
+	}
+
+	staged := service.SourceProcessingModeStaged
+	editResult := make(chan error, 1)
+	writerCtx, cancelWriter := context.WithTimeout(baseCtx, 10*time.Second)
+	defer cancelWriter()
+	go func() {
+		_, err := integration.roots.Edit(writerCtx, created.ID, service.SourceRootEdit{ProcessingMode: &staged})
+		editResult <- err
+	}()
+	waitForRootRowLockWait(t, lockCtx, integration.database, backendPID)
+	if err := transaction.Commit(); err != nil {
+		t.Fatalf("release root row lock: %v", err)
+	}
+	if err := <-editResult; err != nil {
+		t.Fatalf("mode edit after serialized row lock: %v", err)
+	}
+	current, err := integration.roots.Get(baseCtx, created.ID)
+	if err != nil || current.ProcessingMode != staged {
+		t.Fatalf("persisted mode after concurrent mutation = %+v, %v; want staged", current, err)
+	}
+}
+
+func waitForRootRowLockWait(t *testing.T, ctx context.Context, database *bun.DB, blockingPID int) {
+	t.Helper()
+	for {
+		var waiting bool
+		err := database.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid))
+		)`, blockingPID).Scan(ctx, &waiting)
+		if err != nil {
+			t.Fatalf("observe root row lock waiter: %v", err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("mode edit did not wait for the locked source root row: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestSourceRootEditRacesActiveScanWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	integration := newSourceRootsIntegration(t)
 	source, otherSource := t.TempDir(), t.TempDir()
-	created, err := integration.roots.Create(ctx, "Music", source)
+	created, err := integration.roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create source root: %v", err)
 	}
@@ -310,7 +415,7 @@ func TestSourceRootDeletionLeavesFilesInPlaceWithPostgreSQL(t *testing.T) {
 		writeSourceFile(t, path, contents)
 	}
 
-	created, err := integration.roots.Create(ctx, "Music", source)
+	created, err := integration.roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create source root: %v", err)
 	}
@@ -348,7 +453,7 @@ func TestSourceRootDeletionRechecksConfirmationAfterServiceReadWithPostgreSQL(t 
 			ctx := context.Background()
 			integration := newSourceRootsIntegration(t)
 			source := t.TempDir()
-			created, err := integration.roots.Create(ctx, "Music", source)
+			created, err := integration.roots.Create(ctx, "Music", source, "in_place")
 			if err != nil {
 				t.Fatalf("create source root: %v", err)
 			}
@@ -411,7 +516,7 @@ func TestSourceRootDeletionSerializesWritersWithPostgreSQL(t *testing.T) {
 		t.Run(writer, func(t *testing.T) {
 			baseCtx := context.Background()
 			integration := newSourceRootsIntegration(t)
-			created, err := integration.roots.Create(baseCtx, "Music", t.TempDir())
+			created, err := integration.roots.Create(baseCtx, "Music", t.TempDir(), "in_place")
 			if err != nil {
 				t.Fatalf("create source root: %v", err)
 			}

@@ -104,8 +104,10 @@ func (root *SourceRoot) Stale() bool {
 	return root.InventoryPath != nil && *root.InventoryPath != root.ConfiguredPath
 }
 
-// CreateSourceRoot creates a root with generation 0 and no inventory. A root
-// with a duplicate normalized configured path is rejected by the schema.
+// CreateSourceRoot creates a root with generation 0 and no inventory. A supplied
+// processing mode overrides the transitional database default; an empty mode
+// leaves that default for legacy writers and migration fixtures. A root with a
+// duplicate normalized configured path is rejected by the schema.
 func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Context, root *SourceRoot) error {
 	if root.ID == uuid.Nil {
 		root.ID = uuid.New()
@@ -113,7 +115,13 @@ func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Contex
 	if root.Status == "" {
 		root.Status = "unknown"
 	}
-	if _, err := repository.db.NewInsert().Model(root).Exec(ctx); err != nil {
+	insert := repository.db.NewInsert().Model(root)
+	if root.ProcessingMode != "" {
+		// The in_place database default is transitional for pre-mode writers and
+		// migration fixtures; the source-root service always supplies a mode.
+		insert = insert.Value("processing_mode", "?", root.ProcessingMode)
+	}
+	if _, err := insert.Exec(ctx); err != nil {
 		return fmt.Errorf("create source root: %w", err)
 	}
 	return nil
@@ -121,7 +129,7 @@ func (repository *SourceInventoryRepository) CreateSourceRoot(ctx context.Contex
 
 func (repository *SourceInventoryRepository) GetSourceRoot(ctx context.Context, id uuid.UUID) (*SourceRoot, error) {
 	root := new(SourceRoot)
-	if err := repository.db.NewSelect().Model(root).Where("id = ?", id).Scan(ctx); err != nil {
+	if err := repository.db.NewSelect().Model(root).ColumnExpr("source_root.*").Where("id = ?", id).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("get source root: %w", err)
 	}
 	return root, nil
@@ -130,6 +138,7 @@ func (repository *SourceInventoryRepository) GetSourceRoot(ctx context.Context, 
 func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context) ([]SourceRoot, error) {
 	roots := make([]SourceRoot, 0)
 	if err := repository.db.NewSelect().Model(&roots).
+		ColumnExpr("source_root.*").
 		Order("configured_path ASC").Order("id ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list source roots: %w", err)
 	}
@@ -137,7 +146,7 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 }
 
 // UpdateSourceRoot edits the operator-owned fields of a root: its display name,
-// its enabled flag and its configured path. The caller passes the values it read;
+// processing mode, enabled flag and configured path. The caller passes the values it read;
 // the edit is refused when another writer advanced the root's generation between
 // that read and this call, which is the value every scan apply moves. The row is
 // locked for the read, the comparison and the write, so an edit racing a scan
@@ -152,8 +161,9 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // A configured_path or enabled change is refused with ErrSourceRootActiveScan
 // while a scan of the root is queued or running: the path the running scan
 // carries is the one it would publish, and a disabled root must not keep a scan
-// it no longer owns. A display name change is always accepted. The operation
-// source-root lock makes the check atomic against a scan or analysis starting.
+// it no longer owns. A processing-mode change is serialized without blocking
+// queued work, which reads the current mode at execution. The operation source-root
+// lock makes the check atomic against a scan or analysis starting.
 func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		current := new(SourceRoot)
@@ -175,12 +185,16 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 				return fmt.Errorf("update source root: %w", ErrSourceRootActiveScan)
 			}
 		}
-		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
+		update := tx.NewUpdate().Model((*SourceRoot)(nil)).
 			Set("display_name = ?", cas.DisplayName).
 			Set("configured_path = ?", cas.ConfiguredPath).
 			Set("enabled = ?", cas.Enabled).
 			Set("updated_at = now()").
-			Where("id = ?", cas.ID).Exec(ctx); err != nil {
+			Where("id = ?", cas.ID)
+		if cas.ProcessingMode != "" {
+			update = update.Set("processing_mode = ?", cas.ProcessingMode)
+		}
+		if _, err := update.Exec(ctx); err != nil {
 			return fmt.Errorf("update source root: %w", err)
 		}
 		return nil

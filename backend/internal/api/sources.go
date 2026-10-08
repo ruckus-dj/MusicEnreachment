@@ -158,7 +158,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if dependencies.SourceRoots == nil {
 			return nil, huma.Error503ServiceUnavailable("source service is unavailable")
 		}
-		root, err := dependencies.SourceRoots.Create(ctx, input.Body.DisplayName, input.Body.ConfiguredPath)
+		root, err := dependencies.SourceRoots.Create(ctx, input.Body.DisplayName, input.Body.ConfiguredPath, service.SourceProcessingModeInPlace)
 		if err != nil {
 			return nil, huma.Error400BadRequest("source root could not be registered")
 		}

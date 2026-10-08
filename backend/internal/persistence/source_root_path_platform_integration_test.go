@@ -45,7 +45,7 @@ func TestSourceRootConfiguredPathPlatformsWithPostgreSQL(t *testing.T) {
 	}
 
 	roots := service.NewSourceRoots(inventory, emptyManagedPaths{})
-	if _, err := roots.Create(ctx, "Music", "relative/music"); err == nil || !strings.Contains(err.Error(), "absolute") {
+	if _, err := roots.Create(ctx, "Music", "relative/music", "in_place"); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("relative configured path accepted or rejected without the absolute reason: %v", err)
 	}
 }

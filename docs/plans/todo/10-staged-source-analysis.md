@@ -81,6 +81,17 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   callers in this commit. `task verify` passed before commit; migration/application
   behavior beyond schema constraints remains for later stages.
 
+- **I02 — implementation complete locally (2026-10-08; not committed):** source
+  root creation requires an explicit valid processing mode; mode edits apply only
+  to future work. Repository reads now include the mode on both single-root and
+  list paths, and a name/path edit that omits mode preserves a concurrent mode
+  change. The existing row-lock serialization and conditional mode update are
+  covered by regression and PostgreSQL integration tests. `task verify` passed:
+  generated-contract check, Go/frontend lint, tools tests, Go integration tests,
+  frontend tests, and frontend/backend builds all completed successfully. The
+  frontend build emitted its large-chunk-size warning. Native platform matrix,
+  deployment smoke, and other CI-only checks were not run locally.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

@@ -102,7 +102,7 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	writeScanDispatchFile(t, filepath.Join(source, "album", "track.flac"), "audio bytes")
 	writeScanDispatchFile(t, filepath.Join(source, "album", "silent.mka"), "video only bytes")
 	writeScanDispatchFile(t, filepath.Join(source, "album", "broken.wav"), "unreadable bytes")
-	root, err := roots.Create(ctx, "Music", source)
+	root, err := roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create the source root: %v", err)
 	}

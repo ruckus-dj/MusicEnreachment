@@ -72,12 +72,15 @@ func (fixture *sourceRootRepositoryFixture) ListSourceRoots(context.Context) ([]
 }
 
 func (fixture *sourceRootRepositoryFixture) UpdateSourceRoot(_ context.Context, root *persistence.SourceRoot) error {
-	if fixture.busy {
-		return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
-	}
 	for index, stored := range fixture.roots {
 		if stored.ID == root.ID {
+			if fixture.busy && (stored.ConfiguredPath != root.ConfiguredPath || stored.Enabled != root.Enabled) {
+				return fmt.Errorf("update source root: %w", persistence.ErrSourceRootActiveScan)
+			}
 			fixture.updated++
+			if root.ProcessingMode == "" {
+				root.ProcessingMode = stored.ProcessingMode
+			}
 			fixture.roots[index] = root
 			return nil
 		}
@@ -164,13 +167,30 @@ func TestCreateSourceRootRejectsEmptyDisplayName(t *testing.T) {
 	fixture := newSourceRootsFixture(t)
 
 	for _, name := range []string{"", "   "} {
-		view, err := fixture.roots.Create(context.Background(), name, fixture.source)
+		view, err := fixture.roots.Create(context.Background(), name, fixture.source, "in_place")
 		if err == nil || !strings.Contains(err.Error(), "display name") {
 			t.Fatalf("display name %q accepted: %#v, %v", name, view, err)
 		}
 	}
 	if fixture.repository.created != 0 {
 		t.Fatalf("roots created by a rejected name: %d, want 0", fixture.repository.created)
+	}
+}
+
+func TestCreateSourceRootRequiresExplicitValidProcessingMode(t *testing.T) {
+	fixture := newSourceRootsFixture(t)
+	for _, mode := range []string{"", "unknown"} {
+		if _, err := fixture.roots.Create(context.Background(), "Music", fixture.source, mode); err == nil {
+			t.Errorf("Create with mode %q succeeded, want validation error", mode)
+		}
+	}
+	if fixture.repository.created != 0 {
+		t.Fatalf("invalid mode created %d roots, want 0", fixture.repository.created)
+	}
+
+	created, err := fixture.roots.Create(context.Background(), "Music", fixture.source, service.SourceProcessingModeStaged)
+	if err != nil || created.ProcessingMode != service.SourceProcessingModeStaged {
+		t.Fatalf("staged Create = %+v, %v; want staged mode", created, err)
 	}
 }
 
@@ -191,7 +211,7 @@ func TestWindowsUNCSourcePathsAreRefusedWithoutMutation(t *testing.T) {
 		`\\./uNc/server\share`,
 	}
 	for _, path := range unsupported {
-		if _, err := fixture.roots.Create(context.Background(), "new UNC", path); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
+		if _, err := fixture.roots.Create(context.Background(), "new UNC", path, "in_place"); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
 			t.Errorf("Create(%q) error = %v, want unsupported network root", path, err)
 		}
 		if _, err := fixture.roots.Edit(context.Background(), stored.ID, service.SourceRootEdit{ConfiguredPath: stringPointer(path)}); !errors.Is(err, service.ErrUnsupportedSourceRoot) {
@@ -242,7 +262,7 @@ func TestCreateSourceRootRejectsUnusableDirectories(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newSourceRootsFixture(t)
-			view, err := fixture.roots.Create(ctx, "Music", test.path)
+			view, err := fixture.roots.Create(ctx, "Music", test.path, "in_place")
 			if err == nil || !strings.Contains(err.Error(), test.wantPhrase) {
 				t.Fatalf("path %q accepted or rejected with the wrong reason: %#v, %v", test.path, view, err)
 			}
@@ -269,7 +289,7 @@ func TestCreateSourceRootRejectsUnreadableDirectory(t *testing.T) {
 		t.Skip("this runner does not enforce directory permissions, so an unreadable directory cannot be built")
 	}
 
-	view, err := fixture.roots.Create(context.Background(), "Music", unreadable)
+	view, err := fixture.roots.Create(context.Background(), "Music", unreadable, "in_place")
 	if err == nil || !strings.Contains(err.Error(), "not readable") {
 		t.Fatalf("unreadable directory accepted: %#v, %v", view, err)
 	}
@@ -301,7 +321,7 @@ func TestCreateSourceRootRejectsManagedOverlap(t *testing.T) {
 		{name: "a symlink resolving into the managed output directory", path: linkIntoOutput, wantPhrase: "managed output"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			view, err := fixture.roots.Create(ctx, "Music", test.path)
+			view, err := fixture.roots.Create(ctx, "Music", test.path, "in_place")
 			if err == nil || !strings.Contains(err.Error(), test.wantPhrase) {
 				t.Fatalf("overlapping path %q accepted or rejected with the wrong reason: %#v, %v", test.path, view, err)
 			}
@@ -319,7 +339,7 @@ func TestCreateSourceRootRejectsManagedOverlap(t *testing.T) {
 		}
 		repository := &sourceRootRepositoryFixture{locations: map[uuid.UUID]int64{}}
 		roots := service.NewSourceRoots(repository, managedPathsFixture{tools: t.TempDir(), output: nested})
-		if _, err := roots.Create(ctx, "Music", parent); err == nil || !strings.Contains(err.Error(), "managed output") {
+		if _, err := roots.Create(ctx, "Music", parent, "in_place"); err == nil || !strings.Contains(err.Error(), "managed output") {
 			t.Fatalf("a directory containing the managed output directory was accepted: %v", err)
 		}
 	})
@@ -332,7 +352,7 @@ func TestCreateSourceRootRejectsManagedOverlap(t *testing.T) {
 func TestCreateSourceRootRejectsDuplicateNormalizedPath(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the first root: %v", err)
 	}
@@ -345,7 +365,7 @@ func TestCreateSourceRootRejectsDuplicateNormalizedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, duplicate := range []string{fixture.source + string(filepath.Separator), filepath.Join(fixture.source, "..", filepath.Base(fixture.source)), link} {
-		if _, err := fixture.roots.Create(ctx, "Second", duplicate); err == nil || !strings.Contains(err.Error(), "already exists") {
+		if _, err := fixture.roots.Create(ctx, "Second", duplicate, "in_place"); err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("duplicate configured path %q accepted: %v", duplicate, err)
 		}
 	}
@@ -369,7 +389,7 @@ func TestCreateSourceRootLeavesTheDirectoryUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	view, err := fixture.roots.Create(context.Background(), " Music ", fixture.source)
+	view, err := fixture.roots.Create(context.Background(), " Music ", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create a root for an existing directory: %v", err)
 	}
@@ -398,7 +418,7 @@ func TestCreateSourceRootAcceptsReadOnlyDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o755) })
 
-	view, err := fixture.roots.Create(context.Background(), "Archive", readOnly)
+	view, err := fixture.roots.Create(context.Background(), "Archive", readOnly, "in_place")
 	if err != nil {
 		t.Fatalf("read-only source directory rejected: %v", err)
 	}
@@ -446,7 +466,7 @@ func TestSourceValidationNeverAttemptsFilesystemCreates(t *testing.T) {
 	restore := settings.SetFilesystemCreateAttemptHook(func(string) { attempts++ })
 	defer restore()
 
-	created, err := roots.Create(ctx, "Music", source)
+	created, err := roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create source root: %v", err)
 	}
@@ -470,11 +490,11 @@ func TestOverlappingSourceRootsKeepTheirOwnInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outer, err := fixture.roots.Create(ctx, "Library", fixture.source)
+	outer, err := fixture.roots.Create(ctx, "Library", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the containing root: %v", err)
 	}
-	inner, err := fixture.roots.Create(ctx, "Live", nested)
+	inner, err := fixture.roots.Create(ctx, "Live", nested, "in_place")
 	if err != nil {
 		t.Fatalf("create the contained root: %v", err)
 	}
@@ -497,7 +517,7 @@ func TestOverlappingSourceRootsKeepTheirOwnInventory(t *testing.T) {
 func TestEditSourceRootChangesNamePathAndEnabled(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the root: %v", err)
 	}
@@ -528,10 +548,43 @@ func TestEditSourceRootChangesNamePathAndEnabled(t *testing.T) {
 	}
 }
 
+type modeChangingSourceRootRepository struct {
+	*sourceRootRepositoryFixture
+}
+
+func (repository modeChangingSourceRootRepository) UpdateSourceRoot(ctx context.Context, root *persistence.SourceRoot) error {
+	// Simulate a mode edit that commits after the service read but before this
+	// unrelated edit reaches the repository.
+	repository.roots[0].ProcessingMode = service.SourceProcessingModeStaged
+	return repository.sourceRootRepositoryFixture.UpdateSourceRoot(ctx, root)
+}
+
+func TestNameOnlyEditPreservesConcurrentProcessingModeChange(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSourceRootsFixture(t)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, service.SourceProcessingModeInPlace)
+	if err != nil {
+		t.Fatalf("create source root: %v", err)
+	}
+
+	roots := service.NewSourceRoots(modeChangingSourceRootRepository{fixture.repository}, managedPathsFixture{tools: fixture.tools, output: fixture.output})
+	name := "Archive"
+	view, err := roots.Edit(ctx, created.ID, service.SourceRootEdit{DisplayName: &name})
+	if err != nil {
+		t.Fatalf("edit source root name: %v", err)
+	}
+	if stored := fixture.repository.roots[0]; stored.DisplayName != name || stored.ProcessingMode != service.SourceProcessingModeStaged {
+		t.Fatalf("stored root after name-only edit = %+v, want name %q and concurrently selected staged mode", stored, name)
+	}
+	if view.ProcessingMode != service.SourceProcessingModeStaged {
+		t.Fatalf("returned root mode = %q, want actual persisted staged mode", view.ProcessingMode)
+	}
+}
+
 func TestEditSourceRootKeepsPreviousStateWhenThePathIsRejected(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the root: %v", err)
 	}
@@ -554,11 +607,16 @@ func TestEditSourceRootKeepsPreviousStateWhenThePathIsRejected(t *testing.T) {
 func TestEditSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the root: %v", err)
 	}
 	fixture.repository.busy = true
+	staged := service.SourceProcessingModeStaged
+	view, err := fixture.roots.Edit(ctx, created.ID, service.SourceRootEdit{ProcessingMode: &staged})
+	if err != nil || view.ProcessingMode != staged {
+		t.Fatalf("mode edit while work is queued = %+v, %v; want accepted staged mode", view, err)
+	}
 
 	disabled := false
 	for _, edit := range []service.SourceRootEdit{
@@ -571,7 +629,7 @@ func TestEditSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 		}
 	}
 	stored := *fixture.repository.roots[0]
-	if stored.ConfiguredPath != fixture.normalized || !stored.Enabled {
+	if stored.ConfiguredPath != fixture.normalized || !stored.Enabled || stored.ProcessingMode != staged {
 		t.Fatalf("root after the refused edits = %+v, want the previous data", stored)
 	}
 }
@@ -579,7 +637,7 @@ func TestEditSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 func TestDeleteSourceRootRequiresMatchingConfirmations(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the root: %v", err)
 	}
@@ -606,7 +664,7 @@ func TestDeleteSourceRootRequiresMatchingConfirmations(t *testing.T) {
 func TestDeleteSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	created, err := fixture.roots.Create(ctx, "Music", fixture.source)
+	created, err := fixture.roots.Create(ctx, "Music", fixture.source, "in_place")
 	if err != nil {
 		t.Fatalf("create the root: %v", err)
 	}
@@ -624,7 +682,7 @@ func TestDeleteSourceRootIsRefusedWhileAScanIsActive(t *testing.T) {
 func TestEditEnabledSourceRootAdmitsPendingAfterCommitBestEffort(t *testing.T) {
 	ctx := context.Background()
 	fixture := newSourceRootsFixture(t)
-	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: fixture.normalized, Enabled: false}
+	root := &persistence.SourceRoot{ID: uuid.New(), DisplayName: "Music", ConfiguredPath: fixture.normalized, ProcessingMode: service.SourceProcessingModeInPlace, Enabled: false}
 	fixture.repository.roots = append(fixture.repository.roots, root)
 	dispatcher := &pendingSourceRootFixture{
 		admissionErr: errors.New("pending service unavailable"),

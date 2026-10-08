@@ -49,7 +49,7 @@ func newSourceScanStartIntegration(t *testing.T, platform settings.PlatformState
 	inventory := persistence.NewSourceInventoryRepository(database)
 	tools, output, source := t.TempDir(), t.TempDir(), t.TempDir()
 	roots := service.NewSourceRoots(inventory, managedPathsFixture{tools: tools, output: output})
-	root, err := roots.Create(ctx, "Music", source)
+	root, err := roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create the source root: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestSourceScanStartSerializesWithRootDeletionWithPostgreSQL(t *testing.T) {
 		t.Fatalf("scan River jobs after the refused start = %d, want 0", jobs)
 	}
 
-	other, err := fixture.roots.Create(ctx, "Archive", t.TempDir())
+	other, err := fixture.roots.Create(ctx, "Archive", t.TempDir(), "in_place")
 	if err != nil {
 		t.Fatalf("create the second source root: %v", err)
 	}

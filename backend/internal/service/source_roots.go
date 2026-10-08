@@ -62,6 +62,7 @@ type SourceRoot struct {
 	ID                   uuid.UUID
 	DisplayName          string
 	ConfiguredPath       string
+	ProcessingMode       string
 	Enabled              bool
 	Status               string
 	SafeError            *string
@@ -74,14 +75,19 @@ type SourceRoot struct {
 	UpdatedAt            time.Time
 }
 
-// SourceRootEdit carries the fields an edit may change. A nil field keeps the
-// stored value, and Enabled is a pointer because false is a value an operator
-// sets, not an omission.
+// SourceRootEdit carries the fields an edit may change. Nil fields keep their
+// stored values, and pointer fields distinguish omission from explicit values.
 type SourceRootEdit struct {
 	DisplayName    *string
 	ConfiguredPath *string
+	ProcessingMode *string
 	Enabled        *bool
 }
+
+const (
+	SourceProcessingModeInPlace = "in_place"
+	SourceProcessingModeStaged  = "staged"
+)
 
 // SourceRoots manages registered source directories. It only records and
 // validates paths: a source directory belongs to the operator, MeloTrove reads
@@ -104,16 +110,19 @@ func (s *SourceRoots) SetPendingDispatcher(dispatcher sourceRootPendingAdmitter)
 
 // Create registers a new enabled root. The display name must not be empty and
 // the path must pass ValidateSourcePath. Nothing is written to the directory.
-func (s *SourceRoots) Create(ctx context.Context, displayName, configuredPath string) (SourceRoot, error) {
+func (s *SourceRoots) Create(ctx context.Context, displayName, configuredPath, processingMode string) (SourceRoot, error) {
 	name, err := sourceRootDisplayName(displayName)
 	if err != nil {
+		return SourceRoot{}, err
+	}
+	if err := validateSourceProcessingMode(processingMode); err != nil {
 		return SourceRoot{}, err
 	}
 	path, err := s.ValidateSourcePath(ctx, configuredPath, nil)
 	if err != nil {
 		return SourceRoot{}, fmt.Errorf("source root path: %w", err)
 	}
-	root := &persistence.SourceRoot{DisplayName: name, ConfiguredPath: path, Enabled: true}
+	root := &persistence.SourceRoot{DisplayName: name, ConfiguredPath: path, ProcessingMode: processingMode, Enabled: true}
 	if err := s.repository.CreateSourceRoot(ctx, root); err != nil {
 		return SourceRoot{}, fmt.Errorf("create source root: %w", err)
 	}
@@ -144,8 +153,9 @@ func (s *SourceRoots) List(ctx context.Context) ([]SourceRoot, error) {
 	return views, nil
 }
 
-// Edit changes the display name, the configured path or the enabled flag. A path
-// is re-validated before it is stored, and a changed path keeps the previous
+// Edit changes the display name, processing mode, configured path or enabled
+// flag. A mode change affects future work only and does not block on queued work.
+// A path is re-validated before it is stored, and a changed path keeps the previous
 // inventory, which the returned view reports as stale until a successful scan of
 // the new path replaces it. A path or enabled change is refused with
 // ErrSourceRootBusy while a scan of the root is active; a name change is not.
@@ -155,6 +165,12 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 		return SourceRoot{}, fmt.Errorf("read source root: %w", err)
 	}
 	updated := *current
+	// The repository treats an empty mode as "do not change it". Do not pass
+	// the mode from this earlier read for edits that did not request a mode
+	// change: a concurrent explicit mode edit must not be overwritten.
+	if edit.ProcessingMode == nil {
+		updated.ProcessingMode = ""
+	}
 	if edit.DisplayName != nil {
 		name, err := sourceRootDisplayName(*edit.DisplayName)
 		if err != nil {
@@ -171,6 +187,12 @@ func (s *SourceRoots) Edit(ctx context.Context, id uuid.UUID, edit SourceRootEdi
 	}
 	if edit.Enabled != nil {
 		updated.Enabled = *edit.Enabled
+	}
+	if edit.ProcessingMode != nil {
+		if err := validateSourceProcessingMode(*edit.ProcessingMode); err != nil {
+			return SourceRoot{}, err
+		}
+		updated.ProcessingMode = *edit.ProcessingMode
 	}
 	if err := s.repository.UpdateSourceRoot(ctx, &updated); err != nil {
 		if errors.Is(err, persistence.ErrSourceRootActiveScan) {
@@ -308,12 +330,19 @@ func (s *SourceRoots) view(ctx context.Context, root *persistence.SourceRoot) (S
 		return SourceRoot{}, fmt.Errorf("count source locations: %w", err)
 	}
 	return SourceRoot{
-		ID: root.ID, DisplayName: root.DisplayName, ConfiguredPath: root.ConfiguredPath,
+		ID: root.ID, DisplayName: root.DisplayName, ConfiguredPath: root.ConfiguredPath, ProcessingMode: root.ProcessingMode,
 		Enabled: root.Enabled, Status: root.Status, SafeError: root.SafeError,
 		InventoryPath: root.InventoryPath, Stale: root.Stale(),
 		ScanGeneration: root.ScanGeneration, LastSuccessfulScanAt: root.LastSuccessfulScanAt,
 		LocationCount: count, CreatedAt: root.CreatedAt, UpdatedAt: root.UpdatedAt,
 	}, nil
+}
+
+func validateSourceProcessingMode(mode string) error {
+	if mode != SourceProcessingModeInPlace && mode != SourceProcessingModeStaged {
+		return fmt.Errorf("source processing mode must be %q or %q", SourceProcessingModeInPlace, SourceProcessingModeStaged)
+	}
+	return nil
 }
 
 func sourceRootDisplayName(displayName string) (string, error) {

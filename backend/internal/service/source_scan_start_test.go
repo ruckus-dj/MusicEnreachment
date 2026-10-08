@@ -127,7 +127,7 @@ func newSourceScanStartFixture(t *testing.T, setup service.SourceScanSetup, plat
 	}
 	tools, output := t.TempDir(), t.TempDir()
 	roots := service.NewSourceRoots(repository, managedPathsFixture{tools: tools, output: output})
-	root, err := roots.Create(context.Background(), "Music", t.TempDir())
+	root, err := roots.Create(context.Background(), "Music", t.TempDir(), "in_place")
 	if err != nil {
 		t.Fatalf("create the source root: %v", err)
 	}

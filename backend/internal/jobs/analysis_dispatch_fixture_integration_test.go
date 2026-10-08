@@ -79,7 +79,7 @@ func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.Sourc
 	roots := service.NewSourceRoots(inventory, registry)
 	source := t.TempDir()
 	writeScanDispatchFile(t, filepath.Join(source, "album", "track.flac"), "audio bytes")
-	root, err := roots.Create(ctx, "Music", source)
+	root, err := roots.Create(ctx, "Music", source, "in_place")
 	if err != nil {
 		t.Fatalf("create the source root: %v", err)
 	}
