@@ -67,6 +67,10 @@ type interruptedSourceAnalysisRecovery interface {
 	RecoverInterruptedSourceAnalysis(context.Context, uuid.UUID, string) error
 }
 
+type interruptedSourceAnalysisArtifactCleanupRecovery interface {
+	RecoverInterruptedSourceAnalysisArtifactCleanupAtStartup(context.Context, uuid.UUID, int, int64) error
+}
+
 // ReconcileInterruptedOperations marks queued/running operations whose River
 // delivery is not live as retryable failures and removes their private staging.
 // An interrupted scan is resolved against its root first: a generation the root
@@ -119,6 +123,16 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			if operation.Kind == service.SourceAnalysisOperationKind {
 				if err := recoverInterruptedSourceAnalysis(ctx, repository, operation); err != nil {
 					return err
+				}
+				return nil
+			}
+			if operation.Kind == persistence.SourceAnalysisArtifactCleanupOperationKind {
+				recovery, ok := repository.(interruptedSourceAnalysisArtifactCleanupRecovery)
+				if !ok || operation.RiverJobID == nil {
+					return fmt.Errorf("recover source analysis artifact cleanup: exact-fence persistence recovery is unavailable")
+				}
+				if err := recovery.RecoverInterruptedSourceAnalysisArtifactCleanupAtStartup(ctx, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
+					return fmt.Errorf("recover source analysis artifact cleanup %s: %w", operation.ID, err)
 				}
 				return nil
 			}

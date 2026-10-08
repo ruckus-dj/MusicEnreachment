@@ -1269,6 +1269,7 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 		Where("id = ?", id).
 		Where("state = 'failed'").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("dismiss operation: %w", err)
@@ -1284,6 +1285,7 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 		Where("state = 'succeeded'").
 		Where("finished_at < ?", before).
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cleanup succeeded operations: %w", err)

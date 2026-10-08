@@ -16,6 +16,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Directory access mask. FILE_ADD_FILE and FILE_ADD_SUBDIRECTORY are the
+// documented directory-access aliases of FILE_WRITE_DATA and FILE_APPEND_DATA;
+// x/sys/windows exports only the latter names.
+const windowsDirAccess = windows.FILE_LIST_DIRECTORY | windows.FILE_WRITE_DATA |
+	windows.FILE_APPEND_DATA | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE
+
 type windowsOutputOpener struct{}
 
 func newPlatformOutputOpener() OutputOpener { return windowsOutputOpener{} }
@@ -39,7 +45,7 @@ func (windowsOutputOpener) OpenRoot(ctx context.Context, path string) (OutputDir
 			return nil, ErrInvalidPath
 		}
 	}
-	h, err := outputWindowsOpen(windows.InvalidHandle, `\??\`+path[:2]+`\`, windows.FILE_LIST_DIRECTORY|windows.FILE_ADD_FILE|windows.FILE_ADD_SUBDIRECTORY|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, true)
+	h, err := outputWindowsOpen(windows.InvalidHandle, `\??\`+path[:2]+`\`, windowsDirAccess, windows.FILE_OPEN, true)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +134,7 @@ func (d *windowsOutputDir) openDir(ctx context.Context, name string) (*windowsOu
 		d.mu.Unlock()
 		return nil, os.ErrClosed
 	}
-	h, err := outputWindowsOpen(d.handle, name, windows.FILE_LIST_DIRECTORY|windows.FILE_ADD_FILE|windows.FILE_ADD_SUBDIRECTORY|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, true)
+	h, err := outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_OPEN, true)
 	d.mu.Unlock()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if h != windows.InvalidHandle {
@@ -153,9 +159,9 @@ func (d *windowsOutputDir) OpenOrCreateDir(ctx context.Context, name string) (Ou
 		d.mu.Unlock()
 		return nil, os.ErrClosed
 	}
-	h, err := outputWindowsOpen(d.handle, name, windows.FILE_LIST_DIRECTORY|windows.FILE_ADD_FILE|windows.FILE_ADD_SUBDIRECTORY|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_CREATE, true)
+	h, err := outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_CREATE, true)
 	if nt, ok := err.(windows.NTStatus); ok && nt == windows.STATUS_OBJECT_NAME_COLLISION {
-		h, err = outputWindowsOpen(d.handle, name, windows.FILE_LIST_DIRECTORY|windows.FILE_ADD_FILE|windows.FILE_ADD_SUBDIRECTORY|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_OPEN, true)
+		h, err = outputWindowsOpen(d.handle, name, windowsDirAccess, windows.FILE_OPEN, true)
 	}
 	d.mu.Unlock()
 	if ctxErr := ctx.Err(); ctxErr != nil {

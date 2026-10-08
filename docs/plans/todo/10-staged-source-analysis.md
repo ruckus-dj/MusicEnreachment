@@ -161,6 +161,19 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   Explicit deletion remains I08; no automatic unlink was introduced. Native
   platform CI and deployment smoke were not run.
 
+- **I08 — explicit artifact cleanup complete locally (2026-10-09):** added
+  explicit cleanup admission, dedicated one-attempt River delivery, durable
+  per-artifact outcomes and fenced claims. Shared output sessions and exclusive
+  delivery sessions span filesystem actions; interrupted startup recovery never
+  unlinks. Deleted/missing results survive registry removal; failures preserve
+  ownership and remain eligible for the next explicit action. Sourcefs cleanup
+  accepts only canonical registered paths, rejects links/nonregular entries and
+  does not create or prune directories. API mutation guards, post-gate runtime
+  lookup and coherent operation detail snapshots are covered. OpenAPI/client
+  regenerated. `task verify` passed. Unix cleanup uses the approved trusted
+  filesystem boundary, not an atomic hostile-replacement guarantee. Native
+  Windows execution and deployment smoke were not run; UI remains I11.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

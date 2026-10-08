@@ -256,6 +256,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	if existing.State != "failed" {
 		return nil, fmt.Errorf("only failed operations can be retried")
 	}
+	if existing.Kind == SourceAnalysisArtifactCleanupOperationKind {
+		return nil, fmt.Errorf("cleanup failures require a new explicit artifact selection")
+	}
 	if existing.Kind == SourceAnalysisOperationKind {
 		return s.retryAnalysis(ctx, existing)
 	}
@@ -303,6 +306,8 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 		return s.scanRetry.RetrySourceScanOperationAndEnqueue(ctx, existing.ID, s.river, ScanSourceJobArgs{OperationID: existing.ID}, nil)
 	case SourceAnalysisOperationKind:
 		return s.retryAnalysis(ctx, existing)
+	case SourceAnalysisArtifactCleanupOperationKind:
+		return nil, fmt.Errorf("cleanup failures require a new explicit artifact selection")
 	default:
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, OperationJobArgs{OperationID: existing.ID}, nil)
 	}

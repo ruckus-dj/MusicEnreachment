@@ -25,6 +25,7 @@ type Dependencies struct {
 	// never probes the source, so it stays available while the platform is
 	// diagnostic or Setup is unfinished.
 	SourceLocationDetails *service.SourceLocationDetails
+	SourceArtifactCleanup *service.SourceAnalysisArtifactCleanup
 }
 
 type preflightEntry struct {

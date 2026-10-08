@@ -1,10 +1,12 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -82,6 +84,64 @@ func TestOperationEndpointsExposeTheScanTargetSourceRootID(t *testing.T) {
 	if !seen[scanID.String()] || !seen[installID.String()] || !seen[moveID.String()] {
 		t.Fatalf("listed operations omit the fixtures: %v", seen)
 	}
+}
+
+func TestCleanupOperationDetailUsesOneConsistentRead(t *testing.T) {
+	operationID, artifactID := uuid.New(), uuid.New()
+	repository := &operationDetailRepository{
+		transitionOperationsRepository: &transitionOperationsRepository{rows: map[uuid.UUID]*persistence.Operation{
+			operationID: {
+				ID: operationID, Kind: service.SourceAnalysisArtifactCleanupOperationKind,
+				State: "running", Stage: "cleaning_artifacts",
+			},
+		}},
+	}
+	// Simulate a worker settling both rows between two otherwise-independent
+	// reads. The detail reader represents one transaction's terminal snapshot.
+	finished := time.Now().UTC()
+	repository.detail = &persistence.OperationWithCleanupItems{
+		Operation: &persistence.Operation{
+			ID: operationID, Kind: service.SourceAnalysisArtifactCleanupOperationKind,
+			State: "succeeded", Stage: "finished", FinishedAt: &finished,
+		},
+		CleanupItems: []persistence.SourceAnalysisArtifactCleanupItem{{
+			ArtifactID: artifactID, OperationID: operationID, State: "succeeded",
+		}},
+	}
+
+	router := chi.NewRouter()
+	huma := api.New(router)
+	api.RegisterAll(huma, api.Dependencies{
+		Operations:            service.NewOperations(repository),
+		SourceArtifactCleanup: service.NewSourceAnalysisArtifactCleanup(nil, nil, nil),
+	})
+
+	response := decodeOperationBody(t, transitionRequest(t, router, http.MethodGet, "/operations/"+operationID.String(), ""))
+	if response["state"] != "succeeded" {
+		t.Fatalf("operation state = %v, want succeeded", response["state"])
+	}
+	results, ok := response["cleanup_results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("cleanup_results = %#v, want one terminal result", response["cleanup_results"])
+	}
+	result, ok := results[0].(map[string]any)
+	if !ok || result["state"] != "succeeded" || result["artifact_id"] != artifactID.String() {
+		t.Fatalf("cleanup result = %#v, want succeeded result for %s", results[0], artifactID)
+	}
+	if repository.readCount != 1 {
+		t.Fatalf("combined detail reads = %d, want exactly one", repository.readCount)
+	}
+}
+
+type operationDetailRepository struct {
+	*transitionOperationsRepository
+	detail    *persistence.OperationWithCleanupItems
+	readCount int
+}
+
+func (repository *operationDetailRepository) ReadOperationWithCleanupItems(_ context.Context, _ uuid.UUID) (*persistence.OperationWithCleanupItems, error) {
+	repository.readCount++
+	return repository.detail, nil
 }
 
 func decodeOperationBody(t *testing.T, response *httptest.ResponseRecorder) map[string]any {

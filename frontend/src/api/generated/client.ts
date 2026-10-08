@@ -47,6 +47,8 @@ import type {
   RetrySourceAnalysisStepBody,
   SaveRuntimeBody,
   SetupStateBody,
+  SourceArtifactCleanupBody,
+  SourceArtifactCleanupCandidatesBody,
   SourceLocationDetailResponse,
   SourceLocationsBody,
   SourceRootResponse,
@@ -2280,6 +2282,247 @@ export const useSaveSetupRuntime = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getSaveSetupRuntimeMutationOptions(options), queryClient);
+    }
+
+export type listSourceAnalysisArtifactCleanupCandidatesResponse200 = {
+  data: SourceArtifactCleanupCandidatesBody
+  status: 200
+}
+
+export type listSourceAnalysisArtifactCleanupCandidatesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listSourceAnalysisArtifactCleanupCandidatesResponseSuccess = (listSourceAnalysisArtifactCleanupCandidatesResponse200) & {
+  headers: Headers;
+};
+export type listSourceAnalysisArtifactCleanupCandidatesResponseError = (listSourceAnalysisArtifactCleanupCandidatesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listSourceAnalysisArtifactCleanupCandidatesResponse = (listSourceAnalysisArtifactCleanupCandidatesResponseSuccess | listSourceAnalysisArtifactCleanupCandidatesResponseError)
+
+export const getListSourceAnalysisArtifactCleanupCandidatesUrl = () => {
+
+
+
+
+  return `/api/source-analysis/artifacts/cleanup`
+}
+
+/**
+ * @summary List staged analysis artifacts eligible for explicit cleanup
+ */
+export const listSourceAnalysisArtifactCleanupCandidates = async ( options?: RequestInit): Promise<listSourceAnalysisArtifactCleanupCandidatesResponse> => {
+
+  const res = await fetch(getListSourceAnalysisArtifactCleanupCandidatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listSourceAnalysisArtifactCleanupCandidatesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listSourceAnalysisArtifactCleanupCandidatesResponse
+}
+
+
+
+
+
+export const getListSourceAnalysisArtifactCleanupCandidatesQueryKey = () => {
+    return [
+    `/api/source-analysis/artifacts/cleanup`
+    ] as const;
+    }
+
+
+export const getListSourceAnalysisArtifactCleanupCandidatesQueryOptions = <TData = Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSourceAnalysisArtifactCleanupCandidatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>> = ({ signal }) => listSourceAnalysisArtifactCleanupCandidates({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSourceAnalysisArtifactCleanupCandidatesQueryResult = NonNullable<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>>
+export type ListSourceAnalysisArtifactCleanupCandidatesQueryError = ErrorModel
+
+
+export function useListSourceAnalysisArtifactCleanupCandidates<TData = Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>,
+          TError,
+          Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSourceAnalysisArtifactCleanupCandidates<TData = Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>,
+          TError,
+          Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSourceAnalysisArtifactCleanupCandidates<TData = Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List staged analysis artifacts eligible for explicit cleanup
+ */
+
+export function useListSourceAnalysisArtifactCleanupCandidates<TData = Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSourceAnalysisArtifactCleanupCandidates>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSourceAnalysisArtifactCleanupCandidatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type cleanupSourceAnalysisArtifactsResponse202 = {
+  data: OperationResponse
+  status: 202
+}
+
+export type cleanupSourceAnalysisArtifactsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type cleanupSourceAnalysisArtifactsResponseSuccess = (cleanupSourceAnalysisArtifactsResponse202) & {
+  headers: Headers;
+};
+export type cleanupSourceAnalysisArtifactsResponseError = (cleanupSourceAnalysisArtifactsResponseDefault) & {
+  headers: Headers;
+};
+
+export type cleanupSourceAnalysisArtifactsResponse = (cleanupSourceAnalysisArtifactsResponseSuccess | cleanupSourceAnalysisArtifactsResponseError)
+
+export const getCleanupSourceAnalysisArtifactsUrl = () => {
+
+
+
+
+  return `/api/source-analysis/artifacts/cleanup`
+}
+
+/**
+ * @summary Explicitly clean selected staged analysis artifacts
+ */
+export const cleanupSourceAnalysisArtifacts = async (sourceArtifactCleanupBody: NonReadonly<SourceArtifactCleanupBody>, options?: RequestInit): Promise<cleanupSourceAnalysisArtifactsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getCleanupSourceAnalysisArtifactsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(sourceArtifactCleanupBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: cleanupSourceAnalysisArtifactsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as cleanupSourceAnalysisArtifactsResponse
+}
+
+
+
+
+
+export const getCleanupSourceAnalysisArtifactsMutationKey = () => ['cleanupSourceAnalysisArtifacts'] as const;
+
+export const getCleanupSourceAnalysisArtifactsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>, TError,CleanupSourceAnalysisArtifactsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>, TError,CleanupSourceAnalysisArtifactsMutationVariables, TContext> => {
+
+const mutationKey = getCleanupSourceAnalysisArtifactsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>, CleanupSourceAnalysisArtifactsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  cleanupSourceAnalysisArtifacts(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CleanupSourceAnalysisArtifactsMutationResult = NonNullable<Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>>
+    export type CleanupSourceAnalysisArtifactsMutationBody = NonReadonly<SourceArtifactCleanupBody>
+    export type CleanupSourceAnalysisArtifactsMutationError = ErrorModel
+    export type CleanupSourceAnalysisArtifactsMutationVariables = {data: NonReadonly<SourceArtifactCleanupBody>}
+
+    /**
+ * @summary Explicitly clean selected staged analysis artifacts
+ */
+export const useCleanupSourceAnalysisArtifacts = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>, TError,CleanupSourceAnalysisArtifactsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cleanupSourceAnalysisArtifacts>>,
+        TError,
+        CleanupSourceAnalysisArtifactsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCleanupSourceAnalysisArtifactsMutationOptions(options), queryClient);
     }
 
 export type listSourcesResponse200 = {

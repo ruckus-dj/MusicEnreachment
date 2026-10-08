@@ -31,24 +31,25 @@ type OperationOutput struct {
 }
 
 type OperationResponse struct {
-	ID                     uuid.UUID  `json:"id"`
-	Kind                   string     `json:"kind"`
-	State                  string     `json:"state"`
-	Stage                  string     `json:"stage"`
-	TargetInstallationID   *uuid.UUID `json:"target_installation_id,omitempty"`
-	TargetSourceRootID     *uuid.UUID `json:"target_source_root_id,omitempty"`
-	TargetSourceLocationID *uuid.UUID `json:"target_source_location_id,omitempty"`
-	TargetIdentity         string     `json:"target_identity,omitempty"`
-	BytesCompleted         int64      `json:"bytes_completed"`
-	BytesTotal             *int64     `json:"bytes_total,omitempty"`
-	SafeError              *string    `json:"safe_error,omitempty"`
-	CreatedAt              time.Time  `json:"created_at"`
-	StartedAt              *time.Time `json:"started_at,omitempty"`
-	FinishedAt             *time.Time `json:"finished_at,omitempty"`
-	UpdatedAt              time.Time  `json:"updated_at"`
+	ID                     uuid.UUID                                         `json:"id"`
+	Kind                   string                                            `json:"kind"`
+	State                  string                                            `json:"state"`
+	Stage                  string                                            `json:"stage"`
+	TargetInstallationID   *uuid.UUID                                        `json:"target_installation_id,omitempty"`
+	TargetSourceRootID     *uuid.UUID                                        `json:"target_source_root_id,omitempty"`
+	TargetSourceLocationID *uuid.UUID                                        `json:"target_source_location_id,omitempty"`
+	TargetIdentity         string                                            `json:"target_identity,omitempty"`
+	BytesCompleted         int64                                             `json:"bytes_completed"`
+	BytesTotal             *int64                                            `json:"bytes_total,omitempty"`
+	SafeError              *string                                           `json:"safe_error,omitempty"`
+	CreatedAt              time.Time                                         `json:"created_at"`
+	StartedAt              *time.Time                                        `json:"started_at,omitempty"`
+	FinishedAt             *time.Time                                        `json:"finished_at,omitempty"`
+	UpdatedAt              time.Time                                         `json:"updated_at"`
+	CleanupResults         []service.SourceAnalysisArtifactCleanupItemResult `json:"cleanup_results,omitempty"`
 }
 
-func registerOperations(api huma.API, operations *service.Operations, setup *service.SetupService) {
+func registerOperations(api huma.API, operations *service.Operations, setup *service.SetupService, cleanup *service.SourceAnalysisArtifactCleanup) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-operations", Method: http.MethodGet, Path: "/operations",
 		Summary: "List current operation snapshots", Tags: []string{"Operations"},
@@ -78,11 +79,15 @@ func registerOperations(api huma.API, operations *service.Operations, setup *ser
 		if operations == nil {
 			return nil, huma.Error503ServiceUnavailable("operation service is unavailable")
 		}
-		snapshot, err := operations.Snapshot(ctx, input.ID)
+		detail, err := operations.Detail(ctx, input.ID)
 		if err != nil {
 			return nil, huma.Error404NotFound("operation not found")
 		}
-		return operationOutput(snapshot), nil
+		output := operationOutput(detail.Snapshot)
+		if detail.Snapshot.Kind == service.SourceAnalysisArtifactCleanupOperationKind && cleanup != nil {
+			output.Body.CleanupResults = detail.CleanupResults
+		}
+		return output, nil
 	})
 
 	huma.Register(api, huma.Operation{

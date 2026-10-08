@@ -1328,7 +1328,7 @@ describe("SettingsScreen", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Каталог установки недоступен");
-    expect(alert).toHaveFocus();
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(alert.closest("dialog")).toBeNull();
   });

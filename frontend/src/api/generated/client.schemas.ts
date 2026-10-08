@@ -205,11 +205,19 @@ export interface MovePreflightInputBody {
   remove_old_files: boolean;
 }
 
+export interface SourceAnalysisArtifactCleanupItemResult {
+  artifact_id: string;
+  safe_error?: string;
+  state: string;
+}
+
 export interface OperationResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   bytes_completed: number;
   bytes_total?: number;
+  /** @nullable */
+  cleanup_results?: SourceAnalysisArtifactCleanupItemResult[] | null;
   created_at: string;
   finished_at?: string;
   id: string;
@@ -301,6 +309,12 @@ export interface SetupStateBody {
   settings: RuntimeSettingsResponse;
 }
 
+export interface SourceAnalysisArtifactCleanupCandidate {
+  artifact_id: string;
+  relative_path: string;
+  state: string;
+}
+
 export type SourceAnalysisStepResponseName = typeof SourceAnalysisStepResponseName[keyof typeof SourceAnalysisStepResponseName];
 
 
@@ -351,6 +365,25 @@ export interface SourceAnalysisStepResponse {
   sha256?: SourceSHA256ResultResponse;
   skip_reason?: string;
   state: SourceAnalysisStepResponseState;
+}
+
+export interface SourceArtifactCleanupBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     * @nullable
+     */
+  artifact_ids: string[] | null;
+}
+
+export interface SourceArtifactCleanupCandidatesBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  candidates: SourceAnalysisArtifactCleanupCandidate[] | null;
+  count: number;
 }
 
 export type SourceLocationDetailResponseAnalysisState = typeof SourceLocationDetailResponseAnalysisState[keyof typeof SourceLocationDetailResponseAnalysisState];

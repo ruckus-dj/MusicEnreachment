@@ -15,10 +15,11 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	RegisterSetup(api, dependencies.Setup)
 	registerSettings(api, dependencies.Setup)
 	registerTools(api, dependencies, tokens)
-	registerOperations(api, dependencies.Operations, dependencies.Setup)
+	registerOperations(api, dependencies.Operations, dependencies.Setup, dependencies.SourceArtifactCleanup)
 	registerSources(api, dependencies)
 	registerSourceLocationDetail(api, dependencies)
 	registerSourceAnalysis(api, dependencies)
+	registerSourceArtifactCleanup(api, dependencies.SourceArtifactCleanup, dependencies.Operations, dependencies.Setup)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

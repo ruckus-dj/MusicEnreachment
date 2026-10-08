@@ -137,6 +137,7 @@ func Run(ctx context.Context, config Config) error {
 	)
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
+	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,
@@ -160,6 +161,7 @@ func Run(ctx context.Context, config Config) error {
 		sourceInventory, persistence.NewSourceAnalysisArtifactRepository(db), registry, nil, nil,
 	))
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
+	artifactCleanupWorker := jobs.NewSourceAnalysisArtifactCleanupWorker(setupManagerRepository, operationService, artifactCleanup)
 
 	sourceFileConcurrency, err := registry.GetSourceFileConcurrency(ctx)
 	if err != nil {
@@ -176,6 +178,7 @@ func Run(ctx context.Context, config Config) error {
 		// A queued analysis is registered for the same reason; queue concurrency
 		// is initialized from the source-file setting and bounded live by worker.
 		river.AddWorker(workers, analysisWorker)
+		river.AddWorker(workers, artifactCleanupWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}, sourceFileConcurrency, jobs.NewCleanupPeriodicJob())
 	if err != nil {
@@ -227,6 +230,7 @@ func Run(ctx context.Context, config Config) error {
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
+		SourceArtifactCleanup: artifactCleanup,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{
