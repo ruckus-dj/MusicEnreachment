@@ -8,12 +8,20 @@
 
 ## Следующий этап
 
-Текущий этап — [план 09: проработка staged-анализа и рабочего каталога](todo/09-staged-source-analysis-design.md),
+Текущий этап — [план 09: проработка staged source analysis](todo/09-staged-source-analysis-design.md),
 дополненный [решениями владельца от 2026-10-08](todo/09-staged-source-analysis-owner-decisions.md).
-Статус: проработка выполняется, решения собраны, приложение пока не реализовано.
-D01–D06 не объявлены выполненными без отдельных свидетельств; предстоят
-сопоставление с кодом, UI/lifecycle и DB/API/deployment проработка и исполняемая
-декомпозиция.
+Статус: D01 выполнен как factual map на `959c680`; D03–D05 описаны предложением
+контракта, D06 — отдельным implementation proposal. D02-сценарии и независимое
+review/явное owner approval остаются. Приложение не реализовано; proposal NOT
+READY, implementation не начата.
+
+- [Контракт D03–D05](todo/09-staged-source-analysis-contract.md) — UI-flow,
+  lifecycle, DB/API/deployment proposal с открытыми review-вопросами.
+- [Implementation proposal](to-decompose/09-staged-source-analysis-implementation-proposal.md)
+  — последовательные маленькие commits, зависимости, verification и CI; не готов
+  к реализации до explicit approval.
+- [D01 execution map](../reports/plan09-execution-map-2026-10-08.md) — фактический
+  code map, не требования и не свидетельство поставки staged mode.
 
 ## Завершено
 

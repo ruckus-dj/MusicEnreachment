@@ -1,4 +1,4 @@
-# План 09: проработать staged-анализ источников и рабочий каталог
+# План 09: проработать staged source analysis источников
 
 ## Статус
 
@@ -26,10 +26,12 @@
 Ограничения свидетельств не превращаются в новые требования и не переоткрывают
 завершённые планы без нового обнаруженного дефекта.
 
-Текущий анализ работает только `in_place`. Для NAS/HDD уже предусмотрен второй
-режим: одно последовательное копирование в явно выбранный общий work-directory,
-анализ временной копии и её очистка. Это ограниченное развитие существующего
-вертикального среза без выбора matching/confidence и политики качества.
+Текущий анализ работает только `in_place`. Утверждённое владельцем направление для
+NAS/HDD — per-root staged mode: одна последовательная временная AUDIO-копия в
+служебной области управляемого output (`analysis`), анализ копии и её явная
+очистка. Отдельный общий work-directory setting/mount не вводится. Это
+ограниченное развитие существующего вертикального среза без выбора
+matching/confidence и политики качества.
 
 Другие варианты отложены осознанно:
 
@@ -47,8 +49,11 @@
 - [Требования](../../design/requirements.md): выбор обработки на месте или через
   временную копию для каждого входящего каталога.
 - [Решения](../../design/decisions.md), «Инвентарь и обработка источников»:
-  `in_place`/`staged`, явный work-directory, hash в потоке копирования,
-  size/mtime как достаточный критерий текущести, независимые результаты шагов.
+  `in_place`/`staged`, size/mtime как достаточный критерий текущести,
+  независимые результаты шагов. Исторические положения того же раздела о явном
+  общем work-directory и SHA только в copy-потоке помечены позднейшим уточнением
+  владельца 2026-10-08 как superseded: staged использует output-managed копии,
+  SHA — независимый запрашиваемый step.
 - [Модель данных](../../design/data-model.md): root/location/variant, SHA identity,
   nullable digest, отсутствие истории и освобождение удерживаемых результатов.
 - [Архитектура](../../design/repository-architecture.md): технические слои,
@@ -137,13 +142,13 @@ hash в copy-потоке и полный scan как атомарный ист�
 
 ### D01. Снять актуальную карту исполнения
 
- - [x] Сопоставить планы 01–08 с текущей реализацией и отметить ограничения, не
+- [x] Сопоставить планы 01–08 с текущей реализацией и отметить ограничения, не
       создавая новый список дефектов из исторических отчётов.
- - [x] Проследить scan admission → preparation → candidate publication → pending
+- [x] Проследить scan admission → preparation → candidate publication → pending
       analysis → single-step retry → terminal settlement/startup recovery.
- - [x] Отметить каждое прямое source-read: stat, SHA, probe и fingerprint; место,
+- [x] Отметить каждое прямое source-read: stat, SHA, probe и fingerprint; место,
       где возможно подставить prepared input без дублирования ffprobe.
- - [x] Зафиксировать snapshot fields, source/tool holds, lock order и filesystem
+- [x] Зафиксировать snapshot fields, source/tool holds, lock order и filesystem
       действия вне транзакций. Для карты указать точные символы и файлы.
 
 Ориентиры текущего кода:
@@ -166,7 +171,8 @@ hash в copy-потоке и полный scan как атомарный ист�
 
 - [ ] Описать локальный SSD/in-place и HDD/NAS/staged, новое и существующее root.
 - [ ] Разобрать неверный/недоступный work path, нехватку места, изменение source
-      при copy, исчезновение диска и disabled root.
+      при copy, исчезновение диска (отдельного режима «выключить» у root нет —
+      владелец допускает только add/remove).
 - [ ] Разобрать partial tool success, retry одного шага, изменение active tools,
       смену режима/пути и restart после каждого filesystem/DB перехода.
 - [ ] Представить владельцу таблицу вариантов Q01–Q08; явно записать ответы,
@@ -178,75 +184,86 @@ WAITING FOR OWNER, а не «готово к реализации».
 
 ### D03. Подготовить UI-flow
 
-- [ ] Нарисовать дополнение формы root: режим, объяснение I/O и server path.
-- [ ] Подготовить секцию work-directory в согласованном месте Settings; черновик,
+- [x] Описать дополнение формы root: режим, объяснение I/O и server path.
+- [x] Подготовить секцию output/concurrency в Settings; черновик,
       проверка, сохранение и readback имеют разные состояния.
-- [ ] Показать queued/copying/tool/cleanup/error/retry только в согласованном
+- [x] Показать queued/copying/tool/cleanup/error/retry только в согласованном
       контракте; не обещать проценты, если backend не предоставляет total.
-- [ ] Описать loading/empty/error/stale, inline errors, keyboard navigation,
+- [x] Описать loading/empty/error/stale, inline errors, keyboard navigation,
       focus restoration и сохранность drafts при completion/reconnect.
-- [ ] Сопоставить с `screenshots/v2/sources-{light,dark}-1440.png` и
+- [x] Сопоставить с `screenshots/v2/sources-{light,dark}-1440.png` и
       `settings-{light,dark}-1440.png`: плотная desktop-first геометрия,
       canvas/ink tokens, различение состояний текстом, не только цветом.
-- [ ] Отдельно проверить узкий viewport 375 px как отсутствие потери действий,
+- [x] Описать проверку узкого viewport 375 px как отсутствие потери действий,
       не как новое обязательство mobile-first.
 
-**Результат:** reviewed UI-flow со всеми отказами; демоданные не заменяют API.
+**Результат:** UI-flow, error/stale states, draft/focus и проверка viewport
+предложены в [контракте D03–D05](09-staged-source-analysis-contract.md).
+Это текстовая проработка, не визуально reviewed flow и не API реализация.
 
 ### D04. Спроектировать один lifecycle prepared input
 
-- [ ] Сформировать таблицу переходов: admission → owned copy → validated copy
+- [x] Сформировать таблицу переходов: admission → owned copy → validated copy
       → cache/tool preparation → DB publication → cleanup; точные состояния
       выбрать по согласованному контракту, не добавлять новый analyzer pipeline.
-- [ ] Объяснить, как один copy используется нужными независимыми steps и как
+- [x] Объяснить, как один copy используется нужными независимыми steps и как
       выполняются retry/recovery без повтора успешных siblings.
-- [ ] Определить границу «одного копирования»: обычная обработка, отдельный
+- [x] Определить границу «одного копирования»: обычная обработка, отдельный
       retry/rerun и crash recovery. Не выводить из этого бессрочное хранение
       scratch или запрет повторного copy после сбоя.
-- [ ] Отдельно описать SHA enabled/disabled, cache hit/miss, неизменённый source,
+- [x] Отдельно описать SHA enabled/disabled, cache hit/miss, неизменённый source,
       probe_error retry и fingerprint rerun. Запретить неявный hash backfill.
-- [ ] Указать stat до/после copy и перед применением, связь source identity с
+- [x] Указать stat до/после copy и перед применением, связь source identity с
       snapshot и сохранённым результатом, реакцию на изменение size/mtime.
-- [ ] Описать ownership temporary paths, manifest/DB references, fencing старой
+- [x] Описать ownership temporary paths, manifest/DB references, fencing старой
       доставки и очистку только доказанно принадлежащих приложению artifacts.
-- [ ] Разобрать crash после создания каталога, partial copy, готовой copy,
+- [x] Разобрать crash после создания каталога, partial copy, готовой copy,
       tool success, DB commit и до/во время cleanup. Не удалять живую работу.
-- [ ] Подготовить concurrency/resource модель без новых продуктовых квот,
+- [x] Подготовить concurrency/resource модель без новых продуктовых квот,
       timers или более строгой filesystem threat model.
 
-**Результат:** таблица happy path/отказов/recovery и аргументация отсутствия
-второго полного probe для обычного текущего файла.
+**Результат:** lifecycle/crash matrix и integration point shared preparer в
+[контракте D03–D05](09-staged-source-analysis-contract.md). Fingerprint cache
+semantics явно оставлены unresolved review issue; не согласованный implementation
+contract.
 
 ### D05. Определить DB/API и deployment-контракт
 
-- [ ] Предложить физическое хранение режима root, typed work-directory setting
+- [x] Предложить физическое хранение root mode, output-owned staging references
       и минимальных owned-staging references; объяснить связь с целевой моделью.
-- [ ] Указать upgrade существующих roots и безопасный rollback; не переписывать
+- [x] Указать upgrade существующих roots и безопасный rollback; не переписывать
       исторические миграции и не заявлять destructive down допустимым молча.
-- [ ] Определить snapshot режим/путь/policy/tool pins, их валидацию и holds;
-      атомарный enqueue через `River.InsertTx`, commit/rollback и lock order.
-- [ ] Спроектировать DTO существующих root/settings/operation API и ошибки;
+- [x] Предложить минимальный operation IDs/intent, актуальные settings, validation
+      и holds; полный input snapshot конфигурации не сохранять.
+- [x] Описать минимальную admission identity/intent, чтение текущих settings,
+      validation и holds; enqueue через `River.InsertTx`, commit/rollback и lock order.
+- [x] Спроектировать DTO существующих root/settings/operation API и ошибки;
       URL новых endpoints, если нужны, остаются предложением до review.
-- [ ] Описать OpenAPI → Orval pipeline без ручных правок generated files.
-- [ ] Подготовить явный Compose bind mount/volume для work-directory и сценарий
+- [x] Описать OpenAPI → Orval pipeline без ручных правок generated files.
+- [x] Подготовить явный Compose output bind mount и standalone сценарий
       standalone; новых bootstrap env vars не вводить.
 
-**Результат:** согласованная физическая и HTTP-модель, а не SQL/API реализация.
+**Результат:** предложенная физическая, HTTP и deployment-модель в
+[контракте D03–D05](09-staged-source-analysis-contract.md). Требуется review;
+это не согласованная SQL/API реализация.
 
 ### D06. Декомпозировать последующую реализацию
 
-- [ ] Разбить на небольшие последовательные задачи: settings/roots/schema;
+- [x] Разбить на небольшие последовательные commits: settings/roots/schema;
       admission/snapshots; prepared-input copy; scan integration; retry/recovery;
       API/generated; UI; regression/runtime/independent acceptance.
-- [ ] Для каждой задачи указать зависимости, конкретные файлы/символы,
+- [x] Для каждой задачи указать зависимости, точки изменения/символы,
       проверяемый результат и безопасное промежуточное состояние.
-- [ ] Не делать весь черновик source-inventory-and-analysis одним этапом.
-- [ ] Приложить матрицу проверок из раздела 6 и критерии пользовательской готовности.
-- [ ] Получить независимое архитектурное/продуктовое ревью и явное одобрение
-      владельца перед переводом implementation-плана в ready.
+- [x] Не делать весь черновик source-inventory-and-analysis одним этапом.
+- [x] Приложить матрицу проверок из раздела 6 и критерии пользовательской готовности.
+- [x] Независимое архитектурное/продуктовое ревью проведено 2026-10-08
+      ([отчёт](../../reports/plan09-independent-review-2026-10-08.md)).
+- [ ] Получить явное одобрение владельца перед переводом implementation-плана
+      в ready.
 
-**Результат:** отдельный детальный исполняемый план staged-среза. Этот план 09
-не объявляется выполненным вследствие одной только записи следующего плана.
+**Результат:** отдельный [implementation proposal](../to-decompose/09-staged-source-analysis-implementation-proposal.md)
+с commit-by-commit sequencing, dependencies, verification и CI. Он остаётся NOT
+READY до review и явного owner approval.
 
 ## 6. Матрица проверки будущей реализации
 
@@ -282,11 +299,18 @@ Compose smoke — GitHub CI, не локальные cross-builds. Ручной 
       обнаружен, имеет воспроизведение, а не вывод из ограничения старого отчёта.
 - [ ] По Q01–Q08 есть явные ответы владельца либо зависимый scope исключён;
       нигде не выдано молчаливое одобрение default или новой политики.
-- [ ] UI-flow и lifecycle покрывают happy path, partial success, retry, crash,
+- [ ] Оставшиеся D02 пользовательские сценарии описаны и приняты владельцем
+      (new/existing root, недоступный/невалидный path, ENOSPC, изменение source
+      при copy, исчезновение диска); «disabled root» исключён решением владельца.
+- [x] UI-flow и lifecycle предложения покрывают happy path, partial success, retry, crash,
       cleanup и конфигурационные изменения.
-- [ ] DB/API/deployment предложения прошли независимое ревью и согласование;
+- [x] Независимое ревью D03–D06 проведено 2026-10-08
+      ([отчёт](../../reports/plan09-independent-review-2026-10-08.md)); findings
+      внесены, но explicit owner approval ещё не получен.
+- [ ] DB/API/deployment предложения прошли согласование;
       слои, immutable snapshots и transactional enqueue сохранены.
-- [ ] Готов короткий исполняемый план с файлами, зависимостями, критериями и
+- [x] Подготовлен отдельный implementation proposal с файлами/точками изменения,
+      зависимостями, критериями и
       проверками; grouping/matching/publication не включены побочно.
 - [ ] `docs/plans/README.md` указывает текущий статус; исторические done/audit
       и датированные свидетельства не переписаны.

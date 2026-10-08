@@ -21,14 +21,15 @@ explicitly enabled operator setting that may delete a source file only after a
 successful publication.
 
 A source root is registered by its absolute path on the server that runs
-MeloTrove, never by a path on the browser workstation. This slice reads a source
-directly; staged processing, which copies files into an explicitly configured
-work directory (a bind mount or volume rather than container overlay storage),
-is later work with its own scratch mount. There is no environment variable for
-source roots or for a work directory: registered roots are runtime settings in
-PostgreSQL, edited through the UI. An unavailable source or an interrupted scan
-must not erase the last successfully observed inventory or existing managed
-publications.
+MeloTrove, never by a path on the browser workstation. The current slice reads a
+source directly. Staged processing is not implemented. The owner-approved
+direction for plan 09 is per-root staged mode whose temporary audio copies live
+under the required managed output path, without a separate work-directory setting
+or mount; the technical contract and implementation sequence for it remain an
+unapproved proposal. Source roots and
+runtime paths are database-backed settings, not environment variables. An
+unavailable source or an interrupted scan must not erase the last successfully
+observed inventory or existing managed publications.
 
 The current Windows implementation rejects SMB/UNC source roots (for example,
 `\\server\share`, including slash aliases) before filesystem access; legacy
@@ -232,8 +233,9 @@ existing results.
 
 Analysis reads the source read-only and in place, and applies the same freshness
 criterion as scan: a location is current when its observed size and mtime match.
-The current implementation is `in_place` only. Staged mode with a work directory
-and its setting are not implemented in this slice. Automatic analysis never
+The current implementation is `in_place` only. Staged mode — whose owner-approved
+direction uses output-managed temporary copies rather than a separate
+work-directory setting — is not implemented in this slice. Automatic analysis never
 creates, changes or deletes a file below a source root; the source bytes are
 never modified. After the file changes on disk and a successful scan observes the
 new size or mtime, the stored results no longer describe the location and are
@@ -241,7 +243,7 @@ replaced by a new analysis. Deleting a root removes only that root's inventory
 rows; source files on disk and the managed output library stay untouched.
 
 Outside this slice remain: scheduled scans, automatic retry/backoff, a full
-re-analysis button, staged mode and work directory, incoming groups, matching
+re-analysis button, per-root staged mode using output-managed copies, incoming groups, matching
 itself with AcoustID and MusicBrainz, confidence, the local library and
 publication. The single-audio-stream check exists only as the matching gate; no
 grouping, matching or publication runs. No shipped operation deletes a source
