@@ -29,6 +29,10 @@ type operationDeliveryTransitionRepository interface {
 	TransitionOperationForDelivery(context.Context, uuid.UUID, int, int64, func(*persistence.Operation) error) (bool, error)
 }
 
+type providerOperationDeliveryTransitionRepository interface {
+	TransitionProviderOperationForDelivery(context.Context, uuid.UUID, int, int64, int64, func(*persistence.Operation) error) (bool, error)
+}
+
 type toolsExecutionClaimRepository interface {
 	ClaimToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) (bool, error)
 	ReleaseToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
@@ -222,6 +226,63 @@ func (s *Operations) FailForDelivery(ctx context.Context, operation *persistence
 	return s.transitionForDelivery(ctx, operation, "failed", stage, safe, nil)
 }
 
+func (s *Operations) SucceedForDelivery(ctx context.Context, operation *persistence.Operation, stage string) error {
+	return s.transitionForDelivery(ctx, operation, "succeeded", stage, "", nil)
+}
+
+// Provider delivery transitions are fenced by the claim's monotonically
+// increasing execution epoch in addition to the durable attempt and job.
+func (s *Operations) RunningForProviderDelivery(ctx context.Context, operation *persistence.Operation, epoch int64, stage string) error {
+	return s.transitionForProviderDelivery(ctx, operation, epoch, "running", stage, "")
+}
+
+func (s *Operations) FailForProviderDelivery(ctx context.Context, operation *persistence.Operation, epoch int64, stage, safe string) error {
+	if safe == "" {
+		return fmt.Errorf("operation failures require a safe error")
+	}
+	return s.transitionForProviderDelivery(ctx, operation, epoch, "failed", stage, safe)
+}
+
+func (s *Operations) SucceedForProviderDelivery(ctx context.Context, operation *persistence.Operation, epoch int64, stage string) error {
+	return s.transitionForProviderDelivery(ctx, operation, epoch, "succeeded", stage, "")
+}
+
+func (s *Operations) transitionForProviderDelivery(ctx context.Context, expected *persistence.Operation, epoch int64, state, stage, safe string) error {
+	if expected == nil || expected.RiverJobID == nil || epoch < 1 {
+		return fmt.Errorf("provider operation delivery identity is unavailable")
+	}
+	repository, ok := s.repository.(providerOperationDeliveryTransitionRepository)
+	if !ok {
+		return fmt.Errorf("provider operation delivery fencing is unavailable")
+	}
+	now := s.now()
+	changed, err := repository.TransitionProviderOperationForDelivery(ctx, expected.ID, expected.Attempt, *expected.RiverJobID, epoch, func(operation *persistence.Operation) error {
+		if operation.State == "succeeded" || operation.State == "failed" {
+			return fmt.Errorf("operation is already final")
+		}
+		operation.State, operation.Stage = state, stage
+		if state == "running" && operation.StartedAt == nil {
+			operation.StartedAt = &now
+		}
+		if state == "failed" {
+			operation.SafeError = &safe
+			operation.FinishedAt = &now
+		}
+		if state == "succeeded" {
+			operation.FinishedAt = &now
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return fmt.Errorf("provider operation delivery is no longer current")
+	}
+	s.notify(expected.ID)
+	return nil
+}
+
 func (s *Operations) transitionForDelivery(ctx context.Context, expected *persistence.Operation, state, stage, safe string, modify func(*persistence.Operation)) error {
 	if expected == nil || expected.RiverJobID == nil {
 		return fmt.Errorf("operation delivery identity is unavailable")
@@ -323,6 +384,8 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 // analysis retries are delegated to the source-analysis service.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
 	switch existing.Kind {
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search":
+		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, ProviderFetchOperationArgs{OperationID: existing.ID}, nil)
 	case SourceScanOperationKind:
 		if s.scanRetry == nil {
 			return nil, fmt.Errorf("retry operation: the repository cannot re-queue a source scan")

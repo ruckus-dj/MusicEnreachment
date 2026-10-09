@@ -202,6 +202,25 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		if currentIdentity != ticket.ConfigurationIdentity {
 			return fmt.Errorf("apply successful provider response: configuration changed")
 		}
+		if response.Delivery != nil {
+			fence := response.Delivery
+			if fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
+				return fmt.Errorf("apply successful provider response: invalid operation delivery fence")
+			}
+			var kind, state, configurationIdentity, cacheKey string
+			var attempt int
+			var executionEpoch int64
+			var riverJobID sql.NullInt64
+			var sourceID uuid.UUID
+			if err := tx.NewRaw(`SELECT kind, state, attempt, river_job_id, provider_source_id, provider_configuration_identity, provider_cache_key, provider_execution_epoch
+					FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &riverJobID, &sourceID, &configurationIdentity, &cacheKey, &executionEpoch); err != nil {
+				return fmt.Errorf("apply successful provider response: read operation delivery: %w", err)
+			}
+			if !isProviderOperationKind(kind) || state != "running" || attempt != fence.Attempt || !riverJobID.Valid || riverJobID.Int64 != fence.RiverJobID || executionEpoch != fence.ExecutionEpoch ||
+				sourceID != ticket.ProviderSourceID || configurationIdentity != ticket.ConfigurationIdentity || cacheKey != ticket.CacheKey {
+				return fmt.Errorf("apply successful provider response: operation delivery is stale")
+			}
+		}
 		var source ProviderSource
 		if err := tx.NewRaw(`SELECT id, provider_id, configuration_identity FROM provider_source WHERE id = ? FOR UPDATE`, ticket.ProviderSourceID).Scan(ctx, &source); err != nil {
 			return fmt.Errorf("apply successful provider response: read source: %w", err)

@@ -127,4 +127,14 @@ type ProviderSuccessfulResponse struct {
 	Revision  string
 	Payload   json.RawMessage
 	Graph     ProviderGraph
+	Delivery  *ProviderDeliveryFence
+}
+
+// ProviderDeliveryFence binds a cache write to the durable worker delivery that
+// fetched it. Nil is reserved for existing non-operation maintenance callers.
+type ProviderDeliveryFence struct {
+	OperationID    uuid.UUID
+	Attempt        int
+	RiverJobID     int64
+	ExecutionEpoch int64
 }

@@ -49,7 +49,13 @@ type Operation struct {
 	// after a terminal state if the location was deleted.
 	TargetSourceLocationID *uuid.UUID `bun:"target_source_location_id,type:uuid,nullzero"`
 	// SourceAnalysisMode selects normalized source-analysis operation semantics.
-	SourceAnalysisMode string `bun:"source_analysis_mode,nullzero"`
+	SourceAnalysisMode            string     `bun:"source_analysis_mode,nullzero"`
+	ProviderSourceID              *uuid.UUID `bun:"provider_source_id,type:uuid,nullzero"`
+	ProviderConfigurationIdentity *string    `bun:"provider_configuration_identity,nullzero"`
+	ProviderCacheKey              *string    `bun:"provider_cache_key,nullzero"`
+	ProviderExplicitRefresh       bool       `bun:"provider_explicit_refresh"`
+	ProviderDeliveryClaimedAt     *time.Time `bun:"provider_delivery_claimed_at,nullzero"`
+	ProviderExecutionEpoch        int64      `bun:"provider_execution_epoch"`
 	// TargetWorkID and TargetStep are both present only for a single-step
 	// operation; batch operations select their work items in the snapshot.
 	TargetWorkID      *uuid.UUID `bun:"target_work_id,type:uuid,nullzero"`
@@ -167,6 +173,22 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 		}
 		if gateErr != nil {
 			return fmt.Errorf("enqueue operation: lock output admission gate: %w", gateErr)
+		}
+		if operation != nil && strings.HasPrefix(operation.Kind, "provider_") {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+				return fmt.Errorf("enqueue provider operation: lock configuration: %w", err)
+			}
+			var currentIdentity string
+			if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
+				return fmt.Errorf("enqueue provider operation: read configuration: %w", err)
+			}
+			if operation.ProviderConfigurationIdentity == nil || currentIdentity != *operation.ProviderConfigurationIdentity {
+				return fmt.Errorf("enqueue provider operation: configuration changed")
+			}
+			var sourceIdentity string
+			if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
+				return fmt.Errorf("enqueue provider operation: source configuration changed")
+			}
 		}
 		result, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {
@@ -942,6 +964,59 @@ func (repository *SetupManagerRepository) GetOperationForUpdate(ctx context.Cont
 	return operation, nil
 }
 
+// ClaimProviderOperationDelivery allows one active provider execution per
+// durable attempt. The short fixed lease lets River redelivery recover after a
+// process crash without introducing a provider-cache freshness policy.
+func (repository *SetupManagerRepository) ClaimProviderOperationDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64) (int64, bool, error) {
+	var epoch int64
+	err := repository.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at = now(), provider_execution_epoch = provider_execution_epoch + 1, updated_at = now()
+		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search')
+		AND state IN ('queued', 'running') AND attempt = ? AND river_job_id = ?
+		AND (provider_delivery_claimed_at IS NULL OR provider_delivery_claimed_at < now() - interval '5 minutes')
+		RETURNING provider_execution_epoch`, id, attempt, riverJobID).Scan(ctx, &epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("claim provider operation delivery: %w", err)
+	}
+	return epoch, true, nil
+}
+
+// TransitionProviderOperationForDelivery applies a transition only for the
+// currently claimed execution, fencing work from an expired lease.
+func (repository *SetupManagerRepository) TransitionProviderOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, epoch int64, transition func(*Operation) error) (bool, error) {
+	changed := false
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if !isProviderOperationKind(operation.Kind) || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID || operation.ProviderExecutionEpoch != epoch {
+			return nil
+		}
+		if err := transition(operation); err != nil {
+			return err
+		}
+		operation.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("transition provider operation delivery: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func isProviderOperationKind(kind string) bool {
+	switch kind {
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search":
+		return true
+	default:
+		return false
+	}
+}
+
 func (repository *SetupManagerRepository) ListOperations(ctx context.Context, states ...string) ([]Operation, error) {
 	operations := make([]Operation, 0)
 	query := repository.db.NewSelect().Model(&operations).Order("created_at DESC")
@@ -1244,7 +1319,8 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		locked.RiverJobID = &result.Job.ID
 		locked.Attempt++
 		locked.UpdatedAt = time.Now().UTC()
-		if _, err := tx.NewUpdate().Model(locked).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+		locked.ProviderDeliveryClaimedAt = nil
+		if _, err := tx.NewUpdate().Model(locked).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at", "provider_delivery_claimed_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("retry operation: %w", err)
 		}
 		operation = locked

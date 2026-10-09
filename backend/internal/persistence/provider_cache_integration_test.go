@@ -2,15 +2,31 @@ package persistence_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
+
+type providerOperationTestArgs struct{}
+
+func (providerOperationTestArgs) Kind() string { return "provider_fetch_v1" }
+
+type providerOperationTestInserter struct{ jobID int64 }
+
+func (inserter providerOperationTestInserter) InsertTx(ctx context.Context, tx *sql.Tx, _ river.JobArgs, _ *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO provider_operation_enqueue_test_job(id) VALUES($1)`, inserter.jobID); err != nil {
+		return nil, err
+	}
+	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: inserter.jobID}}, nil
+}
 
 func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) {
 	t.Parallel()
@@ -254,6 +270,161 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 	}
 	if err := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: fenced, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`)}); err == nil {
 		t.Fatal("response from obsolete source configuration was accepted")
+	}
+}
+
+func TestProviderOperationDeliveryClaimIsAttemptFenced(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-provider-op')`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cache := persistence.NewProviderCacheRepository(db)
+	provider := persistence.Provider{ID: uuid.New(), Code: "provider-op-test"}
+	if err := cache.CreateProvider(ctx, &provider); err != nil {
+		t.Fatal(err)
+	}
+	source := persistence.ProviderSource{ID: uuid.New(), ProviderID: provider.ID, Namespace: "mb-op-test", Endpoint: "https://musicbrainz.org/ws/2", ConfigurationIdentity: "cfg-provider-op"}
+	if err := cache.CreateProviderSource(ctx, &source); err != nil {
+		t.Fatal(err)
+	}
+	sourceID, identity, key := source.ID, "cfg-provider-op", "release-lookup:test"
+	jobID := int64(918)
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "provider_release_lookup", State: "queued", Stage: "queued",
+		InputSnapshot:    json.RawMessage(`{"schema_version":1,"mbid":"00000000-0000-4000-8000-000000000001"}`),
+		ProviderSourceID: &sourceID, ProviderConfigurationIdentity: &identity, ProviderCacheKey: &key,
+		RiverJobID: &jobID,
+	}
+	if err := persistence.NewSetupManagerRepository(db).CreateOperation(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+	repository := persistence.NewSetupManagerRepository(db)
+	epoch1, claimed, err := repository.ClaimProviderOperationDelivery(ctx, operation.ID, 1, jobID)
+	if err != nil || !claimed || epoch1 != 1 {
+		t.Fatalf("claim provider delivery = epoch %d, claimed %v, %v", epoch1, claimed, err)
+	}
+	_, claimed, err = repository.ClaimProviderOperationDelivery(ctx, operation.ID, 1, jobID)
+	if err != nil || claimed {
+		t.Fatalf("duplicate provider delivery claim = %v, %v", claimed, err)
+	}
+	if _, err := db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at=now()-interval '6 minutes' WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	epoch2, claimed, err := repository.ClaimProviderOperationDelivery(ctx, operation.ID, 1, jobID)
+	if err != nil || !claimed || epoch2 != epoch1+1 {
+		t.Fatalf("recovered provider delivery claim = epoch %d, claimed %v, %v", epoch2, claimed, err)
+	}
+	_, claimed, err = repository.ClaimProviderOperationDelivery(ctx, operation.ID, 2, jobID)
+	if err != nil || claimed {
+		t.Fatalf("stale provider attempt claim = %v, %v", claimed, err)
+	}
+	if _, err := db.NewRaw(`UPDATE operation SET state='running' WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := cache.BeginRefresh(ctx, source.ID, key, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence := &persistence.ProviderDeliveryFence{OperationID: operation.ID, Attempt: 1, RiverJobID: jobID, ExecutionEpoch: epoch1}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"ok":true}`), Delivery: fence,
+	}); err == nil {
+		t.Fatal("expired provider execution applied cache data")
+	}
+	stored, err := cache.GetCachedResponse(ctx, source.ID, key)
+	if err != nil || stored == nil || len(stored.Payload) != 0 {
+		t.Fatalf("read after stale provider response: %+v, %v", stored, err)
+	}
+	_, err = repository.TransitionProviderOperationForDelivery(ctx, operation.ID, 1, jobID, epoch1, func(op *persistence.Operation) error {
+		op.State = "failed"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current, err := repository.GetOperation(ctx, operation.ID); err != nil || current.State != "running" {
+		t.Fatalf("expired provider execution settled operation: %+v, %v", current, err)
+	}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"ok":true}`),
+		Delivery: &persistence.ProviderDeliveryFence{OperationID: operation.ID, Attempt: 1, RiverJobID: jobID, ExecutionEpoch: epoch2},
+	}); err != nil {
+		t.Fatalf("apply current provider delivery: %v", err)
+	}
+	stored, err = cache.GetCachedResponse(ctx, source.ID, key)
+	if err != nil || stored == nil || string(stored.Payload) != `{"ok": true}` {
+		t.Fatalf("read current provider response: %+v, %v", stored, err)
+	}
+	if changed, err := repository.TransitionProviderOperationForDelivery(ctx, operation.ID, 1, jobID, epoch2, func(op *persistence.Operation) error {
+		op.State = "succeeded"
+		op.Stage = "current_execution"
+		finishedAt := time.Now().UTC()
+		op.FinishedAt = &finishedAt
+		return nil
+	}); err != nil || !changed {
+		t.Fatalf("current execution success transition = %v, %v", changed, err)
+	}
+	if current, err := repository.GetOperation(ctx, operation.ID); err != nil || current.State != "succeeded" {
+		t.Fatalf("current execution did not settle successfully: %+v, %v", current, err)
+	}
+	staleTicket, err := cache.BeginRefresh(ctx, source.ID, key, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence.Attempt = 2
+	fence.ExecutionEpoch = epoch2
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: staleTicket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"stale":true}`), Delivery: fence,
+	}); err == nil {
+		t.Fatal("stale operation attempt applied provider data")
+	}
+	after, err := cache.GetCachedResponse(ctx, source.ID, key)
+	if err != nil || after == nil || string(after.Payload) != string(stored.Payload) {
+		t.Fatalf("stale provider delivery changed successful cache: before=%s after=%v err=%v", stored.Payload, after, err)
+	}
+}
+
+func TestProviderOperationAndRiverInsertRollbackTogether(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-provider-rollback')`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cache := persistence.NewProviderCacheRepository(db)
+	provider := persistence.Provider{ID: uuid.New(), Code: "provider-rollback-test"}
+	if err := cache.CreateProvider(ctx, &provider); err != nil {
+		t.Fatal(err)
+	}
+	source := persistence.ProviderSource{ID: uuid.New(), ProviderID: provider.ID, Namespace: "mb-rollback-test", Endpoint: "https://musicbrainz.org/ws/2", ConfigurationIdentity: "cfg-provider-rollback"}
+	if err := cache.CreateProviderSource(ctx, &source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`CREATE TABLE provider_operation_enqueue_test_job(id bigint PRIMARY KEY)`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	jobID, sourceID, identity, key := int64(919), source.ID, "cfg-provider-rollback", "release-search:0:1:artist"
+	operation := &persistence.Operation{
+		ID: uuid.New(), Kind: "provider_release_search", State: "queued", Stage: "queued",
+		InputSnapshot: json.RawMessage(`{invalid`), ProviderSourceID: &sourceID,
+		ProviderConfigurationIdentity: &identity, ProviderCacheKey: &key,
+	}
+	err := persistence.NewSetupManagerRepository(db).CreateOperationAndEnqueue(ctx, operation,
+		providerOperationTestInserter{jobID: jobID}, providerOperationTestArgs{}, nil)
+	if err == nil {
+		t.Fatal("invalid operation unexpectedly committed")
+	}
+	var jobs, operations int
+	if err := db.NewRaw(`SELECT count(*) FROM provider_operation_enqueue_test_job`).Scan(ctx, &jobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM operation WHERE id=?`, operation.ID).Scan(ctx, &operations); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 || operations != 0 {
+		t.Fatalf("enqueue transaction was partially committed: test jobs=%d operations=%d", jobs, operations)
 	}
 }
 

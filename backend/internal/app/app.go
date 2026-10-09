@@ -173,6 +173,8 @@ func Run(ctx context.Context, config Config) error {
 	)
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
+	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
+	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
@@ -214,6 +216,7 @@ func Run(ctx context.Context, config Config) error {
 		// is initialized from the source-file setting and bounded live by worker.
 		river.AddWorker(workers, analysisWorker)
 		river.AddWorker(workers, artifactCleanupWorker)
+		river.AddWorker(workers, providerFetchWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}
 	// Keep exactly one base analysis slot on the main client. Additional River

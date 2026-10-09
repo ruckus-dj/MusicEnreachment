@@ -566,6 +566,17 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Durable provider execution increment (2026-10-10):** lookup/search release и
+recording выполняются через typed persisted intent и River args с operation ID
+only. Claim получает monotonic execution epoch; running/cache apply/terminal
+settlement проверяют operation, attempt, job и epoch. Lease reclaim отсекает
+предыдущее исполнение. Ordinary requests переиспользуют successful cache без
+TTL; explicit refresh failure сохраняет payload/revision. PostgreSQL tests
+проверяют stale claims, а прямой River→HTTP test — все четыре kinds, unknown raw
+fields, duplicate delivery, cache reuse и failed refresh. Полный `task verify`
+02:05 прошёл; независимое ревью закрыто. HTTP start routes и wider automatic
+matching pipeline пока не подключены.
+
 **Normalization / explicit fetch-cache increment (2026-10-10):** source-scoped
 current projections, stable provider/entity identities, endpoint switchback,
 configuration fences и global fetch ordering реализованы в migration 310 и
