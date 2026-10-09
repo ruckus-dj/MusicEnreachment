@@ -196,6 +196,9 @@ func (d *windowsOutputDir) CreateExclusive(ctx context.Context, name string) (Ou
 		return nil, ctxErr
 	}
 	if err != nil {
+		if nt, ok := err.(windows.NTStatus); ok && nt == windows.STATUS_OBJECT_NAME_COLLISION {
+			err = errors.Join(fs.ErrExist, err)
+		}
 		return nil, err
 	}
 	f := os.NewFile(uintptr(h), name)

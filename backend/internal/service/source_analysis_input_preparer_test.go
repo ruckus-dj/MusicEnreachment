@@ -437,24 +437,42 @@ func TestSourceAnalysisInputPreparerRejectsReplacedSourceNamespace(t *testing.T)
 
 func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
-	fixture.preparer.outputOpen = wrappingOutputOpener{OutputOpener: sourcefs.NewOutputOpener(), wrap: func(file sourcefs.OutputFile) sourcefs.OutputFile {
-		return &mutatingOutputFile{OutputFile: file, mutate: func() error {
-			parent := filepath.Dir(filepath.Dir(fixture.finalPath()))
-			moved := parent + "-original"
-			if err := os.Rename(parent, moved); err != nil {
+	stagingPath := filepath.Dir(filepath.Dir(filepath.Dir(fixture.finalPath())))
+	backupPath := stagingPath + "-original"
+	mutationCalls := 0
+	fixture.preparer.outputOpen = wrappingOutputOpener{
+		OutputOpener: sourcefs.NewOutputOpener(),
+		afterOpenDir: func(name string) error {
+			if name != fixture.work.SourceRootID.String() || mutationCalls != 0 {
+				return nil
+			}
+			mutationCalls++
+			if err := os.Rename(stagingPath, backupPath); err != nil {
 				return err
 			}
-			return os.Mkdir(parent, 0o700)
-		}}
-	}}
+			return os.Mkdir(stagingPath, 0o700)
+		},
+	}
+
 	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
 		t.Fatal("Prepare accepted a replaced output descendant")
+	}
+	if mutationCalls != 1 {
+		t.Fatalf("ancestor mutation calls = %d, want 1", mutationCalls)
 	}
 	if fixture.artifacts.readyCalls != 0 || fixture.artifacts.forgetCalls != 0 {
 		t.Fatalf("replaced output transitions: ready=%d forget=%d", fixture.artifacts.readyCalls, fixture.artifacts.forgetCalls)
 	}
-	if _, err := os.Stat(fixture.finalPath()); !os.IsNotExist(err) {
-		t.Fatalf("reopened namespace unexpectedly recreated or retained artifact at path: %v", err)
+	if _, err := os.Stat(fixture.finalPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("configured namespace unexpectedly contains artifact: %v", err)
+	}
+	backupArtifactPath := filepath.Join(backupPath, fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())
+	got, err := os.ReadFile(backupArtifactPath)
+	if err != nil {
+		t.Fatalf("read artifact through pinned ancestor backup: %v", err)
+	}
+	if string(got) != fixture.contents {
+		t.Fatalf("pinned ancestor artifact content differs: got %d bytes, want %d", len(got), len(fixture.contents))
 	}
 }
 
@@ -737,7 +755,8 @@ func (file countBorrowFile) Borrow(ctx context.Context, callback func(*os.File) 
 
 type wrappingOutputOpener struct {
 	sourcefs.OutputOpener
-	wrap func(sourcefs.OutputFile) sourcefs.OutputFile
+	wrap         func(sourcefs.OutputFile) sourcefs.OutputFile
+	afterOpenDir func(string) error
 }
 
 func (opener wrappingOutputOpener) OpenRoot(ctx context.Context, path string) (sourcefs.OutputDirectory, error) {
@@ -745,12 +764,13 @@ func (opener wrappingOutputOpener) OpenRoot(ctx context.Context, path string) (s
 	if err != nil {
 		return nil, err
 	}
-	return wrappingOutputDirectory{OutputDirectory: directory, wrap: opener.wrap}, nil
+	return wrappingOutputDirectory{OutputDirectory: directory, wrap: opener.wrap, afterOpenDir: opener.afterOpenDir}, nil
 }
 
 type wrappingOutputDirectory struct {
 	sourcefs.OutputDirectory
-	wrap func(sourcefs.OutputFile) sourcefs.OutputFile
+	wrap         func(sourcefs.OutputFile) sourcefs.OutputFile
+	afterOpenDir func(string) error
 }
 
 func (directory wrappingOutputDirectory) OpenOrCreateDir(ctx context.Context, name string) (sourcefs.OutputDirectory, error) {
@@ -758,14 +778,23 @@ func (directory wrappingOutputDirectory) OpenOrCreateDir(ctx context.Context, na
 	if err != nil {
 		return nil, err
 	}
-	return wrappingOutputDirectory{OutputDirectory: next, wrap: directory.wrap}, nil
+	if directory.afterOpenDir != nil {
+		if err := directory.afterOpenDir(name); err != nil {
+			_ = next.Close()
+			return nil, err
+		}
+	}
+	return wrappingOutputDirectory{OutputDirectory: next, wrap: directory.wrap, afterOpenDir: directory.afterOpenDir}, nil
 }
 func (directory wrappingOutputDirectory) CreateExclusive(ctx context.Context, name string) (sourcefs.OutputFile, error) {
 	file, err := directory.OutputDirectory.CreateExclusive(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	return directory.wrap(file), nil
+	if directory.wrap != nil {
+		file = directory.wrap(file)
+	}
+	return file, nil
 }
 
 type failingOutputFile struct {
