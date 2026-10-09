@@ -70,7 +70,7 @@ type scanSHA256SettingReader interface {
 }
 
 type sourceAnalysisPendingDispatcher interface {
-	AdmitPending(context.Context, uuid.UUID) error
+	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
 }
 
 // SourceScanWorker runs one queued scan of a source root. The River job carries
@@ -241,7 +241,7 @@ func (worker *SourceScanWorker) finishAndDispatch(ctx context.Context, operation
 		return err
 	}
 	if worker.pending != nil {
-		if err := worker.pending.AdmitPending(ctx, rootID); err != nil {
+		if _, err := worker.pending.AdmitPending(ctx, rootID); err != nil {
 			slog.Warn("source analysis pending dispatch failed after scan apply", "operation", operation.ID.String(), "cause", err)
 		}
 	}
