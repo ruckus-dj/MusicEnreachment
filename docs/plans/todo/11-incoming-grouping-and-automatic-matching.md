@@ -48,7 +48,9 @@
 > gates помечены ссылкой на него. Позднейшие уточнения того же дня — в
 > [Приложении B](#appendix-b-owner-decisions-late-2026-10-09); в частности,
 > строка «ID и защита ручного выбора» уточнена там (B6): embedded MBID — только
-> lookup/evidence, без числового веса и без forced 1.
+> lookup/evidence, без числового веса и без forced 1. Последние pointers — B11
+> (Go-аналог вместо 1:1-переноса Python/RapidFuzz) и B12 (готовые Go-библиотеки
+> вместо самописных решений).
 
 ### Upstream reference и переносимая семантика
 
@@ -102,6 +104,11 @@ commit `17448df1ee7ab5c9ad4769b4e09a474b27547728`. Источники для с�
 > владелец подтвердил, что upstream — его личный код и лицензии допустимы;
 > отдельный лицензионный блокер по fixtures снят. Логика реализуется
 > самостоятельно на Go, Python upstream — только reference (см. A7).
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> перенос upstream text normalization/`token_set_ratio` не делается 1:1: пишем
+> идиоматичный Go-аналог на нормальных Go-библиотеках, без Python-таблиц и без
+> переноса алгоритма RapidFuzz целиком; bit-exact parity не является gate (B11).
 
 ## Цель, сущности и границы
 
@@ -199,6 +206,10 @@ normalization для score в точности. Если по имеющимся
 > вхождение»; сортировка не вводится. `ARTIST=artist1`/`ARTIST=artist2` — список,
 > а не конфликт (B1 переопределяет сохранение повторов из A3).
 
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> «Перенести upstream text normalization для score в точности» superseded:
+> идиоматичный Go-аналог, ожидаемое документированное отличие, не bit-exact (B11).
+
 ### Поиск candidates и evidence
 
 - Для каждого eligible audio file сформировать lookup request из source
@@ -208,6 +219,11 @@ normalization для score в точности. Если по имеющимся
   опираются на current analysis identity, source-root/location/variant identity
   и observed tags, а не на обязательный hash. Не дополнять отсутствующий тег
   provider-значением перед скорингом.
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> acquisition тегов/метаданных — часть анализа; matching читает только сохранённые
+> analyses и не делает file I/O по исходным файлам (B10).
+
 - MusicBrainz используется для release/recording data и authoritative local
   cache; AcoustID optional lookup выдаёт recording evidence и само по себе не
   выбирает release. Если AcoustID выключен/не настроен/не доступен, его factor
@@ -356,6 +372,14 @@ normalization для score в точности. Если по имеющимся
   source-root/location/variant identity, provider cache candidate identity и
   matching policy version. Не использовать stale delivery для overwrite manual
   links.
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> DB-known source/analysis identity проверяется как fence; точный контракт source
+> stat остаётся техническим и должен быть согласован; matching не делает file I/O.
+> Не изобретать критерии ослабления fence и не добавлять default
+> backfill/reanalysis; lifecycle обновления метаданных уже известной inventory
+> остаётся нерешённым (B10).
+
 - Определить idempotency key и сериализацию двух конкурентных group applies,
   manual edits и rescans. Повторная доставка/retry не создаёт дубли local
   entities/links и не заменяет более новое решение. DB locks/constraints, а не
@@ -395,7 +419,39 @@ normalization для score в точности. Если по имеющимся
 > matching, position assignment coordination), закрыты в
 > [Приложении A](#appendix-a-owner-decisions-2026-10-09); настройка limiter
 > self-hosted уточнена в A6, upstream licensing/reference — в A7. Строки таблицы
-> сохранены как состояние на дату подготовки.
+> сохранены как состояние на дату подготовки. Уточнение B10: acquisition
+> тегов/метаданных — часть анализа, matching не читает исходные файлы;
+> «all unknown tags needs owner» — неверно, владелец хочет сохранять все теги.
+> Уточнение B11: M02-acceptance «Golden results по upstream fixtures / exact
+> transferred score outputs» больше не действует — Go-аналог, versioned и
+> documented оценки с ожидаемым отличием, не bit-exact.
+
+## Ход выполнения (2026-10-09)
+
+- **M01 — завершён:** baseline, официальные MusicBrainz/AcoustID/Go/River/
+  PostgreSQL facts и inventory upstream fixtures зафиксированы в
+  [research appendix](../11-m01-provider-and-river-research-2026-10-09.md).
+  Независимое повторное ревью закрыло замечания по fixture provenance и
+  PostgreSQL locking; matching implementation этим ревью не принимается.
+  Документационное изменение сохранено в `2760df8`; полный pre-commit
+  `task verify` прошёл. Исходный baseline `8c205db` также прошёл полный
+  `task verify` перед первым документационным коммитом.
+- **M02 — реализация завершена локально:** чистый Go scoring с policy
+  `matching-go-v1`, готовыми `adrg/strutil`, `anyascii/go` и `x/text` согласно
+  B11–B12. Release/recording/assignment profiles, available-only denominator,
+  negative duration contribution/lower clamp, legacy rounding, position factors,
+  optional AcoustID и lookup-only MBID покрыты regression tests. Raw arrays
+  сохраняются отдельно от дедуплицированного сравнения. Python-derived таблицы,
+  генератор и самописный fuzzy алгоритм удалены до коммита реализации.
+  Первоначальный `task verify` выявил устаревший expected value для Unicode
+  case folding (`Straße`); тест исправлен на `strasse`. Независимое ревью также
+  выявило и закрыло валидацию duration factor >1. Повторный полный
+  `task verify` прошёл: Go integration, 241 frontend tests, 4 tools tests,
+  generation, lint и build. Notice bundle включён в локальный build и Dockerfile;
+  Docker/native platform CI локально не запускались и не заявляются.
+  База изменения — `2760df8`; точная ревизия реализации фиксируется коммитом.
+- **M03–M10 — ещё не завершены.** План остаётся в `todo/` до полной
+  согласованной приёмки; чистый scorer пока не подключён к providers/БД/UI.
 
 ## Cross-stage safety and acceptance invariants
 
@@ -424,7 +480,9 @@ normalization для score в точности. Если по имеющимся
    before persisted application. Old worker cannot apply after source mutation,
    group membership change, newer provider evidence or new policy. Follow the
    owner-approved product freshness criterion; stricter race/security mechanics
-   may be implementation safeguards, not added product acceptance.
+   may be implementation safeguards, not added product acceptance. Matching
+   performs no source file I/O; the precise source stat contract is technical and
+   must align (B10) — do not invent fence relaxation or default backfill/reanalysis.
 6. **Provider resilience:** typed no-match/ambiguous/rate-limit/unavailable/
    malformed outcomes preserve prior provider cache where appropriate and remain
    distinct from source analysis problems. Optional AcoustID absent = no factor.
@@ -457,6 +515,10 @@ normalization для score в точности. Если по имеющимся
   migration up/down evidence, concurrency/idempotency cases and browser
   acceptance. Historical failures remain recorded as failures; add dated
   follow-up status rather than rewriting history.
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> «exact transferred score outputs» superseded: matching tests фиксируют
+> versioned/documented Go-оценки с ожидаемым отличием, не bit-exact parity (B11).
 
 ## Остаточные вопросы / gates
 
@@ -574,6 +636,10 @@ matching, position assignment coordination) других неразрешённ�
 > вхождение»; сортировка не вводится. Повторяющиеся теги вида
 > `ARTIST=artist1`/`ARTIST=artist2` — список, не конфликт (B1).
 
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> требование точного переноса score-normalization из этой формулировки superseded:
+> идиоматичный Go-аналог, без Python-таблиц/RapidFuzz целиком, не bit-exact (B11).
+
 ## A4. Достаточность edition-ключа без MBID (закрывает edition-sufficiency gate)
 
 - Без usable release MBID: полный `ALBUM` вместе с полным artist (полный
@@ -632,18 +698,21 @@ idempotency и acceptance invariants. Это приложение не явля�
 **Дата фиксации: 2026-10-09 (позднейшее уточнение того же дня). Статус: явные
 продуктовые решения владельца.** Приложение не переписывает исторические факты и
 текст Приложения A; при конфликте приоритет имеют решения ниже. В частности, B1
-переопределяет сохранение повторов из A3, а B6 supersedes прежнее требование
-«встроенный MBID участвует в общей matching-формуле». Реализация не заявляется.
+переопределяет сохранение повторов из A3, B6 supersedes прежнее требование
+«встроенный MBID участвует в общей matching-формуле», а B11 supersedes 1:1-перенос
+Python/RapidFuzz (точный score-normalization, скомпилированную таблицу B9 и
+bit-exact fixtures). Реализация не заявляется.
 
 ## B1. Теги latest: сохранение, списки и дубликаты
 
 - Сохраняются все исходные теги; observed tags нельзя подменять или отбрасывать.
 - Повторяющиеся теги (например `ARTIST=artist1` и `ARTIST=artist2`) — это список,
   а не конфликт; мультиартисты не сворачиваются к первому имени.
-- Дубликаты значений могут дедуплицироваться в set со стабильным порядком
-  «первое вхождение»; сортировка не вводится, порядок консистентен прежнему
-  порядку, если владелец не скажет иначе. Это переопределяет сохранение повторов
-  из [A3](#appendix-a-owner-decisions-2026-10-09).
+- Дубликаты значений могут дедуплицироваться с сохранением порядка «первое
+  вхождение». Это технический порядок, безопасно сохраняющий прежний порядок, а
+  не выбранная владельцем новая сортировка; сортировка не вводится. Это
+  переопределяет сохранение повторов из
+  [A3](#appendix-a-owner-decisions-2026-10-09).
 - Форматы и alias mapping table подлежат изучению; разумная реализация
   допускается (владелец: «в целом пока делай как-то, потом поправим»). Нельзя
   утверждать, что ffprobe сохраняет все теги, без отдельного исследования.
@@ -685,3 +754,110 @@ idempotency и acceptance invariants. Это приложение не явля�
   формуле» (реестр решений и body «Embedded release/recording/track MBID —
   сильное сопоставимое evidence общей формулы»).
 - Manual-link protection и запрет фальшивого confidence/score = 1 сохраняются.
+
+## B7. Assignment: legacy combined release+recording factors; release selection отдельно
+
+- Assignment использует точные legacy-факторы combined release + recording,
+  duration и MusicBrainz search (дважды) — ту же переносимую формулу, что и
+  scoring; новых факторов/весов не вводится.
+- Выбор release — отдельный шаг со своим прежним контрактом (qualified >= 0.70 для
+  каждого файла, unique max sum, tie → review) и не смешивается с assignment
+  ([A2](#appendix-a-owner-decisions-2026-10-09)).
+
+## B8. Source/provider milliseconds: legacy rounding до seconds
+
+- Значения duration из source/provider в миллисекундах переводятся в секунды
+  legacy-округлением (Python `round`, ties-to-even) до применения неизменной
+  duration-формулы; сама формула не меняется.
+
+## B9. Reference normalization: compiled RapidFuzz 3.14.6 + Unidecode 1.4.0, standalone Go
+
+- Reference normalization явно привязывается к скомпилированному RapidFuzz 3.14.6
+  (не Python fallback) и Unidecode 1.4.0.
+- Точная семантика реализуется standalone на Go; Python runtime не требуется.
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09)):**
+> скомпилированная таблица RapidFuzz/Unidecode и standalone exact-семантика
+> superseded: идиоматичный Go-аналог на нормальных Go-библиотеках, без Python-
+> таблиц и mapping-generator, не bit-exact (B11).
+
+## B10. Acquisition метаданных/тегов — часть анализа; matching не читает исходные файлы
+
+Точная формулировка владельца:
+
+> «Вытаскивание из источника и сохранение метаданных (включая теги) должно быть
+> частью АНАЛИЗА файла, а не матчинга. Матчинг происходит уже по известным
+> анализам и сравнению их с провайдерами, мы не должны в матчинге вообще исходные
+> файлы трогать».
+
+- Однозначно: вытаскивание из источника и сохранение метаданных, включая теги, —
+  часть **анализа** файла.
+- Matching работает только по уже известным сохранённым analyses и их сравнению с
+  провайдерами; matching не читает исходные файлы (no source file I/O).
+- Ранее предложенное получение тегов на фазе matching **отклонено**, не одобрено.
+- Вопрос binary payload / зависимости (в том числе `go-mp4`) владельцем пока не
+  одобрен; не выбирать и не предполагать.
+- Исторические факты не переписываются; существующего одобрения, обязывающего
+  custom/native/raw collector, нет.
+
+> **Reference note — source fencing:** DB-known source/analysis identity
+> проверяется как fence, но точный контракт source stat остаётся техническим и
+> должен быть согласован; matching при этом не делает file I/O. Не изобретать
+> критерии ослабления fence и не добавлять default backfill/reanalysis. Lifecycle
+> обновления метаданных уже известной inventory остаётся нерешённым.
+
+> **M03 misconception:** формулировка «all unknown tags needs owner» неверна —
+> владелец уже явно хочет сохранять все теги (B1); это не открытый owner gate.
+> Research doc M03 другим writer'ом не правится; уточнение фиксируется здесь, в
+> плане.
+
+## B11. Go-аналог вместо 1:1 переноса Python/RapidFuzz
+
+Точная формулировка владельца:
+
+> «МЫ БЕРЁМ PYTHON РЕАЛИЗАЦИЮ НЕ 1:1, НЕ ТАЩИМ ВСЁ ПОДРЯД, А НОРМАЛЬНО ПИШЕМ
+> АНАЛОГ В GO СПЕЦИФИКЕ И ВСЕ БИБЛИОТЕКИ МЕНЯЕМ НА ВАРИАНТЫ НА GO. НЕ НАДО ТАЩИТЬ
+> КАКИЕ-ТО ТАБЛИЦЫ ИЗ КАКОЙ-ТО БИБЛИОТЕКИ НА PYTHON, НЕ НАДО ТАЩИТЬ АЛГОРИТМ
+> ЦЕЛИКОМ ИЗ RAPIDFUZZ, возьми ... нормальные Go библиотеки в замену».
+
+- Пишем идиоматичный аналог логики на Go; нормальные Go-зависимости для fuzzy и
+  транслитерации используются как замена Python-библиотек.
+- **Не** переносим Python-таблицы и не генерируем mapping-generator из Python.
+- **Не** переносим алгоритм RapidFuzz целиком.
+- Bit-exact parity с Python не является gate; resulting Go text scores versioned и
+  документированы, ожидаемое отличие допустимо и не называется bit-exact.
+- Product math не меняется: factors, weights, duration, threshold, release
+  selection, all-files rule и manual — как прежде (B7/B8, A2).
+- Конкретные Go-библиотеки не объявляются одобренными до технической
+  рекомендации; владелец разрешает Go-замены.
+- B11 supersedes требование точного переноса score-normalization (A3/текст),
+  скомпилированную таблицу B9 и «1:1» fixtures/exact transferred score outputs.
+
+## B12. Готовые Go-библиотеки вместо самописных решений
+
+Точная формулировка владельца:
+
+> «Если на что-то есть готовая go библиотека мы берём готовую go библиотеку, мы
+> не пишем велосипеды сами!»
+
+- Где для задачи есть готовая Go-библиотека — берём готовую; собственные
+  велосипеды (fuzzy/LCS, таблицы, декодирование и т.п.) не пишем.
+- **Технический выбор M02 (не индивидуальное одобрение библиотек).** Владелец дал
+  широкое разрешение на Go-замены, а не выбирал отдельно метрику или конкретную
+  библиотеку; выбор библиотеки/метрики — техническое решение реализации, а не
+  per-library owner approval. Для scoring/text-normalization выбраны:
+  - `github.com/adrg/strutil` `v0.3.1` — метрика normalized Levenshtein;
+  - `github.com/anyascii/go` `v0.3.3` — транслитерация (лицензия ISC);
+  - существующий `golang.org/x/text` `v0.42.0` — Unicode NFC и case folding.
+- Не заявлять, что каждая библиотека/метрика одобрена владельцем по отдельности;
+  это технический выбор в рамках широкого Go-разрешения.
+- Product math не меняется: factors/weights, duration, threshold, tie-правило и
+  all-files/all-group правило — как прежде (B7/B8, A2); bit-exact parity с Python
+  по-прежнему не gate (B11).
+- **Сырые теги — только анализ.** Acquisition тегов/метаданных остаётся частью
+  анализа (B10); matching не делает source I/O и работает по сохранённым
+  analyses. Кандидат `github.com/tommyo123/mtag` `v1.0.2` технически исследован
+  (MIT, Go, без обязательных env vars и без обязательного CLI), но полный
+  собственный raw-парсер как default не выбирается. Фактическая интеграция в
+  анализ и выбор механизма — решения следующего этапа, ещё не одобренные;
+  четвёртый механизм не утверждён.

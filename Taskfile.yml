@@ -75,7 +75,9 @@ tasks:
   tools:test:
     internal: true
     cmds:
-      - node --test tools/check-generated.test.mjs
+      # Node 24 expands tools/*.test.mjs itself, so colocated tool tests are picked up
+      # without shell globbing (works on Windows shells that do not expand globs).
+      - node --test tools/*.test.mjs
 
   migrate:rollback:
     desc: Roll back the last application migration group (stop the server first)

@@ -16,6 +16,7 @@ RUN cd backend && CGO_ENABLED=0 go build -o /melotrove ./cmd/server
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /melotrove /melotrove
+COPY --from=backend /src/backend/THIRD_PARTY_NOTICES.md /usr/share/doc/melotrove/THIRD_PARTY_NOTICES.md
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/melotrove", "-healthcheck"]
 ENTRYPOINT ["/melotrove"]
