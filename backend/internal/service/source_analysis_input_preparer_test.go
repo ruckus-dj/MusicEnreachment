@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -437,9 +438,10 @@ func TestSourceAnalysisInputPreparerRejectsReplacedSourceNamespace(t *testing.T)
 
 func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T) {
 	fixture := newInputPreparerFixture(t, nil)
-	stagingPath := filepath.Dir(filepath.Dir(filepath.Dir(fixture.finalPath())))
-	backupPath := stagingPath + "-original"
+	parentPath := filepath.Join(fixture.outputPath, "analysis", "staging", fixture.work.SourceRootID.String())
+	backupPath := parentPath + "-original"
 	mutationCalls := 0
+	var mutationErr error
 	fixture.preparer.outputOpen = wrappingOutputOpener{
 		OutputOpener: sourcefs.NewOutputOpener(),
 		afterOpenDir: func(name string) error {
@@ -447,14 +449,23 @@ func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T
 				return nil
 			}
 			mutationCalls++
-			if err := os.Rename(stagingPath, backupPath); err != nil {
-				return err
+			if err := os.Rename(parentPath, backupPath); err != nil {
+				mutationErr = fmt.Errorf("rename output root directory: %w", err)
+				return mutationErr
 			}
-			return os.Mkdir(stagingPath, 0o700)
+			if err := os.Mkdir(parentPath, 0o700); err != nil {
+				mutationErr = fmt.Errorf("recreate output root directory: %w", err)
+				return mutationErr
+			}
+			return nil
 		},
 	}
 
-	if _, err := fixture.preparer.Prepare(context.Background(), fixture.fence); err == nil {
+	_, prepareErr := fixture.preparer.Prepare(context.Background(), fixture.fence)
+	if mutationErr != nil {
+		t.Fatalf("replace opened output root directory: %v", mutationErr)
+	}
+	if prepareErr == nil {
 		t.Fatal("Prepare accepted a replaced output descendant")
 	}
 	if mutationCalls != 1 {
@@ -466,7 +477,7 @@ func TestSourceAnalysisInputPreparerRejectsReplacedOutputDescendant(t *testing.T
 	if _, err := os.Stat(fixture.finalPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("configured namespace unexpectedly contains artifact: %v", err)
 	}
-	backupArtifactPath := filepath.Join(backupPath, fixture.work.SourceRootID.String(), fixture.work.ID.String(), fixture.artifactID.String())
+	backupArtifactPath := filepath.Join(backupPath, fixture.work.ID.String(), fixture.artifactID.String())
 	got, err := os.ReadFile(backupArtifactPath)
 	if err != nil {
 		t.Fatalf("read artifact through pinned ancestor backup: %v", err)
