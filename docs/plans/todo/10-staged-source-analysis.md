@@ -174,6 +174,19 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   filesystem boundary, not an atomic hostile-replacement guarantee. Native
   Windows execution and deployment smoke were not run; UI remains I11.
 
+- **I09 — atomic output reset complete locally (2026-10-09):** runtime saves
+  use an exclusive pinned output session and a durable directory-intent/identity
+  journal. Both expected roots and runtime values are validated atomically;
+  startup recovery precedes operation reconciliation and worker startup. Reset
+  cancels queued work, clears transient execution selectors and holds, and
+  invalidates staged-output references without deleting old files or successful
+  analyses, provenance, or durable intent. Tools filesystem claims protect
+  execution and unresolved rollback across terminal states and retry handoff.
+  Initial and populated same-root saves, setup completion, explicit-empty
+  rejection, missing-parent manifests, recovery, and populated analysis reset
+  have regression coverage. `task verify` passed. Native platform CI,
+  deployment smoke, and an exhaustive process-kill crash matrix were not run.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

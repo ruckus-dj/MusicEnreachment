@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,9 +112,10 @@ type RuntimeUpdate struct {
 }
 
 type Registry struct {
-	store Store
-	level *slog.LevelVar
-	now   func() time.Time
+	store           Store
+	level           *slog.LevelVar
+	now             func() time.Time
+	runtimeUpdateMu sync.Mutex
 }
 
 func New(store Store, level *slog.LevelVar) *Registry {
@@ -287,49 +289,11 @@ func (r *Registry) SetOutputDirectory(ctx context.Context, path string, toolsDir
 }
 
 func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) error {
-	values := make(map[string]string)
-	if update.ToolsDirectory != nil {
-		normalized, err := NormalizePath(*update.ToolsDirectory)
-		if err != nil {
-			return fmt.Errorf("tools directory: %w", err)
-		}
-		value, err := serializeSetting(toolsRootSetting, normalized)
-		if err != nil {
-			return fmt.Errorf("tools directory: %w", err)
-		}
-		values[ToolsDirectoryKey] = value
-	}
-	if update.OutputDirectory != nil {
-		normalized, err := NormalizePath(*update.OutputDirectory)
-		if err != nil {
-			return fmt.Errorf("output directory: %w", err)
-		}
-		value, err := serializeSetting(outputRootSetting, normalized)
-		if err != nil {
-			return fmt.Errorf("output directory: %w", err)
-		}
-		values[OutputDirectoryKey] = value
-	}
-	if update.OutputCaseSensitive != nil {
-		value, err := serializeSetting(outputCaseSetting, *update.OutputCaseSensitive)
-		if err != nil {
-			return fmt.Errorf("output case sensitivity: %w", err)
-		}
-		values[OutputCaseSensitiveKey] = value
-	}
-	if update.OutputUnicodeNormalization != nil {
-		value, err := serializeSetting(outputUnicodeSetting, *update.OutputUnicodeNormalization)
-		if err != nil {
-			return fmt.Errorf("output Unicode normalization: %w", err)
-		}
-		values[OutputUnicodeNormalizationKey] = value
-	}
-	if update.PublicationFormat != nil {
-		value, err := serializeSetting(publicationSetting, *update.PublicationFormat)
-		if err != nil {
-			return fmt.Errorf("publication format: %w", err)
-		}
-		values[PublicationFormatKey] = value
+	r.runtimeUpdateMu.Lock()
+	defer r.runtimeUpdateMu.Unlock()
+	values, err := runtimeUpdateValues(update)
+	if err != nil {
+		return err
 	}
 	if len(values) == 0 {
 		return nil
@@ -352,6 +316,70 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 		return fmt.Errorf("runtime path updates require transactional settings storage")
 	}
 	return r.store.SetMany(ctx, values)
+}
+
+// CoordinateRuntimeReset serializes a durable output reset with all runtime updates.
+// The callback receives roots read once under the lock and already serialized values
+// for the atomic reset transaction.
+func (r *Registry) CoordinateRuntimeReset(ctx context.Context, expectedTools, expectedOutput string, update RuntimeUpdate, run func(string, string, map[string]string) error) error {
+	r.runtimeUpdateMu.Lock()
+	defer r.runtimeUpdateMu.Unlock()
+	values, err := runtimeUpdateValues(update)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return fmt.Errorf("runtime reset callback is required")
+	}
+	return run(expectedTools, expectedOutput, values)
+}
+
+func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
+	values := make(map[string]string)
+	if update.ToolsDirectory != nil {
+		normalized, err := NormalizePath(*update.ToolsDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("tools directory: %w", err)
+		}
+		value, err := serializeSetting(toolsRootSetting, normalized)
+		if err != nil {
+			return nil, fmt.Errorf("tools directory: %w", err)
+		}
+		values[ToolsDirectoryKey] = value
+	}
+	if update.OutputDirectory != nil {
+		normalized, err := NormalizePath(*update.OutputDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("output directory: %w", err)
+		}
+		value, err := serializeSetting(outputRootSetting, normalized)
+		if err != nil {
+			return nil, fmt.Errorf("output directory: %w", err)
+		}
+		values[OutputDirectoryKey] = value
+	}
+	if update.OutputCaseSensitive != nil {
+		value, err := serializeSetting(outputCaseSetting, *update.OutputCaseSensitive)
+		if err != nil {
+			return nil, fmt.Errorf("output case sensitivity: %w", err)
+		}
+		values[OutputCaseSensitiveKey] = value
+	}
+	if update.OutputUnicodeNormalization != nil {
+		value, err := serializeSetting(outputUnicodeSetting, *update.OutputUnicodeNormalization)
+		if err != nil {
+			return nil, fmt.Errorf("output Unicode normalization: %w", err)
+		}
+		values[OutputUnicodeNormalizationKey] = value
+	}
+	if update.PublicationFormat != nil {
+		value, err := serializeSetting(publicationSetting, *update.PublicationFormat)
+		if err != nil {
+			return nil, fmt.Errorf("publication format: %w", err)
+		}
+		values[PublicationFormatKey] = value
+	}
+	return values, nil
 }
 
 // GetOutputFilesystemSemantics returns the probed filesystem characteristics.

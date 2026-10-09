@@ -128,7 +128,11 @@ func Run(ctx context.Context, config Config) error {
 		return fmt.Errorf("load runtime log level: %w", err)
 	}
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
-	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient())
+	outputReset := service.NewOutputReset(setupManagerRepository, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"})
+	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient()).WithOutputReset(outputReset)
+	if err := outputReset.RecoverOutputReset(ctx); err != nil {
+		return fmt.Errorf("recover output reset: %w", err)
+	}
 	riverSlot := &riverClientSlot{}
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
 	sourceAnalysis := service.NewSourceAnalysisOperations(

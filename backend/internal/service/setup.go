@@ -36,6 +36,15 @@ type SetupService struct {
 	platform          settings.PlatformState
 	musicbrainzClient musicbrainz.Checker
 	installations     InstallationLookup
+	outputReset       *OutputReset
+}
+
+func (s *SetupService) WithOutputReset(outputReset *OutputReset) *SetupService {
+	s.outputReset = outputReset
+	if outputReset != nil {
+		outputReset.registry = s.registry
+	}
+	return s
 }
 
 type InstallationLookup interface {
@@ -161,7 +170,9 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 			health.Healthy = false
 			health.Problems = append(health.Problems, "output directory is unavailable")
 		} else {
-			current, probeErr := settings.ProbeOutputDirectory(runtimeSettings.OutputDirectory, !completed)
+			// Runtime settings already identify the approved output root. It may
+			// contain reset-created areas or published files before setup completes.
+			current, probeErr := settings.ProbeOutputDirectory(runtimeSettings.OutputDirectory, false)
 			if probeErr != nil {
 				health.Healthy = false
 				health.Problems = append(health.Problems, "output directory is not ready")
@@ -178,6 +189,26 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings, SHA256Enabled: sha256Enabled}, nil
 }
 func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
+	var tools, output, format *string
+	if toolsDirectory != "" {
+		tools = &toolsDirectory
+	}
+	if outputDirectory != "" {
+		output = &outputDirectory
+	}
+	if publicationFormat != "" {
+		format = &publicationFormat
+	}
+	return s.SaveRuntimeRequest(ctx, tools, output, format)
+}
+
+// SaveRuntimeRequest preserves omitted values while treating an explicitly empty
+// output directory as an invalid request.
+func (s *SetupService) SaveRuntimeRequest(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat *string) error {
+	return s.saveRuntimeRequest(ctx, toolsDirectory, outputDirectory, publicationFormat)
+}
+
+func (s *SetupService) saveRuntimeRequest(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat *string) error {
 	update := settings.RuntimeUpdate{}
 	currentTools, hasTools, err := s.registry.GetToolsDirectory(ctx)
 	if err != nil {
@@ -196,8 +227,14 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 	}
 	update.ExpectedToolsDirectory = &expectedTools
 	update.ExpectedOutputDirectory = &expectedOutput
-	if toolsDirectory != "" {
-		normalized, err := settings.NormalizePath(toolsDirectory)
+	if publicationFormat != nil && *publicationFormat != "" {
+		update.PublicationFormat = publicationFormat
+	}
+	if toolsDirectory != nil {
+		if *toolsDirectory == "" {
+			return fmt.Errorf("tools directory is required")
+		}
+		normalized, err := settings.NormalizePath(*toolsDirectory)
 		if err != nil {
 			return fmt.Errorf("tools directory: %w", err)
 		}
@@ -219,25 +256,32 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 		currentTools, hasTools = normalized, true
 		update.ToolsDirectory = &normalized
 	}
-	if outputDirectory != "" {
-		normalized, err := settings.NormalizePath(outputDirectory)
+	if outputDirectory != nil {
+		if *outputDirectory == "" {
+			return fmt.Errorf("output directory is required")
+		}
+		normalized, err := settings.NormalizePath(*outputDirectory)
 		if err != nil {
 			return fmt.Errorf("output directory: %w", err)
 		}
-		semantics, err := settings.ProbeOutputDirectory(normalized, true)
+		currentOutput, hasOutput = normalized, true
+		update.OutputDirectory = &normalized
+		if normalized != expectedOutput {
+			if s.outputReset == nil {
+				return fmt.Errorf("output directory changes require the durable output reset service")
+			}
+			_, err = s.outputReset.ResetRuntime(ctx, expectedTools, expectedOutput, normalized, update)
+			return err
+		}
+		semantics, err := settings.ProbeOutputDirectory(normalized, false)
 		if err != nil {
 			return fmt.Errorf("output directory semantics: %w", err)
 		}
-		currentOutput, hasOutput = normalized, true
-		update.OutputDirectory = &normalized
 		update.OutputCaseSensitive = &semantics.CaseSensitive
 		update.OutputUnicodeNormalization = &semantics.UnicodeNormalization
 	}
 	if hasTools && hasOutput && settings.PathsOverlap(currentTools, currentOutput) {
 		return fmt.Errorf("tools directory overlaps with output directory")
-	}
-	if publicationFormat != "" {
-		update.PublicationFormat = &publicationFormat
 	}
 	return s.registry.UpdateRuntime(ctx, update)
 }
@@ -252,10 +296,6 @@ func (s *SetupService) ValidatePaths(ctx context.Context, toolsDir, outputDir st
 	savedOutput, _, err := s.registry.GetOutputDirectory(ctx)
 	if err != nil {
 		return PathValidation{}, fmt.Errorf("read output directory: %w", err)
-	}
-	completed, err := s.registry.SetupCompleted(ctx)
-	if err != nil {
-		return PathValidation{}, fmt.Errorf("read setup completion: %w", err)
 	}
 	if toolsDir == "" {
 		toolsDir = savedTools
@@ -291,7 +331,14 @@ func (s *SetupService) ValidatePaths(ctx context.Context, toolsDir, outputDir st
 	if err != nil {
 		return PathValidation{}, fmt.Errorf("output directory: %w", err)
 	}
-	semantics, err := settings.ProbeOutputDirectory(outputProbe, exists && (!completed || outputPath != savedOutput))
+	savedOutputPath := ""
+	if savedOutput != "" {
+		savedOutputPath, err = settings.NormalizePath(savedOutput)
+		if err != nil {
+			return PathValidation{}, fmt.Errorf("read saved output directory: %w", err)
+		}
+	}
+	semantics, err := settings.ProbeOutputDirectory(outputProbe, exists && outputPath != savedOutputPath)
 	if err != nil {
 		return PathValidation{}, fmt.Errorf("output directory is not writable or empty or semantics could not be probed: %w", err)
 	}
@@ -383,7 +430,7 @@ func (s *SetupService) Complete(ctx context.Context) error {
 	if err := settings.ProbeWritable(state.Runtime.ToolsDirectory); err != nil {
 		return fmt.Errorf("tools directory is not writable: %w", err)
 	}
-	semantics, err := settings.ProbeOutputDirectory(state.Runtime.OutputDirectory, true)
+	semantics, err := settings.ProbeOutputDirectory(state.Runtime.OutputDirectory, false)
 	if err != nil {
 		return fmt.Errorf("output directory is not ready: %w", err)
 	}

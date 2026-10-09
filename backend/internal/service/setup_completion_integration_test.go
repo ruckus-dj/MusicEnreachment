@@ -24,6 +24,7 @@ import (
 
 func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock func() time.Time) (*service.SetupService, *settings.Registry, *persistence.SettingsRepository) {
 	t.Helper()
+	_ = openSourceScanRiver(t, database)
 	ctx := t.Context()
 	store := persistence.NewSettingsRepository(database)
 	registry := settings.NewRegistryWithClock(store, clock)
@@ -32,8 +33,11 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 		t.Fatal(err)
 	}
 	installations := persistence.NewSetupManagerRepository(database)
-	setup := service.NewSetup(store, registry, platform, installations, nil)
-	if err := setup.SaveRuntime(ctx, t.TempDir(), t.TempDir(), "mka"); err != nil {
+	setup := service.NewSetup(store, registry, platform, installations, nil).WithOutputReset(
+		service.NewOutputReset(installations, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"}),
+	)
+	toolsDirectory, outputDirectory := t.TempDir(), filepath.Join(t.TempDir(), "output")
+	if err := setup.SaveRuntimeRequest(ctx, &toolsDirectory, &outputDirectory, setupCompletionStringPointer("mka")); err != nil {
 		t.Fatal(err)
 	}
 	if err := setup.SaveMusicBrainz(ctx, "self-hosted", endpoint); err != nil {
@@ -65,6 +69,39 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 	}
 	return setup, registry, store
 }
+
+func TestInitialOutputResetDirectoriesDoNotBlockSetupCompletion(t *testing.T) {
+	database := testpostgres.OpenMigrated(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte(`{"id":"5b11f4ce-a62d-471e-81fc-a69a8278c7da"}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+
+	setup, registry, _ := completionFixture(t, database, server.URL+"/ws/2", time.Now)
+	state, err := setup.State(t.Context())
+	if err != nil || !state.ConfigurationHealth.Healthy {
+		t.Fatalf("initial output reset made configuration unhealthy: %#v, %v", state.ConfigurationHealth, err)
+	}
+	if _, err := setup.ValidatePaths(t.Context(), "", ""); err != nil {
+		t.Fatalf("saved output root failed validation: %v", err)
+	}
+	for _, area := range []string{"analysis", "publication", "checks", "media"} {
+		output, _, err := registry.GetOutputDirectory(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(filepath.Join(output, area)); err != nil || !info.IsDir() {
+			t.Fatalf("initial output area %q missing: info=%v err=%v", area, info, err)
+		}
+	}
+	if err := setup.Complete(t.Context()); err != nil {
+		t.Fatalf("setup completion rejected the initial reset output: %v", err)
+	}
+}
+
+func setupCompletionStringPointer(value string) *string { return &value }
 
 func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 	// The unfiltered process-global probe hook must not overlap other tests.
@@ -112,7 +149,7 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 		t.Fatal("state did not reach the filesystem probe seam")
 	}
 	entries, err := os.ReadDir(output)
-	if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+	if err != nil || len(entries) != 5 {
 		t.Fatalf("semantics probe entries are not present while paused: %v, %v", entries, err)
 	}
 
@@ -159,7 +196,7 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 		t.Fatalf("probe retry after concurrent setup operations: %v", err)
 	}
 	entries, err = os.ReadDir(output)
-	if err != nil || len(entries) != 0 {
+	if err != nil || len(entries) != 4 {
 		t.Fatalf("concurrent probes left artifacts: %v, %v", entries, err)
 	}
 }
@@ -167,7 +204,7 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.Open(t)
-	for _, change := range []string{"musicbrainz identity", "runtime setting", "active installation verification", "output no longer empty"} {
+	for _, change := range []string{"musicbrainz identity", "runtime setting", "active installation verification", "output directory changed"} {
 		t.Run(change, func(t *testing.T) {
 			// Given: all requirements are healthy, but the final HTTP response is held.
 			testpostgres.ResetAndMigrate(t, database)
@@ -207,12 +244,8 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 				err = registry.SetPublicationFormat(ctx, "source")
 			case "active installation verification":
 				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_versions = '{}' WHERE package_kind = 'ffmpeg'")
-			case "output no longer empty":
-				var output string
-				output, _, err = registry.GetOutputDirectory(ctx)
-				if err == nil {
-					err = os.WriteFile(filepath.Join(output, "new-file.mka"), []byte("changed during check"), 0o600)
-				}
+			case "output directory changed":
+				err = setup.SaveRuntime(ctx, "", filepath.Join(t.TempDir(), "new-output"), "")
 			}
 			if err != nil {
 				t.Fatalf("configuration write was blocked by the connectivity check: %v", err)

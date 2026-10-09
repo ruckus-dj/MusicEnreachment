@@ -180,6 +180,23 @@ func TestSaveRuntimeRejectsWhitespaceDirectoryLikeRegistry(t *testing.T) {
 	}
 }
 
+func TestSaveRuntimeRequestDistinguishesOmittedAndEmptyToolsDirectory(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	setup := NewSetup(store, settings.New(store, nil), settings.PlatformState{}, nil, nil)
+	empty := ""
+
+	if err := setup.SaveRuntimeRequest(ctx, &empty, nil, nil); err == nil {
+		t.Fatal("explicitly empty tools directory was accepted")
+	}
+	if err := setup.SaveRuntimeRequest(ctx, nil, nil, nil); err != nil {
+		t.Fatalf("omitted tools directory was rejected: %v", err)
+	}
+	if len(store.data) != 0 {
+		t.Fatalf("omitted or invalid tools directory changed settings: %#v", store.data)
+	}
+}
+
 func TestSaveRuntimePreservesOmittedSettingsAndBlocksToolsMove(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
@@ -218,9 +235,15 @@ func TestSaveRuntimePreservesOmittedSettingsAndBlocksToolsMove(t *testing.T) {
 func TestSaveRuntimeCommitsValidatedFieldsInOneWrite(t *testing.T) {
 	ctx := context.Background()
 	store := &recordingRuntimeStore{memoryStore: newMemoryStore()}
-	setup := NewSetup(store, settings.New(store, nil), settings.PlatformState{}, nil, nil)
+	registry := settings.New(store, nil)
+	toolsPath, outputPath := t.TempDir(), t.TempDir()
+	store.data[settings.ToolsDirectoryKey] = toolsPath
+	store.data[settings.OutputDirectoryKey] = outputPath
+	store.data[settings.OutputCaseSensitiveKey] = "true"
+	store.data[settings.OutputUnicodeNormalizationKey] = "none"
+	setup := NewSetup(store, registry, settings.PlatformState{}, nil, nil)
 
-	if err := setup.SaveRuntime(ctx, t.TempDir(), t.TempDir(), "mka"); err != nil {
+	if err := setup.SaveRuntime(ctx, toolsPath, outputPath, "mka"); err != nil {
 		t.Fatal(err)
 	}
 	if store.calls != 1 || len(store.data) != 5 {

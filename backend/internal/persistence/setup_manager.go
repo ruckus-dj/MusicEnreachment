@@ -1081,7 +1081,7 @@ func (repository *SetupManagerRepository) TransitionOperationForDelivery(ctx con
 		if err != nil {
 			return err
 		}
-		if operation.Kind != "install" || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+		if (operation.Kind != "install" && operation.Kind != "move_tools_root") || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
 			return nil
 		}
 		if err := transition(operation); err != nil {
@@ -1198,6 +1198,32 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		if err != nil {
 			return fmt.Errorf("insert retry River job: %w", err)
 		}
+		if locked.Kind == "install" || locked.Kind == "move_tools_root" {
+			oldJobID := int64(0)
+			if locked.RiverJobID != nil {
+				oldJobID = *locked.RiverJobID
+			}
+			claimResult, err := tx.NewRaw(`UPDATE tools_execution_claim
+				SET attempt = ?, river_job_id = ?, claimed_at = now()
+				WHERE operation_id = ? AND attempt = ? AND river_job_id = ? AND borrower = ? AND NOT borrowed`,
+				locked.Attempt+1, result.Job.ID, locked.ID, locked.Attempt, oldJobID, locked.Kind).Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("handoff tools execution claim for retry: %w", err)
+			}
+			updated, err := claimResult.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("handoff tools execution claim for retry: %w", err)
+			}
+			if updated == 0 {
+				var claimExists bool
+				if err := tx.NewRaw("SELECT EXISTS (SELECT 1 FROM tools_execution_claim WHERE operation_id = ?)", locked.ID).Scan(ctx, &claimExists); err != nil {
+					return fmt.Errorf("check tools execution claim for retry: %w", err)
+				}
+				if claimExists {
+					return ErrToolsExecutionClaimHeld
+				}
+			}
+		}
 		if locked.Kind == "install" && locked.TargetInstallationID != nil {
 			if _, err := tx.NewUpdate().Model((*ToolInstallation)(nil)).
 				Set("state = 'preparing'").Set("updated_at = now()").
@@ -1268,6 +1294,7 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 	result, err := repository.db.NewDelete().Model((*Operation)(nil)).
 		Where("id = ?", id).
 		Where("state = 'failed'").
+		Where("NOT EXISTS (SELECT 1 FROM tools_execution_claim WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Exec(ctx)
@@ -1284,6 +1311,7 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 	_, err := repository.db.NewDelete().Model((*Operation)(nil)).
 		Where("state = 'succeeded'").
 		Where("finished_at < ?", before).
+		Where("NOT EXISTS (SELECT 1 FROM tools_execution_claim WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
 		Exec(ctx)

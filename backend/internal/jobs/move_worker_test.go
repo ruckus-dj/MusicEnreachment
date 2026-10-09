@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -511,9 +510,7 @@ func TestInstallationWorkerRollsBackPublishedTargetAfterResumedVerificationFailu
 	dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, operations, runtimeSettings, platform,
 		tools.NewLifecycle(moveCommandRunner{failName: "ffprobe"})))
 
-	if err := dispatcher.Work(context.Background(), &river.Job[service.OperationJobArgs]{
-		Args: service.OperationJobArgs{OperationID: operation.ID},
-	}); err != nil {
+	if err := dispatcher.Work(context.Background(), workerJob(operation.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if operation.State != "failed" || repository.root != oldRoot {
@@ -569,7 +566,7 @@ func TestInstallationWorkerResumesRollbackAfterEachConfirmedOriginalRestore(t *t
 	}
 	dispatcher := jobs.NewInstallationWorker(repository, operations, nil, moveWorkerSettings{root: newRoot}, platform, nil)
 	dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, operations, moveWorkerSettings{root: newRoot}, platform, tools.NewLifecycle(moveCommandRunner{})))
-	if err := dispatcher.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operation.ID}}); err != nil {
+	if err := dispatcher.Work(context.Background(), workerJob(operation.ID)); err != nil {
 		t.Fatalf("dispatcher could not resume rollback after restored original: %v", err)
 	}
 	if repository.root != oldRoot || operation.State != "failed" {
@@ -806,7 +803,7 @@ func dispatchMove(t *testing.T, repository *moveWorkerRepository, root string) e
 	dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, operations, runtimeSettings, platform, tools.NewLifecycle(moveCommandRunner{})))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return dispatcher.Work(ctx, &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: repository.operation.ID}})
+	return dispatcher.Work(ctx, workerJob(repository.operation.ID))
 }
 
 func TestInstallationWorkerPreparesSourceWitnessesBeforeSwitch(t *testing.T) {
@@ -1529,9 +1526,7 @@ func TestInstallationWorkerRedeliveryCleansInterruptedRestoreTemporary(t *testin
 			runtimeSettings := moveWorkerSettings{root: newRoot}
 			dispatcher := jobs.NewInstallationWorker(repository, operations, nil, runtimeSettings, platform, nil)
 			dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, operations, runtimeSettings, platform, tools.NewLifecycle(moveCommandRunner{})))
-			if err := dispatcher.Work(context.Background(), &river.Job[service.OperationJobArgs]{
-				Args: service.OperationJobArgs{OperationID: operation.ID},
-			}); err != nil {
+			if err := dispatcher.Work(context.Background(), workerJob(operation.ID)); err != nil {
 				t.Fatal(err)
 			}
 			if operation.State != "failed" || repository.root != oldRoot {
@@ -1590,7 +1585,7 @@ func TestInstallationWorkerRollbackDoesNotAdoptByteIdenticalUnknownConflictTarge
 	dispatcher := jobs.NewInstallationWorker(repository, service.NewOperations(repository), nil, runtimeSettings, platform, nil)
 	dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, service.NewOperations(repository), runtimeSettings, platform, tools.NewLifecycle(moveCommandRunner{})))
 
-	err = dispatcher.Work(context.Background(), &river.Job[service.OperationJobArgs]{Args: service.OperationJobArgs{OperationID: operation.ID}})
+	err = dispatcher.Work(context.Background(), workerJob(operation.ID))
 	if err == nil || !strings.Contains(err.Error(), "unknown target blocks restoration") {
 		t.Fatalf("byte-identical unknown target was adopted: %v", err)
 	}
@@ -1667,9 +1662,7 @@ func TestInstallationWorkerRedeliveryCleansSucceededMoveStaging(t *testing.T) {
 		moveWorkerSettings{root: newRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, nil)
 	installationWorker.SetMoveWorker(moveWorker)
 
-	if err := installationWorker.Work(context.Background(), &river.Job[service.OperationJobArgs]{
-		Args: service.OperationJobArgs{OperationID: operation.ID},
-	}); err != nil {
+	if err := installationWorker.Work(context.Background(), workerJob(operation.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
@@ -1704,9 +1697,7 @@ func TestInstallationWorkerSurfacesAndRecoversSucceededMoveCleanupFailure(t *tes
 	if err := os.Mkdir(fault, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	err = installationWorker.Work(context.Background(), &river.Job[service.OperationJobArgs]{
-		Args: service.OperationJobArgs{OperationID: operation.ID},
-	})
+	err = installationWorker.Work(context.Background(), workerJob(operation.ID))
 	if err == nil {
 		t.Fatal("dispatcher hid succeeded move staging cleanup failure")
 	}
@@ -1714,9 +1705,7 @@ func TestInstallationWorkerSurfacesAndRecoversSucceededMoveCleanupFailure(t *tes
 		t.Fatal(err)
 	}
 
-	if err := installationWorker.Work(context.Background(), &river.Job[service.OperationJobArgs]{
-		Args: service.OperationJobArgs{OperationID: operation.ID},
-	}); err != nil {
+	if err := installationWorker.Work(context.Background(), workerJob(operation.ID)); err != nil {
 		t.Fatalf("dispatcher could not retry staging cleanup: %v", err)
 	}
 	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
@@ -1781,7 +1770,7 @@ func newMoveFixture(t *testing.T, confirmed, removeOld bool) (string, string, *p
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued", InputSnapshot: raw}
+	operation := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued", Attempt: 1, RiverJobID: workerDeliveryID(), InputSnapshot: raw}
 	return oldRoot, newRoot, operation, installation, snapshot
 }
 

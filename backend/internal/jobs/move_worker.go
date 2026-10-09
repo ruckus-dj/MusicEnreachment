@@ -199,7 +199,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	if operation.State == "queued" && publication != nil && moveNeedsPreSwitchRollbackOnRetry(operation.Stage) {
 		return worker.rollbackTargets(ctx, operation, snapshot, staging, ownedTargets, fmt.Errorf("tools root move was interrupted before switching roots"))
 	}
-	if err := worker.operations.Running(ctx, operation.ID, "copy"); err != nil {
+	if err := worker.operations.RunningForDelivery(ctx, operation, "copy"); err != nil {
 		return err
 	}
 	payloadRoot := filepath.Join(staging, "payload")

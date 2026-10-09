@@ -89,7 +89,7 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 		return fmt.Errorf("list active operations for recovery: %w", err)
 	}
 	for index := range active {
-		if err := func() error {
+		if err := func() (recoveryErr error) {
 			operation := &active[index]
 			var unlock func()
 			if operation.Kind == "install" {
@@ -113,6 +113,21 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			}
 			if live {
 				return nil
+			}
+			if (operation.Kind == "install" || operation.Kind == "move_tools_root") && operation.RiverJobID != nil {
+				recoveryOperation := *operation
+				preserveMoveStaging := operation.Kind == "move_tools_root" && moveNeedsRollbackOnRetry(operation.Stage)
+				defer func() {
+					if recoveryErr != nil || preserveMoveStaging {
+						if claims, ok := repository.(interface {
+							AbandonToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+						}); ok {
+							recoveryErr = errors.Join(recoveryErr, claims.AbandonToolsExecutionDelivery(ctx, recoveryOperation.ID, recoveryOperation.Attempt, *recoveryOperation.RiverJobID, recoveryOperation.Kind))
+						}
+					} else {
+						recoveryErr = operations.ReleaseToolsExecutionDelivery(ctx, &recoveryOperation, *recoveryOperation.RiverJobID)
+					}
+				}()
 			}
 			if operation.Kind == service.SourceScanOperationKind {
 				if err := recoverInterruptedSourceScan(ctx, repository, operations, operation); err != nil {
@@ -218,13 +233,88 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			return err
 		}
 	}
-	if err := cleanupTerminalInstallations(ctx, repository, runtimeSettings); err != nil {
+	if err := cleanupTerminalInstallations(ctx, repository, operations, runtimeSettings); err != nil {
+		return err
+	}
+	if err := cleanupTerminalMoves(ctx, repository, operations); err != nil {
 		return err
 	}
 	return nil
 }
 
-func cleanupTerminalInstallations(ctx context.Context, repository interruptedOperationRepository, runtimeSettings interruptedOperationSettings) error {
+func cleanupTerminalMoves(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations) error {
+	terminal, err := repository.ListOperations(ctx, "succeeded", "failed")
+	if err != nil {
+		return fmt.Errorf("list terminal tools moves for cleanup: %w", err)
+	}
+	for index := range terminal {
+		listed := &terminal[index]
+		if listed.Kind != "move_tools_root" {
+			continue
+		}
+		unlock := lockInstallationExecution(listed.ID)
+		operation, err := repository.GetOperation(ctx, listed.ID)
+		if err != nil {
+			unlock()
+			return fmt.Errorf("reload terminal tools move %s: %w", listed.ID, err)
+		}
+		if operation.State != "succeeded" && operation.State != "failed" {
+			unlock()
+			continue
+		}
+		var snapshot service.MoveSnapshot
+		if err := json.Unmarshal(operation.InputSnapshot, &snapshot); err != nil || snapshot.NewRoot == "" {
+			unlock()
+			return fmt.Errorf("invalid succeeded move snapshot for cleanup")
+		}
+		if operation.State == "failed" && moveNeedsRollbackOnRetry(operation.Stage) {
+			if operation.RiverJobID != nil {
+				if claims, ok := repository.(interface {
+					AbandonToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+				}); ok {
+					if err := claims.AbandonToolsExecutionDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, operation.Kind); err != nil {
+						unlock()
+						return fmt.Errorf("retain unresolved failed move %s for retry: %w", operation.ID, err)
+					}
+				}
+			}
+			unlock()
+			continue
+		}
+		if err := cleanupOldSourceRestoreStaging(snapshot, operation.ID); err != nil {
+			if operation.RiverJobID != nil {
+				if claims, ok := repository.(interface {
+					AbandonToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+				}); ok {
+					err = errors.Join(err, claims.AbandonToolsExecutionDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, operation.Kind))
+				}
+			}
+			unlock()
+			return fmt.Errorf("clean succeeded move restore staging %s: %w", operation.ID, err)
+		}
+		if err := tools.CleanupOperationStaging(snapshot.NewRoot, operation.ID); err != nil {
+			if operation.RiverJobID != nil {
+				if claims, ok := repository.(interface {
+					AbandonToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+				}); ok {
+					err = errors.Join(err, claims.AbandonToolsExecutionDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID, operation.Kind))
+				}
+			}
+			unlock()
+			return fmt.Errorf("clean succeeded move staging %s: %w", operation.ID, err)
+		}
+		if operation.RiverJobID != nil {
+			if err := operations.ReleaseToolsExecutionDelivery(ctx, operation, *operation.RiverJobID); err != nil {
+				unlock()
+				return fmt.Errorf("release recovered succeeded move %s: %w", operation.ID, err)
+			}
+		}
+		unlock()
+	}
+	return nil
+}
+
+func cleanupTerminalInstallations(ctx context.Context, repository interruptedOperationRepository, operations *service.Operations, runtimeSettings interruptedOperationSettings) error {
 	terminal, err := repository.ListOperations(ctx, "succeeded", "failed")
 	if err != nil {
 		return fmt.Errorf("list terminal installations for cleanup: %w", err)
@@ -270,6 +360,12 @@ func cleanupTerminalInstallations(ctx context.Context, repository interruptedOpe
 					continue
 				}
 				return fmt.Errorf("clean terminal installation %s: %w", operation.ID, cleanupErr)
+			}
+			if operation.RiverJobID != nil {
+				if err := operations.ReleaseToolsExecutionDelivery(ctx, operation, *operation.RiverJobID); err != nil {
+					unlock()
+					return fmt.Errorf("release recovered terminal installation %s: %w", operation.ID, err)
+				}
 			}
 		}
 		unlock()

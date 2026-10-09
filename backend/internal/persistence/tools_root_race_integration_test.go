@@ -99,7 +99,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		if _, err := database.ExecContext(ctx, `
 			CREATE FUNCTION reject_test_runtime_setting() RETURNS trigger AS $$
 			BEGIN
-				IF NEW.setting_name = 'zz_test_reject' THEN RAISE EXCEPTION 'test rejection'; END IF;
+				IF NEW.setting_name = 'publication_format' THEN RAISE EXCEPTION 'test rejection'; END IF;
 				RETURN NEW;
 			END; $$ LANGUAGE plpgsql;
 			CREATE TRIGGER reject_test_runtime_setting BEFORE INSERT OR UPDATE ON app_setting
@@ -113,9 +113,9 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		// The tools root stays rootA so the install/operation guard is skipped and
 		// the rejected key reaches the trigger; otherwise the guard fails first.
 		err := settingsRepository.UpdateRuntime(ctx, rootA, "", map[string]string{
-			"tools_directory":  rootA,
-			"output_directory": "/srv/output-rollback",
-			"zz_test_reject":   "reject",
+			"tools_directory":    rootA,
+			"output_directory":   "/srv/output-rollback",
+			"publication_format": "mka",
 		})
 		if err == nil {
 			t.Fatal("runtime settings write with a rejected key succeeded")
@@ -180,11 +180,15 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		oldRoot = "/srv/tools"
 		newRoot = "/srv/tools-next"
 		output  = "/srv/output"
+		neutral = "/srv/output-neutral"
 	)
 	if err := settingsRepository.SetMany(ctx, map[string]string{
 		"tools_directory": oldRoot, "output_directory": output, "output_case_sensitive": "true",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if err := resetTestOutputDirectory(t, ctx, setupRepository, output, neutral); err != nil {
+		t.Fatalf("move output root before testing move overlap: %v", err)
 	}
 
 	for name, candidate := range map[string]string{
@@ -194,14 +198,20 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		"filesystem root": "/",
 	} {
 		t.Run(name, func(t *testing.T) {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
+				t.Fatalf("reset output root before move overlap test: %v", err)
+			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued", Attempt: 1,
 				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
 			t.Cleanup(func() {
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
-				_ = settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "output_directory": output, "output_case_sensitive": "true"})
+				_ = settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "output_case_sensitive": "true"})
+				if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, output); err != nil {
+					t.Errorf("reset output root after move overlap test: %v", err)
+				}
 				_, _ = database.NewRaw("DELETE FROM app_setting WHERE setting_name = 'output_unicode_normalization'").Exec(ctx)
 			})
-			if err := settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "output_directory": output, "output_case_sensitive": "true"}); err != nil {
+			if err := settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "output_case_sensitive": "true"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := database.NewRaw("DELETE FROM app_setting WHERE setting_name = 'output_unicode_normalization'").Exec(ctx); err != nil {
@@ -210,26 +220,20 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 			if _, err := database.NewInsert().Model(move).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
-			err := settingsRepository.UpdateRuntime(ctx, oldRoot, output, map[string]string{
-				"output_directory": candidate, "output_case_sensitive": "true", "output_unicode_normalization": "none",
-			})
+			err := resetTestOutputDirectory(t, ctx, setupRepository, neutral, candidate)
 			if err == nil {
 				t.Fatalf("conflicting output %q was accepted during move", candidate)
 			}
-			assertStoredRuntimeValue(t, ctx, database, "output_directory", output)
+			assertStoredRuntimeValue(t, ctx, database, "output_directory", neutral)
 			assertStoredRuntimeAbsent(t, ctx, database, "output_unicode_normalization")
-			if err := settingsRepository.UpdateRuntime(ctx, oldRoot, output, map[string]string{
-				"output_directory": "/mnt/archive/output", "output_case_sensitive": "true", "output_unicode_normalization": "none",
-			}); err != nil {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, "/mnt/archive/output"); err != nil {
 				t.Fatalf("nonconflicting output update during move: %v", err)
 			}
 			assertStoredRuntimeValue(t, ctx, database, "output_directory", "/mnt/archive/output")
 			if _, err := database.NewDelete().Model(move).WherePK().Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := settingsRepository.UpdateRuntime(ctx, oldRoot, "/mnt/archive/output", map[string]string{
-				"output_directory": output, "output_case_sensitive": "true", "output_unicode_normalization": "none",
-			}); err != nil {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -237,12 +241,17 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 
 	for name, candidate := range map[string]string{"equal": newRoot, "parent": "/srv", "child": newRoot + "/nested", "filesystem root": "/"} {
 		t.Run("move admission observes output committed first/"+name, func(t *testing.T) {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
+				t.Fatalf("reset output root before move admission race: %v", err)
+			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
 				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
 			t.Cleanup(func() {
 				_, _ = database.NewRaw("DELETE FROM river_job WHERE args->>'operation_id' = ?", move.ID.String()).Exec(ctx)
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
-				_ = settingsRepository.Set(ctx, "output_directory", output)
+				if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
+					t.Errorf("reset output root after move admission race: %v", err)
+				}
 			})
 			err := runQueryRace(t, ctx, database,
 				"SELECT pg_advisory_xact_lock(1297371734, 1)", "pg_advisory_xact_lock(",
@@ -260,7 +269,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 			assertNoMoveAdmission(t, ctx, database, move.ID)
 			assertStoredRuntimeValue(t, ctx, database, "output_case_sensitive", "true")
 			assertStoredRuntimeAbsent(t, ctx, database, "output_unicode_normalization")
-			if err := settingsRepository.Set(ctx, "output_directory", output); err != nil {
+			if err := resetTestOutputDirectory(t, ctx, setupRepository, candidate, neutral); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -268,12 +277,17 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 
 	for name, candidate := range map[string]string{"equal": newRoot, "parent": "/srv", "child": newRoot + "/nested", "filesystem root": "/"} {
 		t.Run("output update observes move admission committed first/"+name, func(t *testing.T) {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
+				t.Fatalf("reset output root before output update race: %v", err)
+			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
 				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
 			t.Cleanup(func() {
 				_, _ = database.NewRaw("DELETE FROM river_job WHERE args->>'operation_id' = ?", move.ID.String()).Exec(ctx)
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
-				_ = settingsRepository.Set(ctx, "output_directory", output)
+				if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, output); err != nil {
+					t.Errorf("reset output root after output update race: %v", err)
+				}
 			})
 			err := runQueryRace(t, ctx, database,
 				"SELECT pg_advisory_xact_lock(1297371734, 1)", "pg_advisory_xact_lock(",
@@ -286,14 +300,14 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 					return setupRepository.CreateOperationWith(ctx, tx, move)
 				},
 				func(ctx context.Context) error {
-					return settingsRepository.UpdateRuntime(ctx, oldRoot, output, map[string]string{
+					return settingsRepository.UpdateRuntime(ctx, oldRoot, neutral, map[string]string{
 						"output_directory": candidate, "output_case_sensitive": "true", "output_unicode_normalization": "none",
 					})
 				})
 			if err == nil {
 				t.Fatalf("conflicting output update %q committed after move admission", candidate)
 			}
-			assertStoredRuntimeValue(t, ctx, database, "output_directory", output)
+			assertStoredRuntimeValue(t, ctx, database, "output_directory", neutral)
 			assertStoredRuntimeAbsent(t, ctx, database, "output_unicode_normalization")
 			if _, err := database.NewDelete().Model(move).WherePK().Exec(ctx); err != nil {
 				t.Fatal(err)
@@ -318,7 +332,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		if err := setupRepository.CreateOperation(ctx, operation); err != nil {
 			t.Fatal(err)
 		}
-		if err := settingsRepository.Set(ctx, "output_directory", retryTarget); err != nil {
+		if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, retryTarget); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := setupRepository.RetryOperationAndEnqueue(ctx, operation.ID, client, service.OperationJobArgs{OperationID: operation.ID}, nil); err == nil {
@@ -332,7 +346,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		if err := database.NewRaw("SELECT count(*) FROM river_job WHERE args->>'operation_id' = ?", operation.ID.String()).Scan(ctx, &jobs); err != nil || jobs != 0 {
 			t.Fatalf("rejected retry left River jobs=%d err=%v", jobs, err)
 		}
-		if err := settingsRepository.Set(ctx, "output_directory", "/mnt/archive/output"); err != nil {
+		if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, "/mnt/archive/output"); err != nil {
 			t.Fatal(err)
 		}
 		retried, err := setupRepository.RetryOperationAndEnqueue(ctx, operation.ID, client, service.OperationJobArgs{OperationID: operation.ID}, nil)
@@ -356,6 +370,8 @@ func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostg
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	settingsRepository := persistence.NewSettingsRepository(database)
+	setupRepository := persistence.NewSetupManagerRepository(database)
+	openScanEnqueueRiver(t, database)
 
 	t.Run("active selection waits for package mutation", func(t *testing.T) {
 		err := runQueryRace(t, ctx, database,
@@ -399,9 +415,21 @@ func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostg
 		if err := settingsRepository.Set(ctx, "output_directory", alias); err == nil {
 			t.Fatal("output symlink alias overlapping tools root was accepted")
 		}
-		if err := settingsRepository.SetMany(ctx, map[string]string{
-			"tools_directory": filepath.Join(base, "output"), "output_directory": target,
-		}); err != nil {
+		if err := settingsRepository.Set(ctx, "tools_directory", filepath.Join(base, "tools-next")); err != nil {
+			t.Fatal(err)
+		}
+		currentOutput, found, err := settingsRepository.Get(ctx, "output_directory")
+		if err != nil || !found {
+			t.Fatalf("read current output root: found=%t err=%v", found, err)
+		}
+		canonicalTarget, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := resetTestOutputDirectory(t, ctx, setupRepository, currentOutput, canonicalTarget); err != nil {
+			t.Fatal(err)
+		}
+		if err := settingsRepository.Set(ctx, "tools_directory", filepath.Join(base, "output")); err != nil {
 			t.Fatal(err)
 		}
 		if err := settingsRepository.Set(ctx, "tools_directory", alias); err == nil {
@@ -412,7 +440,7 @@ func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostg
 			t.Fatal(err)
 		}
 		assertStoredRuntimeValue(t, ctx, database, "tools_directory", filepath.Join(canonicalOutput, "output"))
-		canonicalTarget, err := filepath.EvalSymlinks(target)
+		canonicalTarget, err = filepath.EvalSymlinks(target)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -440,6 +468,26 @@ func assertStoredRuntimeAbsent(t *testing.T, ctx context.Context, database *bun.
 	if count != 0 {
 		t.Fatalf("%s persisted after rejected runtime update", name)
 	}
+}
+
+func resetTestOutputDirectory(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, oldRoot, newRoot string) error {
+	t.Helper()
+	_, err := repository.RunOutputReset(ctx, oldRoot, newRoot,
+		func(context.Context, func(string) error) error { return nil },
+		func(context.Context, persistence.OutputResetJournal) error { return nil })
+	return err
+}
+
+func resetTestOutputRoot(t *testing.T, ctx context.Context, settings *persistence.SettingsRepository, setup *persistence.SetupManagerRepository, newRoot string) error {
+	t.Helper()
+	oldRoot, found, err := settings.Get(ctx, "output_directory")
+	if err != nil {
+		t.Fatalf("read output root before reset: %v", err)
+	}
+	if !found || oldRoot == newRoot {
+		return nil
+	}
+	return resetTestOutputDirectory(t, ctx, setup, oldRoot, newRoot)
 }
 
 func assertNoMoveAdmission(t *testing.T, ctx context.Context, database *bun.DB, operationID uuid.UUID) {

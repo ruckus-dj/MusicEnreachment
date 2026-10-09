@@ -54,9 +54,9 @@ type SaveRuntimeInput struct {
 }
 
 type SaveRuntimeBody struct {
-	ToolsDirectory    string `json:"tools_directory,omitempty" maxLength:"4096"`
-	OutputDirectory   string `json:"output_directory,omitempty" maxLength:"4096"`
-	PublicationFormat string `json:"publication_format,omitempty" enum:"source,mka"`
+	ToolsDirectory    *string `json:"tools_directory,omitempty" maxLength:"4096"`
+	OutputDirectory   *string `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat *string `json:"publication_format,omitempty" enum:"source,mka"`
 }
 
 type CheckPathsInput struct {
@@ -121,7 +121,7 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := setup.SaveRuntime(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
+		if err := setup.SaveRuntimeRequest(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
 			return nil, huma.Error400BadRequest("invalid runtime settings")
 		}
 		return nil, nil

@@ -31,8 +31,12 @@ func (retryer *appSourceAnalysisRetryer) RetryOperation(_ context.Context, id uu
 
 type workerOperationRepository struct {
 	*persistence.SetupManagerRepository
-	operation    *persistence.Operation
-	installation *persistence.ToolInstallation
+	operation     *persistence.Operation
+	installation  *persistence.ToolInstallation
+	claimAttempt  int
+	claimJobID    int64
+	claimBorrower string
+	claimHeld     bool
 }
 
 func appWorkerDeliveryID() *int64 { id := int64(1); return &id }
@@ -61,6 +65,40 @@ func (repository *workerOperationRepository) TransitionOperationForDelivery(_ co
 		return false, err
 	}
 	return true, nil
+}
+
+func (repository *workerOperationRepository) ClaimToolsExecutionDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, borrower string) (bool, error) {
+	operation := repository.operation
+	if operation == nil || operation.ID != id || operation.Kind != borrower || operation.Attempt != attempt ||
+		operation.RiverJobID == nil || *operation.RiverJobID != jobID ||
+		(operation.State != "queued" && operation.State != "running" && operation.State != "succeeded" && operation.State != "failed") {
+		return false, nil
+	}
+	if repository.claimHeld {
+		return false, persistence.ErrToolsExecutionClaimHeld
+	}
+	repository.claimAttempt, repository.claimJobID, repository.claimBorrower = attempt, jobID, borrower
+	repository.claimHeld = true
+	if operation.State == "queued" {
+		operation.State = "running"
+	}
+	return true, nil
+}
+
+func (repository *workerOperationRepository) ReleaseToolsExecutionDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, borrower string) error {
+	if repository.operation != nil && repository.operation.ID == id && repository.claimHeld &&
+		repository.claimAttempt == attempt && repository.claimJobID == jobID && repository.claimBorrower == borrower {
+		repository.claimHeld = false
+	}
+	return nil
+}
+
+func (repository *workerOperationRepository) AbandonToolsExecutionDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, borrower string) error {
+	if repository.operation != nil && repository.operation.ID == id && repository.claimHeld &&
+		repository.claimAttempt == attempt && repository.claimJobID == jobID && repository.claimBorrower == borrower {
+		repository.claimHeld = false
+	}
+	return nil
 }
 
 func (repository *workerOperationRepository) FailInstallationDelivery(_ context.Context, id uuid.UUID, attempt int, jobID int64, target uuid.UUID, stage, safe string) (bool, error) {

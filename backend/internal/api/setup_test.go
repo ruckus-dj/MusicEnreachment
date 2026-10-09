@@ -121,6 +121,36 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 	}
 }
 
+func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {
+	store := apiSettingsStore{
+		settings.ToolsDirectoryKey:    "/tools",
+		settings.OutputDirectoryKey:   "/output",
+		settings.PublicationFormatKey: "mka",
+	}
+	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	handler := api.HandlerWithSetup(setup)
+	for _, test := range []struct {
+		name, body string
+		want       int
+	}{
+		{"omitted", `{}`, http.StatusNoContent},
+		{"explicit empty", `{"output_directory":""}`, http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPut, "/setup/runtime", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d want=%d: %s", response.Code, test.want, response.Body.String())
+			}
+			if store[settings.OutputDirectoryKey] != "/output" {
+				t.Fatalf("output directory changed: %q", store[settings.OutputDirectoryKey])
+			}
+		})
+	}
+}
+
 func TestCheckSetupPathsValidatesWithoutSaving(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)

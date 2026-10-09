@@ -29,6 +29,11 @@ type operationDeliveryTransitionRepository interface {
 	TransitionOperationForDelivery(context.Context, uuid.UUID, int, int64, func(*persistence.Operation) error) (bool, error)
 }
 
+type toolsExecutionClaimRepository interface {
+	ClaimToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) (bool, error)
+	ReleaseToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+}
+
 type OperationSnapshot struct {
 	ID                     uuid.UUID
 	Kind                   string
@@ -183,6 +188,24 @@ func (s *Operations) Running(ctx context.Context, id uuid.UUID, stage string) er
 // whose job args intentionally contain only the operation ID.
 func (s *Operations) RunningForDelivery(ctx context.Context, operation *persistence.Operation, stage string) error {
 	return s.transitionForDelivery(ctx, operation, "running", stage, "", nil)
+}
+
+// ClaimToolsExecutionDelivery admits filesystem work only for the current
+// durable tools-operation delivery.
+func (s *Operations) ClaimToolsExecutionDelivery(ctx context.Context, operation *persistence.Operation, riverJobID int64) (bool, error) {
+	repository, ok := s.repository.(toolsExecutionClaimRepository)
+	if !ok {
+		return false, fmt.Errorf("tools execution claim repository is unavailable")
+	}
+	return repository.ClaimToolsExecutionDelivery(ctx, operation.ID, operation.Attempt, riverJobID, operation.Kind)
+}
+
+func (s *Operations) ReleaseToolsExecutionDelivery(ctx context.Context, operation *persistence.Operation, riverJobID int64) error {
+	repository, ok := s.repository.(toolsExecutionClaimRepository)
+	if !ok {
+		return fmt.Errorf("tools execution claim repository is unavailable")
+	}
+	return repository.ReleaseToolsExecutionDelivery(ctx, operation.ID, operation.Attempt, riverJobID, operation.Kind)
 }
 
 func (s *Operations) ProgressForDelivery(ctx context.Context, operation *persistence.Operation, stage string, completed int64, total *int64) error {

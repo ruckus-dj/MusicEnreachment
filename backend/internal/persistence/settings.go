@@ -106,6 +106,9 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 			if value, ok := values["output_directory"]; ok {
 				nextOutput = value
 			}
+			if outputChange && outputRootChangeRequiresReset(currentOutput, nextOutput) {
+				return fmt.Errorf("output directory changes must use the output reset workflow")
+			}
 			caseSensitive = runtimeCaseSensitivity(values, caseSensitive)
 			if toolsChange && nextTools != currentTools {
 				if err := rejectActiveRootMove(ctx, tx); err != nil {
@@ -260,6 +263,10 @@ func rejectActiveRootMove(ctx context.Context, tx bun.Tx) error {
 // UpdateRuntime serializes a direct tools-root change with every tools
 // mutation. expectedToolsRoot is empty when no root is currently configured.
 func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoot, expectedOutputRoot string, values map[string]string) error {
+	values = cloneSettingValues(values)
+	if err := validateRuntimeSettingValues(values); err != nil {
+		return err
+	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockToolsMoveGateExclusive(ctx, tx); err != nil {
 			return fmt.Errorf("lock tools operations: %w", err)
@@ -280,6 +287,9 @@ func (r *SettingsRepository) UpdateRuntime(ctx context.Context, expectedToolsRoo
 		}
 		if value, ok := values["output_directory"]; ok {
 			nextOutput = value
+		}
+		if _, outputChange := values["output_directory"]; outputChange && outputRootChangeRequiresReset(currentOutput, nextOutput) {
+			return fmt.Errorf("output directory changes must use the output reset workflow")
 		}
 		caseSensitive = runtimeCaseSensitivity(values, caseSensitive)
 		if nextTools != currentTools {
@@ -321,6 +331,10 @@ func runtimeCaseSensitivity(values map[string]string, current bool) bool {
 		return value != "false"
 	}
 	return current
+}
+
+func outputRootChangeRequiresReset(current, next string) bool {
+	return current != "" && next != current
 }
 
 func readRuntimeRoots(ctx context.Context, tx bun.Tx) (toolsRoot, outputRoot string, caseSensitive bool, resultErr error) {

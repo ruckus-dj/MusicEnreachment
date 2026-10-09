@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -61,9 +62,32 @@ func (worker *InstallationWorker) SetMoveWorker(moveWorker *MoveWorker) {
 	worker.moveWorker = moveWorker
 }
 
-func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[service.OperationJobArgs]) error {
+func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[service.OperationJobArgs]) (result error) {
 	operationID := job.Args.OperationID
 	operation, err := worker.repository.GetOperation(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	if operation.Kind != "install" && operation.Kind != "move_tools_root" {
+		return fmt.Errorf("operation is not a tools operation")
+	}
+	admissionState, admissionStage := operation.State, operation.Stage
+	claimed, err := worker.operations.ClaimToolsExecutionDelivery(ctx, operation, job.ID)
+	if err != nil || !claimed {
+		return err
+	}
+	unlock := lockInstallationExecution(operationID)
+	defer unlock()
+	defer func() {
+		if result == nil {
+			result = worker.operations.ReleaseToolsExecutionDelivery(context.WithoutCancel(ctx), operation, job.ID)
+		} else if repository, ok := worker.repository.(interface {
+			AbandonToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
+		}); ok {
+			result = errors.Join(result, repository.AbandonToolsExecutionDelivery(context.WithoutCancel(ctx), operation.ID, operation.Attempt, job.ID, operation.Kind))
+		}
+	}()
+	operation, err = worker.repository.GetOperation(ctx, operationID)
 	if err != nil {
 		return err
 	}
@@ -71,28 +95,23 @@ func (worker *InstallationWorker) Work(ctx context.Context, job *river.Job[servi
 		if worker.moveWorker == nil {
 			return fmt.Errorf("tools root move worker is unavailable")
 		}
+		operation.State, operation.Stage = admissionState, admissionStage
 		return worker.moveWorker.Work(ctx, operation)
 	}
 	if operation.Kind != "install" {
 		return fmt.Errorf("operation is not an installation")
-	}
-	unlock := lockInstallationExecution(operationID)
-	defer unlock()
-	// The operation may have been retried while this delivery waited for the
-	// process-local filesystem fence. All later decisions use durable state.
-	operation, err = worker.repository.GetOperation(ctx, operationID)
-	if err != nil {
-		return err
-	}
-	if operation.Kind == "install" && (operation.RiverJobID == nil || *operation.RiverJobID != job.ID) {
-		// A delivery from before a retry must not run against the newer attempt.
-		return nil
 	}
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return worker.cleanupTerminalInstallation(ctx, operation)
 	}
 	if operation.Kind != "install" || operation.TargetInstallationID == nil {
 		return fmt.Errorf("operation is not an installation")
+	}
+	if admissionState == "queued" {
+		// The claim has durably moved the row to running. Retain the pre-claim
+		// state locally because queued-retry publication recovery differs from
+		// recovery of an interrupted running delivery.
+		operation.State, operation.Stage = admissionState, admissionStage
 	}
 	installation, err := worker.repository.GetInstallation(ctx, *operation.TargetInstallationID)
 	if err != nil {
