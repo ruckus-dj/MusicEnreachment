@@ -42,6 +42,11 @@
 | «Полный релиз» — финальное уточнение | Для auto-apply matching достаточно, чтобы **все файлы входящей группы** уверенно получили назначения. Не требуется покрыть все позиции provider release: неполный provider tracklist coverage допустим. Если вся группа назначена, авто-решение применяется ко всей группе. Частичное auto-apply группы запрещено. | Самое позднее обязательное уточнение владельца; оно supersedes предложение «все позиции релиза покрыты» из ранней версии формулировки/макета. |
 | Граница публикации | Matching может сохранять локальные сущности и подтверждённые matching/source links; он не публикует файлы и не объявляет публикацию выполненной. | Решения владельца; `docs/design/decisions.md`, `docs/design/data-model.md`. |
 
+> **Датированное дополнение 2026-10-09:** решения владельца по ранее открытым
+> gates ниже зафиксированы в
+> [Приложении A](#appendix-a-owner-decisions-2026-10-09); противоречащие открытые
+> gates помечены ссылкой на него.
+
 ### Upstream reference и переносимая семантика
 
 Upstream прочитан библиотекарем в read-only clone
@@ -89,6 +94,11 @@ commit `17448df1ee7ab5c9ad4769b4e09a474b27547728`. Источники для с�
   несовместимой лицензией/персональными данными: тогда сделать эквивалентный
   минимальный синтетический fixture и сослаться на upstream test как источник
   поведения.
+
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> владелец подтвердил, что upstream — его личный код и лицензии допустимы;
+> отдельный лицензионный блокер по fixtures снят. Логика реализуется
+> самостоятельно на Go, Python upstream — только reference (см. A7).
 
 ## Цель, сущности и границы
 
@@ -146,6 +156,10 @@ design выяснить у владельца lifecycle этих именно gr
 их persistence из правила page-only assignment drafts. Удалённые/изменившиеся
 files не остаются assignment targets.
 
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> lifecycle group corrections закрыт: page drafts до отдельного явного confirm,
+> затем сохранение в DB.
+
 **Обязательный exact-normalization gate:** теги хранятся как массивы строк
 (`observed_tags` из plan 10); нельзя делить значение по `;` или `/`, сворачивать
 мультиартистов к первому имени или сравнивать только один из конфликтующих
@@ -156,6 +170,11 @@ normalization для score в точности. Если по имеющимся
 однозначно определить продуктовую эквивалентность списков тегов, это реальный
 блокер группировочного auto-merge: запросить владельца, а не записать в этом
 плане NFKC/case/separator/order default.
+
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> normalization закрыта: NFC, case insensitive, trim крайних пробелов, пустые
+> элементы исключаются, порядок и повторы сохраняются, значение не делится по
+> `/` или `;`.
 
 ### Поиск candidates и evidence
 
@@ -197,6 +216,12 @@ normalization для score в точности. Если по имеющимся
   отдельного явного одобрения владельцем это **блокирующий owner gate для M07**;
   новый global algorithm не выбирать, default не предполагать, а раскладка
   остаётся read-only/review.
+
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> owner gate M07 закрыт: assignment — взаимно-однозначная раскладка с максимальной
+> суммой confidence, каждый файл >= 0.70; при нескольких равных лучших раскладках
+> вся группа уходит в review.
+
 - Переносимый approved-минимум после выбора release: для auto-apply группы
   **каждый файл** группы должен получить назначение; отсутствие назначения хотя
   бы одного файла отправляет всю группу в review, и уверенная часть не
@@ -207,8 +232,10 @@ normalization для score в точности. Если по имеющимся
   provider positions, и непокрытые позиции не блокируют auto outcome, если все
   входные файлы группы однозначно назначены. Это НЕ разрешает частичное auto
   assignment файлов группы.
-- Порог 0.70 применить к release qualified score (а к assignment score — только
-  после закрытия owner gate M07) именно в одобренных точках. Не выдумывать
+- Порог 0.70 применить к release qualified score (а к assignment score — owner
+  gate M07 закрыт 2026-10-09, см.
+  [Приложение A](#appendix-a-owner-decisions-2026-10-09)) именно в одобренных
+  точках. Не выдумывать
   второй порог, gap, confidence/status enum, комбинацию причины или статус
   только ради UI. Policy version версионирует
   формулу/принятие; обновление policy заменяет текущие candidates/automatic
@@ -282,6 +309,13 @@ normalization для score в точности. Если по имеющимся
   согласовать с владельцем до реализации; новые env vars не добавлять.
   В M05 проверить отсутствие искусственной паузы для self-hosted при отключённом
   лимите и соблюдение public policy; HTTP timeout этим решением не меняется.
+
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> отдельный toggle self-hosted, default off; при включении задержка между
+> запросами (секунды, float `0.0..60.0`), начальное/дефолтное значение поля —
+> 0.5 s; при off — запросы без искусственных пауз; HTTP timeout и public policy
+> сохраняются.
+
 - Изучить текущие provider/settings/API abstractions и avoid second matching
   pipeline. Объём provider response/cache freshness needs technical design;
   не создавать неподтверждённую долгую provider snapshot history или скрытый
@@ -328,6 +362,13 @@ normalization для score в точности. Если по имеющимся
 | M09 — Incoming + matching UI | React route/feature for incoming group list and S02/S03 matching, page-local drafts, accessible search/assignment/evidence inspector/group corrections. Add explicit manual confirm; no publication action. | M08. Prototype `docs/app-design/01-product-and-flows.md`, `02-screens.md`, `03-data-and-evidence.md` are references only. | RTL tests for initial/error/empty/provider unavailable, evidence and missing/not-applicable, candidate changes, independent drafts per release, drag/keyboard, occupied row, manual merge/split/move, manual link protected, stale conflict retaining page draft, navigating/reloading does not claim draft persistence; no fake score. Browser review desktop/mobile-width and both themes, focus/keyboard/readable dense tables. |
 | M10 — end-to-end acceptance / independent review | Update only stale **status** notes with dated addenda (do not rewrite historical report facts); reconcile README links and docs status after evidence. Run whole story with PostgreSQL/River fixtures and providers mocked; provide independent review. | M01–09 complete. | `task verify`; CI checks for changed Go/API/schema/client/platform surfaces; independent reviewer maps decisions, migrations, concurrency and acceptance. No network-dependent acceptance or publication claim. Move plan to `done/` only after accepted complete evidence. |
 
+> **Уточнение 2026-10-09:** блокирующие owner gates, упомянутые в M03, M06 и M07
+> (exact tag semantics, group-correction lifecycle, trigger/lifecycle auto
+> matching, position assignment coordination), закрыты в
+> [Приложении A](#appendix-a-owner-decisions-2026-10-09); настройка limiter
+> self-hosted уточнена в A6, upstream licensing/reference — в A7. Строки таблицы
+> сохранены как состояние на дату подготовки.
+
 ## Cross-stage safety and acceptance invariants
 
 1. **Atomic group outcome:** the automatic action is group-wide over every
@@ -339,6 +380,8 @@ normalization для score в точности. Если по имеющимся
    semantics. Требование «each file requires its own eligible, unique target
    position» относится к неутверждённой position-assignment логике и действует
    только после закрытия owner gate M07; до этого раскладка read-only/review.
+   owner gate M07 закрыт 2026-10-09 (см.
+   [Приложение A](#appendix-a-owner-decisions-2026-10-09)).
 3. **Missing vs mismatch:** unavailable evidence is excluded from the weighted
    denominator; present conflicting values are compared by the approved scoring
    factors and must not be reclassified as missing. Do not add a special conflict
@@ -407,6 +450,14 @@ legacy scoring, score threshold, group release winner/tie и точном зна
   tie/equal-max раскладка не утверждены; не выводить их из scoring, полноты
   группы или MBID order и не выбирать новый global algorithm.
 
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> оба перечисленных блокирующих owner gate закрыты: (1) matching запускается
+> автоматически после успешного анализа, новые/поздно готовые файлы пересчитывают
+> группу с сохранением manual protection; (2) position assignment — взаимно-
+> однозначная раскладка с максимальной суммой confidence, каждый файл >= 0.70,
+> равные лучшие раскладки уходят в review. Формулировки gates выше сохранены как
+> состояние на дату подготовки.
+
 Перед зависящими increments остаются **технические** gates: официальный research
 MusicBrainz/AcoustID rate/HTTP policy и выбранный compliant runtime mechanism;
 fixture licensing/provenance; physical schema / migration and lock review; точное
@@ -418,6 +469,16 @@ observed-tags contract; в таком случае запросить владе
 технические. Кроме перечисленных открытых owner gates (trigger/lifecycle auto
 matching, position assignment coordination) других неразрешённых owner decisions
 этот план не фиксирует.
+
+> **Уточнение 2026-10-09 (см. [Приложение A](#appendix-a-owner-decisions-2026-10-09)):**
+> оба перечисленных owner gate закрыты (см. выше). Из «технических» gates
+> продуктово решены exact multi-value tag equivalence при группировке (A3),
+> edition-sufficiency без MBID (A4), lifecycle сохранения ручных merge/split/move
+> (A5), управление self-hosted limiter (A6, отдельный toggle default off,
+> задержка 0.0..60.0, начальное поле 0.5 s) и upstream licensing/provenance
+> (A7, лицензии допустимы).
+> Остальные перечисленные пункты остаются техническими до соответствующих
+> increments.
 
 ## Связанные документы
 
@@ -433,3 +494,93 @@ matching, position assignment coordination) других неразрешённ�
 - Upstream scoring reference: read-only clone/commit and tests documented in
   «Реестр одобренных решений и источников»; external source, not runtime
   dependency.
+
+---
+
+# Приложение A. План 11 — решения владельца по группировке и автоматическому matching (2026-10-09)
+
+<a id="appendix-a-owner-decisions-2026-10-09"></a>
+
+**Дата фиксации: 2026-10-09. Статус: явные продуктовые решения владельца.**
+Это дополнение фиксирует решения по ранее открытым owner gates и не переписывает
+исторические факты плана: формулировки выше сохранены как состояние на дату
+подготовки. При конфликте между этим приложением и телом плана или более ранними
+формулировками приоритет имеют решения ниже. Реализация этим приложением не
+заявляется.
+
+## A1. Триггер и lifecycle автоматического matching (закрывает owner gate M06–M08)
+
+- Auto matching запускается автоматически после успешного завершения source
+  analysis. Отдельная явная команда оператора как обязательное условие запуска
+  не требуется.
+- Новые файлы группы и файлы, ставшие пригодными позже (новые/late-completion
+  analysis), пересчитывают группу. Пересчёт выполняется с соблюдением manual
+  protection: подтверждённые manual links защищены и не перебираются автоматикой.
+  Повторный расчёт не создаёт дубли local entities/links.
+
+## A2. Position assignment coordination (закрывает owner gate M07)
+
+- Assignment — взаимно-однозначная (bijective) раскладка входных файлов группы
+  на provider-позиции, максимизирующая сумму confidence по раскладке.
+- В раскладке каждый назначенный файл должен иметь confidence >= 0.70.
+- При нескольких равных лучших раскладках (одинаковая максимальная сумма
+  confidence) автоматический выбор не делается: вся группа уходит в ручной
+  review. Детерминированный тай-брейкер (в том числе lexical MBID order) не
+  вводится.
+
+## A3. Exact normalization тегов для группировки (закрывает multi-value / exact-normalization gate)
+
+- Значения тегов сравниваются после: Unicode NFC; без учёта регистра (case
+  insensitive); trim только крайних пробелов.
+- Пустые элементы исключаются из сравниваемого списка.
+- Порядок элементов и повторы сохраняются: значения не сортируются и не
+  дедуплицируются.
+- Значение не делится по `/` или `;`; split tag arrays не сворачиваются к одному
+  имени.
+- Это группировочное сравнение отдельно от переносимой upstream text
+  normalization для score; последняя переносится точно, как задано в теле плана.
+
+## A4. Достаточность edition-ключа без MBID (закрывает edition-sufficiency gate)
+
+- Без usable release MBID: полный `ALBUM` вместе с полным artist (полный
+  `ALBUMARTIST`, иначе fallback к полному `ARTIST`) и `DATE` **или**
+  `CATALOGNUMBER` достаточно, чтобы группировать файлы между folders и roots.
+- Missing и filled различаются: отсутствующее значение не приравнивается к
+  заполненному и не присоединяется к нему.
+- `country` (явные теги либо выводимая из разрешённого release MBID) остаётся
+  разделяющим признаком: разные страны — разные группы.
+
+## A5. Lifecycle ручных group corrections (закрывает group-correction lifecycle gate)
+
+- Ручные merge/split/move groups живут как page drafts до отдельного явного
+  confirm; навигация/refresh сохранение draft не обещает.
+- После отдельного явного confirm corrections сохраняются в DB (persisted).
+- Это не меняет правило page-only assignment drafts и не делает «Подтвердить»
+  публикацией.
+
+## A6. Self-hosted MusicBrainz limiter — toggle и задержка
+
+- Отдельный toggle для self-hosted MusicBrainz — runtime-настройка в БД с UI
+  toggle; значение по умолчанию — **off**.
+- При включённом toggle настройка задаёт **задержку между запросами в секундах**
+  (`float`, диапазон `0.0..60.0`); начальное/дефолтное значение поля —
+  **0.5 секунды**.
+- При off возможность запросов без искусственных пауз сохраняется.
+- HTTP timeout сохраняется; обязательные ограничения публичного MusicBrainz и
+  AcoustID сохраняются; новые env vars не добавляются.
+
+## A7. Upstream rights и способ реализации
+
+- Владелец подтвердил, что upstream — его личный код; лицензии на перенос
+  fixtures/семантики допустимы, отдельный лицензионный блокер по происхождению
+  fixtures снят.
+- Логику реализуем самостоятельно на Go; Python-реализация upstream — только
+  reference для переносимой семантики, не runtime-зависимость и не копируемая
+  реализация.
+
+## A8. Сохранность прочих контрактов
+
+Все остальные контракты плана без изменений: публикация вне scope, source
+read-only, manual protection, provider/rate/layering, схема/миграции, fencing,
+idempotency и acceptance invariants. Это приложение не является доказательством
+выполнения этапов M01–M10.
