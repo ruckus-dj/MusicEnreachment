@@ -655,7 +655,13 @@ func newAnalysisStepFixture(
 	selectedTools []persistence.SourceAnalysisToolSelection,
 ) *analysisStepFixture {
 	t.Helper()
-	operation := normalizedOperation(t, root, location, work, mode, targetWorkID, targetStep, work.SHA256Enabled, rerun, selectedTools)
+	var metadataSelected bool
+	if mode == persistence.SourceAnalysisModeBatch {
+		if err := database.NewRaw(`SELECT EXISTS (SELECT 1 FROM source_analysis_step WHERE work_id=? AND step='metadata' AND state='pending')`, work.ID).Scan(ctx, &metadataSelected); err != nil {
+			t.Fatalf("read pending metadata selection: %v", err)
+		}
+	}
+	operation := normalizedOperation(t, root, location, work, mode, targetWorkID, targetStep, work.SHA256Enabled, rerun, selectedTools, metadataSelected)
 	admitAndRunNormalizedAnalysis(t, ctx, database, repository, client, operation)
 	return &analysisStepFixture{t: t, repository: repository, ctx: ctx, work: work, operation: operation}
 }

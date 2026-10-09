@@ -57,7 +57,9 @@ describe("source inspector step controls", () => {
     );
     await openInspector();
 
-    expect(screen.getByText("Состояние: Не запрошено")).toBeVisible();
+    expect(screen.getByRole("listitem", { name: "SHA-256" })).toHaveTextContent(
+      "Состояние: Не запрошено",
+    );
     expect(screen.queryByText("Состояние: Загрузка")).not.toBeInTheDocument();
     expect(screen.getByText("preserved-fingerprint")).toBeVisible();
     expect(screen.queryByText(/Анализ недоступен/)).not.toBeInTheDocument();
@@ -100,7 +102,9 @@ describe("source inspector step controls", () => {
     expect(screen.getByText("matroska")).toBeVisible();
     expect(screen.getByText("partial ffprobe failure")).toBeVisible();
     expect(screen.queryByText(/Анализ недоступен/)).not.toBeInTheDocument();
-    expect(screen.getByText("Состояние: Не запрошено")).toBeVisible();
+    expect(
+      screen.getByRole("listitem", { name: "Акустический отпечаток" }),
+    ).toHaveTextContent("Состояние: Не запрошено");
     expect(
       screen.queryByText("Успешный результат этапа отсутствует."),
     ).not.toBeInTheDocument();

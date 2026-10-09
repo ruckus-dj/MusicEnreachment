@@ -143,6 +143,63 @@ describe("SourceAnalysisSteps", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows saved metadata and retries only the failed metadata step", () => {
+    const onRetry = vi.fn();
+    render(
+      <SourceAnalysisSteps
+        {...props({
+          steps: {
+            metadata: { state: "failed", safeError: "Tag reader failed" },
+          },
+          retryAvailable: { metadata: true },
+          metadata: {
+            tags: { TITLE: ["Saved title"] },
+            provenance: {
+              name: "tag reader",
+              version: "1.0",
+              contract: "normalized tags",
+            },
+            nativeMatroska: { tags: [] },
+          },
+          onRetry,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Saved title")).toBeInTheDocument();
+    expect(screen.getByText(/tag reader 1.0/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Повторить этап «Метаданные тегов»",
+      }),
+    );
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith("metadata");
+  });
+
+  it("keeps a null tag key and shows the unknown text without crashing", () => {
+    render(
+      <SourceAnalysisSteps
+        {...props({
+          metadata: {
+            tags: { TITLE: ["Saved title"], COMMENT: null },
+            provenance: {
+              name: "tag reader",
+              version: "1.0",
+              contract: "normalized tags",
+            },
+          },
+        })}
+      />,
+    );
+
+    // The null-valued tag keeps its key instead of being filtered out, and its
+    // values are reported as explicitly unknown rather than crashing on join.
+    expect(screen.getByText("TITLE")).toBeInTheDocument();
+    expect(screen.getByText("Saved title")).toBeInTheDocument();
+    const commentRow = screen.getByText("COMMENT").parentElement;
+    expect(commentRow).toHaveTextContent(/COMMENT.*Неизвестно/);
+  });
+
   it("keeps successful execution data when matching is unsupported", () => {
     render(
       <SourceAnalysisSteps

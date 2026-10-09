@@ -264,6 +264,7 @@ export const RetrySourceAnalysisStepBodyStep = {
   sha256: 'sha256',
   probe: 'probe',
   fingerprint: 'fingerprint',
+  metadata: 'metadata',
 } as const;
 
 export interface RetrySourceAnalysisStepBody {
@@ -334,6 +335,7 @@ export const SourceAnalysisStepResponseName = {
   sha256: 'sha256',
   probe: 'probe',
   fingerprint: 'fingerprint',
+  metadata: 'metadata',
 } as const;
 
 export type SourceAnalysisStepResponseState = typeof SourceAnalysisStepResponseState[keyof typeof SourceAnalysisStepResponseState];
@@ -361,6 +363,20 @@ export interface SourceFingerprintResponse {
   version_banner: string;
 }
 
+export interface SourceMetadataProvenanceResponse {
+  contract: string;
+  name: string;
+  version: string;
+}
+
+export type SourceMetadataResponseTags = {[key: string]: string[] | null};
+
+export interface SourceMetadataResponse {
+  native_matroska?: unknown;
+  provenance: SourceMetadataProvenanceResponse;
+  tags: SourceMetadataResponseTags;
+}
+
 export interface SourceSHA256ResultResponse {
   algorithm?: string;
   applied_operation_id?: string;
@@ -371,6 +387,7 @@ export interface SourceSHA256ResultResponse {
 export interface SourceAnalysisStepResponse {
   attempt: number;
   fingerprint?: SourceFingerprintResponse;
+  metadata?: SourceMetadataResponse;
   name: SourceAnalysisStepResponseName;
   reuse_origin?: string;
   safe_error?: string;

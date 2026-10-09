@@ -19,7 +19,7 @@ type RetrySourceAnalysisStepInput struct {
 }
 
 type RetrySourceAnalysisStepBody struct {
-	Step              string    `json:"step" enum:"sha256,probe,fingerprint"`
+	Step              string    `json:"step" enum:"sha256,probe,fingerprint,metadata"`
 	ExpectedSizeBytes int64     `json:"expected_size_bytes" minimum:"0"`
 	ExpectedMtime     time.Time `json:"expected_mtime"`
 }

@@ -21,7 +21,7 @@ const (
 )
 
 // lockSourceFingerprintMutations serializes transactions that can publish,
-// select, or retire digest-keyed fingerprint results. Acquire it before any
+// select, or retire digest-keyed fingerprint and metadata results. Acquire it before any
 // root, location, work, operation, or step row lock; callers of lower-level
 // promotion/retirement helpers are responsible for holding this gate.
 func lockSourceFingerprintMutations(ctx context.Context, database bun.IDB) error {

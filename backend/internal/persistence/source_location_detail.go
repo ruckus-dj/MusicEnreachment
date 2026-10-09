@@ -20,6 +20,7 @@ type SourceLocationDetailSnapshot struct {
 	Steps                    []SourceAnalysisStep
 	SHAVariant               *SourceMediaVariant
 	Fingerprint              *SourceFingerprintResult
+	Metadata                 *SourceMetadataResult
 	MatchingEligible         bool
 	Variant                  *MediaVariant
 	ActiveOperationID        *uuid.UUID
@@ -64,6 +65,7 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 		var steps []SourceAnalysisStep
 		var shaVariant *SourceMediaVariant
 		var fingerprint *SourceFingerprintResult
+		var metadataResult *SourceMetadataResult
 		matchingEligible := false
 		candidate := new(SourceAnalysisWork)
 		if err := tx.NewSelect().Model(candidate).
@@ -73,9 +75,9 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 			Where("relative_path = ?", location.RelativePath).Where("size_bytes = ?", location.SizeBytes).
 			Where("mtime = ?", location.Mtime).Order("created_at DESC").Limit(1).Scan(ctx); err == nil {
 			work = candidate
-			steps = make([]SourceAnalysisStep, 0, 3)
+			steps = make([]SourceAnalysisStep, 0, 4)
 			if err := tx.NewSelect().Model(&steps).Where("work_id = ?", work.ID).
-				OrderExpr("CASE step WHEN 'sha256' THEN 1 WHEN 'probe' THEN 2 WHEN 'fingerprint' THEN 3 ELSE 4 END ASC").Scan(ctx); err != nil {
+				OrderExpr("CASE step WHEN 'sha256' THEN 1 WHEN 'probe' THEN 2 WHEN 'fingerprint' THEN 3 WHEN 'metadata' THEN 4 ELSE 5 END ASC").Scan(ctx); err != nil {
 				return fmt.Errorf("read source location detail steps: %w", err)
 			}
 			stepByName := make(map[string]SourceAnalysisStep, len(steps))
@@ -95,6 +97,12 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 				fingerprint = new(SourceFingerprintResult)
 				if err := tx.NewSelect().Model(fingerprint).Where("id = ?", *step.SuccessFingerprintResultID).Scan(ctx); err != nil {
 					return fmt.Errorf("read source location detail selected fingerprint: %w", err)
+				}
+			}
+			if step, ok := stepByName[string(SourceStepMetadata)]; ok && step.SuccessMetadataResultID != nil {
+				metadataResult = new(SourceMetadataResult)
+				if err := tx.NewSelect().Model(metadataResult).Where("id = ?", *step.SuccessMetadataResultID).Scan(ctx); err != nil {
+					return fmt.Errorf("read source location detail selected metadata result: %w", err)
 				}
 			}
 			if selectedVariantID != nil && fingerprint != nil {
@@ -169,7 +177,7 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 		}
 		snapshot = &SourceLocationDetailSnapshot{
 			Root: root, Location: location, Work: work, Steps: steps, SHAVariant: shaVariant,
-			Fingerprint: fingerprint, MatchingEligible: matchingEligible,
+			Fingerprint: fingerprint, Metadata: metadataResult, MatchingEligible: matchingEligible,
 			Variant: variant, ActiveOperationID: active, ActiveFPCalcInstallation: activeFPCalcInstallation,
 			StagedArtifact: stagedArtifact,
 		}

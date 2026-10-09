@@ -158,7 +158,7 @@ export function useSourceInspector(sourceId: string, locationId: string) {
 
   async function action(
     kind: "retry" | "rerun",
-    step?: "sha256" | "probe" | "fingerprint",
+    step?: "sha256" | "probe" | "fingerprint" | "metadata",
   ) {
     if (!detail || loading || actionRequest.current) return;
     const request = new AbortController();

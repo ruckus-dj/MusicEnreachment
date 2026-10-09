@@ -43,8 +43,8 @@ func TestApplySourceEnumerationPreservesUnchangedWorkAndProtectsUnreadableScope(
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE work_id=? AND state='pending'`, originalWorkID).Scan(ctx, &initialSteps); err != nil {
 		t.Fatalf("count initial pending steps: %v", err)
 	}
-	if initialSteps != 3 {
-		t.Fatalf("initial pending steps = %d, want one per analysis step", initialSteps)
+	if initialSteps != 4 {
+		t.Fatalf("initial pending steps = %d, want one per analysis step including metadata", initialSteps)
 	}
 	if _, err := database.NewRaw(`UPDATE source_location SET probe_status='probe_error',safe_error='earlier failure' WHERE id=?`, outside.ID).Exec(ctx); err != nil {
 		t.Fatalf("set prior analysis failure: %v", err)

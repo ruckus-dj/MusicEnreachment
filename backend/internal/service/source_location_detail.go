@@ -62,6 +62,19 @@ type SourceAnalysisStepDetail struct {
 	ReuseOrigin *string
 	SHA256      *SourceSHA256Result
 	Fingerprint *SourceFingerprintDetail
+	Metadata    *SourceMetadataDetail
+}
+
+type SourceMetadataDetail struct {
+	Tags       map[string][]string
+	Provenance SourceMetadataProvenance
+	Matroska   json.RawMessage
+}
+
+type SourceMetadataProvenance struct {
+	Name     string
+	Version  string
+	Contract string
 }
 
 // SourceStagedArtifactDetail projects registry facts only. Preparation has no
@@ -225,6 +238,21 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 					AlgorithmID: fingerprint.AlgorithmID, Duration: fingerprint.ReportedDuration,
 					CalculatedAt: fingerprint.CalculatedAt, AppliedOperationID: fingerprint.AppliedOperationID,
 					ParserContractVersion: fingerprint.ParserContractVersion,
+				}
+			}
+			if step.Step == string(persistence.SourceStepMetadata) && snapshot.Metadata != nil {
+				metadata := snapshot.Metadata
+				detailTags := make(map[string][]string)
+				if err := json.Unmarshal(metadata.ObservedTags, &detailTags); err != nil {
+					return SourceLocationDetail{}, fmt.Errorf("read source location detail: the stored metadata tags cannot be read: %w", err)
+				}
+				var provenance SourceMetadataProvenance
+				if err := json.Unmarshal(metadata.Provenance, &provenance); err != nil {
+					return SourceLocationDetail{}, fmt.Errorf("read source location detail: the stored metadata provenance cannot be read: %w", err)
+				}
+				stepDetail.Metadata = &SourceMetadataDetail{
+					Tags: detailTags, Provenance: provenance,
+					Matroska: append(json.RawMessage(nil), metadata.NativeMatroska...),
 				}
 			}
 			detail.Steps = append(detail.Steps, stepDetail)

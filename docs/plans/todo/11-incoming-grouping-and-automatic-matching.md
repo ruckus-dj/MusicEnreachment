@@ -460,6 +460,28 @@ normalization для score в точности. Если по имеющимся
 > Историческая запись «M03–M10 ещё не завершены» выше сохранена как состояние на
 > дату подготовки.
 
+> **Датированное дополнение 2026-10-09 (четвёртый metadata-шаг engine, B13/B14):**
+> Четвёртый независимый шаг source-analysis engine — извлечение тегов через
+> TagLib (`go-taglib`) рядом с SHA/ffprobe/fingerprint — подключён к
+> существующему prepared-scan lifecycle и проверен полным `task verify`
+> (Go integration, 243 frontend tests, 4 tools tests, generation, lint, build);
+> финальное независимое ревью закрыто, коммит готов. Metadata admitted/queued как
+> обычный шаг: enumeration/prepared scan переиспользует тот же prepared input,
+> второй pipeline не создаётся; шаг не требует managed tools (пустой tool
+> selection, как у SHA256); ошибка metadata сохраняет успехи соседних шагов,
+> retry повторяет только ошибочный шаг; перед запуском reader повторно
+> валидируется prepared path (path pre/post validation), snapshots сохраняются.
+> MKA: sole audio track, union global + soleAudio track tags, UID 0 = all,
+> multi-audio не смешивается; ffprobe остаётся техническим probe. Канонический
+> metadata result хранит один current row на SHA: latest `observed_at` (UTC,
+> microsecond) побеждает, при равенстве — стабильный `winning_result_id`;
+> canonical IDs стабильны; promotion работает при SHA off/digestless;
+> проигравшие/неиспользуемые candidates очищаются. API/UI перегенерированы
+> текущими (`task generate`). Это **не** завершение всего плана: M03 остаются
+> БД/manual corrections/grouping persisted/feeds и прочее, M04–M10 не
+> реализованы; план остаётся в `todo/`. База изменения — `1a52919`; точная
+> ревизия реализации фиксируется коммитом.
+
 ## Cross-stage safety and acceptance invariants
 
 1. **Atomic group outcome:** the automatic action is group-wide over every

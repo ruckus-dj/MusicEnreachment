@@ -78,7 +78,7 @@ func insertStorageStep(t *testing.T, ctx context.Context, database *bun.DB, step
 	t.Helper()
 	workID := insertStorageWork(t, ctx, database)
 	row := persistence.SourceAnalysisStep{WorkID: workID, Step: step, State: "pending"}
-	if _, err := database.NewInsert().Model(&row).Exec(ctx); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id,step,state) VALUES(?,?,?)`, row.WorkID, row.Step, row.State); err != nil {
 		t.Fatalf("insert analysis step: %v", err)
 	}
 	return row
@@ -99,11 +99,11 @@ func insertStorageWork(t *testing.T, ctx context.Context, database *bun.DB) uuid
 
 func assertStorageStepInputIsNull(t *testing.T, ctx context.Context, database *bun.DB, key persistence.SourceAnalysisStep) {
 	t.Helper()
-	var found persistence.SourceAnalysisStep
-	if err := database.NewSelect().Model(&found).Where("work_id = ?", key.WorkID).Where("step = ?", key.Step).Scan(ctx); err != nil {
+	var inputSnapshot []byte
+	if err := database.NewRaw(`SELECT input_snapshot FROM source_analysis_step WHERE work_id=? AND step=?`, key.WorkID, key.Step).Scan(ctx, &inputSnapshot); err != nil {
 		t.Fatalf("load analysis step: %v", err)
 	}
-	if len(found.InputSnapshot) != 0 {
-		t.Fatalf("step input = %s, want SQL NULL", found.InputSnapshot)
+	if len(inputSnapshot) != 0 {
+		t.Fatalf("step input = %s, want SQL NULL", inputSnapshot)
 	}
 }

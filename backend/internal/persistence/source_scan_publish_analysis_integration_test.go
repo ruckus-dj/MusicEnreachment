@@ -59,6 +59,10 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPublishCounts(t, ctx, db, 2, 1, 1, 2)
+	var pendingMetadata int
+	if err := db.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE step='metadata' AND state='pending'`).Scan(ctx, &pendingMetadata); err != nil || pendingMetadata != 2 {
+		t.Fatalf("prepared scan pending metadata step count = %d, %v; want 2", pendingMetadata, err)
+	}
 
 	var shaRefs int
 	if err := db.NewRaw(`SELECT count(DISTINCT success_sha_variant_id) FROM source_analysis_step WHERE step='sha256' AND state='succeeded'`).Scan(ctx, &shaRefs); err != nil || shaRefs != 1 {
@@ -99,6 +103,10 @@ func TestPublishPreparedSourceScanAnalysisTransactionally(t *testing.T) {
 	var disabledSHAState, disabledSHASkip string
 	if err := db.NewRaw(`SELECT state,skip_reason FROM source_analysis_step WHERE step='sha256' AND work_id IN (SELECT id FROM source_analysis_work WHERE relative_path='c.flac')`).Scan(ctx, &disabledSHAState, &disabledSHASkip); err != nil || disabledSHAState != "skipped" || disabledSHASkip != "disabled" {
 		t.Fatalf("disabled SHA step = %q/%q, %v; want skipped/disabled", disabledSHAState, disabledSHASkip, err)
+	}
+	var disabledMetadataState string
+	if err := db.NewRaw(`SELECT state FROM source_analysis_step WHERE step='metadata' AND work_id IN (SELECT id FROM source_analysis_work WHERE relative_path='c.flac')`).Scan(ctx, &disabledMetadataState); err != nil || disabledMetadataState != "pending" {
+		t.Fatalf("disabled-hash metadata state = %q, %v; want pending", disabledMetadataState, err)
 	}
 }
 

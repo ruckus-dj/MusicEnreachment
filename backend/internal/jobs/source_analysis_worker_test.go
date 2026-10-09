@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,14 +104,15 @@ func TestSourceAnalysisWorkerPreparerConfigRejectsInvalidPinnedTool(t *testing.T
 
 type workerGroupRepository struct {
 	analysisWorkerRepository
-	mode         string
-	claims       int
-	shaApplies   int
-	probeApplies int
-	fpApplies    int
-	failures     []persistence.SourceStepFailure
-	applyMu      sync.Mutex
-	probeApplied chan struct{}
+	mode          string
+	claims        int
+	shaApplies    int
+	probeApplies  int
+	fpApplies     int
+	failures      []persistence.SourceStepFailure
+	applyMu       sync.Mutex
+	probeApplied  chan struct{}
+	failureSignal chan persistence.SourceStepName
 }
 
 func (repository *workerGroupRepository) ClaimSourceAnalysisStep(context.Context, persistence.SourceStepClaim) (int, error) {
@@ -142,8 +144,15 @@ func (repository *workerGroupRepository) ApplySourceFingerprint(context.Context,
 	return &persistence.SourceFingerprintResult{}, nil
 }
 
+func (repository *workerGroupRepository) ApplySourceMetadata(context.Context, persistence.SourceMetadataApply) (*persistence.SourceMetadataResult, error) {
+	return &persistence.SourceMetadataResult{}, nil
+}
+
 func (repository *workerGroupRepository) FailSourceAnalysisStep(_ context.Context, failure persistence.SourceStepFailure) error {
 	repository.failures = append(repository.failures, failure)
+	if repository.failureSignal != nil {
+		repository.failureSignal <- persistence.SourceStepName(failure.Step)
+	}
 	return nil
 }
 
@@ -404,6 +413,96 @@ func TestSourceAnalysisWorkerJoinsCanceledRunnerBeforeReturning(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker did not return after canceled runner was released")
+	}
+}
+
+// metadataGateInputPreparer wraps the real in-place preparer and moves the
+// source path away after preparation so the shared input's namespace check
+// fails. It lets a test force exactly one validation failure while the sibling
+// runners are held, then restore the file for their later validation.
+type metadataGateInputPreparer struct {
+	preparer   *service.SourceAnalysisInputPreparer
+	sourcePath string
+	movedPath  string
+}
+
+func (preparer *metadataGateInputPreparer) PrepareMode(ctx context.Context, fence persistence.SourceAnalysisArtifactFence, mode string) (*service.SourceAnalysisPreparedInput, error) {
+	input, err := preparer.preparer.PrepareMode(ctx, fence, mode)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(preparer.sourcePath, preparer.movedPath); err != nil {
+		return nil, err
+	}
+	return input, nil
+}
+
+func TestSourceAnalysisWorkerMetadataPreValidationFailureSkipsReaderAndKeepsSiblings(t *testing.T) {
+	releaseSiblings := make(chan struct{})
+	releaseOnce := sync.Once{}
+	release := func() { releaseOnce.Do(func() { close(releaseSiblings) }) }
+	var metadataCalls atomic.Int32
+	runner := workerGroupPreparingFunc(func(_ context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
+		if request.Targets&service.SourceAnalysisTargetMetadata != 0 {
+			metadataCalls.Add(1)
+			return service.SourceAnalysisPreparation{}
+		}
+		<-releaseSiblings
+		if request.Targets&service.SourceAnalysisTargetProbe != 0 {
+			return preparedProbe()
+		}
+		return preparedFingerprint()
+	})
+	repo := &workerInputRepository{workerGroupRepository: workerGroupRepository{failureSignal: make(chan persistence.SourceStepName, 4)}}
+	worker, snapshot, operation, executions, recording := newWorkerGroup(t, repo, runner)
+	sourcePath := filepath.Join(*repo.root.InventoryPath, repo.work.RelativePath)
+	movedPath := sourcePath + ".moved"
+	worker.inputPreparer = &metadataGateInputPreparer{preparer: recording.preparer, sourcePath: sourcePath, movedPath: movedPath}
+	metadataExecution := persistence.SourceAnalysisExecution{Work: *repo.work, Step: persistence.SourceAnalysisStep{Step: string(persistence.SourceStepMetadata)}}
+	executions = append(executions[1:], metadataExecution) // probe, fingerprint, metadata
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		release()
+		_ = os.Rename(movedPath, sourcePath)
+	})
+	done := make(chan error, 1)
+	go func() { done <- worker.runWorkGroup(ctx, operation, snapshot, 9, executions, "staged") }()
+
+	select {
+	case step := <-repo.failureSignal:
+		if step != persistence.SourceStepMetadata {
+			release()
+			t.Fatalf("pre-validation failed step %q, want metadata", step)
+		}
+	case <-time.After(2 * time.Second):
+		release()
+		t.Fatal("metadata pre-validation failure was not recorded")
+	}
+	if calls := metadataCalls.Load(); calls != 0 {
+		release()
+		t.Fatalf("metadata reader ran %d times despite failed pre-validation", calls)
+	}
+	if err := os.Rename(movedPath, sourcePath); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	release()
+	select {
+	case err := <-done:
+		var stepFailure *sourceAnalysisStepFailure
+		if !errors.As(err, &stepFailure) {
+			t.Fatalf("group error = %v, want metadata step failure", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not finish after releasing siblings")
+	}
+	if len(repo.failures) != 1 || repo.failures[0].Step != persistence.SourceStepMetadata {
+		t.Fatalf("failures = %+v, want only metadata", repo.failures)
+	}
+	if repo.probeApplies != 1 || repo.fpApplies != 1 {
+		t.Fatalf("sibling applies: probe=%d fingerprint=%d, want 1 each", repo.probeApplies, repo.fpApplies)
 	}
 }
 

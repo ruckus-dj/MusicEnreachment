@@ -102,6 +102,17 @@ func deleteOrphanedMediaVariants(ctx context.Context, tx bun.IDB) error {
 	).Exec(ctx); err != nil {
 		return fmt.Errorf("delete orphaned source fingerprint results: %w", err)
 	}
+	if _, err := tx.NewRaw(
+		`DELETE FROM media_metadata_result AS result
+			 WHERE result.source_sha256 IS NULL
+			   AND NOT EXISTS (SELECT 1 FROM source_analysis_step AS step WHERE step.success_metadata_result_id=result.id)
+			   AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
+			       JOIN source_analysis_step AS step ON step.work_id=hold.work_id
+			       WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
+			         AND step.success_metadata_result_id=result.id)`,
+	).Exec(ctx); err != nil {
+		return fmt.Errorf("delete orphaned source metadata results: %w", err)
+	}
 	return nil
 }
 

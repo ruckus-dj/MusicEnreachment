@@ -36,6 +36,11 @@ func retireSourceAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID)
 		WHERE work_id=? AND success_fingerprint_result_id IS NOT NULL`, workID).Scan(ctx, &resultIDs); err != nil {
 		return fmt.Errorf("retire source analysis work: read fingerprint references: %w", err)
 	}
+	var metadataResultIDs []uuid.UUID
+	if err := tx.NewRaw(`SELECT success_metadata_result_id FROM source_analysis_step
+		WHERE work_id=? AND success_metadata_result_id IS NOT NULL`, workID).Scan(ctx, &metadataResultIDs); err != nil {
+		return fmt.Errorf("retire source analysis work: read metadata references: %w", err)
+	}
 	if _, err := tx.NewRaw(`DELETE FROM source_analysis_step WHERE work_id=?`, workID).Exec(ctx); err != nil {
 		return fmt.Errorf("retire source analysis work: delete steps: %w", err)
 	}
@@ -52,6 +57,11 @@ func retireSourceAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID)
 	}
 	for _, resultID := range resultIDs {
 		if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, resultID); err != nil {
+			return err
+		}
+	}
+	for _, resultID := range metadataResultIDs {
+		if err := deleteUnreferencedSourceMetadataResult(ctx, tx, resultID); err != nil {
 			return err
 		}
 	}

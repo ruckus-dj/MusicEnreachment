@@ -282,7 +282,7 @@ func unionRequestedSteps(left, right []string) []string {
 		seen[step] = true
 	}
 	result := make([]string, 0, len(seen))
-	for _, step := range []string{"sha256", "probe", "fingerprint"} {
+	for _, step := range []string{"sha256", "probe", "fingerprint", "metadata"} {
 		if seen[step] {
 			result = append(result, step)
 		}
@@ -350,6 +350,10 @@ func makeCompletedSourceAnalysisArtifactsCleanupEligible(ctx context.Context, tx
 			   OR (requested.step='fingerprint' AND NOT EXISTS (
 				SELECT 1 FROM media_fingerprint_result result WHERE result.id=analysis_step.success_fingerprint_result_id
 				  AND result.fingerprint <> '' AND result.fpcalc_version <> ''
+			   ))
+			   OR (requested.step='metadata' AND NOT EXISTS (
+				SELECT 1 FROM media_metadata_result result WHERE result.id=analysis_step.success_metadata_result_id
+				  AND jsonb_typeof(result.observed_tags)='object' AND jsonb_typeof(result.provenance)='object'
 			   ))
 		  )
 	), marked_artifacts AS (

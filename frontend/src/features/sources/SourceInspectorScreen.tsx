@@ -10,7 +10,7 @@ import { statusLabel } from "./sourcesApi";
 import { useSourceInspector } from "./useSourceInspector";
 import "./sources.css";
 
-const stepNames = ["sha256", "probe", "fingerprint"] as const;
+const stepNames = ["sha256", "probe", "fingerprint", "metadata"] as const;
 type StepName = (typeof stepNames)[number];
 
 export function SourceInspectorScreen({
@@ -64,6 +64,7 @@ export function SourceInspectorScreen({
   ) as Record<StepName, boolean>;
   const sha256 = getStep("sha256")?.sha256;
   const fingerprint = getStep("fingerprint")?.fingerprint;
+  const metadata = getStep("metadata")?.metadata;
   const fingerprintStepState = getStep("fingerprint")?.state;
   // The service only reruns a fingerprint whose latest step succeeded and whose
   // stored result was produced by a different active fpcalc version. Mirror that
@@ -201,6 +202,13 @@ export function SourceInspectorScreen({
                 value: fingerprint.value,
                 version: fingerprint.version,
                 provenance: getStep("fingerprint")?.reuse_origin,
+              }
+            }
+            metadata={
+              metadata && {
+                tags: metadata.tags,
+                provenance: metadata.provenance,
+                nativeMatroska: metadata.native_matroska,
               }
             }
             retryAvailable={retryAvailable}

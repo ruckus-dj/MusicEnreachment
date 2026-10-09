@@ -63,7 +63,7 @@ type SourceStagedArtifactResponse struct {
 }
 
 type SourceAnalysisStepResponse struct {
-	Name        string                      `json:"name" enum:"sha256,probe,fingerprint"`
+	Name        string                      `json:"name" enum:"sha256,probe,fingerprint,metadata"`
 	State       string                      `json:"state" enum:"not_requested,pending,queued,running,succeeded,failed,skipped"`
 	SafeError   *string                     `json:"safe_error,omitempty"`
 	SkipReason  *string                     `json:"skip_reason,omitempty"`
@@ -71,6 +71,19 @@ type SourceAnalysisStepResponse struct {
 	ReuseOrigin *string                     `json:"reuse_origin,omitempty"`
 	SHA256      *SourceSHA256ResultResponse `json:"sha256,omitempty"`
 	Fingerprint *SourceFingerprintResponse  `json:"fingerprint,omitempty"`
+	Metadata    *SourceMetadataResponse     `json:"metadata,omitempty"`
+}
+
+type SourceMetadataResponse struct {
+	Tags       map[string][]string              `json:"tags"`
+	Provenance SourceMetadataProvenanceResponse `json:"provenance"`
+	Matroska   json.RawMessage                  `json:"native_matroska,omitempty"`
+}
+
+type SourceMetadataProvenanceResponse struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Contract string `json:"contract"`
 }
 
 type SourceSHA256ResultResponse struct {
@@ -210,6 +223,16 @@ func sourceLocationDetailResponse(detail service.SourceLocationDetail) (SourceLo
 				Duration: fingerprint.Duration, CalculatedAt: fingerprint.CalculatedAt,
 				AppliedOperationID:    fingerprint.AppliedOperationID,
 				ParserContractVersion: fingerprint.ParserContractVersion,
+			}
+		}
+		if step.Metadata != nil {
+			stepResponse.Metadata = &SourceMetadataResponse{
+				Tags: step.Metadata.Tags,
+				Provenance: SourceMetadataProvenanceResponse{
+					Name: step.Metadata.Provenance.Name, Version: step.Metadata.Provenance.Version,
+					Contract: step.Metadata.Provenance.Contract,
+				},
+				Matroska: step.Metadata.Matroska,
 			}
 		}
 		response.Steps = append(response.Steps, stepResponse)

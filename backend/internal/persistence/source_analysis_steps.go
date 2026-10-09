@@ -18,6 +18,7 @@ const (
 	SourceStepSHA256      SourceStepName = "sha256"
 	SourceStepProbe       SourceStepName = "probe"
 	SourceStepFingerprint SourceStepName = "fingerprint"
+	SourceStepMetadata    SourceStepName = "metadata"
 )
 
 // SourceAnalysisStepInput is one initial item in a work record.
@@ -79,6 +80,18 @@ type SourceFingerprintApply struct {
 	Result           SourceFingerprintResult
 }
 
+type SourceMetadataApply struct {
+	WorkID           uuid.UUID
+	OperationID      uuid.UUID
+	OperationAttempt int
+	JobID            int64
+	StepAttempt      int
+	ObservedTags     json.RawMessage
+	Provenance       json.RawMessage
+	NativeMatroska   json.RawMessage
+	ObservedAt       time.Time
+}
+
 // SourceStepFailure settles only the claimed step and leaves its previous
 // successful selection, and every sibling step, untouched.
 type SourceStepFailure struct {
@@ -100,7 +113,7 @@ type lockedSourceStep struct {
 }
 
 func validSourceStep(step SourceStepName) bool {
-	return step == SourceStepSHA256 || step == SourceStepProbe || step == SourceStepFingerprint
+	return step == SourceStepSHA256 || step == SourceStepProbe || step == SourceStepFingerprint || step == SourceStepMetadata
 }
 
 // StoreSourceAnalysisWork records one current immutable work identity and its
@@ -456,6 +469,86 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 	return selected, nil
 }
 
+// ApplySourceMetadata settles only the metadata step. A SHA identity, when
+// already selected, makes this result the canonical current capture for that
+// digest; without SHA the step retains its own result until a later promotion.
+func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Context, apply SourceMetadataApply) (*SourceMetadataResult, error) {
+	if len(apply.ObservedTags) == 0 || len(apply.Provenance) == 0 || apply.ObservedAt.IsZero() {
+		return nil, fmt.Errorf("apply source metadata: captured tags, provenance, and observed time are required")
+	}
+	var selected *SourceMetadataResult
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply source metadata: lock canonical result mutations: %w", err)
+		}
+		locked, err := lockSourceAnalysisStep(ctx, tx, apply.WorkID, apply.OperationID, apply.OperationAttempt, apply.JobID, SourceStepMetadata)
+		if err != nil {
+			return fmt.Errorf("apply source metadata: %w", err)
+		}
+		if err := checkSourceStepApplyFence(locked, apply.StepAttempt); err != nil {
+			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == apply.StepAttempt && sameUUID(locked.Step.LastOperationID, apply.OperationID) && locked.Step.SuccessMetadataResultID != nil {
+				selected = new(SourceMetadataResult)
+				return tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, *locked.Step.SuccessMetadataResultID).Scan(ctx, selected)
+			}
+			return fmt.Errorf("apply source metadata: %w", ErrSourceAnalysisStale)
+		}
+		if locked.Operation.State != "running" {
+			return fmt.Errorf("apply source metadata: %w", ErrSourceAnalysisStale)
+		}
+		var digest []byte
+		var shaStep SourceAnalysisStep
+		if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='sha256'`, locked.Work.ID).Scan(ctx, &shaStep); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("apply source metadata: read SHA step: %w", err)
+		}
+		if shaStep.SuccessSHAVariantID != nil {
+			if err := tx.NewRaw(`SELECT source_sha256 FROM media_variant WHERE id=?`, *shaStep.SuccessSHAVariantID).Scan(ctx, &digest); err != nil {
+				return fmt.Errorf("apply source metadata: read SHA identity: %w", err)
+			}
+		}
+		observedAt := apply.ObservedAt.UTC().Truncate(time.Microsecond)
+		resultID := uuid.New()
+		result := &SourceMetadataResult{ID: resultID, SourceSHA256: digest, ObservedTags: apply.ObservedTags, Provenance: apply.Provenance,
+			NativeMatroska: apply.NativeMatroska, ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
+		previousID := locked.Step.SuccessMetadataResultID
+		if len(digest) == 32 {
+			// Stable conflict arbitration: the earliest observed capture wins, then
+			// UUID breaks equal-time ties. The selected step always references the
+			// canonical row returned by this upsert.
+			selected, err = upsertCanonicalMetadataResult(ctx, tx, digest, *result)
+			if err != nil {
+				return fmt.Errorf("apply source metadata: upsert canonical result: %w", err)
+			}
+		} else {
+			if _, err := tx.NewInsert().Model(result).Exec(ctx); err != nil {
+				return fmt.Errorf("apply source metadata: insert digest-less result: %w", err)
+			}
+			selected = result
+		}
+		if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_metadata_result_id=?,success_reuse_origin='executed',safe_error=NULL,
+			execution_operation_id=NULL,execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=?,updated_at=now()
+			WHERE work_id=? AND step='metadata' AND step_attempt=?`, selected.ID, apply.OperationID, locked.Work.ID, apply.StepAttempt).Exec(ctx); err != nil {
+			return fmt.Errorf("apply source metadata: persist step: %w", err)
+		}
+		if previousID != nil && *previousID != selected.ID {
+			if err := deleteUnreferencedSourceMetadataResult(ctx, tx, *previousID); err != nil {
+				return fmt.Errorf("apply source metadata: clean previous result: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
+func nullableJSON(value json.RawMessage) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
 // ReuseSourceFingerprint selects the current result for the work's current digest.
 func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.Context, claim SourceStepClaim, capturedStepAttempt int) (*SourceFingerprintResult, error) {
 	if claim.Step != SourceStepFingerprint || claim.WorkID == uuid.Nil || claim.OperationID == uuid.Nil || claim.OperationAttempt < 1 || claim.JobID < 1 || capturedStepAttempt < 1 {
@@ -751,6 +844,22 @@ func promoteSourceResults(ctx context.Context, tx bun.Tx, locked *lockedSourceSt
 			if err := deleteUnreferencedSourceFingerprintResult(ctx, tx, result.ID); err != nil {
 				return err
 			}
+		}
+	}
+	var metadataStep SourceAnalysisStep
+	if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='metadata'`, locked.Work.ID).Scan(ctx, &metadataStep); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if metadataStep.SuccessMetadataResultID != nil {
+		result := new(SourceMetadataResult)
+		if err := tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, *metadataStep.SuccessMetadataResultID).Scan(ctx, result); err != nil {
+			return err
+		}
+		if len(canonical.SourceSHA256) != 32 || len(result.SourceSHA256) != 0 && string(result.SourceSHA256) != string(canonical.SourceSHA256) {
+			return fmt.Errorf("selected metadata result belongs to a different SHA identity")
+		}
+		if _, err := upsertCanonicalMetadataResult(ctx, tx, canonical.SourceSHA256, *result); err != nil {
+			return fmt.Errorf("promote selected metadata result: %w", err)
 		}
 	}
 	return nil

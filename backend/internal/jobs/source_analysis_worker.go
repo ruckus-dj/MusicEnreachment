@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,7 @@ type analysisWorkerRepository interface {
 	ApplySourceSHA256(context.Context, persistence.SourceSHA256Apply) (*persistence.SourceMediaVariant, error)
 	ApplySourceProbe(context.Context, persistence.SourceProbeApply) (*persistence.SourceMediaVariant, error)
 	ApplySourceFingerprint(context.Context, persistence.SourceFingerprintApply) (*persistence.SourceFingerprintResult, error)
+	ApplySourceMetadata(context.Context, persistence.SourceMetadataApply) (*persistence.SourceMetadataResult, error)
 	ReuseSourceProbe(context.Context, persistence.SourceStepClaim, int, uuid.UUID, string, int) (*persistence.SourceMediaVariant, error)
 	ReuseSourceFingerprint(context.Context, persistence.SourceStepClaim, int) (*persistence.SourceFingerprintResult, error)
 	FailSourceAnalysisStep(context.Context, persistence.SourceStepFailure) error
@@ -484,7 +486,7 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 		byStep[persistence.SourceStepName(execution.Step.Step)] = execution
 	}
 	ordered := make([]persistence.SourceStepName, 0, len(executions))
-	for _, step := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
+	for _, step := range []persistence.SourceStepName{persistence.SourceStepSHA256, persistence.SourceStepProbe, persistence.SourceStepFingerprint, persistence.SourceStepMetadata} {
 		if _, ok := byStep[step]; ok {
 			attempt, err := worker.repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{WorkID: workID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, Step: step})
 			if err != nil {
@@ -535,18 +537,24 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	var failures []error
 	var toolConfig service.SourceAnalysisPreparerConfig
 	toolConfigErr := error(nil)
-	if len(steps) != 0 {
-		toolConfig, toolConfigErr = worker.preparerConfig(ctx, snapshot, &executions[0].Work, operation.ID, operation.Attempt, jobID, steps...)
+	toolSteps := make([]persistence.SourceStepName, 0, len(steps))
+	for _, step := range steps {
+		if step == persistence.SourceStepProbe || step == persistence.SourceStepFingerprint {
+			toolSteps = append(toolSteps, step)
+		}
+	}
+	if len(toolSteps) != 0 {
+		toolConfig, toolConfigErr = worker.preparerConfig(ctx, snapshot, &executions[0].Work, operation.ID, operation.Attempt, jobID, toolSteps...)
 	}
 	preparer := worker.preparer
 	if preparer == nil {
 		preparer = service.NewSourceAnalysisPreparer(toolConfig)
 	}
 	if toolConfigErr != nil {
-		for _, step := range steps {
+		for _, step := range toolSteps {
 			failures = append(failures, worker.failStep(ctx, operation, byStep[step], step, claims[step], jobID, "The selected managed analysis tool is unavailable."))
 		}
-		steps = nil
+		steps = withoutAnalysisSteps(steps, toolSteps)
 	}
 	var digest *[32]byte
 	if _, hasSHA := byStep[persistence.SourceStepSHA256]; hasSHA {
@@ -567,6 +575,7 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	type stepOutcome struct {
 		step     persistence.SourceStepName
 		prepared service.SourceAnalysisPreparation
+		err      error
 	}
 	outcomes := make(chan stepOutcome, len(steps))
 	for _, step := range steps {
@@ -576,11 +585,25 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 			if step == persistence.SourceStepFingerprint && snapshot.Mode == persistence.SourceAnalysisModeSingleStep && operation.RerunTarget && snapshot.TargetStep != nil && *snapshot.TargetStep == string(persistence.SourceStepFingerprint) {
 				request.BypassFingerprintCache = true
 			}
+			// The metadata reader resolves the prepared pathname instead of the
+			// pinned handle, so revalidate the shared input immediately before it
+			// runs. A failure is reported through this step's outcome and never
+			// cancels the sibling runners.
+			if step == persistence.SourceStepMetadata {
+				if err := input.Validate(ctx); err != nil {
+					outcomes <- stepOutcome{step: step, err: err}
+					return
+				}
+			}
 			outcomes <- stepOutcome{step: step, prepared: preparer.Prepare(ctx, request)}
 		}()
 	}
 	for range steps {
 		outcome := <-outcomes // Join every runner before releasing the prepared input.
+		if outcome.err != nil {
+			failures = append(failures, worker.failStep(ctx, operation, byStep[outcome.step], outcome.step, claims[outcome.step], jobID, "The source file changed. Start a new analysis."))
+			continue
+		}
 		if err := input.Validate(ctx); err != nil {
 			failures = append(failures, worker.failStep(ctx, operation, byStep[outcome.step], outcome.step, claims[outcome.step], jobID, "The source file changed. Start a new analysis."))
 			continue
@@ -682,7 +705,7 @@ func (worker *SourceAnalysisWorker) prepareWorkSteps(ctx context.Context, operat
 	if preparer == nil {
 		preparer = service.NewSourceAnalysisPreparer(config)
 	}
-	if targets&service.SourceAnalysisTargetFingerprint != 0 {
+	if targets&(service.SourceAnalysisTargetFingerprint|service.SourceAnalysisTargetMetadata) != 0 {
 		request.ServerPath = filepath.Join(work.InventoryPath, filepath.FromSlash(work.RelativePath))
 	}
 	prepared := preparer.Prepare(ctx, request)
@@ -750,6 +773,27 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 			return nil, err
 		}
 		_, err = worker.repository.ApplySourceFingerprint(ctx, persistence.SourceFingerprintApply{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Result: *prepared.Fingerprint.Result})
+	case persistence.SourceStepMetadata:
+		if prepared.Metadata.State != service.SourceAnalysisSucceeded || prepared.Metadata.Capture == nil {
+			failure := fence()
+			failure.SafeError = safeStepError(prepared.Metadata.SafeError, "Source metadata could not be read.")
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		capture := prepared.Metadata.Capture
+		tags, marshalErr := json.Marshal(capture.Tags)
+		provenance, provenanceErr := json.Marshal(capture.Provenance)
+		var native json.RawMessage
+		if capture.Matroska != nil {
+			native, marshalErr = json.Marshal(capture.Matroska)
+		}
+		if marshalErr != nil || provenanceErr != nil {
+			failure := fence()
+			failure.SafeError = "The metadata result could not be saved. The previous result is unchanged."
+			return nil, worker.persistStepFailure(ctx, failure)
+		}
+		_, err = worker.repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{WorkID: work.ID, OperationID: operation.ID,
+			OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, ObservedTags: tags,
+			Provenance: provenance, NativeMatroska: native, ObservedAt: time.Now().UTC()})
 	default:
 		return nil, fmt.Errorf("unsupported source analysis step %q", step)
 	}
@@ -1040,9 +1084,28 @@ func analysisTargets(step persistence.SourceStepName) service.SourceAnalysisTarg
 		return service.SourceAnalysisTargetProbe
 	case persistence.SourceStepFingerprint:
 		return service.SourceAnalysisTargetFingerprint
+	case persistence.SourceStepMetadata:
+		return service.SourceAnalysisTargetMetadata
 	default:
 		return 0
 	}
+}
+
+func withoutAnalysisSteps(steps, removed []persistence.SourceStepName) []persistence.SourceStepName {
+	filtered := make([]persistence.SourceStepName, 0, len(steps))
+	for _, step := range steps {
+		remove := false
+		for _, candidate := range removed {
+			if step == candidate {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			filtered = append(filtered, step)
+		}
+	}
+	return filtered
 }
 
 func safeStepError(message, fallback string) string {

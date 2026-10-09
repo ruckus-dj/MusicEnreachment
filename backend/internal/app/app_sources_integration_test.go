@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -267,7 +268,8 @@ func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(track), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(track, []byte("audio bytes"), 0o644); err != nil {
+	trackData := appMetadataFLACFixture()
+	if err := os.WriteFile(track, trackData, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -294,17 +296,27 @@ func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
 
 	var page api.SourceLocationsBody
 	decodeInto(t, fixture.request(t, http.MethodGet, "/sources/"+root.ID.String()+"/locations", ""), &page)
-	if len(page.Locations) != 1 || page.Locations[0].RelativePath != "disc/track.flac" || page.Locations[0].SizeBytes != int64(len("audio bytes")) {
+	if len(page.Locations) != 1 || page.Locations[0].RelativePath != "disc/track.flac" || page.Locations[0].SizeBytes != int64(len(trackData)) {
 		t.Fatalf("published locations = %+v", page.Locations)
 	}
-	if page.Locations[0].ProbeStatus != persistence.SourceProbeStatusNoAudio {
-		var probeFailure string
-		if err := fixture.database.NewRaw(`SELECT COALESCE(s.safe_error, '') FROM source_analysis_step s JOIN source_analysis_work w ON w.id=s.work_id WHERE w.location_id=? AND s.step='probe'`, page.Locations[0].ID).Scan(t.Context(), &probeFailure); err != nil {
-			t.Fatalf("read probe failure: %v", err)
-		}
-		t.Fatalf("probe status = %q, want %q for a file ffprobe reports without an audio stream: %s",
-			page.Locations[0].ProbeStatus, persistence.SourceProbeStatusNoAudio,
-			probeFailure)
+	if page.Locations[0].ProbeStatus != persistence.SourceProbeStatusAudio {
+		t.Fatalf("probe status = %q, want %q for a file ffprobe reports with an audio stream",
+			page.Locations[0].ProbeStatus, persistence.SourceProbeStatusAudio)
+	}
+	var observedTagsJSON []byte
+	if err := fixture.database.NewRaw(`SELECT result.observed_tags FROM source_analysis_step step
+		JOIN source_analysis_work work ON work.id=step.work_id
+		JOIN media_metadata_result result ON result.id=step.success_metadata_result_id
+		WHERE work.location_id=? AND step.step='metadata' AND step.state='succeeded'`, page.Locations[0].ID).Scan(t.Context(), &observedTagsJSON); err != nil {
+		t.Fatalf("read metadata captured by the production worker: %v", err)
+	}
+	var observedTags map[string][]string
+	if err := json.Unmarshal(observedTagsJSON, &observedTags); err != nil {
+		t.Fatalf("decode metadata captured by the production worker: %v", err)
+	}
+	if len(observedTags["ARTIST"]) != 1 || observedTags["ARTIST"][0] != "Test Artist" ||
+		len(observedTags["TITLE"]) != 1 || observedTags["TITLE"][0] != "Test Track" {
+		t.Fatalf("metadata captured by the production worker = %+v", observedTags)
 	}
 	var scanned api.SourceRootResponse
 	decodeInto(t, fixture.request(t, http.MethodGet, "/sources/"+root.ID.String(), ""), &scanned)
@@ -340,20 +352,54 @@ func TestApplicationSourcesEndpointsDriveTheProductionWorker(t *testing.T) {
 		t.Fatal("the deleted root is still stored")
 	}
 	preserved, err := os.ReadFile(track)
-	if err != nil || string(preserved) != "audio bytes" {
-		t.Fatalf("deleting a root altered its source file: %q, %v", preserved, err)
+	if err != nil || !bytes.Equal(preserved, trackData) {
+		t.Fatalf("deleting a root altered its source file: %x, %v", preserved, err)
 	}
 	if status := fixture.mutateStatus(t, http.MethodGet, "/sources/"+root.ID.String(), ""); status != http.StatusNotFound {
 		t.Fatalf("reading a deleted root status=%d, want 404", status)
 	}
 }
 
+// appMetadataFLACFixture is a metadata-only FLAC stream with valid STREAMINFO
+// and Vorbis-comment blocks. The production metadata reader exercises TagLib;
+// audio decoding is not part of this test's contract.
+func appMetadataFLACFixture() []byte {
+	streamInfo := make([]byte, 34)
+	binary.BigEndian.PutUint16(streamInfo[0:2], 4096)
+	binary.BigEndian.PutUint16(streamInfo[2:4], 4096)
+	const sampleRate uint64 = 44100
+	const channelsMinusOne uint64 = 1
+	const bitsPerSampleMinusOne uint64 = 15
+	packed := sampleRate<<44 | channelsMinusOne<<41 | bitsPerSampleMinusOne<<36
+	binary.BigEndian.PutUint64(streamInfo[10:18], packed)
+
+	comments := make([]byte, 0, 128)
+	appendLength := func(value string) {
+		var length [4]byte
+		binary.LittleEndian.PutUint32(length[:], uint32(len(value)))
+		comments = append(comments, length[:]...)
+		comments = append(comments, value...)
+	}
+	appendLength("MeloTrove integration fixture")
+	var count [4]byte
+	binary.LittleEndian.PutUint32(count[:], 2)
+	comments = append(comments, count[:]...)
+	appendLength("ARTIST=Test Artist")
+	appendLength("TITLE=Test Track")
+
+	flac := []byte("fLaC")
+	flac = append(flac, 0x00, 0x00, 0x00, byte(len(streamInfo)))
+	flac = append(flac, streamInfo...)
+	flac = append(flac, 0x84, byte(len(comments)>>16), byte(len(comments)>>8), byte(len(comments)))
+	return append(flac, comments...)
+}
+
 // provisionManagedFFprobe materializes a fake managed ffmpeg of the active
 // installation, so the composed worker's ffprobe is a real executable this test
-// controls. The binaries report the release version on the version query and an
-// audio-free ffprobe response on a probe, which is the ffprobe contract of an
-// audio-less file. The release identity is one the approved catalog offers for
-// this platform, so a later install preflight can bind to the same installation.
+// controls. The binaries report the release version on the version query and
+// report an audio stream when probing. The release identity is one the approved
+// catalog offers for this platform, so a later install preflight can bind to
+// the same installation.
 func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
@@ -375,7 +421,7 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	configuration := struct {
 		Version string `json:"version"`
 		NoAudio bool   `json:"no_audio"`
-	}{Version: release, NoAudio: true}
+	}{Version: release}
 	if err := copyAppScanProbe(source, target, configuration); err != nil {
 		t.Fatalf("write the managed %s: %v", names[0], err)
 	}

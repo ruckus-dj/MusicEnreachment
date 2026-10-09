@@ -2,7 +2,13 @@ import type { SourceTechnicalResultResponse } from "../../api/generated/client.s
 import { AppButton } from "../../components/AppButton";
 import { SourceTechnicalResult } from "./SourceTechnicalResult";
 
-export type SourceAnalysisStepName = "sha256" | "probe" | "fingerprint";
+const unknown = "Неизвестно";
+
+export type SourceAnalysisStepName =
+  | "sha256"
+  | "probe"
+  | "fingerprint"
+  | "metadata";
 export type SourceAnalysisStepState =
   | "not_requested"
   | "loading"
@@ -25,15 +31,31 @@ export interface SourceAnalysisFingerprintSuccess {
   readonly provenance?: string;
 }
 
+export interface SourceAnalysisMetadataSuccess {
+  // Tag values are nullable in the API projection: a present key with a null
+  // value means the tag exists but its values are unknown. Keep the key and
+  // render the unknown text instead of dropping it or crashing on join.
+  readonly tags: Readonly<Record<string, readonly string[] | null>>;
+  readonly provenance: {
+    readonly name: string;
+    readonly version: string;
+    readonly contract: string;
+  };
+  readonly nativeMatroska?: unknown;
+}
+
 export interface SourceAnalysisStepsProps {
   readonly steps: Readonly<
-    Record<SourceAnalysisStepName, SourceAnalysisStepStatus>
+    Partial<Record<SourceAnalysisStepName, SourceAnalysisStepStatus>>
   >;
   readonly sha256?: { readonly value: string; readonly provenance?: string };
   readonly probeResult?: SourceTechnicalResultResponse;
   readonly probeProvenance?: string;
   readonly fingerprint?: SourceAnalysisFingerprintSuccess;
-  readonly retryAvailable: Readonly<Record<SourceAnalysisStepName, boolean>>;
+  readonly metadata?: SourceAnalysisMetadataSuccess;
+  readonly retryAvailable: Readonly<
+    Partial<Record<SourceAnalysisStepName, boolean>>
+  >;
   readonly onRetry: (step: SourceAnalysisStepName) => void;
   readonly fingerprintRerunAvailable: boolean;
   readonly onRerunFingerprint: () => void;
@@ -50,6 +72,7 @@ const stepNames: ReadonlyArray<{
   { name: "sha256", label: "SHA-256" },
   { name: "probe", label: "Технический анализ ffprobe" },
   { name: "fingerprint", label: "Акустический отпечаток" },
+  { name: "metadata", label: "Метаданные тегов" },
 ];
 
 function stateLabel(state: SourceAnalysisStepState): string {
@@ -88,6 +111,7 @@ export function SourceAnalysisSteps({
   probeResult,
   probeProvenance,
   fingerprint,
+  metadata,
   retryAvailable,
   onRetry,
   fingerprintRerunAvailable,
@@ -96,7 +120,7 @@ export function SourceAnalysisSteps({
   matching,
 }: SourceAnalysisStepsProps) {
   const firstError = stepNames
-    .map(({ name, label }) => ({ name, label, error: steps[name].safeError }))
+    .map(({ name, label }) => ({ name, label, error: steps[name]?.safeError }))
     .find(({ error }) => error);
 
   return (
@@ -109,12 +133,13 @@ export function SourceAnalysisSteps({
       )}
       <ul>
         {stepNames.map(({ name, label }) => {
-          const step = steps[name];
+          const step = steps[name] ?? { state: "not_requested" as const };
           const busy = isBusy(step.state);
           const hasSuccess =
             (name === "sha256" && !!sha256) ||
             (name === "probe" && !!probeResult) ||
             (name === "fingerprint" && !!fingerprint);
+          const successful = hasSuccess || (name === "metadata" && !!metadata);
           return (
             <li key={name} aria-label={label}>
               <h3>{label}</h3>
@@ -158,6 +183,37 @@ export function SourceAnalysisSteps({
                   )}
                 </>
               )}
+              {name === "metadata" && metadata && (
+                <>
+                  <p>
+                    Источник: {metadata.provenance.name}{" "}
+                    {metadata.provenance.version}
+                  </p>
+                  <p className="sources-note">{metadata.provenance.contract}</p>
+                  {Object.entries(metadata.tags).length > 0 ? (
+                    <dl className="sources-summary">
+                      {Object.entries(metadata.tags).map(([tag, values]) => (
+                        <div key={tag}>
+                          <dt>{tag}</dt>
+                          <dd>
+                            {values === null ? unknown : values.join(" · ")}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : (
+                    <p className="sources-note">Сохранённых тегов нет.</p>
+                  )}
+                  {metadata.nativeMatroska !== undefined && (
+                    <details>
+                      <summary>Нативные теги Matroska</summary>
+                      <pre>
+                        {JSON.stringify(metadata.nativeMatroska, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </>
+              )}
               {step.state === "failed" && retryAvailable[name] && (
                 <AppButton isDisabled={busy} onPress={() => onRetry(name)}>
                   Повторить этап «{label}»
@@ -171,7 +227,7 @@ export function SourceAnalysisSteps({
                   Повторно вычислить отпечаток
                 </AppButton>
               )}
-              {!hasSuccess &&
+              {!successful &&
                 step.state !== "failed" &&
                 step.state !== "skipped" &&
                 step.state !== "not_requested" && (

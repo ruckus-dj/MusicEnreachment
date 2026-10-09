@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -19,6 +20,7 @@ type SourceAnalysisStep string
 const (
 	SourceAnalysisProbeStep       SourceAnalysisStep = "probe"
 	SourceAnalysisFingerprintStep SourceAnalysisStep = "fingerprint"
+	SourceAnalysisMetadataStep    SourceAnalysisStep = "metadata"
 )
 
 type SourceAnalysisTarget uint8
@@ -27,6 +29,7 @@ const (
 	SourceAnalysisTargetSHA256 SourceAnalysisTarget = 1 << iota
 	SourceAnalysisTargetProbe
 	SourceAnalysisTargetFingerprint
+	SourceAnalysisTargetMetadata
 )
 
 // SourceAnalysisPreparerHold acquires a persistence hold immediately before a
@@ -40,6 +43,10 @@ type SourceAnalysisProbe interface {
 type SourceAnalysisFingerprinter interface {
 	Fingerprint(context.Context, string) (tools.FPCalcResult, error)
 	Version(context.Context) (tools.FPCalcVersion, error)
+}
+
+type SourceAnalysisMetadataReader interface {
+	Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
 }
 
 // SourceAnalysisCacheLookup resolves the independently reusable results for one
@@ -82,10 +89,16 @@ type SourceAnalysisFingerprintOutcome struct {
 	Result *persistence.SourceFingerprintResult
 }
 
+type SourceAnalysisMetadataOutcome struct {
+	SourceAnalysisStepOutcome
+	Capture *metadata.Capture
+}
+
 type SourceAnalysisPreparation struct {
 	SHA256      SourceAnalysisSHA256Outcome
 	Probe       SourceAnalysisProbeOutcome
 	Fingerprint SourceAnalysisFingerprintOutcome
+	Metadata    SourceAnalysisMetadataOutcome
 }
 
 type SourceAnalysisPrepareRequest struct {
@@ -113,6 +126,7 @@ type SourceAnalysisPreparerConfig struct {
 	FingerprintResult    persistence.SourceFingerprintResult
 	ProbeFactory         func(string) (SourceAnalysisProbe, error)
 	FingerprinterFactory func(string) (SourceAnalysisFingerprinter, error)
+	MetadataReader       SourceAnalysisMetadataReader
 	Cache                SourceAnalysisCacheLookup
 	Hold                 SourceAnalysisPreparerHold
 }
@@ -138,6 +152,7 @@ func (preparer *SourceAnalysisPreparer) Prepare(ctx context.Context, request Sou
 		SHA256:      SourceAnalysisSHA256Outcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisNotRequested}},
 		Probe:       SourceAnalysisProbeOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisNotRequested}},
 		Fingerprint: SourceAnalysisFingerprintOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisNotRequested}},
+		Metadata:    SourceAnalysisMetadataOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisNotRequested}},
 	}
 	if request.Targets&SourceAnalysisTargetSHA256 != 0 {
 		digest, err := sourcefs.SHA256(ctx, request.File)
@@ -182,6 +197,8 @@ func (preparer *SourceAnalysisPreparer) Prepare(ctx context.Context, request Sou
 	}
 	var probeChannel chan probeResult
 	var fingerprintChannel chan fingerprintResult
+	type metadataResult struct{ outcome SourceAnalysisMetadataOutcome }
+	var metadataChannel chan metadataResult
 	if request.Targets&SourceAnalysisTargetProbe != 0 {
 		probeChannel = make(chan probeResult, 1)
 		go func() { probeChannel <- probeResult{preparer.runProbe(ctx, request.File, probeCache)} }()
@@ -192,11 +209,29 @@ func (preparer *SourceAnalysisPreparer) Prepare(ctx context.Context, request Sou
 			fingerprintChannel <- fingerprintResult{preparer.runFingerprint(ctx, request.ServerPath, request.BypassFingerprintCache, fingerprintCache)}
 		}()
 	}
+	if request.Targets&SourceAnalysisTargetMetadata != 0 {
+		metadataChannel = make(chan metadataResult, 1)
+		go func() {
+			reader := preparer.config.MetadataReader
+			if reader == nil {
+				reader = metadata.Reader{}
+			}
+			capture, err := reader.Read(ctx, request.ServerPath, metadata.ReadRequest{})
+			if err != nil {
+				metadataChannel <- metadataResult{outcome: SourceAnalysisMetadataOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisFailed, SafeError: "source metadata could not be read"}}}
+				return
+			}
+			metadataChannel <- metadataResult{outcome: SourceAnalysisMetadataOutcome{SourceAnalysisStepOutcome: SourceAnalysisStepOutcome{State: SourceAnalysisSucceeded}, Capture: &capture}}
+		}()
+	}
 	if probeChannel != nil {
 		result.Probe = (<-probeChannel).outcome
 	}
 	if fingerprintChannel != nil {
 		result.Fingerprint = (<-fingerprintChannel).outcome
+	}
+	if metadataChannel != nil {
+		result.Metadata = (<-metadataChannel).outcome
 	}
 	return result
 }

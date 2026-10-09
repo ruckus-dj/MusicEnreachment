@@ -355,10 +355,13 @@ describe("source inspector", () => {
   it("does not fabricate successful state for steps absent from the persisted response", async () => {
     await openInspector();
     const steps = screen.getAllByRole("listitem");
-    expect(steps).toHaveLength(3);
+    expect(steps).toHaveLength(4);
     for (const step of steps) {
       expect(step).toHaveTextContent("Состояние: Не запрошено");
     }
+    expect(
+      screen.getByRole("listitem", { name: "Метаданные тегов" }),
+    ).toHaveTextContent("Состояние: Не запрошено");
     expect(screen.queryByText("Завершено")).not.toBeInTheDocument();
   });
 

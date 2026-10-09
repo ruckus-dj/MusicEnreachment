@@ -63,6 +63,9 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("admit source analysis: lock output admission gate: %w", err)
 		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("admit source analysis: lock digest-keyed result mutations: %w", err)
+		}
 		if snapshot.ToolsReadRequired {
 			if err := lockToolsMoveReaders(ctx, tx); err != nil {
 				return fmt.Errorf("admit source analysis: lock tools-root readers: %w", err)

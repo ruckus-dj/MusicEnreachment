@@ -97,6 +97,63 @@ func TestNormalizedSourceAnalysisAdmissionClaimAndTerminalReleaseWithPostgreSQL(
 	}
 }
 
+func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	repository := persistence.NewSourceInventoryRepository(database)
+	client := openScanEnqueueRiver(t, database)
+	root := createInventoryRoot(t, ctx, repository, "/srv/enumeration-metadata-admission")
+	scan := newSourceScanOperation(t, ctx, database, root, "running")
+	mtime := probeMtime()
+	if err := repository.ReplaceSourceScanCandidates(ctx, scan.ID, []persistence.SourceScanCandidateInput{
+		enumerationCandidate("track.flac", 1024, mtime),
+	}); err != nil {
+		t.Fatalf("store enumeration candidate: %v", err)
+	}
+	if err := repository.ApplySourceEnumeration(ctx, enumerationApply(scan, root, nil)); err != nil {
+		t.Fatalf("apply enumeration: %v", err)
+	}
+	// Normalized analysis admission is root-exclusive. The enumerated scan must
+	// first reach a terminal state, just as it does before pending work is
+	// dispatched by the production scan worker.
+	setOperationState(t, ctx, database, scan.ID, "succeeded")
+	location := readLocation(t, ctx, database, root.ID, "track.flac")
+	var work persistence.SourceAnalysisWork
+	if err := database.NewRaw(`SELECT * FROM source_analysis_work WHERE current_location_id=?`, location.ID).Scan(ctx, &work); err != nil {
+		t.Fatalf("read enumerated analysis work: %v", err)
+	}
+	var metadata persistence.SourceAnalysisStep
+	if err := database.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='metadata'`, work.ID).Scan(ctx, &metadata); err != nil {
+		t.Fatalf("read pending metadata step: %v", err)
+	}
+	if metadata.State != "pending" {
+		t.Fatalf("enumerated metadata state = %q, want pending", metadata.State)
+	}
+
+	operation := normalizedOperation(t, root, location, &work, persistence.SourceAnalysisModeBatch, nil, nil, false, false, nil, true)
+	if err := repository.CreateNormalizedSourceAnalysisOperationAndEnqueue(ctx, operation, client, service.SourceAnalysisJobArgs{OperationID: operation.ID}, nil); err != nil {
+		t.Fatalf("admit pending metadata: %v", err)
+	}
+	var selected []persistence.SourceAnalysisStepSelection
+	snapshot, err := persistence.DecodeSourceAnalysisOperationSnapshot(operation.InputSnapshot)
+	if err != nil {
+		t.Fatalf("decode admitted operation snapshot: %v", err)
+	}
+	selected = snapshot.SelectedSteps
+	if len(selected) != 1 || selected[0].WorkID != work.ID || selected[0].Step != persistence.SourceStepMetadata {
+		t.Fatalf("admitted selected steps = %+v, want metadata for enumerated work", selected)
+	}
+	if operation.ToolsReadRequired || len(operation.SourceAnalysisTools) != 0 {
+		t.Fatalf("metadata admission unexpectedly selected tools: %+v", operation.SourceAnalysisTools)
+	}
+	var queuedState string
+	if err := database.NewRaw(`SELECT state FROM source_analysis_step WHERE work_id=? AND step='metadata'`, work.ID).Scan(ctx, &queuedState); err != nil || queuedState != "queued" {
+		t.Fatalf("admitted metadata state = %q, %v; want queued", queuedState, err)
+	}
+	assertOperationHoldCounts(t, ctx, database, operation.ID, 1, 0)
+}
+
 func TestNormalizedSourceAnalysisAdmissionRejectsWrongStepAndRollsBackFailedOperationInsertWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
@@ -358,7 +415,7 @@ func normalizedWork(t *testing.T, ctx context.Context, repository *persistence.S
 	return work
 }
 
-func normalizedOperation(t *testing.T, root *persistence.SourceRoot, location persistence.SourceLocation, work *persistence.SourceAnalysisWork, mode string, targetWorkID *uuid.UUID, targetStep *string, shaEnabled, rerun bool, tools []persistence.SourceAnalysisToolSelection) *persistence.Operation {
+func normalizedOperation(t *testing.T, root *persistence.SourceRoot, location persistence.SourceLocation, work *persistence.SourceAnalysisWork, mode string, targetWorkID *uuid.UUID, targetStep *string, shaEnabled, rerun bool, tools []persistence.SourceAnalysisToolSelection, metadataSelected ...bool) *persistence.Operation {
 	t.Helper()
 	if tools == nil {
 		tools = []persistence.SourceAnalysisToolSelection{}
@@ -376,6 +433,9 @@ func normalizedOperation(t *testing.T, root *persistence.SourceRoot, location pe
 			case "fpcalc":
 				selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: work.ID, Step: persistence.SourceStepFingerprint})
 			}
+		}
+		if len(metadataSelected) > 0 && metadataSelected[0] {
+			selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: work.ID, Step: persistence.SourceStepMetadata})
 		}
 	}
 	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{

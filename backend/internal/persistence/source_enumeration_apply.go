@@ -166,6 +166,7 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 				{WorkID: work.ID, Step: string(SourceStepSHA256), State: "pending"},
 				{WorkID: work.ID, Step: string(SourceStepProbe), State: "pending"},
 				{WorkID: work.ID, Step: string(SourceStepFingerprint), State: "pending"},
+				{WorkID: work.ID, Step: string(SourceStepMetadata), State: "pending"},
 			}
 			if !apply.SHA256Enabled {
 				steps[0].State = "not_requested"

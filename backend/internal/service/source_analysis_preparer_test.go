@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -46,6 +47,12 @@ type preparerProbe func(context.Context, sourcefs.RegularFile) ([]byte, error)
 
 func (probe preparerProbe) ProbeMediaFile(ctx context.Context, file sourcefs.RegularFile) ([]byte, error) {
 	return probe(ctx, file)
+}
+
+type preparerMetadataReader func(context.Context, string, metadata.ReadRequest) (metadata.Capture, error)
+
+func (reader preparerMetadataReader) Read(ctx context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
+	return reader(ctx, path, request)
 }
 
 type preparerFingerprinter struct {
@@ -657,6 +664,56 @@ func TestSourceAnalysisPreparerCancellationJoinsRunnersAndReleasesHolds(t *testi
 	}
 	if holdReleases.Load() != 2 {
 		t.Fatalf("released %d holds; want both", holdReleases.Load())
+	}
+}
+
+func TestSourceAnalysisPreparerMetadataIsIndependentAndPropertiesRemainOptional(t *testing.T) {
+	called := 0
+	reader := preparerMetadataReader(func(_ context.Context, path string, request metadata.ReadRequest) (metadata.Capture, error) {
+		called++
+		if path != "/prepared/source.mka" {
+			t.Fatalf("metadata path = %q", path)
+		}
+		if request.Properties {
+			t.Fatal("properties were requested without explicit opt-in")
+		}
+		return metadata.Capture{Format: "mka", Tags: map[string][]string{"ARTIST": {"one", "two"}}}, errors.New("optional fake failure")
+	})
+	probe := preparerProbe(func(context.Context, sourcefs.RegularFile) ([]byte, error) {
+		return []byte(`{"format":{"format_name":"matroska"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac"}]}`), nil
+	})
+	preparer := NewSourceAnalysisPreparer(SourceAnalysisPreparerConfig{
+		MetadataReader: reader, FFProbeVersion: "ffprobe 8.0", AnalysisPolicy: 1,
+		ProbeFactory: func(string) (SourceAnalysisProbe, error) { return probe, nil },
+	})
+	result := preparer.Prepare(context.Background(), SourceAnalysisPrepareRequest{
+		File: preparerTestFile(t, "audio"), ServerPath: "/prepared/source.mka",
+		Targets: SourceAnalysisTargetProbe | SourceAnalysisTargetMetadata,
+	})
+	if called != 1 || result.Metadata.State != SourceAnalysisFailed || result.Metadata.Capture != nil {
+		t.Fatalf("metadata outcome = %#v, called %d", result.Metadata, called)
+	}
+	if result.Probe.State != SourceAnalysisSucceeded {
+		t.Fatalf("metadata failure changed probe outcome: %#v", result.Probe)
+	}
+}
+
+func TestSourceAnalysisPreparerMetadataOnlyDoesNotRequireManagedTools(t *testing.T) {
+	reader := preparerMetadataReader(func(_ context.Context, _ string, request metadata.ReadRequest) (metadata.Capture, error) {
+		if request.Properties {
+			t.Fatal("optional properties were requested")
+		}
+		return metadata.Capture{Tags: map[string][]string{"ARTIST": {"first", "second"}}}, nil
+	})
+	preparer := NewSourceAnalysisPreparer(SourceAnalysisPreparerConfig{MetadataReader: reader})
+	result := preparer.Prepare(context.Background(), SourceAnalysisPrepareRequest{
+		ServerPath: "/prepared/source.flac", Targets: SourceAnalysisTargetMetadata,
+	})
+	if result.Metadata.State != SourceAnalysisSucceeded || result.Metadata.Capture == nil || len(result.Metadata.Capture.Tags["ARTIST"]) != 2 {
+		t.Fatalf("metadata-only result = %#v", result.Metadata)
+	}
+	if result.Probe.State != SourceAnalysisNotRequested || result.Fingerprint.State != SourceAnalysisNotRequested {
+		t.Fatalf("metadata-only request changed sibling steps: %#v", result)
 	}
 }
 

@@ -361,6 +361,7 @@ func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysis
 		{SourceStepSHA256, prepared.SHA256State, prepared.SHA256SafeError, prepared.SHA256SkipReason, selectedSHA, nil, nil, "executed"},
 		{SourceStepProbe, prepared.ProbeState, prepared.ProbeSafeError, prepared.ProbeSkipReason, nil, selectedProbe, nil, "executed"},
 		{SourceStepFingerprint, prepared.FingerprintState, prepared.FingerprintSafeError, prepared.FingerprintSkipReason, nil, nil, selectedFingerprint, fingerprintOrigin},
+		{SourceStepMetadata, SourcePreparedStepState("pending"), "", "", nil, nil, nil, "executed"},
 	}
 	if !existingWork {
 		if _, err := tx.NewInsert().Model(work).Exec(ctx); err != nil {

@@ -71,6 +71,22 @@ type SourceFingerprintResult struct {
 	ParserContractVersion int       `bun:"parser_contract_version"`
 }
 
+// SourceMetadataResult stores one successful metadata capture. Digest-less
+// results remain attached to their selected work step until SHA is available;
+// digest-bearing rows are the current canonical capture for that file identity.
+type SourceMetadataResult struct {
+	bun.BaseModel      `bun:"table:media_metadata_result"`
+	ID                 uuid.UUID       `bun:"id,pk,type:uuid"`
+	SourceSHA256       []byte          `bun:"source_sha256,nullzero"`
+	ObservedTags       json.RawMessage `bun:"observed_tags,type:jsonb"`
+	Provenance         json.RawMessage `bun:"provenance,type:jsonb"`
+	NativeMatroska     json.RawMessage `bun:"native_matroska,type:jsonb,nullzero"`
+	ObservedAt         time.Time       `bun:"observed_at,nullzero"`
+	WinningResultID    uuid.UUID       `bun:"winning_result_id,type:uuid"`
+	AppliedOperationID uuid.UUID       `bun:"applied_operation_id,type:uuid"`
+	CreatedAt          time.Time       `bun:"created_at,nullzero"`
+}
+
 type SourceAnalysisWork struct {
 	bun.BaseModel         `bun:"table:source_analysis_work"`
 	ID                    uuid.UUID  `bun:"id,pk,type:uuid"`
@@ -103,6 +119,7 @@ type SourceAnalysisStep struct {
 	SuccessSHAVariantID        *uuid.UUID      `bun:"success_sha_variant_id,type:uuid,nullzero"`
 	SuccessProbeVariantID      *uuid.UUID      `bun:"success_probe_variant_id,type:uuid,nullzero"`
 	SuccessFingerprintResultID *uuid.UUID      `bun:"success_fingerprint_result_id,type:uuid,nullzero"`
+	SuccessMetadataResultID    *uuid.UUID      `bun:"success_metadata_result_id,type:uuid,nullzero"`
 	SuccessReuseOrigin         *string         `bun:"success_reuse_origin,nullzero"`
 	InputSnapshot              json.RawMessage `bun:"input_snapshot,type:jsonb,nullzero"`
 }

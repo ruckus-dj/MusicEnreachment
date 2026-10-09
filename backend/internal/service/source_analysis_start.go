@@ -267,7 +267,7 @@ func (s *SourceAnalysisOperations) admit(ctx context.Context, operation *persist
 }
 
 func (s *SourceAnalysisOperations) selectedTools(ctx context.Context, step persistence.SourceStepName) ([]persistence.SourceAnalysisToolSelection, error) {
-	if step == persistence.SourceStepSHA256 {
+	if step == persistence.SourceStepSHA256 || step == persistence.SourceStepMetadata {
 		return []persistence.SourceAnalysisToolSelection{}, nil
 	}
 	runtimeSettings, err := s.runtime.ReadRuntimeSettings(ctx)
@@ -363,7 +363,7 @@ func findAnalysisStep(steps []persistence.SourceAnalysisStep, target persistence
 }
 
 func validAnalysisStep(step persistence.SourceStepName) bool {
-	return step == persistence.SourceStepSHA256 || step == persistence.SourceStepProbe || step == persistence.SourceStepFingerprint
+	return step == persistence.SourceStepSHA256 || step == persistence.SourceStepProbe || step == persistence.SourceStepFingerprint || step == persistence.SourceStepMetadata
 }
 
 func sourceAnalysisStartRefusal(err error) error {
