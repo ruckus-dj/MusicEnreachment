@@ -101,17 +101,6 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Provision approved managed-tool transport fixture and run evidence tests
-        run: task fixtures:managed-transport > managed-transport.log 2>&1
-      - name: Upload managed-tool transport evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: managed-transport-${{ matrix.name }}
-          path: |
-            build/tool-fixtures/manifest.json
-            managed-transport.log
-          if-no-files-found: warn
       - name: Test backend
         working-directory: backend
         run: go test -v ./...

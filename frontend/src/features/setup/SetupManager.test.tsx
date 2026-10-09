@@ -567,8 +567,8 @@ describe("SetupManager", () => {
       await act(async () => {
         TestEventSource.instances.at(-1)?.dispatchEvent(new Event("open"));
       });
-      await waitFor(async () =>
-        expect(await screen.findAllByText("1.0: Активна")).toHaveLength(
+      await waitFor(() =>
+        expect(screen.getAllByText("1.0: Активна")).toHaveLength(
           kind === "ffmpeg" ? 1 : 2,
         ),
       );
@@ -591,7 +591,10 @@ describe("SetupManager", () => {
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
     expect(completed).toHaveBeenCalledOnce();
     expect(current.settings.publication_format).toBe("mka");
-  });
+    // This scenario drives all six wizard steps; React Aria rendering in jsdom
+    // can exceed Vitest's default per-test budget on CI. Scope the longer bound
+    // to this full-wizard test only.
+  }, 10_000);
 
   it("keeps a failed operation available across reload and retries via REST", async () => {
     localStorage.setItem("melotrove.setup.operation", operation.id);

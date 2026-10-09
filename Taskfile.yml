@@ -111,7 +111,7 @@ tasks:
       - golangci-lint run ./...
 
   fixtures:provision:
-    desc: Download approved managed FFmpeg binaries and generate a seek-dependent transport fixture
+    desc: Manual online acceptance (not an automated CI gate) - download approved managed FFmpeg binaries over the network and generate a seek-dependent transport fixture
     vars:
       RELEASE: '{{.RELEASE | default "latest"}}'
       OUTPUT: '{{.OUTPUT | default "build/tool-fixtures"}}'
@@ -121,7 +121,7 @@ tasks:
       - go run ./cmd/tool-fixtures -release "{{.RELEASE}}" -output "{{if isAbs .OUTPUT}}{{.OUTPUT}}{{else}}{{joinPath .ROOT_DIR .OUTPUT}}{{end}}" -manifest "{{if isAbs .MANIFEST}}{{.MANIFEST}}{{else}}{{joinPath .ROOT_DIR .MANIFEST}}{{end}}"
 
   fixtures:managed-transport:
-    desc: Provision fixture then run managed-transport-tagged tools tests against its manifest
+    desc: Manual online acceptance (not an automated CI gate) - provision the fixture over the network then run managed-transport-tagged tools tests against its manifest
     deps: [fixtures:provision]
     vars:
       MANIFEST: '{{.MANIFEST | default "build/tool-fixtures/manifest.json"}}'
