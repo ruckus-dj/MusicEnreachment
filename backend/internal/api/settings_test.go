@@ -65,6 +65,99 @@ func TestSettingsSHA256DefaultAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAcoustIDApplicationKeyWriteOnlyLifecycle(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	if err := registry.CompleteSetup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	setup := service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	handler := api.HandlerWithSetup(setup)
+	secret := " arbitrary:key value "
+
+	request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":" arbitrary:key value "}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("set key status=%d body=%s", response.Code, response.Body.String())
+	}
+	if store[settings.AcoustIDApplicationKey] != secret {
+		t.Fatalf("stored key=%q, want exact supplied value", store[settings.AcoustIDApplicationKey])
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"has_acoustid_application_key":true`) || strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("GET settings status=%d body=%s, want presence only", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/settings/acoustid/application-key", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete key status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, exists := store[settings.AcoustIDApplicationKey]; exists {
+		t.Fatal("expected AcoustID application key setting to be absent after delete")
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"has_acoustid_application_key":false`) || strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("GET after delete status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAcoustIDApplicationKeyRejectsEmptyAndDoesNotEcho(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	if err := registry.CompleteSetup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handler := api.HandlerWithSetup(service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil))
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(`{"key":""}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || strings.Contains(response.Body.String(), `"key":""`) {
+		t.Fatalf("empty key status=%d body=%s, want safe validation error", response.Code, response.Body.String())
+	}
+}
+
+func TestAcoustIDApplicationKeyValidationNeverEchoesRequestValues(t *testing.T) {
+	store := apiSettingsStore{}
+	registry := settings.New(store, nil)
+	if err := registry.CompleteSetup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handler := api.HandlerWithSetup(service.NewSetup(store, registry, settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil))
+
+	secret := "recognizable-acoustid-secret"
+	longKey := strings.Repeat(secret, 4096/len(secret)+1)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "oversized key", body: `{"key":"` + longKey + `"}`},
+		{name: "array key", body: `{"key":["` + secret + `"]}`},
+		{name: "object key", body: `{"key":{"secret":"` + secret + `"}}`},
+		{name: "unknown field", body: `{"key":"valid","unexpected":"` + secret + `"}`},
+		{name: "missing key", body: `{"unexpected":"` + secret + `"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPut, "/settings/acoustid/application-key", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(response, request)
+			if response.Code < http.StatusBadRequest || response.Code >= http.StatusInternalServerError {
+				t.Fatalf("status=%d body=%s, want a client error", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), secret) || strings.Contains(response.Body.String(), longKey) {
+				t.Fatalf("response leaked request value: %s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestSettingsSHA256RejectsInvalidInput(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)

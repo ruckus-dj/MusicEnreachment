@@ -51,6 +51,14 @@ type UpdateLogLevelBody struct {
 	Level string `json:"level" enum:"debug,info,warn,error"`
 }
 
+type UpdateAcoustIDApplicationKeyInput struct {
+	Body UpdateAcoustIDApplicationKeyBody `json:"body"`
+}
+
+type UpdateAcoustIDApplicationKeyBody struct {
+	Key string `json:"key"`
+}
+
 type CheckSettingsMusicBrainzOutput struct {
 	Body CheckMusicBrainzBody `json:"body"`
 }
@@ -172,6 +180,41 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		if err := setup.SetLogLevel(ctx, input.Body.Level); err != nil {
 			return nil, huma.Error400BadRequest("log level could not be saved")
+		}
+		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "set-acoustid-application-key", Method: http.MethodPut, Path: "/settings/acoustid/application-key",
+		Summary: "Set the AcoustID application key", Tags: []string{"Settings"},
+	}, func(ctx context.Context, input *UpdateAcoustIDApplicationKeyInput) (*struct{}, error) {
+		if err := requireSetupComplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if len(input.Body.Key) == 0 || len(input.Body.Key) > 4096 {
+			return nil, huma.Error422UnprocessableEntity("invalid AcoustID application key request")
+		}
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
+		}
+		if err := setup.SetAcoustIDApplicationKey(ctx, input.Body.Key); err != nil {
+			return nil, huma.Error400BadRequest("AcoustID application key could not be saved")
+		}
+		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-acoustid-application-key", Method: http.MethodDelete, Path: "/settings/acoustid/application-key",
+		Summary: "Delete the AcoustID application key", Tags: []string{"Settings"},
+	}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+		if err := requireSetupComplete(ctx, setup); err != nil {
+			return nil, err
+		}
+		if setup == nil {
+			return nil, huma.Error503ServiceUnavailable("settings service is unavailable")
+		}
+		if err := setup.DeleteAcoustIDApplicationKey(ctx); err != nil {
+			return nil, huma.Error500InternalServerError("AcoustID application key could not be deleted")
 		}
 		return nil, nil
 	})

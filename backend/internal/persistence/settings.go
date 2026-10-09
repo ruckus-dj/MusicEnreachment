@@ -41,6 +41,13 @@ func (r *SettingsRepository) Set(ctx context.Context, name, value string) error 
 	return r.SetMany(ctx, map[string]string{name: value})
 }
 
+func (r *SettingsRepository) Delete(ctx context.Context, name string) error {
+	if _, err := r.db.NewDelete().Model((*AppSetting)(nil)).Where("setting_name = ?", name).Exec(ctx); err != nil {
+		return fmt.Errorf("delete setting %q: %w", name, err)
+	}
+	return nil
+}
+
 func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]string) error {
 	if len(values) == 0 {
 		return nil

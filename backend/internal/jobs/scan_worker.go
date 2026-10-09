@@ -81,18 +81,23 @@ type sourceAnalysisPendingDispatcher interface {
 // the two.
 type SourceScanWorker struct {
 	river.WorkerDefaults[service.ScanSourceJobArgs]
-	repository scanWorkerRepository
-	operations *service.Operations
-	paths      service.SourceScanPathValidator
-	settings   scanWorkerSettings
-	platform   settings.PlatformState
-	pending    sourceAnalysisPendingDispatcher
+	repository     scanWorkerRepository
+	operations     *service.Operations
+	paths          service.SourceScanPathValidator
+	settings       scanWorkerSettings
+	platform       settings.PlatformState
+	pending        sourceAnalysisPendingDispatcher
+	incomingGroups incomingGroupsRefresher
 }
 
 // SetPendingDispatcher installs the best-effort handoff that starts analysis
 // work made pending by a newly applied scan generation.
 func (worker *SourceScanWorker) SetPendingDispatcher(dispatcher sourceAnalysisPendingDispatcher) {
 	worker.pending = dispatcher
+}
+
+func (worker *SourceScanWorker) SetIncomingGroupsRefresher(refresher incomingGroupsRefresher) {
+	worker.incomingGroups = refresher
 }
 
 func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanWorkerSettings, platform settings.PlatformState, _ *tools.Lifecycle) *SourceScanWorker {
@@ -239,6 +244,11 @@ func (worker *SourceScanWorker) finishAndDispatch(ctx context.Context, operation
 	}
 	if err := delivery.FinishSourceScanDelivery(ctx, operation.ID, operation.Attempt, scanOperationJobID(operation), "succeeded", scanSucceededStage, ""); err != nil {
 		return err
+	}
+	if worker.incomingGroups != nil {
+		if err := worker.incomingGroups.RefreshIfNeeded(context.WithoutCancel(ctx)); err != nil {
+			slog.Warn("refresh incoming groups after source scan", "operation", operation.ID, "error", err)
+		}
 	}
 	if worker.pending != nil {
 		if _, err := worker.pending.AdmitPending(ctx, rootID); err != nil {

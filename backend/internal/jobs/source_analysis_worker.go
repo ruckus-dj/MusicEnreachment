@@ -58,6 +58,10 @@ type sourceFileConcurrencyReader interface {
 	GetSourceFileConcurrency(context.Context) (int, error)
 }
 
+type incomingGroupsRefresher interface {
+	RefreshIfNeeded(context.Context) error
+}
+
 // pendingDispatcher admits the next queued batch for a source root after a
 // normalized analysis settles. The pending service owns the root-exclusive
 // admission; the worker only wakes it after a committed terminal settlement, so
@@ -78,6 +82,7 @@ type SourceAnalysisWorker struct {
 	inputPreparer        service.SourceAnalysisInputPreparing
 	verifyFFProbeVersion func(context.Context, string) (string, error)
 	pendingDispatcher    pendingDispatcher
+	incomingGroups       incomingGroupsRefresher
 	fileLimiter          *sourceFileLimiter
 }
 
@@ -240,6 +245,10 @@ func (worker *SourceAnalysisWorker) SetPendingDispatcher(dispatcher pendingDispa
 	worker.pendingDispatcher = dispatcher
 }
 
+func (worker *SourceAnalysisWorker) SetIncomingGroupsRefresher(refresher incomingGroupsRefresher) {
+	worker.incomingGroups = refresher
+}
+
 // RefreshSourceFileConcurrency rereads the configured limit and wakes active
 // delivery schedulers so they can admit work using the updated capacity.
 func (worker *SourceAnalysisWorker) RefreshSourceFileConcurrency(ctx context.Context) error {
@@ -281,8 +290,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 			return nil
 		}
 		operation.TargetSourceRootID = rootID
-		worker.operations.Notify(operation.ID)
-		worker.wakePending(ctx, operation)
+		worker.finishNormalizedDelivery(ctx, operation)
 		return nil
 	}
 	if operation.State != "queued" {
@@ -365,12 +373,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	if singleFailure != nil {
 		state, safeError = "failed", singleFailure.safeError
 	}
-	if err := worker.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: job.ID}, state, service.SourceAnalysisStageApplying, safeError); err != nil {
-		return err
-	}
-	worker.operations.Notify(operation.ID)
-	worker.wakePending(ctx, operation)
-	return nil
+	return worker.settleDelivery(ctx, operation, job.ID, state, service.SourceAnalysisStageApplying, safeError)
 }
 
 // runSourceAnalysisGroups is a demand-driven scheduler. Only admitted groups
@@ -472,6 +475,7 @@ func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, op
 		recovered.TargetSourceRootID = rootID
 	}
 	worker.operations.Notify(operation.ID)
+	worker.refreshIncomingGroups(ctx, operation)
 	return nil
 }
 
@@ -1040,12 +1044,30 @@ func (worker *SourceAnalysisWorker) verifySourceStillCurrent(ctx context.Context
 }
 
 func (worker *SourceAnalysisWorker) terminalFailure(ctx context.Context, operation *persistence.Operation, jobID int64, stage, safe string) error {
-	if err := worker.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: jobID}, "failed", stage, safe); err != nil {
+	return worker.settleDelivery(ctx, operation, jobID, "failed", stage, safe)
+}
+
+func (worker *SourceAnalysisWorker) settleDelivery(ctx context.Context, operation *persistence.Operation, jobID int64, state, stage, safe string) error {
+	if err := worker.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: jobID}, state, stage, safe); err != nil {
 		return err
 	}
-	worker.operations.Notify(operation.ID)
-	worker.wakePending(ctx, operation)
+	worker.finishNormalizedDelivery(ctx, operation)
 	return nil
+}
+
+func (worker *SourceAnalysisWorker) finishNormalizedDelivery(ctx context.Context, operation *persistence.Operation) {
+	worker.operations.Notify(operation.ID)
+	worker.refreshIncomingGroups(ctx, operation)
+	worker.wakePending(ctx, operation)
+}
+
+func (worker *SourceAnalysisWorker) refreshIncomingGroups(ctx context.Context, operation *persistence.Operation) {
+	if worker.incomingGroups == nil {
+		return
+	}
+	if err := worker.incomingGroups.RefreshIfNeeded(context.WithoutCancel(ctx)); err != nil {
+		slog.Warn("refresh incoming groups after source analysis", "operation", operation.ID, "error", err)
+	}
 }
 
 // wakePending admits the next pending batch for the operation's root after its

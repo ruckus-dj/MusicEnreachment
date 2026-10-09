@@ -35,6 +35,7 @@ const settings: SetupStateBody["settings"] = {
   sha256_enabled: true,
   log_level: "info",
   source_file_concurrency: 4,
+  has_acoustid_application_key: false,
 };
 function state(
   overrides: Partial<SetupStateBody["settings"]> = {},

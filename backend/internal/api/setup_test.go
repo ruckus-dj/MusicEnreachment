@@ -58,6 +58,11 @@ func (store apiSettingsStore) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
+func (store apiSettingsStore) Delete(_ context.Context, key string) error {
+	delete(store, key)
+	return nil
+}
+
 func (store apiSettingsStore) SetMany(_ context.Context, values map[string]string) error {
 	for key, value := range values {
 		store[key] = value

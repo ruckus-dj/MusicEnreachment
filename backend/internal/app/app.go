@@ -151,6 +151,10 @@ func Run(ctx context.Context, config Config) error {
 	}
 	riverSlot := &riverClientSlot{}
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
+	incomingGroups := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db))
+	if err := incomingGroups.RefreshIfNeeded(ctx); err != nil {
+		return fmt.Errorf("recover incoming groups: %w", err)
+	}
 	sourceAnalysis := service.NewSourceAnalysisOperations(
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		registry, registry, platform, riverSlot,
@@ -173,11 +177,13 @@ func Run(ctx context.Context, config Config) error {
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
 	)
+	scanWorker.SetIncomingGroupsRefresher(incomingGroups)
 	scanWorker.SetPendingDispatcher(sourceAnalysis)
 	analysisWorker := jobs.NewSourceAnalysisWorker(
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, registry, registry, platform,
 	)
+	analysisWorker.SetIncomingGroupsRefresher(incomingGroups)
 	analysisWorker.WithInputPreparer(service.NewSourceAnalysisInputPreparer(
 		sourceInventory, persistence.NewSourceAnalysisArtifactRepository(db), registry, nil, nil,
 	))
@@ -323,7 +329,7 @@ func Run(ctx context.Context, config Config) error {
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
-		SourceArtifactCleanup: artifactCleanup,
+		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

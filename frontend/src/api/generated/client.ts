@@ -31,6 +31,8 @@ import type {
   CreateSourceBody,
   DeleteSourceBody,
   ErrorModel,
+  IncomingGroupingEditBody,
+  IncomingGroupsBody,
   InstallPreflightBody,
   InstallPreflightInputBody,
   InstallationActionInputBody,
@@ -55,6 +57,7 @@ import type {
   SourcesBody,
   StartInstallBody,
   StartMoveBody,
+  UpdateAcoustIDApplicationKeyBody,
   UpdateLRCLIBBody,
   UpdateLogLevelBody,
   UpdateMusicBrainzBody,
@@ -115,6 +118,361 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export type getIncomingGroupsResponse200 = {
+  data: IncomingGroupsBody
+  status: 200
+}
+
+export type getIncomingGroupsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getIncomingGroupsResponseSuccess = (getIncomingGroupsResponse200) & {
+  headers: Headers;
+};
+export type getIncomingGroupsResponseError = (getIncomingGroupsResponseDefault) & {
+  headers: Headers;
+};
+
+export type getIncomingGroupsResponse = (getIncomingGroupsResponseSuccess | getIncomingGroupsResponseError)
+
+export const getGetIncomingGroupsUrl = () => {
+
+
+
+
+  return `/api/incoming-groups`
+}
+
+/**
+ * @summary Read persisted incoming file groups
+ */
+export const getIncomingGroups = async ( options?: RequestInit): Promise<getIncomingGroupsResponse> => {
+
+  const res = await fetch(getGetIncomingGroupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getIncomingGroupsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getIncomingGroupsResponse
+}
+
+
+
+
+
+export const getGetIncomingGroupsQueryKey = () => {
+    return [
+    `/api/incoming-groups`
+    ] as const;
+    }
+
+
+export const getGetIncomingGroupsQueryOptions = <TData = Awaited<ReturnType<typeof getIncomingGroups>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIncomingGroupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncomingGroups>>> = ({ signal }) => getIncomingGroups({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIncomingGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof getIncomingGroups>>>
+export type GetIncomingGroupsQueryError = ErrorModel
+
+
+export function useGetIncomingGroups<TData = Awaited<ReturnType<typeof getIncomingGroups>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroups>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroups>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroups<TData = Awaited<ReturnType<typeof getIncomingGroups>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroups>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroups>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroups<TData = Awaited<ReturnType<typeof getIncomingGroups>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read persisted incoming file groups
+ */
+
+export function useGetIncomingGroups<TData = Awaited<ReturnType<typeof getIncomingGroups>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroups>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIncomingGroupsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export type confirmIncomingGroupsResponse200 = {
+  data: IncomingGroupsBody
+  status: 200
+}
+
+export type confirmIncomingGroupsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmIncomingGroupsResponseSuccess = (confirmIncomingGroupsResponse200) & {
+  headers: Headers;
+};
+export type confirmIncomingGroupsResponseError = (confirmIncomingGroupsResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmIncomingGroupsResponse = (confirmIncomingGroupsResponseSuccess | confirmIncomingGroupsResponseError)
+
+export const getConfirmIncomingGroupsUrl = () => {
+
+
+
+
+  return `/api/incoming-groups/confirm`
+}
+
+/**
+ * @summary Confirm incoming group corrections
+ */
+export const confirmIncomingGroups = async (incomingGroupingEditBody: NonReadonly<IncomingGroupingEditBody>, options?: RequestInit): Promise<confirmIncomingGroupsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getConfirmIncomingGroupsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(incomingGroupingEditBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmIncomingGroupsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmIncomingGroupsResponse
+}
+
+
+
+
+
+export const getConfirmIncomingGroupsMutationKey = () => ['confirmIncomingGroups'] as const;
+
+export const getConfirmIncomingGroupsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroups>>, TError,ConfirmIncomingGroupsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroups>>, TError,ConfirmIncomingGroupsMutationVariables, TContext> => {
+
+const mutationKey = getConfirmIncomingGroupsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmIncomingGroups>>, ConfirmIncomingGroupsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmIncomingGroups(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmIncomingGroupsMutationResult = NonNullable<Awaited<ReturnType<typeof confirmIncomingGroups>>>
+    export type ConfirmIncomingGroupsMutationBody = NonReadonly<IncomingGroupingEditBody>
+    export type ConfirmIncomingGroupsMutationError = ErrorModel
+    export type ConfirmIncomingGroupsMutationVariables = {data: NonReadonly<IncomingGroupingEditBody>}
+
+    /**
+ * @summary Confirm incoming group corrections
+ */
+export const useConfirmIncomingGroups = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroups>>, TError,ConfirmIncomingGroupsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmIncomingGroups>>,
+        TError,
+        ConfirmIncomingGroupsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmIncomingGroupsMutationOptions(options), queryClient);
+    }
+
+export type previewIncomingGroupsResponse200 = {
+  data: IncomingGroupsBody
+  status: 200
+}
+
+export type previewIncomingGroupsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewIncomingGroupsResponseSuccess = (previewIncomingGroupsResponse200) & {
+  headers: Headers;
+};
+export type previewIncomingGroupsResponseError = (previewIncomingGroupsResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewIncomingGroupsResponse = (previewIncomingGroupsResponseSuccess | previewIncomingGroupsResponseError)
+
+export const getPreviewIncomingGroupsUrl = () => {
+
+
+
+
+  return `/api/incoming-groups/preview`
+}
+
+/**
+ * @summary Preview incoming group corrections
+ */
+export const previewIncomingGroups = async (incomingGroupingEditBody: NonReadonly<IncomingGroupingEditBody>, options?: RequestInit): Promise<previewIncomingGroupsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreviewIncomingGroupsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(incomingGroupingEditBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewIncomingGroupsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewIncomingGroupsResponse
+}
+
+
+
+
+
+export const getPreviewIncomingGroupsMutationKey = () => ['previewIncomingGroups'] as const;
+
+export const getPreviewIncomingGroupsMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroups>>, TError,PreviewIncomingGroupsMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroups>>, TError,PreviewIncomingGroupsMutationVariables, TContext> => {
+
+const mutationKey = getPreviewIncomingGroupsMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewIncomingGroups>>, PreviewIncomingGroupsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewIncomingGroups(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewIncomingGroupsMutationResult = NonNullable<Awaited<ReturnType<typeof previewIncomingGroups>>>
+    export type PreviewIncomingGroupsMutationBody = NonReadonly<IncomingGroupingEditBody>
+    export type PreviewIncomingGroupsMutationError = ErrorModel
+    export type PreviewIncomingGroupsMutationVariables = {data: NonReadonly<IncomingGroupingEditBody>}
+
+    /**
+ * @summary Preview incoming group corrections
+ */
+export const usePreviewIncomingGroups = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroups>>, TError,PreviewIncomingGroupsMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewIncomingGroups>>,
+        TError,
+        PreviewIncomingGroupsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreviewIncomingGroupsMutationOptions(options), queryClient);
+    }
 
 export type listOperationsResponse200 = {
   data: OperationsBody
@@ -703,6 +1061,220 @@ export function useGetSettings<TData = Awaited<ReturnType<typeof getSettings>>, 
 
 
 
+
+export type deleteAcoustidApplicationKeyResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteAcoustidApplicationKeyResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteAcoustidApplicationKeyResponseSuccess = (deleteAcoustidApplicationKeyResponse204) & {
+  headers: Headers;
+};
+export type deleteAcoustidApplicationKeyResponseError = (deleteAcoustidApplicationKeyResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteAcoustidApplicationKeyResponse = (deleteAcoustidApplicationKeyResponseSuccess | deleteAcoustidApplicationKeyResponseError)
+
+export const getDeleteAcoustidApplicationKeyUrl = () => {
+
+
+
+
+  return `/api/settings/acoustid/application-key`
+}
+
+/**
+ * @summary Delete the AcoustID application key
+ */
+export const deleteAcoustidApplicationKey = async ( options?: RequestInit): Promise<deleteAcoustidApplicationKeyResponse> => {
+
+  const res = await fetch(getDeleteAcoustidApplicationKeyUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteAcoustidApplicationKeyResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteAcoustidApplicationKeyResponse
+}
+
+
+
+
+
+export const getDeleteAcoustidApplicationKeyMutationKey = () => ['deleteAcoustidApplicationKey'] as const;
+
+export const getDeleteAcoustidApplicationKeyMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>, TError,void, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>, TError,void, TContext> => {
+
+const mutationKey = getDeleteAcoustidApplicationKeyMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>, void> = () => {
+
+
+          return  deleteAcoustidApplicationKey(fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcoustidApplicationKeyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>>
+
+    export type DeleteAcoustidApplicationKeyMutationError = ErrorModel
+
+
+    /**
+ * @summary Delete the AcoustID application key
+ */
+export const useDeleteAcoustidApplicationKey = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>, TError,void, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcoustidApplicationKey>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDeleteAcoustidApplicationKeyMutationOptions(options), queryClient);
+    }
+
+export type setAcoustidApplicationKeyResponse204 = {
+  data: void
+  status: 204
+}
+
+export type setAcoustidApplicationKeyResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type setAcoustidApplicationKeyResponseSuccess = (setAcoustidApplicationKeyResponse204) & {
+  headers: Headers;
+};
+export type setAcoustidApplicationKeyResponseError = (setAcoustidApplicationKeyResponseDefault) & {
+  headers: Headers;
+};
+
+export type setAcoustidApplicationKeyResponse = (setAcoustidApplicationKeyResponseSuccess | setAcoustidApplicationKeyResponseError)
+
+export const getSetAcoustidApplicationKeyUrl = () => {
+
+
+
+
+  return `/api/settings/acoustid/application-key`
+}
+
+/**
+ * @summary Set the AcoustID application key
+ */
+export const setAcoustidApplicationKey = async (updateAcoustIDApplicationKeyBody: NonReadonly<UpdateAcoustIDApplicationKeyBody>, options?: RequestInit): Promise<setAcoustidApplicationKeyResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSetAcoustidApplicationKeyUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateAcoustIDApplicationKeyBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: setAcoustidApplicationKeyResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as setAcoustidApplicationKeyResponse
+}
+
+
+
+
+
+export const getSetAcoustidApplicationKeyMutationKey = () => ['setAcoustidApplicationKey'] as const;
+
+export const getSetAcoustidApplicationKeyMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAcoustidApplicationKey>>, TError,SetAcoustidApplicationKeyMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof setAcoustidApplicationKey>>, TError,SetAcoustidApplicationKeyMutationVariables, TContext> => {
+
+const mutationKey = getSetAcoustidApplicationKeyMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAcoustidApplicationKey>>, SetAcoustidApplicationKeyMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  setAcoustidApplicationKey(data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAcoustidApplicationKeyMutationResult = NonNullable<Awaited<ReturnType<typeof setAcoustidApplicationKey>>>
+    export type SetAcoustidApplicationKeyMutationBody = NonReadonly<UpdateAcoustIDApplicationKeyBody>
+    export type SetAcoustidApplicationKeyMutationError = ErrorModel
+    export type SetAcoustidApplicationKeyMutationVariables = {data: NonReadonly<UpdateAcoustIDApplicationKeyBody>}
+
+    /**
+ * @summary Set the AcoustID application key
+ */
+export const useSetAcoustidApplicationKey = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAcoustidApplicationKey>>, TError,SetAcoustidApplicationKeyMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAcoustidApplicationKey>>,
+        TError,
+        SetAcoustidApplicationKeyMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetAcoustidApplicationKeyMutationOptions(options), queryClient);
+    }
 
 export type updateLogLevelResponse204 = {
   data: void

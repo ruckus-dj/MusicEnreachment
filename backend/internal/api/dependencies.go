@@ -26,6 +26,7 @@ type Dependencies struct {
 	// diagnostic or Setup is unfinished.
 	SourceLocationDetails *service.SourceLocationDetails
 	SourceArtifactCleanup *service.SourceAnalysisArtifactCleanup
+	IncomingGroups        *service.IncomingGroups
 }
 
 type preflightEntry struct {

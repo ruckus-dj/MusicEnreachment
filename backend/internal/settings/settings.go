@@ -33,6 +33,7 @@ const (
 	ActiveFPCalcInstallationKey   = "active_fpcalc_installation_id"
 	SetupCompletedAtKey           = "setup_completed_at"
 	SourceFileConcurrencyKey      = "source_file_concurrency"
+	AcoustIDApplicationKey        = "acoustid_application_key"
 )
 
 type Store interface {
@@ -57,6 +58,10 @@ type musicBrainzVerificationStore interface {
 
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
+}
+
+type settingDeleteStore interface {
+	Delete(context.Context, string) error
 }
 
 type Platform struct{ GOOS, GOARCH string }
@@ -97,6 +102,7 @@ type RuntimeSettings struct {
 	ActiveFPCalcInstallation   string
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization string
+	HasAcoustIDApplicationKey  bool
 }
 
 // RuntimeUpdate selects the validated runtime values to change in one write.
@@ -165,6 +171,31 @@ func (r *Registry) SetLogLevel(ctx context.Context, value string) error {
 	}
 	r.level.Set(level)
 	return nil
+}
+
+// HasAcoustIDApplicationKey exposes key presence only; the secret itself is
+// intentionally never returned from the settings registry.
+func (r *Registry) HasAcoustIDApplicationKey(ctx context.Context) (bool, error) {
+	_, exists, err := r.store.Get(ctx, AcoustIDApplicationKey)
+	return exists, err
+}
+
+// SetAcoustIDApplicationKey saves the exact supplied application key.
+func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) error {
+	if value == "" || len(value) > 4096 {
+		return fmt.Errorf("AcoustID application key is invalid")
+	}
+	return r.store.Set(ctx, AcoustIDApplicationKey, value)
+}
+
+// DeleteAcoustIDApplicationKey removes the application key entirely. Its
+// absence is the sole signal that AcoustID lookup is unavailable.
+func (r *Registry) DeleteAcoustIDApplicationKey(ctx context.Context) error {
+	store, ok := r.store.(settingDeleteStore)
+	if !ok {
+		return fmt.Errorf("settings storage does not support deleting settings")
+	}
+	return store.Delete(ctx, AcoustIDApplicationKey)
 }
 
 func (r *Registry) LoadLogLevel(ctx context.Context) error {
@@ -632,6 +663,10 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	hasAcoustIDKey, err := r.HasAcoustIDApplicationKey(ctx)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	return RuntimeSettings{
 		SourceFileConcurrency:      fileConcurrency,
 		ToolsDirectory:             tools,
@@ -646,6 +681,7 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		ActiveFPCalcInstallation:   fpcalc,
 		OutputCaseSensitive:        caseSensitive,
 		OutputUnicodeNormalization: unicodeNormalization,
+		HasAcoustIDApplicationKey:  hasAcoustIDKey,
 	}, nil
 }
 

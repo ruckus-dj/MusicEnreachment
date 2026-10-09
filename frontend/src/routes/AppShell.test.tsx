@@ -34,6 +34,7 @@ const state: SetupStateBody = {
     sha256_enabled: true,
     log_level: "info",
     source_file_concurrency: 4,
+    has_acoustid_application_key: false,
   },
   configuration_health: { healthy: false, problems: ["setup incomplete"] },
 };

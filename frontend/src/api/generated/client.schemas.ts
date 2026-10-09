@@ -130,6 +130,80 @@ export interface ErrorModel {
   type?: string;
 }
 
+export type IncomingFileResponseTags = {[key: string]: string[] | null};
+
+export interface IncomingLocationResponse {
+  configured_path: string;
+  inventory_path: string;
+  location_id: string;
+  mtime: string;
+  relative_path: string;
+  root_id: string;
+  size_bytes: number;
+  technical_identity: string;
+  work_id: string;
+}
+
+export interface IncomingFileResponse {
+  capture_analysis_id: string;
+  capture_identity: string;
+  /** @nullable */
+  locations: IncomingLocationResponse[] | null;
+  tags: IncomingFileResponseTags;
+  variant_id: string;
+}
+
+export interface IncomingGroupingDiagnosticResponse {
+  code: string;
+  /** @nullable */
+  values: string[] | null;
+  variant_id: string;
+}
+
+export interface IncomingGroupResponse {
+  /** @nullable */
+  diagnostics: IncomingGroupingDiagnosticResponse[] | null;
+  id: string;
+  manual: boolean;
+  /** @nullable */
+  members: string[] | null;
+  revision: string;
+  /** @nullable */
+  unready_members: string[] | null;
+}
+
+export interface IncomingGroupingActionInput {
+  group_id?: string;
+  /** @nullable */
+  group_ids?: string[] | null;
+  kind: string;
+  /** @nullable */
+  member_ids?: string[] | null;
+  target_group_id?: string;
+}
+
+export interface IncomingGroupingEditBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  actions: IncomingGroupingActionInput[] | null;
+  base_revision: string;
+  draft_revision?: string;
+  epoch: number;
+}
+
+export interface IncomingGroupsBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  draft_revision?: string;
+  epoch: number;
+  /** @nullable */
+  files: IncomingFileResponse[] | null;
+  /** @nullable */
+  groups: IncomingGroupResponse[] | null;
+  revision: string;
+}
+
 export interface InstallPreflightBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -279,6 +353,7 @@ export interface RetrySourceAnalysisStepBody {
 export interface RuntimeSettingsResponse {
   active_ffmpeg_installation_id?: string;
   active_fpcalc_installation_id?: string;
+  has_acoustid_application_key: boolean;
   log_level: string;
   lrclib_enabled: boolean;
   musicbrainz_base_url: string;
@@ -620,6 +695,12 @@ export interface StartMoveBody {
   confirmed_conflicts?: string[] | null;
   /** @minLength 1 */
   preflight_token: string;
+}
+
+export interface UpdateAcoustIDApplicationKeyBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  key: string;
 }
 
 export interface UpdateLRCLIBBody {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
+
+var ErrIncomingGroupingInvalid = errors.New("incoming grouping correction is invalid")
 
 type incomingGroupingStore interface {
 	State(context.Context) (persistence.IncomingGroupingState, error)
@@ -25,6 +28,16 @@ type IncomingGroupingSnapshot struct {
 	Epoch  int64
 	Groups []IncomingGroup
 	Files  []IncomingFile
+}
+
+// IncomingGroupingAction is a client-requested edit, replayed against the
+// server's current partition for both preview and confirmation.
+type IncomingGroupingAction struct {
+	Kind          string
+	GroupIDs      []uuid.UUID
+	GroupID       uuid.UUID
+	MemberIDs     []uuid.UUID
+	TargetGroupID uuid.UUID
 }
 
 // IncomingGroups provides stateless previews and persisted refresh/confirmation.
@@ -92,6 +105,21 @@ func (groups *IncomingGroups) Refresh(ctx context.Context) error {
 	})
 }
 
+// RefreshIfNeeded completes a durable invalidation without doing any source IO.
+func (groups *IncomingGroups) RefreshIfNeeded(ctx context.Context) error {
+	if groups == nil || groups.store == nil {
+		return fmt.Errorf("incoming grouping store is unavailable")
+	}
+	state, err := groups.store.State(ctx)
+	if err != nil {
+		return err
+	}
+	if !state.NeedsRefresh {
+		return nil
+	}
+	return groups.Refresh(ctx)
+}
+
 func DraftIncomingMergePage(snapshot IncomingGroupingSnapshot, ids ...uuid.UUID) (IncomingGroupDraft, error) {
 	base, err := IncomingGroupsRevision(snapshot.Groups)
 	if err != nil {
@@ -116,6 +144,38 @@ func DraftIncomingMovePage(snapshot IncomingGroupingSnapshot, members []uuid.UUI
 	return DraftIncomingMove(snapshot.Groups, base, members, target)
 }
 
+func ReplayIncomingGroupingActions(groups []IncomingGroup, baseRevision string, actions []IncomingGroupingAction) (IncomingGroupDraft, error) {
+	if err := validateIncomingGroupsRevision(groups, baseRevision); err != nil {
+		return IncomingGroupDraft{}, persistence.ErrIncomingGroupingConflict
+	}
+	current := cloneIncomingGroups(groups)
+	for _, action := range actions {
+		revision, err := IncomingGroupsRevision(current)
+		if err != nil {
+			return IncomingGroupDraft{}, err
+		}
+		var draft IncomingGroupDraft
+		switch action.Kind {
+		case "merge":
+			draft, err = DraftIncomingMerge(current, revision, action.GroupIDs...)
+		case "split":
+			draft, err = DraftIncomingSplit(current, revision, action.GroupID, action.MemberIDs)
+		case "move":
+			draft, err = DraftIncomingMove(current, revision, action.MemberIDs, action.TargetGroupID)
+		default:
+			return IncomingGroupDraft{}, ErrIncomingGroupingInvalid
+		}
+		if err != nil {
+			if errors.Is(err, persistence.ErrIncomingGroupingConflict) {
+				return IncomingGroupDraft{}, err
+			}
+			return IncomingGroupDraft{}, fmt.Errorf("%w: %v", ErrIncomingGroupingInvalid, err)
+		}
+		current = draft.Groups
+	}
+	return IncomingGroupDraft{BaseRevision: baseRevision, Groups: current}, nil
+}
+
 // Confirm applies a stateless page draft only if its base and draft revisions
 // still match a fresh database snapshot acquired under source/grouping locks.
 func (groups *IncomingGroups) Confirm(ctx context.Context, epoch int64, draft IncomingGroupDraft, baseRevision, draftRevision string) error {
@@ -138,6 +198,43 @@ func (groups *IncomingGroups) Confirm(ctx context.Context, epoch int64, draft In
 		}
 		if baseRevision == "" || draft.BaseRevision != baseRevision || actualBase != baseRevision {
 			return nil, persistence.ErrIncomingGroupingConflict
+		}
+		actualDraft, err := IncomingGroupsRevision(draft.Groups)
+		if err != nil {
+			return nil, err
+		}
+		if draftRevision == "" || actualDraft != draftRevision {
+			return nil, persistence.ErrIncomingGroupingConflict
+		}
+		if err := validateIncomingPartition(visible, draft.Groups); err != nil {
+			return nil, err
+		}
+		confirmed, err := applyIncomingDraft(visible, draft.Groups)
+		if err != nil {
+			return nil, err
+		}
+		confirmed = retainUnreadyMembers(current, confirmed)
+		return persistableIncomingGroups(confirmed, view.Locations, view.Files)
+	})
+}
+
+func (groups *IncomingGroups) ConfirmActions(ctx context.Context, epoch int64, baseRevision, draftRevision string, actions []IncomingGroupingAction) error {
+	if groups == nil || groups.store == nil {
+		return fmt.Errorf("incoming grouping store is unavailable")
+	}
+	return groups.store.Confirm(ctx, epoch, func(captures []persistence.IncomingGroupingCapture, persisted []persistence.IncomingGroupingGroup) ([]persistence.IncomingGroupingGroup, error) {
+		view, err := incomingFilesFromCaptures(captures)
+		if err != nil {
+			return nil, err
+		}
+		current, err := reconcileIncomingGroups(view.Files, view.Locations, view.Ready, persisted)
+		if err != nil {
+			return nil, err
+		}
+		visible := visibleIncomingGroups(current)
+		draft, err := ReplayIncomingGroupingActions(visible, baseRevision, actions)
+		if err != nil {
+			return nil, err
 		}
 		actualDraft, err := IncomingGroupsRevision(draft.Groups)
 		if err != nil {

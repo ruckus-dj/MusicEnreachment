@@ -35,6 +35,32 @@ func TestGroupIncomingFilesMBIDCrossRootAndStableRevision(t *testing.T) {
 	}
 }
 
+func TestReplayIncomingGroupingActionsUsesCurrentPartition(t *testing.T) {
+	firstID, secondID := uuid.New(), uuid.New()
+	firstMember, secondMember := uuid.New(), uuid.New()
+	groups := []IncomingGroup{
+		{ID: firstID, Revision: "one", Members: []uuid.UUID{firstMember}},
+		{ID: secondID, Revision: "two", Members: []uuid.UUID{secondMember}},
+	}
+	base, err := IncomingGroupsRevision(groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := ReplayIncomingGroupingActions(groups, base, []IncomingGroupingAction{{Kind: "merge", GroupIDs: []uuid.UUID{firstID, secondID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Groups) != 1 || len(draft.Groups[0].Members) != 2 {
+		t.Fatalf("merge actions were not replayed against current groups: %#v", draft.Groups)
+	}
+	if _, err := ReplayIncomingGroupingActions(groups, "stale", nil); err == nil {
+		t.Fatal("expected stale base revision to be rejected")
+	}
+	if _, err := ReplayIncomingGroupingActions(groups, base, []IncomingGroupingAction{{Kind: "move", MemberIDs: []uuid.UUID{uuid.New()}, TargetGroupID: firstID}}); err == nil {
+		t.Fatal("expected nonexistent member reference to be rejected")
+	}
+}
+
 func TestGroupIncomingFilesEditionFieldsAndDiscNumber(t *testing.T) {
 	baseTags := map[string][]string{"ALBUM": {"Album"}, "ALBUMARTIST": {"Artist"}, "ALBUMDATE": {"2001"}, "CATALOGNUMBER": {"cat"}, "RELEASECOUNTRY": {"US"}, "DISCNUMBER": {"1"}}
 	a := incomingTestFile("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000021", "a.flac", baseTags)

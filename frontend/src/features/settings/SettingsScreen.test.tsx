@@ -39,6 +39,7 @@ const settings = {
     active_fpcalc_installation_id: "fp-active",
     output_case_sensitive: true,
     output_unicode_normalization: "none",
+    has_acoustid_application_key: false,
   },
 };
 const activeFF = {
@@ -2862,5 +2863,135 @@ describe("SettingsScreen", () => {
       within(toolsRoot).getByRole("button", { name: "Перенести каталог" }),
     ).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Платформа недоступна");
+  });
+
+  it("reports an absent AcoustID key and hides deletion", async () => {
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Ключ приложения AcoustID");
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("type", "password");
+    expect(
+      screen.getByText("Ключ не задан; поиск AcoustID недоступен."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Удалить ключ AcoustID" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows AcoustID presence from the boolean without pre-filling the secret", async () => {
+    server.use(
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            has_acoustid_application_key: true,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Ключ приложения AcoustID");
+    expect(input).toHaveValue("");
+    expect(
+      screen.getByText(
+        "Ключ сохранён. Его значение нельзя прочитать из настроек.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Удалить ключ AcoustID" }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves the AcoustID key, clears the field, and toggles presence", async () => {
+    let hasKey = false;
+    const put = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ key: "secret-key" });
+      hasKey = true;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.put("/api/settings/acoustid/application-key", put),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            has_acoustid_application_key: hasKey,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Ключ приложения AcoustID");
+    expect(input).toHaveValue("");
+    const save = screen.getByRole("button", {
+      name: "Сохранить ключ AcoustID",
+    });
+    expect(save).toBeDisabled();
+    fireEvent.change(input, { target: { value: "secret-key" } });
+    expect(save).toBeEnabled();
+    const saved = nextResponseFor(
+      "/api/settings/acoustid/application-key",
+      "PUT",
+    );
+    fireEvent.click(save);
+    await saved;
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("Ключ приложения AcoustID сохранён."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(
+      screen.getByText(
+        "Ключ сохранён. Его значение нельзя прочитать из настроек.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Удалить ключ AcoustID" }),
+    ).toBeInTheDocument();
+  });
+
+  it("deletes the AcoustID key, clears the field, and clears presence", async () => {
+    let hasKey = true;
+    const remove = vi.fn(() => {
+      hasKey = false;
+      return new HttpResponse(null, { status: 204 });
+    });
+    server.use(
+      http.delete("/api/settings/acoustid/application-key", remove),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            has_acoustid_application_key: hasKey,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Ключ приложения AcoustID");
+    expect(input).toHaveValue("");
+    const removeButton = await screen.findByRole("button", {
+      name: "Удалить ключ AcoustID",
+    });
+    const deleted = nextResponseFor(
+      "/api/settings/acoustid/application-key",
+      "DELETE",
+    );
+    fireEvent.click(removeButton);
+    await deleted;
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("Ключ приложения AcoustID удалён."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(
+      screen.getByText("Ключ не задан; поиск AcoustID недоступен."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Удалить ключ AcoustID" }),
+    ).not.toBeInTheDocument();
   });
 });

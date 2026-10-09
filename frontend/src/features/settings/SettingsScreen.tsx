@@ -9,6 +9,7 @@ import { subscribeToOperation } from "../../api/client/operations";
 import {
   activateToolInstallation,
   checkSettingsMusicbrainz,
+  deleteAcoustidApplicationKey,
   deleteToolInstallation,
   dismissOperation,
   getOperation,
@@ -19,6 +20,7 @@ import {
   preflightToolInstall,
   preflightToolsRootMove,
   retryOperation,
+  setAcoustidApplicationKey,
   startToolInstall,
   startToolsRootMove,
   updateLogLevel,
@@ -183,6 +185,7 @@ export function SettingsScreen() {
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [operations, setOperations] = useState<OperationResponse[]>([]);
+  const [acoustIDApplicationKey, setAcoustIDApplicationKey] = useState("");
   const outputDirectory = useSectionDraft<string>();
   const publicationFormat =
     useSectionDraft<UpdateSettingsBodyPublicationFormat>();
@@ -595,6 +598,43 @@ export function SettingsScreen() {
       setOutputDialogError(message(reason));
     } finally {
       outputDirectory.endSave();
+      setBusy(false);
+    }
+  }
+
+  async function saveAcoustIDApplicationKey() {
+    if (busy || acoustIDApplicationKey.length === 0) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      successful(
+        await setAcoustidApplicationKey({ key: acoustIDApplicationKey }),
+        204,
+      );
+      setAcoustIDApplicationKey("");
+      await refreshState();
+      setNotice("Ключ приложения AcoustID сохранён.");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAcoustIDApplicationKey() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      successful(await deleteAcoustidApplicationKey(), 204);
+      setAcoustIDApplicationKey("");
+      await refreshState();
+      setNotice("Ключ приложения AcoustID удалён.");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
       setBusy(false);
     }
   }
@@ -1191,6 +1231,39 @@ export function SettingsScreen() {
               className="setup-panel settings-panel"
             >
               <h2 id="providers-title">Провайдеры метаданных</h2>
+              <label>
+                Ключ приложения AcoustID
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={acoustIDApplicationKey}
+                  onChange={(event) =>
+                    setAcoustIDApplicationKey(event.target.value)
+                  }
+                  maxLength={4096}
+                />
+              </label>
+              <p>
+                {state.settings.has_acoustid_application_key
+                  ? "Ключ сохранён. Его значение нельзя прочитать из настроек."
+                  : "Ключ не задан; поиск AcoustID недоступен."}
+              </p>
+              <div className="settings-actions">
+                <AppButton
+                  isDisabled={busy || acoustIDApplicationKey.length === 0}
+                  onPress={() => void saveAcoustIDApplicationKey()}
+                >
+                  Сохранить ключ AcoustID
+                </AppButton>
+                {state.settings.has_acoustid_application_key && (
+                  <AppButton
+                    isDisabled={busy}
+                    onPress={() => void deleteAcoustIDApplicationKey()}
+                  >
+                    Удалить ключ AcoustID
+                  </AppButton>
+                )}
+              </div>
               <label>
                 MusicBrainz mode
                 <select

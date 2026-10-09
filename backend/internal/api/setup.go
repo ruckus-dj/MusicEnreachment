@@ -43,6 +43,7 @@ type RuntimeSettingsResponse struct {
 	ActiveFPCalcInstallationID string     `json:"active_fpcalc_installation_id,omitempty"`
 	OutputCaseSensitive        *bool      `json:"output_case_sensitive,omitempty"`
 	OutputUnicodeNormalization string     `json:"output_unicode_normalization,omitempty"`
+	HasAcoustIDApplicationKey  bool       `json:"has_acoustid_application_key"`
 }
 
 type ConfigurationHealthResponse struct {
@@ -284,6 +285,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,
 				OutputCaseSensitive:        state.Runtime.OutputCaseSensitive,
 				OutputUnicodeNormalization: state.Runtime.OutputUnicodeNormalization,
+				HasAcoustIDApplicationKey:  state.Runtime.HasAcoustIDApplicationKey,
 			},
 		},
 	}

@@ -52,6 +52,12 @@
 > (Go-аналог вместо 1:1-переноса Python/RapidFuzz) и B12 (готовые Go-библиотеки
 > вместо самописных решений).
 
+> **Датированное дополнение 2026-10-10:** контракт application key AcoustID
+> уточнён в [Приложении B](#appendix-b-owner-decisions-late-2026-10-09), B15:
+> write-only настройка в PostgreSQL, отсутствие ключа = нет AcoustID lookup,
+> отдельного enable/disable toggle нет; MusicBrainz matching остаётся
+> работоспособным без ключа. Реализация provider foundation этим не заявляется.
+
 ### Upstream reference и переносимая семантика
 
 Upstream прочитан библиотекарем в read-only clone
@@ -229,6 +235,14 @@ normalization для score в точности. Если по имеющимся
   выбирает release. Если AcoustID выключен/не настроен/не доступен, его factor
   отсутствует (не «совпал», не штраф). Provider failure не меняет
   `media_variant.problem_flags` и не удаляет уже сохранённый cache.
+
+> **Датированное дополнение 2026-10-10 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09), B15):**
+> отдельного AcoustID enable/disable toggle не вводится: application key —
+> write-only настройка в PostgreSQL, его наличие включает lookup, отсутствие
+> ключа = AcoustID lookup не выполняется. Формулировка «выключен/не настроен/не
+> доступен» выше читается согласно B15; при отсутствии ключа MusicBrainz
+> matching остаётся работоспособным (optional factor отсутствует).
+
 - Candidate track assignment строится для реальных позиций release с совпадающим
   recording evidence и доступными title/artist/duration/position features.
   Сохранить full evidence: raw/source/provider values, normalized values,
@@ -519,6 +533,34 @@ normalization для score в точности. Если по имеющимся
 > завершены**; план остаётся в `todo/`. Публикация вне scope. База изменения —
 > `bd50439`; точная ревизия реализации фиксируется коммитом (без выдуманного
 > hash). Новых standalone research-файлов не добавлялось.
+
+### Дополнение к прогрессу — 2026-10-10
+
+- Grouping API и lifecycle подключены: snapshot, stateless preview и confirm
+  повторяют действия на сервере; stale fences дают 409, invalid edits — 422.
+  Startup восстанавливает refresh по durable marker; scan и analysis workers
+  вызывают refresh после successful/failed settlement и recovery. Ошибка refresh
+  не отменяет committed settlement; marker остаётся для повторного refresh.
+- API regression tests проверяют непустые merge/split/move, отсутствие записи
+  manual draft при preview и stale confirmation на fake store. Прямой
+  PostgreSQL API cycle этими тестами не заявляется; persistence отдельно имеет
+  PostgreSQL integration coverage.
+- Контракт B15 реализован: AcoustID application key хранится в PostgreSQL,
+  PUT/DELETE меняют ключ, ответы показывают только presence boolean. Password
+  field пуст при загрузке и очищается после успеха. Endpoint-scoped redaction
+  исключает echo ключа из framework 4xx errors; oversized/wrong-type inputs
+  покрыты тестами. Lookup ещё не подключён.
+- Provider cache foundation: migration 300, provider-scoped stable IDs,
+  composite FKs, ordered repeated credits, numerical/display track positions,
+  generation/configuration CAS и last-success JSON. Partial updates сохраняют
+  omitted metadata/raw fields, explicit `{}` заменяет их. Track swaps,
+  removal/reintroduction сохраняют IDs. HTTP clients, TTL и automatic refresh
+  policy в этот increment не входят.
+- Полный `task verify` 2026-10-10 00:26 прошёл: Go integration, 247 frontend
+  tests, 4 tools tests, generation, lint и build. Независимые ревью этих
+  bounded increments закрыты. База — `7eff040`; ревизии фиксируются коммитами.
+- Весь план **не завершён**: local entities/links, candidates, provider
+  execution, automatic matching и incoming UI остаются следующими increments.
 
 ## Cross-stage safety and acceptance invariants
 
@@ -983,6 +1025,37 @@ bit-exact fixtures). Реализация не заявляется.
 - B10/B13 сохраняются: acquisition тегов/метаданных — часть анализа; matching
   не делает source file I/O; при ошибке metadata успехи соседних шагов
   сохраняются, retry повторяет только ошибочный шаг.
+
+## B15. AcoustID application key: write-only настройка, отсутствие ключа = нет lookup, без отдельного toggle
+
+**Дата фиксации: 2026-10-10. Статус: явное продуктовое решение владельца.**
+Позднейшее уточнение контракта AcoustID; оно не переписывает исторические факты
+и текст Приложений A/B от 2026-10-09. При конфликте приоритет имеют решения
+ниже. Реализация этим приложением не заявляется.
+
+Владелец подтвердил предложенный контракт дословно: «Да, такой контракт».
+
+- Application API key AcoustID хранится как runtime-настройка в PostgreSQL
+  (DB-backed), а не как env var.
+- Настройка **write-only**: сохранённый ключ никогда не возвращается клиенту
+  через API. Ключ не попадает в логи и не помещается в diagnostic URLs; никакой
+  диагностический вывод не раскрывает значение ключа.
+- Оператор может **заменить или удалить** ключ. Отдельного независимого
+  AcoustID enable/disable toggle не вводится: включение AcoustID определяется
+  наличием сохранённого ключа, а не отдельным флагом.
+- Если ключ **отсутствует (ABSENT)**, AcoustID lookup не выполняется.
+- MusicBrainz matching остаётся работоспособным без ключа: AcoustID — optional
+  factor. При отсутствии ключа его factor отсутствует (не «совпал», не штраф);
+  отсутствие AcoustID не блокирует matching и не меняет прочие контракты.
+- Это уточняет строку реестра «AcoustID» и §«Поиск candidates и evidence»;
+  optionality AcoustID, «отсутствие = не совпадение», запрет штрафа, source
+  read-only и publication вне scope сохраняются.
+
+> **Статус реализации:** это продуктовый контракт, а не подтверждение
+> выполнения provider foundation/M05. Реализация MusicBrainz/AcoustID provider и
+> settings этим документом не заявляется завершённой или проверенной; она
+> остаётся за review gate соответствующих этапов. Исторические датированные
+> записи 2026-10-09 не переписываются.
 
 ---
 

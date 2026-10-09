@@ -23,6 +23,20 @@ type SetupState struct {
 	SHA256Enabled       bool
 }
 
+func (s *SetupService) SetAcoustIDApplicationKey(ctx context.Context, key string) error {
+	if err := s.registry.SetAcoustIDApplicationKey(ctx, key); err != nil {
+		return fmt.Errorf("save AcoustID application key: %w", err)
+	}
+	return nil
+}
+
+func (s *SetupService) DeleteAcoustIDApplicationKey(ctx context.Context) error {
+	if err := s.registry.DeleteAcoustIDApplicationKey(ctx); err != nil {
+		return fmt.Errorf("delete AcoustID application key: %w", err)
+	}
+	return nil
+}
+
 type PathValidation struct {
 	ToolsDirectory             string
 	OutputDirectory            string
