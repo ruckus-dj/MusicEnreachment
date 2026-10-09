@@ -46,3 +46,22 @@ owned directories и сохранение чужого каталога/стар
 Независимое ревью подтвердило эту ограниченную boundary-проверку и обнаружило
 race stderr capture; capture затем защищён mutex. Основной агент повторил
 `task verify`: gate прошёл. Это одна boundary, не исчерпывающая process-kill matrix.
+
+## Дополнительное покрытие конкретных границ
+
+Последующее read-only ревью выделило два недоказанных случая, а не требование
+убивать процесс на каждой границе. Добавлены integration fixtures:
+
+- `TestInterruptedCleanupAfterUnlinkRequiresExplicitSettlement`: unlink до
+  неуспешного settlement; recovery сохраняет registry ownership и не трогает
+  filesystem; settled operation отсутствует в повторном startup discovery;
+  последующий явный cleanup фиксирует missing outcome и удаляет registry row.
+- `TestOutputResetAcceptanceIntentWithoutDurableIdentityFailsClosed`: mkdir
+  после записанного intent, но до durable identity; повторное recovery не
+  присваивает ownership, сохраняет каталог/байты и старые settings, admission
+  остаётся заблокированным.
+
+Основной агент выполнил полный `task verify` после исправления cleanup fixture:
+оба случая и общий gate прошли. Подтверждённого runtime bug в этих случаях не
+установлено. Это закрывает два конкретных пробела, выявленных данным ревью,
+но не объявляет частичное ревью исчерпывающим доказательством каждой границы.

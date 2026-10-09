@@ -158,6 +158,79 @@ func TestOutputResetAcceptancePreparingRecoveryOwnsOnlyCreatedDirectories(t *tes
 	}
 }
 
+func TestOutputResetAcceptanceIntentWithoutDurableIdentityFailsClosed(t *testing.T) {
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	oldRoot := t.TempDir()
+	_, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
+	before, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	newRoot, err := settings.NormalizePath(filepath.Join(base, "output"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	filesystem := settings.NewResetFilesystem()
+	allowed, err := filesystem.PlannedDirectories(newRoot, []string{newRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignBytes := []byte("not owned by reset")
+	foreignFile := filepath.Join(newRoot, "foreign.txt")
+	recordFailure := errors.New("injected durable identity write failure")
+	repository := persistence.NewSetupManagerRepository(database)
+	_, err = repository.RunOutputResetRequest(ctx, persistence.OutputResetRequest{
+		ExpectedOldRoot: before.OutputDirectory, ExpectedToolsRoot: before.ToolsDirectory, NewRoot: newRoot,
+		AllowedDirectories: allowed,
+		Prepare: func(ctx context.Context, record func(persistence.OutputResetDirectory) error) error {
+			// Persist only the intent (the real pre-mkdir journal transition), then
+			// simulate the crash window after mkdir but before recording identity.
+			if err := record(persistence.OutputResetDirectory{Path: newRoot, Phase: "intent"}); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(newRoot, 0o700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(foreignFile, foreignBytes, 0o600); err != nil {
+				return err
+			}
+			return recordFailure
+		}, Finish: func(context.Context, persistence.OutputResetJournal) error { return nil },
+	})
+	if !errors.Is(err, recordFailure) {
+		t.Fatalf("prepare error=%v, want injected identity write failure", err)
+	}
+
+	reset := service.NewOutputReset(repository, settings.NewResetFilesystem(), nil)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := reset.RecoverOutputReset(ctx); err == nil {
+			t.Fatalf("recovery attempt %d unexpectedly adopted an intent-only directory", attempt)
+		}
+		if err := database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			return persistence.AcquireOutputAdmissionGate(ctx, tx)
+		}); err == nil {
+			t.Fatalf("output admission succeeded after failed recovery attempt %d", attempt)
+		}
+	}
+	info, err := os.Stat(newRoot)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("intent-only directory was removed: info=%v err=%v", info, err)
+	}
+	if data, err := os.ReadFile(foreignFile); err != nil || !bytes.Equal(data, foreignBytes) {
+		t.Fatalf("foreign bytes changed: contents=%q err=%v", data, err)
+	}
+	after, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil || after.OutputDirectory != before.OutputDirectory || after.ToolsDirectory != before.ToolsDirectory {
+		t.Fatalf("runtime settings changed: before=%+v after=%+v err=%v", before, after, err)
+	}
+	journal, err := repository.ReadUnresolvedOutputReset(ctx)
+	if err != nil || journal == nil || journal.State != "preparing" {
+		t.Fatalf("unresolved intent-only journal=%+v err=%v, want preparing", journal, err)
+	}
+}
+
 func TestOutputResetAcceptanceCommittedRecoveryRetainsDirectories(t *testing.T) {
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
