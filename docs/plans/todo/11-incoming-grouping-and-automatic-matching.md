@@ -403,7 +403,7 @@ normalization для score в точности. Если по имеющимся
 
 | Этап | Scope и основные точки | Зависимости / безопасное промежуточное состояние | Acceptance |
 | --- | --- | --- | --- |
-| M01 — baseline / upstream semantics | Зафиксировать ревизию baseline; сверить `backend/internal/integrations/`, `service/`, `persistence/`, API, current migrations, frontend routes; оформить [provider/River official-doc research appendix](../11-m01-provider-and-river-research-2026-10-09.md). Собрать license/provenance inventory upstream fixtures. | Нет. Только документационное/техническое исследование; matching behavior не меняется. | Appendix содержит официальные источники, даты и подтверждённые лимиты/операционные facts; upstream clone/commit и fixture licensing записаны; no code. |
+| M01 — baseline / upstream semantics | Зафиксировать ревизию baseline; сверить `backend/internal/integrations/`, `service/`, `persistence/`, API, current migrations, frontend routes; оформить [provider/River official-doc research appendix](#appendix-c-m01-provider-and-river-research). Собрать license/provenance inventory upstream fixtures. | Нет. Только документационное/техническое исследование; matching behavior не меняется. | Appendix содержит официальные источники, даты и подтверждённые лимиты/операционные facts; upstream clone/commit и fixture licensing записаны; no code. |
 | M02 — scoring module + regression corpus | Новый чистый service-domain scoring implementation, typed inputs/evidence/policy version и deterministic table fixtures. Перенести upstream formula weights/normalization/duration и coverage cases; интеграция AcoustID как optional factor; не переносить explicit-ID forced 1. | M01. Pure matching score не записывает links и не вызывает сеть. | Golden results по upstream fixtures; available-only weighted average, lower clamp, fuzz/transliteration, all position factors, exact duration values, missing factors, explicit IDs regular formula; Noize fixture license handled; full `task verify`. |
 | M03 — exact tag values + grouping model | Отдельные normalizer/group-key parser tests; продуктовый gate на полный multi-value semantics и persistence lifecycle ручных merge/split/move; derived grouping read model с cross-root support, MBID/tag/folder priorities, country/date/catalog conflicts, DISCNUMBER. | M02 плюс required tag semantics и group-correction lifecycle. Пока exact product equivalence не решена, допускается только safe unmerged conflicts, не автоматический merge. | Fixtures доказывают MBID cross-root grouping; full ALBUMARTIST/fallback ARTIST; DATE/CATALOGNUMBER/country splits; conflicting and missing keys don't silently join; disc number doesn't partition; same insufficient tags in different folders stay separate; explicit merge/split/move с одобренным lifecycle. |
 | M04 — physical grouping/matching schema | Предложение и review схемы; versioned migrations/models/repositories для persisted provider cache, current candidates/evidence, confirmed entity/provider/source links и group identity/fences только если lifecycle group corrections требует хранения. Constraints/FK/idempotency/manual protection. Down миграции. | M01–M03, migration review. Не добавлять assignment drafts. | PostgreSQL integration tests clean/populated up/down; guards for provider identity, candidate confidence/policy, manual links; identity/analysis fencing valid with SHA disabled/NULL (no hash prerequisite); repeated apply idempotent; rollback preserves preexisting inventory/analysis and no publication rows are created. |
@@ -430,7 +430,7 @@ normalization для score в точности. Если по имеющимся
 
 - **M01 — завершён:** baseline, официальные MusicBrainz/AcoustID/Go/River/
   PostgreSQL facts и inventory upstream fixtures зафиксированы в
-  [research appendix](../11-m01-provider-and-river-research-2026-10-09.md).
+  [research appendix](#appendix-c-m01-provider-and-river-research).
   Независимое повторное ревью закрыло замечания по fixture provenance и
   PostgreSQL locking; matching implementation этим ревью не принимается.
   Документационное изменение сохранено в `2760df8`; полный pre-commit
@@ -452,6 +452,13 @@ normalization для score в точности. Если по имеющимся
   База изменения — `2760df8`; точная ревизия реализации фиксируется коммитом.
 - **M03–M10 — ещё не завершены.** План остаётся в `todo/` до полной
   согласованной приёмки; чистый scorer пока не подключён к providers/БД/UI.
+
+> **Позднейшее уточнение 2026-10-09 (см. [Приложение B](#appendix-b-owner-decisions-late-2026-10-09), B14):**
+> M03 в части **чистого grouping/reader capability** завершён и проверен полным
+> `task verify`. Это **не** завершение всего плана: engine, БД, providers,
+> автоматический matching и UI не реализованы; план остаётся в `todo/`.
+> Историческая запись «M03–M10 ещё не завершены» выше сохранена как состояние на
+> дату подготовки.
 
 ## Cross-stage safety and acceptance invariants
 
@@ -811,9 +818,15 @@ bit-exact fixtures). Реализация не заявляется.
 > Research doc M03 другим writer'ом не правится; уточнение фиксируется здесь, в
 > плане.
 
+> **Датированное дополнение 2026-10-09:** отдельный research doc M03 перенесён
+> внутрь плана как [Приложение D](#appendix-d-m03-tag-mapping-research);
+> standalone-файл удалён. Техническая рекомендация `mtag` из него помечена
+> obsolete и superseded решением B14 (TagLib / `go-taglib`). Исторические факты
+> исследования сохранены в Приложении D.
+
 ## B11. Go-аналог вместо 1:1 переноса Python/RapidFuzz
 
-Точная формулировка владельца:
+Сокращённая цитата решения владельца:
 
 > «МЫ БЕРЁМ PYTHON РЕАЛИЗАЦИЮ НЕ 1:1, НЕ ТАЩИМ ВСЁ ПОДРЯД, А НОРМАЛЬНО ПИШЕМ
 > АНАЛОГ В GO СПЕЦИФИКЕ И ВСЕ БИБЛИОТЕКИ МЕНЯЕМ НА ВАРИАНТЫ НА GO. НЕ НАДО ТАЩИТЬ
@@ -861,3 +874,450 @@ bit-exact fixtures). Реализация не заявляется.
   собственный raw-парсер как default не выбирается. Фактическая интеграция в
   анализ и выбор механизма — решения следующего этапа, ещё не одобренные;
   четвёртый механизм не утверждён.
+
+## B13. Независимый metadata step и разработка с нуля
+
+**Позднейшие решения владельца от 2026-10-09:**
+
+- Извлечение и сохранение тегов через готовую Go-библиотеку — четвёртый
+  независимый шаг существующего source-analysis engine, рядом с SHA, ffprobe
+  и fingerprint. Используется тот же prepared input, не второй pipeline.
+- При ошибке metadata сохраняются успехи соседних шагов; ошибка видна как
+  ошибка анализа. Retry повторяет только ошибочный шаг.
+- Приложение не опубликовано, ведётся разработка с нуля. Владелец не требует
+  обратной совместимости, миграции старых установок или backfill существующих
+  анализов. Не добавлять такие сценарии как продуктовые обязательства и не
+  вводить специальные действия обновления исторических captures.
+- Физическая схема и тесты строятся под актуальную модель. SQL migrations
+  остаются способом создания схемы и имеют проверяемый down path; это не
+  требование сохранять совместимость со старыми версиями dev-приложения.
+- Упоминания populated upgrade, сохранения historical values и обязательного
+  отображения старых analysis intent в теле плана не задают новый compatibility
+  scope. Проверяются актуальные schema/constraints/transactions и выбранный
+  migration/down path, а не миграция опубликованной старой установки.
+- Это закрывает вопрос механизма из B12 и вопрос обновления исторической
+  inventory из B10. Matching по-прежнему не делает source file I/O.
+
+## B14. Metadata reader: TagLib (go-taglib), ограниченный набор тегов и MKA projection
+
+**Позднейшие решения владельца от 2026-10-09 (уточняют механизм из B13).**
+
+- Извлечение тегов выполняется через **TagLib** (`go-taglib`). Владелец принял,
+  что библиотека возвращает **ограниченный набор тегов** (accepted limited
+  returned tags), а не полный raw dump всех контейнеров.
+- `Properties` — **опциональны**: их использование не обязательно.
+- **ffprobe остаётся техническим probe** и не заменяется. TagLib — metadata-шаг
+  рядом с существующими шагами анализа (SHA/ffprobe/fingerprint), а не замена
+  ffprobe.
+- **MKA:** файл сохраняется (keep); projection тегов — **UID 0 соответствует
+  всем** (matches all). Используется **sole audio** трек; применяется union
+  global tags + soleAudio track tags; теги нескольких аудио-треков **не
+  смешиваются** (no multi-audio mix).
+- Это **supersedes** техническую рекомендацию `github.com/tommyo123/mtag`
+  `v1.0.2` из B12 и из [Приложения D](#appendix-d-m03-tag-mapping-research):
+  mtag-рекомендация помечена obsolete. Нормализованные возвращаемые теги —
+  от TagLib (`go-taglib`).
+- Историческая фиксация `mtag` остаётся в
+  [Приложении D](#appendix-d-m03-tag-mapping-research) как исследованный, но не
+  выбранный кандидат.
+- B10/B13 сохраняются: acquisition тегов/метаданных — часть анализа; matching
+  не делает source file I/O; при ошибке metadata успехи соседних шагов
+  сохраняются, retry повторяет только ошибочный шаг.
+
+---
+
+# Приложение C. План 11, M01 — provider и River research appendix
+
+<a id="appendix-c-m01-provider-and-river-research"></a>
+
+**Дата проверки внешних источников:** 2026-10-09.
+**Назначение:** документальная фиксация baseline и upstream facts для M01 плана 11.
+**Статус:** исследование; это не продуктовый контракт и не подтверждение выполнения следующих этапов.
+
+**Позднейшее решение владельца, 2026-10-09:** Python служит reference логики,
+не целью переноса 1:1. RapidFuzz и Unidecode, их внутренние алгоритмы и таблицы
+не переносятся в приложение. M02 использует готовые Go-библиотеки; см.
+[B11–B12 плана](#appendix-b-owner-decisions-late-2026-10-09).
+Исторические сведения об upstream requirements и лицензиях ниже остаются
+результатом исследования, а не списком зависимостей MeloTrove.
+
+## Baseline репозитория
+
+- `git rev-parse HEAD`: `8c205db526d23e05279e17e185d11a2cb7a6813c`.
+- Уточнение baseline при дополнении 2026-10-09: commit `671759030f32893161bc87c4ab0e7ca36be9c1ec` содержит только изменение документации плана 11 и не меняет исследованную кодовую ревизию `8c205db526d23e05279e17e185d11a2cb7a6813c`. Последующий HEAD `c26bf689c37179a6dd90be8f69ab9bca40936a03` также меняет только документацию плана 11 (coverage wording и ссылку M01); исследование кода по-прежнему привязано к 8c205db. Внешняя PostgreSQL документация и upstream clone проверены отдельно.
+- До этой работы `git status --short` показывал уже изменённый `docs/plans/todo/11-incoming-grouping-and-automatic-matching.md` и неотслеживаемый `test_stand/`. Эти предварительные изменения не принадлежат M01 appendix; не трактовать их как результат M01 и не перезаписывать.
+- Backend объявляет Go `1.27` (`backend/go.mod`); локально проверенная версия — `go1.27.1 darwin/arm64`. На дату доступа текущая документация `pkg.go.dev/net/http` опубликована для Go `1.27.2` (8 октября 2026); для версионной HTTP-семантики ниже используется именно эта версия, а не предположение о версии локального toolchain.
+- `backend/go.mod` и `backend/go.sum` фиксируют River `v0.48.0` (включая `riverdatabasesql` и `rivertype`). Официальные River pages ниже — текущие docs на дату доступа, не архивная документация, привязанная к `v0.48.0`.
+- В коде на baseline MusicBrainz ограничен connectivity check в `backend/internal/integrations/musicbrainz/client.go`: официальный WS/2 endpoint, `http.Client.Timeout = 10s`, контекст запроса, JSON и ограничение тела 1 MiB. Настраивается `User-Agent`; production release/recording search, cache, общий rate limiter и AcoustID adapter в этой границе не обнаружены. Конфигурация public/self-hosted находится в settings/service; текущий base URL — существующая настройка, не новая abstraction для matching.
+- Существующие операции сохраняют состояние и ставят River jobs через `InsertTx` в Bun/PostgreSQL transaction, например `backend/internal/persistence/setup_manager.go`, `source_scan_enqueue.go`, `source_scan_retry.go`. В persistence применяются транзакционные row locks (`FOR UPDATE`) и точечные PostgreSQL advisory locks; пример для анализа — `source_analysis_steps.go:122-145,631-665`, где порядок lock-ов начинается с `source_root`, затем `source_location`, `source_analysis_work`, `operation` и step. Это наблюдаемые примеры текущего кода, а не утверждённый порядок lock-ов для будущего matching.
+- На baseline верхняя версия встроенной SQL-миграции — `20261027000000_source_analysis_artifact_requested_steps.tx.{up,down}.sql`. DBML в `docs/design/music_ingest_redesign.dbml` концептуален: он не доказывает наличия matching schema.
+- Текущие boundaries подтверждаются `docs/design/repository-architecture.md` и `docs/design/decisions.md`: integrations владеет внешним HTTP/parsing; service оркестрирует; только persistence обращается к Bun/PostgreSQL; `InsertTx` позволяет одной транзакцией записать application state и поставить job. Это исследование не меняет их.
+
+## Официальные provider facts
+
+Все ссылки ниже проверены 2026-10-09. Ревизии MusicBrainz взяты из footer самих страниц, а не выведены из даты доступа.
+
+### MusicBrainz WS/2
+
+Источники: [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API), ревизия wiki `79405`; [Rate Limiting](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting), ревизия `78895`; [Search](https://musicbrainz.org/doc/MusicBrainz_API/Search). Основной JSON endpoint документирован как `https://musicbrainz.org/ws/2/`; JSON выбирается через `fmt=json` или `Accept: application/json`.
+
+Проверенные facts:
+
+- Для публичного сервиса клиентское приложение не должно превышать **один запрос в секунду**; rate limiting отдельно рассматривает User-Agent, IP и общую нагрузку. Превышение/перегрузка может привести к `503 Service Unavailable`. IP rule применяет блокировку к запросам с IP, пока частота не опустится до 1/s или ниже; это не обещание, что отдельные лишние запросы просто будут обслужены с меньшей частотой.
+- Каждому запросу необходим содержательный `User-Agent` с названием приложения и достаточной контактной информацией; версия рекомендована. Документированные примеры имеют форму `Application/version (contact-url-or-email)`. Нынешний connectivity client уже задаёт `MeloTrove/0.1.0 (https://github.com/ruckus/MusicEnreachment)`.
+- Lookup по MBID может включать связанные сущности, но число возвращаемых linked entities ограничено 25; за остальными данными требуется browse. Browse поддерживает `offset`, а `limit` — максимум 100.
+- Browse `/release` дополнительно ограничивает совокупный результат страницы 500 треками: страница может содержать меньше запрошенного количества релизов, но релиз не делится. Для paging `offset` следует увеличивать на фактическое число полученных релизов, а не на заданный `limit`.
+- Search принимает `limit` от 1 до 100, по умолчанию 25, и `offset` для paging. Search не становится lookup/browse; ответ содержит результаты Lucene query.
+- Публичный MusicBrainz WS — бесплатен для некоммерческого использования согласно API FAQ. Эта информация не разрешает коммерческое использование.
+
+**Граница переноса:** публичный лимит относится к публичному MusicBrainz; не распространять его автоматически на self-hosted инстанс. Owner decisions по отдельному self-hosted toggle/default/delay находятся в [Приложении A плана](#appendix-a-owner-decisions-2026-10-09), а не выводятся из этой policy. Официальная API documentation не задаёт продукту cache freshness, batch size, внутренний RPS default либо стратегию повторов.
+
+### AcoustID lookup
+
+Источник: [AcoustID Web Service](https://acoustid.org/webservice), проверен 2026-10-09. Lookup endpoint: `https://api.acoustid.org/v2/lookup`.
+
+Проверенные facts:
+
+- Для fingerprint lookup необходимы application API key (`client`), длительность всего аудиофайла в секундах (`duration`) и fingerprint (`fingerprint`). Можно запросить recording IDs/metadata через `meta`; найденные MusicBrainz recordings — связанное evidence.
+- Сервис разрешает GET и POST, причём документация предпочитает сжатый POST для длинных fingerprints. Параметры lookup описаны как параметры запроса. Для данного приложения передача application key и fingerprint в POST body согласуется с требованием `docs/design/decisions.md` не помещать credentials в URL; это обоснование для реализации, а не отдельное правило AcoustID.
+- Указан предел **не более 3 запросов в секунду**. Указано **non-commercial use only**; для коммерческого применения сайт направляет к отдельному коммерческому сервису.
+- Выполнение lookup — необязательное evidence: owner contract плана 11 устанавливает optionality и обработку отсутствующего AcoustID factor. API docs не устанавливают для приложения default включения, cache freshness или расписание запросов.
+
+В scope M01 не входят fingerprint submission, пользовательский API key для submission и изменение данных AcoustID; документируемый для matching use case — lookup evidence для recording.
+
+### Go `net/http`
+
+Источник: [pkg.go.dev/net/http для Go 1.27.2](https://pkg.go.dev/net/http@go1.27.2), текущая опубликованная версия на 2026-10-09.
+
+- `http.NewRequestWithContext` связывает контекст с lifecycle request; отмена/timeout контекста применяются, пока отправляется запрос, получен ответ и читается response body.
+- `http.Client.Timeout` охватывает connect, redirects и чтение response body; timer продолжает действовать после возврата `Do` и может прервать чтение body. В репозитории connectivity client задаёт 10s timeout, дополнительно принимая caller context.
+- `Client.Do` сам по себе не трактует HTTP status вне 2xx как Go error; вызывающая сторона должна прочитать/закрыть body и интерпретировать status. Это релевантно будущей обработке `503`/rate limit, но не утверждает конкретную политику retry.
+- `net/http.Transport` может в некоторых случаях автоматически повторить идемпотентный запрос при ранее использованном соединении; условия зависят от replayable body/идемпотентности и ошибки. Поэтому официальная документация не даёт основания утверждать, что встроенных повторов «нет вообще». При внедрении rate limiter нужно учитывать возможную повторную HTTP отправку и не объявлять число вызовов `Do` равным точному числу wire requests без проверки конкретного поведения.
+
+Контекст/timeout — механизм ограничения и отмены HTTP работы, не политика freshness, retries, backoff или частоты провайдера.
+
+## River facts и наблюдаемая практика репозитория
+
+Официальные источники, проверенные 2026-10-09: [Transactional enqueueing](https://riverqueue.com/docs/transactional-enqueueing), [Job retries](https://riverqueue.com/docs/job-retries), [Writing reliable workers](https://riverqueue.com/docs/reliable-workers), [Unique jobs](https://riverqueue.com/docs/unique-jobs).
+
+- Транзакционный enqueue связывает вставку job с прикладными изменениями в одной транзакции: job становится доступной после commit вместе с состоянием, от которого зависит. Репозиторий использует `InsertTx` для этого паттерна.
+- Ошибки/сбои могут приводить к retry; workers должны наследовать и уважать `context` и быть безопасны к повторному исполнению. Документированный default River retries — максимум 25 попыток с экспоненциальной задержкой/jitter; не следует принимать default этой библиотеки за утверждённую retry-политику matching.
+- Unique jobs ограничивают повторную **вставку** по заданным атрибутам/состояниям. Они не обеспечивают exactly-once execution: River описывает выполнение как at-least-once, поэтому приложение должно идемпотентно применять side effects и иметь собственные DB fences/constraints.
+- `InsertTx`/unique job semantics не выбирают автоматически idempotency key, допустимость повторного применения устаревшего результата, recovery lifecycle или модель matching cache. Это остаётся design/implementation scope соответствующих этапов.
+
+## Upstream scoring и fixture provenance
+
+Проверена read-only shallow clone, указанный в плане: `/private/var/folders/53/d19hgbk92bx678h9hm3s7fm40000gn/T/opencode/upstream_repo`, `HEAD=17448df1ee7ab5c9ad4769b4e09a474b27547728`. Clone не содержит найденного файла `LICENSE`/`COPYING`; отсутствие файла в shallow clone не является юридическим выводом об upstream лицензии.
+
+- Ниже перечислены provider fixture files, читаемые matching tests через `tests/support/providers.py` (`FIXTURES_DIRECTORY / provider / <FixtureCase>.json`), и файлы inline/scoring regression cases. Для всех перечисленных путей source commit в исследованном clone — `17448df1ee7ab5c9ad4769b4e09a474b27547728`; в clone на этом commit отсутствует найденный LICENSE/COPYING. Provenance помечен по наблюдаемой форме/комментариям тестов; где первичный источник не записан, он так и отмечен как неизвестный.
+
+| Путь в upstream | Наблюдаемый origin | License/provenance disposition |
+| --- | --- | --- |
+| `tests/fixtures/musicbrainz/ambiguous.json` | Synthetic fixture-control JSON (`outcome`, `candidate_count`), не MusicBrainz wire response | Exact upstream file owner-approved для переноса по A7; отдельная лицензия/атрибуция файла в clone не указана. |
+| `tests/fixtures/musicbrainz/disabled.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/malformed.json` | Synthetic malformed fixture-control JSON (незакрытая JSON value) | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/no_match.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/rate_limited.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/success.json` | Synthetic fixture DTO (`Fixture Release`/`Fixture Artist`, тестовые MBID); не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/timeout.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/musicbrainz/unavailable.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/ambiguous.json` | Synthetic fixture-control JSON (`outcome`, `candidate_count`), не AcoustID wire response | Exact upstream file owner-approved для переноса по A7; отдельная лицензия/атрибуция файла в clone не указана. |
+| `tests/fixtures/acoustid/disabled.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/malformed.json` | Synthetic malformed fixture-control JSON (незакрытая JSON value) | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/no_match.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/noize-pesnya-dlya-radio.json` | Test comment называет содержимое «verbatim current AcoustID response captured for the Noize MC source»; response hash закреплён regression test. Но запрос использует placeholder `'noize-fingerprint'`, не сохранённый реальный fingerprint; provenance реального lookup/input не установлена. | A7 даёт owner approval для переноса upstream fixture. Точная лицензия/provider attribution и происхождение захваченного response отдельно в clone не записаны — считать эти детали неизвестными, сохранять известное attribution и проверять применимые требования при переносе. |
+| `tests/fixtures/acoustid/rate_limited.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/success.json` | Synthetic fixture DTO с `Fixture` recording MBID и тестовым score; не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/timeout.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/fixtures/acoustid/unavailable.json` | Synthetic fixture-control JSON, не provider response | То же: A7 owner approval; отдельная лицензия не указана. |
+| `tests/matching/test_matching.py` | Inline constructed score inputs/candidates; содержащиеся реальные на вид названия/имена не снабжены отдельной source provenance в test file | Владелец одобрил использование upstream fixture material по A7; отдельная лицензия test file не обнаружена. Для каждого фактически переносимого real-world literal точная исходная provenance неизвестна. |
+| `tests/matching/test_matching_providers.py` | Inline synthetic transport JSON/test objects, в основном явно названные `Fixture`; test file также содержит реалистичные названия/IDs без per-literal provenance | A7 owner approval для upstream test material; отдельная лицензия test file не обнаружена. Не объявлять real-looking literals синтетическими provider captures; их внешняя provenance не зафиксирована. |
+| `tests/matching/test_noize_matching_regression.py` | Regression consumer/inline test, который читает указанный Noize JSON и передаёт `'noize-fingerprint'`; реального fingerprint input в test нет | A7 owner approval для файла; provenance/лицензия response ограничены сведениями из строки таблицы выше и не становятся установленными только из test name. |
+
+`test_matching.py` — scoring-focused family (406 строк); `test_matching_providers.py` (1319 строк) покрывает также inline provider adapter/evidence cases; `test_noize_matching_regression.py` — 92 строки. Noize JSON не является fingerprint corpus и не доказывает live-network lookup. SHA-256 содержимого `tests/fixtures/acoustid/noize-pesnya-dlya-radio.json`, зафиксированный test assertion: `048562094731e7993eeb78a4cae77adb552c8a54f01b2af08d43e2902efee3a0`.
+
+- В `pyproject.toml` upstream указаны `rapidfuzz>=3.14.6` и `Unidecode==1.4.0`. Зафиксированная owner-approved лицензируемость upstream fixtures/семантики и обязательство реализовать логику самостоятельно на Go отражены в A7 плана 11. Это не делает Python-код runtime dependency и не меняет выбор разрешённых в проекте зависимостей.
+- Справочные license sources для этих upstream requirements: [RapidFuzz license](https://github.com/rapidfuzz/RapidFuzz/blob/main/LICENSE) — MIT; [PyPI Unidecode 1.4.0](https://pypi.org/project/Unidecode/1.4.0/) — GNU GPL v2 or later (GPLv2+). Допустимость, подтверждённая владельцем, не отменяет выполнения применимых требований лицензии/атрибуции, если fixture или производный материал действительно переносится; это требует compliance-проверки при таком переносе.
+- Для переноса fixture corpus точные источники каждого значения/записи и происхождение Noize fixture следует сохранять. Личная собственность upstream и допустимость лицензий подтверждены владельцем; это снимает owner approval gate, но не отменяет соблюдение применимых уведомлений/атрибуции при фактическом переносе файлов.
+- Инвентаризация выше ограничена тремя matching tests и shallow clone. Она не является полным SBOM/лицензионным аудитом всего upstream-репозитория или всех его зависимостей.
+
+## PostgreSQL locking semantics и локальная практика
+
+Источники проверены 2026-10-09 в версионной документации [PostgreSQL 18, Explicit Locking](https://www.postgresql.org/docs/18/explicit-locking.html) и [PostgreSQL 18, Advisory Lock Functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS). На дату проверки документация указывает PostgreSQL 18 как current supported version; это версия документации, не заявление о конкретной runtime-версии установленной БД.
+
+**Официальные факты:**
+
+- Row-level locks удерживаются до завершения транзакции (либо соответствующего savepoint rollback). `SELECT ... FOR UPDATE` блокирует конкурирующие записи и несовместимые row-lock requests на затронутых строках; обычный SELECT без row lock не блокируется row lock-ом.
+- Взаимные ожидания блокировок могут образовать deadlock; PostgreSQL обнаруживает deadlock и abort-ит одну транзакцию. Docs рекомендуют брать locks на несколько объектов в согласованном порядке. Ожидание конфликтующей блокировки без deadlock может продолжаться без ограничения времени.
+- Advisory locks — application-defined; PostgreSQL не навязывает их протокол и не гарантирует, что все конкурирующие участники берут тот же lock. Session-level lock держится до явного unlock либо конца session и не откатывается вместе с transaction rollback. Transaction-level (`*_xact_lock`) автоматически освобождается в конце transaction и не требует unlock.
+- PostgreSQL предоставляет key формы двух `int4` или одного `int8`; shared/exclusive варианты существуют как для session-, так и для transaction-level locks. Это механизм сериализации только между участниками, соблюдающими одинаковые lock keys/protocol.
+
+**Наблюдаемое соответствие кода (не контракт для будущего matching):**
+
+- `backend/internal/persistence/source_analysis_coordination.go`: `advisoryXactLock` формирует вызов `pg_advisory_xact_lock` или `_shared` из пары `int32`; namespace `0x4d545256` (`MTRV`) и domain keys заданы явно. `lockPackageKinds` сортирует package kinds перед взятием нескольких advisory locks; комментарий явно запрещает `hashtext` для этих ключей.
+- `backend/internal/persistence/source_coordination.go`: package activation использует те же sorted advisory keys; `lockToolsRoots` сортирует roots, а SQL запрашивает их `ORDER BY id` до row-lock. Это две наблюдаемые меры порядка в соответствующих call paths, а не глобальная гарантия для всех операций.
+- `backend/internal/persistence/output_admission_coordination.go`: output admission gate берёт shared transaction-level advisory lock, reset gate — exclusive transaction-level lock. Отдельный `WithExclusiveOutputAdmissionSession` закрепляет `*sql.Conn`, берёт `pg_advisory_lock` session-level и явно делает `pg_advisory_unlock` на том же соединении; это связано с callback/journal/filesystem flow и отличается lifecycle-ом от обычного xact helper.
+- `backend/internal/persistence/source_analysis_steps.go` также демонстрирует row-lock порядок `source_root → source_location → source_analysis_work → operation → source_analysis_step`. Никакой из этих примеров не утверждает, что будущая matching-транзакция должна копировать этот порядок без собственного design/review.
+
+PostgreSQL facts не выбирают продуктовую модель или lock protocol matching; точный стабильный порядок и transaction scope для будущих group apply/cache operations остаются техническим design/review вопросом.
+
+## Facts и решения, которые остаются открытыми
+
+Подтверждённые выше лимиты, HTTP semantics и River guarantees — **внешние факты**. Одобренные продуктовые решения остаются в owner appendix плана. Это исследование не принимает дополнительных продуктовых решений и не выбирает технический механизм.
+
+Перед соответствующими increments ещё требуется отдельно определить и проверить: provider cache freshness/invalidation; конкретный compliant limiter/semaphore и поведение при `503`; self-hosted endpoint compatibility assumptions; правила AcoustID key transport/storage в соответствии с проектным secret policy; применение query/browse/lookup и dedup/paging к конкретным сущностям; соответствие River integration/docs версии `v0.48.0`; idempotency, lock order, fences и recovery для matching transactions. Не переносить текущие timeout, file concurrency=4 или чужие library defaults как новые RPS, cache TTL, retry или persistence decisions.
+
+## Проверенные локальные материалы
+
+- `docs/design/decisions.md`, `docs/design/repository-architecture.md`, `docs/design/data-model.md`, `docs/design/music_ingest_redesign.dbml`.
+- `backend/internal/integrations/musicbrainz/client.go`; `backend/internal/settings/settings.go`; `backend/internal/service/setup.go`.
+- `backend/internal/persistence/setup_manager.go`, `source_scan_enqueue.go`, `source_scan_retry.go`, `source_analysis_steps.go`; `backend/internal/jobs/`.
+- `backend/go.mod`, `backend/go.sum`, `backend/internal/migrations/`; `frontend/src/routes/AppShell.tsx`, `frontend/src/features/sources/`.
+
+Файлы и directory boundaries перечислены как места baseline inspection, а не свидетельство наличия в них matching implementation. Codegraph/исходный код и миграции проверялись на code baseline `8c205db526d23e05279e17e185d11a2cb7a6813c`; HEAD на момент этого уточнения `c26bf689c37179a6dd90be8f69ab9bca40936a03` содержит только более поздние documentation-only изменения. Локальные тесты не запускались, поскольку это документационное уточнение M01.
+
+---
+
+# Приложение D. План 11, M03 — исследование сопоставления тегов (tag mapping research appendix)
+
+<a id="appendix-d-m03-tag-mapping-research"></a>
+
+**Дата:** 2026-10-09.
+**Назначение:** документальная фиксация фактов о тегах и их сопоставлении для M03
+плана 11.
+**Статус:** исследование. Это не продуктовый контракт, не подтверждение
+выполнения этапов и не приёмка. Документ не принимает продуктовых решений, не
+меняет план, не утверждает дизайн кода и не заявляет пройденных проверок.
+
+> **Датированное дополнение 2026-10-09:** этот раздел перенесён внутрь плана из
+> standalone research doc M03; файл удалён. Техническая рекомендация `mtag` ниже
+> помечена obsolete и superseded решением [B14](#appendix-b-owner-decisions-late-2026-10-09)
+> (TagLib / `go-taglib`). Исторические факты сохранены без правки.
+
+## Границы и честность изложения
+
+- Это research-only appendix. Продуктовые решения о группировке/matching остаются
+  в [Приложении A](#appendix-a-owner-decisions-2026-10-09)
+  и [Приложении B](#appendix-b-owner-decisions-late-2026-10-09)
+  плана 11; здесь новых решений не вводится.
+- **Прямой дизайн «сырого» декодера тегов не утверждён.** Любая схема
+  самостоятельного разбора контейнеров/тегов — вопрос для архитектурного
+  ревью, а не согласованное решение. Этот документ такой дизайн не фиксирует.
+- **Нет заявки на test acceptance.** Наблюдения о поведении декодеров ниже —
+  это эмпирические факты из read-only исследования librarian (включая его
+  fixtures), а не результат прогона тестов этого репозитория. Они не являются
+  приёмочным доказательством и не заменяют будущие regression fixtures.
+- Таблица ниже — **практически предлагаемое сопоставление (proposed)**, не
+  утверждённое окончательно. Официальные имена тегов зависят от теггера
+  (custom labels) и от конкретной программы; канонические имена MusicBrainz
+  Picard не подтверждены официальным источником в этом исследовании (см. ниже).
+- При конфликте с решениями владельца или `docs/design/` приоритет имеют они.
+
+## Официальные источники
+
+### Vorbis comment — проверено
+
+Источник: [Ogg Vorbis I format specification: comment field and header
+specification](https://xiph.org/vorbis/doc/v-comment.html), проверено
+2026-10-09. Подтверждённые факты из спецификации:
+
+- Поле комментария имеет вид `NAME=value`; имя поля не зависит от регистра
+  (ASCII `A–Z` эквивалентны `a–z`), значение — UTF-8 до конца поля.
+- **Имена полей не обязаны быть уникальными.** Спецификация прямо приводит
+  пример нескольких `ARTIST=` (Dizzy Gillespie / Sonny Rollins / Sonny Stitt) как
+  допустимый и поощряемый: повторяющиеся теги — это список, а не ошибка.
+- Стандартный минимальный набор имён: `TITLE`, `VERSION`, `ALBUM`, `TRACKNUMBER`,
+  `ARTIST`, `PERFORMER`, `COPYRIGHT`, `LICENSE`, `ORGANIZATION`, `DESCRIPTION`,
+  `GENRE`, `DATE`, `LOCATION`, `CONTACT`, `ISRC`.
+- Спецификация ссылается на реализацию `vorbis/lib/info.c`:
+  `_vorbis_pack_comment()` / `_vorbis_unpack_comment()`.
+- Спецификация **не** определяет `ALBUMARTIST`, `CATALOGNUMBER`, `RELEASECOUNTRY`
+  или `MUSICBRAINZ_*`; это теггер-конвенции (в частности Picard), а не часть
+  Vorbis-спецификации. Это различие важно: имена MusicBrainz-тегов ниже —
+  предлагаемое сопоставление, а не цитата из Vorbis-спеки.
+
+### FFmpeg / ffprobe — read-only исследование исходников librarian
+
+- Факты о поведении декодеров ffmpeg ниже получены librarian из read-only
+  исследования исходников FFmpeg на **текущем master, без закреплённой ревизии
+  (unpinned)**. Это **не общая гарантия для всех сборок/версий**: поведение
+  может меняться между релизами, а конкретная версия управляемого ffprobe
+  проекта не закреплена (каталог выбирает релизы на рантайме, см.
+  `backend/internal/integrations/tools/catalog.go`).
+- Поэтому любые утверждения о декодерах следует читать как «наблюдено на
+  исследованной ревизии master», а не как «так устроено во всех сборках».
+- Официальная документация ffprobe (форма вывода `-show_format`/`-show_streams`)
+  остаётся внешним ориентиром; точная ревизия/коммит для закрепления ещё не
+  выбрана и здесь не фиксируется.
+
+> **Позднейшее уточнение 2026-10-09 (см. [B14](#appendix-b-owner-decisions-late-2026-10-09)):**
+> ffprobe остаётся техническим probe; metadata-теги извлекаются отдельным
+> metadata-шагом через TagLib (`go-taglib`), ffprobe не заменяется.
+
+### MusicBrainz Picard tag mapping — недоступно, НЕ цитируется как проверенное
+
+- URL из задания `https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html`
+  вернул HTTP 404 на 2026-10-09. Официальная страница Picard tag mapping по
+  этому адресу недоступна.
+- Поэтому канонические имена Picard **не приводятся как проверенный
+  официальный источник**. Значения MusicBrainz-тегов в таблице ниже — это
+  широко распространённая практика теггеров и предлагаемое сопоставление, а не
+  цитата из подтверждённой документации Picard.
+- Повторный fetch не выполнялся; факт 404 зафиксирован как ограничение.
+
+## Текущее состояние кода (baseline, не контракт)
+
+- Управляемый probe запускается командой
+  `-v error -protocol_whitelist fd -fd <desc> -show_format -show_streams -of json fd:`
+  (`backend/internal/integrations/tools/ffprobe_file.go`, `technicalFileArguments`).
+  Это один probe, собирающий контейнер и все потоки в один JSON.
+- `backend/internal/service/source_technical_analysis.go` строит
+  `Tags map[string][]string`: ключи приводятся к верхнему регистру, значения —
+  в порядке первого появления, одинаковые строки в рамках одного ключа
+  дедуплицируются (`slices.Contains`), строки **не делятся** по `;` или `/`.
+  Теги берутся сначала из `format.tags`, затем из `tags` аудиопотоков в порядке
+  индекса.
+- Утверждённые 13 расширений (`docs/design/deployment.md`): `.flac`, `.wav`,
+  `.aif`, `.aiff`, `.ape`, `.wv`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`,
+  `.wma`, `.mka` (без учёта регистра).
+- **Ограничение:** команда `-show_format -show_streams -of json` не даёт права
+  утверждать, что сохранены все «сырые» теги контейнера. Часть тегов не
+  попадает в вывод ffprobe (пример ниже — `UFID`), часть теряет исходную
+  множественность (см. ниже). Текущее «сырое» хранение неполно и **не
+  реализовано** как полный raw-retention. Владелец уже потребовал сохранять все
+  исходные теги, в том числе не участвующие в matching; способ реализации ещё
+  предстоит выбрать.
+
+## Наблюдаемое поведение декодеров (эмпирические факты librarian)
+
+Исследование read-only, текущий master FFmpeg, без закреплённой ревизии. Не
+общая гарантия для всех сборок.
+
+- **Vorbis (FLAC / OGG / Opus):** повторяющиеся теги в контейнере ffprobe
+  **склеивает в одну строку через `;`**. То есть список `ARTIST=A`, `ARTIST=B`
+  наблюдается как одно значение `"A;B"`.
+- **MP4 / M4A:** повторяющиеся теги также **склеиваются через `;`** в одно
+  значение.
+- **ID3 (MP3 и др.):** при повторе **побеждает первое** значение (first wins);
+  остальные теряются.
+- **WAV INFO / APE / ASF (WMA) / Matroska (MKA):** при повторе **побеждает
+  последнее** значение (last wins); более ранние перезаписываются.
+- **`UFID` (MusicBrainz recording) отсутствует в выводе ffprobe.** Это значит,
+  что MusicBrainz recording/track ID, записанный в ID3 `UFID` с owner
+  `http://musicbrainz.org`, через текущий probe **не читается**; доступны лишь
+  те MusicBrainz-значения, что лежат в обычных текстовых тегах (например TXXX).
+- Общий вывод: демультиплексор может потерять множественность ещё до JSON writer;
+  текущий объект `tags` не восстанавливает её. Ни одна из стратегий (join `;`,
+  first, last) не даёт восстановить полный исходный список повторов.
+
+## Следствия (факты, не решения)
+
+- **Нельзя делить литеральное значение по `;`.** После склейки `"A;B"`
+  невозможно отличить реальный разделитель от `;` внутри одного значения.
+  Текущий код это соблюдает и не делает split.
+- **Список тегов с дедупликацией и стабильным порядком «первое вхождение»**
+  работает уже после того, как ffprobe потерял исходную множественность; он
+  сохраняет порядок того, что дошло, но не восстанавливает утраченное.
+- **Сохранение всех исходных тегов уже требуется владельцем.** Неизвестные имена
+  не дают права отбрасывать теги. Хранение и mapping реализуются в анализе;
+  matching работает только с сохранёнными результатами, без source file I/O.
+- **Country** сравнивается уже утверждённым fuzzy scoring (Приложение B, B2);
+  конфликт только по country **не добавляет отдельный veto/review**. Здесь это
+  только фиксируется как ограничение сопоставления, без новых правил.
+
+## Предлагаемое сопоставление канонических полей (proposed, не утверждено)
+
+Канонические поля: `artist`, `albumartist`, `album`, `title`, `date`, `catalog`,
+`country`, MB release, MB record (track), MB release-track.
+
+| Канон | Vorbis (FLAC/OGG/Opus) | ID3v2 (MP3/AIFF/WAV/AAC) | MP4/M4A | ASF/WMA | Matroska/MKA |
+| --- | --- | --- | --- | --- | --- |
+| artist | `ARTIST` | `TPE1` | `©ART` | `Author` | `ARTIST` (проверить, не изобретать) |
+| albumartist | `ALBUMARTIST` | `TPE2` | `aART` | `WM/AlbumArtist` | `ALBUMARTIST` (проверить) |
+| album | `ALBUM` | `TALB` | `©alb` | `WM/AlbumTitle` | `ALBUM` (проверить) |
+| title | `TITLE` | `TIT2` | `©nam` | `Title` | `TITLE` (проверить) |
+| date | `DATE` | `TDRC` (иначе `TYER`+`TDAT`) | `©day` | `WM/Year` | `DATE` (проверить) |
+| catalog | `CATALOGNUMBER` | `TXXX:CATALOGNUMBER` (custom) | `----:com.apple.iTunes:CATALOGNUMBER` | `WM/CatalogNumber` (проверить) | `CATALOGNUMBER` (проверить) |
+| country | `RELEASECOUNTRY` | `TXXX:MusicBrainz Album Release Country` (custom) | `----:com.apple.iTunes:MusicBrainz Album Release Country` | `MusicBrainz/Release Country` (proposed) | `RELEASECOUNTRY` (проверить) |
+| MB release | `MUSICBRAINZ_ALBUMID` | `TXXX:MusicBrainz Album Id` (custom) | `----:com.apple.iTunes:MusicBrainz Album Id` | `MusicBrainz/Album Id` (proposed) | `MUSICBRAINZ_ALBUMID` (проверить) |
+| MB record | `MUSICBRAINZ_TRACKID` | `UFID` (owner `http://musicbrainz.org`) — **ffprobe не читает** | `----:com.apple.iTunes:MusicBrainz Track Id` | `MusicBrainz/Track Id` (proposed) | `MUSICBRAINZ_TRACKID` (проверить) |
+| MB release-track | `MUSICBRAINZ_RELEASETRACKID` | `TXXX:MusicBrainz Release Track Id` (custom) | `----:com.apple.iTunes:MusicBrainz Release Track Id` | `MusicBrainz/Release Track Id` (proposed) | `MUSICBRAINZ_RELEASETRACKID` (проверить) |
+
+Пояснения к таблице:
+
+- Колонки Vorbis/ID3/MP4/ASF перечисляют ключи, которые принято использовать в
+  теггерах; это **предлагаемое** сопоставление, а не утверждённые официальные
+  имена. ID3-варианты `TXXX`/`UFID` и MP4 freeform `----:com.apple.iTunes:*` —
+  пользовательские (custom) контейнеры, их точные имена зависят от теггера.
+- Для ASF ключи вида `MusicBrainz/*` даны как proposed: точные официальные имена
+  ASF MusicBrainz-полей в этом исследовании не подтверждены.
+- Для Matroska имена тегов свободные; официальный набор следует **проверять, а не
+  изобретать**. Значения в колонке помечены «проверить».
+- **`UFID` / MusicBrainz recording отсутствует в выводе ffprobe**, поэтому
+  строка «MB record» для ID3 недоступна текущим probe; запись через обычные
+  текстовые теги, если она есть, читается, но UFID — нет.
+- Фактические значения после probe могут быть склеены через `;` (Vorbis, MP4),
+  усечены до первого (ID3) или последнего (WAV INFO/APE/ASF/Matroska) — см.
+  раздел о декодерах.
+
+## 13 утверждённых семейств и где какие теги
+
+- 13 расширений: `.flac`, `.wav`, `.aif`, `.aiff`, `.ape`, `.wv`, `.mp3`,
+  `.m4a`, `.aac`, `.ogg`, `.opus`, `.wma`, `.mka`.
+- **ID3** применяется в AIFF, WAV и AAC (в дополнение к MP3; для MP4/M4A
+  основной tag carrier — metadata atoms, не ID3).
+- **APE**-теги применяются в APE, WV (WavPack) и AAC.
+- Это карта семейств/расширений, а не утверждение о полном извлечении: реальный
+  набор прочитанных тегов ограничен текущим ffprobe-выводом (см. ограничения).
+
+## Остаточные ограничения и открытые пункты
+
+### Позднейшее исследование Go-библиотек (2026-10-09)
+
+> **Пометка obsolete (2026-10-09, см. [B14](#appendix-b-owner-decisions-late-2026-10-09)):**
+> рекомендация `github.com/tommyo123/mtag v1.0.2` ниже **устарела
+> (superseded)**: владелец выбрал **TagLib** (`go-taglib`) с нормализованными
+> возвращаемыми тегами, приняв ограниченный набор тегов и опциональные
+> `Properties`. Текст ниже сохранён как исторический факт исследования и не
+> является выбранным механизмом.
+
+Готовая универсальная библиотека `github.com/tommyo123/mtag v1.0.2` покрывает
+все 13 расширений проекта, включая Matroska/MKA. Лицензия MIT, pure Go,
+сторонних runtime-зависимостей нет. Проверялся исходный код указанной версии,
+не только заявленное покрытие: [source](https://github.com/tommyo123/mtag/tree/v1.0.2).
+
+- `OpenSource(io.ReaderAt, size, ...)` работает с уже открытым источником,
+  без повторного открытия пути; применять его можно внутри анализа.
+- Native stores (`ID3v2().Frames`, Vorbis fields, APE fields, MP4 items)
+  сохраняют множественные значения и позволяют не выбирать только первого артиста.
+- Convenience `Artist()`/`AlbumArtist()` возвращают первое значение; общий
+  `Tags()`/`Get()` тоже не является полным многозначным представлением.
+  Для adapter нужны native stores и multi-value API, а не эти getters.
+- Matroska имеет ограничения: `TagBinary` и язык не извлекаются полностью,
+  часть scoped/raw stores не экспортируется. Эти пробелы нужно проверить в
+  adapter; наличие библиотеки ещё не доказывает сохранение всех тегов.
+- По последнему решению владельца готовые Go-библиотеки используются вместо
+  самостоятельного написания готовых алгоритмов. Выбор adapter и интеграция
+  в анализ ещё не реализованы; source file I/O в matching запрещён.
+
+### Ограничения исследования
+
+- Сырое хранение тегов сейчас **неполно и не реализовано** как полный raw
+  retention; требование сохранять все исходные теги уже одобрено владельцем.
+  Нужно выбрать техническое отображение без потери native names и списков.
+- Прямой дизайн raw-декодера тегов **не утверждён** до архитектурного ревью.
+- Канонические имена Picard не подтверждены (страница 404); сопоставление в
+  таблице — proposed.
+- Поведение декодеров зафиксировано на исследованной ревизии master FFmpeg без
+  закреплённой версии и **не является гарантией для всех сборок**.
+- Никакие тесты/приёмка этим документом не заявляются; это не отчёт о проверке
+  репозитория.
+
+## Позднейшее уточнение статуса M03 (2026-10-09)
+
+- Чистый **grouping/reader capability** M03 завершён и проверен полным
+  `task verify`.
+- Это **не** завершение всего плана: engine, БД, providers, автоматический
+  matching и UI не реализованы; план остаётся в `todo/`.
+- Механизм извлечения тегов уточнён решением [B14](#appendix-b-owner-decisions-late-2026-10-09)
+  (TagLib / `go-taglib`).
