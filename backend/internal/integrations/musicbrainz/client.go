@@ -31,16 +31,29 @@ type Checker interface {
 }
 
 func NewClient() *Client {
+	return NewClientWithGate(NewPublicRateGate())
+}
+
+func NewClientWithGate(gate *PublicRateGate) *Client {
+	return NewClientWithHTTPClient(NewGovernedHTTPClient(gate))
+}
+
+// NewClientWithHTTPClient lets the application share the same governed
+// transport with the MusicBrainz catalogue client.
+func NewClientWithHTTPClient(httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+	client := *httpClient
+	client.Timeout = RequestTimeout
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 || len(via) == 0 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("too many redirects")
+		}
+		return nil
+	}
 	return &Client{
-		httpClient: &http.Client{
-			Timeout: RequestTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 3 || len(via) == 0 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
-					return fmt.Errorf("too many redirects")
-				}
-				return nil
-			},
-		},
+		httpClient: &client,
 	}
 }
 

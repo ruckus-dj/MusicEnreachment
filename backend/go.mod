@@ -20,8 +20,11 @@ require (
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
 	go.senan.xyz/taglib v0.14.0
+	go.uploadedlobster.com/mbtypes v0.4.0
+	go.uploadedlobster.com/musicbrainzws2 v0.19.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
+	golang.org/x/time v0.16.0
 )
 
 require (
@@ -43,6 +46,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/go-resty/resty/v2 v2.17.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -88,6 +92,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 )

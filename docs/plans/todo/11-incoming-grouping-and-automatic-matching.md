@@ -564,6 +564,19 @@ normalization для score в точности. Если по имеющимся
 
 ## Cross-stage safety and acceptance invariants
 
+### Provider adapters — проверенный bounded increment
+
+MusicBrainz lookup/search реализованы через готовый
+`go.uploadedlobster.com/musicbrainzws2 v0.19.0`, с bounded raw capture,
+per-attempt limiter, protocol cooldown и cancellation-aware self-hosted limiter.
+AcoustID использует узкий POST adapter: подходящего готового клиента с безопасным
+POST и injected transport не найдено. Ключ не помещается в URL; отсутствие ключа
+не вызывает запрос. Timeout охватывает limiter wait и HTTP; raw evidence и
+несколько MBIDs сохраняются без выбора первого. Полный `task verify` прошёл,
+независимое ревью adapters закрыто. Application composition общего gate,
+provider jobs/cache mapping и automatic matching ещё не подключены; M05 и весь
+план не объявляются завершёнными. Dependency licenses включены в notices.
+
 1. **Atomic group outcome:** the automatic action is group-wide over every
    incoming file. No high-confidence subset can auto-apply while the rest enters
    review. Provider-side release positions absent from the provider response are
