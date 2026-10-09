@@ -82,6 +82,7 @@ func newSourceApplicationFixture(t *testing.T, tc testContainer) sourceApplicati
 		scanWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
 		operations, roots, registry, platform, tools.NewLifecycle(nil),
 	)
+	worker.SetPendingDispatcher(sourceAnalysis)
 	analysisWorker := jobs.NewSourceAnalysisWorker(
 		analysisWorkerRepository{SetupManagerRepository: setupManager, SourceInventoryRepository: inventory},
 		operations, registry, registry, platform,
@@ -418,7 +419,7 @@ func (fixture sourceApplicationFixture) countOperations(ctx context.Context) (in
 }
 
 // runScan queues one scan through the composed router and executes the
-// production worker with the operation the composition recorded.
+// production scan and automatically admitted analysis operations.
 func (fixture sourceApplicationFixture) runScan(t *testing.T, rootID uuid.UUID) {
 	t.Helper()
 	response := fixture.request(t, http.MethodPost, "/sources/"+rootID.String()+"/scan", "")
@@ -450,30 +451,30 @@ func (fixture sourceApplicationFixture) runScan(t *testing.T, rootID uuid.UUID) 
 	if err := fixture.worker.Work(context.Background(), job); err != nil {
 		t.Fatalf("the production scan worker failed: %v", err)
 	}
-	if _, err := fixture.sourceAnalysis.AdmitPending(t.Context(), rootID); err != nil {
-		t.Fatalf("admit per-file source analysis after enumeration: %v", err)
+	var analysisOperation persistence.Operation
+	if err := fixture.database.NewSelect().Model(&analysisOperation).
+		Where("kind = ? AND target_source_root_id = ? AND state IN (?, ?)", service.SourceAnalysisOperationKind, rootID, "queued", "running").
+		Order("created_at DESC").Limit(1).Scan(t.Context()); err != nil {
+		t.Fatalf("scan completion did not automatically admit per-file source analysis: %v", err)
 	}
-	for range 10 {
-		var analysisOperation persistence.Operation
-		err := fixture.database.NewSelect().Model(&analysisOperation).
-			Where("kind = ? AND target_source_root_id = ? AND state IN (?, ?)", service.SourceAnalysisOperationKind, rootID, "queued", "running").
-			Order("created_at DESC").Limit(1).Scan(t.Context())
-		if err == sql.ErrNoRows {
-			break
-		}
-		if err != nil {
-			t.Fatalf("read the queued per-file analysis operation: %v", err)
-		}
-		if analysisOperation.RiverJobID == nil {
-			t.Fatalf("per-file analysis operation has no River job: %+v", analysisOperation)
-		}
-		analysisJob := &river.Job[service.SourceAnalysisJobArgs]{
-			JobRow: &rivertype.JobRow{ID: *analysisOperation.RiverJobID},
-			Args:   service.SourceAnalysisJobArgs{OperationID: analysisOperation.ID},
-		}
-		if err := fixture.analysis.Work(context.Background(), analysisJob); err != nil {
-			t.Fatalf("the per-file source analysis worker failed: %v", err)
-		}
+	if analysisOperation.RiverJobID == nil {
+		t.Fatalf("per-file analysis operation has no River job: %+v", analysisOperation)
+	}
+	if analysisOperation.State != "queued" {
+		t.Fatalf("automatically admitted analysis operation state = %q, want queued", analysisOperation.State)
+	}
+	analysisJob := &river.Job[service.SourceAnalysisJobArgs]{
+		JobRow: &rivertype.JobRow{ID: *analysisOperation.RiverJobID},
+		Args:   service.SourceAnalysisJobArgs{OperationID: analysisOperation.ID},
+	}
+	if err := fixture.analysis.Work(t.Context(), analysisJob); err != nil {
+		t.Fatalf("the production source analysis worker failed: %v", err)
+	}
+	if err := fixture.database.NewSelect().Model(&analysisOperation).Where("id = ?", analysisOperation.ID).Scan(t.Context()); err != nil {
+		t.Fatalf("read completed automatic source analysis operation: %v", err)
+	}
+	if analysisOperation.State != "succeeded" {
+		t.Fatalf("automatic source analysis operation state = %q, want succeeded (safe error: %v)", analysisOperation.State, analysisOperation.SafeError)
 	}
 }
 

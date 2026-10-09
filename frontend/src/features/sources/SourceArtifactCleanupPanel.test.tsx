@@ -97,6 +97,9 @@ describe("SourceArtifactCleanupPanel", () => {
         expect(await request.json()).toEqual({ artifact_ids: ["a"] });
         return HttpResponse.json(operation(), { status: 202 });
       }),
+      http.get("/api/operations/cleanup-op", () =>
+        HttpResponse.json(operation({ state: "running", stage: "deleting" })),
+      ),
     );
     render(<SourceArtifactCleanupPanel />);
 
@@ -159,7 +162,7 @@ describe("SourceArtifactCleanupPanel", () => {
       screen.getByRole("button", { name: "Подтвердить очистку" }),
     );
     await waitFor(() => expect(posts).toBe(1));
-    expect(CleanupEventSource.instances).toHaveLength(1);
+    await waitFor(() => expect(CleanupEventSource.instances).toHaveLength(1));
   });
 
   it("claims a cleanup synchronously so same-tick starts post once and pending operations reject another start", async () => {

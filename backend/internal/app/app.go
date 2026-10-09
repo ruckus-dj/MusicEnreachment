@@ -173,6 +173,7 @@ func Run(ctx context.Context, config Config) error {
 		scanWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
 	)
+	scanWorker.SetPendingDispatcher(sourceAnalysis)
 	analysisWorker := jobs.NewSourceAnalysisWorker(
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, registry, registry, platform,
