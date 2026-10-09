@@ -1174,7 +1174,7 @@ export const getUpdateSettingsUrl = () => {
 }
 
 /**
- * @summary Update output directory and publication format
+ * @summary Update runtime settings
  */
 export const updateSettings = async (updateSettingsBody: NonReadonly<UpdateSettingsBody>, options?: RequestInit): Promise<updateSettingsResponse> => {
 
@@ -1247,7 +1247,7 @@ const {mutation: mutationOptions, fetch: fetchOptions} = options ?
     export type UpdateSettingsMutationVariables = {data: NonReadonly<UpdateSettingsBody>}
 
     /**
- * @summary Update output directory and publication format
+ * @summary Update runtime settings
  */
 export const useUpdateSettings = <TError = ErrorModel,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSettings>>, TError,UpdateSettingsMutationVariables, TContext>, fetch?: RequestInit}

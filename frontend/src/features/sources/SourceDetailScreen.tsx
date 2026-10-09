@@ -24,7 +24,12 @@ import {
 } from "./sourcesApi";
 import "./sources.css";
 
-type EditForm = { displayName: string; path: string; enabled: boolean };
+type EditForm = {
+  displayName: string;
+  path: string;
+  processingMode: "in_place" | "staged";
+  enabled: boolean;
+};
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const [root, setRoot] = useState<SourceRootResponse>();
@@ -36,6 +41,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
   const [form, setForm] = useState<EditForm>({
     displayName: "",
     path: "",
+    processingMode: "in_place",
     enabled: true,
   });
   const [deleting, setDeleting] = useState(false);
@@ -96,6 +102,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     setForm({
       displayName: root.display_name,
       path: root.configured_path,
+      processingMode: root.processing_mode,
       enabled: root.enabled,
     });
     setFormError("");
@@ -115,6 +122,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       const response = await updateSource(sourceId, {
         display_name: form.displayName.trim(),
         configured_path: form.path.trim(),
+        processing_mode: form.processingMode,
         enabled: form.enabled,
       });
       if (response.status !== 200) throw sourceFailure("edit", response);
@@ -258,7 +266,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             aria-labelledby="source-edit-title"
             className="sources-panel"
           >
-            <h2 id="source-edit-title">Имя, путь и включение</h2>
+            <h2 id="source-edit-title">Имя, путь, режим и включение</h2>
             {editing ? (
               <form
                 aria-labelledby="source-edit-title"
@@ -285,6 +293,27 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                     }
                   />
                 </label>
+                <label>
+                  Режим обработки
+                  <select
+                    required
+                    value={form.processingMode}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        processingMode: event.target
+                          .value as EditForm["processingMode"],
+                      })
+                    }
+                  >
+                    <option value="in_place">in_place</option>
+                    <option value="staged">staged</option>
+                  </select>
+                </label>
+                <p className="sources-help">
+                  Смена режима влияет только на будущую обработку и не запускает
+                  повторный анализ текущего инвентаря.
+                </p>
                 <label className="sources-inline">
                   <input
                     type="checkbox"

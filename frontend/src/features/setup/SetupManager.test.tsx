@@ -34,6 +34,7 @@ const settings: SetupStateBody["settings"] = {
   lrclib_enabled: true,
   sha256_enabled: true,
   log_level: "info",
+  source_file_concurrency: 4,
 };
 function state(
   overrides: Partial<SetupStateBody["settings"]> = {},

@@ -33,6 +33,7 @@ const state: SetupStateBody = {
     lrclib_enabled: true,
     sha256_enabled: true,
     log_level: "info",
+    source_file_concurrency: 4,
   },
   configuration_health: { healthy: false, problems: ["setup incomplete"] },
 };
@@ -47,6 +48,7 @@ const sourceRoot: SourceRootResponse = {
   id: "root-1",
   display_name: "Входящие",
   configured_path: "/srv/inbox",
+  processing_mode: "in_place",
   enabled: true,
   status: "available",
   stale: false,

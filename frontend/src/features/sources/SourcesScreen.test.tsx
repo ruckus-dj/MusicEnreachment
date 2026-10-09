@@ -21,6 +21,7 @@ function root(overrides: Partial<SourceRootResponse> = {}): SourceRootResponse {
     id: "root-1",
     display_name: "Входящие",
     configured_path: "/srv/inbox",
+    processing_mode: "in_place",
     enabled: true,
     status: "available",
     stale: false,
@@ -272,6 +273,7 @@ describe("source root creation", () => {
       id: "root-disk",
       display_name: "Диск",
       configured_path: "/srv/disk",
+      processing_mode: "staged",
       status: "unknown",
       scan_generation: 0,
       location_count: 0,
@@ -285,6 +287,7 @@ describe("source root creation", () => {
         expect(await request.json()).toEqual({
           display_name: "Диск",
           configured_path: "/srv/disk",
+          processing_mode: "staged",
         });
         created.push(registered);
         return HttpResponse.json(registered);
@@ -302,6 +305,10 @@ describe("source root creation", () => {
     });
     fireEvent.change(screen.getByLabelText("Путь на сервере"), {
       target: { value: "/srv/disk" },
+    });
+    expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Режим обработки"), {
+      target: { value: "staged" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Зарегистрировать каталог" }),
@@ -340,6 +347,9 @@ describe("source root creation", () => {
     });
     fireEvent.change(screen.getByLabelText("Путь на сервере"), {
       target: { value: "/srv/missing" },
+    });
+    fireEvent.change(screen.getByLabelText("Режим обработки"), {
+      target: { value: "in_place" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Зарегистрировать каталог" }),
@@ -449,6 +459,7 @@ describe("source root detail", () => {
       id: "root-1",
       display_name: "Входящие 2",
       configured_path: "/srv/inbox2",
+      processing_mode: "staged",
       inventory_path: "/srv/inbox",
       stale: true,
     });
@@ -473,6 +484,9 @@ describe("source root detail", () => {
     fireEvent.change(screen.getByLabelText("Путь на сервере"), {
       target: { value: "/srv/inbox2" },
     });
+    fireEvent.change(screen.getByLabelText("Режим обработки"), {
+      target: { value: "staged" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Сохранить каталог" }));
 
     expect(
@@ -483,6 +497,7 @@ describe("source root detail", () => {
     expect(patched).toEqual({
       display_name: "Входящие 2",
       configured_path: "/srv/inbox2",
+      processing_mode: "staged",
       enabled: true,
     });
     expect(
@@ -516,6 +531,7 @@ describe("source root detail", () => {
     expect(patched).toEqual({
       display_name: "Входящие",
       configured_path: "/srv/inbox",
+      processing_mode: "in_place",
       enabled: false,
     });
   });

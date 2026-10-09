@@ -151,6 +151,27 @@ func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {
 	}
 }
 
+func TestSetupRuntimeResponseIncludesDefaultSourceFileConcurrency(t *testing.T) {
+	store := apiSettingsStore{}
+	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
+	response := httptest.NewRecorder()
+	api.HandlerWithSetup(setup).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Settings struct {
+			SourceFileConcurrency int `json:"source_file_concurrency"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Settings.SourceFileConcurrency != 4 {
+		t.Fatalf("response concurrency = %d, want default 4: %s", body.Settings.SourceFileConcurrency, response.Body.String())
+	}
+}
+
 func TestCheckSetupPathsValidatesWithoutSaving(t *testing.T) {
 	store := apiSettingsStore{}
 	registry := settings.New(store, nil)

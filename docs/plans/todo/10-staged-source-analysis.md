@@ -187,6 +187,20 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   have regression coverage. `task verify` passed. Native platform CI,
   deployment smoke, and an exhaustive process-kill crash matrix were not run.
 
+- **I10 — external contracts complete locally (2026-10-09):** source creation
+  requires an explicit processing mode; optional edits preserve omitted mode.
+  Runtime responses and atomic settings updates expose positive source-file
+  concurrency with the approved default of four. Live admission refresh and
+  demand-based supplemental River consumers allow growth above startup capacity;
+  grouped scheduling reacquires permits per file and preserves active work on
+  shrink. Barrier and real-River saturated-raise regressions are included.
+  Inspector snapshots expose staged artifact lifecycle, independent cleanup
+  errors, immutable creator/borrower evidence, and requested-intent certainty.
+  Migration 270 preserves unknown historical intent rather than fabricating it.
+  Minimal source-form contract adaptation and regenerated clients are included.
+  `task verify` passed. Native platform CI and browser acceptance were not run;
+  full UI behavior remains I11.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

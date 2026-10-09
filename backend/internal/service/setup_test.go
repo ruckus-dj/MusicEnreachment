@@ -158,6 +158,44 @@ func TestSaveRuntimeDoesNotPartiallyPersistInvalidSettings(t *testing.T) {
 	if len(store.data) != 0 {
 		t.Fatalf("invalid settings were partially persisted: %#v", store.data)
 	}
+	for _, concurrency := range []int{0, -1} {
+		format := "mka"
+		if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
+			PublicationFormat: &format, SourceFileConcurrency: &concurrency,
+		}); err == nil {
+			t.Fatalf("non-positive concurrency %d was accepted", concurrency)
+		}
+		if len(store.data) != 0 {
+			t.Fatalf("invalid concurrency %d partially persisted settings: %#v", concurrency, store.data)
+		}
+	}
+}
+
+func TestSaveRuntimeConcurrencyIsPresenceAwareAndAtomic(t *testing.T) {
+	ctx := context.Background()
+	store := &recordingRuntimeStore{memoryStore: newMemoryStore()}
+	registry := settings.New(store, nil)
+	setup := NewSetup(store, registry, settings.PlatformState{}, nil, nil)
+
+	state, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil || state.SourceFileConcurrency != 4 {
+		t.Fatalf("default concurrency = %d, %v; want 4", state.SourceFileConcurrency, err)
+	}
+	format, concurrency := "mka", 7
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
+		PublicationFormat: &format, SourceFileConcurrency: &concurrency,
+	}); err != nil {
+		t.Fatalf("save runtime settings: %v", err)
+	}
+	if store.calls != 1 || store.data[settings.PublicationFormatKey] != format || store.data[settings.SourceFileConcurrencyKey] != "7" {
+		t.Fatalf("format and concurrency were not committed in one write: calls=%d settings=%#v", store.calls, store.data)
+	}
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{PublicationFormat: &format}); err != nil {
+		t.Fatalf("save without concurrency: %v", err)
+	}
+	if store.data[settings.SourceFileConcurrencyKey] != "7" {
+		t.Fatalf("omitted concurrency was not preserved: %#v", store.data)
+	}
 }
 
 func TestSaveRuntimeRejectsWhitespaceDirectoryLikeRegistry(t *testing.T) {

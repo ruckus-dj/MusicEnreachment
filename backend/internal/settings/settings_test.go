@@ -114,6 +114,34 @@ func TestSourceFileConcurrencyDefaultAndValidation(t *testing.T) {
 	}
 }
 
+func TestSourceFileConcurrencyObserverRunsAfterCommitForBothUpdatePaths(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	wakeups := 0
+	registry.WithConcurrencyObserver(func() {
+		wakeups++
+		value, err := registry.GetSourceFileConcurrency(ctx)
+		if err != nil || value != 6 {
+			t.Errorf("observer saw concurrency %d, %v; want committed value 6", value, err)
+		}
+	})
+
+	concurrency := 6
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{SourceFileConcurrency: &concurrency}); err != nil {
+		t.Fatalf("update runtime: %v", err)
+	}
+	if wakeups != 1 {
+		t.Fatalf("runtime update wakeups = %d, want 1", wakeups)
+	}
+	if err := registry.SetSourceFileConcurrency(ctx, concurrency); err != nil {
+		t.Fatalf("set concurrency: %v", err)
+	}
+	if wakeups != 2 {
+		t.Fatalf("setter wakeups = %d, want 2", wakeups)
+	}
+}
+
 func TestUnsupportedPlatformReturnsImmediate(t *testing.T) {
 	store := newMemoryStore()
 	registry := settings.New(store, nil)

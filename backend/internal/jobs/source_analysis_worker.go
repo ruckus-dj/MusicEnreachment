@@ -80,38 +80,70 @@ type SourceAnalysisWorker struct {
 }
 
 // sourceFileLimiter is shared by all River deliveries handled by this worker.
-// The limit is read before each admission attempt, so runtime setting changes
-// affect waiting files without imposing a process-wide hard-coded ceiling.
+// Refresh updates the persisted limit without canceling already-admitted work.
 type sourceFileLimiter struct {
-	mu      sync.Mutex
-	active  int
-	changed chan struct{}
+	mu         sync.Mutex
+	refreshMu  sync.Mutex
+	readLimit  func(context.Context) (int, error)
+	active     int
+	limit      int
+	generation uint64
+	changed    chan struct{}
 }
 
-func (limiter *sourceFileLimiter) acquire(ctx context.Context, getLimit func(context.Context) (int, error)) (func(), error) {
+func (limiter *sourceFileLimiter) Refresh(ctx context.Context) error {
+	limiter.refreshMu.Lock()
+	defer limiter.refreshMu.Unlock()
+
+	limiter.mu.Lock()
+	limiter.generation++
+	generation := limiter.generation
+	limiter.mu.Unlock()
+
+	limit := 4
+	var err error
+	if limiter.readLimit != nil {
+		limit, err = limiter.readLimit(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	if limit < 1 {
+		return fmt.Errorf("source file concurrency must be positive")
+	}
+
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if generation != limiter.generation {
+		return nil
+	}
+	if limiter.limit != limit {
+		limiter.limit = limit
+		limiter.signalLocked()
+	}
+	return nil
+}
+
+func (limiter *sourceFileLimiter) acquire(ctx context.Context) (func(), error) {
 	for {
-		limit, err := getLimit(ctx)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if limit < 1 {
-			return nil, fmt.Errorf("source file concurrency must be positive")
-		}
 		limiter.mu.Lock()
-		if limiter.changed == nil {
-			limiter.changed = make(chan struct{})
-		}
-		if limiter.active < limit {
+		if limiter.active < limiter.currentLimitLocked() {
 			limiter.active++
 			limiter.mu.Unlock()
+			var once sync.Once
 			return func() {
-				limiter.mu.Lock()
-				limiter.active--
-				close(limiter.changed)
-				limiter.changed = make(chan struct{})
-				limiter.mu.Unlock()
+				once.Do(func() {
+					limiter.mu.Lock()
+					limiter.active--
+					limiter.signalLocked()
+					limiter.mu.Unlock()
+				})
 			}, nil
 		}
+		limiter.ensureChangedLocked()
 		changed := limiter.changed
 		limiter.mu.Unlock()
 		select {
@@ -122,9 +154,69 @@ func (limiter *sourceFileLimiter) acquire(ctx context.Context, getLimit func(con
 	}
 }
 
+func (limiter *sourceFileLimiter) tryAcquire() (func(), bool) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if limiter.active >= limiter.currentLimitLocked() {
+		return nil, false
+	}
+	limiter.active++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			limiter.mu.Lock()
+			limiter.active--
+			limiter.signalLocked()
+			limiter.mu.Unlock()
+		})
+	}, true
+}
+
+func (limiter *sourceFileLimiter) currentLimitLocked() int {
+	if limiter.limit < 1 {
+		return 4
+	}
+	return limiter.limit
+}
+
+func (limiter *sourceFileLimiter) ensureChangedLocked() {
+	if limiter.changed == nil {
+		limiter.changed = make(chan struct{})
+	}
+}
+
+func (limiter *sourceFileLimiter) signalLocked() {
+	limiter.ensureChangedLocked()
+	close(limiter.changed)
+	limiter.changed = make(chan struct{})
+}
+
+func (limiter *sourceFileLimiter) limitSnapshot() int {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	return limiter.currentLimitLocked()
+}
+
+func (limiter *sourceFileLimiter) changedSnapshot() <-chan struct{} {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	limiter.ensureChangedLocked()
+	return limiter.changed
+}
+
 func NewSourceAnalysisWorker(repository analysisWorkerRepository, operations *service.Operations, toolsDirectory service.ToolsDirectoryReader, runtimeSettings analysisWorkerSettings, platform settings.PlatformState) *SourceAnalysisWorker {
+	limiter := &sourceFileLimiter{readLimit: func(ctx context.Context) (int, error) {
+		if reader, ok := runtimeSettings.(sourceFileConcurrencyReader); ok {
+			limit, err := reader.GetSourceFileConcurrency(ctx)
+			if err != nil {
+				return 0, fmt.Errorf("read source file concurrency: %w", err)
+			}
+			return limit, nil
+		}
+		return 4, nil
+	}}
 	return &SourceAnalysisWorker{repository: repository, operations: operations, toolsDirectory: toolsDirectory,
-		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener(), fileLimiter: new(sourceFileLimiter)}
+		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener(), fileLimiter: limiter}
 }
 
 // WithPreparer makes the step engine replaceable in deterministic worker tests.
@@ -144,6 +236,12 @@ func (worker *SourceAnalysisWorker) WithInputPreparer(preparer service.SourceAna
 // client.
 func (worker *SourceAnalysisWorker) SetPendingDispatcher(dispatcher pendingDispatcher) {
 	worker.pendingDispatcher = dispatcher
+}
+
+// RefreshSourceFileConcurrency rereads the configured limit and wakes active
+// delivery schedulers so they can admit work using the updated capacity.
+func (worker *SourceAnalysisWorker) RefreshSourceFileConcurrency(ctx context.Context) error {
+	return worker.fileLimiter.Refresh(ctx)
 }
 
 func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[service.SourceAnalysisJobArgs]) error {
@@ -192,6 +290,19 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 		slog.Warn("source analysis cannot start", "operation", operation.ID, "cause", err)
 		return worker.terminalFailure(ctx, operation, job.ID, service.SourceAnalysisStageQueued, analysisSafeNotReady)
 	}
+	if err := worker.fileLimiter.Refresh(ctx); err != nil {
+		return fmt.Errorf("refresh source file concurrency: %w", err)
+	}
+	reservation, reserved := worker.fileLimiter.tryAcquire()
+	if !reserved {
+		return river.JobSnooze(time.Second)
+	}
+	reservationTransferred := false
+	defer func() {
+		if !reservationTransferred {
+			reservation()
+		}
+	}()
 	admittedOperation := operation
 	operation, selections, processingMode, err := worker.repository.StartNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, worker.platform.Platform.GOOS, worker.platform.Platform.GOARCH)
 	if err != nil {
@@ -220,51 +331,10 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	}
 	var singleFailure *sourceAnalysisStepFailure
 	groups := groupSourceAnalysisExecutions(executions)
-	type groupResult struct {
-		index int
-		err   error
-	}
-	results := make(chan groupResult, len(groups))
-	groupCtx, cancelGroups := context.WithCancel(ctx)
-	defer cancelGroups()
-	for index, group := range groups {
-		index, group := index, group
-		go func() {
-			getLimit := func(ctx context.Context) (int, error) {
-				if reader, ok := worker.runtimeSettings.(sourceFileConcurrencyReader); ok {
-					limit, readErr := reader.GetSourceFileConcurrency(ctx)
-					if readErr != nil {
-						return 0, fmt.Errorf("read source file concurrency: %w", readErr)
-					}
-					return limit, nil
-				}
-				return len(groups), nil
-			}
-			release, acquireErr := worker.fileLimiter.acquire(groupCtx, getLimit)
-			if acquireErr != nil {
-				results <- groupResult{index: index, err: acquireErr}
-				return
-			}
-			defer release()
-			results <- groupResult{index: index, err: worker.runWorkGroup(groupCtx, operation, snapshot, job.ID, group, processingMode)}
-		}()
-	}
-	groupErrors := make([]error, len(groups))
-	var fatalErr error
-	for range groups {
-		result := <-results
-		err := result.err
-		groupErrors[result.index] = err
-		if err != nil {
-			var stepFailure *sourceAnalysisStepFailure
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, persistence.ErrSourceAnalysisStale) || !errors.As(err, &stepFailure) {
-				if fatalErr == nil {
-					fatalErr = err
-					cancelGroups()
-				}
-			}
-		}
-	}
+	groupErrors, fatalErr := runSourceAnalysisGroups(ctx, worker.fileLimiter, reservation, len(groups), func(groupCtx context.Context, index int) error {
+		return worker.runWorkGroup(groupCtx, operation, snapshot, job.ID, groups[index], processingMode)
+	})
+	reservationTransferred = true
 	// Every group has exited and released its limiter hold before delivery
 	// recovery can clear the durable work holds.
 	if fatalErr != nil {
@@ -299,6 +369,86 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	worker.operations.Notify(operation.ID)
 	worker.wakePending(ctx, operation)
 	return nil
+}
+
+// runSourceAnalysisGroups is a demand-driven scheduler. Only admitted groups
+// have goroutines; each group owns exactly one limiter permit until it exits.
+func runSourceAnalysisGroups(ctx context.Context, limiter *sourceFileLimiter, reservation func(), count int, run func(context.Context, int) error) ([]error, error) {
+	type groupResult struct {
+		index int
+		err   error
+	}
+	results := make(chan groupResult, count)
+	groupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make([]error, count)
+	firstReservation := reservation
+	next, active := 0, 0
+	var fatal error
+	for next < count || active > 0 {
+		if fatal != nil && active == 0 {
+			break
+		}
+		capacityChanged := limiter.changedSnapshot()
+		for fatal == nil && next < count {
+			release := firstReservation
+			if release != nil {
+				firstReservation = nil
+			} else {
+				var ok bool
+				release, ok = limiter.tryAcquire()
+				if !ok {
+					break
+				}
+			}
+			index := next
+			next++
+			active++
+			go func() {
+				// Release the permit before publishing the outcome so the
+				// scheduler never observes a completed group while its limiter
+				// hold is still active. The deferred release keeps the panic
+				// path leak-free and is idempotent through the limiter's
+				// sync.Once, so the explicit release is never double-counted.
+				defer release()
+				err := run(groupCtx, index)
+				release()
+				results <- groupResult{index: index, err: err}
+			}()
+		}
+		if active == 0 && next == count {
+			break
+		}
+		select {
+		case result := <-results:
+			active--
+			errs[result.index] = result.err
+			if result.err != nil {
+				var stepFailure *sourceAnalysisStepFailure
+				if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) || errors.Is(result.err, persistence.ErrSourceAnalysisStale) || !errors.As(result.err, &stepFailure) {
+					if fatal == nil {
+						fatal = result.err
+						cancel()
+					}
+				}
+			}
+		case <-capacityChanged:
+		case <-groupCtx.Done():
+			if fatal == nil {
+				fatal = groupCtx.Err()
+			}
+			cancel()
+			for active > 0 {
+				result := <-results
+				active--
+				errs[result.index] = result.err
+			}
+		}
+	}
+	if firstReservation != nil {
+		firstReservation()
+	}
+	return errs, fatal
 }
 
 func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, operation *persistence.Operation, delivery persistence.SourceAnalysisOperationDelivery) error {

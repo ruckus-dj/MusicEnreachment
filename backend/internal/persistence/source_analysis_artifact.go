@@ -42,6 +42,8 @@ type SourceAnalysisArtifact struct {
 	OwnerOperationAttempt int        `bun:"owner_operation_attempt"`
 	OwnerJobID            int64      `bun:"owner_job_id"`
 	State                 string     `bun:"state"`
+	RequestedSteps        []string   `bun:"requested_steps,array"`
+	RequestedStepsKnown   bool       `bun:"requested_steps_known"`
 	CleanupError          *string    `bun:"cleanup_error,nullzero"`
 	CleanupAt             *time.Time `bun:"cleanup_at,nullzero"`
 	CreatedAt             time.Time  `bun:"created_at,nullzero"`
@@ -110,6 +112,7 @@ func (repository *SourceAnalysisArtifactRepository) Acquire(ctx context.Context,
 			SourceSizeBytes:    work.SizeBytes, SourceMtime: work.Mtime,
 			OwnerOperationID: fence.OperationID, OwnerOperationAttempt: fence.OperationAttempt,
 			OwnerJobID: fence.JobID, State: SourceAnalysisArtifactAcquiring,
+			RequestedSteps: []string{}, RequestedStepsKnown: false,
 		}
 		if _, err := tx.NewInsert().Model(artifact).Exec(ctx); err != nil {
 			return fmt.Errorf("acquire source analysis artifact: insert ownership record: %w", err)

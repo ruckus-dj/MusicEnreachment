@@ -199,16 +199,36 @@ func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDi
 	if publicationFormat != "" {
 		format = &publicationFormat
 	}
-	return s.SaveRuntimeRequest(ctx, tools, output, format)
+	return s.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
+		ToolsDirectory: tools, OutputDirectory: output, PublicationFormat: format,
+	})
+}
+
+// RuntimeUpdateRequest is a presence-aware request to update runtime settings.
+// Nil fields are preserved; supplied values follow the same validation and
+// transaction path as setup runtime updates.
+type RuntimeUpdateRequest struct {
+	ToolsDirectory        *string
+	OutputDirectory       *string
+	PublicationFormat     *string
+	SourceFileConcurrency *int
 }
 
 // SaveRuntimeRequest preserves omitted values while treating an explicitly empty
 // output directory as an invalid request.
 func (s *SetupService) SaveRuntimeRequest(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat *string) error {
-	return s.saveRuntimeRequest(ctx, toolsDirectory, outputDirectory, publicationFormat)
+	return s.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
+		ToolsDirectory: toolsDirectory, OutputDirectory: outputDirectory, PublicationFormat: publicationFormat,
+	})
 }
 
-func (s *SetupService) saveRuntimeRequest(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat *string) error {
+// SaveRuntimeUpdate saves all supplied runtime values atomically.
+func (s *SetupService) SaveRuntimeUpdate(ctx context.Context, request RuntimeUpdateRequest) error {
+	return s.saveRuntimeRequest(ctx, request)
+}
+
+func (s *SetupService) saveRuntimeRequest(ctx context.Context, request RuntimeUpdateRequest) error {
+	toolsDirectory, outputDirectory, publicationFormat := request.ToolsDirectory, request.OutputDirectory, request.PublicationFormat
 	update := settings.RuntimeUpdate{}
 	currentTools, hasTools, err := s.registry.GetToolsDirectory(ctx)
 	if err != nil {
@@ -230,6 +250,7 @@ func (s *SetupService) saveRuntimeRequest(ctx context.Context, toolsDirectory, o
 	if publicationFormat != nil && *publicationFormat != "" {
 		update.PublicationFormat = publicationFormat
 	}
+	update.SourceFileConcurrency = request.SourceFileConcurrency
 	if toolsDirectory != nil {
 		if *toolsDirectory == "" {
 			return fmt.Errorf("tools directory is required")

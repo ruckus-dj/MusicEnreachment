@@ -147,6 +147,7 @@ func (fixture sourceApplicationFixture) mutateStatus(t *testing.T, method, path,
 type sourceCreateBody struct {
 	DisplayName    string `json:"display_name"`
 	ConfiguredPath string `json:"configured_path"`
+	ProcessingMode string `json:"processing_mode"`
 }
 
 type sourceDeleteBody struct {
@@ -172,7 +173,7 @@ func normalizedSourcePath(t *testing.T, path string) string {
 
 func (fixture sourceApplicationFixture) createRoot(t *testing.T, name, path string) api.SourceRootResponse {
 	t.Helper()
-	input, err := json.Marshal(sourceCreateBody{DisplayName: name, ConfiguredPath: path})
+	input, err := json.Marshal(sourceCreateBody{DisplayName: name, ConfiguredPath: path, ProcessingMode: "in_place"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestApplicationSourcesEndpointsRequireSetup(t *testing.T) {
 	id := uuid.NewString()
 	for _, request := range []struct{ method, path, body string }{
 		{http.MethodGet, "/sources", ""},
-		{http.MethodPost, "/sources", `{"display_name":"Music","configured_path":"/music"}`},
+		{http.MethodPost, "/sources", `{"display_name":"Music","configured_path":"/music","processing_mode":"in_place"}`},
 		{http.MethodGet, "/sources/" + id, ""},
 		{http.MethodPatch, "/sources/" + id, `{}`},
 		{http.MethodDelete, "/sources/" + id, `{"confirmed_path":"/music","confirmed_location_count":0}`},

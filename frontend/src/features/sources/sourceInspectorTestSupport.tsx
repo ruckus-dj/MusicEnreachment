@@ -24,6 +24,11 @@ export function detail(
     probe_status: "audio",
     matching_eligible: false,
     steps: [],
+    staged_artifact: {
+      state: "unknown",
+      requested_steps: [],
+      requested_steps_known: false,
+    },
     root: {
       enabled: true,
       stale: false,

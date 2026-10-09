@@ -26,6 +26,7 @@ type SourceRootResponse struct {
 	ID                   uuid.UUID  `json:"id"`
 	DisplayName          string     `json:"display_name"`
 	ConfiguredPath       string     `json:"configured_path"`
+	ProcessingMode       string     `json:"processing_mode" enum:"in_place,staged"`
 	Enabled              bool       `json:"enabled"`
 	Status               string     `json:"status" enum:"unknown,available,unavailable"`
 	SafeError            *string    `json:"safe_error,omitempty"`
@@ -53,6 +54,7 @@ type CreateSourceInput struct {
 type CreateSourceBody struct {
 	DisplayName    string `json:"display_name" minLength:"1" maxLength:"256"`
 	ConfiguredPath string `json:"configured_path" minLength:"1" maxLength:"4096"`
+	ProcessingMode string `json:"processing_mode" enum:"in_place,staged"`
 }
 
 type UpdateSourceInput struct {
@@ -66,6 +68,7 @@ type UpdateSourceInput struct {
 type UpdateSourceBody struct {
 	DisplayName    *string `json:"display_name,omitempty" minLength:"1" maxLength:"256"`
 	ConfiguredPath *string `json:"configured_path,omitempty" minLength:"1" maxLength:"4096"`
+	ProcessingMode *string `json:"processing_mode,omitempty" enum:"in_place,staged"`
 	Enabled        *bool   `json:"enabled,omitempty"`
 }
 
@@ -158,7 +161,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		if dependencies.SourceRoots == nil {
 			return nil, huma.Error503ServiceUnavailable("source service is unavailable")
 		}
-		root, err := dependencies.SourceRoots.Create(ctx, input.Body.DisplayName, input.Body.ConfiguredPath, service.SourceProcessingModeInPlace)
+		root, err := dependencies.SourceRoots.Create(ctx, input.Body.DisplayName, input.Body.ConfiguredPath, input.Body.ProcessingMode)
 		if err != nil {
 			return nil, huma.Error400BadRequest("source root could not be registered")
 		}
@@ -199,7 +202,8 @@ func registerSources(api huma.API, dependencies Dependencies) {
 			return nil, huma.Error503ServiceUnavailable("source service is unavailable")
 		}
 		edit := service.SourceRootEdit{
-			DisplayName: input.Body.DisplayName, ConfiguredPath: input.Body.ConfiguredPath, Enabled: input.Body.Enabled,
+			DisplayName: input.Body.DisplayName, ConfiguredPath: input.Body.ConfiguredPath,
+			ProcessingMode: input.Body.ProcessingMode, Enabled: input.Body.Enabled,
 		}
 		root, err := dependencies.SourceRoots.Edit(ctx, input.ID, edit)
 		if err != nil {
@@ -318,7 +322,8 @@ func registerSources(api huma.API, dependencies Dependencies) {
 func sourceRootResponse(root service.SourceRoot) SourceRootResponse {
 	return SourceRootResponse{
 		ID: root.ID, DisplayName: root.DisplayName, ConfiguredPath: root.ConfiguredPath,
-		Enabled: root.Enabled, Status: root.Status, SafeError: root.SafeError,
+		ProcessingMode: root.ProcessingMode,
+		Enabled:        root.Enabled, Status: root.Status, SafeError: root.SafeError,
 		InventoryPath: root.InventoryPath, Stale: root.Stale, ScanGeneration: root.ScanGeneration,
 		LastSuccessfulScanAt: root.LastSuccessfulScanAt, LocationCount: root.LocationCount,
 		CreatedAt: root.CreatedAt, UpdatedAt: root.UpdatedAt,

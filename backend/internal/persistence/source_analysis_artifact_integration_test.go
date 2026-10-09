@@ -44,6 +44,9 @@ func TestSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T
 	if err != nil {
 		t.Fatalf("acquire artifact: %v", err)
 	}
+	if !artifact.RequestedStepsKnown || len(artifact.RequestedSteps) != 1 || artifact.RequestedSteps[0] != string(persistence.SourceStepSHA256) {
+		t.Fatalf("acquired artifact intent = %v (known %t), want known sha256", artifact.RequestedSteps, artifact.RequestedStepsKnown)
+	}
 	if _, err := artifacts.Acquire(ctx, artifactID, fence); err != nil {
 		t.Fatalf("repeat artifact acquisition: %v", err)
 	}
@@ -108,7 +111,7 @@ func TestSourceAnalysisArtifactAcquireAndReadyFencingWithPostgreSQL(t *testing.T
 		t.Fatalf("retained artifacts = %+v, %v; want the canonical ready artifact", retained, err)
 	}
 	borrowed, err := artifacts.BindRetained(ctx, artifactID, fence)
-	if err != nil || borrowed == nil || borrowed.ID != artifactID {
+	if err != nil || borrowed == nil || borrowed.ID != artifactID || !borrowed.RequestedStepsKnown {
 		t.Fatalf("idempotently bind retained artifact = %+v, %v", borrowed, err)
 	}
 	if err := artifacts.ForgetUncreated(ctx, artifactID, fence); err == nil {
@@ -439,6 +442,110 @@ func TestSourceAnalysisArtifactSettlementKeepsCumulativeCopyForSingleStepRetryWi
 	}
 	if stored.State != persistence.SourceAnalysisArtifactReady {
 		t.Fatalf("completing all accumulated step requests automatically changed artifact to %q", stored.State)
+	}
+}
+
+func TestSourceAnalysisArtifactRetainedBindingsAccumulateCanonicalRequestedStepsWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fixture := newNormalizedWorkOperation(t, "/srv/artifact-requested-step-union", true,
+		[]persistence.SourceAnalysisStepInput{
+			{Step: persistence.SourceStepSHA256, State: "failed", SafeError: sourceAnalysisArtifactString("retry SHA")},
+			{Step: persistence.SourceStepProbe, State: "failed", SafeError: sourceAnalysisArtifactString("retry probe")},
+			{Step: persistence.SourceStepFingerprint, State: "failed", SafeError: sourceAnalysisArtifactString("retry fingerprint")},
+		})
+	ffmpegInstallationID := insertAnalysisInstallation(t, ctx, fixture.database, "artifact-requested-step-union")
+	fpcalcInstallation := insertAnalysisFPCalcFixture(t, ctx, fixture.database, "artifact-requested-step-union-fpcalc", "1.5.1")
+	probeTool := normalizedToolSelection(t, ctx, fixture.database, ffmpegInstallationID, "ffprobe")
+	fingerprintTool := normalizedToolSelection(t, ctx, fixture.database, fpcalcInstallation.ID, "fpcalc")
+	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_root SET processing_mode='staged' WHERE id=?`, fixture.root.ID); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := persistence.NewSourceAnalysisArtifactRepository(fixture.database)
+	var artifactID uuid.UUID
+	var creatorOperationID uuid.UUID
+	for index, step := range []persistence.SourceStepName{
+		persistence.SourceStepFingerprint,
+		persistence.SourceStepProbe,
+		persistence.SourceStepSHA256,
+	} {
+		target := fixture.work.ID
+		stepValue := string(step)
+		var selectedTools []persistence.SourceAnalysisToolSelection
+		switch step {
+		case persistence.SourceStepProbe:
+			selectedTools = []persistence.SourceAnalysisToolSelection{probeTool}
+		case persistence.SourceStepFingerprint:
+			selectedTools = []persistence.SourceAnalysisToolSelection{fingerprintTool}
+		}
+		operation := normalizedOperation(t, fixture.root, fixture.location, fixture.work,
+			persistence.SourceAnalysisModeSingleStep, &target, &stepValue, true, false, selectedTools)
+		if err := fixture.admit(t, ctx, operation); err != nil {
+			t.Fatalf("admit %s retry: %v", step, err)
+		}
+		if _, err := fixture.database.ExecContext(ctx, `UPDATE operation SET state='running',stage='analysis',started_at=now() WHERE id=?`, operation.ID); err != nil {
+			t.Fatal(err)
+		}
+		fence := persistence.SourceAnalysisArtifactFence{WorkID: fixture.work.ID, OperationID: operation.ID,
+			OperationAttempt: operation.Attempt, JobID: *operation.RiverJobID}
+		insertWorkExecution(t, ctx, fixture, fence, "staged")
+		if _, err := fixture.repository.ClaimSourceAnalysisStep(ctx, persistence.SourceStepClaim{
+			WorkID: fence.WorkID, OperationID: fence.OperationID, OperationAttempt: fence.OperationAttempt,
+			JobID: fence.JobID, Step: step,
+		}); err != nil {
+			t.Fatalf("claim %s retry: %v", step, err)
+		}
+
+		if index == 0 {
+			artifactID = uuid.New()
+			creatorOperationID = operation.ID
+			artifact, err := artifacts.Acquire(ctx, artifactID, fence)
+			if err != nil {
+				t.Fatalf("acquire staged artifact for %s: %v", step, err)
+			}
+			if _, err := artifacts.MarkReady(ctx, artifactID, fence, artifact.SourceSizeBytes); err != nil {
+				t.Fatalf("mark artifact ready: %v", err)
+			}
+		} else {
+			binding, err := artifacts.GetBinding(ctx, fixture.work.ID)
+			if err != nil || binding == nil || binding.ID != artifactID {
+				t.Fatalf("retained binding before %s = %+v, %v", step, binding, err)
+			}
+			retained, err := artifacts.ListRetained(ctx, fixture.work.ID)
+			if err != nil || len(retained) != 1 || retained[0].ID != artifactID {
+				t.Fatalf("retained artifacts before %s = %+v, %v", step, retained, err)
+			}
+			bound, err := artifacts.BindRetained(ctx, artifactID, fence)
+			if err != nil || bound == nil || bound.ID != artifactID || !bound.RequestedStepsKnown {
+				t.Fatalf("bind retained artifact for %s = %+v, %v", step, bound, err)
+			}
+		}
+		if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID,
+			persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: fence.JobID},
+			"failed", "retryable", "Fixture retry remains incomplete."); err != nil {
+			t.Fatalf("settle %s retry: %v", step, err)
+		}
+	}
+
+	var stored persistence.SourceAnalysisArtifact
+	if err := fixture.database.NewSelect().Model(&stored).Where("id=?", artifactID).Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sha256", "probe", "fingerprint"}
+	if !stored.RequestedStepsKnown || strings.Join(stored.RequestedSteps, ",") != strings.Join(want, ",") {
+		t.Fatalf("retained artifact steps = %v (known %t), want canonical %v", stored.RequestedSteps, stored.RequestedStepsKnown, want)
+	}
+	if stored.OwnerOperationID != creatorOperationID || stored.State != persistence.SourceAnalysisArtifactReady {
+		t.Fatalf("retained artifact ownership/state = %s/%s; want original owner %s and ready state", stored.OwnerOperationID, stored.State, creatorOperationID)
+	}
+	var binding struct {
+		RequestedSteps []string `bun:"requested_steps,array"`
+	}
+	if err := fixture.database.NewRaw(`SELECT requested_steps FROM source_analysis_work_artifact_binding WHERE work_id=?`, fixture.work.ID).Scan(ctx, &binding); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(binding.RequestedSteps, ",") != strings.Join(want, ",") {
+		t.Fatalf("retained binding steps = %v, want %v", binding.RequestedSteps, want)
 	}
 }
 

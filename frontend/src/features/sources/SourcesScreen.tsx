@@ -102,6 +102,9 @@ function SourceListScreen() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
+  const [processingMode, setProcessingMode] = useState<
+    "" | "in_place" | "staged"
+  >("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
@@ -137,8 +140,10 @@ function SourceListScreen() {
   }, [formError]);
 
   async function register() {
-    if (!name.trim() || !path.trim()) {
-      setFormError("Укажите имя каталога и абсолютный путь на сервере.");
+    if (!name.trim() || !path.trim() || !processingMode) {
+      setFormError(
+        "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
+      );
       return;
     }
     setBusy(true);
@@ -148,12 +153,14 @@ function SourceListScreen() {
       const response = await createSource({
         display_name: name.trim(),
         configured_path: path.trim(),
+        processing_mode: processingMode,
       });
       if (response.status !== 200) throw sourceFailure("create", response);
       const registered = response.data;
       setCreating(false);
       setName("");
       setPath("");
+      setProcessingMode("");
       setNotice(`Каталог «${registered.display_name}» зарегистрирован.`);
       await load();
       listHeading.current?.focus();
@@ -169,6 +176,7 @@ function SourceListScreen() {
     setFormError("");
     setName("");
     setPath("");
+    setProcessingMode("");
   }
 
   return (
@@ -220,6 +228,22 @@ function SourceListScreen() {
                   value={path}
                   onChange={(event) => setPath(event.target.value)}
                 />
+              </label>
+              <label>
+                Режим обработки
+                <select
+                  required
+                  value={processingMode}
+                  onChange={(event) =>
+                    setProcessingMode(
+                      event.target.value as typeof processingMode,
+                    )
+                  }
+                >
+                  <option value="">Выберите режим</option>
+                  <option value="in_place">in_place</option>
+                  <option value="staged">staged</option>
+                </select>
               </label>
               <p className="sources-help">
                 Путь принадлежит серверу, а не этому компьютеру. MeloTrove

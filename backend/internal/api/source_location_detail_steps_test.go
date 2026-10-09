@@ -77,4 +77,61 @@ func TestSourceLocationDetailResponseDoesNotInventStepsWithoutWork(t *testing.T)
 	}
 }
 
+func TestSourceLocationDetailResponseProjectsStagedArtifactAndExplicitAbsence(t *testing.T) {
+	artifactID, creatorID, borrowerID := uuid.New(), uuid.New(), uuid.New()
+	safeError := "cleanup could not be completed"
+	response, err := sourceLocationDetailResponse(service.SourceLocationDetail{
+		RootID: uuid.New(), LocationID: uuid.New(),
+		StagedArtifact: service.SourceStagedArtifactDetail{
+			ID: &artifactID, State: "cleanup_failed", RequestedSteps: []string{"sha256", "fingerprint"}, RequestedStepsKnown: true,
+			CreatorOperationID: &creatorID, BorrowerOperationID: &borrowerID,
+			SafeError:          &safeError,
+			RelativeOutputPath: stringPointer("analysis/staging/root/work/artifact"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("present staged artifact: %v", err)
+	}
+	artifact := response.StagedArtifact
+	if artifact.ArtifactID == nil || *artifact.ArtifactID != artifactID || artifact.State != "cleanup_failed" || len(artifact.RequestedSteps) != 2 || !artifact.RequestedStepsKnown || artifact.CreatorOperationID == nil || *artifact.CreatorOperationID != creatorID || artifact.BorrowerOperationID == nil || *artifact.BorrowerOperationID != borrowerID || artifact.SafeError == nil || *artifact.SafeError != safeError {
+		t.Fatalf("staged artifact response = %#v", artifact)
+	}
+	if artifact.RelativeOutputPath == nil || *artifact.RelativeOutputPath != "analysis/staging/root/work/artifact" {
+		t.Fatalf("relative output path = %#v", artifact.RelativeOutputPath)
+	}
+
+	withoutArtifact, err := sourceLocationDetailResponse(service.SourceLocationDetail{
+		RootID: uuid.New(), LocationID: uuid.New(),
+		StagedArtifact: service.SourceStagedArtifactDetail{State: "unknown", RequestedSteps: []string{}},
+	})
+	if err != nil {
+		t.Fatalf("present absent artifact: %v", err)
+	}
+	absent := withoutArtifact.StagedArtifact
+	if absent.State != "unknown" || absent.ArtifactID != nil || absent.CreatorOperationID != nil || absent.BorrowerOperationID != nil || absent.SafeError != nil || absent.RelativeOutputPath != nil || len(absent.RequestedSteps) != 0 || absent.RequestedStepsKnown {
+		t.Fatalf("absent artifact was invented: %#v", absent)
+	}
+	encoded, err := json.Marshal(withoutArtifact)
+	if err != nil {
+		t.Fatalf("encode absent artifact: %v", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatalf("decode absent artifact JSON: %v", err)
+	}
+	if string(body["staged_artifact"]) == "null" || string(body["staged_artifact"]) == "" {
+		t.Fatalf("staged_artifact = %s, want the explicit unknown object", body["staged_artifact"])
+	}
+	var stagedArtifact struct {
+		State               string `json:"state"`
+		RequestedStepsKnown bool   `json:"requested_steps_known"`
+	}
+	if err := json.Unmarshal(body["staged_artifact"], &stagedArtifact); err != nil {
+		t.Fatalf("decode staged artifact JSON: %v", err)
+	}
+	if stagedArtifact.State != "unknown" || stagedArtifact.RequestedStepsKnown {
+		t.Fatalf("staged_artifact = %#v, want unknown with unknown requested steps", stagedArtifact)
+	}
+}
+
 func stringPointer(value string) *string { return &value }

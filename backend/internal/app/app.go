@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,6 +40,21 @@ type operationRepository interface {
 
 type riverClientSlot struct {
 	persistence.RiverInserter
+}
+
+type analysisConsumerHandle struct {
+	client       *river.Client[*sql.Tx]
+	listenerPool interface{ Close() }
+	closeOnce    sync.Once
+}
+
+func (consumer *analysisConsumerHandle) Stop(ctx context.Context) error {
+	err := consumer.client.Stop(ctx)
+	if err == nil {
+		<-consumer.client.Stopped()
+		consumer.closeOnce.Do(consumer.listenerPool.Close)
+	}
+	return err
 }
 
 // scanWorkerRepository joins the two repositories a scan worker reads: the
@@ -167,11 +183,7 @@ func Run(ctx context.Context, config Config) error {
 	analysisWorker.SetPendingDispatcher(sourceAnalysis)
 	artifactCleanupWorker := jobs.NewSourceAnalysisArtifactCleanupWorker(setupManagerRepository, operationService, artifactCleanup)
 
-	sourceFileConcurrency, err := registry.GetSourceFileConcurrency(ctx)
-	if err != nil {
-		return fmt.Errorf("read source file concurrency: %w", err)
-	}
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, func(workers *river.Workers) {
+	registerWorkers := func(workers *river.Workers) {
 		if !platform.Diagnostic && platform.Platform.Supported() {
 			river.AddWorker(workers, installWorker)
 		}
@@ -184,7 +196,11 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, analysisWorker)
 		river.AddWorker(workers, artifactCleanupWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
-	}, sourceFileConcurrency, jobs.NewCleanupPeriodicJob())
+	}
+	// Keep exactly one base analysis slot on the main client. Additional River
+	// clients are provisioned only for actual queued/running demand.
+	primaryAnalysisCapacity := 1
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob())
 	if err != nil {
 		return err
 	}
@@ -207,6 +223,78 @@ func Run(ctx context.Context, config Config) error {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = riverClient.Stop(shutdown)
+	}()
+	consumerLifetimeContext, cancelConsumerLifetime := context.WithCancel(ctx)
+	defer cancelConsumerLifetime()
+	consumerPool, err := jobs.NewAnalysisConsumerPool(primaryAnalysisCapacity, func(startCtx context.Context, capacity int) (jobs.AnalysisConsumer, error) {
+		// Consumer clients live for the application lifetime, not for the
+		// controller reconciliation that happened to create them.
+		client, listenerPool, startErr := jobs.StartAnalysisConsumerWithLifetime(startCtx, consumerLifetimeContext, config.DatabaseURL, sqldb, registerWorkers, capacity)
+		if startErr != nil {
+			return nil, startErr
+		}
+		return &analysisConsumerHandle{client: client, listenerPool: listenerPool}, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := consumerPool.Stop(shutdown); err != nil {
+			logger.Warn("stop additional River analysis consumers", "error", err)
+		}
+	}()
+	registry.WithConcurrencyObserver(func() {
+		if err := analysisWorker.RefreshSourceFileConcurrency(ctx); err != nil {
+			logger.Warn("refresh source file concurrency after settings update", "error", err)
+		}
+		consumerPool.Wake()
+	})
+	consumerContext, stopConsumerMonitor := context.WithCancel(ctx)
+	consumerMonitorDone := make(chan struct{})
+	defer func() {
+		stopConsumerMonitor()
+		<-consumerMonitorDone
+	}()
+	consumerPool.Wake()
+	go func() {
+		defer close(consumerMonitorDone)
+		// This timer reconciles queue demand as jobs arrive. Settings changes use
+		// the post-commit observer for immediate wakeups rather than polling.
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-consumerContext.Done():
+				return
+			case <-consumerPool.Wakeups():
+			case <-ticker.C:
+			}
+			generation := consumerPool.Generation()
+			controllerContext, cancelController := context.WithCancel(consumerContext)
+			if refreshErr := analysisWorker.RefreshSourceFileConcurrency(controllerContext); refreshErr != nil {
+				cancelController()
+				logger.Warn("refresh source file concurrency for River consumers", "error", refreshErr)
+				continue
+			}
+			limit, readErr := registry.GetSourceFileConcurrency(controllerContext)
+			if readErr != nil {
+				cancelController()
+				logger.Warn("read source file concurrency for River consumers", "error", readErr)
+				continue
+			}
+			demand, readErr := jobs.AnalysisQueueDemand(controllerContext, riverClient)
+			if readErr != nil {
+				cancelController()
+				logger.Warn("read source analysis queue demand", "error", readErr)
+				continue
+			}
+			if reconcileErr := consumerPool.SetDemandForGeneration(controllerContext, generation, limit, demand); reconcileErr != nil {
+				logger.Warn("reconcile River analysis consumers", "error", reconcileErr)
+			}
+			cancelController()
+		}
 	}()
 	toolCatalog := service.NewCatalogService(catalog, tools.Platform{
 		GOOS: platform.Platform.GOOS, GOARCH: platform.Platform.GOARCH,

@@ -97,6 +97,12 @@ func (repository *sourceAPIRepository) UpdateSourceRoot(_ context.Context, root 
 	}
 	for index, stored := range repository.roots {
 		if stored.ID == root.ID {
+			// The production repository treats an empty processing mode as
+			// "leave it unchanged"; mirror that here so an edit that omits the
+			// mode keeps the stored one instead of clearing it.
+			if root.ProcessingMode == "" {
+				root.ProcessingMode = stored.ProcessingMode
+			}
 			repository.roots[index] = root
 			return nil
 		}
@@ -281,7 +287,7 @@ func sourceStringPointer(value string) *string { return &value }
 
 func (fixture sourcesAPIFixture) createRoot(t *testing.T, name, path string) api.SourceRootResponse {
 	t.Helper()
-	body := fmt.Sprintf(`{"display_name":%q,"configured_path":%q}`, name, path)
+	body := fmt.Sprintf(`{"display_name":%q,"configured_path":%q,"processing_mode":"in_place"}`, name, path)
 	response := sourceRequest(t, fixture.handler, http.MethodPost, "/sources", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create a source root: status=%d %s", response.Code, response.Body.String())
@@ -303,7 +309,7 @@ func TestSourceRoutesAnswerWithoutDependencies(t *testing.T) {
 	id := uuid.NewString()
 	for _, request := range []struct{ method, path, body string }{
 		{http.MethodGet, "/sources", ""},
-		{http.MethodPost, "/sources", `{"display_name":"Music","configured_path":"/music"}`},
+		{http.MethodPost, "/sources", `{"display_name":"Music","configured_path":"/music","processing_mode":"in_place"}`},
 		{http.MethodGet, "/sources/" + id, ""},
 		{http.MethodPatch, "/sources/" + id, `{}`},
 		{http.MethodDelete, "/sources/" + id, `{"confirmed_path":"/music","confirmed_location_count":0}`},
@@ -323,7 +329,7 @@ func TestCreateSourceRootValidatesOperatorInput(t *testing.T) {
 	source := t.TempDir()
 
 	created := fixture.createRoot(t, "  Music  ", source)
-	if created.DisplayName != "Music" || created.ConfiguredPath != normalizedSourcePath(t, source) ||
+	if created.DisplayName != "Music" || created.ConfiguredPath != normalizedSourcePath(t, source) || created.ProcessingMode != "in_place" ||
 		!created.Enabled || created.InventoryPath != nil || created.Stale || created.LocationCount != 0 {
 		t.Fatalf("created root = %+v", created)
 	}
@@ -347,13 +353,15 @@ func TestCreateSourceRootValidatesOperatorInput(t *testing.T) {
 		body string
 		want int
 	}{
-		{"missing display name", fmt.Sprintf(`{"configured_path":%q}`, t.TempDir()), http.StatusUnprocessableEntity},
-		{"missing configured path", `{"display_name":"Music"}`, http.StatusUnprocessableEntity},
-		{"relative path", `{"display_name":"Music","configured_path":"music/relative"}`, http.StatusBadRequest},
-		{"absent directory", fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, filepath.Join(t.TempDir(), "absent")), http.StatusBadRequest},
-		{"file instead of directory", fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, regularFile), http.StatusBadRequest},
-		{"overlap with the managed output root", fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, managedOverlap), http.StatusBadRequest},
-		{"duplicate configured path", fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, source), http.StatusBadRequest},
+		{"missing display name", fmt.Sprintf(`{"configured_path":%q,"processing_mode":"in_place"}`, t.TempDir()), http.StatusUnprocessableEntity},
+		{"missing configured path", `{"display_name":"Music","processing_mode":"in_place"}`, http.StatusUnprocessableEntity},
+		{"missing processing mode", fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, t.TempDir()), http.StatusUnprocessableEntity},
+		{"invalid processing mode", fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"automatic"}`, t.TempDir()), http.StatusUnprocessableEntity},
+		{"relative path", `{"display_name":"Music","configured_path":"music/relative","processing_mode":"in_place"}`, http.StatusBadRequest},
+		{"absent directory", fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, filepath.Join(t.TempDir(), "absent")), http.StatusBadRequest},
+		{"file instead of directory", fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, regularFile), http.StatusBadRequest},
+		{"overlap with the managed output root", fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, managedOverlap), http.StatusBadRequest},
+		{"duplicate configured path", fmt.Sprintf(`{"display_name":"Other","configured_path":%q,"processing_mode":"in_place"}`, source), http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := sourceRequest(t, fixture.handler, http.MethodPost, "/sources", test.body)
@@ -365,6 +373,12 @@ func TestCreateSourceRootValidatesOperatorInput(t *testing.T) {
 	if len(fixture.repository.roots) != 1 {
 		t.Fatalf("a rejected create stored a root: %d roots", len(fixture.repository.roots))
 	}
+
+	stagedResponse := sourceRequest(t, fixture.handler, http.MethodPost, "/sources",
+		fmt.Sprintf(`{"display_name":"Staged","configured_path":%q,"processing_mode":"staged"}`, t.TempDir()))
+	if stagedResponse.Code != http.StatusOK || decodeSourceRoot(t, stagedResponse).ProcessingMode != "staged" {
+		t.Fatalf("staged create status=%d response=%s", stagedResponse.Code, stagedResponse.Body.String())
+	}
 }
 
 func TestSourceRootReadReportsAvailabilityAndStaleInventory(t *testing.T) {
@@ -373,7 +387,7 @@ func TestSourceRootReadReportsAvailabilityAndStaleInventory(t *testing.T) {
 	currentPath := normalizedSourcePath(t, t.TempDir())
 	lastSuccess := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, Enabled: true,
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Enabled: true,
 		Status: persistence.SourceRootStatusUnavailable, SafeError: sourceStringPointer("the source directory is not readable"),
 		InventoryPath: &previousPath, ScanGeneration: 7, LastSuccessfulScanAt: &lastSuccess,
 	}
@@ -394,7 +408,7 @@ func TestSourceRootReadReportsAvailabilityAndStaleInventory(t *testing.T) {
 	}
 	fetched := decodeSourceRoot(t, sourceRequest(t, fixture.handler, http.MethodGet, "/sources/"+root.ID.String(), ""))
 	for _, presented := range []api.SourceRootResponse{listed.Sources[0], fetched} {
-		if presented.ID != root.ID || presented.InventoryPath == nil || *presented.InventoryPath != previousPath {
+		if presented.ID != root.ID || presented.ProcessingMode != "staged" || presented.InventoryPath == nil || *presented.InventoryPath != previousPath {
 			t.Fatalf("presented root = %+v", presented)
 		}
 		if !presented.Stale || presented.ScanGeneration != 7 || presented.LocationCount != 1 {
@@ -424,8 +438,17 @@ func TestUpdateSourceRootAppliesEditsAndMapsConflicts(t *testing.T) {
 		t.Fatalf("update status=%d: %s", response.Code, response.Body.String())
 	}
 	updated := decodeSourceRoot(t, response)
-	if updated.DisplayName != "Renamed" || updated.Enabled || updated.ConfiguredPath != root.ConfiguredPath {
+	if updated.DisplayName != "Renamed" || updated.Enabled || updated.ConfiguredPath != root.ConfiguredPath || updated.ProcessingMode != "in_place" {
 		t.Fatalf("updated root = %+v", updated)
+	}
+
+	modeChange := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"processing_mode":"staged"}`)
+	if modeChange.Code != http.StatusOK || decodeSourceRoot(t, modeChange).ProcessingMode != "staged" {
+		t.Fatalf("processing mode update status=%d response=%s", modeChange.Code, modeChange.Body.String())
+	}
+	preserveMode := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"display_name":"Still staged"}`)
+	if preserveMode.Code != http.StatusOK || decodeSourceRoot(t, preserveMode).ProcessingMode != "staged" {
+		t.Fatalf("omitted processing mode status=%d response=%s", preserveMode.Code, preserveMode.Body.String())
 	}
 
 	invalid := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"display_name":""}`)
@@ -511,7 +534,7 @@ func TestDiagnosticPlatformBlocksRootMutationsAndScan(t *testing.T) {
 	source := t.TempDir()
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, source),
-		Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{
 		{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "a.flac", ProbeStatus: persistence.SourceProbeStatusAudio},
@@ -531,7 +554,7 @@ func TestDiagnosticPlatformBlocksRootMutationsAndScan(t *testing.T) {
 	}
 
 	mutations := []struct{ method, path, body string }{
-		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, t.TempDir())},
+		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q,"processing_mode":"in_place"}`, t.TempDir())},
 		{http.MethodPatch, "/sources/" + root.ID.String(), `{"display_name":"Renamed"}`},
 		{http.MethodDelete, "/sources/" + root.ID.String(),
 			fmt.Sprintf(`{"confirmed_path":%q,"confirmed_location_count":1}`, root.ConfiguredPath)},
@@ -563,7 +586,7 @@ func TestListSourceLocationsPaginatesThePublishedInventory(t *testing.T) {
 	fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, t.TempDir()),
-		Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
 	}
 	mtime := time.Date(2026, time.September, 2, 8, 30, 0, 0, time.UTC)
 	expected := make([]string, 0, 5)
@@ -625,7 +648,7 @@ func TestListSourceLocationsValidatesItsInputs(t *testing.T) {
 	fixture := newSourcesAPIFixture(t, supportedSourcePlatform(), true)
 	root := &persistence.SourceRoot{
 		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: normalizedSourcePath(t, t.TempDir()),
-		Enabled: true, Status: persistence.SourceRootStatusAvailable,
+		ProcessingMode: "in_place", Enabled: true, Status: persistence.SourceRootStatusAvailable,
 	}
 	fixture.seedRoot(t, root, []persistence.SourceLocation{
 		{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "a.flac", ProbeStatus: persistence.SourceProbeStatusNoAudio},
@@ -743,7 +766,7 @@ func TestFailedScanKeepsPublishedInventoryVisible(t *testing.T) {
 	currentPath := normalizedSourcePath(t, t.TempDir())
 	lastSuccess := time.Date(2026, time.September, 3, 9, 0, 0, 0, time.UTC)
 	root := &persistence.SourceRoot{
-		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, Enabled: true,
+		ID: uuid.New(), DisplayName: "Music", ConfiguredPath: currentPath, ProcessingMode: "staged", Enabled: true,
 		Status: persistence.SourceRootStatusAvailable, InventoryPath: &previousPath,
 		ScanGeneration: 3, LastSuccessfulScanAt: &lastSuccess,
 	}

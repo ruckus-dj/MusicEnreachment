@@ -20,6 +20,7 @@ const availableRoot: SourceRootResponse = {
   id: "root-refresh",
   display_name: "Архив",
   configured_path: "/srv/archive",
+  processing_mode: "in_place",
   inventory_path: "/srv/archive",
   enabled: true,
   status: "available",

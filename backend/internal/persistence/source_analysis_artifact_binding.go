@@ -107,10 +107,8 @@ func (repository *SourceAnalysisArtifactRepository) BindRetained(ctx context.Con
 		if binding.ArtifactID != artifactID {
 			return fmt.Errorf("bind retained source analysis artifact: artifact is not the current work binding")
 		}
-		if binding.BorrowerOperationID != nil && *binding.BorrowerOperationID == fence.OperationID && binding.BorrowerOperationAttempt != nil && *binding.BorrowerOperationAttempt == fence.OperationAttempt && binding.BorrowerJobID != nil && *binding.BorrowerJobID == fence.JobID {
-			return nil
-		}
-		if binding.BorrowerOperationID != nil {
+		sameBorrower := binding.BorrowerOperationID != nil && *binding.BorrowerOperationID == fence.OperationID && binding.BorrowerOperationAttempt != nil && *binding.BorrowerOperationAttempt == fence.OperationAttempt && binding.BorrowerJobID != nil && *binding.BorrowerJobID == fence.JobID
+		if binding.BorrowerOperationID != nil && !sameBorrower {
 			live, err := liveArtifactDelivery(ctx, tx, *binding.BorrowerOperationID, *binding.BorrowerOperationAttempt, *binding.BorrowerJobID)
 			if err != nil {
 				return err
@@ -123,7 +121,7 @@ func (repository *SourceAnalysisArtifactRepository) BindRetained(ctx context.Con
 		if err != nil {
 			return err
 		}
-		if liveCreator || artifact.State == SourceAnalysisArtifactAcquiring {
+		if !sameBorrower && (liveCreator || artifact.State == SourceAnalysisArtifactAcquiring) {
 			return fmt.Errorf("bind retained source analysis artifact: live creator owns the artifact")
 		}
 		steps, err := requestedStepsForOperation(ctx, tx, operation, work.ID)
@@ -131,10 +129,15 @@ func (repository *SourceAnalysisArtifactRepository) BindRetained(ctx context.Con
 			return err
 		}
 		binding.RequestedSteps = unionRequestedSteps(binding.RequestedSteps, steps)
+		if _, err := tx.NewRaw(`UPDATE source_analysis_artifact SET requested_steps=?, requested_steps_known=true WHERE id=?`, pgdialect.Array(binding.RequestedSteps), artifactID).Exec(ctx); err != nil {
+			return fmt.Errorf("bind retained source analysis artifact: update accumulated steps: %w", err)
+		}
 		if _, err := tx.NewRaw(`UPDATE source_analysis_work_artifact_binding SET borrower_operation_id=?, borrower_operation_attempt=?, borrower_job_id=?, requested_steps=?, updated_at=now() WHERE work_id=? AND artifact_id=?`,
 			fence.OperationID, fence.OperationAttempt, fence.JobID, pgdialect.Array(binding.RequestedSteps), work.ID, artifactID).Exec(ctx); err != nil {
 			return fmt.Errorf("bind retained source analysis artifact: update binding: %w", err)
 		}
+		artifact.RequestedSteps = binding.RequestedSteps
+		artifact.RequestedStepsKnown = true
 		return nil
 	})
 	if err != nil {
@@ -233,9 +236,14 @@ func bindAcquiredArtifact(ctx context.Context, tx bun.Tx, artifact *SourceAnalys
 		return fmt.Errorf("acquire source analysis artifact: another artifact or delivery is bound to work")
 	}
 	binding.RequestedSteps = unionRequestedSteps(binding.RequestedSteps, steps)
+	if _, err := tx.NewRaw(`UPDATE source_analysis_artifact SET requested_steps=?, requested_steps_known=true WHERE id=?`, pgdialect.Array(binding.RequestedSteps), artifact.ID).Exec(ctx); err != nil {
+		return fmt.Errorf("update acquired artifact accumulated steps: %w", err)
+	}
 	if _, err := tx.NewRaw(`UPDATE source_analysis_work_artifact_binding SET requested_steps=?, updated_at=now() WHERE work_id=? AND artifact_id=?`, pgdialect.Array(binding.RequestedSteps), fence.WorkID, artifact.ID).Exec(ctx); err != nil {
 		return fmt.Errorf("update acquired artifact obligations: %w", err)
 	}
+	artifact.RequestedSteps = binding.RequestedSteps
+	artifact.RequestedStepsKnown = true
 	return nil
 }
 
@@ -267,13 +275,17 @@ func requestedStepsForOperation(ctx context.Context, tx bun.Tx, operation *Opera
 
 func unionRequestedSteps(left, right []string) []string {
 	seen := make(map[string]bool, len(left)+len(right))
-	result := make([]string, 0, len(left)+len(right))
-	for _, step := range append(append([]string(nil), left...), right...) {
-		if step != "sha256" && step != "probe" && step != "fingerprint" || seen[step] {
-			continue
-		}
+	for _, step := range left {
 		seen[step] = true
-		result = append(result, step)
+	}
+	for _, step := range right {
+		seen[step] = true
+	}
+	result := make([]string, 0, len(seen))
+	for _, step := range []string{"sha256", "probe", "fingerprint"} {
+		if seen[step] {
+			result = append(result, step)
+		}
 	}
 	return result
 }

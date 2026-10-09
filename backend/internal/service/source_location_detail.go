@@ -64,6 +64,20 @@ type SourceAnalysisStepDetail struct {
 	Fingerprint *SourceFingerprintDetail
 }
 
+// SourceStagedArtifactDetail projects registry facts only. Preparation has no
+// artifact identity yet; an absent projection means no staged delivery or
+// artifact was established by the database snapshot.
+type SourceStagedArtifactDetail struct {
+	ID                  *uuid.UUID
+	State               string
+	RequestedSteps      []string
+	RequestedStepsKnown bool
+	CreatorOperationID  *uuid.UUID
+	BorrowerOperationID *uuid.UUID
+	SafeError           *string
+	RelativeOutputPath  *string
+}
+
 type SourceSHA256Result struct {
 	Value              string
 	Algorithm          *string
@@ -114,6 +128,7 @@ type SourceLocationDetail struct {
 	ActiveFPCalcVersion    *string
 	Steps                  []SourceAnalysisStepDetail
 	MatchingEligible       bool
+	StagedArtifact         SourceStagedArtifactDetail
 }
 
 // SourceLocationDetails reads one location of a root for the inspector. It never
@@ -152,6 +167,7 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 		LocationID: location.ID, RelativePath: location.RelativePath, SizeBytes: location.SizeBytes,
 		Mtime: location.Mtime, ProbeStatus: location.ProbeStatus, SafeError: location.SafeError,
 		MediaVariantID: location.MediaVariantID,
+		StagedArtifact: SourceStagedArtifactDetail{State: "unknown", RequestedSteps: []string{}},
 	}
 	if variant := snapshot.Variant; variant != nil {
 		selectedProbeVariantID := variant.ID
@@ -171,6 +187,22 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 	detail.ActiveFPCalcVersion = activeFPCalcVersion(snapshot.ActiveFPCalcInstallation)
 	detail.ActiveAnalysisOperationID = snapshot.ActiveOperationID
 	detail.MatchingEligible = snapshot.MatchingEligible
+	if artifact := snapshot.StagedArtifact; artifact != nil {
+		requestedSteps := append([]string{}, artifact.RequestedSteps...)
+		detail.StagedArtifact = SourceStagedArtifactDetail{
+			State: artifact.State, RequestedSteps: requestedSteps, RequestedStepsKnown: artifact.RequestedStepsKnown,
+			CreatorOperationID: artifact.CreatorOperationID, BorrowerOperationID: artifact.BorrowerOperationID,
+			SafeError: artifact.SafeError,
+		}
+		if artifact.ID != uuid.Nil {
+			id := artifact.ID
+			detail.StagedArtifact.ID = &id
+		}
+		if artifact.RelativeOutputPath != "" {
+			path := artifact.RelativeOutputPath
+			detail.StagedArtifact.RelativeOutputPath = &path
+		}
+	}
 	if len(snapshot.Steps) > 0 {
 		detail.Steps = make([]SourceAnalysisStepDetail, 0, len(snapshot.Steps))
 		for _, step := range snapshot.Steps {

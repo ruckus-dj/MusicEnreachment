@@ -65,6 +65,14 @@ export interface ConfigurationHealthResponse {
   problems: string[] | null;
 }
 
+export type CreateSourceBodyProcessingMode = typeof CreateSourceBodyProcessingMode[keyof typeof CreateSourceBodyProcessingMode];
+
+
+export const CreateSourceBodyProcessingMode = {
+  in_place: 'in_place',
+  staged: 'staged',
+} as const;
+
 export interface CreateSourceBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -78,6 +86,7 @@ export interface CreateSourceBody {
      * @maxLength 256
      */
   display_name: string;
+  processing_mode: CreateSourceBodyProcessingMode;
 }
 
 export interface DeleteSourceBody {
@@ -279,6 +288,7 @@ export interface RuntimeSettingsResponse {
   output_unicode_normalization?: string;
   publication_format: string;
   sha256_enabled: boolean;
+  source_file_concurrency: number;
   tools_directory: string;
 }
 
@@ -296,6 +306,8 @@ export interface SaveRuntimeBody {
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: SaveRuntimeBodyPublicationFormat;
+  /** @minimum 1 */
+  source_file_concurrency?: number;
   /** @maxLength 4096 */
   tools_directory?: string;
 }
@@ -456,6 +468,31 @@ export interface SourceLocationRootStateResponse {
   status: SourceLocationRootStateResponseStatus;
 }
 
+export type SourceStagedArtifactResponseState = typeof SourceStagedArtifactResponseState[keyof typeof SourceStagedArtifactResponseState];
+
+
+export const SourceStagedArtifactResponseState = {
+  unknown: 'unknown',
+  preparation: 'preparation',
+  acquiring: 'acquiring',
+  ready: 'ready',
+  retained: 'retained',
+  cleanup_eligible: 'cleanup_eligible',
+  cleanup_failed: 'cleanup_failed',
+} as const;
+
+export interface SourceStagedArtifactResponse {
+  artifact_id?: string;
+  borrower_operation_id?: string;
+  creator_operation_id?: string;
+  relative_output_path?: string;
+  /** @nullable */
+  requested_steps: string[] | null;
+  requested_steps_known: boolean;
+  safe_error?: string;
+  state: SourceStagedArtifactResponseState;
+}
+
 export interface SourceLocationDetailResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -474,6 +511,7 @@ export interface SourceLocationDetailResponse {
   safe_error?: string;
   selected_probe_variant_id?: string;
   size_bytes: number;
+  staged_artifact: SourceStagedArtifactResponse;
   /** @nullable */
   steps: SourceAnalysisStepResponse[] | null;
 }
@@ -506,6 +544,14 @@ export interface SourceLocationsBody {
   next_cursor?: string;
 }
 
+export type SourceRootResponseProcessingMode = typeof SourceRootResponseProcessingMode[keyof typeof SourceRootResponseProcessingMode];
+
+
+export const SourceRootResponseProcessingMode = {
+  in_place: 'in_place',
+  staged: 'staged',
+} as const;
+
 export type SourceRootResponseStatus = typeof SourceRootResponseStatus[keyof typeof SourceRootResponseStatus];
 
 
@@ -526,6 +572,7 @@ export interface SourceRootResponse {
   inventory_path?: string;
   last_successful_scan_at?: string;
   location_count: number;
+  processing_mode: SourceRootResponseProcessingMode;
   safe_error?: string;
   scan_generation: number;
   stale: boolean;
@@ -616,7 +663,17 @@ export interface UpdateSettingsBody {
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: UpdateSettingsBodyPublicationFormat;
+  /** @minimum 1 */
+  source_file_concurrency?: number;
 }
+
+export type UpdateSourceBodyProcessingMode = typeof UpdateSourceBodyProcessingMode[keyof typeof UpdateSourceBodyProcessingMode];
+
+
+export const UpdateSourceBodyProcessingMode = {
+  in_place: 'in_place',
+  staged: 'staged',
+} as const;
 
 export interface UpdateSourceBody {
   /** A URL to the JSON Schema for this object. */
@@ -632,6 +689,7 @@ export interface UpdateSourceBody {
      */
   display_name?: string;
   enabled?: boolean;
+  processing_mode?: UpdateSourceBodyProcessingMode;
 }
 
 export type ListOperationsParams = {

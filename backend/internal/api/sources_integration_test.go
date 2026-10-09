@@ -69,7 +69,7 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, source)
+	body := fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, source)
 	response := sourceRequest(t, handler, http.MethodPost, "/sources", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create source root status=%d: %s", response.Code, response.Body.String())
@@ -235,7 +235,7 @@ func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
 	})
 
 	source := t.TempDir()
-	body := fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, source)
+	body := fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, source)
 	response := sourceRequest(t, supported, http.MethodPost, "/sources", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create source root status=%d: %s", response.Code, response.Body.String())
@@ -269,7 +269,7 @@ func TestDiagnosticPlatformRootMutationsAgainstPostgreSQL(t *testing.T) {
 
 	confirmation := fmt.Sprintf(`{"confirmed_path":%q,"confirmed_location_count":1}`, root.ConfiguredPath)
 	for _, mutation := range []struct{ method, path, body string }{
-		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, t.TempDir())},
+		{http.MethodPost, "/sources", fmt.Sprintf(`{"display_name":"Other","configured_path":%q,"processing_mode":"in_place"}`, t.TempDir())},
 		{http.MethodPatch, "/sources/" + root.ID.String(), `{"display_name":"Renamed"}`},
 		{http.MethodDelete, "/sources/" + root.ID.String(), confirmation},
 		{http.MethodPost, "/sources/" + root.ID.String() + "/scan", ""},

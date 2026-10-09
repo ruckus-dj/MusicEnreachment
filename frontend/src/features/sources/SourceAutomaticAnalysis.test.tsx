@@ -53,6 +53,7 @@ function root(generation: number, count: number): SourceRootResponse {
     id: rootId,
     display_name: "Входящие",
     configured_path: "/srv/inbox",
+    processing_mode: "in_place",
     inventory_path: "/srv/inbox",
     enabled: true,
     status: "available",
@@ -110,6 +111,11 @@ function locationDetail(
     probe_status: "audio",
     matching_eligible: !active,
     active_fpcalc_version: "1.6.1",
+    staged_artifact: {
+      state: "unknown",
+      requested_steps: [],
+      requested_steps_known: false,
+    },
     ...(active ? { active_analysis_operation_id: analysisId } : {}),
     result: {
       ffprobe_version: "ffprobe 8.0",

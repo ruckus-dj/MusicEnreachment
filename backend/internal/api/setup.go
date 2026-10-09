@@ -29,6 +29,7 @@ type PlatformResponse struct {
 }
 
 type RuntimeSettingsResponse struct {
+	SourceFileConcurrency      int        `json:"source_file_concurrency"`
 	ToolsDirectory             string     `json:"tools_directory"`
 	OutputDirectory            string     `json:"output_directory"`
 	PublicationFormat          string     `json:"publication_format"`
@@ -54,9 +55,10 @@ type SaveRuntimeInput struct {
 }
 
 type SaveRuntimeBody struct {
-	ToolsDirectory    *string `json:"tools_directory,omitempty" maxLength:"4096"`
-	OutputDirectory   *string `json:"output_directory,omitempty" maxLength:"4096"`
-	PublicationFormat *string `json:"publication_format,omitempty" enum:"source,mka"`
+	ToolsDirectory        *string `json:"tools_directory,omitempty" maxLength:"4096"`
+	OutputDirectory       *string `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat     *string `json:"publication_format,omitempty" enum:"source,mka"`
+	SourceFileConcurrency *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
 }
 
 type CheckPathsInput struct {
@@ -121,7 +123,10 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := requireSupportedPlatform(ctx, setup); err != nil {
 			return nil, err
 		}
-		if err := setup.SaveRuntimeRequest(ctx, input.Body.ToolsDirectory, input.Body.OutputDirectory, input.Body.PublicationFormat); err != nil {
+		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
+			ToolsDirectory: input.Body.ToolsDirectory, OutputDirectory: input.Body.OutputDirectory,
+			PublicationFormat: input.Body.PublicationFormat, SourceFileConcurrency: input.Body.SourceFileConcurrency,
+		}); err != nil {
 			return nil, huma.Error400BadRequest("invalid runtime settings")
 		}
 		return nil, nil
@@ -265,6 +270,7 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				Reason: state.Platform.Reason,
 			},
 			Settings: RuntimeSettingsResponse{
+				SourceFileConcurrency:      state.Runtime.SourceFileConcurrency,
 				ToolsDirectory:             state.Runtime.ToolsDirectory,
 				OutputDirectory:            state.Runtime.OutputDirectory,
 				PublicationFormat:          state.Runtime.PublicationFormat,

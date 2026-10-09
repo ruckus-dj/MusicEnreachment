@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -23,6 +24,21 @@ type SourceLocationDetailSnapshot struct {
 	Variant                  *MediaVariant
 	ActiveOperationID        *uuid.UUID
 	ActiveFPCalcInstallation *ToolInstallation
+	StagedArtifact           *SourceLocationStagedArtifact
+}
+
+// SourceLocationStagedArtifact is a bounded projection of the single artifact
+// registered for the location's current analysis work. Paths remain relative to
+// the managed output root; no filesystem access is needed to read this record.
+type SourceLocationStagedArtifact struct {
+	ID                  uuid.UUID  `bun:"id,type:uuid"`
+	State               string     `bun:"state"`
+	RequestedSteps      []string   `bun:"requested_steps,array"`
+	RequestedStepsKnown bool       `bun:"requested_steps_known"`
+	CreatorOperationID  *uuid.UUID `bun:"creator_operation_id,type:uuid,nullzero"`
+	BorrowerOperationID *uuid.UUID `bun:"borrower_operation_id,type:uuid,nullzero"`
+	SafeError           *string    `bun:"safe_error,nullzero"`
+	RelativeOutputPath  string     `bun:"relative_output_path"`
 }
 
 // ReadSourceLocationDetail reads the root, owned location, saved result and
@@ -110,9 +126,12 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 				}
 			}
 		}
-		var activeID uuid.UUID
+		var activeOperation struct {
+			ID            uuid.UUID       `bun:"id,type:uuid"`
+			InputSnapshot json.RawMessage `bun:"input_snapshot"`
+		}
 		err := tx.NewRaw(
-			`SELECT o.id FROM operation o /* source_location_detail_active */
+			`SELECT o.id, o.input_snapshot FROM operation o /* source_location_detail_active */
 				 WHERE kind = ? AND state IN ('queued', 'running')
 				   AND target_source_root_id = ? AND (
 				     target_source_location_id = ? OR
@@ -123,10 +142,10 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 				 ORDER BY o.created_at DESC
 				 LIMIT 1`,
 			analysisSourceOperationKind, rootID, locationID, workID(work),
-		).Scan(ctx, &activeID)
+		).Scan(ctx, &activeOperation)
 		var active *uuid.UUID
 		if err == nil {
-			active = &activeID
+			active = &activeOperation.ID
 		} else if err != sql.ErrNoRows {
 			return fmt.Errorf("read source location detail active analysis: %w", err)
 		}
@@ -144,10 +163,15 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 		} else if err != sql.ErrNoRows {
 			return fmt.Errorf("read source location detail active fpcalc installation: %w", err)
 		}
+		stagedArtifact, err := readSourceLocationStagedArtifact(ctx, tx, work, active, activeOperation.InputSnapshot)
+		if err != nil {
+			return err
+		}
 		snapshot = &SourceLocationDetailSnapshot{
 			Root: root, Location: location, Work: work, Steps: steps, SHAVariant: shaVariant,
 			Fingerprint: fingerprint, MatchingEligible: matchingEligible,
 			Variant: variant, ActiveOperationID: active, ActiveFPCalcInstallation: activeFPCalcInstallation,
+			StagedArtifact: stagedArtifact,
 		}
 		return nil
 	})
@@ -155,6 +179,85 @@ func (repository *SourceInventoryRepository) ReadSourceLocationDetail(ctx contex
 		return nil, fmt.Errorf("read source location detail: %w", err)
 	}
 	return snapshot, nil
+}
+
+func readSourceLocationStagedArtifact(ctx context.Context, tx bun.Tx, work *SourceAnalysisWork, activeOperationID *uuid.UUID, activeInputSnapshot json.RawMessage) (*SourceLocationStagedArtifact, error) {
+	if work == nil {
+		return nil, nil
+	}
+	artifact := new(SourceLocationStagedArtifact)
+	err := tx.NewRaw(`SELECT artifact.id, artifact.state, artifact.requested_steps, artifact.requested_steps_known,
+		artifact.owner_operation_id AS creator_operation_id,
+		binding.borrower_operation_id, artifact.cleanup_error AS safe_error,
+		artifact.relative_output_path
+		FROM source_analysis_artifact artifact
+		LEFT JOIN source_analysis_work_artifact_binding binding
+		  ON binding.work_id=artifact.work_id AND binding.artifact_id=artifact.id
+		WHERE artifact.work_id=?
+		ORDER BY (binding.artifact_id IS NOT NULL) DESC, artifact.created_at DESC, artifact.id DESC LIMIT 1`, work.ID).Scan(ctx, artifact)
+	if err == nil {
+		if artifact.State == SourceAnalysisArtifactReady && artifact.BorrowerOperationID == nil {
+			artifact.State = "retained"
+		}
+		return artifact, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("read source location detail staged artifact: %w", err)
+	}
+	if activeOperationID == nil {
+		return nil, nil
+	}
+	var staged bool
+	if err := tx.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM source_analysis_work_execution execution
+		JOIN operation operation ON operation.id=execution.operation_id
+		WHERE execution.work_id=? AND execution.operation_id=?
+		  AND execution.operation_attempt=operation.attempt
+		  AND execution.job_id=operation.river_job_id
+		  AND execution.processing_mode='staged'
+		  AND operation.state IN ('queued','running')
+	)`, work.ID, *activeOperationID).Scan(ctx, &staged); err != nil {
+		return nil, fmt.Errorf("read source location detail staged preparation: %w", err)
+	}
+	if !staged {
+		return nil, nil
+	}
+	requestedSteps, requestedStepsKnown := stagedRequestedSteps(activeInputSnapshot, work.ID)
+	return &SourceLocationStagedArtifact{
+		State: "preparation", RequestedSteps: requestedSteps, RequestedStepsKnown: requestedStepsKnown,
+	}, nil
+}
+
+func stagedRequestedSteps(inputSnapshot json.RawMessage, workID uuid.UUID) ([]string, bool) {
+	var intent struct {
+		TargetWorkID  *uuid.UUID `json:"target_work_id"`
+		TargetStep    *string    `json:"target_step"`
+		SelectedSteps []struct {
+			WorkID uuid.UUID `json:"work_id"`
+			Step   string    `json:"step"`
+		} `json:"selected_steps"`
+	}
+	if len(inputSnapshot) == 0 || json.Unmarshal(inputSnapshot, &intent) != nil {
+		return []string{}, false
+	}
+	steps := make([]string, 0, len(intent.SelectedSteps)+1)
+	if intent.TargetWorkID != nil && *intent.TargetWorkID == workID && intent.TargetStep != nil {
+		steps = append(steps, *intent.TargetStep)
+	}
+	for _, selected := range intent.SelectedSteps {
+		if selected.WorkID == workID {
+			steps = append(steps, selected.Step)
+		}
+	}
+	if len(steps) == 0 {
+		return []string{}, false
+	}
+	for _, step := range steps {
+		if !validSourceStep(SourceStepName(step)) {
+			return []string{}, false
+		}
+	}
+	return unionRequestedSteps(nil, steps), true
 }
 
 func workID(work *SourceAnalysisWork) uuid.UUID {

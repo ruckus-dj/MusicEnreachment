@@ -64,6 +64,7 @@ function root(overrides: Partial<SourceRootResponse> = {}): SourceRootResponse {
     id: rootId,
     display_name: "Входящие",
     configured_path: "/srv/inbox",
+    processing_mode: "in_place",
     enabled: true,
     status: "available",
     stale: false,

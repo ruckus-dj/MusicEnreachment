@@ -34,6 +34,11 @@ func validateRuntimeSettingValues(values map[string]string) error {
 			if value != "source" && value != "mka" {
 				return fmt.Errorf("publication format must be 'source' or 'mka'")
 			}
+		case "source_file_concurrency":
+			concurrency, err := strconv.Atoi(value)
+			if err != nil || concurrency < 1 {
+				return fmt.Errorf("source file concurrency must be a positive integer")
+			}
 		default:
 			return fmt.Errorf("unsupported runtime setting %q", name)
 		}

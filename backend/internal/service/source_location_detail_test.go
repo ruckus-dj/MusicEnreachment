@@ -86,3 +86,75 @@ func TestSourceLocationDetailDoesNotInventActiveFPCalcVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceLocationDetailProjectsStagedArtifactWithoutInventingPreparationIdentity(t *testing.T) {
+	rootID, locationID := uuid.New(), uuid.New()
+	preparing, err := service.NewSourceLocationDetails(sourceLocationDetailRepositoryFixture{
+		snapshot: &persistence.SourceLocationDetailSnapshot{
+			Root:           &persistence.SourceRoot{ID: rootID},
+			Location:       &persistence.SourceLocation{ID: locationID, SourceRootID: rootID},
+			StagedArtifact: &persistence.SourceLocationStagedArtifact{State: "preparation", RequestedSteps: []string{"sha256"}, RequestedStepsKnown: true},
+		},
+	}).Read(context.Background(), rootID, locationID)
+	if err != nil {
+		t.Fatalf("read preparing location: %v", err)
+	}
+	if preparing.StagedArtifact.State != "preparation" || preparing.StagedArtifact.ID != nil || preparing.StagedArtifact.CreatorOperationID != nil || !preparing.StagedArtifact.RequestedStepsKnown || len(preparing.StagedArtifact.RequestedSteps) != 1 || preparing.StagedArtifact.RequestedSteps[0] != "sha256" {
+		t.Fatalf("preparation projection = %#v", preparing.StagedArtifact)
+	}
+
+	artifactID, creatorID, borrowerID := uuid.New(), uuid.New(), uuid.New()
+	safeError := "cleanup could not be completed"
+	projected, err := service.NewSourceLocationDetails(sourceLocationDetailRepositoryFixture{
+		snapshot: &persistence.SourceLocationDetailSnapshot{
+			Root:     &persistence.SourceRoot{ID: rootID},
+			Location: &persistence.SourceLocation{ID: locationID, SourceRootID: rootID},
+			StagedArtifact: &persistence.SourceLocationStagedArtifact{
+				ID: artifactID, State: "cleanup_failed", RequestedSteps: []string{"sha256", "probe"}, RequestedStepsKnown: true,
+				CreatorOperationID: &creatorID, BorrowerOperationID: &borrowerID, SafeError: &safeError,
+				RelativeOutputPath: "analysis/staging/root/work/artifact",
+			},
+		},
+	}).Read(context.Background(), rootID, locationID)
+	if err != nil {
+		t.Fatalf("read artifact location: %v", err)
+	}
+	artifact := projected.StagedArtifact
+	if artifact.ID == nil || *artifact.ID != artifactID || artifact.State != "cleanup_failed" || len(artifact.RequestedSteps) != 2 || !artifact.RequestedStepsKnown || artifact.CreatorOperationID == nil || *artifact.CreatorOperationID != creatorID || artifact.BorrowerOperationID == nil || *artifact.BorrowerOperationID != borrowerID || artifact.SafeError == nil || *artifact.SafeError != safeError {
+		t.Fatalf("artifact projection = %#v", artifact)
+	}
+}
+
+func TestSourceLocationDetailKeepsUnknownArtifactShapeAndProjectsRegisteredStates(t *testing.T) {
+	rootID, locationID := uuid.New(), uuid.New()
+	read := func(artifact *persistence.SourceLocationStagedArtifact) service.SourceLocationDetail {
+		t.Helper()
+		detail, err := service.NewSourceLocationDetails(sourceLocationDetailRepositoryFixture{
+			snapshot: &persistence.SourceLocationDetailSnapshot{
+				Root:           &persistence.SourceRoot{ID: rootID},
+				Location:       &persistence.SourceLocation{ID: locationID, SourceRootID: rootID},
+				StagedArtifact: artifact,
+			},
+		}).Read(context.Background(), rootID, locationID)
+		if err != nil {
+			t.Fatalf("read source location detail: %v", err)
+		}
+		return detail
+	}
+
+	unknown := read(nil).StagedArtifact
+	if unknown.State != "unknown" || len(unknown.RequestedSteps) != 0 || unknown.RequestedStepsKnown || unknown.ID != nil || unknown.CreatorOperationID != nil || unknown.BorrowerOperationID != nil || unknown.RelativeOutputPath != nil {
+		t.Fatalf("unknown staged artifact projection = %#v", unknown)
+	}
+
+	creatorID := uuid.New()
+	for _, state := range []string{"acquiring", "ready", "cleanup_eligible", "cleanup_failed"} {
+		artifactID := uuid.New()
+		projected := read(&persistence.SourceLocationStagedArtifact{
+			ID: artifactID, State: state, RequestedSteps: []string{"sha256"}, RequestedStepsKnown: true, CreatorOperationID: &creatorID,
+		}).StagedArtifact
+		if projected.ID == nil || *projected.ID != artifactID || projected.State != state || len(projected.RequestedSteps) != 1 || projected.RequestedSteps[0] != "sha256" || !projected.RequestedStepsKnown || projected.CreatorOperationID == nil || *projected.CreatorOperationID != creatorID {
+			t.Fatalf("%s staged artifact projection = %#v", state, projected)
+		}
+	}
+}

@@ -45,6 +45,21 @@ type SourceLocationDetailResponse struct {
 	ActiveFPCalcVersion       *string                      `json:"active_fpcalc_version,omitempty"`
 	Steps                     []SourceAnalysisStepResponse `json:"steps"`
 	MatchingEligible          bool                         `json:"matching_eligible"`
+	StagedArtifact            SourceStagedArtifactResponse `json:"staged_artifact"`
+}
+
+// SourceStagedArtifactResponse exposes the bounded registry state, never a
+// filesystem stat or an absolute path. The unknown state explicitly represents
+// a snapshot with no evidence of a staged artifact or staged preparation.
+type SourceStagedArtifactResponse struct {
+	ArtifactID          *uuid.UUID `json:"artifact_id,omitempty"`
+	State               string     `json:"state" enum:"unknown,preparation,acquiring,ready,retained,cleanup_eligible,cleanup_failed"`
+	RequestedSteps      []string   `json:"requested_steps"`
+	RequestedStepsKnown bool       `json:"requested_steps_known"`
+	CreatorOperationID  *uuid.UUID `json:"creator_operation_id,omitempty"`
+	BorrowerOperationID *uuid.UUID `json:"borrower_operation_id,omitempty"`
+	SafeError           *string    `json:"safe_error,omitempty"`
+	RelativeOutputPath  *string    `json:"relative_output_path,omitempty"`
 }
 
 type SourceAnalysisStepResponse struct {
@@ -168,6 +183,13 @@ func sourceLocationDetailResponse(detail service.SourceLocationDetail) (SourceLo
 			Status: detail.Root.Status, SafeError: detail.Root.SafeError, Enabled: detail.Root.Enabled,
 			Stale: detail.Root.Stale, InventoryPath: detail.Root.InventoryPath,
 		},
+	}
+	artifact := detail.StagedArtifact
+	response.StagedArtifact = SourceStagedArtifactResponse{
+		ArtifactID: artifact.ID, State: artifact.State,
+		RequestedSteps: append([]string{}, artifact.RequestedSteps...), RequestedStepsKnown: artifact.RequestedStepsKnown,
+		CreatorOperationID: artifact.CreatorOperationID, BorrowerOperationID: artifact.BorrowerOperationID,
+		SafeError: artifact.SafeError, RelativeOutputPath: artifact.RelativeOutputPath,
 	}
 	for _, step := range detail.Steps {
 		stepResponse := SourceAnalysisStepResponse{

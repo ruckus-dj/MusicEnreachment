@@ -75,7 +75,7 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	})
 
 	root := decodeSourceRoot(t, sourceRequest(t, handler, http.MethodPost, "/sources",
-		fmt.Sprintf(`{"display_name":"Music","configured_path":%q}`, t.TempDir())))
+		fmt.Sprintf(`{"display_name":"Music","configured_path":%q,"processing_mode":"in_place"}`, t.TempDir())))
 	location := persistence.SourceLocation{
 		ID: uuid.New(), SourceRootID: root.ID, RelativePath: "disc/track.flac", SizeBytes: 2048,
 		Mtime: time.Now().UTC().Truncate(time.Microsecond), LastSeenScanGeneration: 1,
@@ -583,7 +583,7 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	}
 
 	foreignRoot := decodeSourceRoot(t, sourceRequest(t, handler, http.MethodPost, "/sources",
-		fmt.Sprintf(`{"display_name":"Other","configured_path":%q}`, t.TempDir())))
+		fmt.Sprintf(`{"display_name":"Other","configured_path":%q,"processing_mode":"in_place"}`, t.TempDir())))
 	foreign := persistence.SourceLocation{
 		ID: uuid.New(), SourceRootID: foreignRoot.ID, RelativePath: "other.flac", SizeBytes: 64,
 		Mtime: time.Now().UTC(), LastSeenScanGeneration: 1, ProbeStatus: persistence.SourceProbeStatusAudio,

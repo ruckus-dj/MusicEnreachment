@@ -109,13 +109,15 @@ type RuntimeUpdate struct {
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization *string
 	PublicationFormat          *string
+	SourceFileConcurrency      *int
 }
 
 type Registry struct {
-	store           Store
-	level           *slog.LevelVar
-	now             func() time.Time
-	runtimeUpdateMu sync.Mutex
+	store               Store
+	level               *slog.LevelVar
+	now                 func() time.Time
+	runtimeUpdateMu     sync.Mutex
+	concurrencyObserver func()
 }
 
 func New(store Store, level *slog.LevelVar) *Registry {
@@ -310,12 +312,37 @@ func (r *Registry) UpdateRuntime(ctx context.Context, update RuntimeUpdate) erro
 		if update.ExpectedOutputDirectory != nil {
 			expectedOutput = *update.ExpectedOutputDirectory
 		}
-		return store.UpdateRuntime(ctx, expectedTools, expectedOutput, values)
+		err := store.UpdateRuntime(ctx, expectedTools, expectedOutput, values)
+		if err == nil {
+			r.notifyConcurrencyUpdate(values)
+		}
+		return err
 	}
 	if update.ToolsDirectory != nil || update.OutputDirectory != nil || update.OutputCaseSensitive != nil || update.OutputUnicodeNormalization != nil {
 		return fmt.Errorf("runtime path updates require transactional settings storage")
 	}
-	return r.store.SetMany(ctx, values)
+	err = r.store.SetMany(ctx, values)
+	if err == nil {
+		r.notifyConcurrencyUpdate(values)
+	}
+	return err
+}
+
+// WithConcurrencyObserver registers a non-blocking wake-up called after source
+// file concurrency is durably updated and before runtime updates are unlocked.
+// Observers should re-read the setting rather than treating the notification as
+// carrying a value.
+func (r *Registry) WithConcurrencyObserver(observer func()) *Registry {
+	r.runtimeUpdateMu.Lock()
+	defer r.runtimeUpdateMu.Unlock()
+	r.concurrencyObserver = observer
+	return r
+}
+
+func (r *Registry) notifyConcurrencyUpdate(values map[string]string) {
+	if _, changed := values[SourceFileConcurrencyKey]; changed && r.concurrencyObserver != nil {
+		r.concurrencyObserver()
+	}
 }
 
 // CoordinateRuntimeReset serializes a durable output reset with all runtime updates.
@@ -331,7 +358,11 @@ func (r *Registry) CoordinateRuntimeReset(ctx context.Context, expectedTools, ex
 	if run == nil {
 		return fmt.Errorf("runtime reset callback is required")
 	}
-	return run(expectedTools, expectedOutput, values)
+	err = run(expectedTools, expectedOutput, values)
+	if err == nil {
+		r.notifyConcurrencyUpdate(values)
+	}
+	return err
 }
 
 func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
@@ -378,6 +409,13 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 			return nil, fmt.Errorf("publication format: %w", err)
 		}
 		values[PublicationFormatKey] = value
+	}
+	if update.SourceFileConcurrency != nil {
+		value, err := serializeSetting(sourceFileConcurrencySetting, *update.SourceFileConcurrency)
+		if err != nil {
+			return nil, fmt.Errorf("source file concurrency: %w", err)
+		}
+		values[SourceFileConcurrencyKey] = value
 	}
 	return values, nil
 }
@@ -529,7 +567,13 @@ func (r *Registry) SetSourceFileConcurrency(ctx context.Context, concurrency int
 	if err != nil {
 		return err
 	}
-	return r.store.Set(ctx, SourceFileConcurrencyKey, value)
+	r.runtimeUpdateMu.Lock()
+	defer r.runtimeUpdateMu.Unlock()
+	if err := r.store.Set(ctx, SourceFileConcurrencyKey, value); err != nil {
+		return err
+	}
+	r.notifyConcurrencyUpdate(map[string]string{SourceFileConcurrencyKey: value})
+	return nil
 }
 
 func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
