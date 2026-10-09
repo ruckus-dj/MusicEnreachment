@@ -74,7 +74,7 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
 | I09 — output setting/reset and logical areas | Existing Setup/settings validation (`backend/internal/api/setup.go`, settings API/registry, `backend/internal/app/` composition), output coordinator, `deploy/compose/docker-compose.yml`. Mandatory output path; validate-only first. Under one global output/admission gate, re-read setting and running/claimed execution, reject running/claimed execution including the queued-to-running claim race, then transactionally update setting and invalidate all queued/task rows and old-output DB refs. Preserve local entities/source/inventory/analysis; leave old files untouched. | I01–I08 per data references. Reset cannot ship until the gate covers admissions and worker claim-to-running, and the filesystem journal/recovery sequence is implemented. Safe intermediate: reset unavailable until both are complete. | Admission/claim/reset races; failed validation no mutation; DB rollback preserves old setting/refs; crash at each mkdir/transaction boundary recovered from journal; all reset scope invalidated, old physical files untouched; `task verify`; CI deployment smoke. |
 | I10 — API/OpenAPI/generated client | Huma DTO/routes under `backend/internal/api/sources.go`, source analysis/settings APIs; run repository `task generate`; update React call sites only from generated contract. Endpoints/DTO resolved per contract. | I02–I09 API shapes stable; no direct generated-file edits. Safe intermediate: backend contract + generated artifacts synchronized. | `task generate` included in `task verify`; generated drift check; API error and transaction cases; GitHub CI. |
 | I11 — Sources/Settings UI | `frontend/src/features/sources/` (root create/edit, scan list, inspector, cleanup) and `frontend/src/features/settings/SettingsScreen.tsx`; reuse existing operation REST reread/SSE wake-up. Accessible loading/error/dirty/retry/reset flow. | I10. Safe intermediate: no fake mode default, no unsupported actions; current features remain usable. | RTL/accessibility coverage in full gate; review light/dark desktop + 375px action retention; browser CI/manual evidence as explicitly reported. |
-| I12 — integration acceptance | Integration fixtures for source tree, DB/River, real managed tools; deployment fixture; docs/status update and independent reviewer. No application behavior additions beyond approved contract. | I01–I11 complete. | `task verify`; GitHub native platform matrix, PostgreSQL/River integration and Compose deployment smoke; real runtime staged vs in-place; source bytes unchanged; artifact ownership/recovery evidence; independent acceptance report. |
+| I12 — integration acceptance | Integration fixtures for source tree, DB/River, real managed tools; isolated local Docker runtime; docs/status update and independent reviewer. No application behavior additions beyond approved contract. | I01–I11 complete. | `task verify`; GitHub native platform matrix, PostgreSQL/River integration; real runtime staged vs in-place; source bytes unchanged; artifact ownership/recovery evidence; independent acceptance report. Separate Compose/deployment smoke excluded by owner on 2026-10-09. |
 
 ## Progress
 
@@ -239,6 +239,24 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   `plan10-independent-review-2026-10-09.md`. The owner deferred CI HTTP smoke;
   native CI, real-media-tool runtime evidence and exhaustive crash acceptance
   are not claimed. Plan remains in `todo/` until remaining acceptance is resolved.
+
+### Последующее уточнение I12 (2026-10-09)
+
+- Полный local gate и pre-commit прошли на `1fcc18e`. Runtime выявил и
+  исправил отсутствующий scan-to-analysis handoff (`c27d11b`) и cleanup
+  delivery kind / Bun outcome mapping (`1fcc18e`); добавлены PostgreSQL regressions.
+- На образе с подтверждённой revision label `1fcc18e` новые roots в обоих
+  режимах прошли по одному scan и шесть автоматических анализов: все 18 шагов
+  SHA/ffprobe/fpcalc выполнены без cache reuse. Явный cleanup трёх новых staged
+  artifacts успешен; физические файлы отсутствуют, шесть невыбранных сохранены.
+  Все 12 before/after записей originals/copies совпадают по SHA, size, mtime_ns
+  и mode. Evidence и исторические ограничения — в
+  `docs/reports/plan10-real-tools-runtime-acceptance-2026-10-09.md`.
+- Два конкретных recovery gaps закрыты fixtures (`b6d432f`); отдельный kill
+  на каждой границе не является дополнительным требованием владельца.
+- Native CI для `9d4b1ca` failed: run `37897516267`. Причины fixture failures
+  исправлены в `f9e9dd8`; passing native matrix после push исправленной ревизии
+  ещё не подтверждена. Поэтому план пока остаётся в `todo/`.
 
 ## Cross-commit dependency notes
 
