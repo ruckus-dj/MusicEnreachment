@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +23,17 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	barrier := &liveCapacityPreparer{firstStarted: make(chan struct{}), secondStarted: make(chan struct{}), releaseFirst: make(chan struct{})}
+	barrier := &liveCapacityPreparer{
+		firstStarted:  make(chan struct{}),
+		secondStarted: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+		releaseSecond: make(chan struct{}),
+	}
+	// Registered immediately so any fatal path below unblocks both deliveries
+	// before the consumers are torn down.
+	defer barrier.releaseFirstBarrier()
+	defer barrier.releaseSecondBarrier()
+
 	fixture := newAnalysisDispatchFixtureWithPreparer(t, barrier)
 	if err := fixture.registry.SetSourceFileConcurrency(ctx, 1); err != nil {
 		t.Fatalf("set initial source file concurrency: %v", err)
@@ -39,7 +50,6 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	if err := fixture.registry.SetSourceFileConcurrency(ctx, 2); err != nil {
 		t.Fatalf("raise source file concurrency: %v", err)
 	}
-	second := enqueueLiveCapacityOperation(t, ctx, fixture, secondWork.ID)
 
 	secondClient, secondListener, err := StartAnalysisConsumer(ctx, fixture.databaseURL, fixture.database.DB, func(workers *river.Workers) {
 		river.AddWorker(workers, fixture.worker)
@@ -47,6 +57,9 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	if err != nil {
 		t.Fatalf("start supplemental analysis consumer: %v", err)
 	}
+	// Subscribe before the second operation is enqueued: River only delivers
+	// events observed after Subscribe, so enqueuing first could lose the
+	// completion signal.
 	secondEvents, cancelSecondEvents := secondClient.Subscribe(river.EventKindJobCompleted)
 	t.Cleanup(cancelSecondEvents)
 	t.Cleanup(func() {
@@ -54,12 +67,13 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 		secondListener.Close()
 	})
 
+	second := enqueueLiveCapacityOperation(t, ctx, fixture, secondWork.ID)
+
 	select {
 	case <-barrier.secondStarted:
 		// The second delivery entered actual source preparation while the first
 		// remained blocked, demonstrating that the live shared limit was refreshed.
 	case <-ctx.Done():
-		close(barrier.releaseFirst)
 		t.Fatalf("second operation did not start before the first was released: %v", ctx.Err())
 	}
 
@@ -68,7 +82,8 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 	if firstState.State != "running" || secondState.State != "running" {
 		t.Fatalf("operation states while both preparations overlap: first=%q second=%q, want both running", firstState.State, secondState.State)
 	}
-	close(barrier.releaseFirst)
+	barrier.releaseFirstBarrier()
+	barrier.releaseSecondBarrier()
 
 	awaitRiverCompletion(t, ctx, fixture.events, *first.RiverJobID)
 	awaitRiverCompletion(t, ctx, secondEvents, *second.RiverJobID)
@@ -80,10 +95,23 @@ func TestSourceAnalysisLiveCapacityUsesAdditionalConsumerPostgreSQL(t *testing.T
 }
 
 type liveCapacityPreparer struct {
-	calls         atomic.Int32
-	firstStarted  chan struct{}
-	secondStarted chan struct{}
-	releaseFirst  chan struct{}
+	calls             atomic.Int32
+	firstStarted      chan struct{}
+	secondStarted     chan struct{}
+	releaseFirst      chan struct{}
+	releaseSecond     chan struct{}
+	releaseFirstOnce  sync.Once
+	releaseSecondOnce sync.Once
+}
+
+// releaseFirstBarrier unblocks the first delivery exactly once. It is safe to
+// call from both the test body and a deferred fatal-path cleanup.
+func (preparer *liveCapacityPreparer) releaseFirstBarrier() {
+	preparer.releaseFirstOnce.Do(func() { close(preparer.releaseFirst) })
+}
+
+func (preparer *liveCapacityPreparer) releaseSecondBarrier() {
+	preparer.releaseSecondOnce.Do(func() { close(preparer.releaseSecond) })
 }
 
 func (preparer *liveCapacityPreparer) Prepare(ctx context.Context, request service.SourceAnalysisPrepareRequest) service.SourceAnalysisPreparation {
@@ -96,6 +124,10 @@ func (preparer *liveCapacityPreparer) Prepare(ctx context.Context, request servi
 		}
 	case 2:
 		close(preparer.secondStarted)
+		select {
+		case <-preparer.releaseSecond:
+		case <-ctx.Done():
+		}
 	}
 	return service.NewSourceAnalysisPreparer(service.SourceAnalysisPreparerConfig{}).Prepare(ctx, request)
 }

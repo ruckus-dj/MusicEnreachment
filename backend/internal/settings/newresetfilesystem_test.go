@@ -131,17 +131,36 @@ func TestResetFilesystemDoesNotRemoveDirectoryAfterIdentityReplacement(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
+	// Rename the original aside instead of removing it so its inode stays
+	// alive. Removing and immediately recreating the directory can reuse the
+	// same inode (ABA), which would let the replacement inherit the recorded
+	// identity and mask the swap.
+	backup := filepath.Join(root, "original-output")
+	if err := os.Rename(path, backup); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	original, err := os.Lstat(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(original, replacement) {
+		t.Fatal("replacement directory reused the original inode; identity check cannot fail closed")
 	}
 	if err := NewResetFilesystem().RollbackManifest(context.Background(), manifest); err == nil {
 		t.Fatal("expected replacement identity to fail closed")
 	}
 	if info, err := os.Stat(path); err != nil || !info.IsDir() {
 		t.Fatalf("replacement directory was removed: %v", err)
+	}
+	if info, err := os.Stat(backup); err != nil || !info.IsDir() {
+		t.Fatalf("original directory backup was not retained: %v", err)
 	}
 }
 

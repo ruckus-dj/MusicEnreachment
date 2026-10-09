@@ -122,9 +122,17 @@ func TestSetupMutationRoutesCloseAfterCompletion(t *testing.T) {
 }
 
 func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {
+	root := t.TempDir()
+	toolsDirectory := filepath.Join(root, "tools")
+	outputDirectory := filepath.Join(root, "output")
+	for _, directory := range []string{toolsDirectory, outputDirectory} {
+		if err := os.Mkdir(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	store := apiSettingsStore{
-		settings.ToolsDirectoryKey:    "/tools",
-		settings.OutputDirectoryKey:   "/output",
+		settings.ToolsDirectoryKey:    toolsDirectory,
+		settings.OutputDirectoryKey:   outputDirectory,
 		settings.PublicationFormatKey: "mka",
 	}
 	setup := service.NewSetup(store, settings.New(store, nil), settings.PlatformState{Platform: settings.Platform{GOOS: "linux", GOARCH: "amd64"}}, nil, nil)
@@ -144,7 +152,7 @@ func TestSaveRuntimeDistinguishesOmittedAndEmptyOutputDirectory(t *testing.T) {
 			if response.Code != test.want {
 				t.Fatalf("status=%d want=%d: %s", response.Code, test.want, response.Body.String())
 			}
-			if store[settings.OutputDirectoryKey] != "/output" {
+			if store[settings.OutputDirectoryKey] != outputDirectory {
 				t.Fatalf("output directory changed: %q", store[settings.OutputDirectoryKey])
 			}
 		})
