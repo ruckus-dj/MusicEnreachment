@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-aria-components";
-import type { SourceAnalysisStepResponse } from "../../api/generated/client.schemas";
+import type {
+  SourceAnalysisStepResponse,
+  SourceStagedArtifactResponse,
+} from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { SourceAnalysisSteps } from "./SourceAnalysisSteps";
 import { statusLabel } from "./sourcesApi";
@@ -138,8 +141,8 @@ export function SourceInspectorScreen({
                 <dd>{new Date(detail.mtime).toLocaleString()}</dd>
               </div>
               <div>
-                <dt>Режим источника</dt>
-                <dd>Только чтение · in-place</dd>
+                <dt>Воздействие анализа</dt>
+                <dd>Анализ не изменяет исходный файл</dd>
               </div>
               <div>
                 <dt>Доступность каталога</dt>
@@ -182,6 +185,7 @@ export function SourceInspectorScreen({
               </p>
             )}
           </section>
+          <StagedArtifactStatus artifact={detail.staged_artifact} />
           <SourceAnalysisSteps
             steps={steps}
             sha256={
@@ -216,6 +220,81 @@ export function SourceInspectorScreen({
             }}
           />
         </>
+      )}
+    </section>
+  );
+}
+
+function StagedArtifactStatus({
+  artifact,
+}: {
+  readonly artifact?: SourceStagedArtifactResponse;
+}) {
+  const stateLabels = {
+    unknown: "Неизвестно",
+    preparation: "Подготовка",
+    acquiring: "Получение артефакта",
+    ready: "Готов",
+    retained: "Сохранён",
+    cleanup_eligible: "Ожидает очистки",
+    cleanup_failed: "Ошибка очистки",
+  } as const;
+  // The current server always sends an explicit projection, but legacy or
+  // malformed payloads may omit it or leave fields out. Absent registry facts
+  // stay explicitly unknown instead of being cast into a shape the server did
+  // not send, and nullable requested_steps are read safely.
+  const state = artifact?.state ?? "unknown";
+  const stateLabel: string = stateLabels[state] ?? stateLabels.unknown;
+  const requestedSteps = artifact?.requested_steps ?? [];
+  const requestedStepsKnown = artifact?.requested_steps_known === true;
+  const reusedFromDifferentOperation =
+    !!artifact?.creator_operation_id &&
+    !!artifact?.borrower_operation_id &&
+    artifact.creator_operation_id !== artifact.borrower_operation_id;
+
+  return (
+    <section className="sources-panel" aria-labelledby="staged-artifact-title">
+      <h2 id="staged-artifact-title">Промежуточный артефакт анализа</h2>
+      <p>Состояние: {stateLabel}</p>
+      {state === "ready" && (
+        <p className="sources-note">
+          Артефакт зарегистрирован как готовый; это не подтверждает наличие
+          файла на диске.
+        </p>
+      )}
+      {state === "unknown" && (
+        <p className="sources-note">
+          Сведения о промежуточном артефакте неизвестны.
+        </p>
+      )}
+      {requestedStepsKnown ? (
+        <>
+          <p>
+            Запрошенные этапы:{" "}
+            {requestedSteps.length > 0 ? requestedSteps.join(", ") : "Нет"}
+          </p>
+          {requestedSteps.length === 0 && (
+            <p className="sources-note">
+              Пустой список запрошенных этапов не означает, что этапы завершены.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="sources-note">
+          История запрошенных этапов неизвестна; пустой список не означает, что
+          этапы завершены или не запрашивались.
+        </p>
+      )}
+      {reusedFromDifferentOperation && (
+        <p className="sources-note">
+          Промежуточный артефакт создан другой операцией и используется текущей
+          операцией.
+        </p>
+      )}
+      {state === "cleanup_failed" && artifact?.safe_error && (
+        <p role="alert">
+          Очистить промежуточный артефакт не удалось: {artifact.safe_error}
+        </p>
       )}
     </section>
   );

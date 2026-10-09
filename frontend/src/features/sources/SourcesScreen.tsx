@@ -5,9 +5,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { createSource, listSources } from "../../api/generated/client";
+import {
+  createSource,
+  listSources,
+  startSourceScan,
+} from "../../api/generated/client";
 import type { SourceRootResponse } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { SourceArtifactCleanupPanel } from "./SourceArtifactCleanupPanel";
 import { SourceDetailScreen } from "./SourceDetailScreen";
 import { SourceInspectorScreen } from "./SourceInspectorScreen";
 import {
@@ -109,6 +114,9 @@ function SourceListScreen() {
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
+  const [partialSuccess, setPartialSuccess] = useState("");
+  const [partialSourceId, setPartialSourceId] = useState("");
+  const registering = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
@@ -140,15 +148,19 @@ function SourceListScreen() {
   }, [formError]);
 
   async function register() {
+    if (registering.current) return;
     if (!name.trim() || !path.trim() || !processingMode) {
       setFormError(
         "Укажите имя каталога, абсолютный путь на сервере и режим обработки.",
       );
       return;
     }
+    registering.current = true;
     setBusy(true);
     setFormError("");
     setNotice("");
+    setPartialSuccess("");
+    setPartialSourceId("");
     try {
       const response = await createSource({
         display_name: name.trim(),
@@ -161,12 +173,32 @@ function SourceListScreen() {
       setName("");
       setPath("");
       setProcessingMode("");
-      setNotice(`Каталог «${registered.display_name}» зарегистрирован.`);
-      await load();
-      listHeading.current?.focus();
+      try {
+        // Registration is an explicit operator action that admits exactly one
+        // initial scan. The detail screen adopts this operation by discovery.
+        const scan = await startSourceScan(registered.id);
+        if (scan.status !== 200) {
+          setPartialSuccess(
+            `Каталог «${registered.display_name}» зарегистрирован, но запуск сканирования не принят сервером. Каталог сохранён: откройте его и запустите сканирование вручную.`,
+          );
+          setPartialSourceId(registered.id);
+          await load();
+          listHeading.current?.focus();
+          return;
+        }
+        window.location.hash = `/sources/${encodeURIComponent(registered.id)}`;
+      } catch {
+        setPartialSuccess(
+          `Каталог «${registered.display_name}» зарегистрирован, но запустить сканирование не удалось. Каталог сохранён: откройте его и запустите сканирование вручную.`,
+        );
+        setPartialSourceId(registered.id);
+        await load();
+        listHeading.current?.focus();
+      }
     } catch (reason) {
       setFormError(message(reason));
     } finally {
+      registering.current = false;
       setBusy(false);
     }
   }
@@ -174,6 +206,8 @@ function SourceListScreen() {
   function cancelCreate() {
     setCreating(false);
     setFormError("");
+    setPartialSuccess("");
+    setPartialSourceId("");
     setName("");
     setPath("");
     setProcessingMode("");
@@ -194,6 +228,18 @@ function SourceListScreen() {
       </p>
       {busy && sources && <p role="status">Выполняется запрос…</p>}
       {notice && <p role="status">{notice}</p>}
+      {partialSuccess && (
+        <div className="sources-partial-success" role="alert">
+          <p>{partialSuccess}</p>
+          <AppButton
+            onPress={() => {
+              window.location.hash = `/sources/${encodeURIComponent(partialSourceId)}`;
+            }}
+          >
+            Открыть каталог для ручного сканирования
+          </AppButton>
+        </div>
+      )}
       {error && (
         <>
           <p ref={alert} tabIndex={-1} role="alert">
@@ -232,6 +278,7 @@ function SourceListScreen() {
               <label>
                 Режим обработки
                 <select
+                  className="sources-select"
                   required
                   value={processingMode}
                   onChange={(event) =>
@@ -349,6 +396,7 @@ function SourceListScreen() {
               инвентарь: записи остаются от последнего успешного сканирования.
             </p>
           </section>
+          <SourceArtifactCleanupPanel />
         </>
       )}
     </section>

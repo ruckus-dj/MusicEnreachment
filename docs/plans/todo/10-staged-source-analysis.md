@@ -201,6 +201,21 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   `task verify` passed. Native platform CI and browser acceptance were not run;
   full UI behavior remains I11.
 
+- **I11 — UI implementation complete locally (2026-10-09):** explicit source
+  creation starts one operator-initiated scan and preserves registration when
+  scan admission fails. Public root-disable mutation and its UI control are
+  removed; historical flags remain read-compatible. Settings expose concurrency
+  and a separately confirmed output change, with independently acknowledged
+  output/format drafts. Sources mounts explicit, ID-specific staged cleanup;
+  immediate REST reads and monotonic snapshots preserve terminal per-item results
+  independently of SSE. Inspector lifecycle and unknown requested history remain
+  separate from successful analysis results. Acceptance regression uncovered and
+  fixed Bun omitting the requested processing mode on root insertion. Both modes
+  now have source-byte/hash/mtime invariance coverage through real filesystem,
+  PostgreSQL, and River orchestration with explicitly fake media executables.
+  `task verify` passed, including 241 frontend tests and builds. Browser visual
+  acceptance, real-media-tool evidence, and remaining I12 evidence are pending.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

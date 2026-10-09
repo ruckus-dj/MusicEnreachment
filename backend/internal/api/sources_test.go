@@ -433,13 +433,22 @@ func TestUpdateSourceRootAppliesEditsAndMapsConflicts(t *testing.T) {
 	root := fixture.createRoot(t, "Music", t.TempDir())
 
 	response := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(),
-		`{"display_name":"Renamed","enabled":false}`)
+		`{"display_name":"Renamed"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("update status=%d: %s", response.Code, response.Body.String())
 	}
 	updated := decodeSourceRoot(t, response)
-	if updated.DisplayName != "Renamed" || updated.Enabled || updated.ConfiguredPath != root.ConfiguredPath || updated.ProcessingMode != "in_place" {
+	if updated.DisplayName != "Renamed" || !updated.Enabled || updated.ConfiguredPath != root.ConfiguredPath || updated.ProcessingMode != "in_place" {
 		t.Fatalf("updated root = %+v", updated)
+	}
+
+	disabled := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"enabled":false}`)
+	if disabled.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("enabled field status=%d, want %d: %s", disabled.Code, http.StatusUnprocessableEntity, disabled.Body.String())
+	}
+	unchanged := decodeSourceRoot(t, sourceRequest(t, fixture.handler, http.MethodGet, "/sources/"+root.ID.String(), ""))
+	if !unchanged.Enabled || unchanged.DisplayName != "Renamed" {
+		t.Fatalf("root changed after rejected enabled field = %+v", unchanged)
 	}
 
 	modeChange := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"processing_mode":"staged"}`)
@@ -455,13 +464,13 @@ func TestUpdateSourceRootAppliesEditsAndMapsConflicts(t *testing.T) {
 	if invalid.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty display name status=%d, want 422: %s", invalid.Code, invalid.Body.String())
 	}
-	missing := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+uuid.NewString(), `{"enabled":true}`)
+	missing := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+uuid.NewString(), `{"display_name":"Missing"}`)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("unknown root update status=%d, want 404: %s", missing.Code, missing.Body.String())
 	}
 
 	fixture.repository.busy = true
-	busy := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"enabled":true}`)
+	busy := sourceRequest(t, fixture.handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"display_name":"Busy edit"}`)
 	if busy.Code != http.StatusConflict {
 		t.Fatalf("active scan update status=%d, want 409: %s", busy.Code, busy.Body.String())
 	}

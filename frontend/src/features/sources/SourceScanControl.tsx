@@ -19,7 +19,7 @@ function stageText(operation: OperationResponse): string {
   if (operation.state === "queued") return "Сканирование поставлено в очередь.";
   const stage = operation.stage.replace(/^retry:/, "");
   if (stage === "traversing")
-    return "Обход каталога: чтение дерева и проверка аудиопотока файлов.";
+    return "Обход каталога: перечисление файлов и чтение их метаданных.";
   if (stage === "applying")
     return "Применение результатов: подтверждённый инвентарь сохраняется.";
   return `Сканирование выполняется (этап сервера: ${stage}).`;
@@ -261,6 +261,7 @@ function SourceScanView({ root, onScanCompleted }: SourceScanControlProps) {
       {operation?.state === "succeeded" && (
         <p role="status">
           Сканирование завершено: инвентарь обновлён последним успешным обходом.
+          Это не означает завершение анализа аудиофайлов.
         </p>
       )}
       {operation?.state === "failed" && (

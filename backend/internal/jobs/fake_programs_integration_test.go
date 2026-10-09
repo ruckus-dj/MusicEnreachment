@@ -42,6 +42,7 @@ func cachedFakeProgram(name string) (string, error) {
 		testpostgres.AddCleanup(func() error { return os.RemoveAll(fakeProgramsDir) })
 		for _, program := range []struct{ name, packagePath string }{
 			{"analysisprobe", "./testdata/analysisprobe"},
+			{"analysisfpcalc", "./testdata/analysisfpcalc"},
 			{"scanningprobe", "./testdata/scanningprobe"},
 		} {
 			build := exec.Command("go", "build", "-o", filepath.Join(fakeProgramsDir, program.name), program.packagePath)

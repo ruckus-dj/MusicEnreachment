@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   SourceLocationResponse,
   SourceRootResponse,
@@ -128,6 +128,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   window.location.hash = "";
+  vi.unstubAllGlobals();
 });
 
 async function renderDetail(
@@ -269,6 +270,12 @@ describe("source root list", () => {
 
 describe("source root creation", () => {
   it("registers a server path and reloads the list", async () => {
+    vi.stubGlobal(
+      "EventSource",
+      class extends EventTarget {
+        close() {}
+      },
+    );
     const registered = root({
       id: "root-disk",
       display_name: "Диск",
@@ -281,8 +288,29 @@ describe("source root creation", () => {
       last_successful_scan_at: undefined,
     });
     const created: SourceRootResponse[] = [];
+    const scan = {
+      id: "scan-new-root",
+      kind: "scan_source",
+      state: "queued",
+      stage: "queued",
+      target_source_root_id: "root-disk",
+      bytes_completed: 0,
+      created_at: "2026-09-30T00:00:00Z",
+      updated_at: "2026-09-30T00:00:00Z",
+    };
+    let scanRequests = 0;
     server.use(
       http.get("/api/sources", () => json(created)),
+      http.get("/api/sources/root-disk", () => HttpResponse.json(registered)),
+      locationsHandler([]),
+      http.get("/api/operations", () =>
+        HttpResponse.json({ operations: scanRequests ? [scan] : [] }),
+      ),
+      http.get("/api/operations/scan-new-root", () => HttpResponse.json(scan)),
+      http.post("/api/sources/root-disk/scan", () => {
+        scanRequests += 1;
+        return HttpResponse.json(scan);
+      }),
       http.post("/api/sources", async ({ request }) => {
         expect(await request.json()).toEqual({
           display_name: "Диск",
@@ -315,15 +343,75 @@ describe("source root creation", () => {
     );
 
     expect(
-      await screen.findByText("Каталог «Диск» зарегистрирован."),
+      await screen.findByRole("heading", { level: 1, name: "Диск" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Подключённые каталоги" }),
-    ).toHaveFocus();
-    expect(screen.getByText("/srv/disk")).toBeVisible();
+      await screen.findByText("Сканирование поставлено в очередь."),
+    ).toBeVisible();
+    expect(scanRequests).toBe(1);
+    expect(window.location.hash).toBe("#/sources/root-disk");
+    fireEvent.click(screen.getByRole("button", { name: "К списку каталогов" }));
     expect(
-      screen.queryByText("Ни один каталог не зарегистрирован."),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("heading", { level: 1, name: "Источники" }),
+    ).toHaveFocus();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Добавить каталог" }),
+    );
+    expect(screen.getByLabelText("Режим обработки")).toHaveValue("");
+  });
+
+  it("keeps the registered root after scan admission fails and offers manual scan", async () => {
+    const registered = root({
+      id: "root-retained",
+      display_name: "Сохранённый",
+      configured_path: "/srv/retained",
+      status: "unknown",
+      scan_generation: 0,
+      location_count: 0,
+      inventory_path: undefined,
+      last_successful_scan_at: undefined,
+    });
+    const scans = [] as string[];
+    server.use(
+      http.get("/api/sources", () => json([registered])),
+      http.post("/api/sources", () => HttpResponse.json(registered)),
+      http.post("/api/sources/root-retained/scan", () => {
+        scans.push("attempt");
+        return HttpResponse.json(
+          { detail: "source root has an active scan" },
+          { status: 409 },
+        );
+      }),
+    );
+    window.location.hash = "/sources";
+    render(<SourcesScreen />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Добавить каталог" }),
+    );
+    fireEvent.change(screen.getByLabelText("Имя каталога"), {
+      target: { value: "Сохранённый" },
+    });
+    fireEvent.change(screen.getByLabelText("Путь на сервере"), {
+      target: { value: "/srv/retained" },
+    });
+    fireEvent.change(screen.getByLabelText("Режим обработки"), {
+      target: { value: "in_place" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Зарегистрировать каталог" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "зарегистрирован, но запуск сканирования не принят",
+    );
+    expect(screen.getByRole("row", { name: /Сохранённый/ })).toBeVisible();
+    expect(scans).toHaveLength(1);
+    expect(
+      screen.getByRole("button", {
+        name: "Открыть каталог для ручного сканирования",
+      }),
+    ).toBeVisible();
   });
 
   it("keeps the create form and explains a rejected path", async () => {
@@ -498,18 +586,19 @@ describe("source root detail", () => {
       display_name: "Входящие 2",
       configured_path: "/srv/inbox2",
       processing_mode: "staged",
-      enabled: true,
     });
     expect(
       screen.getByRole("heading", { level: 1, name: "Входящие 2" }),
     ).toBeVisible();
   });
 
-  it("saves the enabled flag of a root", async () => {
+  it("hides the legacy enable control and preserves a stored disabled flag on edit", async () => {
     const saved = root({ id: "root-1", enabled: false });
     let patched: unknown;
     server.use(
-      http.get("/api/sources/:sourceId", () => HttpResponse.json(root())),
+      http.get("/api/sources/:sourceId", () =>
+        HttpResponse.json(root({ enabled: false })),
+      ),
       locationsHandler(),
       http.patch("/api/sources/:sourceId", async ({ request }) => {
         patched = await request.json();
@@ -522,7 +611,8 @@ describe("source root detail", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Изменить каталог" }),
     );
-    fireEvent.click(screen.getByLabelText("Каталог включён"));
+    expect(screen.queryByLabelText("Каталог включён")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сохранить каталог" }));
 
     expect(
@@ -532,7 +622,6 @@ describe("source root detail", () => {
       display_name: "Входящие",
       configured_path: "/srv/inbox",
       processing_mode: "in_place",
-      enabled: false,
     });
   });
 

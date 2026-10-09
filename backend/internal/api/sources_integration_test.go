@@ -150,7 +150,8 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatalf("a refused deletion removed the root: %v", err)
 	}
 
-	// A queued scan of the root blocks both a path/enabled edit and a deletion.
+	// A queued scan of the root blocks a path edit and a deletion, but does not
+	// block a display-name change.
 	active := &persistence.Operation{
 		ID: uuid.New(), Kind: service.SourceScanOperationKind, State: "queued", Stage: service.SourceScanStageQueued,
 		InputSnapshot: []byte(`{"source_root_id":"` + root.ID.String() + `"}`), TargetSourceRootID: &root.ID,
@@ -163,8 +164,22 @@ func TestSourceRootsHTTPAgainstPostgreSQL(t *testing.T) {
 		t.Fatalf("deletion during an active scan status=%d: %s", blocked.Code, blocked.Body.String())
 	}
 	disabled := sourceRequest(t, handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"enabled":false}`)
-	if disabled.Code != http.StatusConflict {
-		t.Fatalf("disable during an active scan status=%d: %s", disabled.Code, disabled.Body.String())
+	if disabled.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("enabled field status=%d, want %d: %s", disabled.Code, http.StatusUnprocessableEntity, disabled.Body.String())
+	}
+	unchanged, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil || !unchanged.Enabled {
+		t.Fatalf("rejected enabled field changed the root: root=%+v err=%v", unchanged, err)
+	}
+	newSourcePath := t.TempDir()
+	pathEditBody := fmt.Sprintf(`{"configured_path":%q}`, newSourcePath)
+	pathEdit := sourceRequest(t, handler, http.MethodPatch, "/sources/"+root.ID.String(), pathEditBody)
+	if pathEdit.Code != http.StatusConflict {
+		t.Fatalf("path edit during an active scan status=%d, want %d: %s", pathEdit.Code, http.StatusConflict, pathEdit.Body.String())
+	}
+	renamed := sourceRequest(t, handler, http.MethodPatch, "/sources/"+root.ID.String(), `{"display_name":"Renamed"}`)
+	if renamed.Code != http.StatusOK {
+		t.Fatalf("display-name edit during an active scan status=%d: %s", renamed.Code, renamed.Body.String())
 	}
 	if _, err := database.NewDelete().Model((*persistence.Operation)(nil)).Where("id = ?", active.ID).Exec(ctx); err != nil {
 		t.Fatalf("remove the queued scan operation: %v", err)

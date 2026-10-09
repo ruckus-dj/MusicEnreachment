@@ -688,7 +688,6 @@ export interface UpdateSourceBody {
      * @maxLength 256
      */
   display_name?: string;
-  enabled?: boolean;
   processing_mode?: UpdateSourceBodyProcessingMode;
 }
 

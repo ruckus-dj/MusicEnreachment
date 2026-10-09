@@ -63,13 +63,11 @@ type UpdateSourceInput struct {
 }
 
 // UpdateSourceBody carries the fields an edit changes. The pointers keep an
-// absent field apart from a false boolean, so disabling a root is a value the
-// operator sends rather than an omission.
+// absent field apart from an empty value.
 type UpdateSourceBody struct {
 	DisplayName    *string `json:"display_name,omitempty" minLength:"1" maxLength:"256"`
 	ConfiguredPath *string `json:"configured_path,omitempty" minLength:"1" maxLength:"4096"`
 	ProcessingMode *string `json:"processing_mode,omitempty" enum:"in_place,staged"`
-	Enabled        *bool   `json:"enabled,omitempty"`
 }
 
 type DeleteSourceInput struct {
@@ -203,7 +201,7 @@ func registerSources(api huma.API, dependencies Dependencies) {
 		}
 		edit := service.SourceRootEdit{
 			DisplayName: input.Body.DisplayName, ConfiguredPath: input.Body.ConfiguredPath,
-			ProcessingMode: input.Body.ProcessingMode, Enabled: input.Body.Enabled,
+			ProcessingMode: input.Body.ProcessingMode,
 		}
 		root, err := dependencies.SourceRoots.Edit(ctx, input.ID, edit)
 		if err != nil {

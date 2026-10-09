@@ -39,7 +39,7 @@ func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 		t.Fatalf("created root = %+v, want a generated id, generation 0, no inventory and unknown status", root)
 	}
 	stored, err := inventory.GetSourceRoot(ctx, root.ID)
-	if err != nil || stored.ConfiguredPath != "/srv/root-crud" || stored.DisplayName != "Root CRUD" {
+	if err != nil || stored.ConfiguredPath != "/srv/root-crud" || stored.DisplayName != "Root CRUD" || stored.ProcessingMode != "in_place" {
 		t.Fatalf("stored root = %+v, %v", stored, err)
 	}
 	duplicate := &persistence.SourceRoot{ConfiguredPath: "/srv/root-crud", DisplayName: "Duplicate", Enabled: true}
@@ -68,6 +68,34 @@ func TestSourceRootRepositoryWithPostgreSQL(t *testing.T) {
 	}
 	if _, err := inventory.GetSourceRoot(ctx, root.ID); err == nil {
 		t.Fatal("deleted source root is still readable")
+	}
+}
+
+func TestCreateSourceRootPersistsProcessingModeWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+
+	root := &persistence.SourceRoot{
+		ConfiguredPath: "/srv/root-staged-mode",
+		DisplayName:    "Staged root",
+		ProcessingMode: "staged",
+		Enabled:        true,
+	}
+	if err := inventory.CreateSourceRoot(ctx, root); err != nil {
+		t.Fatalf("create staged source root: %v", err)
+	}
+	if root.ProcessingMode != "staged" {
+		t.Fatalf("created root processing mode = %q, want staged", root.ProcessingMode)
+	}
+
+	stored, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read staged source root: %v", err)
+	}
+	if stored.ProcessingMode != "staged" {
+		t.Fatalf("stored root processing mode = %q, want staged", stored.ProcessingMode)
 	}
 }
 

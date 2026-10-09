@@ -56,6 +56,17 @@ func newAnalysisDispatchFixture(t *testing.T) analysisDispatchFixture {
 }
 
 func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.SourceAnalysisPreparing) analysisDispatchFixture {
+	return newAnalysisDispatchFixtureConfigured(t, preparer, "in_place", true)
+}
+
+// newAnalysisDispatchFixtureWithoutPendingWork leaves admission to the test,
+// avoiding a background pending-work dispatch before it can choose delivery
+// options such as the source root's processing mode.
+func newAnalysisDispatchFixtureWithoutPendingWork(t *testing.T, processingMode string) analysisDispatchFixture {
+	return newAnalysisDispatchFixtureConfigured(t, nil, processingMode, false)
+}
+
+func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceAnalysisPreparing, processingMode string, sha256Enabled bool) analysisDispatchFixture {
 	t.Helper()
 	ctx := context.Background()
 	database := testpostgres.OpenMigrated(t)
@@ -64,6 +75,10 @@ func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.Sourc
 	toolsRoot := t.TempDir()
 	setRuntimeRoots(t, ctx, settingsRepository, toolsRoot)
 	registry := settings.New(settingsRepository, nil)
+	outputRoot := t.TempDir()
+	if err := registry.SetOutputDirectory(ctx, outputRoot, toolsRoot); err != nil {
+		t.Fatalf("set the analysis dispatch output directory: %v", err)
+	}
 	if err := registry.CompleteSetup(ctx); err != nil {
 		t.Fatalf("complete setup for analysis dispatch: %v", err)
 	}
@@ -79,7 +94,7 @@ func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.Sourc
 	roots := service.NewSourceRoots(inventory, registry)
 	source := t.TempDir()
 	writeScanDispatchFile(t, filepath.Join(source, "album", "track.flac"), "audio bytes")
-	root, err := roots.Create(ctx, "Music", source, "in_place")
+	root, err := roots.Create(ctx, "Music", source, processingMode)
 	if err != nil {
 		t.Fatalf("create the source root: %v", err)
 	}
@@ -88,11 +103,15 @@ func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.Sourc
 		ID: uuid.New(), LocationID: track.ID, SourceRootID: root.ID,
 		ConfiguredPath: root.ConfiguredPath, InventoryPath: root.ConfiguredPath,
 		RelativePath: track.RelativePath, SizeBytes: track.SizeBytes, Mtime: track.Mtime,
-		SHA256Enabled: true, OriginScanOperationID: uuid.New(),
+		SHA256Enabled: sha256Enabled, OriginScanOperationID: uuid.New(),
+	}
+	initialState := "pending"
+	if !sha256Enabled {
+		initialState = "not_requested"
 	}
 	if err := inventory.StoreSourceAnalysisWork(ctx, &work, []persistence.SourceAnalysisStepInput{
-		{Step: persistence.SourceStepSHA256, State: "pending"},
-		{Step: persistence.SourceStepProbe, State: "pending"},
+		{Step: persistence.SourceStepSHA256, State: initialState},
+		{Step: persistence.SourceStepProbe, State: initialState},
 		{Step: persistence.SourceStepFingerprint, State: "not_requested"},
 	}); err != nil {
 		t.Fatalf("store current normalized work: %v", err)
@@ -135,13 +154,13 @@ func (fixture *analysisDispatchFixture) installAnalysisDispatchFPCalc(t *testing
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatalf("create the managed fpcalc directory: %v", err)
 	}
-	contents, err := os.ReadFile(fixture.helperPath)
+	helper, err := cachedFakeProgram("analysisfpcalc")
 	if err != nil {
-		t.Fatalf("read fake analysis executable: %v", err)
+		t.Fatalf("prepare fake fpcalc executable: %v", err)
 	}
 	names := tools.ExpectedExecutables(tools.PackageFPCalc, runtime.GOOS)
 	for _, name := range names {
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o755); err != nil {
+		if err := copyFakeExecutable(helper, filepath.Join(directory, name), struct{}{}); err != nil {
 			t.Fatalf("write managed fpcalc executable: %v", err)
 		}
 	}
@@ -179,16 +198,38 @@ func (fixture *analysisDispatchFixture) startScheduled(t *testing.T, ctx context
 	return fixture.startWithSchedule(t, ctx, true)
 }
 
-func (fixture *analysisDispatchFixture) startWithSchedule(t *testing.T, ctx context.Context, scheduled bool) *persistence.Operation {
+func (fixture *analysisDispatchFixture) startAllRequestedSteps(t *testing.T, ctx context.Context) *persistence.Operation {
 	t.Helper()
-	// The location has one current normalized work row. Re-arm its pending steps for
-	// this delivery rather than inserting another work identity for that location.
+	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_work SET sha256_enabled=true WHERE id=?`, fixture.work.ID); err != nil {
+		t.Fatalf("enable SHA-256 for current analysis work: %v", err)
+	}
+	fixture.work.SHA256Enabled = true
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_step SET state='pending',step_attempt=0,
 		safe_error=NULL,skip_reason=NULL,input_snapshot=NULL,execution_operation_id=NULL,
 		execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=NULL,
 		success_probe_variant_id=NULL,success_reuse_origin=NULL,updated_at=now()
+		WHERE work_id=? AND step IN ('sha256','probe','fingerprint')`, fixture.work.ID); err != nil {
+		t.Fatalf("request all analysis steps for current work: %v", err)
+	}
+	return fixture.startWithScheduleAndReset(t, ctx, false, false)
+}
+
+func (fixture *analysisDispatchFixture) startWithSchedule(t *testing.T, ctx context.Context, scheduled bool) *persistence.Operation {
+	return fixture.startWithScheduleAndReset(t, ctx, scheduled, true)
+}
+
+func (fixture *analysisDispatchFixture) startWithScheduleAndReset(t *testing.T, ctx context.Context, scheduled, resetSteps bool) *persistence.Operation {
+	t.Helper()
+	// The location has one current normalized work row. Re-arm its pending steps for
+	// this delivery rather than inserting another work identity for that location.
+	if resetSteps {
+		if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_step SET state='pending',step_attempt=0,
+		safe_error=NULL,skip_reason=NULL,input_snapshot=NULL,execution_operation_id=NULL,
+		execution_operation_attempt=NULL,execution_job_id=NULL,last_operation_id=NULL,
+		success_probe_variant_id=NULL,success_reuse_origin=NULL,updated_at=now()
 		WHERE work_id=? AND step IN ('sha256','probe')`, fixture.work.ID); err != nil {
-		t.Fatalf("reset current analysis work for a fresh delivery: %v", err)
+			t.Fatalf("reset current analysis work for a fresh delivery: %v", err)
+		}
 	}
 	shaEnabled, rerun, cacheOnly := true, false, false
 	tool := persistence.SourceAnalysisToolSelection{

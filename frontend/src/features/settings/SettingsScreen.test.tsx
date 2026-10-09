@@ -28,6 +28,7 @@ const settings = {
     tools_directory: "/srv/tools",
     output_directory: "/srv/music",
     publication_format: "mka",
+    source_file_concurrency: 4,
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
     musicbrainz_verified_at: "2026-09-01T00:00:00Z",
@@ -257,6 +258,31 @@ describe("SettingsScreen", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("traps output-dialog keyboard focus and restores it after Escape", async () => {
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/new-output" } });
+    const trigger = screen.getByRole("button", { name: "Сменить output" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Подтвердить смену output",
+    });
+    const cancel = within(dialog).getByRole("button", { name: "Отмена" });
+    expect(confirm).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it("closes the move dialog on Cancel and restores focus to its trigger", async () => {
     render(<SettingsScreen />);
     const trigger = await screen.findByRole("button", {
@@ -462,13 +488,12 @@ describe("SettingsScreen", () => {
     );
   });
 
-  it("saves settings and rereads server state, while showing validation errors", async () => {
+  it("saves only the publication format and rereads server state, while showing validation errors", async () => {
     const calls: string[] = [];
     server.use(
       http.put("/api/settings/runtime", async ({ request }) => {
         calls.push("put");
         expect(await request.json()).toEqual({
-          output_directory: "/new",
           publication_format: "source",
         });
         return new HttpResponse(null, { status: 204 });
@@ -479,9 +504,7 @@ describe("SettingsScreen", () => {
           ...settings,
           settings: {
             ...settings.settings,
-            output_directory: calls.includes("put")
-              ? "/new"
-              : settings.settings.output_directory,
+            output_directory: settings.settings.output_directory,
           },
         });
       }),
@@ -496,9 +519,7 @@ describe("SettingsScreen", () => {
     });
     const response = nextResponseFor("/api/settings/runtime", "PUT");
     await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Сохранить публикацию" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Сохранить формат" }));
       await response;
     });
     await waitFor(() => expect(calls).toContain("get"));
@@ -531,14 +552,400 @@ describe("SettingsScreen", () => {
       }
       document.addEventListener("focusin", onFocus);
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить публикацию" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить формат" }));
     const focusedAlert = await alertFocused;
     const validation = await screen.findByRole("alert");
     expect(validation).toHaveTextContent("Каталог недоступен");
     expect(validation).toBe(focusedAlert);
     expect(validation).toHaveFocus();
+  });
+
+  it.each([
+    "",
+    "0",
+    "-1",
+    "1.5",
+  ])("rejects invalid source-file concurrency input %j without a request", async (value) => {
+    const save = vi.fn();
+    server.use(http.put("/api/settings/runtime", save));
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(input, { target: { value } });
+    expect(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    ).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("persists a positive concurrency and omits it from format-only saves", async () => {
+    const payloads: unknown[] = [];
+    server.use(
+      http.put("/api/settings/runtime", async ({ request }) => {
+        payloads.push(await request.json());
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: { ...settings.settings, source_file_concurrency: 2 },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const concurrency = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(concurrency, { target: { value: "2" } });
+    const saved = nextResponseFor("/api/settings/runtime", "PUT");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    );
+    await saved;
+    await waitFor(() => expect(concurrency).toHaveValue("2"));
+    fireEvent.change(screen.getByLabelText("Publication format"), {
+      target: { value: "source" },
+    });
+    const formatSaved = nextResponseFor("/api/settings/runtime", "PUT");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить формат" }));
+    await formatSaved;
+    await waitFor(() => expect(payloads).toHaveLength(2));
+    expect(payloads).toEqual([
+      { source_file_concurrency: 2 },
+      { publication_format: "source" },
+    ]);
+  });
+
+  it.each([
+    "9007199254740992",
+    "999999999999999999999999999999999999",
+  ])("rejects concurrency that cannot be represented exactly: %s", async (value) => {
+    const save = vi.fn();
+    server.use(http.put("/api/settings/runtime", save));
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(input, { target: { value } });
+
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "точно представимое в браузере",
+    );
+    expect(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    ).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unsaved output edit when saving only the publication format", async () => {
+    const payloads: unknown[] = [];
+    let publicationFormat = settings.settings.publication_format;
+    server.use(
+      http.put("/api/settings/runtime", async ({ request }) => {
+        const payload = (await request.json()) as {
+          publication_format?: string;
+        };
+        payloads.push(payload);
+        if (payload.publication_format)
+          publicationFormat = payload.publication_format;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            publication_format: publicationFormat,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/unsaved-output" } });
+    fireEvent.change(screen.getByLabelText("Publication format"), {
+      target: { value: "source" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить формат" }));
+
+    await waitFor(() =>
+      expect(payloads).toEqual([{ publication_format: "source" }]),
+    );
+    expect(output).toHaveValue("/unsaved-output");
+    expect(
+      screen.getByText("Есть несохранённые изменения публикации."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an unsaved format edit when saving only the output directory", async () => {
+    const payloads: unknown[] = [];
+    let outputDirectory = settings.settings.output_directory;
+    let publicationFormat = settings.settings.publication_format;
+    server.use(
+      http.put("/api/settings/runtime", async ({ request }) => {
+        const payload = (await request.json()) as {
+          output_directory?: string;
+          publication_format?: string;
+        };
+        payloads.push(payload);
+        if (payload.output_directory)
+          outputDirectory = payload.output_directory;
+        if (payload.publication_format)
+          publicationFormat = payload.publication_format;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            output_directory: outputDirectory,
+            publication_format: publicationFormat,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/saved-output" } });
+    fireEvent.change(screen.getByLabelText("Publication format"), {
+      target: { value: "source" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить смену output" }),
+    );
+
+    await waitFor(() =>
+      expect(payloads).toEqual([{ output_directory: "/saved-output" }]),
+    );
+    expect(output).toHaveValue("/saved-output");
+    expect(screen.getByLabelText("Publication format")).toHaveValue("source");
+    expect(
+      screen.getByText("Есть несохранённые изменения публикации."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a newer concurrency edit dirty while a saved value is being reread", async () => {
+    const payloads: unknown[] = [];
+    let concurrency = 4;
+    let settingsReads = 0;
+    let releaseReadback!: (response: Response) => void;
+    const readback = new Promise<Response>((resolve) => {
+      releaseReadback = resolve;
+    });
+    let markReadbackRequested!: () => void;
+    const readbackRequested = new Promise<void>((resolve) => {
+      markReadbackRequested = resolve;
+    });
+    server.use(
+      http.get("/api/settings", () => {
+        settingsReads += 1;
+        if (settingsReads === 1) return json(settings);
+        markReadbackRequested();
+        return readback.then(() =>
+          json({
+            ...settings,
+            settings: {
+              ...settings.settings,
+              source_file_concurrency: concurrency,
+            },
+          }),
+        );
+      }),
+      http.put("/api/settings/runtime", async ({ request }) => {
+        const payload = (await request.json()) as {
+          source_file_concurrency: number;
+        };
+        payloads.push(payload);
+        concurrency = payload.source_file_concurrency;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    render(<SettingsScreen />);
+    const input = await screen.findByLabelText("Одновременные файлы");
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить параллельность" }),
+    );
+    await readbackRequested;
+    fireEvent.change(input, { target: { value: "3" } });
+
+    await act(async () => {
+      releaseReadback(new Response());
+      await readback;
+    });
+
+    expect(payloads).toEqual([{ source_file_concurrency: 2 }]);
+    expect(input).toHaveValue("3");
+    expect(
+      screen.getByText("Есть несохранённое изменение параллельности."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an accepted output change dirty after readback failure and recovers on retry", async () => {
+    let outputDirectory = settings.settings.output_directory;
+    let settingsReads = 0;
+    const payloads: unknown[] = [];
+    server.use(
+      http.put("/api/settings/runtime", async ({ request }) => {
+        const payload = (await request.json()) as { output_directory: string };
+        payloads.push(payload);
+        outputDirectory = payload.output_directory;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () => {
+        settingsReads += 1;
+        if (settingsReads === 1)
+          return json({
+            ...settings,
+            settings: {
+              ...settings.settings,
+              output_directory: outputDirectory,
+            },
+          });
+        if (settingsReads === 2)
+          return HttpResponse.json(
+            { detail: "read unavailable" },
+            { status: 503 },
+          );
+        return json({
+          ...settings,
+          settings: { ...settings.settings, output_directory: outputDirectory },
+        });
+      }),
+    );
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/accepted-output" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
+    let dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить смену output" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "не удалось подтвердить его чтением",
+    );
+    expect(output).toHaveValue("/accepted-output");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+    fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
+    dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить смену output" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(output).toHaveValue("/accepted-output");
+    expect(payloads).toEqual([
+      { output_directory: "/accepted-output" },
+      { output_directory: "/accepted-output" },
+    ]);
+    expect(
+      screen.queryByText("Есть несохранённые изменения публикации."),
+    ).toBeNull();
+  });
+
+  it("requires confirmation to change output and cancellation does not reset anything", async () => {
+    const save = vi.fn();
+    server.use(http.put("/api/settings/runtime", save));
+    render(<SettingsScreen />);
+    const output = await screen.findByLabelText("Output directory");
+    fireEvent.change(output, { target: { value: "/new-output" } });
+    const trigger = screen.getByRole("button", { name: "Сменить output" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    expect(dialog).toHaveTextContent("Сами прежние файлы не будут удалены");
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(output).toHaveValue("/new-output");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("changes output only after confirmation and shows safe server reset errors", async () => {
+    const save = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ output_directory: "/new-output" });
+      return HttpResponse.json(
+        { detail: "Новый каталог недоступен" },
+        { status: 400 },
+      );
+    });
+    server.use(http.put("/api/settings/runtime", save));
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("Output directory"), {
+      target: { value: "/new-output" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Сменить output" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Сменить каталог публикации?",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Подтвердить смену output" }),
+    );
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("Новый каталог недоступен");
+    expect(alert).toHaveFocus();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it.each([
+    "queued",
+    "failed",
+  ])("allows output reset when an operation is %s", async (operationState) => {
+    common({
+      operations: [
+        { ...operation, kind: "source-analysis", state: operationState },
+      ],
+    });
+    const save = vi.fn(() => new HttpResponse(null, { status: 204 }));
+    server.use(
+      http.put("/api/settings/runtime", save),
+      http.get("/api/operations/:id", () =>
+        json({ ...operation, kind: "source-analysis", state: operationState }),
+      ),
+    );
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("Output directory"), {
+      target: { value: "/new-output" },
+    });
+    const trigger = screen.getByRole("button", { name: "Сменить output" });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+    const confirm = screen.getByRole("button", {
+      name: "Подтвердить смену output",
+    });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
+  it("blocks output reset while an operation is running", async () => {
+    common({
+      operations: [{ ...operation, kind: "source-analysis", state: "running" }],
+    });
+    const save = vi.fn();
+    server.use(
+      http.put("/api/settings/runtime", save),
+      http.get("/api/operations/:id", () =>
+        json({ ...operation, kind: "source-analysis", state: "running" }),
+      ),
+    );
+    render(<SettingsScreen />);
+    await screen.findByLabelText("Output directory");
+    expect(
+      screen.getByRole("button", { name: "Сменить output" }),
+    ).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("saves MusicBrainz and LRCLIB changes through typed APIs", async () => {
@@ -975,7 +1382,7 @@ describe("SettingsScreen", () => {
     expect(reads).toBe(3);
   });
 
-  it("preserves edit-and-revert revisions across a pending PUT and readback", async () => {
+  it("preserves a publication edit-and-revert revision across a pending PUT and readback", async () => {
     let releaseSave!: () => void;
     let releaseRead!: () => void;
     const saveGate = new Promise<void>((resolve) => {
@@ -1001,31 +1408,31 @@ describe("SettingsScreen", () => {
           await readGate;
           return json({
             ...settings,
-            settings: { ...settings.settings, output_directory: "/submitted" },
+            settings: { ...settings.settings, publication_format: "source" },
           });
         }
         return json(settings);
       }),
     );
     render(<SettingsScreen />);
-    const output = await screen.findByLabelText("Output directory");
-    fireEvent.change(output, { target: { value: "/submitted" } });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить публикацию" }),
-    );
+    const format = await screen.findByLabelText("Publication format");
+    fireEvent.change(format, { target: { value: "source" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить формат" }));
     await waitFor(() => expect(reads).toBe(1));
-    fireEvent.change(output, { target: { value: "/srv/music" } });
+    fireEvent.change(format, { target: { value: "mka" } });
     releaseSave();
     await readbackRequest;
-    fireEvent.change(output, { target: { value: "/temporary-edit" } });
-    fireEvent.change(output, { target: { value: "/srv/music" } });
+    fireEvent.change(format, { target: { value: "source" } });
+    fireEvent.change(format, { target: { value: "mka" } });
     const readbackCompleted = nextResponseFor("/api/settings", "GET");
     releaseRead();
     await act(async () => {
       await readbackCompleted;
     });
-    await screen.findByText("Настройки публикации сохранены.");
-    await waitFor(() => expect(output).toHaveValue("/srv/music"));
+    expect(
+      screen.queryByText("Настройки публикации сохранены."),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(format).toHaveValue("mka"));
     expect(
       screen.getByText("Есть несохранённые изменения публикации."),
     ).toBeInTheDocument();
@@ -2417,7 +2824,7 @@ describe("SettingsScreen", () => {
     expect(window.location.hash).not.toBe("#/setup");
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Сохранить публикацию" }),
+        screen.getByRole("button", { name: "Сохранить формат" }),
       ).not.toBeDisabled(),
     );
   });

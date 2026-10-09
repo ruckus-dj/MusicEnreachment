@@ -138,12 +138,6 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
   };
 }
 
-type PublicationDraft = {
-  output: string;
-  format: UpdateSettingsBodyPublicationFormat;
-};
-const samePublication = (left: PublicationDraft, right: PublicationDraft) =>
-  left.output === right.output && left.format === right.format;
 const sameMusicBrainz = (
   left: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
   right: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
@@ -189,7 +183,10 @@ export function SettingsScreen() {
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [operations, setOperations] = useState<OperationResponse[]>([]);
-  const publication = useSectionDraft<PublicationDraft>(samePublication);
+  const outputDirectory = useSectionDraft<string>();
+  const publicationFormat =
+    useSectionDraft<UpdateSettingsBodyPublicationFormat>();
+  const sourceFileConcurrency = useSectionDraft<string>();
   const musicBrainz = useSectionDraft(sameMusicBrainz);
   const lrclib = useSectionDraft<boolean>();
   const sha256 = useSectionDraft<boolean>();
@@ -200,6 +197,7 @@ export function SettingsScreen() {
   >({});
   const [installDialog, setInstallDialog] = useState<InstallPlan>();
   const [moveDialog, setMoveDialog] = useState(false);
+  const [outputDialog, setOutputDialog] = useState(false);
   const [moveDirectory, setMoveDirectory] = useState("");
   const [removeOld, setRemoveOld] = useState(false);
   const [movePlan, setMovePlan] = useState<MovePlan>();
@@ -208,12 +206,15 @@ export function SettingsScreen() {
   const [loadError, setLoadError] = useState("");
   const [installDialogError, setInstallDialogError] = useState("");
   const [moveDialogError, setMoveDialogError] = useState("");
+  const [outputDialogError, setOutputDialogError] = useState("");
   const [notice, setNotice] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   const loadErrorAlert = useRef<HTMLParagraphElement>(null);
   const installDialogAlert = useRef<HTMLParagraphElement>(null);
   const moveDialogAlert = useRef<HTMLParagraphElement>(null);
+  const outputDialogAlert = useRef<HTMLParagraphElement>(null);
+  const outputDialogRef = useRef<HTMLDialogElement>(null);
   const catalogAlert = useRef<HTMLParagraphElement>(null);
   const automaticCatalogRequested = useRef(false);
   const catalogRequestInFlight = useRef(false);
@@ -283,10 +284,11 @@ export function SettingsScreen() {
       if (!mountedRef.current) return;
       setState(fresh);
       const settings = fresh.settings;
-      publication.sync({
-        output: settings.output_directory,
-        format: settings.publication_format === "source" ? "source" : "mka",
-      });
+      outputDirectory.sync(settings.output_directory);
+      publicationFormat.sync(
+        settings.publication_format === "source" ? "source" : "mka",
+      );
+      sourceFileConcurrency.sync(String(settings.source_file_concurrency));
       musicBrainz.sync({
         mode:
           settings.musicbrainz_mode === "self-hosted"
@@ -315,7 +317,9 @@ export function SettingsScreen() {
     },
     [
       setMoveDirectoryValue,
-      publication.sync,
+      outputDirectory.sync,
+      publicationFormat.sync,
+      sourceFileConcurrency.sync,
       musicBrainz.sync,
       lrclib.sync,
       sha256.sync,
@@ -441,22 +445,30 @@ export function SettingsScreen() {
       moveDialogAlert.current?.focus();
   }, [moveDialogError]);
   useLayoutEffect(() => {
+    if (outputDialogError && outputDialogRef.current?.open)
+      outputDialogAlert.current?.focus();
+  }, [outputDialogError]);
+  useLayoutEffect(() => {
     if (
       dialogFocusRestorePending.current &&
       !installDialog &&
       !moveDialog &&
+      !outputDialog &&
       !busy
     ) {
       dialogFocusRestorePending.current = false;
       restoreDialogFocus();
     }
-  }, [busy, installDialog, moveDialog, restoreDialogFocus]);
+  }, [busy, installDialog, moveDialog, outputDialog, restoreDialogFocus]);
   useLayoutEffect(() => {
     if (installDialog) showSettingsDialog(installDialogRef.current);
   }, [installDialog]);
   useLayoutEffect(() => {
     if (moveDialog) showSettingsDialog(moveDialogRef.current);
   }, [moveDialog]);
+  useLayoutEffect(() => {
+    if (outputDialog) showSettingsDialog(outputDialogRef.current);
+  }, [outputDialog]);
   useEffect(() => {
     if (catalogError) catalogAlert.current?.focus();
   }, [catalogError]);
@@ -539,6 +551,59 @@ export function SettingsScreen() {
       endDraftSave();
       setBusy(false);
     }
+  }
+
+  function closeOutputDialog(force = false) {
+    if (busy && !force) return;
+    dialogFocusRestorePending.current = true;
+    setOutputDialogError("");
+    setOutputDialog(false);
+    const dialog = outputDialogRef.current;
+    if (dialog?.open) dialog.close();
+  }
+
+  const runningOperation = operations.some(
+    (operation) => operation.state === "running",
+  );
+
+  async function confirmOutputDirectory() {
+    if (busy || runningOperation) return;
+    const savedDraft = outputDirectory.capture();
+    const output = savedDraft.value;
+    if (output === undefined) return;
+    outputDirectory.beginSave(savedDraft.revision);
+    setBusy(true);
+    setOutputDialogError("");
+    setNotice("");
+    try {
+      successful(await updateSettings({ output_directory: output }), 204);
+      try {
+        await refreshState((fresh) =>
+          outputDirectory.acknowledge(
+            fresh.settings.output_directory,
+            savedDraft.revision,
+          ),
+        );
+      } catch (reason) {
+        throw new Error(
+          `Каталог публикации принят сервером, но не удалось подтвердить его чтением: ${message(reason)}`,
+        );
+      }
+      setNotice("Каталог публикации изменён.");
+      closeOutputDialog(true);
+    } catch (reason) {
+      setOutputDialogError(message(reason));
+    } finally {
+      outputDirectory.endSave();
+      setBusy(false);
+    }
+  }
+
+  function validConcurrency(value: string) {
+    return (
+      /^[1-9]\d*$/.test(value.trim()) &&
+      Number.isSafeInteger(Number(value.trim()))
+    );
   }
 
   async function checkMusicBrainz() {
@@ -626,6 +691,24 @@ export function SettingsScreen() {
     if (event.key === "Escape") {
       event.preventDefault();
       close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = event.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    );
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    } else if (!event.currentTarget.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
     }
   }
   const loadCatalogNow = () => {
@@ -970,70 +1053,137 @@ export function SettingsScreen() {
               <label>
                 Output directory
                 <input
-                  value={publication.value?.output ?? ""}
+                  value={outputDirectory.value ?? ""}
                   onChange={(event) =>
-                    publication.update({
-                      output: event.target.value,
-                      format: publication.value?.format ?? "mka",
-                    })
+                    outputDirectory.update(event.target.value)
                   }
                 />
               </label>
               <label>
                 Publication format
                 <select
-                  value={publication.value?.format ?? "mka"}
+                  value={publicationFormat.value ?? "mka"}
                   onChange={(event) =>
-                    publication.update({
-                      output: publication.value?.output ?? "",
-                      format: event.target
-                        .value as UpdateSettingsBodyPublicationFormat,
-                    })
+                    publicationFormat.update(
+                      event.target.value as UpdateSettingsBodyPublicationFormat,
+                    )
                   }
                 >
                   <option value="source">Исходный формат</option>
                   <option value="mka">MKA remux</option>
                 </select>
               </label>
-              {publication.dirty && (
+              {(outputDirectory.dirty || publicationFormat.dirty) && (
                 <p>Есть несохранённые изменения публикации.</p>
               )}
               <AppButton
                 isDisabled={busy}
                 onPress={() =>
                   void mutate(
-                    (savedDraft) => {
-                      const saved = savedDraft.value;
-                      return updateSettings({
-                        output_directory:
-                          saved?.output ?? state.settings.output_directory,
+                    (savedDraft) =>
+                      updateSettings({
                         publication_format:
-                          saved?.format ??
+                          savedDraft.value ??
                           (state.settings.publication_format === "source"
                             ? "source"
                             : "mka"),
-                      });
-                    },
+                      }),
                     204,
-                    "Настройки публикации сохранены.",
-                    publication.capture,
+                    "Формат публикации сохранён.",
+                    publicationFormat.capture,
                     (fresh, revision) =>
-                      publication.acknowledge(
-                        {
-                          output: fresh.settings.output_directory,
-                          format:
-                            fresh.settings.publication_format === "source"
-                              ? "source"
-                              : "mka",
-                        },
+                      publicationFormat.acknowledge(
+                        fresh.settings.publication_format === "source"
+                          ? "source"
+                          : "mka",
                         revision,
                       ),
-                    publication.beginSave,
-                    publication.endSave,
+                    publicationFormat.beginSave,
+                    publicationFormat.endSave,
                   )
                 }
               >
-                Сохранить публикацию
+                Сохранить формат
+              </AppButton>
+              <AppButton
+                isDisabled={
+                  busy ||
+                  runningOperation ||
+                  outputDirectory.value === state.settings.output_directory
+                }
+                onPress={(event) => {
+                  dialogReturnFocusRef.current = event.target as HTMLElement;
+                  setError("");
+                  setOutputDialogError("");
+                  setOutputDialog(true);
+                }}
+              >
+                Сменить output
+              </AppButton>
+            </section>
+            <section
+              aria-labelledby="analysis-concurrency-title"
+              className="setup-panel settings-panel"
+            >
+              <h2 id="analysis-concurrency-title">Анализ исходников</h2>
+              <label>
+                Одновременные файлы
+                <input
+                  aria-describedby="source-file-concurrency-help"
+                  aria-invalid={
+                    sourceFileConcurrency.value !== undefined &&
+                    !validConcurrency(sourceFileConcurrency.value)
+                  }
+                  inputMode="numeric"
+                  value={
+                    sourceFileConcurrency.value ??
+                    String(state.settings.source_file_concurrency)
+                  }
+                  onChange={(event) =>
+                    sourceFileConcurrency.update(event.target.value)
+                  }
+                />
+              </label>
+              <p id="source-file-concurrency-help">
+                Положительное целое число файлов, обрабатываемых одновременно.
+                Значение должно точно представляться в браузере.
+              </p>
+              {sourceFileConcurrency.value !== undefined &&
+                !validConcurrency(sourceFileConcurrency.value) && (
+                  <p role="alert">
+                    Введите положительное целое число, точно представимое в
+                    браузере.
+                  </p>
+                )}
+              {sourceFileConcurrency.dirty && (
+                <p>Есть несохранённое изменение параллельности.</p>
+              )}
+              <AppButton
+                isDisabled={
+                  busy ||
+                  !sourceFileConcurrency.value ||
+                  !validConcurrency(sourceFileConcurrency.value)
+                }
+                onPress={() =>
+                  void mutate(
+                    (savedDraft) =>
+                      updateSettings({
+                        source_file_concurrency: Number(savedDraft.value),
+                      }),
+                    204,
+                    "Параллельность анализа сохранена.",
+                    sourceFileConcurrency.capture,
+                    (fresh, revision) =>
+                      sourceFileConcurrency.acknowledge(
+                        String(fresh.settings.source_file_concurrency),
+                        revision,
+                      ),
+                    sourceFileConcurrency.beginSave,
+                    sourceFileConcurrency.endSave,
+                  )
+                }
+              >
+                Сохранить параллельность
               </AppButton>
             </section>
             <section
@@ -1405,6 +1555,45 @@ export function SettingsScreen() {
         <AppButton isDisabled={busy} onPress={() => void loadScreen()}>
           Обновить состояние
         </AppButton>
+      )}
+      {outputDialog && (
+        <dialog
+          ref={outputDialogRef}
+          aria-modal="true"
+          aria-labelledby="output-dialog-title"
+          aria-describedby="output-dialog-warning"
+          className="settings-dialog settings-dialog--destructive"
+          onClose={() => {
+            dialogFocusRestorePending.current = true;
+            setOutputDialog(false);
+            setOutputDialogError("");
+          }}
+          onKeyDown={(event) => onDialogKeyDown(event, closeOutputDialog)}
+          onCancel={(event) => {
+            event.preventDefault();
+            closeOutputDialog();
+          }}
+        >
+          <h2 id="output-dialog-title">Сменить каталог публикации?</h2>
+          <p id="output-dialog-warning">
+            Изменение output отменит все операции в очереди и очистит ссылки на
+            прежние файлы в приложении. Сами прежние файлы не будут удалены.
+          </p>
+          {outputDialogError && (
+            <p ref={outputDialogAlert} tabIndex={-1} role="alert">
+              {outputDialogError}
+            </p>
+          )}
+          <AppButton
+            isDisabled={busy || runningOperation}
+            onPress={() => void confirmOutputDirectory()}
+          >
+            Подтвердить смену output
+          </AppButton>
+          <AppButton isDisabled={busy} onPress={() => closeOutputDialog()}>
+            Отмена
+          </AppButton>
+        </dialog>
       )}
       {installDialog && (
         <dialog

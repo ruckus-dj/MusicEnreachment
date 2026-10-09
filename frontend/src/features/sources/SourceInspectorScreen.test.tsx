@@ -38,6 +38,203 @@ function fingerprintStep(
 
 describe("source inspector", () => {
   it.each([
+    ["unknown", "Неизвестно"],
+    ["preparation", "Подготовка"],
+    ["acquiring", "Получение артефакта"],
+    ["ready", "Готов"],
+    ["retained", "Сохранён"],
+    ["cleanup_eligible", "Ожидает очистки"],
+    ["cleanup_failed", "Ошибка очистки"],
+  ] as const)("projects staged artifact state %s as %s", async (state, label) => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state,
+              requested_steps: [],
+              requested_steps_known: false,
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(
+      screen.getByRole("region", { name: "Промежуточный артефакт анализа" }),
+    ).toHaveTextContent(`Состояние: ${label}`);
+    expect(
+      screen.getByText(/История запрошенных этапов неизвестна/),
+    ).toBeVisible();
+  });
+
+  it("explains known requested steps and only reports reuse across different operations", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state: "retained",
+              requested_steps: ["sha256", "probe"],
+              requested_steps_known: true,
+              creator_operation_id: "creator-op",
+              borrower_operation_id: "borrower-op",
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(screen.getByText("Запрошенные этапы: sha256, probe")).toBeVisible();
+    expect(screen.getByText(/создан другой операцией/)).toBeVisible();
+  });
+
+  it("keeps successful analysis visible when staged artifact cleanup fails", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            result,
+            steps: [{ name: "probe", state: "succeeded", attempt: 1 }],
+            staged_artifact: {
+              state: "cleanup_failed",
+              requested_steps: [],
+              requested_steps_known: false,
+              safe_error: "Удаление недоступно",
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Очистить промежуточный артефакт не удалось: Удаление недоступно",
+    );
+    expect(screen.getByText("First / artist; preserved")).toBeVisible();
+    expect(screen.getByText(/Анализ от/)).toBeVisible();
+  });
+
+  it("does not claim a ready artifact exists on disk or invent progress", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state: "ready",
+              requested_steps: ["sha256"],
+              requested_steps_known: true,
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(
+      screen.getByText(/не подтверждает наличие файла на диске/),
+    ).toBeVisible();
+    expect(screen.queryByText(/%|байт из/)).not.toBeInTheDocument();
+  });
+
+  it("does not describe artifact reuse when creator and borrower are the same", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state: "retained",
+              requested_steps: [],
+              requested_steps_known: true,
+              creator_operation_id: "same-op",
+              borrower_operation_id: "same-op",
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(
+      screen.queryByText(/создан другой операцией/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("treats a legacy payload without a staged artifact projection as explicitly unknown", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            result,
+            steps: [{ name: "probe", state: "succeeded", attempt: 1 }],
+            // A legacy server never sent the projection; JSON drops the key.
+            staged_artifact: undefined,
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    const region = screen.getByRole("region", {
+      name: "Промежуточный артефакт анализа",
+    });
+    expect(region).toHaveTextContent("Состояние: Неизвестно");
+    expect(region).toHaveTextContent(
+      "Сведения о промежуточном артефакте неизвестны.",
+    );
+    expect(
+      within(region).getByText(/История запрошенных этапов неизвестна/),
+    ).toBeVisible();
+    // The successful analysis stays visible beside the unknown projection.
+    expect(screen.getByText("First / artist; preserved")).toBeVisible();
+  });
+
+  it("never reports completion for a known but empty requested step list", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state: "retained",
+              requested_steps: [],
+              requested_steps_known: true,
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(screen.getByText("Запрошенные этапы: Нет")).toBeVisible();
+    expect(
+      screen.getByText(
+        /Пустой список запрошенных этапов не означает, что этапы завершены/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("reads a null requested step list safely instead of crashing", async () => {
+    server.use(
+      http.get(detailPath, () =>
+        HttpResponse.json(
+          detail({
+            staged_artifact: {
+              state: "retained",
+              requested_steps: null,
+              requested_steps_known: true,
+            },
+          }),
+        ),
+      ),
+    );
+    await openInspector();
+
+    expect(screen.getByText("Запрошенные этапы: Нет")).toBeVisible();
+  });
+
+  it.each([
     "probing",
     "future-running-stage",
   ])("describes a fingerprint-only running operation neutrally at stage %s", async (stage) => {

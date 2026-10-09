@@ -61,6 +61,17 @@
   border: 1px solid var(--sources-line);
   border-radius: 4px;
 }
+.sources-screen .sources-partial-success {
+  padding: 8px 10px;
+  margin: 8px 0;
+  color: var(--sources-warning);
+  background: var(--sources-raised);
+  border: 1px solid var(--sources-line);
+  border-radius: 4px;
+}
+.sources-screen .sources-partial-success p {
+  margin: 0 0 4px;
+}
 .sources-screen button {
   min-height: 28px;
   margin: 4px 5px 4px 0;
@@ -90,6 +101,20 @@
 }
 .sources-screen input[type="checkbox"] {
   accent-color: var(--sources-accent);
+}
+.sources-screen input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sources-accent);
+}
+.sources-screen select {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--sources-ink);
+  background: var(--sources-raised);
+  border: 1px solid var(--sources-control);
+  border-radius: 4px;
 }
 .sources-screen form label:not(.sources-inline) {
   display: grid;
@@ -281,7 +306,12 @@
     gap: 2px;
   }
   .sources-screen button,
-  .sources-screen input:not([type="checkbox"]) {
+  .sources-screen input:not([type="checkbox"]),
+  .sources-screen select {
     min-height: 40px;
+  }
+  .sources-screen input[type="radio"] {
+    width: 20px;
+    height: 20px;
   }
 }

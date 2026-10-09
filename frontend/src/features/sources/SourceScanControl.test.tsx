@@ -27,11 +27,11 @@ import { SourceScanControl } from "./SourceScanControl";
 const rootId = "root-1";
 const queuedText = "Сканирование поставлено в очередь.";
 const traversingText =
-  "Обход каталога: чтение дерева и проверка аудиопотока файлов.";
+  "Обход каталога: перечисление файлов и чтение их метаданных.";
 const applyingText =
   "Применение результатов: подтверждённый инвентарь сохраняется.";
 const doneText =
-  "Сканирование завершено: инвентарь обновлён последним успешным обходом.";
+  "Сканирование завершено: инвентарь обновлён последним успешным обходом. Это не означает завершение анализа аудиофайлов.";
 const reconnectText = /потоку событий прерваны/;
 
 // Only the browser event source is controlled; snapshots travel through the

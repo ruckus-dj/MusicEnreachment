@@ -28,7 +28,6 @@ type EditForm = {
   displayName: string;
   path: string;
   processingMode: "in_place" | "staged";
-  enabled: boolean;
 };
 
 export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
@@ -42,7 +41,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
     displayName: "",
     path: "",
     processingMode: "in_place",
-    enabled: true,
   });
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -103,7 +101,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
       displayName: root.display_name,
       path: root.configured_path,
       processingMode: root.processing_mode,
-      enabled: root.enabled,
     });
     setFormError("");
     setNotice("");
@@ -123,7 +120,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
         display_name: form.displayName.trim(),
         configured_path: form.path.trim(),
         processing_mode: form.processingMode,
-        enabled: form.enabled,
       });
       if (response.status !== 200) throw sourceFailure("edit", response);
       applyRoot(response.data);
@@ -266,7 +262,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             aria-labelledby="source-edit-title"
             className="sources-panel"
           >
-            <h2 id="source-edit-title">Имя, путь, режим и включение</h2>
+            <h2 id="source-edit-title">Имя, путь и режим</h2>
             {editing ? (
               <form
                 aria-labelledby="source-edit-title"
@@ -296,6 +292,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                 <label>
                   Режим обработки
                   <select
+                    className="sources-select"
                     required
                     value={form.processingMode}
                     onChange={(event) =>
@@ -314,16 +311,6 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
                   Смена режима влияет только на будущую обработку и не запускает
                   повторный анализ текущего инвентаря.
                 </p>
-                <label className="sources-inline">
-                  <input
-                    type="checkbox"
-                    checked={form.enabled}
-                    onChange={(event) =>
-                      setForm({ ...form, enabled: event.target.checked })
-                    }
-                  />{" "}
-                  Каталог включён
-                </label>
                 <p className="sources-help">
                   Путь принадлежит серверу, а не этому компьютеру. Смена пути не
                   удаляет инвентарь: прежние записи остаются видимыми как
@@ -352,7 +339,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             <p>
               Удаляются только записи инвентаря этого каталога в базе MeloTrove.
               Исходные файлы в каталоге источника и медиатека в output останутся
-              на месте. Во время активного сканирования сервер отклоняет
+              на месте. Во время активной операции с каталогом сервер отклоняет
               удаление.
             </p>
             <AppButton
