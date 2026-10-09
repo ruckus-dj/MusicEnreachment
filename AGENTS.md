@@ -41,7 +41,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Tool integrations | backend/internal/integrations/tools/AGENTS.md | Managed ffmpeg/fpcalc downloads, GitHub adapters |
 | Migrations | backend/internal/migrations/AGENTS.md | Embedded SQL, versioned .tx.up/.down pairs |
 | Settings | backend/internal/settings | Filesystem-backed registry |
-| Frontend screens | frontend/src/features/ | setup/ and settings/ only (early prototype) |
+| Frontend screens | frontend/src/features/ | setup/, settings/, and sources/ |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
 | Design prototype | docs/app-design/AGENTS.md | Static HTML/JS prototype with screenshots |

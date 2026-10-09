@@ -22,14 +22,12 @@ successful publication.
 
 A source root is registered by its absolute path on the server that runs
 MeloTrove, never by a path on the browser workstation. The current slice reads a
-source directly. Staged processing is not implemented. The owner-approved
-direction for plan 09 is per-root staged mode whose temporary audio copies live
-under the required managed output path, without a separate work-directory setting
-or mount; the technical contract and implementation plan are owner-approved, and
-staged mode is not yet implemented. Source roots and
-runtime paths are database-backed settings, not environment variables. An
-unavailable source or an interrupted scan must not erase the last successfully
-observed inventory or existing managed publications.
+source in either of two per-root modes: `in_place` reads the source directly;
+`staged` creates a temporary audio copy under the managed output path and analyzes
+that copy. There is no separate work-directory setting or mount. Source roots and
+runtime paths are database-backed settings, not environment variables. Scan
+reconciliation updates locations in observed areas and removes locations in
+unreadable areas; existing managed publications remain untouched.
 
 The current Windows implementation rejects SMB/UNC source roots (for example,
 `\\server\share`, including slash aliases) before filesystem access; legacy
@@ -163,21 +161,20 @@ registers the path they already know:
 Registering a root does not scan it. A scan starts only from the scan button and
 runs as a background operation that reports the server stages `queued`,
 `traversing` and `applying` instead of a percentage. It is refused while Setup is
-incomplete, the instance platform is unsupported or mismatched, the root is
-disabled, or another scan of the same root is already active. The walk reads the
+incomplete, the instance platform is unsupported or mismatched, or another scan
+of the same root is already active. The walk reads the
 tree directly, does not follow symlinks and cannot leave the root.
 
-After a scan completes successfully, every new or changed location is analyzed
-automatically through the managed tools; a separate **Analyze** action is not
-needed for a normal file. Results may be prepared privately during traversal, but
-nothing is published unless the whole scan succeeded; a failed, interrupted or
-canceled scan neither publishes partial analysis nor replaces the inventory. Analysis has
+The scan enumerates and stats files, then admits per-file analysis work for new or
+changed locations; a separate **Analyze** action is not needed for a normal file.
+`in_place` analyzes the read-only source directly. `staged` first makes one
+managed temporary audio copy and analyzes that copy. Analysis has
 three independent steps, each storing its own success, actual version and
 provenance:
 
-- **SHA-256** — the global SHA-256 setting is a typed runtime setting in
-  PostgreSQL edited through Settings, enabled by default, with no environment
-  variable. When enabled it computes the digest for new and changed files,
+- **SHA-256** — the optional global SHA-256 setting is a typed runtime setting in
+  PostgreSQL edited through Settings, with no environment variable. When enabled
+  it computes the digest for new and changed files,
   including files with no audio stream, so an already known digest can reuse an
   existing analysis instead of analyzing the bytes again. When disabled the step
   is skipped neutrally and does not block `ffprobe` or `fpcalc`. Enabling it does
@@ -209,12 +206,12 @@ provenance:
   application adds no other limit and does not claim the fingerprint covers the
   whole file.
 
-SHA is computed first and its digest is looked up against saved probe results; on
-a cache miss the missing full `ffprobe` and `fpcalc` runs may execute in parallel.
-A successful fingerprint obtained before the probe settles is kept even when the
-probe fails and remains reusable by `(SHA-256, fpcalc version)`; a matching
-`(SHA-256, fpcalc version)` pair reuses the stored fingerprint without running
-`fpcalc` again. Fingerprint is not an identity: it participates in matching only
+When SHA-256 is enabled it is computed as an independent requested step and its
+digest can be used for analysis reuse; when disabled, it is skipped without
+blocking `ffprobe` or `fpcalc`. A successful fingerprint obtained before the probe
+settles is kept even when the probe fails. The latest successful fingerprint is
+reusable by SHA-256; the `fpcalc` version is provenance, not cache identity.
+Fingerprint is not an identity: it participates in matching only
 for a file whose selected successful current `ffprobe` confirmed exactly one
 audio stream. A file with zero or several audio streams keeps its fingerprint and
 provenance for reuse, while matching eligibility is shown neutrally as
@@ -231,37 +228,37 @@ runs, and if it fails, the previous successful fingerprint and its provenance
 remain readable. Activating another `fpcalc` version does not by itself reprocess
 existing results.
 
-Analysis reads the source read-only and in place, and applies the same freshness
-criterion as scan: a location is current when its observed size and mtime match.
-The current implementation is `in_place` only. Staged mode — whose owner-approved
-direction uses output-managed temporary copies rather than a separate
-work-directory setting — is not implemented in this slice. Automatic analysis never
-creates, changes or deletes a file below a source root; the source bytes are
-never modified. After the file changes on disk and a successful scan observes the
-new size or mtime, the stored results no longer describe the location and are
-replaced by a new analysis. Deleting a root removes only that root's inventory
-rows; source files on disk and the managed output library stay untouched.
+Analysis applies the same freshness criterion as scan: a location is current when
+its observed size and mtime match. In `in_place` mode tools read the source; in
+`staged` mode they read its output-managed temporary copy. Automatic analysis never
+creates, changes or deletes a file below a source root. Eligible staged copies are
+removed only by an explicit cleanup action; a failed cleanup retains the ownership
+record for a later explicit attempt. Changing the required output path validates
+the new path and, when no execution is running or claimed, invalidates queued work
+and all database references to old output while leaving old physical files
+untouched.
+After a successful scan observes changed size or mtime, the stored results no
+longer describe the location and are replaced by new analysis. Deleting a root
+removes only that root's inventory rows; source files and managed output remain.
 
 Outside this slice remain: scheduled scans, automatic retry/backoff, a full
-re-analysis button, per-root staged mode using output-managed copies, incoming groups, matching
+re-analysis button, incoming groups, matching
 itself with AcoustID and MusicBrainz, confidence, the local library and
 publication. The single-audio-stream check exists only as the matching gate; no
 grouping, matching or publication runs. No shipped operation deletes a source
 file; deleting a source file after a successful publication remains a later,
 explicitly enabled setting.
 
-Only a fully successful traversal replaces the inventory. A new, changed or
-deleted path appears after such a scan, while an unavailable root, a failed,
-interrupted or canceled scan leaves the last successful inventory visible
-together with the error instead of an empty result. Editing a root's path marks
-the existing inventory stale: the UI keeps listing the files with the path they
-were found under (`inventory_path`) until a successful scan of the new path
-replaces them, so old records are never presented as the inventory of the new
-path. Disabling a root keeps its records and refuses new scans. Deleting a root,
-after explicit confirmation of its path and record count, removes only that
-root's inventory rows from the database: the source files on disk and the
-managed output library stay untouched. No shipped operation deletes a source
-file; that remains a later, explicitly enabled setting.
+Scan reconciliation updates locations in successfully observed areas and removes
+locations from an unreadable file, root or subtree in the affected scope; roots
+and SHA analyses remain. Editing a root's path marks the existing inventory
+stale: the UI keeps listing files with the path where they were found
+(`inventory_path`) until a successful scan of the new path replaces them. Roots
+can be added or deleted, but not disabled. Deleting a root, after explicit
+confirmation of its path and record count, removes only that root's inventory
+rows from the database: source files on disk and the managed output library stay
+untouched. No shipped operation deletes a source file; that remains a later,
+explicitly enabled setting.
 
 ## Security and network exposure
 

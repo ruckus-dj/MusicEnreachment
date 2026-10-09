@@ -306,7 +306,7 @@
 
 **Позднейшее уточнение владельца (2026-10-08):** для staged source analysis и
 управления output приоритетны решения из
-[`docs/plans/todo/10-staged-source-analysis.md#appendix-a-owner-decisions`](../plans/todo/10-staged-source-analysis.md#appendix-a-owner-decisions).
+[`docs/plans/done/10-staged-source-analysis.md#appendix-a-owner-decisions`](../plans/done/10-staged-source-analysis.md#appendix-a-owner-decisions).
 Ниже сохранены исторические формулировки и физические описания текущей
 реализации; в местах противоречия это не актуальный продуктовый контракт и не
 свидетельство выполненного refactor. Требуется отдельная проработка и изменение

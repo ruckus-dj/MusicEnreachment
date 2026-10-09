@@ -8,31 +8,22 @@
 
 ## Следующий этап
 
-Текущий этап — [план 10: реализация staged source analysis](todo/10-staged-source-analysis.md),
-продолжающий завершённую проработку [плана 09](done/09-staged-source-analysis-design.md).
-Статус: проектирование (план 09) завершено, независимое ревью проведено; контракт и
-implementation plan одобрены владельцем 2026-10-08; реализация активна, начиная с I01.
-UI screenshot сопоставление текстовое: полноценный visual/browser review не
-проводился и dark Sources/Settings screenshots в проверенном каталоге не
-обнаружены.
-
-- [Контракт D03–D05](todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05)
-  — одобренная техническая спецификация UI-flow, lifecycle, DB/API/deployment.
-- [Решения владельца от 2026-10-08](todo/10-staged-source-analysis.md#appendix-a-owner-decisions)
-  — зафиксированные продуктовые решения по staged source analysis.
-- [Implementation plan](todo/10-staged-source-analysis.md)
-  — последовательные небольшие этапы, зависимости, reset interlock/journal,
-  bulk cleanup и verification; одобрен к реализации.
-- [D01 execution map](../reports/plan09-execution-map-2026-10-08.md) — фактический
-  code map, не требования и не свидетельство поставки staged mode.
+Нет активного плана реализации. Будущую область следует сначала выбрать и
+проработать отдельно; этот указатель не назначает следующий продуктовый приоритет.
 
 ## Завершено
+
+- [План 10: реализация staged source analysis](done/10-staged-source-analysis.md)
+  — COMPLETE (2026-10-09): I01–I12 завершены, согласованная приёмка завершена;
+  итоговый GitHub CI run `37917622804` для `7a43da732b241f53b9ef3b9718756623a3312e09`
+  полностью зелёный. Runtime/browser свидетельства и ограничения указаны в плане
+  и датированных отчётах.
 
 - [План 09: проектирование staged source analysis](done/09-staged-source-analysis-design.md)
   — COMPLETE (2026-10-08): документационная проработка D01–D06 и независимое ревью;
   контракт D03–D05 и implementation plan одобрены владельцем
-  ([отчёт](../reports/plan09-independent-review-2026-10-08.md)). Приложение ещё не
-  реализовано; исполнение продолжает план 10.
+  ([отчёт](../reports/plan09-independent-review-2026-10-08.md)). На дату завершения
+  плана 09 приложение ещё не было реализовано; позднее реализация завершена планом 10.
 
 - [План 08: согласование Settings и Setup с дизайном](done/08-settings-and-setup-design-corrections.md)
   — COMPLETE (2026-10-08): C01–C08, полный `task verify`, реальные Setup/move,

@@ -10,7 +10,7 @@ D03–D05 и implementation plan одобрены владельцем 2026-10-0
 Подготовлен 2026-10-08 по запросу владельца выбрать следующий шаг.
 **Статус на 2026-10-08: документационная проработка D01–D06 завершена; приложение
 ещё не реализовано.** Утверждённые решения зафиксированы в отдельном
-[документе решений владельца](../todo/10-staged-source-analysis.md#appendix-a-owner-decisions).
+[документе решений владельца](10-staged-source-analysis.md#appendix-a-owner-decisions).
 Документационные результаты D01–D06 готовы; контракт и implementation plan
 одобрены владельцем к реализации. Это не свидетельство поставки кода.
 Требования к staged mode, output и scan из более ранних
@@ -91,7 +91,7 @@ auth/CORS, новые зависимости или произвольные п�
 
 **Уточнение 2026-10-08:** этот исходный список сохраняет прежние границы
 проработки, но в части противоречий superseded решением владельца из
-`../todo/10-staged-source-analysis.md#appendix-a-owner-decisions`. В частности, общий work-directory,
+`10-staged-source-analysis.md#appendix-a-owner-decisions`. В частности, общий work-directory,
 hash в copy-потоке и полный scan как атомарный источник анализа не являются
 актуальными решениями. Не переносить эти положения в требования реализации.
 
@@ -118,7 +118,7 @@ hash в copy-потоке и полный scan как атомарный ист�
 ## 4. Вопросы для явного согласования
 
 **Уточнение 2026-10-08:** Q01–Q08 получили ответы владельца; актуальные решения
-перечислены в [дополнении решений](../todo/10-staged-source-analysis.md#appendix-a-owner-decisions).
+перечислены в [дополнении решений](10-staged-source-analysis.md#appendix-a-owner-decisions).
 Таблица ниже сохраняется как запись исходных вопросов, а не как список
 неразрешённых продуктовых решений. Технические детали, явно оставленные
 предложением (например точные имена директорий), требуют дальнейшей проработки.
@@ -180,7 +180,7 @@ hash в copy-потоке и полный scan как атомарный ист�
 - [x] Разобрать partial tool success, retry одного шага, изменение active tools,
       смену режима/пути и restart после каждого filesystem/DB перехода.
 - [x] Зафиксировать сценарную матрицу и решения Q01–Q08 в
-      [контракте](../todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05); владелец одобрил
+      [контракте](10-staged-source-analysis.md#appendix-b-contract-d03-d05); владелец одобрил
       контракт 2026-10-08.
 - [x] Обновить документацию с датой уточнений и одобрением владельца.
 
@@ -204,7 +204,7 @@ hash в copy-потоке и полный scan как атомарный ист�
       не как новое обязательство mobile-first.
 
 **Результат:** UI-flow, error/stale states, draft/focus и проверка viewport
-описаны в одобренном [контракте D03–D05](../todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05).
+описаны в одобренном [контракте D03–D05](10-staged-source-analysis.md#appendix-b-contract-d03-d05).
 Это текстовая проработка и текстовое сопоставление доступных screenshot names, не
 visual/browser review flow и не API реализация.
 
@@ -230,7 +230,7 @@ visual/browser review flow и не API реализация.
       timers или более строгой filesystem threat model.
 
 **Результат:** lifecycle/crash matrix и integration point shared preparer в
-[контракте D03–D05](../todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05). Fingerprint cache
+[контракте D03–D05](10-staged-source-analysis.md#appendix-b-contract-d03-d05). Fingerprint cache
 решён владельцем: ровно один последний успешный результат на SHA, версия fpcalc —
 provenance; version-keyed схема требует refactor. Решение не является свидетельством
 реализации.
@@ -253,7 +253,7 @@ provenance; version-keyed схема требует refactor. Решение н�
       standalone; новых bootstrap env vars не вводить.
 
 **Результат:** согласованная физическая, HTTP и deployment-модель в
-[контракте D03–D05](../todo/10-staged-source-analysis.md#appendix-b-contract-d03-d05). Это не
+[контракте D03–D05](10-staged-source-analysis.md#appendix-b-contract-d03-d05). Это не
 свидетельство SQL/API реализации.
 
 ### D06. Декомпозировать последующую реализацию
@@ -270,7 +270,7 @@ provenance; version-keyed схема требует refactor. Решение н�
 - [x] Получить явное одобрение владельца контракта и implementation plan
       2026-10-08 («В остальном ок, давай пробовать») с уточнением UI смены output.
 
-**Результат:** [implementation plan](../todo/10-staged-source-analysis.md)
+**Результат:** [implementation plan](10-staged-source-analysis.md)
 с commit-by-commit sequencing, dependencies, verification и CI. Техническая
 проработка закончена; план одобрен владельцем к реализации. Дизайн-этап не
 свидетельствует о выполнении запланированной реализации.

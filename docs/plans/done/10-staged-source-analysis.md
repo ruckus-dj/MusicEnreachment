@@ -1,7 +1,7 @@
 # План 10 — план реализации staged source analysis
 
-**Дата:** 2026-10-08. **Статус: одобрен владельцем 2026-10-08; реализация
-разрешена.** Требования зафиксированы в
+**Дата:** 2026-10-09. **Статус: COMPLETE — реализация и согласованная приёмка
+завершены 2026-10-09.** Требования зафиксированы в
 [решениях владельца](#appendix-a-owner-decisions);
 технические варианты и детали — в [контракте D03–D05](#appendix-b-contract-d03-d05).
 Фактическая карта текущего исполнения: [D01](../../reports/plan09-execution-map-2026-10-08.md).
@@ -238,7 +238,7 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   limits are in `docs/reports/plan10-browser-acceptance-2026-10-09.md` and
   `plan10-independent-review-2026-10-09.md`. The owner deferred CI HTTP smoke;
   native CI, real-media-tool runtime evidence and exhaustive crash acceptance
-  are not claimed. Plan remains in `todo/` until remaining acceptance is resolved.
+  were not claimed at that point; see the dated final acceptance below.
 
 ### Последующее уточнение I12 (2026-10-09)
 
@@ -256,7 +256,29 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   на каждой границе не является дополнительным требованием владельца.
 - Native CI для `9d4b1ca` failed: run `37897516267`. Причины fixture failures
   исправлены в `f9e9dd8`; passing native matrix после push исправленной ревизии
-  ещё не подтверждена. Поэтому план пока остаётся в `todo/`.
+  ещё не была подтверждена на тот момент. Исторический результат не изменяется;
+  итоговое состояние указано ниже.
+
+### Итоговая приёмка I12 (2026-10-09)
+
+- Все этапы I01–I12 завершены. `task verify` и требуемые локальные commit gates
+  проходили; исторические CI failures были исправлены, а не переписаны как
+  успешные. GitHub Actions [run 37917622804](https://github.com/ruckus/MusicEnreachment/actions/runs/37917622804)
+  для ревизии `7a43da732b241f53b9ef3b9718756623a3312e09` завершился успешно:
+  все checks зелёные, включая native platform matrix.
+- Приёмка runtime подтвердила оба режима: шесть fresh analyses, 18 шагов
+  SHA/ffprobe/fpcalc и 12 совпадающих before/after записей исходников и копий
+  (SHA, size, mtime_ns и mode); explicit cleanup удалил три выбранных артефакта,
+  оставив шесть невыбранных.
+  Исходные данные не изменились. Детали и ограничения сохранены в датированном
+  [runtime отчёте](../../reports/plan10-real-tools-runtime-acceptance-2026-10-09.md).
+- Независимый browser review и его ограничения отражены в
+  [browser отчёте](../../reports/plan10-browser-acceptance-2026-10-09.md) и
+  [итоговом независимом review](../../reports/plan10-independent-review-2026-10-09.md).
+  Владелец исключил CI HTTP smoke; exhaustive crash matrix не заявляется.
+- Итоговая проверка подтвердила отсутствие мутации source bytes, cleanup чужих
+  или live artifacts, полных конфигурационных snapshots, новых environment
+  variables и scope creep в matching/publication. План перемещён в `done/`.
 
 ## Cross-commit dependency notes
 
@@ -324,10 +346,12 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
 - [x] Contract and implementation plan explicitly approved by owner 2026-10-08
       («В остальном ок, давай пробовать»), with output-change UI clarification.
 - [x] Implementation scope approved; plan moved to `todo/` and implementation
-      authorized.
-- [ ] Per commit: `task verify` and all applicable CI, with runtime/CI limits
-      reported accurately.
-- [ ] Final acceptance confirms no source mutation, no non-owned/live cleanup,
+      authorized, then moved to `done/` after final acceptance.
+- [x] Per commit: `task verify` and applicable CI were completed; historical
+      failures were fixed and the final passing CI run is recorded above. Runtime
+      and CI limits are reported accurately; this does not claim every historical
+      commit had a passing CI run.
+- [x] Final acceptance confirms no source mutation, no non-owned/live cleanup,
       no accidental full snapshots, no new environment variables, and no
       publication/matching scope creep.
 
@@ -338,7 +362,7 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
 <a id="appendix-a-owner-decisions"></a>
 
 
-**Дата фиксации: 2026-10-08. Статус: решения владельца и реализация staged
+**Дата фиксации: 2026-10-08. Статус на дату фиксации: решения владельца и реализация staged
 source analysis одобрены; выполнение реализации начато с I01.** Этот документ фиксирует явные
 продуктовые решения для дальнейшей проработки. Он не является доказательством
 выполнения этапов D01–D06 и не утверждает, что код, API или схема БД уже
