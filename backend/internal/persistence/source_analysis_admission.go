@@ -323,11 +323,22 @@ func (repository *SourceInventoryRepository) CreateNormalizedSourceAnalysisOpera
 				return fmt.Errorf("admit source analysis: hold installation %s: %w", tool.InstallationID, err)
 			}
 		}
+		invalidateGrouping := false
 		for _, row := range selected {
 			if _, err := tx.NewRaw(`UPDATE source_analysis_step SET state='queued',input_snapshot=?::jsonb,safe_error=NULL,skip_reason=NULL,
 				execution_operation_id=?,execution_operation_attempt=?,execution_job_id=?,updated_at=now()
 				WHERE work_id=? AND step=?`, row.ProposedInput, operation.ID, operation.Attempt, job.Job.ID, row.WorkID, row.Step).Exec(ctx); err != nil {
 				return fmt.Errorf("admit source analysis: queue %s step: %w", row.Step, err)
+			}
+			// Re-queueing a previously successful step (an explicit fingerprint
+			// rerun) discards the result the materialized incoming grouping was
+			// built from. Mark the read model stale in this same admission
+			// transaction; a pending re-queue does not change any published result.
+			invalidateGrouping = invalidateGrouping || row.State == "succeeded"
+		}
+		if invalidateGrouping {
+			if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
+				return fmt.Errorf("admit source analysis: %w", err)
 			}
 		}
 		return nil

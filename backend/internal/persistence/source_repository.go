@@ -195,6 +195,9 @@ func (repository *SourceInventoryRepository) ListSourceRoots(ctx context.Context
 // lock makes the check atomic against a scan or analysis starting.
 func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Context, cas *SourceRoot) error {
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("update source root: lock fingerprint mutations: %w", err)
+		}
 		current := new(SourceRoot)
 		if err := tx.NewRaw("SELECT * FROM source_root WHERE id = ? FOR UPDATE", cas.ID).Scan(ctx, current); err != nil {
 			if err == sql.ErrNoRows {
@@ -224,6 +227,9 @@ func (repository *SourceInventoryRepository) UpdateSourceRoot(ctx context.Contex
 			update = update.Set("processing_mode = ?", cas.ProcessingMode)
 		}
 		if _, err := update.Exec(ctx); err != nil {
+			return fmt.Errorf("update source root: %w", err)
+		}
+		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("update source root: %w", err)
 		}
 		return nil
@@ -279,6 +285,9 @@ func (repository *SourceInventoryRepository) DeleteSourceRoot(ctx context.Contex
 		// The locations of the root went with it; a variant their links kept
 		// alive is now unreferenced and is removed in the same transaction.
 		if err := deleteOrphanedMediaVariants(ctx, tx); err != nil {
+			return fmt.Errorf("delete source root: %w", err)
+		}
+		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("delete source root: %w", err)
 		}
 		return nil
@@ -438,6 +447,9 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 			Set("updated_at = now()").
 			Where("id = ?", root.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source scan: record successful scan: %w", err)
+		}
+		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
+			return fmt.Errorf("apply source scan: %w", err)
 		}
 		return nil
 	})

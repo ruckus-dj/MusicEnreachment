@@ -17,10 +17,15 @@ import (
 // IncomingLocation describes one current inventory location for a file
 // variant. SHA256 is deliberately not required to identify incoming files.
 type IncomingLocation struct {
-	RootID       uuid.UUID
-	RelativePath string
-	SizeBytes    int64
-	Mtime        string
+	RootID            uuid.UUID
+	WorkID            uuid.UUID
+	LocationID        uuid.UUID
+	ConfiguredPath    string
+	InventoryPath     string
+	TechnicalIdentity string
+	RelativePath      string
+	SizeBytes         int64
+	Mtime             string
 }
 
 // IncomingFile is the service-layer snapshot needed for pure grouping. Tags
@@ -28,15 +33,18 @@ type IncomingLocation struct {
 type IncomingFile struct {
 	VariantID         uuid.UUID
 	CaptureAnalysisID uuid.UUID
+	CaptureIdentity   string
 	Locations         []IncomingLocation
 	Tags              map[string][]string
 }
 
 type IncomingGroup struct {
-	ID          uuid.UUID
-	Revision    string
-	Members     []uuid.UUID
-	Diagnostics []IncomingGroupingDiagnostic
+	ID             uuid.UUID
+	Revision       string
+	Manual         bool
+	Members        []uuid.UUID
+	UnreadyMembers []uuid.UUID
+	Diagnostics    []IncomingGroupingDiagnostic
 }
 
 type IncomingGroupingDiagnostic struct {
@@ -277,6 +285,7 @@ func deterministicIncomingGroupID(key incomingGroupKey) uuid.UUID {
 type incomingMemberIdentity struct {
 	Variant   string             `json:"variant"`
 	Analysis  string             `json:"analysis"`
+	Capture   string             `json:"capture,omitempty"`
 	Locations []IncomingLocation `json:"locations"`
 }
 
@@ -309,7 +318,7 @@ func incomingGroupRevision(members []uuid.UUID, filesByVariant map[uuid.UUID]Inc
 			}
 			return a.Mtime < b.Mtime
 		})
-		identities = append(identities, incomingMemberIdentity{Variant: member.String(), Analysis: file.CaptureAnalysisID.String(), Locations: locations})
+		identities = append(identities, incomingMemberIdentity{Variant: member.String(), Analysis: file.CaptureAnalysisID.String(), Capture: file.CaptureIdentity, Locations: locations})
 	}
 	encoded, err := json.Marshal(identities)
 	if err != nil {
@@ -574,6 +583,7 @@ func cloneIncomingGroups(groups []IncomingGroup) []IncomingGroup {
 	for i, group := range groups {
 		result[i] = group
 		result[i].Members = append([]uuid.UUID(nil), group.Members...)
+		result[i].UnreadyMembers = append([]uuid.UUID(nil), group.UnreadyMembers...)
 		result[i].Diagnostics = append([]IncomingGroupingDiagnostic(nil), group.Diagnostics...)
 	}
 	return result

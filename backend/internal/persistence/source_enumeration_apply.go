@@ -205,6 +205,9 @@ func (repository *SourceInventoryRepository) ApplySourceEnumeration(ctx context.
 				return fmt.Errorf("apply source enumeration: record unreadable-scope outcome: %w", err)
 			}
 		}
+		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
+			return fmt.Errorf("apply source enumeration: %w", err)
+		}
 		return nil
 	})
 }

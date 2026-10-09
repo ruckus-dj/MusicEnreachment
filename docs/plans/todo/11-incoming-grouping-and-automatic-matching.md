@@ -482,6 +482,44 @@ normalization для score в точности. Если по имеющимся
 > реализованы; план остаётся в `todo/`. База изменения — `1a52919`; точная
 > ревизия реализации фиксируется коммитом.
 
+> **Датированное дополнение 2026-10-09 (M04a — schema/persistence/service
+> grouping, bounded):** Зафиксирован первый ограниченный increment M04 —
+> grouping schema/persistence/service. Физическая схема и versioned migrations
+> `20261029000000_incoming_grouping` с проверяемым down path:
+> `incoming_grouping_state` (singleton с `revision`/`needs_refresh`),
+> `incoming_group`, `incoming_group_member` (`ready`) и
+> `incoming_group_member_location` — намеренно **скопированные** fence-данные,
+> а не ссылки, чтобы retirement inventory/work не блокировался persisted
+> corrections. Persistence `IncomingGroupingRepository` и service
+> `IncomingGroups` дают stateless snapshot, refresh и явный confirm; page
+> drafts merge/split/move остаются только в page state и в БД не пишутся.
+> Manual confirmed corrections применяются CAS: confirm применяет draft, только
+> если base- и draft-ревизии совпадают со свежим снимком БД, взятым под
+> lock-ами; иначе `ErrIncomingGroupingConflict`. Свежий snapshot берётся под
+> каноническим source mutation gate (`lockSourceFingerprintMutations`, advisory
+> xact lock, namespace `MTRV`, key 4), затем row-locks
+> `source_root → source_location → source_analysis_work` по id и
+> `incoming_grouping_state`. Ready/unready manual retention: manual membership
+> сохраняется только для файлов с пережившей точной location/stat identity;
+> unready-члены сохраняются как `ready=false`; изменившийся файл сбрасывает
+> correction, новый файл не присоединяется к manual-группе автоматически.
+> Capture winner fences: identity capture использует metadata winner
+> (`winning_result_id`), `observed_at`, provenance, tags и опциональный SHA256
+> (`omitempty`), поэтому SHA не является prerequisite (работает при SHA
+> off/NULL, `variant_id` падает на work/location id); technical identity
+> включает probe/fingerprint winner и algorithm namespace/id. Durable
+> `needs_refresh` hooks: `InvalidateIncomingGrouping` вызывается в той же
+> транзакции, что и mutation, в analysis/inventory/root paths (enumeration
+> apply, SHA/probe/fingerprint/metadata apply, fingerprint/probe reuse, source
+> root update/delete, source scan apply) и при re-queue ранее succeeded шага.
+> `task verify` прошёл 2026-10-09 23:10: Go integration, 243 frontend tests,
+> 4 tools tests, generation, lint, build; независимое финальное ревью закрыто.
+> Границы: API/startup/worker refresh ещё **не подключены**; следующий
+> increment и provider cache/local/automatic matching (M04b и далее) **не
+> завершены**; план остаётся в `todo/`. Публикация вне scope. База изменения —
+> `bd50439`; точная ревизия реализации фиксируется коммитом (без выдуманного
+> hash). Новых standalone research-файлов не добавлялось.
+
 ## Cross-stage safety and acceptance invariants
 
 1. **Atomic group outcome:** the automatic action is group-wide over every
