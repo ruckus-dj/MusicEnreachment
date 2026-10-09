@@ -73,6 +73,8 @@ type SetupManagerRepository struct {
 	db *bun.DB
 }
 
+const existingSourceAnalysisArtifactCleanupOperationKind = SourceAnalysisArtifactCleanupOperationKind
+
 func NewSetupManagerRepository(db *bun.DB) *SetupManagerRepository {
 	return &SetupManagerRepository{db: db}
 }
@@ -1069,8 +1071,9 @@ func (repository *SetupManagerRepository) TransitionOperation(ctx context.Contex
 	})
 }
 
-// TransitionOperationForDelivery applies an installation-worker transition
-// only while the operation still names that River job and attempt.
+// TransitionOperationForDelivery applies an installation or source-artifact
+// cleanup worker transition only while the operation still names that River job
+// and attempt.
 func (repository *SetupManagerRepository) TransitionOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, transition func(*Operation) error) (bool, error) {
 	changed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -1081,7 +1084,7 @@ func (repository *SetupManagerRepository) TransitionOperationForDelivery(ctx con
 		if err != nil {
 			return err
 		}
-		if (operation.Kind != "install" && operation.Kind != "move_tools_root") || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+		if (operation.Kind != "install" && operation.Kind != "move_tools_root" && operation.Kind != existingSourceAnalysisArtifactCleanupOperationKind) || operation.Attempt != attempt || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
 			return nil
 		}
 		if err := transition(operation); err != nil {

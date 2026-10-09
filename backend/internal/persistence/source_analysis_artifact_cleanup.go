@@ -42,7 +42,7 @@ type SourceAnalysisArtifactCleanupItem struct {
 	OperationID      uuid.UUID
 	OperationAttempt int
 	JobID            int64
-	RelativePath     string
+	RelativePath     string `bun:"relative_output_path"`
 	State            string
 	SafeError        *string
 }

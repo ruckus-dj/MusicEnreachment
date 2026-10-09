@@ -184,8 +184,9 @@ func (s *Operations) Running(ctx context.Context, id uuid.UUID, stage string) er
 }
 
 // RunningForDelivery and its siblings fence stale River deliveries by the
-// durable operation attempt and job ID. They are used by installation workers,
-// whose job args intentionally contain only the operation ID.
+// durable operation attempt and job ID. They are used by installation and
+// source-artifact cleanup workers, whose job args intentionally contain only
+// the operation ID.
 func (s *Operations) RunningForDelivery(ctx context.Context, operation *persistence.Operation, stage string) error {
 	return s.transitionForDelivery(ctx, operation, "running", stage, "", nil)
 }
