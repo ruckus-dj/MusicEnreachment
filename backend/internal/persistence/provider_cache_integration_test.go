@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -16,6 +17,9 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 	db := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	repository := persistence.NewProviderCacheRepository(db)
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-1') ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 	providerA := persistence.Provider{ID: uuid.New(), Code: "provider-a"}
 	providerB := persistence.Provider{ID: uuid.New(), Code: "provider-b"}
 	if err := repository.CreateProvider(ctx, &providerA); err != nil {
@@ -250,5 +254,219 @@ func TestProviderCacheGenerationAndGraphPersistenceWithPostgreSQL(t *testing.T) 
 	}
 	if err := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: fenced, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`)}); err == nil {
 		t.Fatal("response from obsolete source configuration was accepted")
+	}
+}
+
+func TestProviderSourceProjectionAuthorityAndEndpointIsolation(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name, setting_value) VALUES('musicbrainz_config_identity', 'cfg-source') ON CONFLICT (setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	providerID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz-provider"))
+	if _, err := db.NewRaw(`INSERT INTO provider(id, code) VALUES(?, 'musicbrainz') ON CONFLICT (code) DO NOTHING`, providerID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT id FROM provider WHERE code='musicbrainz'`).Scan(ctx, &providerID); err != nil {
+		t.Fatal(err)
+	}
+	newSource := func(namespace, endpoint string) persistence.ProviderSource {
+		t.Helper()
+		source := persistence.ProviderSource{ID: uuid.New(), ProviderID: providerID, Namespace: namespace, Endpoint: endpoint, ConfigurationIdentity: "cfg-source"}
+		if err := persistence.NewProviderCacheRepository(db).CreateProviderSource(ctx, &source); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	sourceA := newSource("mb-a", "https://mb-a.invalid/ws/2")
+	sourceB := newSource("mb-b", "https://mb-b.invalid/ws/2")
+	repository := persistence.NewProviderCacheRepository(db)
+	const key = "00000000-0000-4000-8000-000000000001"
+	olderSearch, err := repository.BeginRefresh(ctx, sourceA.ID, "search", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerLookup, err := repository.BeginRefresh(ctx, sourceA.ID, "lookup", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply := func(ticket persistence.ProviderRefreshTicket, fields, name string, authority int) {
+		t.Helper()
+		graph := persistence.ProviderGraph{Entities: []persistence.ProviderSourceEntity{{
+			Kind: "release", ProviderKey: key, Name: name, Fields: json.RawMessage(fields),
+			RawSource: json.RawMessage(`{"unknown":true}`), Authority: authority,
+		}}}
+		if err := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`), Graph: graph}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply(newerLookup, `{"title":"lookup","media":[{"tracks":[]}]}`, "Lookup", 3)
+	apply(olderSearch, `{"title":"search","score":95}`, "Search", 2)
+	olderLookup, err := repository.BeginRefresh(ctx, sourceA.ID, "lookup-old", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerLookup, err = repository.BeginRefresh(ctx, sourceA.ID, "lookup-new", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(newerLookup, `{"title":"new lookup","media":[]}`, "New lookup", 3)
+	apply(olderLookup, `{"title":"old lookup"}`, "Old lookup", 3)
+	newSourceBTicket, err := repository.BeginRefresh(ctx, sourceB.ID, "lookup", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(newSourceBTicket, `{"title":"other source"}`, "Other", 3)
+	var fieldsA, fieldsB string
+	if err := db.NewRaw(`SELECT fields::text FROM provider_source_entity WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, sourceA.ID, key).Scan(ctx, &fieldsA); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT fields::text FROM provider_source_entity WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, sourceB.ID, key).Scan(ctx, &fieldsB); err != nil {
+		t.Fatal(err)
+	}
+	var decodedA, decodedB map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(fieldsA), &decodedA); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(fieldsB), &decodedB); err != nil {
+		t.Fatal(err)
+	}
+	var titleA, titleB string
+	_ = json.Unmarshal(decodedA["title"], &titleA)
+	_ = json.Unmarshal(decodedB["title"], &titleB)
+	if titleA != "new lookup" || string(decodedA["media"]) != "[]" || string(decodedA["score"]) != "95" {
+		t.Fatalf("lookup/search projection precedence = %s", fieldsA)
+	}
+	if titleB != "other source" || titleA == titleB {
+		t.Fatalf("endpoint projections mixed: A=%s B=%s", fieldsA, fieldsB)
+	}
+	priorityKey := "00000000-0000-4000-8000-000000000006"
+	olderLookupTicket, err := repository.BeginRefresh(ctx, sourceA.ID, "lookup-before-search", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerSearchTicket, err := repository.BeginRefresh(ctx, sourceA.ID, "search-after-lookup", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPriority := func(ticket persistence.ProviderRefreshTicket, fields string, authority int) {
+		t.Helper()
+		graph := persistence.ProviderGraph{Entities: []persistence.ProviderSourceEntity{{Kind: "release", ProviderKey: priorityKey, Fields: json.RawMessage(fields), RawSource: json.RawMessage(`{}`), Authority: authority}}}
+		if err := repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{}`), Graph: graph}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyPriority(newerSearchTicket, `{"title":"search","score":88}`, 2)
+	applyPriority(olderLookupTicket, `{"title":"lookup"}`, 3)
+	var priorityFields string
+	if err := db.NewRaw(`SELECT fields::text FROM provider_source_entity WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, sourceA.ID, priorityKey).Scan(ctx, &priorityFields); err != nil {
+		t.Fatal(err)
+	}
+	var priority map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(priorityFields), &priority); err != nil {
+		t.Fatal(err)
+	}
+	var priorityTitle string
+	_ = json.Unmarshal(priority["title"], &priorityTitle)
+	if priorityTitle != "lookup" || string(priority["score"]) != "88" {
+		t.Fatalf("older lookup failed to override search while preserving search-only field: %s", priorityFields)
+	}
+	before, err := repository.GetCachedResponse(ctx, sourceA.ID, "lookup-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed, err := repository.BeginRefresh(ctx, sourceA.ID, "lookup-new", "cfg-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repository.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: malformed, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"bad_graph":true}`),
+		Graph: persistence.ProviderGraph{Entities: []persistence.ProviderSourceEntity{{Kind: "release", ProviderKey: key, Fields: json.RawMessage(`[]`), RawSource: json.RawMessage(`{}`), Authority: 3}}},
+	})
+	if err == nil {
+		t.Fatal("malformed normalized graph was accepted")
+	}
+	after, err := repository.GetCachedResponse(ctx, sourceA.ID, "lookup-new")
+	if err != nil || before == nil || after == nil || string(before.Payload) != string(after.Payload) {
+		t.Fatalf("malformed graph did not roll back cache payload: before=%+v after=%+v err=%v", before, after, err)
+	}
+}
+
+func TestMusicBrainzStableSourceIdentityAndConfigurationSwitchback(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	registry := settings.New(persistence.NewSettingsRepository(db), nil)
+	cache := persistence.NewProviderCacheRepository(db)
+	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
+		t.Fatal(err)
+	}
+	publicConfig, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicA, err := cache.ResolveMusicBrainzSource(ctx, "https://musicbrainz.org/ws/2", publicConfig.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := cache.BeginRefresh(ctx, publicA.ID, "release-lookup:one", publicConfig.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: ticket, FetchedAt: time.Now().UTC(), Revision: "saved-revision", Payload: json.RawMessage(`{"id":"saved"}`),
+		Graph: persistence.ProviderGraph{Entities: []persistence.ProviderSourceEntity{{Kind: "release", ProviderKey: "release-one", Name: "Saved", Fields: json.RawMessage(`{"title":"Saved"}`), RawSource: json.RawMessage(`{"title":"Saved"}`), Authority: 3, Complete: true}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staleTicket, err := cache.BeginRefresh(ctx, publicA.ID, "stale-after-switch", publicConfig.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", "https://local.invalid/ws/2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{
+		Ticket: staleTicket, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"stale":true}`),
+	}); err == nil {
+		t.Fatal("response reserved under an old configuration was accepted")
+	}
+	localConfig, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := cache.ResolveMusicBrainzSource(ctx, localConfig.BaseURL, localConfig.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.ID == publicA.ID || local.ProviderID != publicA.ProviderID {
+		t.Fatalf("source identity must vary by endpoint while provider remains stable: public=%+v local=%+v", publicA, local)
+	}
+	if err := registry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
+		t.Fatal(err)
+	}
+	publicConfigAgain, err := registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicAgain, err := cache.ResolveMusicBrainzSource(ctx, "https://musicbrainz.org/ws/2", publicConfigAgain.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publicAgain.ID != publicA.ID || publicAgain.ConfigurationIdentity == publicA.ConfigurationIdentity {
+		t.Fatalf("public source was not deterministically reused with the current config fence: first=%+v second=%+v", publicA, publicAgain)
+	}
+	cached, err := cache.GetCachedResponse(ctx, publicAgain.ID, "release-lookup:one")
+	var cachedPayload struct {
+		ID string `json:"id"`
+	}
+	if cached != nil {
+		if err := json.Unmarshal(cached.Payload, &cachedPayload); err != nil {
+			t.Fatalf("decode switchback cache payload: %v", err)
+		}
+	}
+	if err != nil || cached == nil || cachedPayload.ID != "saved" || cached.Revision == nil || *cached.Revision != "saved-revision" {
+		t.Fatalf("switchback did not retain successful endpoint cache: cached=%+v err=%v", cached, err)
 	}
 }

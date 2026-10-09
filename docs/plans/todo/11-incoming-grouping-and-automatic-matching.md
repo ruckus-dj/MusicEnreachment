@@ -566,6 +566,30 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Normalization / explicit fetch-cache increment (2026-10-10):** source-scoped
+current projections, stable provider/entity identities, endpoint switchback,
+configuration fences и global fetch ordering реализованы в migration 310 и
+repository/service. Authority и accepted order сохраняются по полям и
+коллекциям; omitted track listings не превращаются в explicit empty lists.
+MusicBrainz response envelopes сохраняются, explicit HTTP выполняется вне DB
+transactions. Полный `task verify` 01:49 прошёл; независимое ревью закрыто.
+Это bounded capability: durable provider jobs, automatic candidate selection,
+local links и полный matching pipeline ещё не реализованы.
+
+**Приоритет provider evidence — решение владельца (2026-10-10):** подробный
+lookup приоритетнее search для полученных полей. Search может заполнять
+отсутствующие поля, но не затирает поля lookup. Новый lookup заменяет старый;
+omitted fields сохраняются.
+
+**Reuse/refresh evidence — решение владельца (2026-10-10):** при первом поиске
+получаем отсутствующие ответы; сохранённые успешные ответы переиспользуем без
+TTL. Обновление выполняется по явному действию «Обновить кандидатов».
+Ошибка обновления не меняет отношение к сохранённым успешным данным:
+прежние кандидаты остаются видимыми и доступными для automatic matching на
+обычных условиях. Предложение запрещать новый automatic apply только из-за
+ошибки refresh владельцем отвергнуто. Остальные source/configuration fences и
+защита manual links сохраняются.
+
 Следующий composition increment подключает общий MusicBrainz request gate к
 connectivity checker и provider factory, общий AcoustID limiter (3 requests/s)
 и сохранённые self-hosted controls: toggle default off, delay 0–60 seconds,

@@ -77,6 +77,28 @@ type ProviderGraph struct {
 	Recordings []ProviderRecording           `json:"recordings,omitempty"`
 	Credits    []ProviderReleaseArtistCredit `json:"credits,omitempty"`
 	Tracks     []ProviderReleaseTrack        `json:"tracks,omitempty"`
+	Entities   []ProviderSourceEntity        `json:"entities,omitempty"`
+}
+
+// ProviderSourceEntity is a source-specific current projection. Fields are a
+// sparse object so omitted provider fields remain distinguishable from explicit
+// empty values. Authority orders lookup, search, and nested summary evidence.
+type ProviderSourceEntity struct {
+	Kind          string                           `json:"kind"`
+	ProviderKey   string                           `json:"provider_key"`
+	Name          string                           `json:"name,omitempty"`
+	Fields        json.RawMessage                  `json:"fields"`
+	RawSource     json.RawMessage                  `json:"raw_source"`
+	Authority     int                              `json:"authority"`
+	FieldEvidence map[string]ProviderFieldEvidence `json:"field_evidence,omitempty"`
+	Complete      bool                             `json:"complete"`
+}
+
+// ProviderFieldEvidence is the winning source rank for one sparse projection field.
+// FetchOrder is assigned by persistence from the refresh ticket, never trusted from callers.
+type ProviderFieldEvidence struct {
+	Authority  int   `json:"authority"`
+	FetchOrder int64 `json:"fetch_order"`
 }
 
 type ProviderCachedResponse struct {
@@ -87,6 +109,7 @@ type ProviderCachedResponse struct {
 	FetchedAt        *time.Time      `bun:"fetched_at,nullzero"`
 	Revision         *string         `bun:"revision,nullzero"`
 	Generation       int64           `bun:"generation"`
+	FetchOrder       int64           `bun:"fetch_order"`
 }
 
 type ProviderRefreshTicket struct {
@@ -95,6 +118,7 @@ type ProviderRefreshTicket struct {
 	CacheKey              string
 	Generation            int64
 	ConfigurationIdentity string
+	FetchOrder            int64
 }
 
 type ProviderSuccessfulResponse struct {

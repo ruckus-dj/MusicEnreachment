@@ -59,6 +59,10 @@ type musicBrainzVerificationStore interface {
 	SetMusicBrainzVerifiedIfCurrent(context.Context, string, string, string, string) (bool, error)
 }
 
+type musicBrainzConfigSnapshotStore interface {
+	GetMusicBrainzConfigValues(context.Context) (map[string]string, error)
+}
+
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
 }
@@ -491,6 +495,33 @@ func (r *Registry) SetPublicationFormat(ctx context.Context, format string) erro
 
 // GetMusicBrainzConfig returns the current MusicBrainz configuration.
 func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig, error) {
+	if store, ok := r.store.(musicBrainzConfigSnapshotStore); ok {
+		values, err := store.GetMusicBrainzConfigValues(ctx)
+		if err != nil {
+			return MusicBrainzConfig{}, err
+		}
+		mode, err := parseSnapshotSetting(values, musicBrainzModeSetting)
+		if err != nil {
+			return MusicBrainzConfig{}, err
+		}
+		baseURL, err := parseSnapshotSetting(values, musicBrainzURLSetting)
+		if err != nil {
+			return MusicBrainzConfig{}, err
+		}
+		identity, err := parseSnapshotSetting(values, musicBrainzIdentitySetting)
+		if err != nil {
+			return MusicBrainzConfig{}, err
+		}
+		var verifiedAt *time.Time
+		if value := values[MusicBrainzVerifiedAtKey]; value != "" {
+			parsed, parseErr := musicBrainzVerifiedSetting.parse(value)
+			if parseErr != nil {
+				return MusicBrainzConfig{}, fmt.Errorf("invalid stored MusicBrainz verification: %w", parseErr)
+			}
+			verifiedAt = &parsed
+		}
+		return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
+	}
 	mode, _, err := readSetting(ctx, r.store, musicBrainzModeSetting)
 	if err != nil {
 		return MusicBrainzConfig{}, err
@@ -516,6 +547,26 @@ func (r *Registry) GetMusicBrainzConfig(ctx context.Context) (MusicBrainzConfig,
 	}
 
 	return MusicBrainzConfig{Mode: mode, BaseURL: baseURL, Identity: identity, VerifiedAt: verifiedAt}, nil
+}
+
+func parseSnapshotSetting[T any](values map[string]string, definition settingDefinition[T]) (T, error) {
+	raw, exists := values[definition.name]
+	if !exists {
+		if definition.defaultVal != nil {
+			return *definition.defaultVal, nil
+		}
+		var zero T
+		return zero, nil
+	}
+	value, err := definition.parse(raw)
+	if err == nil && definition.validate != nil {
+		err = definition.validate(value)
+	}
+	if err != nil {
+		var zero T
+		return zero, fmt.Errorf("invalid stored %s: %w", definition.name, err)
+	}
+	return value, nil
 }
 
 // SetMusicBrainzConfig validates and stores MusicBrainz configuration.

@@ -2,7 +2,9 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
@@ -163,8 +166,80 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 				return fmt.Errorf("set setting %q: %w", name, err)
 			}
 		}
+		if _, changed := values["musicbrainz_config_identity"]; changed {
+			if err := syncMusicBrainzProviderSource(ctx, tx); err != nil {
+				return fmt.Errorf("synchronize MusicBrainz provider source: %w", err)
+			}
+		}
 		return nil
 	})
+}
+
+// GetMusicBrainzConfigValues returns the configuration keys under the same
+// advisory lock used by configuration writes and provider-source synchronization.
+func (r *SettingsRepository) GetMusicBrainzConfigValues(ctx context.Context) (map[string]string, error) {
+	values := make(map[string]string, 4)
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration snapshot: %w", err)
+		}
+		var rows []AppSetting
+		if err := tx.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.List([]string{
+			"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity", "musicbrainz_verified_at",
+		})).Scan(ctx); err != nil {
+			return fmt.Errorf("read MusicBrainz configuration snapshot: %w", err)
+		}
+		for _, row := range rows {
+			values[row.Name] = row.Value
+		}
+		return nil
+	})
+	return values, err
+}
+
+func syncMusicBrainzProviderSource(ctx context.Context, tx bun.Tx) error {
+	var mode, endpoint, identity string
+	for _, field := range []struct {
+		name string
+		dest *string
+	}{{"musicbrainz_mode", &mode}, {"musicbrainz_base_url", &endpoint}, {"musicbrainz_config_identity", &identity}} {
+		if err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", field.name).Scan(ctx, field.dest); err != nil && err != sql.ErrNoRows {
+			return err
+		}
+	}
+	if identity == "" {
+		return nil
+	}
+	switch mode {
+	case "public":
+		endpoint = "https://musicbrainz.org/ws/2"
+	case "self-hosted":
+		if strings.TrimSpace(endpoint) == "" {
+			return nil
+		}
+	default:
+		return nil
+	}
+	endpoint = NormalizeMusicBrainzEndpoint(endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	providerID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz-provider"))
+	sourceID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz-source:"+endpoint))
+	providerCode := "musicbrainz"
+	namespaceHash := sha256.Sum256([]byte(endpoint))
+	namespace := "musicbrainz:" + hex.EncodeToString(namespaceHash[:])
+	if _, err := tx.NewRaw(`INSERT INTO provider(id, code) VALUES (?, ?) ON CONFLICT (code) DO NOTHING`, providerID, providerCode).Exec(ctx); err != nil {
+		return err
+	}
+	if err := tx.NewRaw(`SELECT id FROM provider WHERE code = ?`, providerCode).Scan(ctx, &providerID); err != nil {
+		return err
+	}
+	_, err := tx.NewRaw(`INSERT INTO provider_source(id, provider_id, namespace, endpoint, configuration_identity)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (provider_id, namespace) DO UPDATE SET endpoint=EXCLUDED.endpoint,
+		configuration_identity=EXCLUDED.configuration_identity, updated_at=now()`, sourceID, providerID, namespace, endpoint, identity).Exec(ctx)
+	return err
 }
 
 func cloneSettingValues(values map[string]string) map[string]string {

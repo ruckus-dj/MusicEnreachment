@@ -53,14 +53,19 @@ type Entity struct {
 }
 
 type SearchResult struct {
-	Count   int       `json:"count"`
-	Offset  int       `json:"offset"`
-	Created time.Time `json:"created"`
-	Items   []Entity  `json:"items"`
+	Count   int             `json:"count"`
+	Offset  int             `json:"offset"`
+	Created time.Time       `json:"created"`
+	Items   []Entity        `json:"items"`
+	Raw     json.RawMessage `json:"-"`
 }
 
+// Endpoint returns the immutable endpoint this adapter was configured with.
+func (p *Provider) Endpoint() string { return p.base }
+
 type LookupResult struct {
-	Entity Entity `json:"entity"`
+	Entity Entity          `json:"entity"`
+	Raw    json.RawMessage `json:"-"`
 }
 
 func NewProvider(options ProviderOptions) (*Provider, error) {
@@ -156,7 +161,7 @@ func (p *Provider) LookupRelease(ctx context.Context, id string) (LookupResult, 
 	if err := validateLookupEntity(raw, id, string(release.ID), release.Title); err != nil {
 		return LookupResult{}, err
 	}
-	return LookupResult{Entity: projectEntity(raw, rawBody, string(release.ID), release.Title, "", release.Score)}, nil
+	return LookupResult{Entity: projectEntity(raw, rawBody, string(release.ID), release.Title, "", release.Score), Raw: cloneRaw(rawBody)}, nil
 }
 
 func (p *Provider) LookupRecording(ctx context.Context, id string) (LookupResult, error) {
@@ -180,7 +185,7 @@ func (p *Provider) LookupRecording(ctx context.Context, id string) (LookupResult
 	if err := validateLookupEntity(raw, id, string(recording.ID), recording.Title); err != nil {
 		return LookupResult{}, err
 	}
-	return LookupResult{Entity: projectEntity(raw, rawBody, string(recording.ID), recording.Title, "", recording.Score)}, nil
+	return LookupResult{Entity: projectEntity(raw, rawBody, string(recording.ID), recording.Title, "", recording.Score), Raw: cloneRaw(rawBody)}, nil
 }
 
 func (p *Provider) SearchReleases(ctx context.Context, query string, offset, limit int) (SearchResult, error) {
@@ -200,6 +205,7 @@ func (p *Provider) SearchReleases(ctx context.Context, query string, offset, lim
 	if err != nil {
 		return SearchResult{}, err
 	}
+	projected.Raw = cloneRaw(collector.last())
 	return projected, nil
 }
 
@@ -220,6 +226,7 @@ func (p *Provider) SearchRecordings(ctx context.Context, query string, offset, l
 	if err != nil {
 		return SearchResult{}, err
 	}
+	projected.Raw = cloneRaw(collector.last())
 	return projected, nil
 }
 

@@ -38,6 +38,10 @@ func (f *ProviderFactory) MusicBrainz(ctx context.Context) (*musicbrainz.Provide
 	if err != nil {
 		return nil, fmt.Errorf("read MusicBrainz provider configuration: %w", err)
 	}
+	return f.musicBrainzForConfig(ctx, config)
+}
+
+func (f *ProviderFactory) musicBrainzForConfig(ctx context.Context, config settings.MusicBrainzConfig) (*musicbrainz.Provider, error) {
 	throttle, delay, err := f.registry.GetMusicBrainzProviderSettings(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read MusicBrainz provider settings: %w", err)
@@ -57,6 +61,14 @@ func (f *ProviderFactory) MusicBrainz(ctx context.Context) (*musicbrainz.Provide
 		SelfHostedThrottle:     config.Mode == "self-hosted" && throttle,
 		SelfHostedDelaySeconds: delay, SelfHostedRateGate: f.selfHostedGate,
 	})
+}
+
+// MusicBrainzForConfig creates an adapter for the caller's immutable saved
+// configuration snapshot. A later config change is rejected by cache fencing.
+func (f *ProviderFactory) MusicBrainzForConfig(ctx context.Context, config settings.MusicBrainzConfig) (*musicbrainz.Provider, error) {
+	f.musicBrainzMu.Lock()
+	defer f.musicBrainzMu.Unlock()
+	return f.musicBrainzForConfig(ctx, config)
 }
 
 // LookupAcoustID never sends a request until the application key is saved.
