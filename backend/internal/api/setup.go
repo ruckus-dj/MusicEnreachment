@@ -29,21 +29,23 @@ type PlatformResponse struct {
 }
 
 type RuntimeSettingsResponse struct {
-	SourceFileConcurrency      int        `json:"source_file_concurrency"`
-	ToolsDirectory             string     `json:"tools_directory"`
-	OutputDirectory            string     `json:"output_directory"`
-	PublicationFormat          string     `json:"publication_format"`
-	MusicBrainzMode            string     `json:"musicbrainz_mode"`
-	MusicBrainzBaseURL         string     `json:"musicbrainz_base_url"`
-	MusicBrainzVerifiedAt      *time.Time `json:"musicbrainz_verified_at,omitempty"`
-	LRCLIBEnabled              bool       `json:"lrclib_enabled"`
-	SHA256Enabled              bool       `json:"sha256_enabled"`
-	LogLevel                   string     `json:"log_level"`
-	ActiveFFmpegInstallationID string     `json:"active_ffmpeg_installation_id,omitempty"`
-	ActiveFPCalcInstallationID string     `json:"active_fpcalc_installation_id,omitempty"`
-	OutputCaseSensitive        *bool      `json:"output_case_sensitive,omitempty"`
-	OutputUnicodeNormalization string     `json:"output_unicode_normalization,omitempty"`
-	HasAcoustIDApplicationKey  bool       `json:"has_acoustid_application_key"`
+	SourceFileConcurrency             int        `json:"source_file_concurrency"`
+	ToolsDirectory                    string     `json:"tools_directory"`
+	OutputDirectory                   string     `json:"output_directory"`
+	PublicationFormat                 string     `json:"publication_format"`
+	MusicBrainzMode                   string     `json:"musicbrainz_mode"`
+	MusicBrainzBaseURL                string     `json:"musicbrainz_base_url"`
+	MusicBrainzVerifiedAt             *time.Time `json:"musicbrainz_verified_at,omitempty"`
+	LRCLIBEnabled                     bool       `json:"lrclib_enabled"`
+	SHA256Enabled                     bool       `json:"sha256_enabled"`
+	LogLevel                          string     `json:"log_level"`
+	ActiveFFmpegInstallationID        string     `json:"active_ffmpeg_installation_id,omitempty"`
+	ActiveFPCalcInstallationID        string     `json:"active_fpcalc_installation_id,omitempty"`
+	OutputCaseSensitive               *bool      `json:"output_case_sensitive,omitempty"`
+	OutputUnicodeNormalization        string     `json:"output_unicode_normalization,omitempty"`
+	HasAcoustIDApplicationKey         bool       `json:"has_acoustid_application_key"`
+	MusicBrainzSelfHostedThrottle     bool       `json:"musicbrainz_self_hosted_throttle"`
+	MusicBrainzSelfHostedDelaySeconds float64    `json:"musicbrainz_self_hosted_delay_seconds"`
 }
 
 type ConfigurationHealthResponse struct {
@@ -271,21 +273,23 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				Reason: state.Platform.Reason,
 			},
 			Settings: RuntimeSettingsResponse{
-				SourceFileConcurrency:      state.Runtime.SourceFileConcurrency,
-				ToolsDirectory:             state.Runtime.ToolsDirectory,
-				OutputDirectory:            state.Runtime.OutputDirectory,
-				PublicationFormat:          state.Runtime.PublicationFormat,
-				MusicBrainzMode:            state.Runtime.MusicBrainzMode,
-				MusicBrainzBaseURL:         state.Runtime.MusicBrainzBaseURL,
-				MusicBrainzVerifiedAt:      state.Runtime.MusicBrainzVerifiedAt,
-				LRCLIBEnabled:              state.Runtime.LRCLIBEnabled,
-				SHA256Enabled:              state.SHA256Enabled,
-				LogLevel:                   state.Runtime.LogLevel,
-				ActiveFFmpegInstallationID: state.Runtime.ActiveFFmpegInstallation,
-				ActiveFPCalcInstallationID: state.Runtime.ActiveFPCalcInstallation,
-				OutputCaseSensitive:        state.Runtime.OutputCaseSensitive,
-				OutputUnicodeNormalization: state.Runtime.OutputUnicodeNormalization,
-				HasAcoustIDApplicationKey:  state.Runtime.HasAcoustIDApplicationKey,
+				SourceFileConcurrency:             state.Runtime.SourceFileConcurrency,
+				ToolsDirectory:                    state.Runtime.ToolsDirectory,
+				OutputDirectory:                   state.Runtime.OutputDirectory,
+				PublicationFormat:                 state.Runtime.PublicationFormat,
+				MusicBrainzMode:                   state.Runtime.MusicBrainzMode,
+				MusicBrainzBaseURL:                state.Runtime.MusicBrainzBaseURL,
+				MusicBrainzVerifiedAt:             state.Runtime.MusicBrainzVerifiedAt,
+				LRCLIBEnabled:                     state.Runtime.LRCLIBEnabled,
+				SHA256Enabled:                     state.SHA256Enabled,
+				LogLevel:                          state.Runtime.LogLevel,
+				ActiveFFmpegInstallationID:        state.Runtime.ActiveFFmpegInstallation,
+				ActiveFPCalcInstallationID:        state.Runtime.ActiveFPCalcInstallation,
+				OutputCaseSensitive:               state.Runtime.OutputCaseSensitive,
+				OutputUnicodeNormalization:        state.Runtime.OutputUnicodeNormalization,
+				HasAcoustIDApplicationKey:         state.Runtime.HasAcoustIDApplicationKey,
+				MusicBrainzSelfHostedThrottle:     state.Runtime.MusicBrainzSelfHostedThrottle,
+				MusicBrainzSelfHostedDelaySeconds: state.Runtime.MusicBrainzSelfHostedDelaySeconds,
 			},
 		},
 	}

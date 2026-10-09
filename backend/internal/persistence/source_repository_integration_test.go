@@ -817,10 +817,11 @@ func newSourceScanOperation(t *testing.T, ctx context.Context, database *bun.DB,
 		t.Fatalf("enqueue scan operation: %v", err)
 	}
 	if state == "running" {
-		if err := service.NewOperations(repository).Running(ctx, operation.ID, "applying"); err != nil {
-			t.Fatalf("mark scan operation running: %v", err)
+		inventory := persistence.NewSourceInventoryRepository(database)
+		if err := inventory.StartSourceScanDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
+			t.Fatalf("start scan delivery: %v", err)
 		}
-		operation.State, operation.Stage = "running", "applying"
+		operation.State = "running"
 	} else if state != "queued" {
 		t.Fatalf("unsupported scan fixture state %q", state)
 	}

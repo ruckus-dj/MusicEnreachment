@@ -30,6 +30,8 @@ const state: SetupStateBody = {
     publication_format: "",
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
+    musicbrainz_self_hosted_throttle: false,
+    musicbrainz_self_hosted_delay_seconds: 0.5,
     lrclib_enabled: true,
     sha256_enabled: true,
     log_level: "info",

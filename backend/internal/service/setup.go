@@ -427,6 +427,13 @@ func (s *SetupService) SaveMusicBrainz(ctx context.Context, mode, baseURL string
 	return nil
 }
 
+func (s *SetupService) SaveMusicBrainzProviderSettings(ctx context.Context, throttle *bool, delaySeconds *float64) error {
+	if err := s.registry.UpdateMusicBrainzProviderSettings(ctx, throttle, delaySeconds); err != nil {
+		return fmt.Errorf("save MusicBrainz provider settings: %w", err)
+	}
+	return nil
+}
+
 func (s *SetupService) SetLRCLIBEnabled(ctx context.Context, enabled bool) error {
 	if err := s.registry.SetLRCLIBEnabled(ctx, enabled); err != nil {
 		return fmt.Errorf("save LRCLIB setting: %w", err)

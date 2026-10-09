@@ -25,9 +25,13 @@ func (repository *SourceInventoryRepository) StartSourceScanDelivery(ctx context
 			return fmt.Errorf("start source scan delivery: %w", ErrSourceAnalysisStale)
 		}
 		if operation.State == "queued" {
+			var startedAt time.Time
+			if err := tx.NewRaw("SELECT clock_timestamp()").Scan(ctx, &startedAt); err != nil {
+				return fmt.Errorf("start source scan delivery: read database clock: %w", err)
+			}
 			operation.State = "running"
-			operation.StartedAt = ptrTime(time.Now().UTC())
-			operation.UpdatedAt = time.Now().UTC()
+			operation.StartedAt = ptrTime(startedAt)
+			operation.UpdatedAt = startedAt
 			if _, err := tx.NewUpdate().Model(operation).Column("state", "started_at", "updated_at").WherePK().Exec(ctx); err != nil {
 				return fmt.Errorf("start source scan delivery: %w", err)
 			}

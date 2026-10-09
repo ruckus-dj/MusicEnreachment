@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"time"
@@ -156,6 +157,14 @@ func boolDefinition(name string) settingDefinition[bool] {
 	}
 }
 
+func floatDefinition(name string, defaultValue float64, validate func(float64) error) settingDefinition[float64] {
+	return settingDefinition[float64]{
+		name: name, kind: "float", parse: func(value string) (float64, error) { return strconv.ParseFloat(value, 64) },
+		serialize: func(value float64) string { return strconv.FormatFloat(value, 'f', -1, 64) },
+		validate:  validate, defaultVal: &defaultValue, mutable: true,
+	}
+}
+
 func timeDefinition(name string, mutable bool) settingDefinition[time.Time] {
 	return settingDefinition[time.Time]{
 		name: name, kind: "timestamp", parse: func(value string) (time.Time, error) {
@@ -171,6 +180,7 @@ var (
 	defaultInfo            = "info"
 	defaultTrue            = true
 	defaultFileConcurrency = 4
+	defaultSelfHostedDelay = 0.5
 
 	platformOSSetting      = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
 	platformArchSetting    = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
@@ -194,6 +204,16 @@ var (
 		name: SHA256EnabledKey, kind: "bool", parse: strconv.ParseBool,
 		serialize: strconv.FormatBool, defaultVal: &defaultTrue, mutable: true,
 	}
+	musicBrainzSelfHostedThrottleSetting = settingDefinition[bool]{
+		name: MusicBrainzSelfHostedThrottleKey, kind: "bool", parse: strconv.ParseBool,
+		serialize: strconv.FormatBool, mutable: true,
+	}
+	musicBrainzSelfHostedDelaySetting = floatDefinition(MusicBrainzSelfHostedDelayKey, defaultSelfHostedDelay, func(value float64) error {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 60 {
+			return fmt.Errorf("self-hosted MusicBrainz delay must be between 0 and 60 seconds")
+		}
+		return nil
+	})
 	sourceFileConcurrencySetting = settingDefinition[int]{
 		name: SourceFileConcurrencyKey, kind: "int",
 		parse: strconv.Atoi, serialize: strconv.Itoa,
@@ -237,5 +257,6 @@ var registeredSettings = []registeredSetting{
 	outputCaseSetting, outputUnicodeSetting, publicationSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
-	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting, setupCompletedSetting,
+	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting,
+	musicBrainzSelfHostedThrottleSetting, musicBrainzSelfHostedDelaySetting, setupCompletedSetting,
 }

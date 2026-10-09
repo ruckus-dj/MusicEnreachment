@@ -17,8 +17,10 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/riverqueue/river"
+	"golang.org/x/time/rate"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/jobs"
@@ -41,6 +43,10 @@ type operationRepository interface {
 type riverClientSlot struct {
 	persistence.RiverInserter
 }
+
+type acoustIDRateWaiter struct{ limiter *rate.Limiter }
+
+func (waiter acoustIDRateWaiter) Wait(ctx context.Context) error { return waiter.limiter.Wait(ctx) }
 
 type analysisConsumerHandle struct {
 	client       *river.Client[*sql.Tx]
@@ -145,7 +151,13 @@ func Run(ctx context.Context, config Config) error {
 	}
 	setupManagerRepository := persistence.NewSetupManagerRepository(db)
 	outputReset := service.NewOutputReset(setupManagerRepository, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"})
-	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, musicbrainz.NewClient()).WithOutputReset(outputReset)
+	musicBrainzGate := musicbrainz.NewPublicRateGate()
+	governedHTTPClient := musicbrainz.NewGovernedHTTPClient(musicBrainzGate)
+	connectivityChecker := musicbrainz.NewClientWithHTTPClient(governedHTTPClient)
+	acoustIDHTTPClient := &http.Client{Transport: http.DefaultTransport, Timeout: acoustid.RequestTimeout}
+	acoustIDClient := acoustid.NewClient(acoustIDHTTPClient, acoustIDRateWaiter{limiter: rate.NewLimiter(rate.Limit(3), 3)})
+	providerFactory := service.NewProviderFactory(registry, musicBrainzGate, new(musicbrainz.SelfHostedRateGate), governedHTTPClient, acoustIDClient)
+	setup := service.NewSetup(settingsRepository, registry, platform, setupManagerRepository, connectivityChecker).WithOutputReset(outputReset)
 	if err := outputReset.RecoverOutputReset(ctx); err != nil {
 		return fmt.Errorf("recover output reset: %w", err)
 	}
@@ -325,7 +337,7 @@ func Run(ctx context.Context, config Config) error {
 	router.Get("/health/live", api.Liveness)
 	router.Get("/health/ready", api.Readiness(sqldb, platform))
 	router.Mount("/api", api.HandlerWithDependencies(api.Dependencies{
-		Setup: setup, Catalog: toolCatalog, InstallOperations: installOperations,
+		Setup: setup, ProviderFactory: providerFactory, Catalog: toolCatalog, InstallOperations: installOperations,
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,

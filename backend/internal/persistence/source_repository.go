@@ -437,14 +437,18 @@ func (repository *SourceInventoryRepository) ApplySourceScan(ctx context.Context
 		if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", apply.OperationID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source scan: remove applied candidates: %w", err)
 		}
+		var publishedAt time.Time
+		if err := tx.NewRaw("SELECT clock_timestamp()").Scan(ctx, &publishedAt); err != nil {
+			return fmt.Errorf("apply source scan: read database clock: %w", err)
+		}
 		if _, err := tx.NewUpdate().Model((*SourceRoot)(nil)).
 			Set("scan_generation = ?", generation).
 			Set("inventory_path = ?", root.ConfiguredPath).
-			Set("last_successful_scan_at = now()").
+			Set("last_successful_scan_at = ?", publishedAt).
 			Set("last_applied_operation_id = ?", apply.OperationID).
 			Set("status = ?", SourceRootStatusAvailable).
 			Set("safe_error = NULL").
-			Set("updated_at = now()").
+			Set("updated_at = ?", publishedAt).
 			Where("id = ?", root.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source scan: record successful scan: %w", err)
 		}

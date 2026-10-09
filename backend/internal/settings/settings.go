@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,25 +16,27 @@ import (
 )
 
 const (
-	PlatformGOOSKey               = "instance.goos"
-	PlatformGOARCHKey             = "instance.goarch"
-	ToolsDirectoryKey             = "tools_directory"
-	OutputDirectoryKey            = "output_directory"
-	OutputCaseSensitiveKey        = "output_case_sensitive"
-	OutputUnicodeNormalizationKey = "output_unicode_normalization"
-	PublicationFormatKey          = "publication_format"
-	MusicBrainzModeKey            = "musicbrainz_mode"
-	MusicBrainzBaseURLKey         = "musicbrainz_base_url"
-	MusicBrainzConfigIdentityKey  = "musicbrainz_config_identity"
-	MusicBrainzVerifiedAtKey      = "musicbrainz_verified_at"
-	LRCLIBEnabledKey              = "lrclib_enabled"
-	SHA256EnabledKey              = "sha256_enabled"
-	LogLevelKey                   = "log_level"
-	ActiveFFmpegInstallationKey   = "active_ffmpeg_installation_id"
-	ActiveFPCalcInstallationKey   = "active_fpcalc_installation_id"
-	SetupCompletedAtKey           = "setup_completed_at"
-	SourceFileConcurrencyKey      = "source_file_concurrency"
-	AcoustIDApplicationKey        = "acoustid_application_key"
+	PlatformGOOSKey                  = "instance.goos"
+	PlatformGOARCHKey                = "instance.goarch"
+	ToolsDirectoryKey                = "tools_directory"
+	OutputDirectoryKey               = "output_directory"
+	OutputCaseSensitiveKey           = "output_case_sensitive"
+	OutputUnicodeNormalizationKey    = "output_unicode_normalization"
+	PublicationFormatKey             = "publication_format"
+	MusicBrainzModeKey               = "musicbrainz_mode"
+	MusicBrainzBaseURLKey            = "musicbrainz_base_url"
+	MusicBrainzConfigIdentityKey     = "musicbrainz_config_identity"
+	MusicBrainzVerifiedAtKey         = "musicbrainz_verified_at"
+	LRCLIBEnabledKey                 = "lrclib_enabled"
+	SHA256EnabledKey                 = "sha256_enabled"
+	LogLevelKey                      = "log_level"
+	ActiveFFmpegInstallationKey      = "active_ffmpeg_installation_id"
+	ActiveFPCalcInstallationKey      = "active_fpcalc_installation_id"
+	SetupCompletedAtKey              = "setup_completed_at"
+	SourceFileConcurrencyKey         = "source_file_concurrency"
+	AcoustIDApplicationKey           = "acoustid_application_key"
+	MusicBrainzSelfHostedThrottleKey = "musicbrainz_self_hosted_throttle"
+	MusicBrainzSelfHostedDelayKey    = "musicbrainz_self_hosted_delay_seconds"
 )
 
 type Store interface {
@@ -89,20 +92,22 @@ type ConfigurationHealth struct {
 }
 
 type RuntimeSettings struct {
-	SourceFileConcurrency      int
-	ToolsDirectory             string
-	OutputDirectory            string
-	PublicationFormat          string
-	MusicBrainzMode            string
-	MusicBrainzBaseURL         string
-	MusicBrainzVerifiedAt      *time.Time
-	LRCLIBEnabled              bool
-	LogLevel                   string
-	ActiveFFmpegInstallation   string
-	ActiveFPCalcInstallation   string
-	OutputCaseSensitive        *bool
-	OutputUnicodeNormalization string
-	HasAcoustIDApplicationKey  bool
+	SourceFileConcurrency             int
+	ToolsDirectory                    string
+	OutputDirectory                   string
+	PublicationFormat                 string
+	MusicBrainzMode                   string
+	MusicBrainzBaseURL                string
+	MusicBrainzVerifiedAt             *time.Time
+	LRCLIBEnabled                     bool
+	LogLevel                          string
+	ActiveFFmpegInstallation          string
+	ActiveFPCalcInstallation          string
+	OutputCaseSensitive               *bool
+	OutputUnicodeNormalization        string
+	HasAcoustIDApplicationKey         bool
+	MusicBrainzSelfHostedThrottle     bool
+	MusicBrainzSelfHostedDelaySeconds float64
 }
 
 // RuntimeUpdate selects the validated runtime values to change in one write.
@@ -667,22 +672,92 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	selfHostedThrottle, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedThrottleSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	selfHostedDelay, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedDelaySetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	return RuntimeSettings{
-		SourceFileConcurrency:      fileConcurrency,
-		ToolsDirectory:             tools,
-		OutputDirectory:            output,
-		PublicationFormat:          format,
-		MusicBrainzMode:            musicBrainz.Mode,
-		MusicBrainzBaseURL:         musicBrainz.BaseURL,
-		MusicBrainzVerifiedAt:      musicBrainz.VerifiedAt,
-		LRCLIBEnabled:              lrclib,
-		LogLevel:                   logLevel,
-		ActiveFFmpegInstallation:   ffmpeg,
-		ActiveFPCalcInstallation:   fpcalc,
-		OutputCaseSensitive:        caseSensitive,
-		OutputUnicodeNormalization: unicodeNormalization,
-		HasAcoustIDApplicationKey:  hasAcoustIDKey,
+		SourceFileConcurrency:             fileConcurrency,
+		ToolsDirectory:                    tools,
+		OutputDirectory:                   output,
+		PublicationFormat:                 format,
+		MusicBrainzMode:                   musicBrainz.Mode,
+		MusicBrainzBaseURL:                musicBrainz.BaseURL,
+		MusicBrainzVerifiedAt:             musicBrainz.VerifiedAt,
+		LRCLIBEnabled:                     lrclib,
+		LogLevel:                          logLevel,
+		ActiveFFmpegInstallation:          ffmpeg,
+		ActiveFPCalcInstallation:          fpcalc,
+		OutputCaseSensitive:               caseSensitive,
+		OutputUnicodeNormalization:        unicodeNormalization,
+		HasAcoustIDApplicationKey:         hasAcoustIDKey,
+		MusicBrainzSelfHostedThrottle:     selfHostedThrottle,
+		MusicBrainzSelfHostedDelaySeconds: selfHostedDelay,
 	}, nil
+}
+
+// GetAcoustIDApplicationKey returns the saved secret for internal provider use.
+func (r *Registry) GetAcoustIDApplicationKey(ctx context.Context) (string, bool, error) {
+	return r.store.Get(ctx, AcoustIDApplicationKey)
+}
+
+// SetMusicBrainzProviderSettings stores the self-hosted request budget controls.
+func (r *Registry) SetMusicBrainzProviderSettings(ctx context.Context, throttle bool, delaySeconds float64) error {
+	if math.IsNaN(delaySeconds) || math.IsInf(delaySeconds, 0) || delaySeconds < 0 || delaySeconds > 60 {
+		return fmt.Errorf("self-hosted MusicBrainz delay must be between 0 and 60 seconds")
+	}
+	throttleValue, err := serializeSetting(musicBrainzSelfHostedThrottleSetting, throttle)
+	if err != nil {
+		return err
+	}
+	delayValue, err := serializeSetting(musicBrainzSelfHostedDelaySetting, delaySeconds)
+	if err != nil {
+		return err
+	}
+	return r.store.SetMany(ctx, map[string]string{
+		MusicBrainzSelfHostedThrottleKey: throttleValue,
+		MusicBrainzSelfHostedDelayKey:    delayValue,
+	})
+}
+
+// UpdateMusicBrainzProviderSettings atomically stores only the supplied fields,
+// preserving concurrent updates to the other optional field.
+func (r *Registry) UpdateMusicBrainzProviderSettings(ctx context.Context, throttle *bool, delaySeconds *float64) error {
+	values := make(map[string]string, 2)
+	if throttle != nil {
+		value, err := serializeSetting(musicBrainzSelfHostedThrottleSetting, *throttle)
+		if err != nil {
+			return err
+		}
+		values[MusicBrainzSelfHostedThrottleKey] = value
+	}
+	if delaySeconds != nil {
+		value, err := serializeSetting(musicBrainzSelfHostedDelaySetting, *delaySeconds)
+		if err != nil {
+			return err
+		}
+		values[MusicBrainzSelfHostedDelayKey] = value
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return r.store.SetMany(ctx, values)
+}
+
+func (r *Registry) GetMusicBrainzProviderSettings(ctx context.Context) (bool, float64, error) {
+	throttle, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedThrottleSetting)
+	if err != nil {
+		return false, 0, err
+	}
+	delay, _, err := readSetting(ctx, r.store, musicBrainzSelfHostedDelaySetting)
+	if err != nil {
+		return false, 0, err
+	}
+	return throttle, delay, nil
 }
 
 // SetLRCLIBEnabled stores the LRCLIB integration flag.

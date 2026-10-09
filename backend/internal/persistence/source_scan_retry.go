@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -134,7 +133,9 @@ func (repository *SetupManagerRepository) RetrySourceScanOperationAndEnqueue(ctx
 		locked.BytesTotal = nil
 		locked.RiverJobID = &result.Job.ID
 		locked.Attempt++
-		locked.UpdatedAt = time.Now().UTC()
+		if err := tx.NewRaw("SELECT clock_timestamp()").Scan(ctx, &locked.UpdatedAt); err != nil {
+			return fmt.Errorf("retry source scan: read database clock: %w", err)
+		}
 		if _, err := tx.NewUpdate().Model(locked).
 			Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at", "target_source_root_id", "input_snapshot").
 			WherePK().Exec(ctx); err != nil {

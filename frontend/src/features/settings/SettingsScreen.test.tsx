@@ -31,6 +31,8 @@ const settings = {
     source_file_concurrency: 4,
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
+    musicbrainz_self_hosted_throttle: false,
+    musicbrainz_self_hosted_delay_seconds: 0.5,
     musicbrainz_verified_at: "2026-09-01T00:00:00Z",
     lrclib_enabled: true,
     sha256_enabled: true,
@@ -969,8 +971,24 @@ describe("SettingsScreen", () => {
     fireEvent.change(await screen.findByLabelText("MusicBrainz mode"), {
       target: { value: "self-hosted" },
     });
+    expect(
+      screen.getByLabelText(
+        "Ограничивать частоту запросов к self-hosted MusicBrainz",
+      ),
+    ).not.toBeChecked();
+    expect(screen.getByLabelText("Интервал запросов (секунды)")).toHaveValue(
+      0.5,
+    );
     fireEvent.change(screen.getByLabelText("MusicBrainz base URL"), {
       target: { value: "https://music.example" },
+    });
+    fireEvent.click(
+      screen.getByLabelText(
+        "Ограничивать частоту запросов к self-hosted MusicBrainz",
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Интервал запросов (секунды)"), {
+      target: { value: "0.125" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Сохранить и проверить MusicBrainz" }),
@@ -979,6 +997,8 @@ describe("SettingsScreen", () => {
       expect(mb).toHaveBeenCalledWith({
         mode: "self-hosted",
         base_url: "https://music.example",
+        self_hosted_throttle: true,
+        self_hosted_delay_seconds: 0.125,
       }),
     );
     expect(await screen.findByText("MusicBrainz проверен.")).toBeTruthy();

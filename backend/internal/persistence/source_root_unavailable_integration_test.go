@@ -6,6 +6,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -120,7 +121,7 @@ func TestSourceRootUnavailableRefusedForSupersededScanWithPostgreSQL(t *testing.
 	older := newSourceScanOperation(t, ctx, database, root, "queued")
 	failScanOperation(t, ctx, database, older.ID, "The scan failed before the newer generation.")
 	success := newSourceScanOperation(t, ctx, database, root, "queued")
-	startScanOperation(t, ctx, database, success.ID)
+	startScanOperation(t, ctx, database, success)
 	applySourceScan(t, ctx, inventory, success, root.ConfiguredPath,
 		sourceCandidate("album/track.flac", 1024, probeMtime()))
 	setOperationState(t, ctx, database, success.ID, "succeeded")
@@ -203,6 +204,44 @@ func TestSourceRootUnavailableAcceptedForRetryStartedAfterNewerSuccessWithPostgr
 	}
 }
 
+// TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL protects
+// the ordering fence from host clock skew: the operation's host-originated
+// timestamps are older than the successful scan, but the production delivery
+// start records a database timestamp after that success.
+func TestSourceRootUnavailableUsesDatabaseDeliveryStartWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	inventory := persistence.NewSourceInventoryRepository(database)
+	root := createInventoryRoot(t, ctx, inventory, "/srv/clock-skew")
+
+	success := newSourceScanOperation(t, ctx, database, root, "running")
+	applySourceScan(t, ctx, inventory, success, root.ConfiguredPath, sourceCandidate("track.flac", 1024, probeMtime()))
+	setOperationState(t, ctx, database, success.ID, "succeeded")
+
+	queued := newSourceScanOperation(t, ctx, database, root, "queued")
+	hostTimestamp := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
+		Set("created_at = ?", hostTimestamp).Set("updated_at = ?", hostTimestamp).
+		Where("id = ?", queued.ID).Exec(ctx); err != nil {
+		t.Fatalf("simulate a host timestamp behind the database clock: %v", err)
+	}
+	startScanOperation(t, ctx, database, queued)
+	if err := inventory.MarkSourceRootUnavailable(ctx, persistence.SourceScanUnavailable{
+		OperationID: queued.ID, SafeError: unavailableSafeReason,
+		ExpectedAttempt: queued.Attempt, ExpectedJobID: *queued.RiverJobID,
+	}); err != nil {
+		t.Fatalf("mark unavailable after production delivery start: %v", err)
+	}
+	current, err := inventory.GetSourceRoot(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("read root after skewed-host report: %v", err)
+	}
+	if current.Status != persistence.SourceRootStatusUnavailable {
+		t.Fatalf("root status after DB-timestamped delivery = %q, want unavailable", current.Status)
+	}
+}
+
 // TestSourceRootUnavailableRejectsEmptyReasonWithPostgreSQL pins the boundary
 // the SQL check cannot enforce: a reason that is non-NULL but empty is not a
 // usable message, so the repository refuses it before any write.
@@ -268,12 +307,10 @@ func failScanOperation(t *testing.T, ctx context.Context, database *bun.DB, oper
 // startScanOperation models a delivered scan that began its traversal: the
 // attempt start is recorded, which is the ordering key the unavailable guard
 // reads.
-func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, operationID uuid.UUID) {
+func startScanOperation(t *testing.T, ctx context.Context, database *bun.DB, operation *persistence.Operation) {
 	t.Helper()
-	if _, err := database.NewUpdate().Model((*persistence.Operation)(nil)).
-		Set("state = 'running'").Set("started_at = now()").Set("updated_at = now()").
-		Where("id = ?", operationID).Exec(ctx); err != nil {
-		t.Fatalf("start scan operation %s: %v", operationID, err)
+	if err := persistence.NewSourceInventoryRepository(database).StartSourceScanDelivery(ctx, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
+		t.Fatalf("start scan operation %s: %v", operation.ID, err)
 	}
 }
 

@@ -4,14 +4,62 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+type synchronizedSettingsStore struct {
+	mu sync.Mutex
+	memoryStore
+}
+
+func (store *synchronizedSettingsStore) Get(ctx context.Context, key string) (string, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.memoryStore.Get(ctx, key)
+}
+
+func (store *synchronizedSettingsStore) SetMany(ctx context.Context, values map[string]string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.memoryStore.SetMany(ctx, values)
+}
+
+func TestUpdateMusicBrainzProviderSettingsConcurrentPartialUpdates(t *testing.T) {
+	store := &synchronizedSettingsStore{memoryStore: memoryStore{data: make(map[string]string)}}
+	registry := settings.New(store, nil)
+	throttle := true
+	delay := 2.5
+	var updates sync.WaitGroup
+	updates.Add(2)
+	go func() {
+		defer updates.Done()
+		if err := registry.UpdateMusicBrainzProviderSettings(context.Background(), &throttle, nil); err != nil {
+			t.Errorf("update throttle: %v", err)
+		}
+	}()
+	go func() {
+		defer updates.Done()
+		if err := registry.UpdateMusicBrainzProviderSettings(context.Background(), nil, &delay); err != nil {
+			t.Errorf("update delay: %v", err)
+		}
+	}()
+	updates.Wait()
+	gotThrottle, gotDelay, err := registry.GetMusicBrainzProviderSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotThrottle || gotDelay != delay {
+		t.Fatalf("settings = (%v, %v), want (%v, %v)", gotThrottle, gotDelay, true, delay)
+	}
+}
 
 type memoryStore struct {
 	data map[string]string
@@ -68,6 +116,33 @@ func (m *memoryStore) InitializePlatform(_ context.Context, goos, goarch string)
 		return goos, goarch, true, nil
 	}
 	return persistedOS, persistedArch, true, nil
+}
+
+func TestMusicBrainzSelfHostedThrottleSettingsDefaultAndValidation(t *testing.T) {
+	ctx := context.Background()
+	store := &memoryStore{data: make(map[string]string)}
+	registry := settings.New(store, nil)
+	enabled, delay, err := registry.GetMusicBrainzProviderSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled || delay != 0.5 {
+		t.Fatalf("defaults = (%t, %v), want (false, 0.5)", enabled, delay)
+	}
+	for _, value := range []float64{0, 0.125, 60} {
+		if err := registry.SetMusicBrainzProviderSettings(ctx, true, value); err != nil {
+			t.Fatalf("save valid delay %v: %v", value, err)
+		}
+		gotEnabled, gotDelay, err := registry.GetMusicBrainzProviderSettings(ctx)
+		if err != nil || !gotEnabled || gotDelay != value {
+			t.Fatalf("read delay %v = (%t, %v, %v)", value, gotEnabled, gotDelay, err)
+		}
+	}
+	for _, value := range []float64{-0.01, 60.01, math.NaN(), math.Inf(1)} {
+		if err := registry.SetMusicBrainzProviderSettings(ctx, false, value); err == nil {
+			t.Errorf("accepted invalid delay %v", value)
+		}
+	}
 }
 
 func newMemoryStore() *memoryStore {

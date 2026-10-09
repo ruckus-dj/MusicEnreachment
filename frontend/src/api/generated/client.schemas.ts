@@ -358,6 +358,8 @@ export interface RuntimeSettingsResponse {
   lrclib_enabled: boolean;
   musicbrainz_base_url: string;
   musicbrainz_mode: string;
+  musicbrainz_self_hosted_delay_seconds: number;
+  musicbrainz_self_hosted_throttle: boolean;
   musicbrainz_verified_at?: string;
   output_case_sensitive?: boolean;
   output_directory: string;
@@ -739,6 +741,12 @@ export interface UpdateMusicBrainzBody {
   /** @maxLength 2048 */
   base_url?: string;
   mode: UpdateMusicBrainzBodyMode;
+  /**
+     * @minimum 0
+     * @maximum 60
+     */
+  self_hosted_delay_seconds?: number;
+  self_hosted_throttle?: boolean;
 }
 
 export interface UpdateSHA256Body {

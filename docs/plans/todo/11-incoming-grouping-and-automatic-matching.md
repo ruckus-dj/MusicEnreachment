@@ -566,6 +566,16 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+Следующий composition increment подключает общий MusicBrainz request gate к
+connectivity checker и provider factory, общий AcoustID limiter (3 requests/s)
+и сохранённые self-hosted controls: toggle default off, delay 0–60 seconds,
+initial value 0.5. Partial updates атомарно сохраняют omitted fields;
+provider construction не меняет shared gate из устаревшего snapshot.
+Canceled self-hosted waits не создают искусственный backlog. Полный
+`task verify` 2026-10-10 01:03 прошёл (Go integration, 247 frontend tests,
+4 tools tests, generation, lint, build). Provider jobs/cache mapping и
+automatic matching по-прежнему остаются следующими increments.
+
 MusicBrainz lookup/search реализованы через готовый
 `go.uploadedlobster.com/musicbrainzws2 v0.19.0`, с bounded raw capture,
 per-attempt limiter, protocol cooldown и cancellation-aware self-hosted limiter.

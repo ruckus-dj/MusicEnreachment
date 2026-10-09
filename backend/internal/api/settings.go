@@ -23,8 +23,10 @@ type UpdateMusicBrainzInput struct {
 }
 
 type UpdateMusicBrainzBody struct {
-	Mode    string `json:"mode" enum:"public,self-hosted"`
-	BaseURL string `json:"base_url,omitempty" maxLength:"2048"`
+	Mode                   string   `json:"mode" enum:"public,self-hosted"`
+	BaseURL                string   `json:"base_url,omitempty" maxLength:"2048"`
+	SelfHostedThrottle     *bool    `json:"self_hosted_throttle,omitempty"`
+	SelfHostedDelaySeconds *float64 `json:"self_hosted_delay_seconds,omitempty" minimum:"0" maximum:"60"`
 }
 
 type UpdateLRCLIBInput struct {
@@ -116,6 +118,11 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		if err := setup.SaveMusicBrainz(ctx, input.Body.Mode, input.Body.BaseURL); err != nil {
 			return nil, huma.Error400BadRequest("MusicBrainz settings are invalid")
+		}
+		if input.Body.SelfHostedThrottle != nil || input.Body.SelfHostedDelaySeconds != nil {
+			if err := setup.SaveMusicBrainzProviderSettings(ctx, input.Body.SelfHostedThrottle, input.Body.SelfHostedDelaySeconds); err != nil {
+				return nil, huma.Error400BadRequest("MusicBrainz provider settings are invalid")
+			}
 		}
 		return nil, nil
 	})

@@ -141,9 +141,23 @@ function useSectionDraft<T>(equal: (left: T, right: T) => boolean = Object.is) {
 }
 
 const sameMusicBrainz = (
-  left: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
-  right: { mode: UpdateMusicBrainzBodyMode; baseURL: string },
-) => left.mode === right.mode && left.baseURL === right.baseURL;
+  left: {
+    mode: UpdateMusicBrainzBodyMode;
+    baseURL: string;
+    selfHostedThrottle: boolean;
+    selfHostedDelaySeconds: number;
+  },
+  right: {
+    mode: UpdateMusicBrainzBodyMode;
+    baseURL: string;
+    selfHostedThrottle: boolean;
+    selfHostedDelaySeconds: number;
+  },
+) =>
+  left.mode === right.mode &&
+  left.baseURL === right.baseURL &&
+  left.selfHostedThrottle === right.selfHostedThrottle &&
+  left.selfHostedDelaySeconds === right.selfHostedDelaySeconds;
 
 function message(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
@@ -298,6 +312,8 @@ export function SettingsScreen() {
             ? "self-hosted"
             : "public",
         baseURL: settings.musicbrainz_base_url,
+        selfHostedThrottle: settings.musicbrainz_self_hosted_throttle,
+        selfHostedDelaySeconds: settings.musicbrainz_self_hosted_delay_seconds,
       });
       lrclib.sync(settings.lrclib_enabled);
       sha256.sync(settings.sha256_enabled);
@@ -658,6 +674,8 @@ export function SettingsScreen() {
       const saved = await updateMusicbrainzSettings({
         mode: payload.mode,
         base_url: payload.mode === "public" ? "" : payload.baseURL,
+        self_hosted_throttle: payload.selfHostedThrottle,
+        self_hosted_delay_seconds: payload.selfHostedDelaySeconds,
       });
       successful(saved, 204);
       try {
@@ -669,6 +687,10 @@ export function SettingsScreen() {
                   ? "self-hosted"
                   : "public",
               baseURL: fresh.settings.musicbrainz_base_url,
+              selfHostedThrottle:
+                fresh.settings.musicbrainz_self_hosted_throttle,
+              selfHostedDelaySeconds:
+                fresh.settings.musicbrainz_self_hosted_delay_seconds,
             },
             savedDraft.revision,
           ),
@@ -1272,6 +1294,10 @@ export function SettingsScreen() {
                     musicBrainz.update({
                       mode: event.target.value as UpdateMusicBrainzBodyMode,
                       baseURL: musicBrainz.value?.baseURL ?? "",
+                      selfHostedThrottle:
+                        musicBrainz.value?.selfHostedThrottle ?? false,
+                      selfHostedDelaySeconds:
+                        musicBrainz.value?.selfHostedDelaySeconds ?? 0.5,
                     })
                   }
                 >
@@ -1280,18 +1306,56 @@ export function SettingsScreen() {
                 </select>
               </label>
               {musicBrainz.value?.mode === "self-hosted" && (
-                <label>
-                  MusicBrainz base URL
-                  <input
-                    value={musicBrainz.value?.baseURL ?? ""}
-                    onChange={(event) =>
-                      musicBrainz.update({
-                        mode: musicBrainz.value?.mode ?? "public",
-                        baseURL: event.target.value,
-                      })
-                    }
-                  />
-                </label>
+                <>
+                  <label>
+                    MusicBrainz base URL
+                    <input
+                      value={musicBrainz.value?.baseURL ?? ""}
+                      onChange={(event) => {
+                        const currentValue = musicBrainz.value;
+                        if (currentValue === undefined) return;
+                        musicBrainz.update({
+                          ...currentValue,
+                          baseURL: event.target.value,
+                        });
+                      }}
+                    />
+                  </label>
+                  <label className="settings-inline">
+                    <input
+                      type="checkbox"
+                      checked={musicBrainz.value?.selfHostedThrottle ?? false}
+                      onChange={(event) => {
+                        const currentValue = musicBrainz.value;
+                        if (currentValue === undefined) return;
+                        musicBrainz.update({
+                          ...currentValue,
+                          selfHostedThrottle: event.target.checked,
+                        });
+                      }}
+                    />{" "}
+                    Ограничивать частоту запросов к self-hosted MusicBrainz
+                  </label>
+                  <label>
+                    Интервал запросов (секунды)
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      step="any"
+                      required
+                      value={musicBrainz.value?.selfHostedDelaySeconds ?? 0.5}
+                      onChange={(event) => {
+                        const currentValue = musicBrainz.value;
+                        if (currentValue === undefined) return;
+                        musicBrainz.update({
+                          ...currentValue,
+                          selfHostedDelaySeconds: Number(event.target.value),
+                        });
+                      }}
+                    />
+                  </label>
+                </>
               )}
               <p>
                 Последняя проверка:{" "}

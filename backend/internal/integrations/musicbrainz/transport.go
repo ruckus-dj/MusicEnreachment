@@ -142,9 +142,10 @@ func (g *PublicRateGate) observeRetryAfter(value string, now time.Time) {
 }
 
 type governedTransport struct {
-	base       http.RoundTripper
-	gate       *PublicRateGate
-	selfHosted *selfHostedGate
+	base             http.RoundTripper
+	gate             *PublicRateGate
+	selfHosted       *selfHostedGate
+	sharedSelfHosted *SelfHostedRateGate
 }
 
 func (t *governedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -155,6 +156,11 @@ func (t *governedTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	public := isPublicMusicBrainzHost(req.URL.Hostname())
 	if !public && t.selfHosted != nil {
 		if err := t.selfHosted.wait(req.Context()); err != nil {
+			return nil, err
+		}
+	}
+	if !public && t.sharedSelfHosted != nil {
+		if err := t.sharedSelfHosted.Wait(req.Context()); err != nil {
 			return nil, err
 		}
 	}
@@ -192,6 +198,74 @@ func isPublicMusicBrainzHost(host string) bool {
 
 type selfHostedGate struct {
 	limiter *rate.Limiter
+}
+
+// SelfHostedRateGate retains one request budget while its configured interval
+// changes. Applications share it across providers built from runtime settings.
+type SelfHostedRateGate struct {
+	mu           sync.Mutex
+	interval     time.Duration
+	lastDispatch time.Time
+	serial       chan struct{}
+}
+
+func (g *SelfHostedRateGate) Configure(delaySeconds float64) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.interval = time.Duration(delaySeconds * float64(time.Second))
+	g.mu.Unlock()
+}
+
+func (g *SelfHostedRateGate) Wait(ctx context.Context) error {
+	if g == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	if g.serial == nil {
+		g.serial = make(chan struct{}, 1)
+		g.serial <- struct{}{}
+	}
+	serial := g.serial
+	g.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-serial:
+	}
+	defer func() { serial <- struct{}{} }()
+	g.mu.Lock()
+	interval := g.interval
+	lastDispatch := g.lastDispatch
+	g.mu.Unlock()
+	if interval <= 0 {
+		return ctx.Err()
+	}
+	delay := time.Until(lastDispatch.Add(interval))
+	if delay <= 0 {
+		g.mu.Lock()
+		g.lastDispatch = time.Now()
+		g.mu.Unlock()
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		g.mu.Lock()
+		g.lastDispatch = time.Now()
+		g.mu.Unlock()
+		return nil
+	}
 }
 
 func (g *selfHostedGate) wait(ctx context.Context) error {

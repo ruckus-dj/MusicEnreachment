@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +25,7 @@ type ProviderOptions struct {
 	PublicGate             *PublicRateGate
 	SelfHostedThrottle     bool
 	SelfHostedDelaySeconds float64
+	SelfHostedRateGate     *SelfHostedRateGate
 	HTTPClient             *http.Client
 }
 
@@ -70,7 +72,7 @@ func NewProvider(options ProviderOptions) (*Provider, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("invalid musicbrainz base URL")
 	}
-	if options.SelfHostedDelaySeconds < 0 || options.SelfHostedDelaySeconds > 60 {
+	if math.IsNaN(options.SelfHostedDelaySeconds) || math.IsInf(options.SelfHostedDelaySeconds, 0) || options.SelfHostedDelaySeconds < 0 || options.SelfHostedDelaySeconds > 60 {
 		return nil, errors.New("self-hosted musicbrainz delay must be between 0 and 60 seconds")
 	}
 	httpClient := options.HTTPClient
@@ -107,14 +109,16 @@ func NewProvider(options ProviderOptions) (*Provider, error) {
 		copyClient := *httpClient
 		baseTransport := copyClient.Transport
 		var selfHostGate *selfHostedGate
-		if options.SelfHostedDelaySeconds > 0 {
+		if options.SelfHostedRateGate != nil {
+			selfHostGate = nil
+		} else if options.SelfHostedDelaySeconds > 0 {
 			interval := time.Duration(options.SelfHostedDelaySeconds * float64(time.Second))
 			selfHostGate = &selfHostedGate{limiter: rate.NewLimiter(rate.Every(interval), 1)}
 		}
 		if existing, ok := baseTransport.(*governedTransport); ok {
-			copyClient.Transport = &governedTransport{base: existing.base, gate: existing.gate, selfHosted: selfHostGate}
+			copyClient.Transport = &governedTransport{base: existing.base, gate: existing.gate, selfHosted: selfHostGate, sharedSelfHosted: options.SelfHostedRateGate}
 		} else {
-			copyClient.Transport = &governedTransport{base: baseTransport, gate: gate, selfHosted: selfHostGate}
+			copyClient.Transport = &governedTransport{base: baseTransport, gate: gate, selfHosted: selfHostGate, sharedSelfHosted: options.SelfHostedRateGate}
 		}
 		httpClient = &copyClient
 	}
