@@ -216,6 +216,20 @@ D02 сценарии, cache policy, reset scope и crash/recovery предлож
   `task verify` passed, including 241 frontend tests and builds. Browser visual
   acceptance, real-media-tool evidence, and remaining I12 evidence are pending.
 
+- **I12 — local acceptance evidence recorded (2026-10-09), external acceptance
+  remains pending:** `task verify` passed after the real process-kill reset
+  regression and browser-discovered cleanup focus fix. The subprocess verifies
+  durable preparing identities before kill, repeated recovery, and preservation
+  of foreign directories and old output files; this is one crash boundary, not
+  the full matrix. Approved temporary Chrome harnesses verified UI with mock API,
+  including independent drafts, mode/create/scan, cleanup REST completion without
+  SSE establishment, focus wrap/Escape, inspector results and light/dark layouts.
+  The corrected full browser rerun had zero assertion failures. Evidence and
+  limits are in `docs/reports/plan10-browser-acceptance-2026-10-09.md` and
+  `plan10-independent-review-2026-10-09.md`. The owner deferred CI HTTP smoke;
+  native CI, real-media-tool runtime evidence and exhaustive crash acceptance
+  are not claimed. Plan remains in `todo/` until remaining acceptance is resolved.
+
 ## Cross-commit dependency notes
 
 - I03 may develop an enumeration-only traversal only after candidate reconciliation

@@ -3,18 +3,29 @@
 package service_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 // This acceptance test deliberately uses a non-empty old output directory: the
@@ -185,6 +196,229 @@ func TestOutputResetAcceptanceCommittedRecoveryRetainsDirectories(t *testing.T) 
 	if info, err := os.Stat(newRoot); err != nil || !info.IsDir() {
 		t.Fatalf("committed root not retained: info=%v err=%v", info, err)
 	}
+}
+
+// The helper is run in a separate test process so killing it releases the
+// PostgreSQL session/transaction exactly as a process crash would.
+func TestOutputResetProcessCrashChild(t *testing.T) {
+	selected := false
+	for _, arg := range os.Args {
+		if arg == "-test.run=^TestOutputResetProcessCrashChild$" {
+			selected = true
+		}
+	}
+	if !selected {
+		return
+	}
+	var input struct{ URL, ToolsRoot, OldRoot, NewRoot string }
+	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+		t.Fatal(err)
+	}
+	db := bun.NewDB(sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(input.URL))), pgdialect.New())
+	defer db.Close()
+	repository := persistence.NewSetupManagerRepository(db)
+	filesystem := settings.NewResetFilesystem()
+	allowed, err := filesystem.PlannedDirectories(input.NewRoot, []string{input.NewRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.RunOutputResetRequest(context.Background(), persistence.OutputResetRequest{
+		ExpectedOldRoot: input.OldRoot, ExpectedToolsRoot: input.ToolsRoot, NewRoot: input.NewRoot, AllowedDirectories: allowed,
+		Prepare: func(ctx context.Context, record func(persistence.OutputResetDirectory) error) error {
+			if err := filesystem.PrepareDurable(ctx, input.NewRoot, []string{input.NewRoot}, func(entry settings.ResetDirectoryRecord) error {
+				if err := record(persistence.OutputResetDirectory{Path: entry.Path, Phase: entry.Phase, Identity: entry.Identity}); err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(os.Stdout, "durable-prepare-complete"); err != nil {
+				return err
+			}
+			var permission [1]byte
+			if _, err := io.ReadFull(os.Stdin, permission[:]); err != nil {
+				return fmt.Errorf("await parent permission: %w", err)
+			}
+			return nil
+		}, Finish: func(context.Context, persistence.OutputResetJournal) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOutputResetProcessCrashAfterDurablePrepareRecoversOwnedDirectories(t *testing.T) {
+	database := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	oldRoot := t.TempDir()
+	_, registry, repository := outputResetAcceptanceSetup(t, database, oldRoot)
+	runtimeSettings, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	foreign := filepath.Join(base, "foreign")
+	if err := os.Mkdir(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldRoot, "keep"), []byte("old output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := settings.NormalizePath(filepath.Join(base, "new", "output"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plannedDirectories, err := settings.NewResetFilesystem().PlannedDirectories(newRoot, []string{newRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childCtx, cancelChild := context.WithTimeout(ctx, time.Minute)
+	defer cancelChild()
+	cmd := exec.CommandContext(childCtx, os.Args[0], "-test.run=^TestOutputResetProcessCrashChild$", "-test.count=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr lockedBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- cmd.Wait() }()
+	var waitOnce sync.Once
+	wait := func() error {
+		var result error
+		waitOnce.Do(func() { result = <-waitResult })
+		return result
+	}
+	reaped := false
+	defer func() {
+		if !reaped {
+			_ = cmd.Process.Kill()
+			select {
+			case <-waitResult:
+			case <-childCtx.Done():
+			}
+		}
+		_ = stdin.Close()
+	}()
+	if err := json.NewEncoder(stdin).Encode(struct{ URL, ToolsRoot, OldRoot, NewRoot string }{
+		testpostgres.URL(t, database), runtimeSettings.ToolsDirectory, runtimeSettings.OutputDirectory, newRoot,
+	}); err != nil {
+		t.Fatalf("send child request: %v; child stderr: %s", err, stderr.String())
+	}
+	ready := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if scanner.Text() == "durable-prepare-complete" {
+				ready <- nil
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ready <- err
+			return
+		}
+		ready <- io.ErrUnexpectedEOF
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("child did not reach durable prepare: %v; child stderr: %s", err, stderr.String())
+		}
+	case <-childCtx.Done():
+		t.Fatalf("child did not reach durable prepare: %v; child stderr: %s", childCtx.Err(), stderr.String())
+	}
+	journal, err := repository.ReadUnresolvedOutputReset(ctx)
+	if err != nil || journal == nil || journal.State != "preparing" || journal.NewRoot != newRoot || journal.OldRoot != runtimeSettings.OutputDirectory {
+		t.Fatalf("unresolved journal before child kill=%+v err=%v, want preparing reset for %q", journal, err, newRoot)
+	}
+	var manifest []persistence.OutputResetDirectory
+	if err := json.Unmarshal(journal.DirectoryManifest, &manifest); err != nil {
+		t.Fatalf("decode crash journal manifest %q: %v", journal.DirectoryManifest, err)
+	}
+	created := make(map[string]struct{}, len(plannedDirectories))
+	for _, record := range manifest {
+		if record.Phase == "created" {
+			if record.Identity == "" {
+				t.Fatalf("created directory has no durable identity: %+v", record)
+			}
+			created[record.Path] = struct{}{}
+		}
+	}
+	for _, path := range plannedDirectories {
+		if _, ok := created[path]; !ok {
+			t.Fatalf("crash journal is missing the created identity for %q: %+v", path, manifest)
+		}
+	}
+	currentRuntime, err := registry.ReadRuntimeSettings(ctx)
+	if err != nil || currentRuntime.OutputDirectory != runtimeSettings.OutputDirectory || currentRuntime.ToolsDirectory != runtimeSettings.ToolsDirectory {
+		t.Fatalf("runtime changed before child kill: settings=%+v err=%v", currentRuntime, err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill child before commit: %v; child stderr: %s", err, stderr.String())
+	}
+	if err := wait(); err == nil {
+		reaped = true
+		t.Fatalf("child exited successfully instead of being killed; child stderr: %s", stderr.String())
+	} else {
+		reaped = true
+	}
+	reset := service.NewOutputReset(repository, settings.NewResetFilesystem(), nil)
+	for i := 0; i < 2; i++ {
+		if err := reset.RecoverOutputReset(ctx); err != nil {
+			t.Fatalf("recovery %d: %v", i+1, err)
+		}
+	}
+	for _, record := range manifest {
+		if record.Phase != "created" {
+			continue
+		}
+		if _, err := os.Stat(record.Path); !os.IsNotExist(err) {
+			t.Fatalf("crash-created owned directory %q survived recovery: %v", record.Path, err)
+		}
+	}
+	if _, err := os.Stat(newRoot); !os.IsNotExist(err) {
+		t.Fatalf("crash-created output root survived recovery: %v", err)
+	}
+	if info, err := os.Stat(foreign); err != nil || !info.IsDir() {
+		t.Fatalf("foreign directory changed: info=%v err=%v", info, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(oldRoot, "keep")); err != nil || string(data) != "old output" {
+		t.Fatalf("old output changed: contents=%q err=%v", data, err)
+	}
+	var state string
+	if err := database.NewRaw("SELECT state FROM output_reset_journal WHERE token = ?", journal.Token).Scan(ctx, &state); err != nil || state != "finished" {
+		t.Fatalf("journal state after repeated recovery=%q err=%v", state, err)
+	}
+}
+
+// lockedBuffer serializes the child process writes into cmd.Stderr with the
+// parent test goroutine reads that inspect the captured output while the child
+// is still running. The embedded-free design avoids bytes.Buffer's
+// thread-unsafe methods being reached through method promotion.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func outputResetAcceptanceSetup(t *testing.T, database *bun.DB, outputRoot string) (*service.SetupService, *settings.Registry, *persistence.SetupManagerRepository) {

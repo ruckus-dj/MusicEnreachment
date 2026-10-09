@@ -195,6 +195,44 @@ export function SourceArtifactCleanupPanel() {
             if (event.key === "Escape") {
               event.preventDefault();
               closeConfirmation();
+              return;
+            }
+
+            if (event.key !== "Tab") return;
+
+            const focusable = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                [
+                  "a[href]",
+                  "area[href]",
+                  "button",
+                  'input:not([type="hidden"])',
+                  "select",
+                  "textarea",
+                  "iframe",
+                  "object",
+                  "embed",
+                  '[contenteditable="true"]',
+                  "[tabindex]",
+                ].join(", "),
+              ),
+            ).filter(
+              (element) =>
+                !element.matches(":disabled") &&
+                element.tabIndex >= 0 &&
+                !element.closest('[hidden], [inert], [aria-hidden="true"]'),
+            );
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = event.currentTarget.ownerDocument.activeElement;
+
+            if (event.shiftKey && active === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && active === last) {
+              event.preventDefault();
+              first?.focus();
             }
           }}
         >

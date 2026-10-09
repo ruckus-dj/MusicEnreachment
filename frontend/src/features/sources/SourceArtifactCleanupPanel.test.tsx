@@ -112,8 +112,32 @@ describe("SourceArtifactCleanupPanel", () => {
     );
 
     const dialog = screen.getByRole("dialog");
-    expect(screen.getByRole("button", { name: "Отмена" })).toHaveFocus();
+    const cancelButton = screen.getByRole("button", { name: "Отмена" });
+    const confirmButton = screen.getByRole("button", {
+      name: "Подтвердить очистку",
+    });
+    expect(cancelButton).toHaveFocus();
     expect(dialog).toHaveTextContent("a");
+
+    const backwardsTab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    cancelButton.dispatchEvent(backwardsTab);
+    expect(backwardsTab.defaultPrevented).toBe(true);
+    expect(confirmButton).toHaveFocus();
+
+    const forwardsTab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    confirmButton.dispatchEvent(forwardsTab);
+    expect(forwardsTab.defaultPrevented).toBe(true);
+    expect(cancelButton).toHaveFocus();
+
     fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
