@@ -566,6 +566,64 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Local apply increment (2026-10-10):** persisted unique assignment применяется
+одной транзакцией после current evaluation/source/group/provider/AcoustID
+fences. Local release/recording/track/provider identities переиспользуются;
+новые M:N attachments unselected, существующие selected/manual данные
+сохраняются, conflicting manual links блокируют всю группу. Provider identity
+mutations сериализуются общим source gate. Multi-disc release positions имеют
+identity `(release, medium, position)`; lossy rollback запрещён. Accepted
+source-owned credits сохраняют порядок, повторы, credited names и join phrases;
+track override учитывает absent versus explicit-empty, recording inheritance
+только при отсутствии override. Новые catalog entities получают field-level
+provenance, включая recording-title fallback. PostgreSQL tests проверяют
+rollback после второго attachment, сохранение prior automatic association,
+epoch-only invalidation, credits и provenance. Independent review закрыто,
+полный `task verify` прошёл. Durable apply invocation и automatic acquisition
+planning/trigger, incoming UI ещё не подключены.
+
+**Disambiguation research (не approved matching policy):** API release
+`3b98979b-6494-4a7c-8de6-2165902f8a87` имеет title «юность в стиле панк»,
+disambiguation «baby punk version», 10 tracks; `55c7242f-1b4b-485d-b5f2-d6a8feeee088`
+имеет тот же title, пустой disambiguation, 9 tracks. Оба принадлежат release-group
+`3e98c609-6ec3-4928-9511-4da7abb512a0`, но recording ID sets не пересекаются.
+На сервере владельца `comment:"baby punk version"` возвращает нужный release;
+search field `comment` соответствует JSON `disambiguation`. Объединять releases
+по title или release-group нельзя. Обсуждается comparison title и title +
+disambiguation, а также paginated artist-catalog acquisition (без bulk Various
+Artists), но scoring/query/cache-expansion policy пока не утверждена.
+
+**MusicBrainz query research — реальные запросы (2026-10-10, не approved
+policy):** по разрешению владельца выполнены 216 read-only GET queries на
+`https://musicbrainz.fdev.me/`, 24 deterministic samples из 1273 audio files,
+8 artist directories и 177 release directories. Corpus/settings не изменялись;
+reproducible artifacts находятся только в ignored `build/musicbrainz-query-benchmark/`.
+Recording artist+title дал непустую выдачу для 15/24 samples; добавление album
+как обязательного release clause — 12/24; album+title — 13/24. Дополнительных
+samples с hits строгие варианты не нашли. Exact normalized tag heuristic
+(artist, title, associated release) совпал для top result в 7/24, 10/24 и
+10/24 соответственно; это не ground-truth accuracy. У всех samples отсутствуют
+embedded recording/release MBIDs; artist/album/title single-valued, поэтому
+качество multi-value OR не проверено. Noize MC «Выдыхай» / «Розыгрыш»: artist+
+title дал 21 recording, добавление release clause — 3. «Тиндер» с local album
+«Юность в стиле панк baby punk version»: artist+title дал 2 recordings,
+album-constrained variants — 0 (MB album: «юность в стиле панк»). Release
+artist+album против album-only: Linkin Park «One Step Closer» — 12 против 88,
+Noize MC «XV» — 1 против 382; broad queries показывали других artists вверху.
+Это сравнение coverage/noise и metadata consistency, не precision/recall.
+Automatic query formulation, fallback/union semantics и query-score aggregation
+пока не согласованы; proposed AND/OR mapping не считается решением владельца.
+
+**Дополнение artist field benchmark:** ещё 48 read-only queries (всего 264).
+На тех же 24 samples recording `artist` против `artistname` дали одинаковые
+counts, coverage 15/24 и top-20 MBID sets. Порядок совпал у 23/24; единственная
+перестановка — ranks 16–18 у Noize MC «Выдыхай», top-1 не изменился. Release
+варианты дали coverage 14/24 и одинаковые top-20 IDs/order у всех samples.
+Для recording с credit «Noize MC feat. Чиж & Co» оба варианта нашли тот же
+кандидат, но local artist tag содержит только Noize MC; guest-name search
+не проверен. Это не proof equivalence для multi-valued/featured credits и
+не ground-truth accuracy; policy по-прежнему требует обсуждения с владельцем.
+
 **Trusted evidence / decision increment (2026-10-10):** cache-only evaluator
 использует optional AcoustID scope с trusted selected-input provenance,
 nullable accepted-payload revision fences для hits и misses, source fences

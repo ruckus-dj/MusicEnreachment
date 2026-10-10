@@ -115,6 +115,149 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestApplyCurrentMatchingEvaluationMaterializesGroupAtomicallyPostgreSQL(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+	repository := persistence.NewIncomingMatchCandidateRepository(db)
+	evaluation := fixture.evaluation([]persistence.IncomingMatchCandidate{
+		fixture.candidate(fixture.memberA, 0.95),
+		fixture.candidate(fixture.memberB, 0.95),
+	})
+	evaluation.Groups[0].Evidence = matchingApplyEvidence(t, fixture, fixture.trackID)
+	if err := repository.Replace(ctx, evaluation); err != nil {
+		t.Fatalf("persist unique matching evaluation: %v", err)
+	}
+	header, _, err := repository.Get(ctx, fixture.group.ID)
+	if err != nil || header == nil {
+		t.Fatalf("read evaluation header: header=%+v err=%v", header, err)
+	}
+	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, header.EvaluationRevision); err != nil {
+		t.Fatalf("apply current matching evaluation: %v", err)
+	}
+	var localReleaseCount, localTrackCount, releaseTrackCount, trackSourceCount int
+	counts := []struct {
+		query  string
+		target *int
+	}{
+		{`SELECT count(*) FROM provider_local_release WHERE provider_id=?`, &localReleaseCount},
+		{`SELECT count(*) FROM provider_local_track WHERE provider_id=?`, &localTrackCount},
+		{`SELECT count(*) FROM release_track WHERE release_id IN (SELECT local_release_id FROM provider_local_release WHERE provider_id=?)`, &releaseTrackCount},
+		{`SELECT count(*) FROM track_source ts JOIN provider_local_track plt ON plt.local_track_id=ts.track_id WHERE plt.provider_id=? AND ts.decision_method='automatic' AND ts.selected=false`, &trackSourceCount},
+	}
+	for _, count := range counts {
+		if err := db.NewRaw(count.query, fixture.provider).Scan(ctx, count.target); err != nil {
+			t.Fatalf("count applied rows (%s): %v", count.query, err)
+		}
+	}
+	if localReleaseCount != 1 || localTrackCount != 1 || releaseTrackCount != 1 || trackSourceCount != 2 {
+		t.Fatalf("applied rows release=%d tracks=%d release_tracks=%d sources=%d, want 1/1/1/2", localReleaseCount, localTrackCount, releaseTrackCount, trackSourceCount)
+	}
+	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, header.EvaluationRevision); err != nil {
+		t.Fatalf("repeat apply: %v", err)
+	}
+	var afterRepeat int
+	if err := db.NewRaw(`SELECT count(*) FROM track_source ts JOIN provider_local_track plt ON plt.local_track_id=ts.track_id WHERE plt.provider_id=? AND ts.decision_method='automatic' AND ts.selected=false`, fixture.provider).Scan(ctx, &afterRepeat); err != nil || afterRepeat != trackSourceCount {
+		t.Fatalf("repeat application source rows=%d err=%v, want stable count %d", afterRepeat, err, trackSourceCount)
+	}
+}
+
+func TestApplyCurrentMatchingEvaluationRejectsStaleRevisionAndManualVariantConflictPostgreSQL(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+	repository := persistence.NewIncomingMatchCandidateRepository(db)
+	evaluation := fixture.evaluation([]persistence.IncomingMatchCandidate{
+		fixture.candidate(fixture.memberA, 0.95),
+		fixture.candidate(fixture.memberB, 0.95),
+	})
+	evaluation.Groups[0].Evidence = matchingApplyEvidence(t, fixture, fixture.trackID)
+	if err := repository.Replace(ctx, evaluation); err != nil {
+		t.Fatalf("persist unique matching evaluation: %v", err)
+	}
+	header, _, err := repository.Get(ctx, fixture.group.ID)
+	if err != nil || header == nil {
+		t.Fatalf("read evaluation header: header=%+v err=%v", header, err)
+	}
+	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, "stale-revision"); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+		t.Fatalf("apply stale evaluation revision = %v, want conflict", err)
+	}
+	var variantID uuid.UUID
+	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, fixture.workA).Scan(ctx, &variantID); err != nil {
+		t.Fatalf("read manually protected source variant: %v", err)
+	}
+	manualTrackID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, manualTrackID, "Manual target").Exec(ctx); err != nil {
+		t.Fatalf("create manual target track: %v", err)
+	}
+	if err := persistence.NewCollectionRepository(db).UpsertTrackSourceDecision(ctx, persistence.TrackSourceDecision{
+		TrackID: manualTrackID, MediaVariantID: variantID, Compatible: true, Method: "manual", Metadata: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatalf("protect source variant with manual association: %v", err)
+	}
+	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, header.EvaluationRevision); err == nil {
+		t.Fatal("apply succeeded despite a manual source-to-other-track association")
+	}
+	var automaticMappings int
+	if err := db.NewRaw(`SELECT count(*) FROM provider_local_release WHERE provider_id=?`, fixture.provider).Scan(ctx, &automaticMappings); err != nil || automaticMappings != 0 {
+		t.Fatalf("failed group left provider release mappings=%d err=%v, want 0", automaticMappings, err)
+	}
+	var protected bool
+	if err := db.NewRaw(`SELECT decision_method='manual' AND selected=false FROM track_source WHERE track_id=? AND media_variant_id=?`, manualTrackID, variantID).Scan(ctx, &protected); err != nil || !protected {
+		t.Fatalf("manual source state preserved=%v err=%v, want preserved unselected manual association", protected, err)
+	}
+}
+
+func matchingApplyEvidence(t *testing.T, fixture *incomingMatchFixture, trackID uuid.UUID) json.RawMessage {
+	t.Helper()
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(fixture.evaluationEvidence(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := json.Marshal(struct {
+		Version         int       `json:"version"`
+		GroupID         uuid.UUID `json:"group_id"`
+		PolicyVersion   string    `json:"policy_version"`
+		Outcome         string    `json:"outcome"`
+		SelectedRelease struct {
+			ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
+			ProviderReleaseKey string    `json:"provider_release_key"`
+		} `json:"selected_release"`
+		Assignments []struct {
+			FileMemberID    uuid.UUID `json:"file_member_id"`
+			ProviderTrackID uuid.UUID `json:"provider_track_id"`
+			Medium          int       `json:"medium"`
+			Position        int       `json:"position"`
+		} `json:"assignments"`
+	}{
+		Version: 1, GroupID: fixture.group.ID, PolicyVersion: "policy-v1", Outcome: "unique",
+		SelectedRelease: struct {
+			ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
+			ProviderReleaseKey string    `json:"provider_release_key"`
+		}{ProviderReleaseID: fixture.releaseID, ProviderReleaseKey: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+		Assignments: []struct {
+			FileMemberID    uuid.UUID `json:"file_member_id"`
+			ProviderTrackID uuid.UUID `json:"provider_track_id"`
+			Medium          int       `json:"medium"`
+			Position        int       `json:"position"`
+		}{
+			{FileMemberID: fixture.memberA, ProviderTrackID: trackID, Medium: 1, Position: 1},
+			{FileMemberID: fixture.memberB, ProviderTrackID: trackID, Medium: 1, Position: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope["evaluation_decision"] = decision
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.OpenMigrated(t)

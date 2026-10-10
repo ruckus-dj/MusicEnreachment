@@ -146,6 +146,61 @@ func (repository *IncomingMatchCandidateRepository) ReplaceIfCurrent(ctx context
 	return repository.replace(ctx, evaluation, expected)
 }
 
+// lockAndValidateMatchingPrelude establishes the shared mutation/configuration
+// gates before locking source, grouping, and provider state. Both evaluation
+// publication and decision application must follow this exact order.
+func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, operation string) error {
+	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+		return fmt.Errorf("%s: lock source mutation gate: %w", operation, err)
+	}
+	keys := matchingAcoustIDCacheKeys(evaluation.Provider)
+	if len(keys) != 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
+			return fmt.Errorf("%s: lock AcoustID configuration: %w", operation, err)
+		}
+		if err := lockAcoustIDCacheKeys(ctx, tx, officialAcoustIDSourceID(), keys, false); err != nil {
+			return fmt.Errorf("%s: lock AcoustID response keys: %w", operation, err)
+		}
+	}
+	if err := lockCurrentIncomingSourceRows(ctx, tx); err != nil {
+		return err
+	}
+	var state struct {
+		Revision     int64 `bun:"revision"`
+		NeedsRefresh bool  `bun:"needs_refresh"`
+	}
+	if err := tx.NewRaw(`SELECT revision, needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &state); err != nil {
+		return fmt.Errorf("%s: lock grouping state: %w", operation, err)
+	}
+	if state.Revision != evaluation.ExpectedGroupingEpoch || state.NeedsRefresh {
+		return ErrIncomingMatchConflict
+	}
+	if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
+		return err
+	}
+	return nil
+}
+
+func matchingAcoustIDCacheKeys(fence IncomingMatchProviderFence) []string {
+	unique := make(map[string]bool, len(fence.AcoustID)+len(fence.AcoustIDSources))
+	for _, response := range fence.AcoustID {
+		if response.CacheKey != "" {
+			unique[response.CacheKey] = true
+		}
+	}
+	for _, source := range fence.AcoustIDSources {
+		if source.CacheKey != "" {
+			unique[source.CacheKey] = true
+		}
+	}
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (repository *IncomingMatchCandidateRepository) replace(ctx context.Context, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string) error {
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		return err
@@ -184,36 +239,8 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 	}
 	// Canonical lock order: source mutation gate, AcoustID configuration,
 	// ordered cache-key gates, current source/group state, provider rows, then
-	// evaluation revisions.
-	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-		return fmt.Errorf("replace incoming matches: lock source mutation gate: %w", err)
-	}
-	acoustIDCacheKeys := make([]string, 0, len(evaluation.Provider.AcoustID)+len(evaluation.Provider.AcoustIDSources))
-	for _, fence := range evaluation.Provider.AcoustID {
-		acoustIDCacheKeys = append(acoustIDCacheKeys, fence.CacheKey)
-	}
-	for _, fence := range evaluation.Provider.AcoustIDSources {
-		acoustIDCacheKeys = append(acoustIDCacheKeys, fence.CacheKey)
-	}
-	if len(acoustIDCacheKeys) > 0 {
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
-			return fmt.Errorf("replace incoming matches: lock AcoustID configuration: %w", err)
-		}
-		if err := lockAcoustIDCacheKeys(ctx, tx, officialAcoustIDSourceID(), acoustIDCacheKeys, false); err != nil {
-			return fmt.Errorf("replace incoming matches: lock AcoustID response keys: %w", err)
-		}
-	}
-	if err := lockCurrentIncomingSourceRows(ctx, tx); err != nil {
-		return err
-	}
-	var epoch int64
-	if err := tx.NewRaw(`SELECT revision FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &epoch); err != nil {
-		return fmt.Errorf("replace incoming matches: lock grouping state: %w", err)
-	}
-	if epoch != evaluation.ExpectedGroupingEpoch {
-		return ErrIncomingMatchConflict
-	}
-	if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
+	// evaluation revisions. Apply and publication share this exact prelude.
+	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "replace incoming matches"); err != nil {
 		return err
 	}
 	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
@@ -405,6 +432,44 @@ func jsonObject(data json.RawMessage) bool {
 }
 
 func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation) error {
+	var currentGroups []struct {
+		ID       uuid.UUID `bun:"id"`
+		Revision string    `bun:"revision"`
+	}
+	if err := tx.NewRaw(`SELECT id, revision FROM incoming_group ORDER BY id FOR SHARE`).Scan(ctx, &currentGroups); err != nil {
+		return fmt.Errorf("replace incoming matches: lock current groups: %w", err)
+	}
+	identities := make([]struct {
+		ID       string   `json:"id"`
+		Revision string   `json:"revision"`
+		Members  []string `json:"members"`
+	}, 0, len(currentGroups))
+	for _, group := range currentGroups {
+		var members []uuid.UUID
+		if err := tx.NewRaw(`SELECT variant_id FROM incoming_group_member WHERE group_id=? AND ready=true ORDER BY variant_id FOR SHARE`, group.ID).Scan(ctx, &members); err != nil {
+			return fmt.Errorf("replace incoming matches: lock current group members: %w", err)
+		}
+		if len(members) == 0 {
+			continue
+		}
+		identity := struct {
+			ID       string   `json:"id"`
+			Revision string   `json:"revision"`
+			Members  []string `json:"members"`
+		}{ID: group.ID.String(), Revision: group.Revision, Members: make([]string, len(members))}
+		for memberIndex, member := range members {
+			identity.Members[memberIndex] = member.String()
+		}
+		identities = append(identities, identity)
+	}
+	encoded, err := json.Marshal(identities)
+	if err != nil {
+		return fmt.Errorf("replace incoming matches: encode current groups revision: %w", err)
+	}
+	revision := sha256.Sum256(encoded)
+	if evaluation.ExpectedGroupsRevision == "" || hex.EncodeToString(revision[:]) != evaluation.ExpectedGroupsRevision {
+		return ErrIncomingMatchConflict
+	}
 	for _, expected := range evaluation.Groups {
 		var actualRevision string
 		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR SHARE`, expected.GroupID).Scan(ctx, &actualRevision); err != nil {
@@ -508,9 +573,6 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 		}
 	}
 	if len(fence.AcoustID) != 0 || len(fence.AcoustIDSources) != 0 {
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
-			return fmt.Errorf("replace incoming matches: lock AcoustID source: %w", err)
-		}
 		var sourceID, providerID uuid.UUID
 		var endpoint, identity string
 		if err := tx.NewRaw(`SELECT source.id, source.provider_id, source.endpoint, source.configuration_identity

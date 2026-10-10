@@ -121,6 +121,9 @@ func (repository *CollectionRepository) UpsertProviderIdentityLink(ctx context.C
 		return fmt.Errorf("upsert provider identity link: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("upsert provider identity link: lock source mutation gate: %w", err)
+		}
 		var existingMethod string
 		query := fmt.Sprintf(`SELECT method FROM %s WHERE provider_id=? AND %s=? FOR UPDATE`, table, providerColumn)
 		err := tx.NewRaw(query, link.ProviderID, link.ProviderEntityID).Scan(ctx, &existingMethod)
@@ -160,6 +163,9 @@ func (repository *CollectionRepository) RemoveProviderIdentityLink(ctx context.C
 		return fmt.Errorf("remove provider identity link: method must be manual or automatic")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("remove provider identity link: lock source mutation gate: %w", err)
+		}
 		var existingMethod string
 		query := fmt.Sprintf(`SELECT method FROM %s WHERE provider_id=? AND %s=? FOR UPDATE`, table, providerColumn)
 		err := tx.NewRaw(query, providerID, providerEntityID).Scan(ctx, &existingMethod)

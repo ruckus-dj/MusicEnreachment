@@ -106,11 +106,8 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 	if err := normalizeCredits(id, raw["artist-credit"], graph, authority); err != nil {
 		return err
 	}
-	if err := setReleaseRelations(graph, id, raw, authority); err != nil {
-		return err
-	}
 	if !withTracks {
-		return nil
+		return setReleaseRelations(graph, id, raw, authority)
 	}
 	var media []json.RawMessage
 	if len(raw["media"]) == 0 || string(raw["media"]) == "null" {
@@ -119,6 +116,8 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 	if err := json.Unmarshal(raw["media"], &media); err != nil {
 		return fmt.Errorf("decode MusicBrainz release media: %w", err)
 	}
+	normalizedTracks := make([]persistence.ProviderNormalizedTrack, 0)
+	trackCollectionComplete := true
 	for mediumIndex, medium := range media {
 		var mediumRaw map[string]json.RawMessage
 		if err := json.Unmarshal(medium, &mediumRaw); err != nil {
@@ -126,6 +125,7 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 		}
 		var tracks []json.RawMessage
 		if len(mediumRaw["tracks"]) == 0 || string(mediumRaw["tracks"]) == "null" {
+			trackCollectionComplete = false
 			continue
 		}
 		if err := json.Unmarshal(mediumRaw["tracks"], &tracks); err != nil {
@@ -161,6 +161,19 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 				Medium:      mediumIndex, Position: trackIndex, DisplayedNumber: displayed,
 				RecordingProviderKey: strings.ToLower(recordingID), LengthMS: musicBrainzTrackLength(trackRaw["length"]),
 			}
+			var trackArtistCredit *json.RawMessage
+			if value, present := trackRaw["artist-credit"]; present {
+				copy := cloneJSON(value)
+				trackArtistCredit = &copy
+				if err := normalizeArtistEvidence(value, graph, authority); err != nil {
+					return err
+				}
+			}
+			normalizedTracks = append(normalizedTracks, persistence.ProviderNormalizedTrack{
+				ID: trackID, RecordingID: normalizedTrack.RecordingID, Medium: mediumIndex, Position: trackIndex,
+				DisplayedNumber: displayed, RecordingProviderKey: strings.ToLower(recordingID), LengthMS: normalizedTrack.LengthMS,
+				Title: stringField(trackRaw, "title"), ArtistCredit: trackArtistCredit,
+			})
 			foundTrack := false
 			for index := range graph.Tracks {
 				if graph.Tracks[index].ID == trackID {
@@ -174,7 +187,46 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 			}
 		}
 	}
-	return setReleaseRelations(graph, id, raw, authority)
+	if err := setReleaseRelations(graph, id, raw, authority); err != nil {
+		return err
+	}
+	if trackCollectionComplete {
+		if err := setNormalizedReleaseTracks(graph, id, normalizedTracks, authority); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setNormalizedReleaseTracks(graph *persistence.ProviderGraph, releaseID string, tracks []persistence.ProviderNormalizedTrack, authority int) error {
+	for index := range graph.Entities {
+		entity := &graph.Entities[index]
+		if entity.Kind != "release" || entity.ProviderKey != strings.ToLower(releaseID) {
+			continue
+		}
+		if !fieldEvidenceWins(entity.FieldEvidence["normalized_tracks"], authority) {
+			return nil
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(entity.Fields, &fields); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(tracks)
+		if err != nil {
+			return fmt.Errorf("encode MusicBrainz normalized tracks: %w", err)
+		}
+		fields["normalized_tracks"] = encoded
+		entity.Fields, err = json.Marshal(fields)
+		if err != nil {
+			return err
+		}
+		if entity.FieldEvidence == nil {
+			entity.FieldEvidence = make(map[string]persistence.ProviderFieldEvidence)
+		}
+		entity.FieldEvidence["normalized_tracks"] = persistence.ProviderFieldEvidence{Authority: authority}
+		return nil
+	}
+	return fmt.Errorf("normalized MusicBrainz release entity is missing")
 }
 
 func normalizeRecording(data json.RawMessage, graph *persistence.ProviderGraph, authority int) error {

@@ -71,6 +71,20 @@ type ProviderReleaseTrack struct {
 	LengthMS             *int64    `json:"length,omitempty"`
 }
 
+// ProviderNormalizedTrack preserves source track-level fields that are not part
+// of the provider track identity/position tables.
+type ProviderNormalizedTrack struct {
+	ID                   uuid.UUID        `json:"id"`
+	RecordingID          uuid.UUID        `json:"recording_id"`
+	Medium               int              `json:"medium"`
+	Position             int              `json:"position"`
+	DisplayedNumber      string           `json:"displayed_number"`
+	RecordingProviderKey string           `json:"recording_provider_key"`
+	LengthMS             *int64           `json:"length,omitempty"`
+	Title                string           `json:"title,omitempty"`
+	ArtistCredit         *json.RawMessage `json:"artist-credit,omitempty"`
+}
+
 // ProviderGraph is one provider-scoped response graph. Complete is trusted only
 // as a caller-provided fact; partial responses never mark unseen rows absent.
 type ProviderGraph struct {
