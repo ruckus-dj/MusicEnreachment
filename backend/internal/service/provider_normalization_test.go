@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,6 +96,38 @@ func TestNormalizeMusicBrainzSearchAndRecordingLookupRemainPartial(t *testing.T)
 	}
 	if partial.Complete || len(partial.Recordings) != 1 || len(partial.Releases) != 1 || partial.Entities[1].Complete {
 		t.Fatalf("recording lookup incorrectly completed nested release summary: %+v", partial)
+	}
+}
+
+func TestNormalizeArtistSearchAndBrowseAreSparseAndPreserveRawFields(t *testing.T) {
+	artists, err := NormalizeMusicBrainzArtistSearch(musicbrainz.SearchResult{Items: []musicbrainz.Entity{{
+		ID: artistMBID, Name: "Artist", Raw: json.RawMessage(`{"id":"` + artistMBID + `","name":"Artist","disambiguation":"band","future":true}`),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artists.Complete || len(artists.Artists) != 1 || len(artists.Entities) != 1 || artists.Entities[0].Complete {
+		t.Fatalf("artist search graph = %+v", artists)
+	}
+	if !strings.Contains(string(artists.Artists[0].RawSource), `"future"`) {
+		t.Fatalf("raw artist source lost: %s", artists.Artists[0].RawSource)
+	}
+
+	releases, err := NormalizeMusicBrainzArtistReleaseBrowse(musicbrainz.SearchResult{Items: []musicbrainz.Entity{{
+		ID: releaseMBID, Title: "Album", Raw: json.RawMessage(`{"id":"` + releaseMBID + `","title":"Album","date":"1998","disambiguation":"remaster","label-info":[{"catalog-number":"ABC"}],"release-group":{"id":"` + trackMBID + `"}}`),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if releases.Complete || len(releases.Releases) != 1 || len(releases.Tracks) != 0 || len(releases.Entities) != 1 || releases.Entities[0].Complete {
+		t.Fatalf("release browse graph = %+v", releases)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(releases.Entities[0].Fields, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["date"] == nil || fields["disambiguation"] == nil || fields["label-info"] == nil || fields["media"] != nil {
+		t.Fatalf("browse fields did not remain sparse/preserved: %s", releases.Entities[0].Fields)
 	}
 }
 

@@ -1175,7 +1175,7 @@ func (repository *SetupManagerRepository) GetOperationForUpdate(ctx context.Cont
 func (repository *SetupManagerRepository) ClaimProviderOperationDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64) (int64, bool, error) {
 	var epoch int64
 	err := repository.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at = now(), provider_execution_epoch = provider_execution_epoch + 1, updated_at = now()
-		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search', 'provider_acoustid_lookup')
+		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search', 'provider_artist_search', 'provider_artist_release_browse', 'provider_acoustid_lookup')
 		AND state IN ('queued', 'running') AND attempt = ? AND river_job_id = ?
 		AND (provider_delivery_claimed_at IS NULL OR provider_delivery_claimed_at < now() - interval '5 minutes')
 		RETURNING provider_execution_epoch`, id, attempt, riverJobID).Scan(ctx, &epoch)
@@ -1265,7 +1265,7 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 
 func isProviderOperationKind(kind string) bool {
 	switch kind {
-	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_acoustid_lookup":
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup":
 		return true
 	default:
 		return false

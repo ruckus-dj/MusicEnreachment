@@ -102,6 +102,20 @@ func (service *ProviderFetchService) PrepareOperation(ctx context.Context, kind,
 		}
 		intent.Query, intent.Offset, intent.Limit = queryOrMBID, offset, limit
 		key = fmt.Sprintf("recording-search:%d:%d:%s", offset, limit, queryOrMBID)
+	case "artist_search":
+		query := strings.TrimSpace(queryOrMBID)
+		if query == "" || offset < 0 || limit < 1 || limit > 100 {
+			return nil, fmt.Errorf("invalid MusicBrainz search parameters")
+		}
+		intent.Query, intent.Offset, intent.Limit = query, offset, limit
+		key = fmt.Sprintf("artist-search:%d:%d:%s", offset, limit, query)
+	case "artist_release_browse":
+		intent.MBID = strings.ToLower(strings.TrimSpace(queryOrMBID))
+		if !validProviderMBID(intent.MBID) || offset < 0 || limit < 1 || limit > 100 {
+			return nil, fmt.Errorf("invalid MusicBrainz artist browse parameters")
+		}
+		intent.Offset, intent.Limit = offset, limit
+		key = fmt.Sprintf("artist-release-browse:%s:%d:%d", intent.MBID, offset, limit)
 	default:
 		return nil, fmt.Errorf("unsupported provider operation")
 	}
@@ -238,6 +252,20 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 			payload, revision = result.Raw, result.Created.UTC().Format(time.RFC3339Nano)
 			graph, err = NormalizeMusicBrainzRecordingSearch(result)
 		}
+	case "provider_artist_search":
+		result, fetchErr := provider.SearchArtists(ctx, intent.Query, intent.Offset, intent.Limit)
+		err = fetchErr
+		if err == nil {
+			payload, revision = result.Raw, result.Created.UTC().Format(time.RFC3339Nano)
+			graph, err = NormalizeMusicBrainzArtistSearch(result)
+		}
+	case "provider_artist_release_browse":
+		result, fetchErr := provider.BrowseReleasesByArtist(ctx, intent.MBID, intent.Offset, intent.Limit)
+		err = fetchErr
+		if err == nil {
+			payload = result.Raw
+			graph, err = NormalizeMusicBrainzArtistReleaseBrowse(result)
+		}
 	default:
 		err = fmt.Errorf("unsupported provider operation kind")
 	}
@@ -283,6 +311,30 @@ func (service *ProviderFetchService) SearchRecordings(ctx context.Context, query
 		}
 		graph, err := NormalizeMusicBrainzRecordingSearch(result)
 		return result, graph, result.Raw, result.Created.UTC().Format(time.RFC3339Nano), err
+	})
+}
+
+func (service *ProviderFetchService) SearchArtists(ctx context.Context, query string, offset, limit int) (musicbrainz.SearchResult, error) {
+	canonicalQuery := strings.TrimSpace(query)
+	return fetchProviderResponse(service, ctx, fmt.Sprintf("artist-search:%d:%d:%s", offset, limit, canonicalQuery), func(provider *musicbrainz.Provider) (musicbrainz.SearchResult, persistence.ProviderGraph, []byte, string, error) {
+		result, err := provider.SearchArtists(ctx, canonicalQuery, offset, limit)
+		if err != nil {
+			return result, persistence.ProviderGraph{}, nil, "", err
+		}
+		graph, err := NormalizeMusicBrainzArtistSearch(result)
+		return result, graph, result.Raw, result.Created.UTC().Format(time.RFC3339Nano), err
+	})
+}
+
+func (service *ProviderFetchService) BrowseReleasesByArtist(ctx context.Context, artistID string, offset, limit int) (musicbrainz.SearchResult, error) {
+	canonicalID := strings.ToLower(strings.TrimSpace(artistID))
+	return fetchProviderResponse(service, ctx, fmt.Sprintf("artist-release-browse:%s:%d:%d", canonicalID, offset, limit), func(provider *musicbrainz.Provider) (musicbrainz.SearchResult, persistence.ProviderGraph, []byte, string, error) {
+		result, err := provider.BrowseReleasesByArtist(ctx, canonicalID, offset, limit)
+		if err != nil {
+			return result, persistence.ProviderGraph{}, nil, "", err
+		}
+		graph, err := NormalizeMusicBrainzArtistReleaseBrowse(result)
+		return result, graph, result.Raw, "", err
 	})
 }
 

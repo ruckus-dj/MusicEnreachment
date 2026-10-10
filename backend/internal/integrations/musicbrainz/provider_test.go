@@ -40,6 +40,78 @@ func TestSearchReleasesPreservesRawUnknownFieldsAndScorePresence(t *testing.T) {
 	}
 }
 
+func TestSearchArtistsValidatesAndPreservesRawArtistProjection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/artist/" || r.URL.Query().Get("query") != "artist:test" || r.URL.Query().Get("offset") != "25" || r.URL.Query().Get("limit") != "10" {
+			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"count":1,"offset":25,"created":"2020-01-01T00:00:00Z","artists":[{"id":"11111111-1111-4111-8111-111111111111","name":"Artist","disambiguation":"the right one","future":{"keep":true}}]}`))
+	}))
+	defer server.Close()
+	provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.SearchArtists(context.Background(), "artist:test", 25, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Name != "Artist" || result.Items[0].Title != "" {
+		t.Fatalf("artist projection = %#v", result.Items)
+	}
+	if !strings.Contains(string(result.Items[0].Raw), `"future"`) {
+		t.Fatalf("raw artist fields lost: %s", result.Items[0].Raw)
+	}
+}
+
+func TestBrowseReleasesByArtistValidatesBrowseEnvelopeAndDoesNotRequestTracks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if r.URL.Path != "/release/" || query.Get("artist") != "11111111-1111-4111-8111-111111111111" || query.Get("offset") != "50" || query.Get("limit") != "25" {
+			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		if strings.Contains(query.Get("inc"), "recordings") || strings.Contains(query.Get("inc"), "media") {
+			t.Errorf("browse unexpectedly requested track details: inc=%q", query.Get("inc"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"release-count":76,"release-offset":50,"releases":[{"id":"22222222-2222-4222-8222-222222222222","title":"Album","date":"1999","disambiguation":"remaster","label-info":[{"catalog-number":"ABC"}],"release-group":{"id":"33333333-3333-4333-8333-333333333333"}}]}`))
+	}))
+	defer server.Close()
+	provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.BrowseReleasesByArtist(context.Background(), "11111111-1111-4111-8111-111111111111", 50, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 76 || result.Offset != 50 || len(result.Items) != 1 || result.Items[0].Title != "Album" {
+		t.Fatalf("browse projection = %+v", result)
+	}
+	for _, malformed := range []string{
+		`{"count":76,"offset":50,"releases":[]}`,
+		`{"release-count":76,"release-offset":49,"releases":[]}`,
+		`{"release-count":76,"release-offset":50,"releases":null}`,
+		`{"release-count":76,"release-offset":50,"releases":[{}]}`,
+	} {
+		body := malformed
+		badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		badProvider, providerErr := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: badServer.URL})
+		if providerErr != nil {
+			badServer.Close()
+			t.Fatal(providerErr)
+		}
+		if _, browseErr := badProvider.BrowseReleasesByArtist(context.Background(), "11111111-1111-4111-8111-111111111111", 50, 25); browseErr == nil {
+			t.Errorf("accepted malformed browse response: %s", body)
+		}
+		badServer.Close()
+	}
+}
+
 func TestSearchRejectsWrongContentTypeAndOversizedResponse(t *testing.T) {
 	for _, tc := range []struct {
 		name, contentType string
@@ -89,6 +161,79 @@ func TestSearchRejectsMalformedEnvelopeAndEntityFields(t *testing.T) {
 			t.Errorf("accepted malformed response: %s", body)
 		}
 		server.Close()
+	}
+}
+
+func TestSearchRejectsEntitiesMissingRequiredIdentityFields(t *testing.T) {
+	const entityID = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		name string
+		body string
+		call func(*musicbrainz.Provider) error
+	}{
+		{
+			name: "release missing title",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","releases":[{"id":"` + entityID + `"}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchReleases(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+		{
+			name: "release empty title",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","releases":[{"id":"` + entityID + `","title":""}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchReleases(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+		{
+			name: "recording missing title",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","recordings":[{"id":"` + entityID + `"}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchRecordings(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+		{
+			name: "recording empty title",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","recordings":[{"id":"` + entityID + `","title":""}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchRecordings(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+		{
+			name: "artist missing name",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","artists":[{"id":"` + entityID + `"}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchArtists(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+		{
+			name: "artist empty name",
+			body: `{"count":1,"offset":0,"created":"2020-01-01T00:00:00Z","artists":[{"id":"` + entityID + `","name":""}]}`,
+			call: func(provider *musicbrainz.Provider) error {
+				_, err := provider.SearchArtists(context.Background(), "query", 0, 25)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			provider, err := musicbrainz.NewProvider(musicbrainz.ProviderOptions{BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.call(provider); err == nil {
+				t.Fatalf("adapter accepted entity without required identity field: %s", tc.body)
+			}
+		})
 	}
 }
 

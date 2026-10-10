@@ -42,6 +42,10 @@ func TestProviderFetchWorkerRiverDispatchPostgreSQL(t *testing.T) {
 		case path == "/ws/2/release" && r.URL.Query().Get("query") == "artist:test":
 		case path == "/ws/2/recording" && r.URL.Query().Get("query") == "recording:test":
 			body = `{"count":0,"offset":0,"created":"2026-01-01T00:00:00Z","recordings":[],"unknown_top_level":"preserve-recording-search"}`
+		case path == "/ws/2/artist" && r.URL.Query().Get("query") == "artist:lookup":
+			body = `{"count":1,"offset":0,"created":"2026-01-01T00:00:00Z","artists":[{"id":"33333333-3333-4333-8333-333333333333","name":"Fixture Artist","disambiguation":"band","unknown_top_level":"preserve-artist-search"}]}`
+		case path == "/ws/2/release" && r.URL.Query().Get("artist") == "33333333-3333-4333-8333-333333333333":
+			body = `{"release-count":1,"release-offset":0,"releases":[{"id":"44444444-4444-4444-8444-444444444444","title":"Fixture Artist Album","date":"2001","disambiguation":"catalog edition","label-info":[{"catalog-number":"CAT-1"}],"unknown_top_level":"preserve-artist-release-browse"}]}`
 		case r.URL.Path == "/ws/2/release/11111111-1111-4111-8111-111111111111":
 			body = `{"id":"11111111-1111-4111-8111-111111111111","title":"Fixture Release","score":100,"unknown_top_level":"preserve-release-lookup"}`
 		case r.URL.Path == "/ws/2/recording/22222222-2222-4222-8222-222222222222":
@@ -133,11 +137,13 @@ func TestProviderFetchWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// and production worker path; the adapter's captured raw body survives cache.
 	status.Store(http.StatusOK)
 	for _, tc := range []struct {
-		kind, input, wantRaw string
+		kind, input, wantRaw, entityKind, entityKey string
 	}{
-		{"release_lookup", "11111111-1111-4111-8111-111111111111", "preserve-release-lookup"},
-		{"recording_search", "recording:test", "preserve-recording-search"},
-		{"recording_lookup", "22222222-2222-4222-8222-222222222222", "preserve-recording-lookup"},
+		{"release_lookup", "11111111-1111-4111-8111-111111111111", "preserve-release-lookup", "", ""},
+		{"recording_search", "recording:test", "preserve-recording-search", "", ""},
+		{"recording_lookup", "22222222-2222-4222-8222-222222222222", "preserve-recording-lookup", "", ""},
+		{"artist_search", " artist:lookup ", "preserve-artist-search", "artist", "33333333-3333-4333-8333-333333333333"},
+		{"artist_release_browse", "33333333-3333-4333-8333-333333333333", "preserve-artist-release-browse", "release", "44444444-4444-4444-8444-444444444444"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			op, err := fetch.StartProviderOperation(ctx, tc.kind, tc.input, 0, 1, false)
@@ -155,6 +161,15 @@ func TestProviderFetchWorkerRiverDispatchPostgreSQL(t *testing.T) {
 			}
 			if !json.Valid(cached.Payload) || !strings.Contains(string(cached.Payload), tc.wantRaw) {
 				t.Fatalf("raw response did not preserve unknown field: %s", cached.Payload)
+			}
+			if tc.entityKind != "" {
+				var fields string
+				if err := db.NewRaw(`SELECT fields FROM provider_source_entity WHERE provider_source_id=? AND entity_kind=? AND provider_key=?`, *finished.ProviderSourceID, tc.entityKind, tc.entityKey).Scan(ctx, &fields); err != nil {
+					t.Fatalf("read persisted %s projection: %v", tc.entityKind, err)
+				}
+				if fields == "" || (tc.kind == "artist_release_browse" && strings.Contains(fields, "normalized_tracks")) {
+					t.Fatalf("unexpected sparse graph projection: %s", fields)
+				}
 			}
 		})
 	}

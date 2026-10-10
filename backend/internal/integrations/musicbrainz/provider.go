@@ -230,6 +230,62 @@ func (p *Provider) SearchRecordings(ctx context.Context, query string, offset, l
 	return projected, nil
 }
 
+// SearchArtists searches MusicBrainz artists while retaining each provider
+// entity's raw representation for downstream sparse normalization.
+func (p *Provider) SearchArtists(ctx context.Context, query string, offset, limit int) (SearchResult, error) {
+	ctx, cancel, collector := p.callContext(ctx)
+	defer cancel()
+	if err := validateSearch(query, offset, limit); err != nil {
+		return SearchResult{}, err
+	}
+	result, err := p.client.SearchArtists(ctx, mb.SearchFilter{Query: query}, mb.Paginator{Offset: offset, Limit: limit})
+	if err != nil {
+		return SearchResult{}, safeProviderError(ctx, err)
+	}
+	if err := validateCapturedResponse(collector); err != nil {
+		return SearchResult{}, err
+	}
+	if result.Offset != offset {
+		return SearchResult{}, errors.New("invalid musicbrainz search offset")
+	}
+	projected, err := projectSearch(collector.last(), "artists", result.Count, result.Offset, result.Created, result.Artists)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	for index, artist := range result.Artists {
+		if projected.Items[index].ID != string(artist.ID) || projected.Items[index].Name != artist.Name {
+			return SearchResult{}, errors.New("musicbrainz search response projection mismatch")
+		}
+	}
+	projected.Raw = cloneRaw(collector.last())
+	return projected, nil
+}
+
+// BrowseReleasesByArtist returns one provider page of lightweight release
+// summaries for an artist. It intentionally does not request tracklists.
+func (p *Provider) BrowseReleasesByArtist(ctx context.Context, artistID string, offset, limit int) (SearchResult, error) {
+	ctx, cancel, collector := p.callContext(ctx)
+	defer cancel()
+	if !validMBID(artistID) || offset < 0 || limit < 1 || limit > mb.MaxLimit {
+		return SearchResult{}, errors.New("invalid musicbrainz artist browse parameters")
+	}
+	result, err := p.client.BrowseReleases(ctx, mb.ReleaseFilter{
+		ArtistMBID: mbtypes.MBID(artistID), Includes: []string{"artists", "artist-credits", "labels", "release-groups"},
+	}, mb.Paginator{Offset: offset, Limit: limit})
+	if err != nil {
+		return SearchResult{}, safeProviderError(ctx, err)
+	}
+	if err := validateCapturedResponse(collector); err != nil {
+		return SearchResult{}, err
+	}
+	projected, err := projectBrowseReleases(collector.last(), result.Count, result.Offset, offset, result.Releases)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	projected.Raw = cloneRaw(collector.last())
+	return projected, nil
+}
+
 func validateSearch(query string, offset, limit int) error {
 	if strings.TrimSpace(query) == "" || offset < 0 || limit < 1 || limit > mb.MaxLimit {
 		return errors.New("invalid musicbrainz search parameters")
@@ -305,6 +361,45 @@ func validateSearchEnvelope(envelope map[string]json.RawMessage, count, offset i
 	return nil
 }
 
+func projectBrowseReleases(data []byte, count, offset, requestedOffset int, typed []mb.Release) (SearchResult, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil || len(envelope) == 0 {
+		return SearchResult{}, errors.New("invalid musicbrainz release browse response")
+	}
+	var rawCount, rawOffset int
+	if isMissingOrNull(envelope["release-count"]) || json.Unmarshal(envelope["release-count"], &rawCount) != nil || rawCount < 0 || rawCount != count {
+		return SearchResult{}, errors.New("invalid musicbrainz release browse count")
+	}
+	if isMissingOrNull(envelope["release-offset"]) || json.Unmarshal(envelope["release-offset"], &rawOffset) != nil || rawOffset < 0 || rawOffset != offset || rawOffset != requestedOffset {
+		return SearchResult{}, errors.New("invalid musicbrainz release browse offset")
+	}
+	var raws []json.RawMessage
+	if isMissingOrNull(envelope["releases"]) || json.Unmarshal(envelope["releases"], &raws) != nil || len(raws) != len(typed) {
+		return SearchResult{}, errors.New("musicbrainz release browse response projection mismatch")
+	}
+	items := make([]Entity, 0, len(raws))
+	for _, raw := range raws {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil || len(fields) == 0 {
+			return SearchResult{}, errors.New("invalid musicbrainz release browse entity")
+		}
+		var id, title string
+		if unmarshalString(fields["id"], &id) != nil || !validMBID(id) {
+			return SearchResult{}, errors.New("invalid musicbrainz release browse entity id")
+		}
+		if unmarshalString(fields["title"], &title) != nil {
+			return SearchResult{}, errors.New("invalid musicbrainz release browse entity title")
+		}
+		items = append(items, Entity{ID: id, Title: title, Raw: cloneRaw(raw), ArtistCredit: cloneRaw(fields["artist-credit"]), ReleaseEvents: cloneRaw(fields["release-events"]), Labels: cloneRaw(fields["label-info"])})
+	}
+	for index, release := range typed {
+		if items[index].ID != string(release.ID) || items[index].Title != release.Title {
+			return SearchResult{}, errors.New("musicbrainz release browse response projection mismatch")
+		}
+	}
+	return SearchResult{Count: count, Offset: offset, Items: items}, nil
+}
+
 func isMissingOrNull(raw json.RawMessage) bool {
 	return len(raw) == 0 || strings.TrimSpace(string(raw)) == "null"
 }
@@ -340,13 +435,22 @@ func projectSearch[T any](data []byte, key string, count, offset int, created ti
 		if err := unmarshalString(fields["id"], &id); err != nil || !validMBID(id) {
 			return SearchResult{}, errors.New("invalid musicbrainz search entity id")
 		}
-		if err := unmarshalString(fields["title"], &title); err != nil {
-			return SearchResult{}, errors.New("invalid musicbrainz search entity title")
+		if fields["title"] != nil {
+			if err := unmarshalString(fields["title"], &title); err != nil {
+				return SearchResult{}, errors.New("invalid musicbrainz search entity title")
+			}
 		}
 		if fields["name"] != nil {
 			if err := unmarshalString(fields["name"], &name); err != nil {
 				return SearchResult{}, errors.New("invalid musicbrainz search entity name")
 			}
+		}
+		if key == "artists" {
+			if name == "" || title != "" {
+				return SearchResult{}, errors.New("invalid musicbrainz search artist name")
+			}
+		} else if title == "" {
+			return SearchResult{}, errors.New("invalid musicbrainz search entity title")
 		}
 		score, scoreSet, err := parseScore(fields["score"])
 		if err != nil {

@@ -562,6 +562,47 @@ normalization для score в точности. Если по имеющимся
 - Весь план **не завершён**: local entities/links, candidates, provider
   execution, automatic matching и incoming UI остаются следующими increments.
 
+### Решения владельца — 2026-10-11: candidate acquisition
+
+- Одобрено попробовать artist resolution → полный постраничный каталог releases
+  найденного artist → локальный shortlist → загрузка candidate tracklists.
+- Последовательность acquisition: **artist → album + track → album → track**.
+  Fallback-запросы после artist stage не требуют artist в поисковом фильтре;
+  локальные artist tags остаются evidence при проверке применимости.
+- Переход к следующему stage — при **нуле применимых candidates**, а не только
+  при пустом ответе MusicBrainz. Нерелевантные search hits не останавливают fallback.
+- Применимость проверяется по **совокупной оценке ≥0.70** согласно утверждённым
+  scoring profiles; отдельный обязательный порог для artist/album/track не вводится.
+  Утверждённые release selection и assignment requirements сохраняются.
+- Ограничение **top-10**: для серверного поиска — получаемые search results;
+  для полностью скачанного artist catalog — локально ранжированный shortlist
+  перед загрузкой tracklists. Серверный поиск не объявляется локальным.
+- Shortlist учитывает сходство ALBUM с release title и title + disambiguation,
+  полный album artist, DATE и CATALOGNUMBER при их наличии. Отсутствующее поле
+  не считается несовпадением. Retrieval ranking не заменяет итоговый scoring.
+- Это одобрение acquisition behavior, не свидетельство реализации или приёмки.
+  Scope ручного provider picker отдельно подтверждён владельцем: editable query,
+  ввод MBID/URL, выбор artist/release и снятие ручной привязки. Снятие отменяет
+  подтверждённую ручную связь, не удаляя исходные файлы или provider metadata.
+  Последующее поведение automatic matching после снятия ещё не определено;
+  это одобрение scope не задаёт автоматического повторного matching.
+
+### Provider prerequisite — 2026-10-11
+
+- Добавлены artist search и постраничный browse releases по artist MBID:
+  typed/raw envelope validation, sparse normalization, durable fetch/cache
+  intents и retry/claim/transition allowlists. Browse не запрашивает tracklists
+  и не создаёт search score или search timestamp.
+- HTTP fixtures проверяют missing/empty artist name и release/recording title;
+  PostgreSQL/River dispatch проверяет успешные artist search и artist browse.
+- Первые `task verify` выявили коллизию timestamp миграции и пропущенные
+  persistence allowlists новых operation kinds. Оба дефекта исправлены;
+  повторный полный `task verify` прошёл, независимое ревью закрыто.
+- Это provider foundation, не завершённый acquisition: полный traversal ledger,
+  ranking/shortlist, fallback, sealed evaluation handoff и automatic apply
+  orchestration этим increment не реализованы. Предложенные точные ranking,
+  OR-query и group-level stopping rules ещё требуют подтверждения владельца.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

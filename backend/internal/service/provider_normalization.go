@@ -24,6 +24,43 @@ func NormalizeMusicBrainzReleaseSearch(result musicbrainz.SearchResult) (persist
 	return graph, nil
 }
 
+// NormalizeMusicBrainzArtistSearch records artist shortlist evidence and raw
+// artist projections without inferring any release or recording completeness.
+func NormalizeMusicBrainzArtistSearch(result musicbrainz.SearchResult) (persistence.ProviderGraph, error) {
+	graph := persistence.ProviderGraph{}
+	for _, entity := range result.Items {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(entity.Raw, &raw); err != nil {
+			return persistence.ProviderGraph{}, fmt.Errorf("decode MusicBrainz artist: %w", err)
+		}
+		id, name := stringField(raw, "id"), stringField(raw, "name")
+		if !validMBIDString(id) || name == "" || entity.Title != "" {
+			return persistence.ProviderGraph{}, fmt.Errorf("MusicBrainz artist is missing a valid id or name")
+		}
+		key := strings.ToLower(id)
+		graph.Artists = appendUniqueArtist(graph.Artists, persistence.ProviderArtist{
+			ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:artist:"+key)), ProviderKey: key,
+			Name: name, RawSource: cloneJSON(entity.Raw),
+		})
+		if err := appendSourceEntity(&graph, "artist", id, name, raw, 2, false); err != nil {
+			return persistence.ProviderGraph{}, err
+		}
+	}
+	return graph, nil
+}
+
+// NormalizeMusicBrainzArtistReleaseBrowse adds only sparse release summaries;
+// an absent media/tracklist in a browse response is not evidence of deletion.
+func NormalizeMusicBrainzArtistReleaseBrowse(result musicbrainz.SearchResult) (persistence.ProviderGraph, error) {
+	graph := persistence.ProviderGraph{}
+	for _, entity := range result.Items {
+		if err := normalizeRelease(entity.Raw, &graph, false, false, 1); err != nil {
+			return persistence.ProviderGraph{}, err
+		}
+	}
+	return graph, nil
+}
+
 // NormalizeMusicBrainzRecordingSearch normalizes search-hit recordings and
 // their deliberately partial release summaries.
 func NormalizeMusicBrainzRecordingSearch(result musicbrainz.SearchResult) (persistence.ProviderGraph, error) {
