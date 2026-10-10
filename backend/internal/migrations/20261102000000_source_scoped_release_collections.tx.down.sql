@@ -1,0 +1,2 @@
+DROP TABLE provider_source_release_track;
+DROP TABLE provider_source_release_artist_credit;

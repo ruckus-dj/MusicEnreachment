@@ -292,7 +292,7 @@ func normalizeCredits(releaseID string, rawCredits json.RawMessage, graph *persi
 		}
 		normalizedCredit := persistence.ProviderReleaseArtistCredit{
 			ReleaseID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:release:"+strings.ToLower(releaseID))),
-			Position:  position, ArtistID: artistID, NameJoinPhrase: stringField(credit, "joinphrase"),
+			Position:  position, ArtistID: artistID, Name: stringField(credit, "name"), NameJoinPhrase: stringField(credit, "joinphrase"),
 		}
 		foundCredit := false
 		for index := range graph.Credits {

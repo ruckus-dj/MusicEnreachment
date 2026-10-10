@@ -243,12 +243,8 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		if err := applyProviderSourceGraph(ctx, tx, ticket, response.Graph); err != nil {
 			return fmt.Errorf("apply successful provider response: save source projection: %w", err)
 		}
-		if len(response.Graph.Entities) == 0 {
-			if len(response.Graph.Entities) == 0 {
-				if err := applyProviderGraph(ctx, tx, ticket, response.Graph); err != nil {
-					return fmt.Errorf("apply successful provider response: save graph: %w", err)
-				}
-			}
+		if err := applyProviderGraph(ctx, tx, ticket, response.Graph); err != nil {
+			return fmt.Errorf("apply successful provider response: save graph: %w", err)
 		}
 		return nil
 	})
@@ -403,7 +399,8 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 		}
 		if _, err := tx.NewRaw(`INSERT INTO provider_artist(id, provider_id, provider_key, name, metadata, raw_source)
 			VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb)
-			ON CONFLICT (provider_id, provider_key) DO UPDATE SET name=EXCLUDED.name,
+			ON CONFLICT (provider_id, provider_key) DO UPDATE SET
+			name=COALESCE(NULLIF(provider_artist.name, ''), EXCLUDED.name),
 			metadata=CASE WHEN ? THEN EXCLUDED.metadata ELSE provider_artist.metadata END,
 			raw_source=CASE WHEN ? THEN EXCLUDED.raw_source ELSE provider_artist.raw_source END, updated_at=now()`,
 			artist.ID, providerID, artist.ProviderKey, artist.Name, metadata, raw, len(artist.Metadata) > 0, len(artist.RawSource) > 0).Exec(ctx); err != nil {
@@ -430,7 +427,8 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 		}
 		if _, err := tx.NewRaw(`INSERT INTO provider_release(id, provider_id, provider_key, title, metadata, raw_source)
 			VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb)
-			ON CONFLICT (provider_id, provider_key) DO UPDATE SET title=EXCLUDED.title,
+			ON CONFLICT (provider_id, provider_key) DO UPDATE SET
+			title=COALESCE(NULLIF(provider_release.title, ''), EXCLUDED.title),
 			metadata=CASE WHEN ? THEN EXCLUDED.metadata ELSE provider_release.metadata END,
 			raw_source=CASE WHEN ? THEN EXCLUDED.raw_source ELSE provider_release.raw_source END, updated_at=now()`,
 			release.ID, providerID, release.ProviderKey, release.Title, metadata, raw, len(release.Metadata) > 0, len(release.RawSource) > 0).Exec(ctx); err != nil {
@@ -457,7 +455,8 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 		}
 		if _, err := tx.NewRaw(`INSERT INTO provider_recording(id, provider_id, provider_key, title, metadata, raw_source)
 			VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb)
-			ON CONFLICT (provider_id, provider_key) DO UPDATE SET title=EXCLUDED.title,
+			ON CONFLICT (provider_id, provider_key) DO UPDATE SET
+			title=COALESCE(NULLIF(provider_recording.title, ''), EXCLUDED.title),
 			metadata=CASE WHEN ? THEN EXCLUDED.metadata ELSE provider_recording.metadata END,
 			raw_source=CASE WHEN ? THEN EXCLUDED.raw_source ELSE provider_recording.raw_source END, updated_at=now()`,
 			recording.ID, providerID, recording.ProviderKey, recording.Title, metadata, raw, len(recording.Metadata) > 0, len(recording.RawSource) > 0).Exec(ctx); err != nil {
@@ -487,12 +486,16 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 			track.RecordingID = id
 		}
 	}
-	collectionAuthority := make(map[uuid.UUID]int)
-	collectionAccepted := make(map[uuid.UUID]map[string]bool)
+	type acceptedCollection struct {
+		releaseID uuid.UUID
+		authority int
+		credits   bool
+		tracks    bool
+	}
+	acceptedCollections := make(map[uuid.UUID]acceptedCollection)
 	for _, entity := range graph.Entities {
 		if entity.Kind == "release" {
 			releaseID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:release:"+strings.ToLower(entity.ProviderKey)))
-			collectionAuthority[releaseID] = entity.Authority
 			var raw string
 			if err := tx.NewRaw(`SELECT field_evidence FROM provider_source_entity WHERE provider_source_id=? AND entity_kind='release' AND provider_key=?`, ticket.ProviderSourceID, entity.ProviderKey).Scan(ctx, &raw); err != nil {
 				return err
@@ -501,41 +504,31 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 			if err := json.Unmarshal([]byte(raw), &evidence); err != nil {
 				return err
 			}
-			accepted := map[string]bool{}
-			for _, key := range []string{"tracks", "credits"} {
-				fence := evidence["__"+key]
-				accepted[key] = fence.Authority == entity.Authority && fence.FetchOrder == ticket.FetchOrder
+			credits := evidence["__credits"]
+			tracks := evidence["__tracks"]
+			acceptedCollections[releaseID] = acceptedCollection{
+				releaseID: releaseID,
+				authority: entity.Authority,
+				credits:   credits.Authority == entity.Authority && credits.FetchOrder == ticket.FetchOrder,
+				tracks:    tracks.Authority == entity.Authority && tracks.FetchOrder == ticket.FetchOrder,
 			}
-			collectionAccepted[releaseID] = accepted
 		}
 	}
-	collectionRank := func(releaseID uuid.UUID) int {
-		if authority, ok := collectionAuthority[releaseID]; ok {
-			return authority
+	// Keep the global track table as an identity registry only. Collection order
+	// and presence belong to the source projection below, never to this row.
+	for _, track := range graph.Tracks {
+		if track.ID == uuid.Nil || track.ReleaseID == uuid.Nil || track.RecordingID == uuid.Nil || track.Medium < 0 || track.Position < 0 {
+			return fmt.Errorf("valid release track position is required")
 		}
-		if graph.Complete {
-			return 32767
+		if id, ok := releaseIDs[track.ReleaseID]; ok {
+			track.ReleaseID = id
 		}
-		return 0
-	}
-	if graph.Complete {
-		for _, release := range graph.Releases {
-			accepted := collectionAccepted[release.ID]
-			authority := collectionRank(release.ID)
-			if accepted == nil || accepted["tracks"] {
-				if _, err := tx.NewRaw(`UPDATE provider_release_track SET present=false, medium=NULL, position=NULL, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
-					AND (authority < ? OR (authority = ? AND fetch_order < ?))`, authority, ticket.FetchOrder, providerID, release.ID, authority, authority, ticket.FetchOrder).Exec(ctx); err != nil {
-					return err
-				}
-			}
-			if accepted == nil || accepted["credits"] {
-				if _, err := tx.NewRaw(`UPDATE provider_release_artist_credit SET present=false, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
-				AND (authority < ? OR (authority = ? AND fetch_order < ?))`, authority, ticket.FetchOrder, providerID, release.ID, authority, authority, ticket.FetchOrder).Exec(ctx); err != nil {
-					return err
-				}
-			}
+		if id, ok := recordingIDs[track.RecordingID]; ok {
+			track.RecordingID = id
 		}
-		if _, err := tx.NewRaw(`SET CONSTRAINTS ALL DEFERRED`).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO provider_release_track(id, provider_id, release_id, recording_id, medium, position, displayed_number, present, authority, fetch_order)
+			VALUES (?, ?, ?, ?, NULL, NULL, ?, false, 0, 0) ON CONFLICT (provider_id, id) DO NOTHING`,
+			track.ID, providerID, track.ReleaseID, track.RecordingID, track.DisplayedNumber).Exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -543,31 +536,92 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 		if credit.ReleaseID == uuid.Nil || credit.ArtistID == uuid.Nil || credit.Position < 0 {
 			return fmt.Errorf("valid ordered release credit is required")
 		}
-		authority := collectionRank(credit.ReleaseID)
-		if accepted := collectionAccepted[credit.ReleaseID]; accepted != nil && !accepted["credits"] {
+	}
+	for _, accepted := range acceptedCollections {
+		if accepted.credits {
+			if _, err := tx.NewRaw(`DELETE FROM provider_source_release_artist_credit WHERE provider_source_id=? AND release_id=?`, ticket.ProviderSourceID, accepted.releaseID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		if accepted.tracks {
+			if _, err := tx.NewRaw(`DELETE FROM provider_source_release_track WHERE provider_source_id=? AND release_id=?`, ticket.ProviderSourceID, accepted.releaseID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	for _, credit := range graph.Credits {
+		if id, ok := releaseIDs[credit.ReleaseID]; ok {
+			credit.ReleaseID = id
+		}
+		if id, ok := artistIDs[credit.ArtistID]; ok {
+			credit.ArtistID = id
+		}
+		accepted, ok := acceptedCollections[credit.ReleaseID]
+		if !ok || !accepted.credits {
 			continue
 		}
-		if _, err := tx.NewRaw(`INSERT INTO provider_release_artist_credit(provider_id, release_id, position, artist_id, name_join_phrase, present, authority, fetch_order)
-			VALUES (?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, release_id, position) DO UPDATE
-			SET artist_id=EXCLUDED.artist_id, name_join_phrase=EXCLUDED.name_join_phrase, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
-			WHERE EXCLUDED.authority > provider_release_artist_credit.authority OR (EXCLUDED.authority = provider_release_artist_credit.authority AND (EXCLUDED.fetch_order > provider_release_artist_credit.fetch_order OR (EXCLUDED.fetch_order = provider_release_artist_credit.fetch_order AND NOT provider_release_artist_credit.present)))`, providerID, credit.ReleaseID, credit.Position, credit.ArtistID, credit.NameJoinPhrase, authority, ticket.FetchOrder).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO provider_source_release_artist_credit(provider_source_id, provider_id, release_id, position, artist_id, name, name_join_phrase, authority, fetch_order)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, ticket.ProviderSourceID, providerID, credit.ReleaseID, credit.Position, credit.ArtistID, credit.Name, credit.NameJoinPhrase, accepted.authority, ticket.FetchOrder).Exec(ctx); err != nil {
 			return err
 		}
 	}
 	for _, track := range graph.Tracks {
-		if track.ID == uuid.Nil || track.ReleaseID == uuid.Nil || track.RecordingID == uuid.Nil || track.Medium < 0 || track.Position < 0 {
-			return fmt.Errorf("valid release track position is required")
+		if id, ok := releaseIDs[track.ReleaseID]; ok {
+			track.ReleaseID = id
 		}
-		authority := collectionRank(track.ReleaseID)
-		if accepted := collectionAccepted[track.ReleaseID]; accepted != nil && !accepted["tracks"] {
+		if id, ok := recordingIDs[track.RecordingID]; ok {
+			track.RecordingID = id
+		}
+		accepted, ok := acceptedCollections[track.ReleaseID]
+		if !ok || !accepted.tracks {
 			continue
 		}
-		if _, err := tx.NewRaw(`INSERT INTO provider_release_track(id, provider_id, release_id, recording_id, medium, position, displayed_number, present, authority, fetch_order)
-			VALUES (?, ?, ?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, id) DO UPDATE SET
-		release_id=EXCLUDED.release_id, recording_id=EXCLUDED.recording_id, medium=EXCLUDED.medium, position=EXCLUDED.position,
-		displayed_number=EXCLUDED.displayed_number, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
-		WHERE EXCLUDED.authority > provider_release_track.authority OR (EXCLUDED.authority = provider_release_track.authority AND (EXCLUDED.fetch_order > provider_release_track.fetch_order OR (EXCLUDED.fetch_order = provider_release_track.fetch_order AND NOT provider_release_track.present)))`, track.ID, providerID, track.ReleaseID, track.RecordingID, track.Medium, track.Position, track.DisplayedNumber, authority, ticket.FetchOrder).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO provider_source_release_track(provider_source_id, provider_id, track_id, release_id, recording_id, medium, position, displayed_number, authority, fetch_order)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, ticket.ProviderSourceID, providerID, track.ID, track.ReleaseID, track.RecordingID, track.Medium, track.Position, track.DisplayedNumber, accepted.authority, ticket.FetchOrder).Exec(ctx); err != nil {
 			return err
+		}
+	}
+	// Preserve the original global collection behavior for legacy graph callers
+	// that do not supply source entities. Normalized provider responses always
+	// use the source-scoped path above.
+	if len(graph.Entities) == 0 {
+		legacyRank := 0
+		if graph.Complete {
+			legacyRank = 32767
+		}
+		if graph.Complete {
+			for _, release := range graph.Releases {
+				if _, err := tx.NewRaw(`UPDATE provider_release_track SET present=false, medium=NULL, position=NULL, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
+					AND (authority < ? OR (authority = ? AND fetch_order < ?))`, legacyRank, ticket.FetchOrder, providerID, release.ID, legacyRank, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
+					return err
+				}
+				if _, err := tx.NewRaw(`UPDATE provider_release_artist_credit SET present=false, authority=?, fetch_order=? WHERE provider_id=? AND release_id=?
+					AND (authority < ? OR (authority = ? AND fetch_order < ?))`, legacyRank, ticket.FetchOrder, providerID, release.ID, legacyRank, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.NewRaw(`SET CONSTRAINTS ALL DEFERRED`).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		for _, credit := range graph.Credits {
+			if _, err := tx.NewRaw(`INSERT INTO provider_release_artist_credit(provider_id, release_id, position, artist_id, name_join_phrase, present, authority, fetch_order)
+				VALUES (?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, release_id, position) DO UPDATE
+				SET artist_id=EXCLUDED.artist_id, name_join_phrase=EXCLUDED.name_join_phrase, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
+				WHERE EXCLUDED.authority > provider_release_artist_credit.authority OR (EXCLUDED.authority = provider_release_artist_credit.authority AND (EXCLUDED.fetch_order > provider_release_artist_credit.fetch_order OR (EXCLUDED.fetch_order = provider_release_artist_credit.fetch_order AND NOT provider_release_artist_credit.present)))`,
+				providerID, credit.ReleaseID, credit.Position, credit.ArtistID, credit.NameJoinPhrase, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		for _, track := range graph.Tracks {
+			if _, err := tx.NewRaw(`INSERT INTO provider_release_track(id, provider_id, release_id, recording_id, medium, position, displayed_number, present, authority, fetch_order)
+				VALUES (?, ?, ?, ?, ?, ?, ?, true, ?, ?) ON CONFLICT (provider_id, id) DO UPDATE SET
+				release_id=EXCLUDED.release_id, recording_id=EXCLUDED.recording_id, medium=EXCLUDED.medium, position=EXCLUDED.position,
+				displayed_number=EXCLUDED.displayed_number, present=true, authority=EXCLUDED.authority, fetch_order=EXCLUDED.fetch_order
+				WHERE EXCLUDED.authority > provider_release_track.authority OR (EXCLUDED.authority = provider_release_track.authority AND (EXCLUDED.fetch_order > provider_release_track.fetch_order OR (EXCLUDED.fetch_order = provider_release_track.fetch_order AND NOT provider_release_track.present)))`,
+				track.ID, providerID, track.ReleaseID, track.RecordingID, track.Medium, track.Position, track.DisplayedNumber, legacyRank, ticket.FetchOrder).Exec(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

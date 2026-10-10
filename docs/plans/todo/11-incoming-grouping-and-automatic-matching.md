@@ -566,6 +566,29 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Assignment и несколько папок — уточнение владельца (2026-10-10):** внутри
+одной album group допускаются повторные назначения одного provider track
+разным локальным файлам, если файлы находятся в разных папках. Группа может
+объединять несколько папок с копиями альбома. Глобальная инъективность всей
+группы отменена; запрет повторного назначения относится к файлам одной папки.
+При ручной проверке можно исключить часть файлов из matching или перенести
+их к другому изданию; позднее можно явно заменить связь отдельного файла на
+другой MBID. Automatic release selection не разрешает скрыто игнорировать
+файлы: исключение/перенос выполняется явно владельцем.
+
+**SHA lifecycle — уточнение владельца (2026-10-10):** SHA неизменен после
+анализа. Уже проанализированный input не получает SHA задним числом. Если
+будущий повторный анализ создаёт input с новым SHA, это новая запись в БД;
+старую запись без SHA удаляем. Автоматическое объединение конфликтующих
+attachments через позднее изменение SHA существующего input не реализуем.
+
+**Release decision kernel:** реализован pure selector, который рассматривает
+только releases с release-profile score каждого файла ≥0.70. Выбирается
+уникальная максимальная сумма; точная ничья требует review. Суммы binary
+float64 scores сравниваются через `math/big.Rat`, без epsilon или quantization.
+Assignment и runner-up fallback не смешиваются с release selection.
+Независимое ревью kernel закрыто; integration gate отмечается после прохождения.
+
 **Durable provider execution increment (2026-10-10):** lookup/search release и
 recording выполняются через typed persisted intent и River args с operation ID
 only. Claim получает monotonic execution epoch; running/cache apply/terminal

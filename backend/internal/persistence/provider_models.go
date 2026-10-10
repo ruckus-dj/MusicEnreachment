@@ -56,6 +56,7 @@ type ProviderReleaseArtistCredit struct {
 	ReleaseID      uuid.UUID `json:"release_id"`
 	Position       int       `json:"position"`
 	ArtistID       uuid.UUID `json:"artist_id"`
+	Name           string    `json:"name,omitempty"`
 	NameJoinPhrase string    `json:"name_join_phrase"`
 }
 
