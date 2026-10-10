@@ -566,6 +566,22 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Проверенный increment (2026-10-10):** реализованы cache-only scoring inputs
+с отдельными release/assignment profiles, source-scoped recording credits и
+раздельными release-track/recording durations (null остаётся отсутствующим).
+Exact assignment использует готовый pure-Go SAT solver Gini: одна позиция на
+variant, запрет повторов внутри каждой содержащей его папки, повторы между
+папками разрешены; все locations shared variant учитываются одновременно.
+Сумма binary64 scores сравнивается точно Boolean-моделью без округления,
+фиксированного числового лимита или approximate ties; равный optimum требует
+review. Добавлены current candidate persistence с CAS/source/provider fences
+и evaluated-empty state, local collection/provider links/track_source foundation
+с manual protection и M:N attachments. Readiness теперь опирается на durable
+analysis steps, а не удаляемый artifact binding. Independent review findings
+закрыты; полный `task verify` прошёл. Source-to-durable-variant mapping,
+candidate acquisition/orchestration, automatic apply и incoming UI ещё не
+подключены; весь план не завершён.
+
 **Assignment и несколько папок — уточнение владельца (2026-10-10):** внутри
 одной album group допускаются повторные назначения одного provider track
 разным локальным файлам, если файлы находятся в разных папках. Группа может

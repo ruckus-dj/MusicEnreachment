@@ -159,6 +159,7 @@ func normalizeRelease(data json.RawMessage, graph *persistence.ProviderGraph, wi
 				ID: trackID, ReleaseID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:release:"+strings.ToLower(id))),
 				RecordingID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("musicbrainz:recording:"+strings.ToLower(recordingID))),
 				Medium:      mediumIndex, Position: trackIndex, DisplayedNumber: displayed,
+				RecordingProviderKey: strings.ToLower(recordingID), LengthMS: musicBrainzTrackLength(trackRaw["length"]),
 			}
 			foundTrack := false
 			for index := range graph.Tracks {
@@ -394,7 +395,14 @@ func setReleaseRelations(graph *persistence.ProviderGraph, releaseID string, raw
 			tracks := make([]map[string]any, 0)
 			for _, track := range graph.Tracks {
 				if track.ReleaseID == releaseUUID {
-					tracks = append(tracks, map[string]any{"id": track.ID, "recording_id": track.RecordingID, "medium": track.Medium, "position": track.Position, "displayed_number": track.DisplayedNumber})
+					normalizedTrack := map[string]any{
+						"id": track.ID, "recording_id": track.RecordingID, "recording_provider_key": track.RecordingProviderKey,
+						"medium": track.Medium, "position": track.Position, "displayed_number": track.DisplayedNumber,
+					}
+					if track.LengthMS != nil {
+						normalizedTrack["length"] = *track.LengthMS
+					}
+					tracks = append(tracks, normalizedTrack)
 				}
 			}
 			if len(tracks) > 0 || target.Complete {
@@ -421,6 +429,14 @@ func stringField(raw map[string]json.RawMessage, key string) string {
 	var value string
 	_ = json.Unmarshal(raw[key], &value)
 	return value
+}
+
+func musicBrainzTrackLength(raw json.RawMessage) *int64 {
+	var length *int64
+	if len(raw) == 0 || json.Unmarshal(raw, &length) != nil || length == nil || *length < 0 {
+		return nil
+	}
+	return length
 }
 
 func validMBIDString(value string) bool {

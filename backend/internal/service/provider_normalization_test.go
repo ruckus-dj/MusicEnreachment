@@ -23,7 +23,7 @@ func TestNormalizeMusicBrainzReleaseLookupPreservesOrderedCreditsTracksAndUnknow
 			{"artist":{"id":"` + artistMBID + `","name":"Artist","unknown_artist":1},"joinphrase":" feat. "},
 			{"artist":{"id":"` + artistMBID + `","name":"Artist"},"joinphrase":""}
 		],
-		"media":[{"tracks":[{"id":"` + trackMBID + `","number":"A-1","position":"1","recording":{"id":"` + recordingMBID + `","title":"Song","unknown_recording":true}},
+		"media":[{"tracks":[{"id":"` + trackMBID + `","number":"A-1","position":"1","length":9000,"recording":{"id":"` + recordingMBID + `","title":"Song","length":10000,"unknown_recording":true}},
 		{"number":"pregap","recording":{"id":"00000000-0000-4000-8000-000000000005","title":"Pregap"}}]}]
 	}`)}}
 	graph, err := NormalizeMusicBrainzReleaseLookup(result)
@@ -60,6 +60,10 @@ func TestNormalizeMusicBrainzReleaseLookupPreservesOrderedCreditsTracksAndUnknow
 	}
 	if err := json.Unmarshal(releaseFields["normalized_tracks"], &normalizedTracks); err != nil || len(normalizedCredits) != 2 || len(normalizedTracks) != 2 {
 		t.Fatalf("normalized credit/track projection incomplete: credits=%d tracks=%d err=%v", len(normalizedCredits), len(normalizedTracks), err)
+	}
+	var normalizedTrack map[string]json.RawMessage
+	if err := json.Unmarshal(normalizedTracks[0], &normalizedTrack); err != nil || string(normalizedTrack["length"]) != "9000" || string(normalizedTrack["recording_provider_key"]) != `"`+recordingMBID+`"` {
+		t.Fatalf("release track length/key not preserved separately from recording length: %s err=%v", normalizedTracks[0], err)
 	}
 }
 
@@ -176,5 +180,34 @@ func TestNormalizeReleaseTracksPreserveOmittedCollectionsAndHonorExplicitEmpty(t
 	}
 	if partialFields["normalized_tracks"] != nil {
 		t.Fatalf("partially omitted media was treated as a complete empty tracklist: %s", partialGraph.Entities[0].Fields)
+	}
+}
+
+func TestNormalizeMusicBrainzTrackLengthRejectsNullAndPreservesExplicitZero(t *testing.T) {
+	lookup := musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: json.RawMessage(`{
+		"id":"` + releaseMBID + `","title":"Album","media":[{"tracks":[
+			{"id":"00000000-0000-4000-8000-000000000010","number":"1","recording":{"id":"00000000-0000-4000-8000-000000000011","title":"Omitted"}},
+			{"id":"00000000-0000-4000-8000-000000000012","number":"2","length":null,"recording":{"id":"00000000-0000-4000-8000-000000000013","title":"Null"}},
+			{"id":"00000000-0000-4000-8000-000000000014","number":"3","length":0,"recording":{"id":"00000000-0000-4000-8000-000000000015","title":"Zero"}},
+			{"id":"00000000-0000-4000-8000-000000000016","number":"4","length":9000,"recording":{"id":"00000000-0000-4000-8000-000000000017","title":"Positive"}}
+		]}]}`)}}
+	graph, err := NormalizeMusicBrainzReleaseLookup(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Tracks) != 4 {
+		t.Fatalf("normalized tracks = %d, want 4", len(graph.Tracks))
+	}
+	if got := graph.Tracks[0].LengthMS; got != nil {
+		t.Fatalf("omitted track length = %d, want nil", *got)
+	}
+	if got := graph.Tracks[1].LengthMS; got != nil {
+		t.Fatalf("null track length = %d, want nil", *got)
+	}
+	if got := graph.Tracks[2].LengthMS; got == nil || *got != 0 {
+		t.Fatalf("explicit zero track length = %v, want 0", got)
+	}
+	if got := graph.Tracks[3].LengthMS; got == nil || *got != 9000 {
+		t.Fatalf("positive track length = %v, want 9000", got)
 	}
 }

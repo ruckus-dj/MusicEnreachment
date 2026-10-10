@@ -138,16 +138,25 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 			fingerprint_result.calculated_at AS fingerprint_calculated_at,
 			fingerprint_result.parser_contract_version AS fingerprint_parser_version,
 			COALESCE(metadata.state='succeeded' AND metadata.success_metadata_result_id IS NOT NULL
-				AND 'metadata'=ANY(COALESCE(binding.requested_steps, '{}'::text[]))
-				AND NOT EXISTS (SELECT 1 FROM unnest(COALESCE(binding.requested_steps, '{}'::text[])) requested(step)
-					LEFT JOIN source_analysis_step requested_step ON requested_step.work_id=work.id AND requested_step.step=requested.step
-					WHERE requested_step.state IS DISTINCT FROM 'succeeded'), false) AS ready
+				AND NOT EXISTS (SELECT 1 FROM source_analysis_step analysis_step
+					WHERE analysis_step.work_id=work.id AND analysis_step.step<>'metadata'
+					AND NOT (
+						(analysis_step.state='succeeded' AND CASE analysis_step.step
+							WHEN 'sha256' THEN analysis_step.success_sha_variant_id IS NOT NULL
+							WHEN 'probe' THEN analysis_step.success_probe_variant_id IS NOT NULL
+							WHEN 'fingerprint' THEN analysis_step.success_fingerprint_result_id IS NOT NULL
+							ELSE false
+						END)
+						OR (analysis_step.input_snapshot IS NULL AND (
+							analysis_step.state='not_requested'
+							OR (analysis_step.state='skipped' AND analysis_step.skip_reason IN ('disabled','not_requested'))
+						))
+					)), false) AS ready
 		FROM source_root root
 		JOIN source_location location ON location.source_root_id=root.id
 		LEFT JOIN source_analysis_work work ON work.current_location_id=location.id AND work.location_id=location.id
 			AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path
 			AND work.relative_path=location.relative_path AND work.size_bytes=location.size_bytes AND work.mtime=location.mtime
-		LEFT JOIN source_analysis_work_artifact_binding binding ON binding.work_id=work.id
 		LEFT JOIN source_analysis_step metadata ON metadata.work_id=work.id AND metadata.step='metadata'
 		LEFT JOIN media_metadata_result metadata_result ON metadata_result.id=metadata.success_metadata_result_id
 		LEFT JOIN source_analysis_step sha ON sha.work_id=work.id AND sha.step='sha256' AND sha.state='succeeded'
@@ -277,7 +286,7 @@ func loadIncomingGroupingGroups(ctx context.Context, database bun.IDB) ([]Incomi
 }
 
 func insertIncomingGroupingGroup(ctx context.Context, tx bun.Tx, group IncomingGroupingGroup) error {
-	if len(group.Diagnostics) == 0 {
+	if len(group.Diagnostics) == 0 || string(group.Diagnostics) == "null" {
 		group.Diagnostics = json.RawMessage(`[]`)
 	}
 	if _, err := tx.NewRaw(`INSERT INTO incoming_group(id, manual, revision, diagnostics) VALUES (?, ?, ?, ?::jsonb)`, group.ID, group.Manual, group.Revision, string(group.Diagnostics)).Exec(ctx); err != nil {

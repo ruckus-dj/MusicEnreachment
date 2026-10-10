@@ -61,12 +61,14 @@ type ProviderReleaseArtistCredit struct {
 }
 
 type ProviderReleaseTrack struct {
-	ID              uuid.UUID `json:"id"`
-	ReleaseID       uuid.UUID `json:"release_id"`
-	RecordingID     uuid.UUID `json:"recording_id"`
-	Medium          int       `json:"medium"`
-	Position        int       `json:"position"`
-	DisplayedNumber string    `json:"displayed_number"`
+	ID                   uuid.UUID `json:"id"`
+	ReleaseID            uuid.UUID `json:"release_id"`
+	RecordingID          uuid.UUID `json:"recording_id"`
+	Medium               int       `json:"medium"`
+	Position             int       `json:"position"`
+	DisplayedNumber      string    `json:"displayed_number"`
+	RecordingProviderKey string    `json:"recording_provider_key,omitempty"`
+	LengthMS             *int64    `json:"length,omitempty"`
 }
 
 // ProviderGraph is one provider-scoped response graph. Complete is trusted only

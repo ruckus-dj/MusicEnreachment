@@ -531,6 +531,16 @@ func applyProviderGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTi
 			track.ID, providerID, track.ReleaseID, track.RecordingID, track.DisplayedNumber).Exec(ctx); err != nil {
 			return err
 		}
+		var identity struct {
+			ReleaseID   uuid.UUID `bun:"release_id"`
+			RecordingID uuid.UUID `bun:"recording_id"`
+		}
+		if err := tx.NewRaw(`SELECT release_id, recording_id FROM provider_release_track WHERE provider_id=? AND id=?`, providerID, track.ID).Scan(ctx, &identity); err != nil {
+			return err
+		}
+		if identity.ReleaseID != track.ReleaseID || identity.RecordingID != track.RecordingID {
+			return fmt.Errorf("provider track identity conflicts with its existing provider key")
+		}
 	}
 	for _, credit := range graph.Credits {
 		if credit.ReleaseID == uuid.Nil || credit.ArtistID == uuid.Nil || credit.Position < 0 {

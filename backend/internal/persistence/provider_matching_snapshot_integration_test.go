@@ -35,11 +35,26 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	const releaseKey = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	rawRelease := json.RawMessage(`{"id":"` + releaseKey + `","title":"Release","country":"GB","artist-credit":[{"name":"Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Artist"},"joinphrase":" & "},{"name":"Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Artist"}}],"media":[{"position":1,"tracks":[{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","number":"1","recording":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","title":"Track one"}}]},{"position":2,"tracks":[{"id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","number":"1","recording":{"id":"ffffffff-ffff-4fff-8fff-ffffffffffff","title":"Track two"}}]}]}`)
+	rawRelease := json.RawMessage(`{"id":"` + releaseKey + `","title":"Release","country":"GB","artist-credit":[{"name":"Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Artist"},"joinphrase":" & "},{"name":"Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Artist"}}],"media":[{"position":1,"tracks":[{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","number":"1","length":9000,"recording":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","title":"Track one","length":10000}}]},{"position":2,"tracks":[{"id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","number":"1","recording":{"id":"ffffffff-ffff-4fff-8fff-ffffffffffff","title":"Track two"}}]}]}`)
 	graph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: rawRelease}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	graph.Entities = append(graph.Entities,
+		persistence.ProviderSourceEntity{
+			Kind: "recording", ProviderKey: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+			Name: "Track one", Fields: json.RawMessage(`{"artist-credit":[{"name":"" ,"artist":{"id":"11111111-1111-4111-8111-111111111111"}},{"name":"","artist":{"id":"11111111-1111-4111-8111-111111111111"}}],"length":10000}`),
+			RawSource: json.RawMessage(`{"artist-credit":[{"name":"" ,"artist":{"id":"11111111-1111-4111-8111-111111111111"}},{"name":"","artist":{"id":"11111111-1111-4111-8111-111111111111"}}],"length":10000}`),
+			Authority: 3,
+		},
+		persistence.ProviderSourceEntity{
+			Kind: "recording", ProviderKey: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+			Name: "Track two", Fields: json.RawMessage(`{"normalized_artists":["22222222-2222-4222-8222-222222222222","22222222-2222-4222-8222-222222222222"],"length":0}`),
+			RawSource: json.RawMessage(`{"normalized_artists":["22222222-2222-4222-8222-222222222222","22222222-2222-4222-8222-222222222222"],"length":0}`), Authority: 3,
+		},
+		persistence.ProviderSourceEntity{Kind: "artist", ProviderKey: "11111111-1111-4111-8111-111111111111", Name: "Recording Artist", Fields: json.RawMessage(`{}`), RawSource: json.RawMessage(`{}`), Authority: 3},
+		persistence.ProviderSourceEntity{Kind: "artist", ProviderKey: "22222222-2222-4222-8222-222222222222", Name: "Second Artist", Fields: json.RawMessage(`{}`), RawSource: json.RawMessage(`{}`), Authority: 3},
+	)
 	apply := func(key string, payload string, sourceID uuid.UUID) persistence.ProviderRefreshTicket {
 		t.Helper()
 		ticket, err := repository.BeginRefresh(ctx, sourceID, key, identity)
@@ -90,6 +105,15 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 	}
 	if len(release.Tracks) != 2 || release.Tracks[0].Medium != 0 || release.Tracks[0].Position != 0 || release.Tracks[1].Medium != 1 || release.Tracks[1].Position != 0 {
 		t.Fatalf("zero-based medium/track positions = %#v", release.Tracks)
+	}
+	if got := release.Tracks[0].RecordingArtists; len(got) != 2 || got[0] != "Recording Artist" || got[1] != "Recording Artist" || release.Tracks[0].RecordingLengthMS == nil || *release.Tracks[0].RecordingLengthMS != 10000 {
+		t.Fatalf("recording projection = %#v", release.Tracks[0])
+	}
+	if release.Tracks[0].ReleaseLengthMS == nil || *release.Tracks[0].ReleaseLengthMS != 9000 {
+		t.Fatalf("release track duration was not read independently from recording length: %#v", release.Tracks[0])
+	}
+	if got := release.Tracks[1].RecordingArtists; len(got) != 2 || got[0] != "Second Artist" || got[1] != "Second Artist" || release.Tracks[1].RecordingLengthMS == nil || *release.Tracks[1].RecordingLengthMS != 0 {
+		t.Fatalf("normalized recording projection = %#v", release.Tracks[1])
 	}
 	queryOne := snapshot.SearchScores["release-search:0:2:query-one"]
 	queryTwo := snapshot.SearchScores["release-search:0:2:query-two"]
