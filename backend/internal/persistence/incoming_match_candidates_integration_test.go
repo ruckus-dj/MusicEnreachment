@@ -185,24 +185,170 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 	if _, err := db.NewRaw(`UPDATE operation SET state='running', stage='evaluating', started_at=now() WHERE id=?`, parentID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.NewRaw(`UPDATE matching_run SET state='running', execution_epoch=1, current_river_job_id=? WHERE id=?`, jobID, parentID).Exec(ctx); err != nil {
+	if _, err := db.NewRaw(`UPDATE matching_run SET state='queued' WHERE id=?`, parentID).Exec(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running', attempt=1 WHERE id=?`, jobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected := func(label string, operationAttempt, riverAttempt int) {
+		t.Helper()
+		if _, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, operationAttempt, jobID, riverAttempt); err != nil || outcome != persistence.MatchingDeliveryNotClaimed {
+			t.Fatalf("%s claim outcome=%v err=%v, want not claimed", label, outcome, err)
+		}
+		var epoch int64
+		var activeJob *int64
+		if err := db.NewRaw(`SELECT execution_epoch, active_river_job_id FROM matching_run WHERE id=?`, parentID).Scan(ctx, &epoch, &activeJob); err != nil || epoch != 0 || activeJob != nil {
+			t.Fatalf("%s mutated run ownership: epoch=%d active_job=%v err=%v", label, epoch, activeJob, err)
+		}
+	}
+	if _, err := db.NewRaw(`UPDATE app_setting SET setting_value='stale-config' WHERE setting_name='musicbrainz_config_identity'`).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected("superseded config identity", admitted.Attempt, 1)
+	if _, err := db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='musicbrainz_config_identity'`, identity).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE provider_source SET configuration_identity='stale-source' WHERE id=?`, fixture.source).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected("superseded provider source", admitted.Attempt, 1)
+	if _, err := db.NewRaw(`UPDATE provider_source SET configuration_identity=? WHERE id=?`, identity, fixture.source).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE incoming_group SET revision=revision || '-stale' WHERE id=?`, fixture.group.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected("superseded group revision", admitted.Attempt, 1)
+	if _, err := db.NewRaw(`UPDATE incoming_group SET revision=? WHERE id=?`, fixture.group.Revision, fixture.group.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1 WHERE group_id=?`, fixture.group.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected("superseded group generation", admitted.Attempt, 1)
+	if _, err := db.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water-1 WHERE group_id=?`, fixture.group.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE operation SET attempt=attempt+1 WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaimRejected("previous parent attempt registration", admitted.Attempt+1, 1)
+	if _, err := db.NewRaw(`UPDATE operation SET attempt=attempt-1 WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	claim, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim matching delivery: claim=%+v outcome=%v err=%v", claim, outcome, err)
+	}
+	if _, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, 1); err != nil || outcome != persistence.MatchingDeliveryBusy {
+		t.Fatalf("duplicate active claim outcome=%v err=%v, want busy", outcome, err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='retryable' WHERE id=?`, jobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, 1); err != nil || outcome != persistence.MatchingDeliveryNotClaimed {
+		t.Fatalf("retryable same River attempt outcome=%v err=%v, want not claimed", outcome, err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running', attempt=2 WHERE id=?`, jobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, 1); err != nil || outcome != persistence.MatchingDeliveryNotClaimed {
+		t.Fatalf("delayed caller for old River attempt outcome=%v err=%v, want not claimed", outcome, err)
+	}
+	recovered, outcome, err := repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, 2)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed || recovered.ExecutionEpoch != claim.ExecutionEpoch+1 {
+		t.Fatalf("recover abandoned River attempt: claim=%+v outcome=%v err=%v", recovered, outcome, err)
 	}
 	// A delivery with an obsolete execution epoch must not publish, even while
 	// its parent and registered delivery are otherwise current.
-	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 0, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, recovered.ExecutionEpoch-1, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
 		t.Fatalf("stale execution epoch publication = changed:%v err:%v, want rejection", changed, err)
 	}
 	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
 	// A current delivery also cannot complete while an admitted child remains
 	// unsettled.
-	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, recovered.ExecutionEpoch, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
 		t.Fatalf("publication with pending provider dependency = changed:%v err:%v, want rejection", changed, err)
 	}
 	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
-	if _, err := db.NewRaw(`UPDATE matching_provider_dependency SET terminal_outcome='succeeded', settled_at=now() WHERE parent_run_id=?`, parentID).Exec(ctx); err != nil {
+	const pendingBarrierLock int64 = 77913421
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION hold_matching_pending_consume() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(77913421); RETURN NEW; END $$`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER hold_matching_pending_consume BEFORE UPDATE OF consumed_at ON matching_delivery FOR EACH ROW EXECUTE FUNCTION hold_matching_pending_consume()`); err != nil {
+		t.Fatal(err)
+	}
+	barrierConnection, err := db.DB.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := barrierConnection.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, pendingBarrierLock); err != nil {
+		t.Fatal(err)
+	}
+	type pendingResult struct {
+		consumed bool
+		err      error
+	}
+	pendingDone := make(chan pendingResult, 1)
+	go func() {
+		consumed, err := repository.ConsumePendingMatchingDelivery(ctx, parentID, admitted.Attempt, jobID, recovered)
+		pendingDone <- pendingResult{consumed: consumed, err: err}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var blocked bool
+		if err := db.NewRaw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND query LIKE '%UPDATE matching_delivery%')`).Scan(ctx, &blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pending consumer did not reach PostgreSQL barrier")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	var wakeJobID int64
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`UPDATE matching_provider_dependency SET terminal_outcome='succeeded', settled_at=now() WHERE parent_run_id=?`, parentID).Exec(ctx); err != nil {
+			return err
+		}
+		wake, err := river.InsertTx(ctx, tx.Tx, persistence.MatchingEvaluationWakeArgs{OperationID: parentID}, nil)
+		if err != nil {
+			return err
+		}
+		wakeJobID = wake.Job.ID
+		_, err = tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt) VALUES (?, ?, ?)`, parentID, wakeJobID, admitted.Attempt).Exec(ctx)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := barrierConnection.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, pendingBarrierLock); err != nil {
+		t.Fatal(err)
+	}
+	if err := barrierConnection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := <-pendingDone
+	if result.err != nil || !result.consumed {
+		t.Fatalf("consume pending delivery during child settlement: consumed=%v err=%v", result.consumed, result.err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER hold_matching_pending_consume ON matching_delivery`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP FUNCTION hold_matching_pending_consume()`); err != nil {
+		t.Fatal(err)
+	}
+	assertMatchingPublicationWaiting(t, ctx, db, repository, parentID, fixture.group.ID)
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running', attempt=1 WHERE id=?`, wakeJobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	claim, outcome, err = repository.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, wakeJobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim dependency wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
+	}
+	jobID = wakeJobID
 
 	// Force failure only at parent completion, after candidate/header writes have
 	// occurred, and prove the transaction rolled back all of those writes.
@@ -214,7 +360,7 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 	}
 	rollbackCandidate := fixture.candidate(fixture.memberA, .75)
 	rollbackCandidate.Positions = []persistence.IncomingMatchPosition{{TrackID: fixture.trackID, Medium: 0, Position: 0}}
-	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation([]persistence.IncomingMatchCandidate{rollbackCandidate}), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, claim.ExecutionEpoch, fixture.evaluation([]persistence.IncomingMatchCandidate{rollbackCandidate}), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
 		t.Fatalf("forced completion failure publication = changed:%v err:%v, want rejection", changed, err)
 	}
 	if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_matching_parent_completion ON operation`); err != nil {
@@ -224,7 +370,7 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 		t.Fatalf("drop completion failure trigger function: %v", err)
 	}
 	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
-	changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil})
+	changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, claim.ExecutionEpoch, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil})
 	if err != nil || !changed {
 		t.Fatalf("publish matching result: changed=%v err=%v", changed, err)
 	}
@@ -257,6 +403,22 @@ func assertMatchingPublicationStillRunning(t *testing.T, ctx context.Context, db
 	var consumed bool
 	if err := db.NewRaw(`SELECT run.state, delivery.consumed_at IS NOT NULL FROM matching_run run JOIN matching_delivery delivery ON delivery.run_id=run.id WHERE run.id=? AND delivery.river_job_id=?`, parentID, jobID).Scan(ctx, &state, &consumed); err != nil || state != "running" || consumed {
 		t.Fatalf("rejected publication run/delivery state=%q consumed=%v err=%v, want running/unconsumed", state, consumed, err)
+	}
+}
+
+func assertMatchingPublicationWaiting(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, parentID, groupID uuid.UUID) {
+	t.Helper()
+	parent, err := repository.GetOperation(ctx, parentID)
+	if err != nil || parent.State != "running" || parent.Stage != "waiting_provider" {
+		t.Fatalf("waiting parent = %+v err=%v", parent, err)
+	}
+	var state string
+	if err := db.NewRaw(`SELECT state FROM matching_run WHERE id=?`, parentID).Scan(ctx, &state); err != nil || state != "waiting_provider" {
+		t.Fatalf("waiting run state=%q err=%v", state, err)
+	}
+	stored, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, groupID)
+	if err != nil || stored != nil || len(candidates) != 0 {
+		t.Fatalf("waiting publication changed candidates: header=%+v candidates=%+v err=%v", stored, candidates, err)
 	}
 }
 

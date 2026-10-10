@@ -70,15 +70,15 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 			return fmt.Errorf("publish matching evaluation: operation delivery is no longer current")
 		}
 		var run matchingPublisherRun
-		if err := tx.NewRaw(`SELECT state, execution_epoch, current_river_job_id
+		if err := tx.NewRaw(`SELECT state, execution_epoch, current_river_job_id, active_river_job_id, active_execution_epoch
 			FROM matching_run WHERE id=? AND operation_id=? FOR UPDATE`, operationID, operationID).Scan(ctx, &run); err != nil {
 			return fmt.Errorf("publish matching evaluation: lock matching run: %w", err)
 		}
-		if run.State != "running" || run.ExecutionEpoch != executionEpoch || run.CurrentRiverJobID == nil || *run.CurrentRiverJobID != riverJobID {
+		if run.State != "running" || run.ExecutionEpoch != executionEpoch || run.CurrentRiverJobID == nil || *run.CurrentRiverJobID != riverJobID || run.ActiveRiverJobID == nil || *run.ActiveRiverJobID != riverJobID || run.ActiveExecutionEpoch == nil || *run.ActiveExecutionEpoch != executionEpoch {
 			return fmt.Errorf("publish matching evaluation: matching execution is no longer current")
 		}
 		var registered bool
-		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery WHERE run_id=? AND river_job_id=? AND consumed_at IS NULL)`, operationID, riverJobID).Scan(ctx, &registered); err != nil {
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL)`, operationID, riverJobID, attempt).Scan(ctx, &registered); err != nil {
 			return fmt.Errorf("publish matching evaluation: validate registered delivery: %w", err)
 		}
 		if !registered {
@@ -100,7 +100,8 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "provider_delivery_claimed_at", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("publish matching evaluation: complete operation: %w", err)
 		}
-		result, err := tx.NewRaw(`UPDATE matching_run SET state='succeeded', updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, executionEpoch).Exec(ctx)
+		result, err := tx.NewRaw(`UPDATE matching_run SET state='succeeded', active_river_job_id=NULL,
+			active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, executionEpoch).Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("publish matching evaluation: complete matching run: %w", err)
 		}
@@ -128,9 +129,11 @@ type matchingPublisherGeneration struct {
 }
 
 type matchingPublisherRun struct {
-	State             string `bun:"state"`
-	ExecutionEpoch    int64  `bun:"execution_epoch"`
-	CurrentRiverJobID *int64 `bun:"current_river_job_id"`
+	State                string `bun:"state"`
+	ExecutionEpoch       int64  `bun:"execution_epoch"`
+	CurrentRiverJobID    *int64 `bun:"current_river_job_id"`
+	ActiveRiverJobID     *int64 `bun:"active_river_job_id"`
+	ActiveExecutionEpoch *int64 `bun:"active_execution_epoch"`
 }
 
 type matchingPublisherPlan struct {

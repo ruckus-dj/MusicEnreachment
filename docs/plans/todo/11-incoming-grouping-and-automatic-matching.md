@@ -566,6 +566,17 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Delivery claims increment (2026-10-10):** durable ownership привязано к
+registered job, parent attempt, caller River attempt и execution epoch.
+Claim разрешён только для running River job; active duplicate возвращает busy,
+retryable duplicate не меняет epoch. Pending delivery атомарно consumed и
+паркует parent; settlement/wake race покрыт PostgreSQL barrier test.
+Publication требует active claim, retry очищает прежнее ownership.
+Stale attempts/source/config/group generations и recovered epoch проверены
+regression tests. Independent review закрыто, полный `task verify` прошёл.
+Parent worker/app wiring ещё не подключены; остальные automatic stages
+и UI остаются незавершёнными.
+
 **Atomic publisher increment (2026-10-10):** explicit per-file evaluation scope
 сохраняется в canonical version-2 plan; `Prepare` фиксирует evaluation CAS
 baseline до чтения inputs. Добавлен fenced matching retry с epoch/delivery

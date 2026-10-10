@@ -146,7 +146,7 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 		if admission.Parent.RiverJobID == nil || *admission.Parent.RiverJobID <= 0 {
 			return fmt.Errorf("matching admission: parent River delivery identity is missing")
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id) VALUES (?, ?)`, admission.Parent.ID, *admission.Parent.RiverJobID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt) VALUES (?, ?, ?)`, admission.Parent.ID, *admission.Parent.RiverJobID, admission.Parent.Attempt).Exec(ctx); err != nil {
 			return fmt.Errorf("matching admission: register initial parent delivery: %w", err)
 		}
 		for _, target := range targets {
@@ -261,10 +261,11 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 			return fmt.Errorf("retry matching evaluation: update operation: %w", err)
 		}
 		if _, err := tx.NewRaw(`UPDATE matching_run SET state='queued', execution_epoch=execution_epoch+1,
-			current_river_job_id=?, updated_at=now() WHERE id=?`, result.Job.ID, id).Exec(ctx); err != nil {
+				current_river_job_id=?, active_river_job_id=NULL, active_river_attempt=NULL,
+				active_execution_epoch=NULL, updated_at=now() WHERE id=?`, result.Job.ID, id).Exec(ctx); err != nil {
 			return fmt.Errorf("retry matching evaluation: advance execution epoch: %w", err)
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id) VALUES (?, ?)`, id, result.Job.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt) VALUES (?, ?, ?)`, id, result.Job.ID, locked.Attempt).Exec(ctx); err != nil {
 			return fmt.Errorf("retry matching evaluation: register delivery: %w", err)
 		}
 		operation = locked

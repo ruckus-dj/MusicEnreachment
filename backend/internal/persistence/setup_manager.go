@@ -1060,7 +1060,8 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 		if err != nil {
 			return fmt.Errorf("enqueue matching dependency wake: %w", err)
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id) VALUES (?, ?) ON CONFLICT (river_job_id) DO NOTHING`, dependency.RunID, inserted.Job.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt)
+				SELECT ?, ?, attempt FROM operation WHERE id=? ON CONFLICT (river_job_id) DO NOTHING`, dependency.RunID, inserted.Job.ID, parentID).Exec(ctx); err != nil {
 			return fmt.Errorf("record matching dependency wake: %w", err)
 		}
 	}
