@@ -566,6 +566,15 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Output ALBUM — решение владельца (2026-10-10):** выходной ALBUM должен
+содержать MusicBrainz release title вместе с непустым disambiguation;
+title и disambiguation сохраняются отдельно. Например, «юность в стиле панк
+baby punk version» отличается от «юность в стиле панк». Releases не сливаются
+по release-group или общему title. По запросу владельца выполняется следующий
+read-only benchmark: полный paginated каталог кис-кис против search на обычной
+и baby punk версиях. Hybrid acquisition и конкретный candidate shortlist/query
+policy остаются предложением до обсуждения результатов этого benchmark.
+
 **Local apply increment (2026-10-10):** persisted unique assignment применяется
 одной транзакцией после current evaluation/source/group/provider/AcoustID
 fences. Local release/recording/track/provider identities переиспользуются;
@@ -814,6 +823,21 @@ POST и injected transport не найдено. Ключ не помещаетс
 независимое ревью adapters закрыто. Application composition общего gate,
 provider jobs/cache mapping и automatic matching ещё не подключены; M05 и весь
 план не объявляются завершёнными. Dependency licenses включены в notices.
+
+**Скоринг текста — уточнение владельца и реализация (2026-10-10):** владелец
+одобрил замену некорректно выбранного Levenshtein metric на официальный
+RapidFuzz C++ `v3.3.4` (MIT), vendored header-only dependency за узким C ABI и
+cgo. Токены передаются как Unicode code points; используется официальный
+`token_set_ratio`, затем сохраняются прежняя normalization/transliteration,
+multi-value join и coverage penalty. Это отдельная версия политики
+`matching-rapidfuzz-v1`, не bit-exact Python/upstream parity и не изменение
+порогов/весов. Старые queued plans/evaluations/decisions с `matching-go-v1`
+отклоняются как неподдерживаемая политика, без backfill или reinterpretation;
+историческая запись M02 выше фиксирует прежнюю реализацию на дату и не
+переписывается. Native build требует C++17: Linux `libstdc++`, macOS `libc++`,
+Windows MinGW C++ runtime; cgo включён в Task/Docker/CI build paths. Полный
+`task verify` прошёл локально; проверка Windows matrix и независимое ревью
+остаются CI/primary review, локально не заявляются.
 
 1. **Atomic group outcome:** the automatic action is group-wide over every
    incoming file. No high-confidence subset can auto-apply while the rest enters

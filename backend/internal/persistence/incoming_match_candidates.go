@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 	"github.com/uptrace/bun"
 )
 
@@ -304,7 +305,7 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 }
 
 func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
-	if evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || evaluation.PolicyVersion == "" ||
+	if evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || !matchingpolicy.Supported(evaluation.PolicyVersion) ||
 		evaluation.Provider.ProviderID == uuid.Nil || evaluation.Provider.ProviderSourceID == uuid.Nil ||
 		evaluation.Provider.Namespace == "" || evaluation.Provider.Endpoint == "" || evaluation.Provider.ConfigurationIdentity == "" || evaluation.Provider.CacheKey == "" || evaluation.Provider.AcceptedProjectionRevision == "" || len(evaluation.Groups) == 0 {
 		return fmt.Errorf("replace incoming matches: complete snapshot and provider fences are required")

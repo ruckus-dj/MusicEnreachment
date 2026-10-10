@@ -232,7 +232,7 @@ func matchingApplyEvidence(t *testing.T, fixture *incomingMatchFixture, trackID 
 			Position        int       `json:"position"`
 		} `json:"assignments"`
 	}{
-		Version: 1, GroupID: fixture.group.ID, PolicyVersion: "policy-v1", Outcome: "unique",
+		Version: 1, GroupID: fixture.group.ID, PolicyVersion: "matching-rapidfuzz-v1", Outcome: "unique",
 		SelectedRelease: struct {
 			ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
 			ProviderReleaseKey string    `json:"provider_release_key"`
@@ -282,7 +282,7 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 	}{
 		SchemaVersion: 2, GroupingEpoch: fixture.groupingEpoch,
 		Targets:       []persistence.MatchingTarget{{GroupID: fixture.group.ID, Revision: fixture.group.Revision}},
-		PolicyVersion: "policy-v1",
+		PolicyVersion: "matching-rapidfuzz-v1",
 		EvaluationQueryScope: service.MatchingEvaluationQueryScope{
 			GroupIDs:          []uuid.UUID{fixture.group.ID},
 			ReleaseKeysByFile: map[uuid.UUID][]string{fixture.memberA: fixture.releaseKeys, fixture.memberB: fixture.releaseKeys},
@@ -310,7 +310,7 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 	admission := persistence.MatchingAdmission{
 		AdmissionKey: "publisher-success", GroupingEpoch: fixture.groupingEpoch,
 		Targets: []persistence.MatchingTarget{{GroupID: fixture.group.ID, Revision: fixture.group.Revision}},
-		Plan:    plan, PolicyVersion: "policy-v1", Parent: parent,
+		Plan:    plan, PolicyVersion: "matching-rapidfuzz-v1", Parent: parent,
 		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
 		Providers: []persistence.MatchingProviderRequest{{Operation: &persistence.Operation{
 			ID: childID, Kind: "provider_release_lookup", State: "queued", Stage: "fetch", InputSnapshot: json.RawMessage(`{"query":"fixture"}`),
@@ -320,6 +320,31 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 	}
 	repository := persistence.NewSetupManagerRepository(db)
 	river := openScanEnqueueRiver(t, db)
+	legacyAdmission := admission
+	legacyAdmission.PolicyVersion = "matching-go-v1"
+	var legacyPlan map[string]json.RawMessage
+	if err := json.Unmarshal(plan, &legacyPlan); err != nil {
+		t.Fatal(err)
+	}
+	legacyPlan["policy_version"] = json.RawMessage(`"matching-go-v1"`)
+	legacyAdmission.Plan, err = json.Marshal(legacyPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeAdmission, afterAdmission [3]int64
+	countsSQL := `SELECT (SELECT count(*) FROM operation), (SELECT count(*) FROM river_job), (SELECT count(*) FROM matching_run)`
+	if err := db.NewRaw(countsSQL).Scan(ctx, &beforeAdmission[0], &beforeAdmission[1], &beforeAdmission[2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.AdmitMatchingRun(ctx, river, legacyAdmission); err == nil {
+		t.Fatalf("legacy-policy admission error=%v, want policy rejection", err)
+	}
+	if err := db.NewRaw(countsSQL).Scan(ctx, &afterAdmission[0], &afterAdmission[1], &afterAdmission[2]); err != nil {
+		t.Fatal(err)
+	}
+	if afterAdmission != beforeAdmission {
+		t.Fatalf("legacy-policy admission changed operation/job/run counts: before=%v after=%v", beforeAdmission, afterAdmission)
+	}
 	admitted, err := repository.AdmitMatchingRun(ctx, river, admission)
 	if err != nil || admitted.RiverJobID == nil {
 		t.Fatalf("admit matching plan: op=%+v err=%v", admitted, err)
@@ -492,6 +517,24 @@ func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testin
 		t.Fatalf("claim dependency wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
 	}
 	jobID = wakeJobID
+	legacyEvaluation := fixture.evaluation(nil)
+	legacyEvaluation.PolicyVersion = "matching-go-v1"
+	assertPolicyPublicationRejected := func(label string, evaluation persistence.IncomingMatchEvaluation) {
+		t.Helper()
+		if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, claim.ExecutionEpoch, evaluation, map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+			t.Fatalf("%s publication changed=%v err=%v, want policy rejection", label, changed, err)
+		}
+		assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
+	}
+	assertPolicyPublicationRejected("legacy evaluation against current run", legacyEvaluation)
+	if _, err := db.NewRaw(`UPDATE matching_run SET policy_version=?, immutable_plan=?::jsonb WHERE id=?`, "matching-go-v1", string(legacyAdmission.Plan), parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertPolicyPublicationRejected("consistent legacy evaluation and run", legacyEvaluation)
+	assertPolicyPublicationRejected("current evaluation against legacy run", fixture.evaluation(nil))
+	if _, err := db.NewRaw(`UPDATE matching_run SET policy_version=?, immutable_plan=?::jsonb WHERE id=?`, service.MatchingPolicyVersion, string(plan), parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// Force failure only at parent completion, after candidate/header writes have
 	// occurred, and prove the transaction rolled back all of those writes.
@@ -781,7 +824,7 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 
 func (f *incomingMatchFixture) evaluation(candidates []persistence.IncomingMatchCandidate) persistence.IncomingMatchEvaluation {
 	return persistence.IncomingMatchEvaluation{
-		ExpectedGroupsRevision: f.groupsRevision, ExpectedGroupingEpoch: f.groupingEpoch, PolicyVersion: "policy-v1",
+		ExpectedGroupsRevision: f.groupsRevision, ExpectedGroupingEpoch: f.groupingEpoch, PolicyVersion: "matching-rapidfuzz-v1",
 		Provider: persistence.IncomingMatchProviderFence{
 			ProviderID: f.provider, ProviderSourceID: f.source, Namespace: "incoming-match",
 			Endpoint: "https://musicbrainz.example/ws/2", ConfigurationIdentity: "incoming-match-integration",

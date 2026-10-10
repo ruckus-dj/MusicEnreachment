@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 	"github.com/uptrace/bun"
 )
 
@@ -110,7 +111,7 @@ func decodePersistedMatchingDecision(evidence json.RawMessage) (persistedMatchin
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return persistedMatchingDecision{}, fmt.Errorf("apply matching evaluation: trailing decision data")
 	}
-	if decision.Version != 1 || decision.GroupID == uuid.Nil || decision.PolicyVersion == "" || decision.Outcome != "unique" || decision.SelectedRelease == nil || decision.SelectedRelease.ProviderReleaseID == uuid.Nil || decision.SelectedRelease.ProviderReleaseKey == "" || len(decision.Assignments) == 0 {
+	if decision.Version != 1 || decision.GroupID == uuid.Nil || !matchingpolicy.Supported(decision.PolicyVersion) || decision.Outcome != "unique" || decision.SelectedRelease == nil || decision.SelectedRelease.ProviderReleaseID == uuid.Nil || decision.SelectedRelease.ProviderReleaseKey == "" || len(decision.Assignments) == 0 {
 		return persistedMatchingDecision{}, fmt.Errorf("apply matching evaluation: persisted decision is not a valid unique assignment")
 	}
 	seen := make(map[uuid.UUID]bool, len(decision.Assignments))

@@ -98,11 +98,29 @@ jobs:
       - uses: go-task/setup-task@v2
         with:
           version: 3.x
+      - name: Install Windows C++ toolchain
+        id: windows-cxx
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+      - name: Add Windows C++ tools to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Join-Path '${{ steps.windows-cxx.outputs.msys2-location }}' 'mingw64\bin' |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
       - name: Test backend
         working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          CC: gcc
+          CXX: g++
         run: go test -v ./...
       - name: Test frontend
         working-directory: frontend
@@ -116,7 +134,24 @@ jobs:
         run: node tools/prepare-build.mjs
       - name: Build backend
         working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          CC: gcc
+          CXX: g++
         run: go build -o ../build/backend/ ./cmd/server
+      - name: Verify Windows binary has no MinGW runtime DLL dependencies
+        if: runner.os == 'Windows'
+        working-directory: backend
+        shell: pwsh
+        run: |
+          $output = & objdump -p ../build/backend/server.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect Windows backend imports with objdump"
+          }
+          $imports = $output -join "`n"
+          if ($imports -match '(?i)DLL Name:\s*(libstdc\+\+-6|libgcc_s_.*|libwinpthread-1)\.dll') {
+            throw "Windows backend depends on a MinGW runtime DLL: $matches"
+          }
 
   compose-smoke:
     name: Docker Compose smoke

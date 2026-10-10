@@ -72,7 +72,7 @@ func TestMatchingCoordinatorAdmissionIdempotencyAndFencesPostgres(t *testing.T) 
 			}
 			providers = append(providers, persistence.MatchingProviderRequest{Operation: operation(childID, cacheKey), Args: service.ProviderFetchOperationArgs{OperationID: childID}})
 		}
-		return persistence.MatchingAdmission{AdmissionKey: key, GroupingEpoch: state.Revision, Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}}, Plan: plan, PolicyVersion: "test", Parent: &persistence.Operation{ID: parent, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parent}, Providers: providers}
+		return persistence.MatchingAdmission{AdmissionKey: key, GroupingEpoch: state.Revision, Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}}, Plan: plan, PolicyVersion: "matching-rapidfuzz-v1", Parent: &persistence.Operation{ID: parent, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parent}, Providers: providers}
 	}
 	makeAdmission := func(plan json.RawMessage, parent uuid.UUID) persistence.MatchingAdmission {
 		return makeAdmissionFor("same-admission", plan, parent, requestID)
@@ -278,7 +278,7 @@ func TestMatchingCoordinatorAdmissionRollsBackWhenRiverInsertFailsPostgres(t *te
 	admission := persistence.MatchingAdmission{
 		AdmissionKey: "river-failure", GroupingEpoch: state.Revision,
 		Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}},
-		Plan:    matchingTestPlan(t, "rollback", source, identity), PolicyVersion: "test",
+		Plan:    matchingTestPlan(t, "rollback", source, identity), PolicyVersion: "matching-rapidfuzz-v1",
 		Parent:     &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)},
 		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
 		Providers:  []persistence.MatchingProviderRequest{{Operation: &persistence.Operation{ID: childID, Kind: "provider_release_lookup", State: "queued", Stage: "fetch", InputSnapshot: json.RawMessage(`{"query":"safe"}`), ProviderSourceID: &source.ID, ProviderConfigurationIdentity: matchingCoordinatorStringPtr(identity), ProviderID: &source.ProviderID, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &cacheKey}, Args: service.ProviderFetchOperationArgs{OperationID: childID}}},
@@ -335,7 +335,7 @@ func TestMatchingCoordinatorConcurrentChildFailuresRecordOneWakeEachPostgres(t *
 		cacheKey := fmt.Sprintf("release-lookup:concurrent:%d", i)
 		children = append(children, persistence.MatchingProviderRequest{Operation: &persistence.Operation{ID: childID, Kind: "provider_release_lookup", State: "queued", Stage: "fetch", InputSnapshot: json.RawMessage(`{"query":"safe"}`), ProviderSourceID: &source.ID, ProviderConfigurationIdentity: matchingCoordinatorStringPtr(identity), ProviderID: &source.ProviderID, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &cacheKey}, Args: service.ProviderFetchOperationArgs{OperationID: childID}})
 	}
-	admission := persistence.MatchingAdmission{AdmissionKey: "concurrent-child-failures", GroupingEpoch: state.Revision, Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}}, Plan: matchingTestPlan(t, "concurrent", source, identity), PolicyVersion: "test", Parent: &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID}, Providers: children}
+	admission := persistence.MatchingAdmission{AdmissionKey: "concurrent-child-failures", GroupingEpoch: state.Revision, Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}}, Plan: matchingTestPlan(t, "concurrent", source, identity), PolicyVersion: "matching-rapidfuzz-v1", Parent: &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID}, Providers: children}
 	repo := persistence.NewSetupManagerRepository(db)
 	riverClient := openScanEnqueueRiver(t, db)
 	if _, err := repo.AdmitMatchingRun(ctx, riverClient, admission); err != nil {

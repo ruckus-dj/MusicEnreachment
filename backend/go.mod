@@ -3,7 +3,6 @@ module github.com/ruckus/MusicEnreachment/backend
 go 1.27.0
 
 require (
-	github.com/adrg/strutil v0.3.1
 	github.com/anyascii/go v0.3.3
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-air/gini v1.0.4

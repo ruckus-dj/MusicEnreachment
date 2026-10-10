@@ -2,7 +2,11 @@ package service
 
 import (
 	"math"
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/textsimilarity"
 )
 
 func TestScoreMatchingFactorsAvailableOnlyAndMissingDuration(t *testing.T) {
@@ -180,7 +184,7 @@ func TestGoTextCanonicalizationGoldenCases(t *testing.T) {
 		{"Straße", "STRASSE", 1},
 		{"Москва", "Moskva", 1},
 		{"!!!", "???", 0},
-		{"a b", "a", 0.2555555555555556},
+		{"a b", "a", 0.7666666666666667},
 	} {
 		got, err := matchingTextSimilarity(test.left, test.right)
 		if err != nil {
@@ -229,6 +233,37 @@ func TestMatchingTextAvailabilityAndUTF8Validation(t *testing.T) {
 	}
 }
 
+func TestRapidFuzzTokenSetSimilarityRetainsCoveragePenalty(t *testing.T) {
+	reordered, err := softTokenSimilarity("fuzzy was a bear", "bear a was fuzzy")
+	if err != nil || reordered != 1 {
+		t.Fatalf("reordered token similarity = (%v, %v), want (1, nil)", reordered, err)
+	}
+	duplicates, err := softTokenSimilarity("alpha alpha beta", "alpha beta")
+	if err != nil || math.Abs(duplicates-0.8583333333333333) > 1e-12 {
+		t.Fatalf("duplicate-token similarity = (%0.16f, %v), want (0.8583333333333333, nil)", duplicates, err)
+	}
+}
+
+func TestRapidFuzzCoveragePenaltyAndUnicodeWhitespace(t *testing.T) {
+	left, right := "a b", "a"
+	base, err := textsimilarity.TokenSetSimilarity([]rune(left), []rune(right))
+	if err != nil || base != 1 {
+		t.Fatalf("RapidFuzz subset ratio = (%v, %v), want (1, nil)", base, err)
+	}
+	leftTokens, rightTokens := strings.Fields(left), strings.Fields(right)
+	leftCharacters, rightCharacters := utf8.RuneCountInString(strings.Join(leftTokens, " ")), utf8.RuneCountInString(strings.Join(rightTokens, " "))
+	tokenCoverage := float64(min(len(leftTokens), len(rightTokens))) / float64(max(len(leftTokens), len(rightTokens)))
+	characterCoverage := float64(min(leftCharacters, rightCharacters)) / float64(max(leftCharacters, rightCharacters))
+	want := base * (0.6 + 0.4*((tokenCoverage+characterCoverage)/2))
+	got, err := softTokenSimilarity(left, right)
+	if err != nil || math.Abs(got-want) > 1e-12 || got >= 1 {
+		t.Fatalf("subset service score = (%0.16f, %v), want coverage-penalized %0.16f below 1", got, err, want)
+	}
+	if got, err := softTokenSimilarity("alpha\u2003beta", "beta alpha"); err != nil || got != 1 {
+		t.Fatalf("Unicode whitespace tokenization = (%v, %v), want (1, nil)", got, err)
+	}
+}
+
 func TestHighLevelCombinedScoreUsesBothDurationAndSearchFactors(t *testing.T) {
 	duration := 240.0
 	search := 100.0
@@ -274,8 +309,8 @@ func TestReleaseScoringGoldenFixtures(t *testing.T) {
 		Profile:       ReleaseMatchingProfile,
 		ReleaseArtist: MatchingTextPair{Source: []string{"кис-кис"}, Candidate: []string{"кис-кис"}},
 		ReleaseTitle: MatchingTextPair{
-			// This ASCII golden isolates the Go Levenshtein/coverage policy;
-			// its expectation does not assert RapidFuzz parity.
+			// This ASCII golden isolates RapidFuzz token-set similarity and the
+			// existing coverage penalty.
 			Source: []string{"Harakiri"}, Candidate: []string{"Harakiri tribute Egoru Letovu"},
 		},
 		ReleaseExpectedDurationSeconds: &duration, ReleaseActualDurationSeconds: &duration,
@@ -284,8 +319,8 @@ func TestReleaseScoringGoldenFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(kisKis.Confidence-0.7315101070154578) > 1e-12 || kisKis.TotalWeight != 12 {
-		t.Fatalf("Go-policy Kis-Kis release fixture = (%0.16f, weight %d), want (0.7315101070154578, weight 12)", kisKis.Confidence, kisKis.TotalWeight)
+	if math.Abs(kisKis.Confidence-0.9017241379310345) > 1e-12 || kisKis.TotalWeight != 12 {
+		t.Fatalf("RapidFuzz-policy Kis-Kis release fixture = (%0.16f, weight %d), want (0.9017241379310345, weight 12)", kisKis.Confidence, kisKis.TotalWeight)
 	}
 
 	noizeDuration := 160.0

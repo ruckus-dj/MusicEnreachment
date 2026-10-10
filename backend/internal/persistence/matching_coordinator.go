@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 	"github.com/uptrace/bun"
 )
 
@@ -52,7 +53,7 @@ type MatchingAdmission struct {
 // AdmitMatchingRun atomically fences the selected groups, stores the parent,
 // provider requests and dependency rows, and inserts every ID-only delivery.
 func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, client RiverInserter, admission MatchingAdmission) (*Operation, error) {
-	if client == nil || admission.Parent == nil || len(admission.Targets) == 0 || admission.AdmissionKey == "" || len(admission.Plan) == 0 {
+	if client == nil || admission.Parent == nil || len(admission.Targets) == 0 || admission.AdmissionKey == "" || len(admission.Plan) == 0 || !matchingpolicy.Supported(admission.PolicyVersion) {
 		return nil, fmt.Errorf("matching admission is incomplete")
 	}
 	if admission.Parent.ID == uuid.Nil {

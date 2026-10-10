@@ -1,5 +1,8 @@
 version: "3"
 
+env:
+  CGO_ENABLED: "1"
+
 tasks:
   default:
     desc: Build the complete application

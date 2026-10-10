@@ -62,6 +62,8 @@ third-party source and runs it as a separate executable.
 Install these prerequisites:
 
 - [Go 1.27](https://go.dev/doc/install);
+- a C/C++17 toolchain for cgo: Xcode Command Line Tools on macOS, GCC/G++ on
+  Linux, or MinGW-w64 on Windows;
 - [Node.js 24 LTS](https://nodejs.org/) with npm;
 - [Task 3](https://taskfile.dev/docs/installation);
 - [golangci-lint 2.14](https://golangci-lint.run/docs/welcome/install/);
@@ -74,6 +76,11 @@ Install locked frontend dependencies with `task frontend:install`, then run
 the repository root. Enable the hook with `pre-commit install`. The pre-commit
 hook intentionally runs the complete `task verify`; it can be split into faster
 stages later if repository growth makes that necessary.
+
+Backend matching uses the vendored MIT-licensed RapidFuzz C++ library through
+cgo. Linux binaries require the system C++ runtime (`libstdc++6` on Debian);
+the supplied Docker image includes it. Normalization, transliteration, and
+coverage penalties remain in Go.
 
 For frontend development, `npm --prefix frontend run dev` starts Vite. Its
 `/api` and `/health` requests are proxied to a backend listening on

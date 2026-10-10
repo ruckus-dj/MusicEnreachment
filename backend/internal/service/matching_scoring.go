@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 )
 
 // MatchingPolicyVersion identifies the scoring behavior used to produce a
 // confidence. It is deliberately independent of persistence and provider IO.
-const MatchingPolicyVersion = "matching-go-v1"
+const MatchingPolicyVersion = matchingpolicy.CurrentVersion
 
 type MatchingProfile string
 

@@ -31,6 +31,12 @@ func TestDecodeMatchingDecisionRejectsUnsupportedOrInvalidRecords(t *testing.T) 
 	if err := decode(strings.Replace(string(encoded), `"version":1`, `"version":2`, 1)); err == nil {
 		t.Fatal("unsupported version was accepted")
 	}
+	unsupportedPolicy := valid
+	unsupportedPolicy.PolicyVersion = "matching-go-v1"
+	unsupportedPolicyJSON, _ := json.Marshal(unsupportedPolicy)
+	if err := decode(string(unsupportedPolicyJSON)); err == nil {
+		t.Fatal("unsupported policy version was accepted")
+	}
 	if err := decode(strings.TrimSuffix(string(encoded), "}") + `,"unexpected":true}`); err == nil {
 		t.Fatal("unknown field was accepted")
 	}

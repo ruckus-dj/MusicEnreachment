@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 )
 
 const matchingDecisionVersion = 1
@@ -76,7 +77,7 @@ func validateMatchingEvaluationDecision(decision MatchingEvaluationDecision) err
 	if decision.Version != matchingDecisionVersion {
 		return fmt.Errorf("decode matching evaluation decision: unsupported version %d", decision.Version)
 	}
-	if decision.GroupID == uuid.Nil || decision.PolicyVersion == "" {
+	if decision.GroupID == uuid.Nil || !matchingpolicy.Supported(decision.PolicyVersion) {
 		return fmt.Errorf("decode matching evaluation decision: group and policy identities are required")
 	}
 	switch decision.Outcome {

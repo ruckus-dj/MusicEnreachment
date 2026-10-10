@@ -6,17 +6,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/adrg/strutil/metrics"
 	"github.com/anyascii/go"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/textsimilarity"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
-
-var matchingTextMetric = func() *metrics.Levenshtein {
-	metric := metrics.NewLevenshtein()
-	metric.CaseSensitive = true
-	return metric
-}()
 
 func matchingTextFactor(component MatchingComponent, pair MatchingTextPair) (MatchingFactor, error) {
 	factor := MatchingFactor{
@@ -43,12 +37,15 @@ func matchingTextFactor(component MatchingComponent, pair MatchingTextPair) (Mat
 	factor.CandidateNormalized = canonicalMatchingText(right)
 	factor.TransliteratedSourceNormalized = canonicalMatchingText(anyascii.Transliterate(left))
 	factor.TransliteratedCandidateNormalized = canonicalMatchingText(anyascii.Transliterate(right))
-	factor.Value = matchingTextSimilarityProcessed(
+	factor.Value, err = matchingTextSimilarityProcessed(
 		factor.SourceNormalized,
 		factor.CandidateNormalized,
 		factor.TransliteratedSourceNormalized,
 		factor.TransliteratedCandidateNormalized,
 	)
+	if err != nil {
+		return MatchingFactor{}, fmt.Errorf("compare matching text: %w", err)
+	}
 	return factor, nil
 }
 
@@ -74,21 +71,26 @@ func matchingTextSimilarity(left, right string) (float64, error) {
 	rightNormalized := canonicalMatchingText(right)
 	leftTransliterated := canonicalMatchingText(anyascii.Transliterate(left))
 	rightTransliterated := canonicalMatchingText(anyascii.Transliterate(right))
-	return matchingTextSimilarityProcessed(leftNormalized, rightNormalized, leftTransliterated, rightTransliterated), nil
+	return matchingTextSimilarityProcessed(leftNormalized, rightNormalized, leftTransliterated, rightTransliterated)
 }
 
-func matchingTextSimilarityProcessed(left, right, transliteratedLeft, transliteratedRight string) float64 {
-	return max(
-		softTokenSimilarity(left, right),
-		softTokenSimilarity(transliteratedLeft, transliteratedRight),
-	)
+func matchingTextSimilarityProcessed(left, right, transliteratedLeft, transliteratedRight string) (float64, error) {
+	normalized, err := softTokenSimilarity(left, right)
+	if err != nil {
+		return 0, err
+	}
+	transliterated, err := softTokenSimilarity(transliteratedLeft, transliteratedRight)
+	if err != nil {
+		return 0, err
+	}
+	return max(normalized, transliterated), nil
 }
 
-func softTokenSimilarity(left, right string) float64 {
+func softTokenSimilarity(left, right string) (float64, error) {
 	leftTokens := strings.Fields(left)
 	rightTokens := strings.Fields(right)
 	if len(leftTokens) == 0 || len(rightTokens) == 0 {
-		return 0
+		return 0, nil
 	}
 	joinedLeft := strings.Join(leftTokens, " ")
 	joinedRight := strings.Join(rightTokens, " ")
@@ -97,7 +99,11 @@ func softTokenSimilarity(left, right string) float64 {
 	rightCharacters := utf8.RuneCountInString(joinedRight)
 	characterCoverage := float64(min(leftCharacters, rightCharacters)) / float64(max(leftCharacters, rightCharacters))
 	coveragePenalty := 0.6 + 0.4*((tokenCoverage+characterCoverage)/2)
-	return matchingTextMetric.Compare(joinedLeft, joinedRight) * coveragePenalty
+	ratio, err := textsimilarity.TokenSetSimilarity([]rune(joinedLeft), []rune(joinedRight))
+	if err != nil {
+		return 0, fmt.Errorf("compare tokens with RapidFuzz: %w", err)
+	}
+	return ratio * coveragePenalty, nil
 }
 
 func canonicalMatchingText(value string) string {

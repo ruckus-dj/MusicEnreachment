@@ -13,7 +13,7 @@ func TestValidateIncomingMatchEvaluationPreservesUnroundedScoresAndOptionalSHA(t
 	evaluation := IncomingMatchEvaluation{
 		ExpectedGroupsRevision: "groups-revision",
 		ExpectedGroupingEpoch:  8,
-		PolicyVersion:          "matching-policy-1",
+		PolicyVersion:          "matching-rapidfuzz-v1",
 		Provider: IncomingMatchProviderFence{
 			ProviderID: providerID, ProviderSourceID: sourceID,
 			Namespace: "fixture", Endpoint: "https://provider.example",
@@ -46,7 +46,7 @@ func TestValidateIncomingMatchEvaluationAllowsPositionReuseAcrossFiles(t *testin
 	providerID, sourceID, groupID, releaseID, trackID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	firstMember, secondMember := uuid.New(), uuid.New()
 	evaluation := IncomingMatchEvaluation{
-		ExpectedGroupsRevision: "groups-revision", ExpectedGroupingEpoch: 1, PolicyVersion: "policy",
+		ExpectedGroupsRevision: "groups-revision", ExpectedGroupingEpoch: 1, PolicyVersion: "matching-rapidfuzz-v1",
 		Provider: IncomingMatchProviderFence{ProviderID: providerID, ProviderSourceID: sourceID, Namespace: "fixture", Endpoint: "https://provider.example", ConfigurationIdentity: "config", CacheKey: "cache", AcceptedProjectionRevision: "accepted-projection-revision", ReleaseKeys: []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}},
 		Groups: []IncomingMatchGroupEvaluation{{GroupID: groupID, GroupRevision: "group", Members: []IncomingMatchMemberFence{
 			{FileMemberID: firstMember, WorkID: uuid.New()}, {FileMemberID: secondMember, WorkID: uuid.New()},
@@ -57,6 +57,17 @@ func TestValidateIncomingMatchEvaluationAllowsPositionReuseAcrossFiles(t *testin
 	}
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		t.Fatalf("validate position reuse across distinct files: %v", err)
+	}
+}
+
+func TestValidateIncomingMatchEvaluationRejectsUnsupportedPolicy(t *testing.T) {
+	evaluation := IncomingMatchEvaluation{
+		ExpectedGroupsRevision: "groups-revision",
+		ExpectedGroupingEpoch:  1,
+		PolicyVersion:          "matching-go-v1",
+	}
+	if err := validateIncomingMatchEvaluation(evaluation); err == nil {
+		t.Fatal("unsupported policy version passed evaluation validation")
 	}
 }
 

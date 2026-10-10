@@ -144,7 +144,7 @@ func assertMatchingApplyExistingAndNewAssociation(t *testing.T, ctx context.Cont
 				t.Fatalf("new target track %s provider=%s err=%v", row.TrackID, mappedProvider, err)
 			}
 			newFound = true
-			if row.Selected || row.Method != "automatic" || row.Policy == nil || *row.Policy != "policy-v1" {
+			if row.Selected || row.Method != "automatic" || row.Policy == nil || *row.Policy != "matching-rapidfuzz-v1" {
 				t.Errorf("new target association has wrong decision: %+v", row)
 			}
 		}

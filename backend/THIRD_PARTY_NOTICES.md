@@ -11,7 +11,6 @@ product are reproduced here.
 
 | Component | Version | License |
 | --- | --- | --- |
-| `github.com/adrg/strutil` | v0.3.1 | MIT |
 | `github.com/anyascii/go` | v0.3.3 | ISC |
 | `golang.org/x/text` | v0.42.0 | BSD-3-Clause |
 | `go.senan.xyz/taglib` | v0.14.0 | LGPL-2.1 |
@@ -23,33 +22,8 @@ product are reproduced here.
 | `golang.org/x/time` | v0.16.0 | BSD-3-Clause |
 | `golang.org/x/net` | v0.58.0 | BSD-3-Clause |
 | `github.com/go-air/gini` | v1.0.4 | MIT |
+| RapidFuzz C++ (`backend/internal/integrations/textsimilarity/third_party/rapidfuzz`) | v3.3.4 | MIT |
 | TagLib (embedded in `go.senan.xyz/taglib` `taglib.wasm`) | v2.1.1 | LGPL-2.1 or MPL-1.1 |
-
----
-
-## github.com/adrg/strutil v0.3.1
-
-The MIT License (MIT)
-
-Copyright (c) 2019 Adrian-George Bostan <adrg@epistack.com>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 
 ---
 
@@ -327,6 +301,40 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## RapidFuzz C++ v3.3.4
+
+RapidFuzz C++ headers are vendored from the official
+[`rapidfuzz/rapidfuzz-cpp`](https://github.com/rapidfuzz/rapidfuzz-cpp)
+`v3.3.4` tag, commit `82662f3623b3ca3645e543f677fc32fb8bd1fb95`. The upstream
+`LICENSE` file is reproduced at
+`backend/internal/integrations/textsimilarity/third_party/LICENSE`; the source
+archive SHA-256 is `a0dd2ef361cac165e12076696e7c7e8d069a2908abd9599ad4bd190de33f9881`.
+Only unmodified public headers are included. The official license reads:
+
+Copyright © 2020 Max Bachmann
+Copyright © 2011 Adam Cohen
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
 

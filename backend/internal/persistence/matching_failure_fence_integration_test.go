@@ -59,7 +59,7 @@ func TestFailMatchingDeliveryRequiresCurrentFreshFencePostgreSQL(t *testing.T) {
 			admitted, err := repository.AdmitMatchingRun(ctx, openScanEnqueueRiver(t, db), persistence.MatchingAdmission{
 				AdmissionKey: "failure-fence-" + parentID.String(), GroupingEpoch: fixture.groupingEpoch,
 				Targets: []persistence.MatchingTarget{{GroupID: fixture.group.ID, Revision: fixture.group.Revision}},
-				Plan:    json.RawMessage(`{}`), PolicyVersion: "policy-v1", Parent: parent,
+				Plan:    json.RawMessage(`{}`), PolicyVersion: "matching-rapidfuzz-v1", Parent: parent,
 				ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
 				Providers:  []persistence.MatchingProviderRequest{{Operation: child, Args: service.ProviderFetchOperationArgs{OperationID: childID}}},
 			})
