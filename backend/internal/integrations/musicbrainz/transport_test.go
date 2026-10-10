@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,7 +51,28 @@ func TestPublicGateConcurrentWaitersRespectExtendedCooldownAndRate(t *testing.T)
 	}
 }
 
+func TestRateWaiterCancellationDoesNotLeaveFutureReservation(t *testing.T) {
+	limiter := rate.NewLimiter(rate.Every(time.Second), 1)
+	waiter := rateWaiter{limiter: limiter}
+	if err := waiter.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if err := waiter.Wait(ctx); err == nil {
+		t.Fatal("expected canceled wait")
+	}
+	if tokens := limiter.Tokens(); tokens <= 0 {
+		t.Fatalf("canceled future reservation was not restored: %v tokens remain", tokens)
+	}
+}
+
 type countingRequestWaiter struct{ calls atomic.Int32 }
+
+// Limit keeps the gate's completion-spacing floor fast in tests while still
+// exercising the limitProvider path.
+func (waiter *countingRequestWaiter) Limit() rate.Limit { return rate.Every(time.Millisecond) }
 
 func (waiter *countingRequestWaiter) Wait(context.Context) error {
 	waiter.calls.Add(1)
@@ -101,6 +123,210 @@ func TestConnectivityAndSDKProviderSharePublicRequestGate(t *testing.T) {
 	}
 	if got := waiter.calls.Load(); got != 2 {
 		t.Fatalf("shared gate waits = %d, want one per checker/provider request", got)
+	}
+}
+
+func TestPublicDispatchSerializationSpacing(t *testing.T) {
+	gate := NewPublicRateGateWithWaiter(rate.NewLimiter(100, 1), time.Now)
+	interval := gate.interval
+	if interval <= 0 {
+		t.Fatalf("gate interval = %s, want positive spacing", interval)
+	}
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	var mu sync.Mutex
+	var firstCompleted time.Time
+	var secondEntered time.Time
+
+	transport := &governedTransport{
+		gate: gate,
+		base: musicBrainzTestRoundTripper(func(request *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				close(firstEntered)
+				<-releaseFirst
+				mu.Lock()
+				firstCompleted = time.Now()
+				mu.Unlock()
+			} else {
+				mu.Lock()
+				secondEntered = time.Now()
+				mu.Unlock()
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Request:    request,
+			}, nil
+		}),
+	}
+	client := &http.Client{Transport: transport, Timeout: RequestTimeout}
+
+	dispatch := func(path string) chan error {
+		done := make(chan error, 1)
+		go func() {
+			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://musicbrainz.org/ws/2/"+path, nil)
+			if err != nil {
+				done <- err
+				return
+			}
+			response, err := client.Do(request)
+			if err == nil {
+				_ = response.Body.Close()
+			}
+			done <- err
+		}()
+		return done
+	}
+
+	first := dispatch("artist/first")
+	<-firstEntered
+	second := dispatch("artist/second")
+	// Let the second caller reach the dispatch permit while the first is still
+	// in flight. It must not enter the base transport before the first finishes.
+	time.Sleep(10 * time.Millisecond)
+	mu.Lock()
+	queuedEntered := !secondEntered.IsZero()
+	mu.Unlock()
+	if queuedEntered {
+		t.Fatal("second dispatch entered while the first was still in flight")
+	}
+
+	close(releaseFirst)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	completed := firstCompleted
+	entered := secondEntered
+	mu.Unlock()
+	if spacing := entered.Sub(completed); spacing < interval {
+		t.Fatalf("second dispatch spacing = %s, want >= %s from first completion", spacing, interval)
+	}
+}
+
+func TestCanceledQueuedDispatchReleasesPermitWithoutHTTP(t *testing.T) {
+	gate := NewPublicRateGateWithWaiter(rate.NewLimiter(1000, 1), time.Now)
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	transport := &governedTransport{
+		gate: gate,
+		base: musicBrainzTestRoundTripper(func(request *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				close(firstEntered)
+				<-releaseFirst
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Request:    request,
+			}, nil
+		}),
+	}
+	client := &http.Client{Transport: transport, Timeout: RequestTimeout}
+
+	do := func(ctx context.Context, path string) chan error {
+		done := make(chan error, 1)
+		go func() {
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://musicbrainz.org/ws/2/"+path, nil)
+			if err != nil {
+				done <- err
+				return
+			}
+			response, err := client.Do(request)
+			if err == nil {
+				_ = response.Body.Close()
+			}
+			done <- err
+		}()
+		return done
+	}
+
+	first := do(context.Background(), "artist/first")
+	<-firstEntered
+
+	ctx, cancel := context.WithCancel(context.Background())
+	second := do(ctx, "artist/second")
+	// Let the canceled caller queue behind the in-flight dispatch permit.
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	if err := <-second; err == nil {
+		t.Fatal("expected canceled queued dispatch to fail")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("canceled dispatch reached the base transport: calls = %d", got)
+	}
+
+	close(releaseFirst)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+
+	third := do(context.Background(), "artist/third")
+	if err := <-third; err != nil {
+		t.Fatalf("dispatch permit was not released after cancellation: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("base transport calls = %d, want 2", got)
+	}
+}
+
+func TestObservedRetryAfterCooldownBlocksNextDispatch(t *testing.T) {
+	gate := NewPublicRateGateWithWaiter(rate.NewLimiter(1000, 1), time.Now)
+	var calls atomic.Int32
+	transport := &governedTransport{
+		gate: gate,
+		base: musicBrainzTestRoundTripper(func(request *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"1"}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Request:    request,
+			}, nil
+		}),
+	}
+	client := &http.Client{Transport: transport, Timeout: RequestTimeout}
+
+	first, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://musicbrainz.org/ws/2/artist/first", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	// observeRetryAfter runs inside the dispatch permit, so the cooldown must
+	// already be recorded once the first round trip has completed.
+	gate.mu.Lock()
+	cooldown := gate.cooldownUntil
+	gate.mu.Unlock()
+	if !cooldown.After(time.Now()) {
+		t.Fatal("Retry-After was not observed before the dispatch permit was released")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	second, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://musicbrainz.org/ws/2/artist/second", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(second); err == nil {
+		t.Fatal("expected server-directed cooldown to block the next dispatch")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("cooldown did not block the next dispatch: base calls = %d", got)
 	}
 }
 
