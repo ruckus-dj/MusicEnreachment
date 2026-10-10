@@ -14,7 +14,21 @@ import (
 )
 
 type memoryOperations struct {
-	values map[uuid.UUID]*persistence.Operation
+	values  map[uuid.UUID]*persistence.Operation
+	updates int
+}
+
+func TestMatchingRetryWithoutRiverPreservesOperation(t *testing.T) {
+	jobID := int64(42)
+	existing := &persistence.Operation{ID: uuid.New(), Kind: "matching_evaluation_v1", State: "failed", Stage: "failed", Attempt: 3, RiverJobID: &jobID}
+	repository := &memoryOperations{values: map[uuid.UUID]*persistence.Operation{existing.ID: existing}}
+	got, err := NewOperations(repository).Retry(context.Background(), existing.ID)
+	if err == nil || got != nil {
+		t.Fatalf("unsupported matching retry = %v, %v", got, err)
+	}
+	if repository.updates != 0 || existing.State != "failed" || existing.Stage != "failed" || existing.Attempt != 3 || existing.RiverJobID == nil || *existing.RiverJobID != jobID {
+		t.Fatalf("unsupported retry mutated operation: %+v, updates=%d", existing, repository.updates)
+	}
 }
 
 type fakeSourceAnalysisRetryer struct {
@@ -157,6 +171,7 @@ func (m *memoryOperations) ListOperations(context.Context, ...string) ([]persist
 	return operations, nil
 }
 func (m *memoryOperations) UpdateOperation(_ context.Context, o *persistence.Operation) error {
+	m.updates++
 	m.values[o.ID] = o
 	return nil
 }

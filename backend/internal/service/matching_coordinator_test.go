@@ -53,6 +53,70 @@ func TestCanonicalMatchingProviderRequests(t *testing.T) {
 	}
 }
 
+func TestMatchingQueryScopeIsExactAndPartOfPlanDigest(t *testing.T) {
+	groupID := uuid.New()
+	fileA, fileB := uuid.New(), uuid.New()
+	targets := []persistence.MatchingTarget{{GroupID: groupID, Revision: "r1"}}
+	groups := map[uuid.UUID]persistence.IncomingGroupingGroup{
+		groupID: {ID: groupID, Revision: "r1", Members: []uuid.UUID{fileA, fileB}},
+	}
+	base := MatchingEvaluationQueryScope{
+		GroupIDs:          []uuid.UUID{groupID},
+		ReleaseKeysByFile: map[uuid.UUID][]string{fileA: {}, fileB: {"release-b"}},
+		SearchKeysByFile: map[uuid.UUID]MatchingSearchKeys{
+			fileA: {Release: "release-query-a", Recording: "recording-query-a"},
+			fileB: {Release: "release-query-b", Recording: "recording-query-b"},
+		},
+	}
+	canonical, err := canonicalMatchingQueryScope(base, targets, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.ReleaseKeysByFile[fileB][0] = "caller-mutated"
+	if canonical.ReleaseKeysByFile[fileB][0] != "release-b" {
+		t.Fatal("canonical query scope retained caller-owned release-key slices")
+	}
+
+	swapped := MatchingEvaluationQueryScope{
+		GroupIDs:          []uuid.UUID{groupID},
+		ReleaseKeysByFile: map[uuid.UUID][]string{fileA: {"release-b"}, fileB: {}},
+		SearchKeysByFile: map[uuid.UUID]MatchingSearchKeys{
+			fileA: {Release: "release-query-b", Recording: "recording-query-b"},
+			fileB: {Release: "release-query-a", Recording: "recording-query-a"},
+		},
+	}
+	canonicalSwapped, err := canonicalMatchingQueryScope(swapped, targets, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := func(scope MatchingEvaluationQueryScope) []byte {
+		t.Helper()
+		return mustMatchingCoordinatorJSON(t, matchingAdmissionPlan{SchemaVersion: 2, GroupingEpoch: 3, Targets: targets, PolicyVersion: "policy", EvaluationQueryScope: scope})
+	}
+	if sha256.Sum256(plan(canonical)) == sha256.Sum256(plan(canonicalSwapped)) {
+		t.Fatal("swapping per-file query attribution did not change the immutable plan digest")
+	}
+	var encodedPlan map[string]json.RawMessage
+	if err := json.Unmarshal(plan(canonical), &encodedPlan); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := encodedPlan["evaluation_query_scope"]; !ok {
+		t.Fatal("immutable plan omitted the versioned evaluation query scope")
+	}
+	if _, err := canonicalMatchingQueryScope(MatchingEvaluationQueryScope{
+		GroupIDs: []uuid.UUID{groupID}, ReleaseKeysByFile: map[uuid.UUID][]string{fileA: {}, fileB: {}, uuid.New(): {}},
+		SearchKeysByFile: map[uuid.UUID]MatchingSearchKeys{fileA: {Release: "a", Recording: "b"}, fileB: {Release: "c", Recording: "d"}},
+	}, targets, groups); err == nil {
+		t.Fatal("scope with an extra file was accepted")
+	}
+	if _, err := canonicalMatchingQueryScope(MatchingEvaluationQueryScope{
+		GroupIDs: []uuid.UUID{groupID}, ReleaseKeysByFile: map[uuid.UUID][]string{fileA: {}},
+		SearchKeysByFile: map[uuid.UUID]MatchingSearchKeys{fileA: {Release: "a", Recording: "b"}},
+	}, targets, groups); err == nil {
+		t.Fatal("scope missing a selected file was accepted")
+	}
+}
+
 func mustMatchingCoordinatorJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)

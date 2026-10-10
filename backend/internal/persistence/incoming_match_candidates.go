@@ -133,77 +133,103 @@ func (repository *IncomingMatchCandidateRepository) replace(ctx context.Context,
 		}
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		// Match source mutations' canonical order: gate, current source/group state,
-		// then provider configuration. Provider cache writers use config before
-		// their own source row locks; this transaction does not acquire those rows.
-		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
-			return fmt.Errorf("replace incoming matches: lock source mutation gate: %w", err)
-		}
-		if err := lockCurrentIncomingSourceRows(ctx, tx); err != nil {
-			return err
-		}
-		var epoch int64
-		if err := tx.NewRaw(`SELECT revision FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &epoch); err != nil {
-			return fmt.Errorf("replace incoming matches: lock grouping state: %w", err)
-		}
-		if epoch != evaluation.ExpectedGroupingEpoch {
-			return ErrIncomingMatchConflict
-		}
-		if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
-			return err
-		}
-		if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
-			return err
+		return replaceIncomingMatchesTx(ctx, tx, evaluation, expected)
+	})
+}
+
+// replaceIncomingMatchesTx publishes evaluated results inside a caller-owned
+// transaction. Keep the shared validation, lock, CAS, and write path here so
+// standalone evaluation and durable delivery publication have identical fences.
+func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string) error {
+	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
+		return err
+	}
+	if expected != nil {
+		if len(expected) != len(evaluation.Groups) {
+			return fmt.Errorf("replace incoming matches: expected one prior revision per group")
 		}
 		for _, group := range evaluation.Groups {
-			if expected != nil {
-				if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+group.GroupID.String()); err != nil {
-					return fmt.Errorf("replace incoming matches: lock prior evaluation: %w", err)
-				}
-				var current sql.NullString
-				err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, group.GroupID).Scan(ctx, &current)
-				if errors.Is(err, sql.ErrNoRows) {
-					if expected[group.GroupID] != nil {
-						return ErrIncomingMatchConflict
-					}
-				} else if err != nil {
-					return fmt.Errorf("replace incoming matches: read prior evaluation revision: %w", err)
-				} else if !current.Valid || expected[group.GroupID] == nil || current.String != *expected[group.GroupID] {
-					return ErrIncomingMatchConflict
-				}
-			}
-			if _, err := tx.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Exec(ctx); err != nil {
-				return fmt.Errorf("replace incoming match evaluation: remove previous result: %w", err)
-			}
-			providerFences, err := json.Marshal(evaluation.Provider)
-			if err != nil {
-				return fmt.Errorf("replace incoming match evaluation: encode provider fences: %w", err)
-			}
-			evaluationRevision := uuid.NewString()
-			groupEvidence := group.Evidence
-			if len(groupEvidence) == 0 {
-				groupEvidence = json.RawMessage(`{}`)
-			}
-			if _, err := tx.NewRaw(`INSERT INTO incoming_match_evaluation
-				(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
-				 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-					cache_key, cache_revision, provider_snapshot_revision, provider_fences)
-					VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
-				evaluation.ExpectedGroupsRevision, evaluation.ExpectedGroupingEpoch, evaluation.PolicyVersion,
-				evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID,
-				evaluation.Provider.ConfigurationIdentity, evaluation.Provider.Namespace, evaluation.Provider.Endpoint,
-				evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences)).Exec(ctx); err != nil {
-				return fmt.Errorf("replace incoming match evaluation: insert header: %w", err)
-			}
-			if err := copyIncomingMatchMembers(ctx, tx, group); err != nil {
-				return err
-			}
-			if err := insertIncomingMatchCandidates(ctx, tx, group); err != nil {
-				return err
+			if _, ok := expected[group.GroupID]; !ok {
+				return fmt.Errorf("replace incoming matches: prior revision is missing for group")
 			}
 		}
-		return nil
-	})
+	}
+	// Canonical lock order: source mutation gate, current source/group state,
+	// provider configuration, then evaluation revisions.
+	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+		return fmt.Errorf("replace incoming matches: lock source mutation gate: %w", err)
+	}
+	if err := lockCurrentIncomingSourceRows(ctx, tx); err != nil {
+		return err
+	}
+	var epoch int64
+	if err := tx.NewRaw(`SELECT revision FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &epoch); err != nil {
+		return fmt.Errorf("replace incoming matches: lock grouping state: %w", err)
+	}
+	if epoch != evaluation.ExpectedGroupingEpoch {
+		return ErrIncomingMatchConflict
+	}
+	if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
+		return err
+	}
+	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
+		return err
+	}
+	orderedGroups := append([]IncomingMatchGroupEvaluation(nil), evaluation.Groups...)
+	sort.Slice(orderedGroups, func(i, j int) bool { return orderedGroups[i].GroupID.String() < orderedGroups[j].GroupID.String() })
+	for _, group := range orderedGroups {
+		if expected == nil {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+group.GroupID.String()); err != nil {
+			return fmt.Errorf("replace incoming matches: lock prior evaluation: %w", err)
+		}
+		var current sql.NullString
+		err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, group.GroupID).Scan(ctx, &current)
+		if errors.Is(err, sql.ErrNoRows) {
+			if expected[group.GroupID] != nil {
+				return ErrIncomingMatchConflict
+			}
+		} else if err != nil {
+			return fmt.Errorf("replace incoming matches: read prior evaluation revision: %w", err)
+		} else if !current.Valid || expected[group.GroupID] == nil || current.String != *expected[group.GroupID] {
+			return ErrIncomingMatchConflict
+		}
+	}
+	// All group revisions are locked and compared before the first header is
+	// removed, so no group can be published from a partially acquired snapshot.
+	for _, group := range evaluation.Groups {
+		if _, err := tx.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Exec(ctx); err != nil {
+			return fmt.Errorf("replace incoming match evaluation: remove previous result: %w", err)
+		}
+		providerFences, err := json.Marshal(evaluation.Provider)
+		if err != nil {
+			return fmt.Errorf("replace incoming match evaluation: encode provider fences: %w", err)
+		}
+		evaluationRevision := uuid.NewString()
+		groupEvidence := group.Evidence
+		if len(groupEvidence) == 0 {
+			groupEvidence = json.RawMessage(`{}`)
+		}
+		if _, err := tx.NewRaw(`INSERT INTO incoming_match_evaluation
+			(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
+			 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
+			 cache_key, cache_revision, provider_snapshot_revision, provider_fences)
+			VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
+			evaluation.ExpectedGroupsRevision, evaluation.ExpectedGroupingEpoch, evaluation.PolicyVersion,
+			evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID,
+			evaluation.Provider.ConfigurationIdentity, evaluation.Provider.Namespace, evaluation.Provider.Endpoint,
+			evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences)).Exec(ctx); err != nil {
+			return fmt.Errorf("replace incoming match evaluation: insert header: %w", err)
+		}
+		if err := copyIncomingMatchMembers(ctx, tx, group); err != nil {
+			return err
+		}
+		if err := insertIncomingMatchCandidates(ctx, tx, group); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
@@ -332,10 +358,7 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 	if err := tx.NewRaw(`SELECT configuration_identity, namespace, endpoint FROM provider_source WHERE id=? AND provider_id=? FOR SHARE`, fence.ProviderSourceID, fence.ProviderID).Scan(ctx, &source); err != nil || source.ConfigurationIdentity != fence.ConfigurationIdentity || source.Namespace != fence.Namespace || source.Endpoint != fence.Endpoint {
 		return ErrIncomingMatchConflict
 	}
-	queryRevisions := fence.CacheRevisions
-	if len(queryRevisions) == 0 {
-		queryRevisions = map[string]*string{fence.CacheKey: fence.CacheRevision}
-	}
+	queryRevisions := effectiveMatchCacheRevisions(fence)
 	if revision, ok := queryRevisions[fence.CacheKey]; !ok || !equalOptionalString(revision, fence.CacheRevision) {
 		return ErrIncomingMatchConflict
 	}

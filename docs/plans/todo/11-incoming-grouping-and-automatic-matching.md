@@ -566,6 +566,18 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Atomic publisher increment (2026-10-10):** explicit per-file evaluation scope
+сохраняется в canonical version-2 plan; `Prepare` фиксирует evaluation CAS
+baseline до чтения inputs. Добавлен fenced matching retry с epoch/delivery
+registration, generic non-River retry отклоняется без изменения состояния.
+Candidate publication, parent/run success и delivery consumption выполняются
+одной транзакцией с admitted scope, group generations, provider/query fences
+и execution fences. Evidence проверяется против members своей группы; cache
+misses представлены explicit nil revisions. Independent review findings
+закрыты, PostgreSQL regression tests и полный `task verify` прошли.
+Delivery claim/recovery, parent worker и app registration ещё не реализованы;
+automatic planning/apply и UI остаются последующими этапами.
+
 **Durable coordinator — admission increment (2026-10-10):** реализованы
 atomic admission explicit finite MusicBrainz plans, canonical intent digest
 с provider source/configuration fences, idempotency/conflict по admission key,

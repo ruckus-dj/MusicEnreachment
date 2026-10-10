@@ -16,8 +16,8 @@ import (
 // MatchingSearchKeys identify the exact cached search responses associated with
 // one source file. Scores are never borrowed from another file or candidate.
 type MatchingSearchKeys struct {
-	Release   string
-	Recording string
+	Release   string `json:"release"`
+	Recording string `json:"recording"`
 }
 
 // MatchingAcoustIDKey scopes a fingerprint result to the exact candidate

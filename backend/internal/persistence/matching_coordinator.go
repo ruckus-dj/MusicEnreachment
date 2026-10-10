@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -175,6 +176,104 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 		return nil, err
 	}
 	return result, nil
+}
+
+// RetryMatchingEvaluationOperationAndEnqueue advances only the run's delivery
+// epoch. It deliberately preserves captured target generations: a retry of a
+// superseded run is rejected instead of making it current again.
+func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnqueue(
+	ctx context.Context,
+	id uuid.UUID,
+	client RiverInserter,
+	args river.JobArgs,
+	options *river.InsertOpts,
+) (*Operation, error) {
+	if client == nil || args == nil || args.Kind() != "matching_evaluation_v1" {
+		return nil, fmt.Errorf("retry matching evaluation: matching River delivery is required")
+	}
+	var operation *Operation
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("retry matching evaluation: lock output gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("retry matching evaluation: lock provider configuration: %w", err)
+		}
+		locked, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if locked.Kind != "matching_evaluation_v1" || locked.State != "failed" {
+			return fmt.Errorf("only failed matching evaluations can be retried")
+		}
+		var run struct {
+			State    string    `bun:"state"`
+			SourceID uuid.UUID `bun:"provider_source_id"`
+			Identity string    `bun:"provider_configuration_identity"`
+		}
+		if err := tx.NewRaw(`SELECT state, provider_source_id, provider_configuration_identity FROM matching_run WHERE id=? FOR UPDATE`, id).Scan(ctx, &run); err != nil {
+			return fmt.Errorf("retry matching evaluation: lock run: %w", err)
+		}
+		if run.State != "failed" {
+			return fmt.Errorf("retry matching evaluation: run is not failed")
+		}
+		var identity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil || identity != run.Identity {
+			return fmt.Errorf("retry matching evaluation: provider configuration changed")
+		}
+		var sourceIdentity string
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, run.SourceID).Scan(ctx, &sourceIdentity); err != nil || sourceIdentity != run.Identity {
+			return fmt.Errorf("retry matching evaluation: provider source changed")
+		}
+		var stale bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM matching_run_target target
+			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+			WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+				generation.high_water IS DISTINCT FROM target.target_generation OR
+				current_group.revision IS DISTINCT FROM target.captured_group_revision)
+		) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, id).Scan(ctx, &stale); err != nil {
+			return fmt.Errorf("retry matching evaluation: validate captured targets: %w", err)
+		}
+		if stale {
+			return fmt.Errorf("retry matching evaluation: captured groups were superseded")
+		}
+		result, err := client.InsertTx(ctx, tx.Tx, args, options)
+		if err != nil {
+			return fmt.Errorf("insert matching retry River job: %w", err)
+		}
+		if result == nil || result.Job == nil || result.Job.ID <= 0 {
+			return fmt.Errorf("retry matching evaluation: River delivery identity is missing")
+		}
+		previousStage := locked.Stage
+		locked.State = "queued"
+		locked.Stage = "retry:" + previousStage
+		locked.SafeError = nil
+		locked.StartedAt = nil
+		locked.FinishedAt = nil
+		locked.BytesCompleted = 0
+		locked.BytesTotal = nil
+		locked.Attempt++
+		locked.RiverJobID = &result.Job.ID
+		locked.UpdatedAt = time.Now().UTC()
+		if _, err := tx.NewUpdate().Model(locked).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "river_job_id", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("retry matching evaluation: update operation: %w", err)
+		}
+		if _, err := tx.NewRaw(`UPDATE matching_run SET state='queued', execution_epoch=execution_epoch+1,
+			current_river_job_id=?, updated_at=now() WHERE id=?`, result.Job.ID, id).Exec(ctx); err != nil {
+			return fmt.Errorf("retry matching evaluation: advance execution epoch: %w", err)
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id) VALUES (?, ?)`, id, result.Job.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("retry matching evaluation: register delivery: %w", err)
+		}
+		operation = locked
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return operation, nil
 }
 
 type matchingRunAdmissionRow struct {

@@ -74,6 +74,12 @@ type sourceScanRetryEnqueuer interface {
 	RetrySourceScanOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 }
 
+// matchingRetryEnqueuer owns matching run epochs and their registered River
+// deliveries; generic operation retries cannot safely advance those fences.
+type matchingRetryEnqueuer interface {
+	RetryMatchingEvaluationOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
+}
+
 // sourceAnalysisRetryer recreates a normalized single-step retry through the
 // source-analysis service, which owns current-work validation and atomic admission.
 type sourceAnalysisRetryer interface {
@@ -358,6 +364,12 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	if existing.Kind == SourceAnalysisOperationKind {
 		return s.retryAnalysis(ctx, existing)
 	}
+	// A matching retry advances the run's delivery epoch and registers its next
+	// River job; the generic fallback would flip the operation back to queued
+	// while the run's fence stays stale, so refuse it before any state mutation.
+	if existing.Kind == "matching_evaluation_v1" {
+		return nil, fmt.Errorf("retry operation: matching delivery repository is unavailable")
+	}
 	existing.State = "queued"
 	if !strings.HasPrefix(existing.Stage, "retry:") {
 		existing.Stage = "retry:" + existing.Stage
@@ -395,6 +407,12 @@ func (s *Operations) retryEnqueued(ctx context.Context, id uuid.UUID) (*persiste
 // analysis retries are delegated to the source-analysis service.
 func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Operation) (*persistence.Operation, error) {
 	switch existing.Kind {
+	case "matching_evaluation_v1":
+		matching, ok := s.enqueuer.(matchingRetryEnqueuer)
+		if !ok || s.river == nil {
+			return nil, fmt.Errorf("retry operation: matching delivery repository is unavailable")
+		}
+		return matching.RetryMatchingEvaluationOperationAndEnqueue(ctx, existing.ID, s.river, MatchingEvaluationOperationArgs{OperationID: existing.ID}, nil)
 	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search":
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, ProviderFetchOperationArgs{OperationID: existing.ID}, nil)
 	case SourceScanOperationKind:

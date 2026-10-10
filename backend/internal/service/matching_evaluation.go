@@ -40,9 +40,9 @@ type matchingConfigurationReader interface {
 // A file has one key per query family; the evaluator never invents, combines,
 // or fans out provider searches.
 type MatchingEvaluationQueryScope struct {
-	GroupIDs          []uuid.UUID
-	ReleaseKeysByFile map[uuid.UUID][]string
-	SearchKeysByFile  map[uuid.UUID]MatchingSearchKeys
+	GroupIDs          []uuid.UUID                      `json:"group_ids"`
+	ReleaseKeysByFile map[uuid.UUID][]string           `json:"release_keys_by_file"`
+	SearchKeysByFile  map[uuid.UUID]MatchingSearchKeys `json:"search_keys_by_file"`
 }
 
 // MatchingEvaluationService composes persisted grouping/capture snapshots,
@@ -57,6 +57,12 @@ type MatchingEvaluationService struct {
 	config   matchingConfigurationReader
 }
 
+type PreparedMatchingEvaluation struct {
+	ExpectedRevisions map[uuid.UUID]*string
+	Results           []MatchingGroupEvaluationResult
+	evaluation        persistence.IncomingMatchEvaluation
+}
+
 func NewMatchingEvaluationService(groups *IncomingGroups, captures *persistence.IncomingGroupingRepository, provider *persistence.ProviderCacheRepository, results *persistence.IncomingMatchCandidateRepository, config *settings.Registry) *MatchingEvaluationService {
 	return newMatchingEvaluationService(groups, captures, provider, results, config)
 }
@@ -68,23 +74,42 @@ func newMatchingEvaluationService(groups matchingGroupingSnapshotReader, capture
 // EvaluateAndPersist reads only saved captures and provider cache state. If any
 // group is unready, it returns deferred results without publishing any group.
 func (evaluator *MatchingEvaluationService) EvaluateAndPersist(ctx context.Context, scope MatchingEvaluationQueryScope) ([]MatchingGroupEvaluationResult, error) {
+	prepared, err := evaluator.Prepare(ctx, scope)
+	if err != nil {
+		return prepared.Results, err
+	}
+	if err := evaluator.results.ReplaceIfCurrent(ctx, prepared.evaluation, prepared.ExpectedRevisions); err != nil {
+		return nil, err
+	}
+	return prepared.Results, nil
+}
+
+// Prepare evaluates exact persisted inputs and captures the prior evaluation
+// revisions before reading any mutable evaluation inputs. It performs no writes.
+func (evaluator *MatchingEvaluationService) Prepare(ctx context.Context, scope MatchingEvaluationQueryScope) (PreparedMatchingEvaluation, error) {
+	var prepared PreparedMatchingEvaluation
 	if evaluator == nil || evaluator.groups == nil || evaluator.captures == nil || evaluator.provider == nil || evaluator.results == nil || evaluator.config == nil {
-		return nil, fmt.Errorf("matching evaluation dependencies are unavailable")
+		return prepared, fmt.Errorf("matching evaluation dependencies are unavailable")
 	}
 	if len(scope.GroupIDs) == 0 {
-		return nil, fmt.Errorf("matching evaluation requires an explicit group scope")
+		return prepared, fmt.Errorf("matching evaluation requires an explicit group scope")
 	}
 	expectedRevisions, err := captureMatchingEvaluationRevisions(ctx, scope.GroupIDs, evaluator.results)
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
+	prepared.ExpectedRevisions = expectedRevisions
 	grouping, err := evaluator.groups.Snapshot(ctx)
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
 	requestedGroups, err := requestedMatchingGroups(grouping.Groups, scope.GroupIDs)
 	if err != nil {
-		return nil, err
+		return prepared, err
+	}
+	scope, err = exactMatchingEvaluationScope(scope, requestedGroups)
+	if err != nil {
+		return prepared, err
 	}
 	for _, group := range requestedGroups {
 		if len(group.UnreadyMembers) != 0 {
@@ -92,19 +117,20 @@ func (evaluator *MatchingEvaluationService) EvaluateAndPersist(ctx context.Conte
 			for index, current := range requestedGroups {
 				deferred[index] = MatchingGroupEvaluationResult{GroupID: current.ID, Decision: MatchingDecisionDeferred, Reason: "requested scope contains an unready group; no partial publication is allowed"}
 			}
-			return deferred, ErrMatchingEvaluationDeferred
+			prepared.Results = deferred
+			return prepared, ErrMatchingEvaluationDeferred
 		}
 	}
 	captures, err := evaluator.captures.CurrentCaptures(ctx)
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
 	config, err := evaluator.config.GetMusicBrainzConfig(ctx)
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
 	if config.Identity == "" {
-		return nil, fmt.Errorf("matching evaluation requires saved MusicBrainz configuration identity")
+		return prepared, fmt.Errorf("matching evaluation requires saved MusicBrainz configuration identity")
 	}
 	memberIDs := make(map[uuid.UUID]bool)
 	for _, group := range requestedGroups {
@@ -116,14 +142,14 @@ func (evaluator *MatchingEvaluationService) EvaluateAndPersist(ctx context.Conte
 	for member := range memberIDs {
 		releases, ok := scope.ReleaseKeysByFile[member]
 		if !ok || !canonicalMatchingReleaseKeys(releases) {
-			return nil, fmt.Errorf("matching evaluation requires sorted explicit release keys for every group member")
+			return prepared, fmt.Errorf("matching evaluation requires sorted explicit release keys for every group member")
 		}
 		for _, key := range releases {
 			releaseSet[key] = true
 		}
 		keys, ok := scope.SearchKeysByFile[member]
 		if !ok || keys.Release == "" || keys.Recording == "" {
-			return nil, fmt.Errorf("matching evaluation requires exactly one release and recording search key per group member")
+			return prepared, fmt.Errorf("matching evaluation requires exactly one release and recording search key per group member")
 		}
 		querySet[keys.Release], querySet[keys.Recording] = true, true
 	}
@@ -131,31 +157,61 @@ func (evaluator *MatchingEvaluationService) EvaluateAndPersist(ctx context.Conte
 		musicBrainzEndpoint(config), config.Identity,
 		sortedMatchingKeys(releaseSet), sortedMatchingKeys(querySet))
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
 	results, err := EvaluateMatchingSnapshot(ctx, MatchingEvaluationSnapshot{
 		Grouping: grouping, Captures: captures, Provider: providerSnapshot,
 		RequestedGroupIDs: scope.GroupIDs, ReleaseKeysByFile: scope.ReleaseKeysByFile, SearchKeysByFile: scope.SearchKeysByFile,
 	})
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("matching evaluation produced no groups")
+		return prepared, fmt.Errorf("matching evaluation produced no groups")
 	}
 	for _, result := range results {
 		if result.Decision == MatchingDecisionDeferred {
-			return results, ErrMatchingEvaluationDeferred
+			prepared.Results = results
+			return prepared, ErrMatchingEvaluationDeferred
 		}
 	}
 	combined, err := combineMatchingGroupResults(results, providerSnapshot, sortedMatchingKeys(releaseSet), sortedMatchingKeys(querySet))
 	if err != nil {
-		return nil, err
+		return prepared, err
 	}
-	if err := evaluator.results.ReplaceIfCurrent(ctx, combined, expectedRevisions); err != nil {
-		return nil, err
+	prepared.Results = results
+	prepared.evaluation = combined
+	return prepared, nil
+}
+
+func exactMatchingEvaluationScope(scope MatchingEvaluationQueryScope, groups []IncomingGroup) (MatchingEvaluationQueryScope, error) {
+	memberIDs := make(map[uuid.UUID]struct{})
+	for _, group := range groups {
+		for _, member := range group.Members {
+			memberIDs[member] = struct{}{}
+		}
+		for _, member := range group.UnreadyMembers {
+			memberIDs[member] = struct{}{}
+		}
 	}
-	return results, nil
+	if len(scope.ReleaseKeysByFile) != len(memberIDs) || len(scope.SearchKeysByFile) != len(memberIDs) {
+		return MatchingEvaluationQueryScope{}, fmt.Errorf("matching evaluation query scope must cover exactly the selected group members")
+	}
+	copyScope := MatchingEvaluationQueryScope{
+		GroupIDs:          append([]uuid.UUID(nil), scope.GroupIDs...),
+		ReleaseKeysByFile: make(map[uuid.UUID][]string, len(memberIDs)),
+		SearchKeysByFile:  make(map[uuid.UUID]MatchingSearchKeys, len(memberIDs)),
+	}
+	for member := range memberIDs {
+		releases, releaseOK := scope.ReleaseKeysByFile[member]
+		keys, searchOK := scope.SearchKeysByFile[member]
+		if !releaseOK || !searchOK {
+			return MatchingEvaluationQueryScope{}, fmt.Errorf("matching evaluation requires explicit query identities for every selected file")
+		}
+		copyScope.ReleaseKeysByFile[member] = append([]string{}, releases...)
+		copyScope.SearchKeysByFile[member] = keys
+	}
+	return copyScope, nil
 }
 
 func captureMatchingEvaluationRevisions(ctx context.Context, groupIDs []uuid.UUID, store matchingEvaluationStore) (map[uuid.UUID]*string, error) {

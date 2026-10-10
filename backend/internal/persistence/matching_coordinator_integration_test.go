@@ -210,6 +210,28 @@ func TestMatchingCoordinatorAdmissionIdempotencyAndFencesPostgres(t *testing.T) 
 	if err != nil || acceptedAfter == nil || acceptedAfter.Revision == nil || *acceptedAfter.Revision != "accepted-v1" || !bytes.Equal(acceptedAfter.Payload, acceptedBefore.Payload) {
 		t.Fatalf("failed provider transition changed accepted cache: before=%+v after=%+v err=%v", acceptedBefore, acceptedAfter, err)
 	}
+	if _, err := db.NewRaw(`UPDATE operation SET state='failed', stage='evaluation_failed', safe_error='temporary failure', finished_at=now() WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE matching_run SET state='failed' WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := repo.RetryMatchingEvaluationOperationAndEnqueue(ctx, parentID, riverClient,
+		service.MatchingEvaluationOperationArgs{OperationID: parentID}, nil)
+	if err != nil {
+		t.Fatalf("retry matching parent: %v", err)
+	}
+	var deliveryCount int
+	var executionEpoch int64
+	if err := db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &deliveryCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT execution_epoch FROM matching_run WHERE id=?`, parentID).Scan(ctx, &executionEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if retried.State != "queued" || retried.Attempt != first.Attempt+1 || retried.RiverJobID == nil || deliveryCount != 3 || executionEpoch != 1 {
+		t.Fatalf("matching retry did not atomically register a new attempt: operation=%+v deliveries=%d epoch=%d", retried, deliveryCount, executionEpoch)
+	}
 	const changedIdentity = "matching-admission-config-new"
 	if _, err := db.NewRaw(`UPDATE app_setting SET setting_value=? WHERE setting_name='musicbrainz_config_identity'`, changedIdentity).Exec(ctx); err != nil {
 		t.Fatal(err)

@@ -23,7 +23,6 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 	ctx := context.Background()
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	repository := persistence.NewIncomingMatchCandidateRepository(db)
-
 	assertIncomingMatchResult(t, ctx, repository, fixture.group.ID, false, nil)
 	if err := repository.Replace(ctx, fixture.evaluation(nil)); err != nil {
 		t.Fatalf("publish evaluated-empty result: %v", err)
@@ -116,6 +115,151 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestMatchingPublisherCommitsEvaluationAndParentTogetherPostgreSQL(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+	identity := "incoming-match-integration"
+	plan, err := json.Marshal(struct {
+		SchemaVersion        int                                  `json:"schema_version"`
+		GroupingEpoch        int64                                `json:"grouping_epoch"`
+		Targets              []persistence.MatchingTarget         `json:"targets"`
+		PolicyVersion        string                               `json:"policy_version"`
+		EvaluationQueryScope service.MatchingEvaluationQueryScope `json:"evaluation_query_scope"`
+		ProviderRequests     []struct {
+			Kind                          string          `json:"kind"`
+			Snapshot                      json.RawMessage `json:"snapshot"`
+			CacheKey                      string          `json:"cache_key"`
+			ExplicitRefresh               bool            `json:"explicit_refresh"`
+			ProviderSourceID              uuid.UUID       `json:"provider_source_id"`
+			EndpointConfigurationIdentity string          `json:"endpoint_configuration_identity"`
+			ProviderID                    uuid.UUID       `json:"provider_id"`
+		} `json:"provider_requests"`
+	}{
+		SchemaVersion: 2, GroupingEpoch: fixture.groupingEpoch,
+		Targets:       []persistence.MatchingTarget{{GroupID: fixture.group.ID, Revision: fixture.group.Revision}},
+		PolicyVersion: "policy-v1",
+		EvaluationQueryScope: service.MatchingEvaluationQueryScope{
+			GroupIDs:          []uuid.UUID{fixture.group.ID},
+			ReleaseKeysByFile: map[uuid.UUID][]string{fixture.memberA: fixture.releaseKeys, fixture.memberB: fixture.releaseKeys},
+			SearchKeysByFile: map[uuid.UUID]service.MatchingSearchKeys{
+				fixture.memberA: {Release: fixture.cacheKey, Recording: "recording-search:a"},
+				fixture.memberB: {Release: "release-search:b", Recording: "recording-search:b"},
+			},
+		},
+		ProviderRequests: []struct {
+			Kind                          string          `json:"kind"`
+			Snapshot                      json.RawMessage `json:"snapshot"`
+			CacheKey                      string          `json:"cache_key"`
+			ExplicitRefresh               bool            `json:"explicit_refresh"`
+			ProviderSourceID              uuid.UUID       `json:"provider_source_id"`
+			EndpointConfigurationIdentity string          `json:"endpoint_configuration_identity"`
+			ProviderID                    uuid.UUID       `json:"provider_id"`
+		}{{Kind: "provider_release_lookup", Snapshot: json.RawMessage(`{"query":"fixture"}`), CacheKey: "publisher-dependency", ProviderSourceID: fixture.source, EndpointConfigurationIdentity: identity, ProviderID: fixture.provider}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentID, childID := uuid.New(), uuid.New()
+	childCacheKey := "publisher-dependency"
+	parent := &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"plan":{}}`)}
+	admission := persistence.MatchingAdmission{
+		AdmissionKey: "publisher-success", GroupingEpoch: fixture.groupingEpoch,
+		Targets: []persistence.MatchingTarget{{GroupID: fixture.group.ID, Revision: fixture.group.Revision}},
+		Plan:    plan, PolicyVersion: "policy-v1", Parent: parent,
+		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
+		Providers: []persistence.MatchingProviderRequest{{Operation: &persistence.Operation{
+			ID: childID, Kind: "provider_release_lookup", State: "queued", Stage: "fetch", InputSnapshot: json.RawMessage(`{"query":"fixture"}`),
+			ProviderSourceID: &fixture.source, ProviderConfigurationIdentity: &identity,
+			ProviderID: &fixture.provider, ProviderEndpoint: "https://musicbrainz.example/ws/2", ProviderCacheKey: &childCacheKey,
+		}, Args: service.ProviderFetchOperationArgs{OperationID: childID}}},
+	}
+	repository := persistence.NewSetupManagerRepository(db)
+	river := openScanEnqueueRiver(t, db)
+	admitted, err := repository.AdmitMatchingRun(ctx, river, admission)
+	if err != nil || admitted.RiverJobID == nil {
+		t.Fatalf("admit matching plan: op=%+v err=%v", admitted, err)
+	}
+	jobID := *admitted.RiverJobID
+	if _, err := db.NewRaw(`UPDATE operation SET state='running', stage='evaluating', started_at=now() WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE matching_run SET state='running', execution_epoch=1, current_river_job_id=? WHERE id=?`, jobID, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A delivery with an obsolete execution epoch must not publish, even while
+	// its parent and registered delivery are otherwise current.
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 0, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+		t.Fatalf("stale execution epoch publication = changed:%v err:%v, want rejection", changed, err)
+	}
+	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
+	// A current delivery also cannot complete while an admitted child remains
+	// unsettled.
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+		t.Fatalf("publication with pending provider dependency = changed:%v err:%v, want rejection", changed, err)
+	}
+	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
+	if _, err := db.NewRaw(`UPDATE matching_provider_dependency SET terminal_outcome='succeeded', settled_at=now() WHERE parent_run_id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force failure only at parent completion, after candidate/header writes have
+	// occurred, and prove the transaction rolled back all of those writes.
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_matching_parent_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '`+parentID.String()+`'::uuid AND NEW.state = 'succeeded' THEN RAISE EXCEPTION 'forced matching completion failure'; END IF; RETURN NEW; END $$`); err != nil {
+		t.Fatalf("create completion failure trigger function: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_matching_parent_completion BEFORE UPDATE ON operation FOR EACH ROW EXECUTE FUNCTION reject_matching_parent_completion()`); err != nil {
+		t.Fatalf("create completion failure trigger: %v", err)
+	}
+	rollbackCandidate := fixture.candidate(fixture.memberA, .75)
+	rollbackCandidate.Positions = []persistence.IncomingMatchPosition{{TrackID: fixture.trackID, Medium: 0, Position: 0}}
+	if changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation([]persistence.IncomingMatchCandidate{rollbackCandidate}), map[uuid.UUID]*string{fixture.group.ID: nil}); err == nil || changed {
+		t.Fatalf("forced completion failure publication = changed:%v err:%v, want rejection", changed, err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER reject_matching_parent_completion ON operation`); err != nil {
+		t.Fatalf("drop completion failure trigger: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP FUNCTION reject_matching_parent_completion()`); err != nil {
+		t.Fatalf("drop completion failure trigger function: %v", err)
+	}
+	assertMatchingPublicationStillRunning(t, ctx, db, repository, parentID, jobID, fixture.group.ID)
+	changed, err := repository.PublishMatchingEvaluationForDelivery(ctx, parentID, admitted.Attempt, jobID, 1, fixture.evaluation(nil), map[uuid.UUID]*string{fixture.group.ID: nil})
+	if err != nil || !changed {
+		t.Fatalf("publish matching result: changed=%v err=%v", changed, err)
+	}
+	stored, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, fixture.group.ID)
+	if err != nil || stored == nil || len(candidates) != 0 {
+		t.Fatalf("published evaluated-empty result: header=%+v candidates=%+v err=%v", stored, candidates, err)
+	}
+	completed, err := repository.GetOperation(ctx, parentID)
+	if err != nil || completed.State != "succeeded" {
+		t.Fatalf("parent completion = %+v err=%v", completed, err)
+	}
+	var state string
+	var consumed bool
+	if err := db.NewRaw(`SELECT run.state, delivery.consumed_at IS NOT NULL FROM matching_run run JOIN matching_delivery delivery ON delivery.run_id=run.id WHERE run.id=? AND delivery.river_job_id=?`, parentID, jobID).Scan(ctx, &state, &consumed); err != nil || state != "succeeded" || !consumed {
+		t.Fatalf("run/delivery completion state=%q consumed=%v err=%v", state, consumed, err)
+	}
+}
+
+func assertMatchingPublicationStillRunning(t *testing.T, ctx context.Context, db *bun.DB, repository *persistence.SetupManagerRepository, parentID uuid.UUID, jobID int64, groupID uuid.UUID) {
+	t.Helper()
+	parent, err := repository.GetOperation(ctx, parentID)
+	if err != nil || parent.State != "running" {
+		t.Fatalf("rejected publication parent = %+v err=%v, want running", parent, err)
+	}
+	stored, candidates, err := persistence.NewIncomingMatchCandidateRepository(db).Get(ctx, groupID)
+	if err != nil || stored != nil || len(candidates) != 0 {
+		t.Fatalf("rejected publication changed evaluated result: header=%+v candidates=%+v err=%v", stored, candidates, err)
+	}
+	var state string
+	var consumed bool
+	if err := db.NewRaw(`SELECT run.state, delivery.consumed_at IS NOT NULL FROM matching_run run JOIN matching_delivery delivery ON delivery.run_id=run.id WHERE run.id=? AND delivery.river_job_id=?`, parentID, jobID).Scan(ctx, &state, &consumed); err != nil || state != "running" || consumed {
+		t.Fatalf("rejected publication run/delivery state=%q consumed=%v err=%v, want running/unconsumed", state, consumed, err)
+	}
+}
+
 func assertIncomingMatchResult(t *testing.T, ctx context.Context, repository *persistence.IncomingMatchCandidateRepository, groupID uuid.UUID, evaluated bool, want []persistence.IncomingMatchCandidate) {
 	t.Helper()
 	header, candidates, err := repository.Get(ctx, groupID)
@@ -142,10 +286,13 @@ type incomingMatchFixture struct {
 	workA, workB          uuid.UUID
 	provider, source      uuid.UUID
 	releaseID, trackID    uuid.UUID
+	sourceSHA256A         []byte
+	sourceSHA256B         []byte
 	groupingEpoch         int64
 	groupsRevision        string
 	acceptedProjectionRev string
 	cacheKey              string
+	cacheRevision         *string
 	releaseKeys           []string
 	graph                 persistence.ProviderGraph
 }
@@ -210,6 +357,10 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 	captures, err := grouping.CurrentCaptures(ctx)
 	if err != nil {
 		t.Fatalf("read actual incoming captures before grouping: %v", err)
+	}
+	sourceSHA256ByWork := make(map[uuid.UUID][]byte, len(captures))
+	for _, capture := range captures {
+		sourceSHA256ByWork[capture.WorkID] = append([]byte(nil), capture.SourceSHA256...)
 	}
 	if len(captures) != len(works) {
 		t.Fatalf("current incoming captures = %d, want %d", len(captures), len(works))
@@ -292,7 +443,8 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 		t.Fatalf("persist second inspected release projection: %v", err)
 	}
 	releaseKeys := []string{releaseKey, secondReleaseKey}
-	snapshot, err := cache.GetMusicBrainzMatchingSnapshot(ctx, source.Endpoint, identity, releaseKeys, []string{cacheKey})
+	queryKeys := []string{cacheKey, "recording-search:a", "recording-search:b", "release-search:b"}
+	snapshot, err := cache.GetMusicBrainzMatchingSnapshot(ctx, source.Endpoint, identity, releaseKeys, queryKeys)
 	if err != nil || len(snapshot.Releases) != 2 || len(snapshot.Releases[0].Tracks) != 1 {
 		t.Fatalf("read accepted provider projection: snapshot=%#v err=%v", snapshot, err)
 	}
@@ -304,6 +456,11 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 		t.Fatalf("resolve persisted release ID for projected key %q: %v", snapshot.Releases[0].ProviderKey, err)
 	}
 	trackID := snapshot.Releases[0].Tracks[0].ID
+	cacheResponse, err := cache.GetCachedResponse(ctx, source.ID, cacheKey)
+	if err != nil || cacheResponse == nil {
+		t.Fatalf("read accepted cache revision: %v", err)
+	}
+	cacheRevision := cacheResponse.Revision
 	return &incomingMatchFixture{
 		group: persistence.IncomingGroupingGroup{
 			ID: groupSnapshot.Groups[0].ID, Revision: groupSnapshot.Groups[0].Revision,
@@ -311,8 +468,9 @@ func newIncomingMatchFixture(t *testing.T, ctx context.Context, db *bun.DB) *inc
 		},
 		memberA: works[0].ID, memberB: works[1].ID, workA: works[0].ID, workB: works[1].ID,
 		provider: provider.ID, source: source.ID, releaseID: releaseID, trackID: trackID, releaseKeys: releaseKeys,
+		sourceSHA256A: sourceSHA256ByWork[works[0].ID], sourceSHA256B: sourceSHA256ByWork[works[1].ID],
 		groupingEpoch: state.Revision, groupsRevision: groupRevision,
-		acceptedProjectionRev: snapshot.AcceptedProjectionRevision, cacheKey: cacheKey, graph: graph,
+		acceptedProjectionRev: snapshot.AcceptedProjectionRevision, cacheKey: cacheKey, cacheRevision: cacheRevision, graph: graph,
 	}
 }
 
@@ -322,14 +480,38 @@ func (f *incomingMatchFixture) evaluation(candidates []persistence.IncomingMatch
 		Provider: persistence.IncomingMatchProviderFence{
 			ProviderID: f.provider, ProviderSourceID: f.source, Namespace: "incoming-match",
 			Endpoint: "https://musicbrainz.example/ws/2", ConfigurationIdentity: "incoming-match-integration",
-			CacheKey: f.cacheKey, AcceptedProjectionRevision: f.acceptedProjectionRev,
+			CacheKey: f.cacheKey, CacheRevision: f.cacheRevision, AcceptedProjectionRevision: f.acceptedProjectionRev,
+			CacheRevisions: map[string]*string{
+				f.cacheKey:           f.cacheRevision,
+				"release-search:b":   nil,
+				"recording-search:a": nil, "recording-search:b": nil,
+			},
 			ReleaseKeys: append([]string(nil), f.releaseKeys...),
 		},
 		Groups: []persistence.IncomingMatchGroupEvaluation{{GroupID: f.group.ID, GroupRevision: f.group.Revision,
-			Members:    []persistence.IncomingMatchMemberFence{{FileMemberID: f.memberA, WorkID: f.workA}, {FileMemberID: f.memberB, WorkID: f.workB}},
+			Members: []persistence.IncomingMatchMemberFence{
+				{FileMemberID: f.memberA, WorkID: f.workA, SourceSHA256: append([]byte(nil), f.sourceSHA256A...)},
+				{FileMemberID: f.memberB, WorkID: f.workB, SourceSHA256: append([]byte(nil), f.sourceSHA256B...)},
+			},
 			Candidates: candidates,
+			Evidence:   f.evaluationEvidence(),
 		}},
 	}
+}
+
+func (f *incomingMatchFixture) evaluationEvidence() json.RawMessage {
+	type queryEvidence struct {
+		FileMemberID      uuid.UUID `json:"file_member_id"`
+		ReleaseQueryKey   string    `json:"release_query_key"`
+		RecordingQueryKey string    `json:"recording_query_key"`
+	}
+	evidence, _ := json.Marshal(struct {
+		Files []queryEvidence `json:"files"`
+	}{Files: []queryEvidence{
+		{FileMemberID: f.memberA, ReleaseQueryKey: f.cacheKey, RecordingQueryKey: "recording-search:a"},
+		{FileMemberID: f.memberB, ReleaseQueryKey: "release-search:b", RecordingQueryKey: "recording-search:b"},
+	}})
+	return evidence
 }
 
 func (f *incomingMatchFixture) candidate(member uuid.UUID, score float64) persistence.IncomingMatchCandidate {

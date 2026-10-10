@@ -48,11 +48,11 @@ func NewMatchingCoordinator(repository matchingCoordinatorRepository, groups mat
 
 // Start admits exactly the requested current groups and the provider requests
 // explicitly supplied by the caller. It does not expand group scope or fetch.
-func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey string, groupIDs []uuid.UUID, requests []MatchingProviderRequest) (*persistence.Operation, error) {
+func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey string, scope MatchingEvaluationQueryScope, requests []MatchingProviderRequest) (*persistence.Operation, error) {
 	if coordinator == nil || coordinator.repository == nil || coordinator.groups == nil || coordinator.providers == nil || coordinator.river == nil {
 		return nil, fmt.Errorf("matching coordinator is unavailable")
 	}
-	if admissionKey == "" || len(groupIDs) == 0 || len(requests) == 0 {
+	if admissionKey == "" || len(scope.GroupIDs) == 0 || len(requests) == 0 {
 		return nil, fmt.Errorf("matching admission key, exact group scope, and provider requests are required")
 	}
 	state, err := coordinator.groups.State(ctx)
@@ -70,7 +70,7 @@ func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey 
 	for _, group := range allGroups {
 		byID[group.ID] = group
 	}
-	ids := append([]uuid.UUID(nil), groupIDs...)
+	ids := append([]uuid.UUID(nil), scope.GroupIDs...)
 	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
 	targets := make([]persistence.MatchingTarget, 0, len(ids))
 	for i, id := range ids {
@@ -79,6 +79,10 @@ func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey 
 			return nil, fmt.Errorf("matching group scope is invalid or stale")
 		}
 		targets = append(targets, persistence.MatchingTarget{GroupID: id, Revision: group.Revision})
+	}
+	queryScope, err := canonicalMatchingQueryScope(scope, targets, byID)
+	if err != nil {
+		return nil, err
 	}
 	prepared := make([]persistence.MatchingProviderRequest, 0, len(requests))
 	planRequests := make([]matchingPlanProviderRequest, 0, len(requests))
@@ -98,7 +102,7 @@ func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey 
 		})
 	}
 	prepared, planRequests = canonicalMatchingProviderRequests(prepared, planRequests)
-	plan := matchingAdmissionPlan{SchemaVersion: 1, GroupingEpoch: state.Revision, Targets: targets, PolicyVersion: MatchingPolicyVersion, ProviderRequests: planRequests}
+	plan := matchingAdmissionPlan{SchemaVersion: 2, GroupingEpoch: state.Revision, Targets: targets, PolicyVersion: MatchingPolicyVersion, EvaluationQueryScope: queryScope, ProviderRequests: planRequests}
 	encodedPlan, err := json.Marshal(plan)
 	if err != nil {
 		return nil, fmt.Errorf("encode matching plan: %w", err)
@@ -115,11 +119,49 @@ func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey 
 }
 
 type matchingAdmissionPlan struct {
-	SchemaVersion    int                           `json:"schema_version"`
-	GroupingEpoch    int64                         `json:"grouping_epoch"`
-	Targets          []persistence.MatchingTarget  `json:"targets"`
-	PolicyVersion    string                        `json:"policy_version"`
-	ProviderRequests []matchingPlanProviderRequest `json:"provider_requests"`
+	SchemaVersion        int                           `json:"schema_version"`
+	GroupingEpoch        int64                         `json:"grouping_epoch"`
+	Targets              []persistence.MatchingTarget  `json:"targets"`
+	PolicyVersion        string                        `json:"policy_version"`
+	EvaluationQueryScope MatchingEvaluationQueryScope  `json:"evaluation_query_scope"`
+	ProviderRequests     []matchingPlanProviderRequest `json:"provider_requests"`
+}
+
+func canonicalMatchingQueryScope(scope MatchingEvaluationQueryScope, targets []persistence.MatchingTarget, groups map[uuid.UUID]persistence.IncomingGroupingGroup) (MatchingEvaluationQueryScope, error) {
+	result := MatchingEvaluationQueryScope{
+		GroupIDs:          append([]uuid.UUID(nil), scope.GroupIDs...),
+		ReleaseKeysByFile: make(map[uuid.UUID][]string, len(scope.ReleaseKeysByFile)),
+		SearchKeysByFile:  make(map[uuid.UUID]MatchingSearchKeys, len(scope.SearchKeysByFile)),
+	}
+	sort.Slice(result.GroupIDs, func(i, j int) bool { return result.GroupIDs[i].String() < result.GroupIDs[j].String() })
+	selectedMembers := make(map[uuid.UUID]struct{})
+	for _, target := range targets {
+		group := groups[target.GroupID]
+		for _, member := range group.Members {
+			selectedMembers[member] = struct{}{}
+		}
+		for _, member := range group.UnreadyMembers {
+			selectedMembers[member] = struct{}{}
+		}
+	}
+	if len(scope.ReleaseKeysByFile) != len(selectedMembers) || len(scope.SearchKeysByFile) != len(selectedMembers) {
+		return MatchingEvaluationQueryScope{}, fmt.Errorf("matching query scope must cover exactly the selected group members")
+	}
+	for member := range selectedMembers {
+		releases, releaseOK := scope.ReleaseKeysByFile[member]
+		keys, searchOK := scope.SearchKeysByFile[member]
+		if !releaseOK || !searchOK || keys.Release == "" || keys.Recording == "" {
+			return MatchingEvaluationQueryScope{}, fmt.Errorf("matching query scope requires one release and recording search key per selected file")
+		}
+		for index, key := range releases {
+			if key == "" || index > 0 && releases[index-1] >= key {
+				return MatchingEvaluationQueryScope{}, fmt.Errorf("matching query scope release keys must be sorted and unique")
+			}
+		}
+		result.ReleaseKeysByFile[member] = append([]string{}, releases...)
+		result.SearchKeysByFile[member] = keys
+	}
+	return result, nil
 }
 
 type matchingPlanProviderRequest struct {
