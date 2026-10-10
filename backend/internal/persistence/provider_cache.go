@@ -2,10 +2,14 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +20,36 @@ import (
 
 type ProviderCacheRepository struct {
 	db bun.IDB
+}
+
+const acoustIDCacheLockNamespace int32 = 0x41434f55 // "ACOU"
+
+// lockAcoustIDCacheKeys serializes reservations, accepted writes, and matching
+// publication for each official-source/cache-key pair. Callers must acquire
+// these gates before taking provider, operation, or response-cache row locks.
+func lockAcoustIDCacheKeys(ctx context.Context, tx bun.IDB, sourceID uuid.UUID, cacheKeys []string, shared bool) error {
+	keys := append([]string(nil), cacheKeys...)
+	sort.Strings(keys)
+	var previous string
+	for index, cacheKey := range keys {
+		if cacheKey == "" {
+			return fmt.Errorf("AcoustID cache key is required")
+		}
+		if index > 0 && cacheKey == previous {
+			continue
+		}
+		digest := sha256.Sum256([]byte(sourceID.String() + "\x00" + cacheKey))
+		key := int32(binary.BigEndian.Uint32(digest[:4]))
+		if err := advisoryXactLock(ctx, tx, shared, acoustIDCacheLockNamespace, key); err != nil {
+			return fmt.Errorf("lock AcoustID response cache key: %w", err)
+		}
+		previous = cacheKey
+	}
+	return nil
+}
+
+func officialAcoustIDSourceID() uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("acoustid-source:"+acoustIDOfficialEndpoint))
 }
 
 // NormalizeMusicBrainzEndpoint applies the same trailing-slash normalization
@@ -59,6 +93,9 @@ func (repository *ProviderCacheRepository) BeginAcoustIDRefresh(ctx context.Cont
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
 			return err
 		}
+		if err := lockAcoustIDCacheKeys(ctx, tx, sourceID, []string{cacheKey}, false); err != nil {
+			return fmt.Errorf("begin AcoustID refresh: %w", err)
+		}
 		var revision string
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &revision); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("begin AcoustID refresh: read credential revision: %w", err)
@@ -94,6 +131,9 @@ func (repository *ProviderCacheRepository) GetCurrentAcoustIDResponse(ctx contex
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
 			return err
 		}
+		if err := lockAcoustIDCacheKeys(ctx, tx, sourceID, []string{cacheKey}, true); err != nil {
+			return fmt.Errorf("get cached AcoustID response: %w", err)
+		}
 		var sourceIdentity string
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, sourceID).Scan(ctx, &sourceIdentity); err != nil {
 			return fmt.Errorf("get cached AcoustID response: read source: %w", err)
@@ -116,6 +156,65 @@ func (repository *ProviderCacheRepository) GetCurrentAcoustIDResponse(ctx contex
 	return response, err
 }
 
+// GetAcoustIDMatchingSnapshot reads accepted official-source payloads without
+// binding their eligibility to the current application-key revision. A missing
+// response (or a reservation with no payload) is represented as nil.
+func (repository *ProviderCacheRepository) GetAcoustIDMatchingSnapshot(ctx context.Context, cacheKeys []string) (AcoustIDCachedResponseSnapshot, error) {
+	snapshot := AcoustIDCachedResponseSnapshot{Responses: make(map[string]*ProviderCachedResponse, len(cacheKeys))}
+	for _, key := range cacheKeys {
+		if key == "" {
+			return AcoustIDCachedResponseSnapshot{}, fmt.Errorf("get AcoustID matching snapshot: cache keys must be non-empty")
+		}
+		if _, duplicate := snapshot.Responses[key]; duplicate {
+			return AcoustIDCachedResponseSnapshot{}, fmt.Errorf("get AcoustID matching snapshot: duplicate cache key")
+		}
+		snapshot.Responses[key] = nil
+	}
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockAcoustIDCacheKeys(ctx, tx, officialAcoustIDSourceID(), cacheKeys, true); err != nil {
+			return fmt.Errorf("get AcoustID matching snapshot: %w", err)
+		}
+		namespaceHash := sha256.Sum256([]byte(acoustIDOfficialEndpoint))
+		namespace := "acoustid:" + hex.EncodeToString(namespaceHash[:])
+		var source ProviderSource
+		err := tx.NewRaw(`SELECT source.id, source.provider_id, source.namespace, source.endpoint, source.configuration_identity
+			FROM provider_source source JOIN provider ON provider.id=source.provider_id
+			WHERE provider.code=? AND source.namespace=?`, acoustIDProviderCode, namespace).Scan(ctx, &source)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get AcoustID matching snapshot: resolve official source: %w", err)
+		}
+		if source.ConfigurationIdentity != acoustIDSourceIdentity || source.Endpoint != acoustIDOfficialEndpoint {
+			return fmt.Errorf("get AcoustID matching snapshot: official source identity changed")
+		}
+		snapshot.Source = source
+		if len(cacheKeys) == 0 {
+			return nil
+		}
+		var rows []ProviderCachedResponse
+		if err := tx.NewSelect().TableExpr("provider_response_cache").Column("provider_source_id", "provider_id", "cache_key", "payload", "fetched_at", "revision", "generation", "fetch_order").Where("provider_source_id = ?", source.ID).Where("cache_key IN (?)", bun.List(cacheKeys)).Scan(ctx, &rows); err != nil {
+			return fmt.Errorf("get AcoustID matching snapshot: read accepted responses: %w", err)
+		}
+		for i := range rows {
+			row := rows[i]
+			if len(row.Payload) == 0 {
+				continue
+			}
+			digest := sha256.Sum256(row.Payload)
+			revision := hex.EncodeToString(digest[:])
+			row.Revision = &revision
+			snapshot.Responses[row.CacheKey] = &row
+		}
+		return nil
+	})
+	if err != nil {
+		return AcoustIDCachedResponseSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
 // ApplyAcoustIDResponse stores a successful raw response only for the captured
 // credential revision, source, generation, and active provider delivery.
 func (repository *ProviderCacheRepository) ApplyAcoustIDResponse(ctx context.Context, ticket ProviderRefreshTicket, expectedRevision string, fetchedAt time.Time, payload []byte, fence ProviderDeliveryFence) error {
@@ -128,6 +227,9 @@ func (repository *ProviderCacheRepository) ApplyAcoustIDResponse(ctx context.Con
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
 			return err
+		}
+		if err := lockAcoustIDCacheKeys(ctx, tx, ticket.ProviderSourceID, []string{ticket.CacheKey}, false); err != nil {
+			return fmt.Errorf("apply AcoustID response: %w", err)
 		}
 		var revision string
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &revision); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -273,16 +375,36 @@ func (repository *ProviderCacheRepository) BeginRefresh(ctx context.Context, sou
 }
 
 func (repository *ProviderCacheRepository) GetCachedResponse(ctx context.Context, sourceID uuid.UUID, cacheKey string) (*ProviderCachedResponse, error) {
-	response := new(ProviderCachedResponse)
-	err := repository.db.NewRaw(`SELECT provider_source_id, provider_id, cache_key, payload, fetched_at, revision, generation, fetch_order
-		FROM provider_response_cache WHERE provider_source_id = ? AND cache_key = ?`, sourceID, cacheKey).Scan(ctx, response)
-	if err == sql.ErrNoRows {
-		return nil, nil
+	if sourceID != officialAcoustIDSourceID() {
+		response := new(ProviderCachedResponse)
+		err := repository.db.NewRaw(`SELECT provider_source_id, provider_id, cache_key, payload, fetched_at, revision, generation, fetch_order
+			FROM provider_response_cache WHERE provider_source_id = ? AND cache_key = ?`, sourceID, cacheKey).Scan(ctx, response)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get cached provider response: %w", err)
+		}
+		return response, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("get cached provider response: %w", err)
-	}
-	return response, nil
+	var response *ProviderCachedResponse
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockAcoustIDCacheKeys(ctx, tx, sourceID, []string{cacheKey}, true); err != nil {
+			return fmt.Errorf("get cached provider response: %w", err)
+		}
+		cached := new(ProviderCachedResponse)
+		err := tx.NewRaw(`SELECT provider_source_id, provider_id, cache_key, payload, fetched_at, revision, generation, fetch_order
+			FROM provider_response_cache WHERE provider_source_id = ? AND cache_key = ?`, sourceID, cacheKey).Scan(ctx, cached)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get cached provider response: %w", err)
+		}
+		response = cached
+		return nil
+	})
+	return response, err
 }
 
 // GetCurrentCachedResponse is a cache-only read fenced by the current saved

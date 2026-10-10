@@ -33,11 +33,12 @@ type Candidate struct {
 	Locations  []Location
 }
 
-// Result contains the unique maximum-confidence mapping. Choices maps each
-// file ID to the selected candidate ID.
+// Result reports feasibility and, when the optimum is unique, its mapping.
+// Choices maps each file ID to the selected candidate ID.
 type Result struct {
-	Choices map[string]string
-	Unique  bool
+	Feasible bool
+	Choices  map[string]string
+	Unique   bool
 }
 
 // Solve requires exactly one candidate for every input file and at most one
@@ -51,7 +52,7 @@ func Solve(ctx context.Context, candidates []Candidate) (Result, error) {
 		return Result{}, err
 	}
 	if len(files) == 0 {
-		return Result{Choices: map[string]string{}, Unique: true}, nil
+		return Result{Feasible: true, Choices: map[string]string{}, Unique: true}, nil
 	}
 
 	circuit := logic.NewC()
@@ -110,6 +111,13 @@ func Solve(ctx context.Context, candidates []Candidate) (Result, error) {
 		solver.Add(constraint)
 		solver.Add(0)
 	}
+	status, err := solve(ctx, solver, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	if status != 1 {
+		return Result{Feasible: false}, nil
+	}
 
 	prefix := make([]z.Lit, 0, width)
 	for bit := width - 1; bit >= 0; bit-- {
@@ -127,7 +135,7 @@ func Solve(ctx context.Context, candidates []Candidate) (Result, error) {
 			prefix = append(prefix, objective[bit].Not())
 		}
 	}
-	status, err := solve(ctx, solver, prefix)
+	status, err = solve(ctx, solver, prefix)
 	if err != nil {
 		return Result{}, err
 	}
@@ -161,9 +169,9 @@ func Solve(ctx context.Context, candidates []Candidate) (Result, error) {
 		return Result{}, err
 	}
 	if status == 1 {
-		return Result{Unique: false}, nil
+		return Result{Feasible: true, Unique: false}, nil
 	}
-	return Result{Choices: choices, Unique: true}, nil
+	return Result{Feasible: true, Choices: choices, Unique: true}, nil
 }
 
 func validate(candidates []Candidate) ([]string, map[string][]int, map[string][]Location, error) {

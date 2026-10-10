@@ -1,14 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"sort"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/acoustid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
@@ -25,6 +28,10 @@ type matchingCaptureReader interface {
 
 type matchingProviderSnapshotReader interface {
 	GetMusicBrainzMatchingSnapshot(context.Context, string, string, []string, []string) (persistence.ProviderMatchingSnapshot, error)
+}
+
+type matchingAcoustIDSnapshotReader interface {
+	GetAcoustIDMatchingSnapshot(context.Context, []string) (persistence.AcoustIDCachedResponseSnapshot, error)
 }
 
 type matchingEvaluationStore interface {
@@ -44,9 +51,10 @@ type matchingConfigurationReader interface {
 // A file has one key per query family; the evaluator never invents, combines,
 // or fans out provider searches.
 type MatchingEvaluationQueryScope struct {
-	GroupIDs          []uuid.UUID                      `json:"group_ids"`
-	ReleaseKeysByFile map[uuid.UUID][]string           `json:"release_keys_by_file"`
-	SearchKeysByFile  map[uuid.UUID]MatchingSearchKeys `json:"search_keys_by_file"`
+	GroupIDs           []uuid.UUID                      `json:"group_ids"`
+	ReleaseKeysByFile  map[uuid.UUID][]string           `json:"release_keys_by_file"`
+	SearchKeysByFile   map[uuid.UUID]MatchingSearchKeys `json:"search_keys_by_file"`
+	AcoustIDKeysByFile map[uuid.UUID]string             `json:"acoustid_keys_by_file,omitempty"`
 }
 
 // MatchingEvaluationService composes persisted grouping/capture snapshots,
@@ -59,6 +67,7 @@ type MatchingEvaluationService struct {
 	provider matchingProviderSnapshotReader
 	results  matchingEvaluationStore
 	config   matchingConfigurationReader
+	acoustID matchingAcoustIDSnapshotReader
 }
 
 type PreparedMatchingEvaluation struct {
@@ -72,7 +81,11 @@ func NewMatchingEvaluationService(groups *IncomingGroups, captures *persistence.
 }
 
 func newMatchingEvaluationService(groups matchingGroupingSnapshotReader, captures matchingCaptureReader, provider matchingProviderSnapshotReader, results matchingEvaluationStore, config matchingConfigurationReader) *MatchingEvaluationService {
-	return &MatchingEvaluationService{groups: groups, captures: captures, provider: provider, results: results, config: config}
+	evaluator := &MatchingEvaluationService{groups: groups, captures: captures, provider: provider, results: results, config: config}
+	if reader, ok := provider.(matchingAcoustIDSnapshotReader); ok {
+		evaluator.acoustID = reader
+	}
+	return evaluator
 }
 
 // EvaluateAndPersist reads only saved captures and provider cache state. If any
@@ -163,9 +176,77 @@ func (evaluator *MatchingEvaluationService) Prepare(ctx context.Context, scope M
 	if err != nil {
 		return prepared, err
 	}
+	var acoustIDSnapshot persistence.AcoustIDCachedResponseSnapshot
+	acoustIDScores := make(map[MatchingAcoustIDKey]float64)
+	acoustIDInputs := make(map[uuid.UUID][]persistence.IncomingMatchAcoustIDSourceInputFence)
+	acoustIDDiagnostics := make(map[uuid.UUID]string)
+	if len(scope.AcoustIDKeysByFile) != 0 {
+		if evaluator.acoustID == nil {
+			return prepared, fmt.Errorf("matching evaluation AcoustID cache reader is unavailable")
+		}
+		keys := make(map[string]bool)
+		for _, key := range scope.AcoustIDKeysByFile {
+			keys[key] = true
+		}
+		acoustIDSnapshot, err = evaluator.acoustID.GetAcoustIDMatchingSnapshot(ctx, sortedMatchingKeys(keys))
+		if err != nil {
+			return prepared, err
+		}
+		for fileID, key := range scope.AcoustIDKeysByFile {
+			memberCaptures := allCapturesForMember(captures, fileID)
+			matched := false
+			consistent := len(memberCaptures) != 0
+			var first persistence.IncomingGroupingCapture
+			for index, capture := range memberCaptures {
+				requestKey, keyErr := persistence.AcoustIDRequestCacheKeyForCapture(capture)
+				if keyErr != nil {
+					return prepared, fmt.Errorf("matching evaluation AcoustID source input is incomplete: %w", keyErr)
+				}
+				if requestKey == key {
+					matched = true
+				}
+				if index == 0 {
+					first = capture
+				} else if !persistence.SameAcoustIDFingerprintIdentity(first, capture) {
+					consistent = false
+				}
+				acoustIDInputs[fileID] = append(acoustIDInputs[fileID], persistence.IncomingMatchAcoustIDSourceInputFence{Capture: capture, RequestCacheKey: requestKey})
+			}
+			if !matched {
+				return prepared, fmt.Errorf("matching evaluation AcoustID cache key does not match any current selected fingerprint input")
+			}
+			if !consistent {
+				acoustIDDiagnostics[fileID] = "shared source locations have conflicting selected fingerprint identities; AcoustID evidence was not applied"
+			}
+			response := acoustIDSnapshot.Responses[key]
+			if response == nil || !consistent {
+				continue
+			}
+			var cached acoustIDCachedResponse
+			if err := json.Unmarshal(response.Payload, &cached); err != nil {
+				return prepared, fmt.Errorf("decode cached AcoustID response: %w", err)
+			}
+			if !cached.Available {
+				continue
+			}
+			for _, release := range providerSnapshot.Releases {
+				for _, track := range release.Tracks {
+					id := track.RecordingProviderKey
+					if score := acoustid.MaxScoreForRecording(acoustid.LookupResult{Available: true, Matches: cached.Results}, id); score != nil {
+						k := MatchingAcoustIDKey{FileID: fileID, RecordingID: id}
+						if old, ok := acoustIDScores[k]; !ok || *score > old {
+							acoustIDScores[k] = *score
+						}
+					}
+				}
+			}
+		}
+	}
 	results, err := EvaluateMatchingSnapshot(ctx, MatchingEvaluationSnapshot{
 		Grouping: grouping, Captures: captures, Provider: providerSnapshot,
 		RequestedGroupIDs: scope.GroupIDs, ReleaseKeysByFile: scope.ReleaseKeysByFile, SearchKeysByFile: scope.SearchKeysByFile,
+		acoustIDScores: acoustIDScores, acoustIDResponses: acoustIDSnapshot.Responses, acoustIDKeysByFile: scope.AcoustIDKeysByFile,
+		acoustIDSourceInputs: acoustIDInputs, acoustIDDiagnostics: acoustIDDiagnostics,
 	})
 	if err != nil {
 		return prepared, err
@@ -211,9 +292,10 @@ func exactMatchingEvaluationScope(scope MatchingEvaluationQueryScope, groups []I
 		return MatchingEvaluationQueryScope{}, fmt.Errorf("matching evaluation query scope must cover exactly the selected group members")
 	}
 	copyScope := MatchingEvaluationQueryScope{
-		GroupIDs:          append([]uuid.UUID(nil), scope.GroupIDs...),
-		ReleaseKeysByFile: make(map[uuid.UUID][]string, len(memberIDs)),
-		SearchKeysByFile:  make(map[uuid.UUID]MatchingSearchKeys, len(memberIDs)),
+		GroupIDs:           append([]uuid.UUID(nil), scope.GroupIDs...),
+		ReleaseKeysByFile:  make(map[uuid.UUID][]string, len(memberIDs)),
+		SearchKeysByFile:   make(map[uuid.UUID]MatchingSearchKeys, len(memberIDs)),
+		AcoustIDKeysByFile: make(map[uuid.UUID]string),
 	}
 	for member := range memberIDs {
 		releases, releaseOK := scope.ReleaseKeysByFile[member]
@@ -223,6 +305,17 @@ func exactMatchingEvaluationScope(scope MatchingEvaluationQueryScope, groups []I
 		}
 		copyScope.ReleaseKeysByFile[member] = append([]string{}, releases...)
 		copyScope.SearchKeysByFile[member] = keys
+		if key, ok := scope.AcoustIDKeysByFile[member]; ok {
+			if key == "" {
+				return MatchingEvaluationQueryScope{}, fmt.Errorf("matching evaluation AcoustID cache key must be non-empty")
+			}
+			copyScope.AcoustIDKeysByFile[member] = key
+		}
+	}
+	for member := range scope.AcoustIDKeysByFile {
+		if _, ok := memberIDs[member]; !ok {
+			return MatchingEvaluationQueryScope{}, fmt.Errorf("matching evaluation AcoustID scope contains an unselected member")
+		}
 	}
 	return copyScope, nil
 }
@@ -256,6 +349,8 @@ func combineMatchingGroupResults(results []MatchingGroupEvaluationResult, provid
 	}
 	combined := results[0].Result
 	combined.Groups = nil
+	combined.Provider.AcoustID = nil
+	combined.Provider.AcoustIDSources = nil
 	combined.Provider.ReleaseKeys = append([]string(nil), releaseKeys...)
 	combined.Provider.CacheRevisions = make(map[string]*string, len(queryKeys))
 	for _, key := range queryKeys {
@@ -263,12 +358,38 @@ func combineMatchingGroupResults(results []MatchingGroupEvaluationResult, provid
 	}
 	combined.Provider.CacheKey = queryKeys[0]
 	combined.Provider.CacheRevision = copyString(combined.Provider.CacheRevisions[combined.Provider.CacheKey])
+	acoustIDByFile := make(map[uuid.UUID]persistence.IncomingMatchAcoustIDFence)
+	acoustIDSourcesByFile := make(map[uuid.UUID]persistence.IncomingMatchAcoustIDSourceFence)
 	for _, result := range results {
 		if len(result.Result.Groups) != 1 {
 			return persistence.IncomingMatchEvaluation{}, fmt.Errorf("matching evaluation result must contain one group")
 		}
 		combined.Groups = append(combined.Groups, result.Result.Groups[0])
+		for _, fence := range result.Result.Provider.AcoustID {
+			if previous, exists := acoustIDByFile[fence.FileMemberID]; exists && !reflect.DeepEqual(previous, fence) {
+				return persistence.IncomingMatchEvaluation{}, fmt.Errorf("matching evaluation groups disagree about AcoustID evidence for one file")
+			}
+			acoustIDByFile[fence.FileMemberID] = fence
+		}
+		for _, fence := range result.Result.Provider.AcoustIDSources {
+			if previous, exists := acoustIDSourcesByFile[fence.FileMemberID]; exists && !reflect.DeepEqual(previous, fence) {
+				return persistence.IncomingMatchEvaluation{}, fmt.Errorf("matching evaluation groups disagree about AcoustID source inputs for one file")
+			}
+			acoustIDSourcesByFile[fence.FileMemberID] = fence
+		}
 	}
+	for _, fence := range acoustIDByFile {
+		combined.Provider.AcoustID = append(combined.Provider.AcoustID, fence)
+	}
+	for _, fence := range acoustIDSourcesByFile {
+		combined.Provider.AcoustIDSources = append(combined.Provider.AcoustIDSources, fence)
+	}
+	sort.Slice(combined.Provider.AcoustID, func(i, j int) bool {
+		return combined.Provider.AcoustID[i].FileMemberID.String() < combined.Provider.AcoustID[j].FileMemberID.String()
+	})
+	sort.Slice(combined.Provider.AcoustIDSources, func(i, j int) bool {
+		return combined.Provider.AcoustIDSources[i].FileMemberID.String() < combined.Provider.AcoustIDSources[j].FileMemberID.String()
+	})
 	return combined, nil
 }
 
@@ -276,12 +397,17 @@ func combineMatchingGroupResults(results []MatchingGroupEvaluationResult, provid
 // keys and release keys are explicit per-file cache identities; a full provider
 // union snapshot is retained for its projection fence and filtered only here.
 type MatchingEvaluationSnapshot struct {
-	Grouping          IncomingGroupingSnapshot
-	Captures          []persistence.IncomingGroupingCapture
-	Provider          persistence.ProviderMatchingSnapshot
-	RequestedGroupIDs []uuid.UUID
-	ReleaseKeysByFile map[uuid.UUID][]string
-	SearchKeysByFile  map[uuid.UUID]MatchingSearchKeys
+	Grouping             IncomingGroupingSnapshot
+	Captures             []persistence.IncomingGroupingCapture
+	Provider             persistence.ProviderMatchingSnapshot
+	RequestedGroupIDs    []uuid.UUID
+	ReleaseKeysByFile    map[uuid.UUID][]string
+	SearchKeysByFile     map[uuid.UUID]MatchingSearchKeys
+	acoustIDScores       map[MatchingAcoustIDKey]float64
+	acoustIDResponses    map[string]*persistence.ProviderCachedResponse
+	acoustIDKeysByFile   map[uuid.UUID]string
+	acoustIDSourceInputs map[uuid.UUID][]persistence.IncomingMatchAcoustIDSourceInputFence
+	acoustIDDiagnostics  map[uuid.UUID]string
 }
 
 type MatchingGroupDecision string
@@ -443,12 +569,22 @@ func evaluateMatchingGroup(
 			providerReleaseKeys[key] = true
 		}
 		first := captures[0]
+		fingerprintConflict := false
 		for _, capture := range captures[1:] {
-			if capture.WorkID != first.WorkID || !equalOptionalUUID(capture.CaptureAnalysisID, first.CaptureAnalysisID) ||
+			if !equalOptionalUUID(capture.CaptureAnalysisID, first.CaptureAnalysisID) ||
 				!equalOptionalUUID(capture.MetadataWinner, first.MetadataWinner) || !equalOptionalUUID(capture.ProbeWinner, first.ProbeWinner) ||
-				!equalOptionalStringPointer(capture.Fingerprint, first.Fingerprint) || !equalOptionalUUID(capture.FingerprintWinner, first.FingerprintWinner) {
+				!bytes.Equal(capture.ProbeResult, first.ProbeResult) {
 				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("incoming member has conflicting saved matching captures")
 			}
+			if !persistence.SameAcoustIDFingerprintIdentity(first, capture) {
+				fingerprintConflict = true
+			}
+		}
+		if fingerprintConflict {
+			if _, requested := snapshot.acoustIDKeysByFile[memberID]; !requested {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("incoming member has conflicting saved matching captures")
+			}
+			snapshot.acoustIDDiagnostics[memberID] = "shared source locations have conflicting selected fingerprint identities; group requires review"
 		}
 		memberFences = append(memberFences, persistence.IncomingMatchMemberFence{FileMemberID: memberID, WorkID: first.WorkID, SourceSHA256: append([]byte(nil), first.SourceSHA256...)})
 		allCaptures = append(allCaptures, captures...)
@@ -479,7 +615,7 @@ func evaluateMatchingGroup(
 				perFileSnapshot.Releases = append(perFileSnapshot.Releases, release)
 			}
 		}
-		perFileInputs, err := BuildMatchingInputs(allCapturesForMember(allCaptures, memberID), perFileSnapshot, map[uuid.UUID]MatchingSearchKeys{memberID: searchKeys[memberID]}, nil)
+		perFileInputs, err := BuildMatchingInputs(allCapturesForMember(allCaptures, memberID), perFileSnapshot, map[uuid.UUID]MatchingSearchKeys{memberID: searchKeys[memberID]}, snapshot.acoustIDScores)
 		if err != nil {
 			return persistence.IncomingMatchEvaluation{}, "", "", err
 		}
@@ -529,8 +665,26 @@ func makeMatchingGroupResult(
 	selectedRelease := releaseSelection.SelectedReleaseID
 	allMemberReleaseEligible := releaseSelection.Reason == ReleaseSelectionSelected
 	decision, reason := MatchingDecisionReview, "release selection is ambiguous or below threshold"
+	decisionOutcome := MatchingDecisionOutcomeInfeasible
+	switch releaseSelection.Reason {
+	case ReleaseSelectionReview:
+		decisionOutcome = MatchingDecisionOutcomeTie
+	case ReleaseSelectionSelected:
+		decisionOutcome = MatchingDecisionOutcomeUnique
+	}
+	conflictingFingerprint := false
+	for _, member := range members {
+		if snapshot.acoustIDDiagnostics[member.FileMemberID] != "" {
+			conflictingFingerprint = true
+		}
+	}
 	if allMemberReleaseEligible {
 		decision, reason = MatchingDecisionSelected, "unique release selection and assignment"
+	}
+	if conflictingFingerprint {
+		allMemberReleaseEligible = false
+		decision, reason = MatchingDecisionReview, "shared source locations have conflicting selected fingerprint identities; group requires review"
+		decisionOutcome = MatchingDecisionOutcomeReview
 	}
 	positionsByEdge := make(map[edgeKey][]persistence.IncomingMatchPosition)
 	assignmentCandidates := make([]MatchingAssignmentCandidate, 0)
@@ -562,16 +716,92 @@ func makeMatchingGroupResult(
 		}
 		if !allMemberReleaseEligible {
 			decision, reason = MatchingDecisionReview, "selected release has a member without an eligible assignment edge"
+			decisionOutcome = MatchingDecisionOutcomeInfeasible
 		}
 	}
+	var assignment MatchingAssignmentResult
 	if allMemberReleaseEligible {
-		assignment, err := SelectMatchingAssignments(ctx, assignmentCandidates)
+		assignment, err = SelectMatchingAssignments(ctx, assignmentCandidates)
 		if err != nil {
 			return persistence.IncomingMatchEvaluation{}, "", "", err
 		}
-		if !assignment.Unique {
+		if !assignment.Feasible {
+			decision, reason = MatchingDecisionReview, "selected release assignments are infeasible"
+			decisionOutcome = MatchingDecisionOutcomeInfeasible
+		} else if !assignment.Unique {
 			decision, reason = MatchingDecisionReview, "selected release assignment is not uniquely optimal"
+			decisionOutcome = MatchingDecisionOutcomeTie
 		}
+	}
+	if decision == MatchingDecisionReview && decisionOutcome == MatchingDecisionOutcomeUnique {
+		decisionOutcome = MatchingDecisionOutcomeReview
+	}
+	var selectedReleaseIdentity *MatchingDecisionSelectedRelease
+	if selectedRelease != "" {
+		for _, release := range snapshot.Provider.Releases {
+			if release.ProviderKey == selectedRelease {
+				selectedReleaseIdentity = &MatchingDecisionSelectedRelease{ProviderReleaseID: release.ID, ProviderReleaseKey: release.ProviderKey}
+				break
+			}
+		}
+		if selectedReleaseIdentity == nil || selectedReleaseIdentity.ProviderReleaseID == uuid.Nil {
+			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("selected provider release %q is absent from the provider snapshot", selectedRelease)
+		}
+	}
+	decisionAssignments := make([]MatchingDecisionAssignment, 0)
+	if decisionOutcome == MatchingDecisionOutcomeUnique && assignment.Unique {
+		if len(assignment.Choices) != len(members) {
+			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("unique assignment does not cover every group member")
+		}
+		selectedByFile := make([]string, 0, len(assignment.Choices))
+		for fileID := range assignment.Choices {
+			selectedByFile = append(selectedByFile, fileID)
+		}
+		sort.Strings(selectedByFile)
+		for _, fileID := range selectedByFile {
+			candidateID := assignment.Choices[fileID]
+			var selectedEdge *MatchingAssignmentCandidate
+			for i := range assignmentCandidates {
+				candidate := &assignmentCandidates[i]
+				if candidate.FileVariantID == fileID && candidate.CandidateID == candidateID {
+					selectedEdge = candidate
+					break
+				}
+			}
+			if selectedEdge == nil {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("selected assignment %q for file %q is absent from solver candidates", candidateID, fileID)
+			}
+			fileUUID, err := uuid.Parse(fileID)
+			if err != nil {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("parse selected assignment file member: %w", err)
+			}
+			var trackID uuid.UUID
+			for _, edge := range byFileRelease[edgeKey{fileUUID, selectedRelease}] {
+				if fmt.Sprintf("%s/%d/%d", selectedRelease, edge.input.Medium, edge.input.Track) == selectedEdge.PositionID {
+					trackID = matchingTrackID(snapshot.Provider, selectedRelease, edge.input.Medium, edge.input.Track)
+					if trackID != uuid.Nil {
+						decisionAssignments = append(decisionAssignments, MatchingDecisionAssignment{FileMemberID: fileUUID, ProviderTrackID: trackID, Medium: edge.input.Medium, Position: edge.input.Track})
+					}
+					break
+				}
+			}
+			if trackID == uuid.Nil {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("selected provider track for file %q is absent from the provider snapshot", fileID)
+			}
+		}
+		assignedMembers := make(map[uuid.UUID]struct{}, len(decisionAssignments))
+		for _, selected := range decisionAssignments {
+			assignedMembers[selected.FileMemberID] = struct{}{}
+		}
+		for _, member := range members {
+			if _, exists := assignedMembers[member.FileMemberID]; !exists {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("unique assignment omits group member %s", member.FileMemberID)
+			}
+		}
+	}
+	evaluationDecision := MatchingEvaluationDecision{
+		Version: matchingDecisionVersion, GroupID: group.ID, PolicyVersion: MatchingPolicyVersion,
+		Outcome: decisionOutcome, SelectedRelease: selectedReleaseIdentity, Assignments: decisionAssignments,
 	}
 
 	groupEval := persistence.IncomingMatchGroupEvaluation{GroupID: group.ID, GroupRevision: group.Revision, Members: members}
@@ -581,16 +811,18 @@ func makeMatchingGroupResult(
 		fields := matchingSourceFields(file.Tags)
 		keys := snapshot.SearchKeysByFile[member.FileMemberID]
 		fileEvidence = append(fileEvidence, map[string]any{
-			"file_member_id":      member.FileMemberID,
-			"release_query_key":   keys.Release,
-			"recording_query_key": keys.Recording,
-			"raw_tags":            matchingRawTags(file),
-			"mbid_diagnostics":    matchingMBIDDiagnostics(member.FileMemberID, fields),
+			"file_member_id":          member.FileMemberID,
+			"release_query_key":       keys.Release,
+			"recording_query_key":     keys.Recording,
+			"raw_tags":                matchingRawTags(file),
+			"mbid_diagnostics":        matchingMBIDDiagnostics(member.FileMemberID, fields),
+			"acoustid_cache_evidence": matchingAcoustIDEvidence(snapshot, member.FileMemberID),
 		})
 	}
 	groupEvidence, err := json.Marshal(map[string]any{
 		"schema_version": 1, "group_decision": decision, "decision_reason": reason,
 		"selected_release_key": selectedRelease, "release_selection": releaseSelection, "files": fileEvidence,
+		"evaluation_decision": evaluationDecision,
 	})
 	if err != nil {
 		return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("encode group matching evidence: %w", err)
@@ -606,10 +838,11 @@ func makeMatchingGroupResult(
 				"medium":         item.input.Medium, "position": item.input.Track,
 				"release_profile": item.input.ReleaseScore, "release_profile_input": item.input.ReleaseScoreInput,
 				"assignment_profile": item.input.AssignmentScore, "assignment_profile_input": item.input.AssignmentInput,
-				"release_query_key":   snapshot.SearchKeysByFile[key.file].Release,
-				"recording_query_key": snapshot.SearchKeysByFile[key.file].Recording,
-				"raw_tags":            matchingRawTags(findIncomingFile(snapshot.Grouping.Files, key.file)),
-				"mbid_diagnostics":    item.input.Diagnostics,
+				"release_query_key":       snapshot.SearchKeysByFile[key.file].Release,
+				"recording_query_key":     snapshot.SearchKeysByFile[key.file].Recording,
+				"raw_tags":                matchingRawTags(findIncomingFile(snapshot.Grouping.Files, key.file)),
+				"mbid_diagnostics":        item.input.Diagnostics,
+				"acoustid_cache_evidence": matchingAcoustIDEvidence(snapshot, key.file),
 			})
 		}
 		decisionEvidence := map[string]any{
@@ -650,9 +883,47 @@ func makeMatchingGroupResult(
 		cacheKey = keys[0]
 		cacheRevision = copyString(cacheRevisions[cacheKey])
 	}
-	providerFence := persistence.IncomingMatchProviderFence{ProviderID: snapshot.Provider.Source.ProviderID, ProviderSourceID: snapshot.Provider.Source.ID, Namespace: snapshot.Provider.Source.Namespace, Endpoint: snapshot.Provider.Source.Endpoint, ConfigurationIdentity: snapshot.Provider.Source.ConfigurationIdentity, CacheKey: cacheKey, CacheRevision: cacheRevision, CacheRevisions: cacheRevisions, AcceptedProjectionRevision: snapshot.Provider.AcceptedProjectionRevision, ReleaseKeys: releaseKeys}
+	acoustIDFences := make([]persistence.IncomingMatchAcoustIDFence, 0)
+	acoustIDSources := make([]persistence.IncomingMatchAcoustIDSourceFence, 0)
+	for _, member := range members {
+		key := snapshot.acoustIDKeysByFile[member.FileMemberID]
+		if key != "" {
+			response := snapshot.acoustIDResponses[key]
+			var expectedRevision *string
+			if response != nil && response.Revision != nil {
+				expectedRevision = copyString(response.Revision)
+			}
+			acoustIDSources = append(acoustIDSources, persistence.IncomingMatchAcoustIDSourceFence{
+				FileMemberID: member.FileMemberID, CacheKey: key, ExpectedAcceptedRevision: expectedRevision,
+				SourceInputs: snapshot.acoustIDSourceInputs[member.FileMemberID],
+			})
+		}
+		response := snapshot.acoustIDResponses[key]
+		if key == "" || response == nil || response.Revision == nil || snapshot.acoustIDDiagnostics[member.FileMemberID] != "" {
+			continue
+		}
+		acoustIDFences = append(acoustIDFences, persistence.IncomingMatchAcoustIDFence{FileMemberID: member.FileMemberID, CacheKey: key, AcceptedRevision: *response.Revision, SourceInputs: snapshot.acoustIDSourceInputs[member.FileMemberID]})
+	}
+	providerFence := persistence.IncomingMatchProviderFence{ProviderID: snapshot.Provider.Source.ProviderID, ProviderSourceID: snapshot.Provider.Source.ID, Namespace: snapshot.Provider.Source.Namespace, Endpoint: snapshot.Provider.Source.Endpoint, ConfigurationIdentity: snapshot.Provider.Source.ConfigurationIdentity, CacheKey: cacheKey, CacheRevision: cacheRevision, CacheRevisions: cacheRevisions, AcceptedProjectionRevision: snapshot.Provider.AcceptedProjectionRevision, ReleaseKeys: releaseKeys, AcoustID: acoustIDFences, AcoustIDSources: acoustIDSources}
 	evaluation := persistence.IncomingMatchEvaluation{ExpectedGroupsRevision: groupsRevision, ExpectedGroupingEpoch: snapshot.Grouping.Epoch, PolicyVersion: MatchingPolicyVersion, Provider: providerFence, Groups: []persistence.IncomingMatchGroupEvaluation{groupEval}}
 	return evaluation, decision, reason, nil
+}
+
+func matchingAcoustIDEvidence(snapshot MatchingEvaluationSnapshot, fileID uuid.UUID) any {
+	if diagnostic := snapshot.acoustIDDiagnostics[fileID]; diagnostic != "" {
+		return map[string]any{"diagnostic": diagnostic}
+	}
+	key := snapshot.acoustIDKeysByFile[fileID]
+	response := snapshot.acoustIDResponses[key]
+	if key == "" || response == nil || response.Revision == nil {
+		return nil
+	}
+	return map[string]any{
+		"cache_key":         key,
+		"accepted_revision": *response.Revision,
+		"source_inputs":     snapshot.acoustIDSourceInputs[fileID],
+		"diagnostic":        snapshot.acoustIDDiagnostics[fileID],
+	}
 }
 
 func allCapturesForMember(captures []persistence.IncomingGroupingCapture, id uuid.UUID) []persistence.IncomingGroupingCapture {
@@ -721,12 +992,6 @@ func copyString(value *string) *string {
 	return &result
 }
 func equalOptionalUUID(a, b *uuid.UUID) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-func equalOptionalStringPointer(a, b *string) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}

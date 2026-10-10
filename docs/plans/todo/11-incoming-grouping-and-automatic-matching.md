@@ -566,6 +566,20 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Trusted evidence / decision increment (2026-10-10):** cache-only evaluator
+использует optional AcoustID scope с trusted selected-input provenance,
+nullable accepted-payload revision fences для hits и misses, source fences
+всех captured work locations и exact admitted per-file scope. Multi-group
+publication объединяет все response/source fences; evidence содержит lookup
+key и accepted revision. Per-key advisory gates защищают missing cache rows;
+lock order source → AcoustID config → sorted keys → rows исключает найденные
+deadlocks, reservation/key deletion не инвалидируют accepted evidence.
+Точные solver assignments сохраняются как typed versioned decision; обычная
+infeasibility даёт review без assignments и без runner-up fallback, не
+прерывая другие группы. PostgreSQL stale-source/cache-lock regressions,
+independent reviews и полный `task verify` прошли. Automatic acquisition
+planning/trigger, confirmed apply и incoming UI ещё не подключены.
+
 **Durable AcoustID increment (2026-10-10):** credential key/revision snapshot
 и explicit replace/delete атомарны, официальный provider source стабилен;
 credential revision отдельно fencing network/write, без TTL или cache reset.

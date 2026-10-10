@@ -146,9 +146,10 @@ type matchingPublisherPlan struct {
 }
 
 type matchingPublisherQueryScope struct {
-	GroupIDs          []uuid.UUID            `json:"group_ids"`
-	ReleaseKeysByFile map[uuid.UUID][]string `json:"release_keys_by_file"`
-	SearchKeysByFile  map[uuid.UUID]struct {
+	GroupIDs           []uuid.UUID            `json:"group_ids"`
+	ReleaseKeysByFile  map[uuid.UUID][]string `json:"release_keys_by_file"`
+	AcoustIDKeysByFile map[uuid.UUID]string   `json:"acoustid_keys_by_file,omitempty"`
+	SearchKeysByFile   map[uuid.UUID]struct {
 		Release   string `json:"release"`
 		Recording string `json:"recording"`
 	} `json:"search_keys_by_file"`
@@ -178,8 +179,11 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 	if err := json.Unmarshal(run.Plan, &plan); err != nil {
 		return fmt.Errorf("publish matching evaluation: decode admitted plan: %w", err)
 	}
-	if plan.SchemaVersion != 2 {
+	if plan.SchemaVersion != 2 && plan.SchemaVersion != 3 {
 		return fmt.Errorf("publish matching evaluation: admitted plan schema version is unsupported")
+	}
+	if plan.SchemaVersion == 2 && len(plan.Scope.AcoustIDKeysByFile) != 0 || plan.SchemaVersion == 3 && len(plan.Scope.AcoustIDKeysByFile) == 0 {
+		return fmt.Errorf("publish matching evaluation: admitted plan version does not match its AcoustID scope")
 	}
 	if plan.GroupingEpoch != run.GroupingEpoch || evaluation.ExpectedGroupingEpoch != run.GroupingEpoch || plan.PolicyVersion != run.PolicyVersion || evaluation.PolicyVersion != run.PolicyVersion || len(plan.Targets) == 0 || len(plan.Scope.GroupIDs) != len(plan.Targets) {
 		return fmt.Errorf("publish matching evaluation: evaluation does not match admitted plan")
@@ -234,6 +238,25 @@ func validateMatchingPlanQueryScope(scope matchingPublisherQueryScope, evaluatio
 	if len(scope.ReleaseKeysByFile) != selectedMembers || len(scope.SearchKeysByFile) != selectedMembers {
 		return fmt.Errorf("publish matching evaluation: admitted query scope does not cover exactly the evaluated members")
 	}
+	for memberID, key := range scope.AcoustIDKeysByFile {
+		if key == "" || !matchingQueryScopeContainsMember(memberGroups, memberID) {
+			return fmt.Errorf("publish matching evaluation: admitted AcoustID scope contains an invalid member or key")
+		}
+	}
+	if len(evaluation.Provider.AcoustIDSources) != len(scope.AcoustIDKeysByFile) {
+		return fmt.Errorf("publish matching evaluation: AcoustID source fences do not cover exactly the admitted scope")
+	}
+	sourceByMember := make(map[uuid.UUID]IncomingMatchAcoustIDSourceFence, len(evaluation.Provider.AcoustIDSources))
+	for _, source := range evaluation.Provider.AcoustIDSources {
+		key, scoped := scope.AcoustIDKeysByFile[source.FileMemberID]
+		if !scoped || source.CacheKey != key {
+			return fmt.Errorf("publish matching evaluation: AcoustID source fence is outside admitted scope")
+		}
+		if _, duplicate := sourceByMember[source.FileMemberID]; duplicate {
+			return fmt.Errorf("publish matching evaluation: AcoustID source fence repeats a member")
+		}
+		sourceByMember[source.FileMemberID] = source
+	}
 	for memberID, releases := range scope.ReleaseKeysByFile {
 		keys, ok := scope.SearchKeysByFile[memberID]
 		if !ok || keys.Release == "" || keys.Recording == "" {
@@ -256,9 +279,10 @@ func validateMatchingPlanQueryScope(scope matchingPublisherQueryScope, evaluatio
 	for _, group := range evaluation.Groups {
 		var evidence struct {
 			Files []struct {
-				FileMemberID      uuid.UUID `json:"file_member_id"`
-				ReleaseQueryKey   string    `json:"release_query_key"`
-				RecordingQueryKey string    `json:"recording_query_key"`
+				FileMemberID      uuid.UUID       `json:"file_member_id"`
+				ReleaseQueryKey   string          `json:"release_query_key"`
+				RecordingQueryKey string          `json:"recording_query_key"`
+				AcoustIDEvidence  json.RawMessage `json:"acoustid_cache_evidence"`
 			} `json:"files"`
 		}
 		if err := json.Unmarshal(group.Evidence, &evidence); err != nil || len(evidence.Files) != len(group.Members) {
@@ -277,10 +301,108 @@ func validateMatchingPlanQueryScope(scope matchingPublisherQueryScope, evaluatio
 			if _, duplicate := seen[file.FileMemberID]; duplicate {
 				return fmt.Errorf("publish matching evaluation: group evidence repeats a member")
 			}
+			acoustIDKey, scoped := scope.AcoustIDKeysByFile[file.FileMemberID]
+			if scoped && len(file.AcoustIDEvidence) == 0 {
+				return fmt.Errorf("publish matching evaluation: scoped AcoustID evidence field is missing")
+			}
+			if !scoped && len(file.AcoustIDEvidence) != 0 && string(file.AcoustIDEvidence) != "null" {
+				return fmt.Errorf("publish matching evaluation: AcoustID evidence is outside admitted scope")
+			}
+			if scoped && len(file.AcoustIDEvidence) != 0 && string(file.AcoustIDEvidence) != "null" {
+				var actual struct {
+					CacheKey         string `json:"cache_key"`
+					AcceptedRevision string `json:"accepted_revision"`
+					Diagnostic       string `json:"diagnostic"`
+				}
+				if err := json.Unmarshal(file.AcoustIDEvidence, &actual); err != nil {
+					return fmt.Errorf("publish matching evaluation: AcoustID evidence differs from admitted key")
+				}
+				if actual.Diagnostic != "" {
+					if actual.CacheKey != "" || actual.AcceptedRevision != "" {
+						return fmt.Errorf("publish matching evaluation: diagnostic AcoustID evidence contains a score reference")
+					}
+					for _, fence := range evaluation.Provider.AcoustID {
+						if fence.FileMemberID == file.FileMemberID {
+							return fmt.Errorf("publish matching evaluation: diagnostic AcoustID evidence has a response fence")
+						}
+					}
+					if _, ok := sourceByMember[file.FileMemberID]; !ok {
+						return fmt.Errorf("publish matching evaluation: diagnostic AcoustID evidence lacks a source fence")
+					}
+					seen[file.FileMemberID] = struct{}{}
+					continue
+				}
+				if actual.CacheKey != acoustIDKey || actual.AcceptedRevision == "" {
+					return fmt.Errorf("publish matching evaluation: AcoustID evidence differs from admitted key")
+				}
+				source, ok := sourceByMember[file.FileMemberID]
+				if !ok || source.ExpectedAcceptedRevision == nil || *source.ExpectedAcceptedRevision != actual.AcceptedRevision {
+					return fmt.Errorf("publish matching evaluation: AcoustID evidence differs from source revision fence")
+				}
+				fenced := false
+				for _, fence := range evaluation.Provider.AcoustID {
+					if fence.FileMemberID == file.FileMemberID && fence.CacheKey == acoustIDKey && fence.AcceptedRevision == actual.AcceptedRevision {
+						fenced = true
+					}
+				}
+				if !fenced {
+					return fmt.Errorf("publish matching evaluation: AcoustID evidence is not fenced by accepted response")
+				}
+			}
+			if scoped && string(file.AcoustIDEvidence) == "null" {
+				source, ok := sourceByMember[file.FileMemberID]
+				if !ok || source.ExpectedAcceptedRevision != nil {
+					return fmt.Errorf("publish matching evaluation: absent AcoustID evidence disagrees with source revision fence")
+				}
+				for _, fence := range evaluation.Provider.AcoustID {
+					if fence.FileMemberID == file.FileMemberID {
+						return fmt.Errorf("publish matching evaluation: absent AcoustID evidence has an unexpected cache fence")
+					}
+				}
+			}
 			seen[file.FileMemberID] = struct{}{}
 		}
 		if len(seen) != len(memberGroups[group.GroupID]) {
 			return fmt.Errorf("publish matching evaluation: group evidence omits an evaluated member")
+		}
+	}
+	for _, fence := range evaluation.Provider.AcoustID {
+		if key, ok := scope.AcoustIDKeysByFile[fence.FileMemberID]; !ok || key != fence.CacheKey {
+			return fmt.Errorf("publish matching evaluation: AcoustID response fence is outside admitted scope")
+		}
+	}
+	for _, fence := range evaluation.Provider.AcoustIDSources {
+		if fence.ExpectedAcceptedRevision == nil {
+			continue
+		}
+		found := false
+		for _, response := range evaluation.Provider.AcoustID {
+			if response.FileMemberID == fence.FileMemberID && response.CacheKey == fence.CacheKey && response.AcceptedRevision == *fence.ExpectedAcceptedRevision {
+				found = true
+				break
+			}
+		}
+		// Diagnostics intentionally do not apply the accepted response to scoring.
+		if !found {
+			for _, group := range evaluation.Groups {
+				var evidence struct {
+					Files []struct {
+						FileMemberID uuid.UUID `json:"file_member_id"`
+						Evidence     struct {
+							Diagnostic string `json:"diagnostic"`
+						} `json:"acoustid_cache_evidence"`
+					} `json:"files"`
+				}
+				_ = json.Unmarshal(group.Evidence, &evidence)
+				for _, file := range evidence.Files {
+					if file.FileMemberID == fence.FileMemberID && file.Evidence.Diagnostic != "" {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("publish matching evaluation: source revision lacks matching response evidence")
 		}
 	}
 	queryRevisions := effectiveMatchCacheRevisions(evaluation.Provider)

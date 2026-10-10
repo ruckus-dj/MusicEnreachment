@@ -252,6 +252,182 @@ func TestMatchingEvaluationUsesSeparateReleaseAndAssignmentProfiles(t *testing.T
 	}
 }
 
+func TestMatchingEvaluationPersistsExactUniqueSolverAssignmentDeterministically(t *testing.T) {
+	fileA, fileB := uuid.New(), uuid.New()
+	releaseID := uuid.New()
+	trackOne, trackTwo := uuid.New(), uuid.New()
+	group := IncomingGroup{ID: uuid.New(), Revision: "group-r1", Members: []uuid.UUID{fileA, fileB}}
+	rootID := uuid.New()
+	provider := persistence.ProviderMatchingSnapshot{
+		Source:                     persistence.ProviderSource{ID: uuid.New(), ProviderID: uuid.New(), Namespace: "mb", Endpoint: "https://mb.example", ConfigurationIdentity: "config"},
+		AcceptedProjectionRevision: "projection-r1",
+		Releases: []persistence.MatchingRelease{{ID: releaseID, ProviderKey: "release-key", Tracks: []persistence.MatchingReleaseTrack{
+			{ID: trackOne, Medium: 1, Position: 1}, {ID: trackTwo, Medium: 1, Position: 2},
+		}}},
+	}
+	inputs := []MatchingInput{
+		syntheticMatchingInput(fileA, "release-key", 1, 1, .95, .80),
+		syntheticMatchingInput(fileA, "release-key", 1, 2, .95, .95),
+		syntheticMatchingInput(fileB, "release-key", 1, 1, .95, .94),
+		syntheticMatchingInput(fileB, "release-key", 1, 2, .95, .80),
+	}
+	snapshot := MatchingEvaluationSnapshot{
+		Provider: provider,
+		Grouping: IncomingGroupingSnapshot{Epoch: 1, Groups: []IncomingGroup{group}, Files: []IncomingFile{
+			{VariantID: fileA, Locations: []IncomingLocation{{RootID: rootID, RelativePath: "album/a.flac"}}},
+			{VariantID: fileB, Locations: []IncomingLocation{{RootID: rootID, RelativePath: "album/b.flac"}}},
+		}},
+	}
+	members := []persistence.IncomingMatchMemberFence{{FileMemberID: fileA, WorkID: uuid.New()}, {FileMemberID: fileB, WorkID: uuid.New()}}
+	evaluate := func(edges []MatchingInput) MatchingEvaluationDecision {
+		result, selected, _, err := makeMatchingGroupResult(t.Context(), snapshot, "groups-r1", group, members, edges, []string{"release-key"}, map[string]*string{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selected != MatchingDecisionSelected {
+			t.Fatalf("group decision = %q, want selected", selected)
+		}
+		decision, err := DecodeMatchingDecision(result.Groups[0].Evidence)
+		if err != nil {
+			t.Fatalf("decode persisted decision: %v", err)
+		}
+		return decision
+	}
+	first := evaluate(inputs)
+	reversed := append([]MatchingInput(nil), inputs...)
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	second := evaluate(reversed)
+	if first.Outcome != MatchingDecisionOutcomeUnique || first.SelectedRelease == nil || first.SelectedRelease.ProviderReleaseID != releaseID || first.SelectedRelease.ProviderReleaseKey != "release-key" {
+		t.Fatalf("decision release/outcome = %#v", first)
+	}
+	want := map[uuid.UUID]uuid.UUID{fileA: trackTwo, fileB: trackOne}
+	if len(first.Assignments) != len(want) {
+		t.Fatalf("assignments = %#v", first.Assignments)
+	}
+	for _, assignment := range first.Assignments {
+		if want[assignment.FileMemberID] != assignment.ProviderTrackID {
+			t.Errorf("solver assignment for %s = %s, want %s (all assignments: %#v)", assignment.FileMemberID, assignment.ProviderTrackID, want[assignment.FileMemberID], first.Assignments)
+		}
+	}
+	firstJSON, _ := json.Marshal(first)
+	secondJSON, _ := json.Marshal(second)
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("decision changed with edge order:\n%s\n%s", firstJSON, secondJSON)
+	}
+}
+
+func TestMatchingEvaluationTieRetainsSelectedReleaseWithoutAssignments(t *testing.T) {
+	fileID, releaseID, trackOne, trackTwo := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	group := IncomingGroup{ID: uuid.New(), Revision: "group-r1", Members: []uuid.UUID{fileID}}
+	provider := persistence.ProviderMatchingSnapshot{
+		Source:   persistence.ProviderSource{ID: uuid.New(), ProviderID: uuid.New(), Namespace: "mb", Endpoint: "https://mb.example", ConfigurationIdentity: "config"},
+		Releases: []persistence.MatchingRelease{{ID: releaseID, ProviderKey: "release-key", Tracks: []persistence.MatchingReleaseTrack{{ID: trackOne, Medium: 1, Position: 1}, {ID: trackTwo, Medium: 1, Position: 2}}}},
+	}
+	snapshot := MatchingEvaluationSnapshot{Provider: provider, Grouping: IncomingGroupingSnapshot{Files: []IncomingFile{{VariantID: fileID, Locations: []IncomingLocation{{RootID: uuid.New(), RelativePath: "album/a.flac"}}}}}}
+	inputs := []MatchingInput{
+		syntheticMatchingInput(fileID, "release-key", 1, 1, .95, .9),
+		syntheticMatchingInput(fileID, "release-key", 1, 2, .95, .9),
+	}
+	result, selected, _, err := makeMatchingGroupResult(t.Context(), snapshot, "groups-r1", group, []persistence.IncomingMatchMemberFence{{FileMemberID: fileID, WorkID: uuid.New()}}, inputs, []string{"release-key"}, map[string]*string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != MatchingDecisionReview {
+		t.Fatalf("group decision = %q, want review", selected)
+	}
+	decision, err := DecodeMatchingDecision(result.Groups[0].Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Outcome != MatchingDecisionOutcomeTie || decision.SelectedRelease == nil || decision.SelectedRelease.ProviderReleaseID != releaseID || len(decision.Assignments) != 0 {
+		t.Fatalf("tie decision = %#v", decision)
+	}
+}
+
+func TestMatchingEvaluationInfeasibleSelectedReleaseDoesNotAbortOtherGroup(t *testing.T) {
+	badA, badB, good := uuid.New(), uuid.New(), uuid.New()
+	releaseAID, releaseBID := uuid.New(), uuid.New()
+	trackA, trackB1, trackB2 := uuid.New(), uuid.New(), uuid.New()
+	rootID := uuid.New()
+	badGroup := IncomingGroup{ID: uuid.New(), Revision: "bad-r1", Members: []uuid.UUID{badA, badB}}
+	goodGroup := IncomingGroup{ID: uuid.New(), Revision: "good-r1", Members: []uuid.UUID{good}}
+	provider := persistence.ProviderMatchingSnapshot{
+		Source: persistence.ProviderSource{ID: uuid.New(), ProviderID: uuid.New(), Namespace: "mb", Endpoint: "https://mb.example", ConfigurationIdentity: "config"},
+		Releases: []persistence.MatchingRelease{
+			{ID: releaseAID, ProviderKey: "release-a", Tracks: []persistence.MatchingReleaseTrack{{ID: trackA, Medium: 1, Position: 1}}},
+			{ID: releaseBID, ProviderKey: "release-b", Tracks: []persistence.MatchingReleaseTrack{{ID: trackB1, Medium: 1, Position: 1}, {ID: trackB2, Medium: 1, Position: 2}}},
+		},
+	}
+	snapshot := MatchingEvaluationSnapshot{Provider: provider, Grouping: IncomingGroupingSnapshot{Files: []IncomingFile{
+		{VariantID: badA, Locations: []IncomingLocation{{RootID: rootID, RelativePath: "bad/a.flac"}}},
+		{VariantID: badB, Locations: []IncomingLocation{{RootID: rootID, RelativePath: "bad/b.flac"}}},
+		{VariantID: good, Locations: []IncomingLocation{{RootID: uuid.New(), RelativePath: "good/a.flac"}}},
+	}}}
+	inputs := []MatchingInput{
+		syntheticMatchingInput(badA, "release-a", 1, 1, .95, .9),
+		syntheticMatchingInput(badB, "release-a", 1, 1, .95, .9),
+		// A lower-ranked release is feasible, but selected release assignment must not fall back to it.
+		syntheticMatchingInput(badA, "release-b", 1, 1, .8, .9),
+		syntheticMatchingInput(badB, "release-b", 1, 2, .8, .9),
+		syntheticMatchingInput(good, "release-a", 1, 1, .95, .9),
+		syntheticMatchingInput(good, "release-b", 1, 2, .8, .9),
+	}
+	evaluate := func(group IncomingGroup) MatchingGroupEvaluationResult {
+		members := make([]persistence.IncomingMatchMemberFence, 0, len(group.Members))
+		groupInputs := make([]MatchingInput, 0)
+		for _, member := range group.Members {
+			members = append(members, persistence.IncomingMatchMemberFence{FileMemberID: member, WorkID: uuid.New()})
+			for _, input := range inputs {
+				if input.FileID == member {
+					groupInputs = append(groupInputs, input)
+				}
+			}
+		}
+		result, decision, reason, err := makeMatchingGroupResult(t.Context(), snapshot, "groups-r1", group, members, groupInputs, []string{"release-a", "release-b"}, map[string]*string{"query": nil})
+		if err != nil {
+			t.Fatalf("evaluate group %s: %v", group.ID, err)
+		}
+		return MatchingGroupEvaluationResult{GroupID: group.ID, Decision: decision, Reason: reason, Result: result}
+	}
+	badResult := evaluate(badGroup)
+	goodResult := evaluate(goodGroup)
+	if badResult.Decision != MatchingDecisionReview {
+		t.Fatalf("infeasible group decision = %q, want review", badResult.Decision)
+	}
+	badDecision, err := DecodeMatchingDecision(badResult.Result.Groups[0].Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if badDecision.Outcome != MatchingDecisionOutcomeInfeasible || badDecision.SelectedRelease == nil || badDecision.SelectedRelease.ProviderReleaseID != releaseAID || len(badDecision.Assignments) != 0 {
+		t.Fatalf("infeasible group decision evidence = %#v", badDecision)
+	}
+	goodDecision, err := DecodeMatchingDecision(goodResult.Result.Groups[0].Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goodDecision.Outcome != MatchingDecisionOutcomeUnique || len(goodDecision.Assignments) != 1 || goodDecision.Assignments[0].ProviderTrackID != trackA {
+		t.Fatalf("other group decision evidence = %#v", goodDecision)
+	}
+	combined, err := combineMatchingGroupResults([]MatchingGroupEvaluationResult{badResult, goodResult}, provider, []string{"release-a", "release-b"}, []string{"query"})
+	if err != nil {
+		t.Fatalf("combine evaluated groups: %v", err)
+	}
+	if len(combined.Groups) != 2 {
+		t.Fatalf("combined persisted evaluation group count = %d, want 2", len(combined.Groups))
+	}
+	for _, groupEval := range combined.Groups {
+		decision, err := DecodeMatchingDecision(groupEval.Evidence)
+		if err != nil {
+			t.Fatalf("decode combined group %s: %v", groupEval.GroupID, err)
+		}
+		if groupEval.GroupID == goodGroup.ID && decision.Outcome != MatchingDecisionOutcomeUnique {
+			t.Fatalf("other group's decision was lost: %#v", decision)
+		}
+	}
+}
+
 func TestMatchingEvaluationDoesNotDropMembersWithoutEdgesOrFallback(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
 	releaseA, releaseB := uuid.New(), uuid.New()
@@ -277,6 +453,13 @@ func TestMatchingEvaluationDoesNotDropMembersWithoutEdgesOrFallback(t *testing.T
 	}
 	if len(result.Groups[0].Candidates) != 2 {
 		t.Fatalf("candidate edges were lost: %#v", result.Groups[0].Candidates)
+	}
+	evaluationDecision, err := DecodeMatchingDecision(result.Groups[0].Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluationDecision.Outcome != MatchingDecisionOutcomeInfeasible || len(evaluationDecision.Assignments) != 0 || evaluationDecision.SelectedRelease != nil {
+		t.Fatalf("infeasible decision = %#v", evaluationDecision)
 	}
 }
 

@@ -44,6 +44,20 @@ func TestSolveDeduplicatesRepeatedLocationsAndReportsTies(t *testing.T) {
 	}
 }
 
+func TestSolveReportsInfeasibleAssignmentWithoutError(t *testing.T) {
+	location := []Location{{RootID: "root", RelativeParent: "album"}}
+	result, err := Solve(context.Background(), []Candidate{
+		{FileID: "a", ID: "a-only", PositionID: "position", Confidence: .9, Locations: location},
+		{FileID: "b", ID: "b-only", PositionID: "position", Confidence: .9, Locations: location},
+	})
+	if err != nil {
+		t.Fatalf("infeasible assignment returned error: %v", err)
+	}
+	if result.Feasible || result.Unique || len(result.Choices) != 0 {
+		t.Fatalf("infeasible assignment returned a choice: %+v", result)
+	}
+}
+
 func TestSolvePreservesWhitespaceInFolderPaths(t *testing.T) {
 	// Folders that differ only by surrounding whitespace are distinct
 	// locations, so the same position ID in each is not a conflict.

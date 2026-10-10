@@ -17,8 +17,22 @@ func TestSelectMatchingAssignmentsUsesCombinedEdgesAndIgnoresRecordingMBID(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Unique || result.Choices["v1"] != "v1-a" || result.Choices["v2"] != "v2-b" {
+	if !result.Feasible || !result.Unique || result.Choices["v1"] != "v1-a" || result.Choices["v2"] != "v2-b" {
 		t.Fatalf("unexpected assignment result: %+v", result)
+	}
+}
+
+func TestSelectMatchingAssignmentsReportsInfeasibleWithoutError(t *testing.T) {
+	folder := []MatchingAssignmentLocation{{RootID: "root", RelativeParent: "folder"}}
+	result, err := SelectMatchingAssignments(context.Background(), []MatchingAssignmentCandidate{
+		{FileVariantID: "v1", CandidateID: "v1-only", PositionID: "position", Score: MatchingScore{Profile: RecordingReleaseMatchingProfile, Confidence: .9}, Locations: folder},
+		{FileVariantID: "v2", CandidateID: "v2-only", PositionID: "position", Score: MatchingScore{Profile: RecordingReleaseMatchingProfile, Confidence: .9}, Locations: folder},
+	})
+	if err != nil {
+		t.Fatalf("infeasible assignment returned error: %v", err)
+	}
+	if result.Feasible || result.Unique || len(result.Choices) != 0 {
+		t.Fatalf("infeasible assignment returned a choice: %+v", result)
 	}
 }
 

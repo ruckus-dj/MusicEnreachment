@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,12 +82,16 @@ func (service *ProviderFetchService) StartAcoustIDLookup(ctx context.Context, wo
 		if err != nil {
 			return nil, fmt.Errorf("encode AcoustID lookup intent: %w", err)
 		}
-		canonical, err := json.Marshal(input)
+		cacheIdentity := persistence.AcoustIDLookupRequestIdentity{
+			WorkID: input.WorkID, FingerprintRowID: input.FingerprintRowID, WinningResultID: input.WinningResultID,
+			WinnerFingerprint: input.WinnerFingerprint, AlgorithmNamespace: input.AlgorithmNamespace, AlgorithmID: input.AlgorithmID,
+			FPCalcVersion: input.FPCalcVersion, ParserContractVersion: input.ParserContractVersion,
+			SavedReportedDuration: input.SavedReportedDuration, SHA256: input.SHA256, ImmutableMemberIdentity: input.ImmutableMemberIdentity,
+		}
+		cacheKey, err := persistence.AcoustIDRequestCacheKey(cacheIdentity)
 		if err != nil {
 			return nil, fmt.Errorf("encode AcoustID cache identity: %w", err)
 		}
-		digest := sha256.Sum256(canonical)
-		cacheKey := "acoustid-lookup-v1:" + hex.EncodeToString(digest[:])
 		sourceID, identity := capture.ProviderSourceID, capture.ConfigurationIdentity
 		operation = &persistence.Operation{
 			ID: operationID, Kind: "provider_acoustid_lookup", State: "queued", Stage: "queued", InputSnapshot: snapshot,

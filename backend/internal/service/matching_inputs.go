@@ -196,6 +196,7 @@ func cloneFloat(value *float64) *float64 {
 
 func matchingCaptureForFile(captures []persistence.IncomingGroupingCapture, id uuid.UUID) (persistence.IncomingGroupingCapture, error) {
 	var selected *persistence.IncomingGroupingCapture
+	fingerprintConflict := false
 	for _, capture := range captures {
 		if capture.VariantID != id {
 			continue
@@ -207,12 +208,27 @@ func matchingCaptureForFile(captures []persistence.IncomingGroupingCapture, id u
 		}
 		if !bytes.Equal(selected.ProbeResult, capture.ProbeResult) || !bytes.Equal(selected.SourceSHA256, capture.SourceSHA256) ||
 			!reflect.DeepEqual(selected.MetadataWinner, capture.MetadataWinner) || !reflect.DeepEqual(selected.ProbeWinner, capture.ProbeWinner) ||
-			!reflect.DeepEqual(selected.Fingerprint, capture.Fingerprint) || !reflect.DeepEqual(selected.FingerprintWinner, capture.FingerprintWinner) {
+			!reflect.DeepEqual(selected.CaptureAnalysisID, capture.CaptureAnalysisID) {
 			return persistence.IncomingGroupingCapture{}, fmt.Errorf("incoming variant has conflicting saved matching evidence")
+		}
+		if !persistence.SameAcoustIDFingerprintIdentity(*selected, capture) {
+			fingerprintConflict = true
 		}
 	}
 	if selected == nil {
 		return persistence.IncomingGroupingCapture{}, fmt.Errorf("incoming variant has no saved matching capture")
+	}
+	if fingerprintConflict {
+		selected.Fingerprint = nil
+		selected.FingerprintResultID = nil
+		selected.FingerprintWinner = nil
+		selected.FingerprintDuration = nil
+		selected.FingerprintVersion = nil
+		selected.FingerprintBanner = nil
+		selected.FingerprintAlgorithmNamespace = nil
+		selected.FingerprintAlgorithmID = nil
+		selected.FingerprintCalculatedAt = nil
+		selected.FingerprintParserVersion = nil
 	}
 	return *selected, nil
 }

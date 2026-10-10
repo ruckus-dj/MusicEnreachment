@@ -77,7 +77,9 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 		EvaluationQueryScope service.MatchingEvaluationQueryScope `json:"evaluation_query_scope"`
 		ProviderRequests     []json.RawMessage                    `json:"provider_requests"`
 	}
-	if len(intent.Plan) == 0 || decodeMatchingJSON(intent.Plan, &plan) != nil || plan.SchemaVersion != 2 || len(plan.Targets) == 0 || len(plan.EvaluationQueryScope.GroupIDs) == 0 {
+	if len(intent.Plan) == 0 || decodeMatchingJSON(intent.Plan, &plan) != nil || (plan.SchemaVersion != 2 && plan.SchemaVersion != 3) || len(plan.Targets) == 0 || len(plan.EvaluationQueryScope.GroupIDs) == 0 ||
+		(plan.SchemaVersion == 2 && len(plan.EvaluationQueryScope.AcoustIDKeysByFile) != 0) ||
+		(plan.SchemaVersion == 3 && len(plan.EvaluationQueryScope.AcoustIDKeysByFile) == 0) {
 		return worker.failInvalidPlan(ctx, operation, claim, job.ID)
 	}
 	if consumed, err := worker.repository.ConsumePendingMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim); err != nil {

@@ -2,11 +2,14 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"time"
 
@@ -65,7 +68,32 @@ type IncomingMatchProviderFence struct {
 	// candidate outputs, so an evaluated-empty result still fences the releases
 	// it read. Keys are strictly ascending and individually non-empty. The set
 	// itself may be empty when the evaluated search inspected no releases.
-	ReleaseKeys []string `json:"release_keys"`
+	ReleaseKeys     []string                           `json:"release_keys"`
+	AcoustID        []IncomingMatchAcoustIDFence       `json:"acoustid,omitempty"`
+	AcoustIDSources []IncomingMatchAcoustIDSourceFence `json:"acoustid_sources,omitempty"`
+}
+
+// IncomingMatchAcoustIDFence binds optional scoring evidence to its exact
+// per-file request key and accepted payload revision.
+type IncomingMatchAcoustIDFence struct {
+	FileMemberID     uuid.UUID                               `json:"file_member_id"`
+	CacheKey         string                                  `json:"cache_key"`
+	AcceptedRevision string                                  `json:"accepted_revision"`
+	SourceInputs     []IncomingMatchAcoustIDSourceInputFence `json:"source_inputs"`
+}
+
+// IncomingMatchAcoustIDSourceFence retains every current source-work identity
+// used for a requested per-file key, even when no accepted response exists.
+type IncomingMatchAcoustIDSourceFence struct {
+	FileMemberID             uuid.UUID                               `json:"file_member_id"`
+	CacheKey                 string                                  `json:"cache_key"`
+	ExpectedAcceptedRevision *string                                 `json:"expected_accepted_revision"`
+	SourceInputs             []IncomingMatchAcoustIDSourceInputFence `json:"source_inputs"`
+}
+
+type IncomingMatchAcoustIDSourceInputFence struct {
+	Capture         IncomingGroupingCapture `json:"capture"`
+	RequestCacheKey string                  `json:"request_cache_key"`
 }
 
 type IncomingMatchEvaluation struct {
@@ -154,10 +182,26 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 			}
 		}
 	}
-	// Canonical lock order: source mutation gate, current source/group state,
-	// provider configuration, then evaluation revisions.
+	// Canonical lock order: source mutation gate, AcoustID configuration,
+	// ordered cache-key gates, current source/group state, provider rows, then
+	// evaluation revisions.
 	if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 		return fmt.Errorf("replace incoming matches: lock source mutation gate: %w", err)
+	}
+	acoustIDCacheKeys := make([]string, 0, len(evaluation.Provider.AcoustID)+len(evaluation.Provider.AcoustIDSources))
+	for _, fence := range evaluation.Provider.AcoustID {
+		acoustIDCacheKeys = append(acoustIDCacheKeys, fence.CacheKey)
+	}
+	for _, fence := range evaluation.Provider.AcoustIDSources {
+		acoustIDCacheKeys = append(acoustIDCacheKeys, fence.CacheKey)
+	}
+	if len(acoustIDCacheKeys) > 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
+			return fmt.Errorf("replace incoming matches: lock AcoustID configuration: %w", err)
+		}
+		if err := lockAcoustIDCacheKeys(ctx, tx, officialAcoustIDSourceID(), acoustIDCacheKeys, false); err != nil {
+			return fmt.Errorf("replace incoming matches: lock AcoustID response keys: %w", err)
+		}
 	}
 	if err := lockCurrentIncomingSourceRows(ctx, tx); err != nil {
 		return err
@@ -241,7 +285,73 @@ func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
 	if !canonicalReleaseKeys(evaluation.Provider.ReleaseKeys) {
 		return fmt.Errorf("replace incoming matches: evaluated release keys must be sorted, deduplicated, and individually non-empty")
 	}
+	seenAcoustID := make(map[uuid.UUID]bool, len(evaluation.Provider.AcoustID))
+	for _, fence := range evaluation.Provider.AcoustID {
+		if fence.FileMemberID == uuid.Nil || fence.CacheKey == "" || fence.AcceptedRevision == "" || len(fence.SourceInputs) == 0 || seenAcoustID[fence.FileMemberID] {
+			return fmt.Errorf("replace incoming matches: AcoustID cache fence is invalid")
+		}
+		matchedKey := false
+		seenWork := make(map[uuid.UUID]bool, len(fence.SourceInputs))
+		for _, input := range fence.SourceInputs {
+			capture := input.Capture
+			if capture.WorkID == uuid.Nil || capture.VariantID != fence.FileMemberID || capture.FingerprintResultID == nil || capture.FingerprintWinner == nil || capture.Fingerprint == nil || capture.FingerprintVersion == nil || capture.FingerprintAlgorithmNamespace == nil || capture.FingerprintAlgorithmID == nil || capture.FingerprintParserVersion == nil || input.RequestCacheKey == "" || seenWork[capture.WorkID] {
+				return fmt.Errorf("replace incoming matches: AcoustID source input is invalid")
+			}
+			seenWork[capture.WorkID] = true
+			if input.RequestCacheKey == fence.CacheKey {
+				matchedKey = true
+			}
+			key, err := acoustIDRequestCacheKey(capture)
+			if err != nil || key != input.RequestCacheKey {
+				return fmt.Errorf("replace incoming matches: AcoustID request key differs from copied source input")
+			}
+		}
+		if !matchedKey {
+			return fmt.Errorf("replace incoming matches: AcoustID request key does not identify a current source input")
+		}
+		seenAcoustID[fence.FileMemberID] = true
+	}
+	seenAcoustIDSources := make(map[uuid.UUID]bool, len(evaluation.Provider.AcoustIDSources))
+	for _, fence := range evaluation.Provider.AcoustIDSources {
+		if fence.FileMemberID == uuid.Nil || fence.CacheKey == "" || fence.ExpectedAcceptedRevision != nil && *fence.ExpectedAcceptedRevision == "" || len(fence.SourceInputs) == 0 || seenAcoustIDSources[fence.FileMemberID] {
+			return fmt.Errorf("replace incoming matches: AcoustID source fence is invalid")
+		}
+		matchedKey := false
+		seenWork := make(map[uuid.UUID]bool, len(fence.SourceInputs))
+		for _, input := range fence.SourceInputs {
+			capture := input.Capture
+			if capture.WorkID == uuid.Nil || capture.VariantID != fence.FileMemberID || input.RequestCacheKey == "" || seenWork[capture.WorkID] {
+				return fmt.Errorf("replace incoming matches: AcoustID source input is invalid")
+			}
+			seenWork[capture.WorkID] = true
+			if input.RequestCacheKey == fence.CacheKey {
+				matchedKey = true
+			}
+			key, err := acoustIDRequestCacheKey(capture)
+			if err != nil || key != input.RequestCacheKey {
+				return fmt.Errorf("replace incoming matches: AcoustID request key differs from copied source input")
+			}
+		}
+		if !matchedKey {
+			return fmt.Errorf("replace incoming matches: AcoustID source key does not identify a current source input")
+		}
+		seenAcoustIDSources[fence.FileMemberID] = true
+	}
+	for _, fence := range evaluation.Provider.AcoustID {
+		sourceFound := false
+		for _, source := range evaluation.Provider.AcoustIDSources {
+			if source.FileMemberID == fence.FileMemberID && source.CacheKey == fence.CacheKey &&
+				source.ExpectedAcceptedRevision != nil && *source.ExpectedAcceptedRevision == fence.AcceptedRevision && reflect.DeepEqual(source.SourceInputs, fence.SourceInputs) {
+				sourceFound = true
+				break
+			}
+		}
+		if !sourceFound {
+			return fmt.Errorf("replace incoming matches: AcoustID response fence lacks its source fence")
+		}
+	}
 	seenGroups := make(map[uuid.UUID]bool, len(evaluation.Groups))
+	evaluatedMembers := make(map[uuid.UUID]bool)
 	for _, group := range evaluation.Groups {
 		if group.GroupID == uuid.Nil || group.GroupRevision == "" || len(group.Members) == 0 || seenGroups[group.GroupID] {
 			return fmt.Errorf("replace incoming matches: group identity or members are invalid")
@@ -253,6 +363,7 @@ func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
 				return fmt.Errorf("replace incoming matches: member fence is invalid")
 			}
 			members[member.FileMemberID] = true
+			evaluatedMembers[member.FileMemberID] = true
 		}
 		if len(group.Evidence) != 0 && !jsonObject(group.Evidence) {
 			return fmt.Errorf("replace incoming matches: group evidence must be a JSON object")
@@ -269,6 +380,11 @@ func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
 				}
 				positions[key] = true
 			}
+		}
+	}
+	for _, acoustID := range evaluation.Provider.AcoustIDSources {
+		if !evaluatedMembers[acoustID.FileMemberID] {
+			return fmt.Errorf("replace incoming matches: AcoustID source input is outside evaluated members")
 		}
 	}
 	return nil
@@ -319,14 +435,21 @@ func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation Incom
 	if err != nil {
 		return err
 	}
-	byVariant := make(map[uuid.UUID]IncomingGroupingCapture, len(current))
+	byVariant := make(map[uuid.UUID][]IncomingGroupingCapture, len(current))
 	for _, capture := range current {
-		byVariant[capture.VariantID] = capture
+		byVariant[capture.VariantID] = append(byVariant[capture.VariantID], capture)
 	}
 	for _, group := range evaluation.Groups {
 		for _, member := range group.Members {
-			capture, ok := byVariant[member.FileMemberID]
-			if !ok || !capture.Ready || capture.WorkID != member.WorkID || !equalOptionalBytes(capture.SourceSHA256, member.SourceSHA256) {
+			captures := byVariant[member.FileMemberID]
+			matched := false
+			for _, capture := range captures {
+				if capture.Ready && capture.WorkID == member.WorkID && equalOptionalBytes(capture.SourceSHA256, member.SourceSHA256) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				return ErrIncomingMatchConflict
 			}
 		}
@@ -382,6 +505,81 @@ func lockAndValidateMatchProvider(ctx context.Context, tx bun.Tx, evaluation Inc
 		}
 		if !equalOptionalString(revision, queryRevisions[key]) {
 			return ErrIncomingMatchConflict
+		}
+	}
+	if len(fence.AcoustID) != 0 || len(fence.AcoustIDSources) != 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "acoustid-config"); err != nil {
+			return fmt.Errorf("replace incoming matches: lock AcoustID source: %w", err)
+		}
+		var sourceID, providerID uuid.UUID
+		var endpoint, identity string
+		if err := tx.NewRaw(`SELECT source.id, source.provider_id, source.endpoint, source.configuration_identity
+			FROM provider_source source JOIN provider ON provider.id=source.provider_id WHERE provider.code='acoustid'`).Scan(ctx, &sourceID, &providerID, &endpoint, &identity); err != nil || identity != acoustIDSourceIdentity || endpoint != acoustIDOfficialEndpoint {
+			return ErrIncomingMatchConflict
+		}
+		seenFiles := make(map[uuid.UUID]bool, len(fence.AcoustIDSources))
+		currentCaptures, err := loadIncomingGroupingCaptures(ctx, tx)
+		if err != nil {
+			return err
+		}
+		capturesByFile := make(map[uuid.UUID][]IncomingGroupingCapture)
+		for _, capture := range currentCaptures {
+			capturesByFile[capture.VariantID] = append(capturesByFile[capture.VariantID], capture)
+		}
+		for _, expected := range fence.AcoustIDSources {
+			if seenFiles[expected.FileMemberID] {
+				return ErrIncomingMatchConflict
+			}
+			seenFiles[expected.FileMemberID] = true
+			current := capturesByFile[expected.FileMemberID]
+			if len(current) != len(expected.SourceInputs) {
+				return ErrIncomingMatchConflict
+			}
+			sort.Slice(current, func(i, j int) bool { return current[i].WorkID.String() < current[j].WorkID.String() })
+			copied := append([]IncomingMatchAcoustIDSourceInputFence(nil), expected.SourceInputs...)
+			sort.Slice(copied, func(i, j int) bool { return copied[i].Capture.WorkID.String() < copied[j].Capture.WorkID.String() })
+			for index, capture := range current {
+				// CurrentCaptures joins only a work item whose root, location, and
+				// inventory facts still agree. Recheck the operator-visible root
+				// state as well: a disabled or stale root is not a current source.
+				if !capture.Ready || !capture.RootEnabled || capture.RootStale ||
+					capture.LocationID == uuid.Nil || capture.RootID == uuid.Nil ||
+					capture.ConfiguredPath == "" || capture.InventoryPath != capture.ConfiguredPath ||
+					capture.RelativePath == "" || capture.SizeBytes < 0 ||
+					!reflect.DeepEqual(capture, copied[index].Capture) {
+					return ErrIncomingMatchConflict
+				}
+				requestKey, keyErr := acoustIDRequestCacheKey(capture)
+				if keyErr != nil || requestKey != copied[index].RequestCacheKey {
+					return ErrIncomingMatchConflict
+				}
+			}
+			if len(copied) == 0 {
+				return ErrIncomingMatchConflict
+			}
+		}
+		for _, expected := range fence.AcoustIDSources {
+			var payload []byte
+			err := tx.NewRaw(`SELECT payload FROM provider_response_cache WHERE provider_source_id=? AND provider_id=? AND cache_key=? FOR SHARE`, sourceID, providerID, expected.CacheKey).Scan(ctx, &payload)
+			if errors.Is(err, sql.ErrNoRows) {
+				if expected.ExpectedAcceptedRevision != nil {
+					return ErrIncomingMatchConflict
+				}
+				continue
+			}
+			if err != nil {
+				return ErrIncomingMatchConflict
+			}
+			if len(payload) == 0 {
+				if expected.ExpectedAcceptedRevision != nil {
+					return ErrIncomingMatchConflict
+				}
+				continue
+			}
+			digest := sha256.Sum256(payload)
+			if expected.ExpectedAcceptedRevision == nil || hex.EncodeToString(digest[:]) != *expected.ExpectedAcceptedRevision {
+				return ErrIncomingMatchConflict
+			}
 		}
 	}
 	// The evaluated release set is carried by the fence, not inferred from the

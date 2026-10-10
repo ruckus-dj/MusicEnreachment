@@ -25,10 +25,12 @@ type MatchingAssignmentCandidate struct {
 	Locations     []MatchingAssignmentLocation
 }
 
-// MatchingAssignmentResult is populated only when the exact optimum is unique.
+// MatchingAssignmentResult distinguishes infeasible constraints from a tie;
+// choices are populated only when the exact optimum is unique.
 type MatchingAssignmentResult struct {
-	Unique  bool
-	Choices map[string]string
+	Feasible bool
+	Unique   bool
+	Choices  map[string]string
 }
 
 // SelectMatchingAssignments maximizes the exact sum of combined assignment
@@ -53,5 +55,5 @@ func SelectMatchingAssignments(ctx context.Context, candidates []MatchingAssignm
 	if err != nil {
 		return MatchingAssignmentResult{}, err
 	}
-	return MatchingAssignmentResult{Unique: result.Unique, Choices: result.Choices}, nil
+	return MatchingAssignmentResult{Feasible: result.Feasible, Unique: result.Unique, Choices: result.Choices}, nil
 }

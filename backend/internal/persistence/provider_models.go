@@ -115,6 +115,14 @@ type ProviderCachedResponse struct {
 	FetchOrder       int64           `bun:"fetch_order"`
 }
 
+// AcoustIDCachedResponseSnapshot contains only accepted responses from the
+// fixed official AcoustID source. Reservation generation/order are omitted:
+// refreshing a key must not invalidate its last accepted payload.
+type AcoustIDCachedResponseSnapshot struct {
+	Source    ProviderSource
+	Responses map[string]*ProviderCachedResponse
+}
+
 type ProviderRefreshTicket struct {
 	ProviderSourceID      uuid.UUID
 	ProviderID            uuid.UUID

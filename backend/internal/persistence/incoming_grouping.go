@@ -51,6 +51,9 @@ type IncomingGroupingCapture struct {
 	MediaVariantID                *uuid.UUID
 	CaptureAnalysisID             *uuid.UUID
 	RootID                        uuid.UUID
+	RootEnabled                   bool
+	RootStatus                    string
+	RootStale                     bool
 	LocationID                    uuid.UUID
 	ConfiguredPath                string
 	InventoryPath                 string
@@ -68,6 +71,7 @@ type IncomingGroupingCapture struct {
 	MetadataObservedAt            *time.Time
 	MetadataProvenance            json.RawMessage
 	Fingerprint                   *string
+	FingerprintResultID           *uuid.UUID
 	FingerprintWinner             *uuid.UUID
 	FingerprintDuration           *float64
 	FingerprintVersion            *string
@@ -122,7 +126,9 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 		SELECT COALESCE(sha.success_sha_variant_id, work.id, location.id) AS variant_id,
 			work_identity.media_variant_id AS media_variant_id,
 			COALESCE(work.id, location.id) AS work_id, metadata.success_metadata_result_id AS capture_analysis_id,
-			root.id AS root_id, location.id AS location_id, root.configured_path, root.inventory_path,
+			root.id AS root_id, root.enabled AS root_enabled, root.status AS root_status,
+			(root.inventory_path IS NOT NULL AND root.inventory_path<>root.configured_path) AS root_stale,
+			location.id AS location_id, root.configured_path, root.inventory_path,
 			location.relative_path, location.size_bytes, location.mtime,
 			metadata_result.observed_tags AS tags, metadata_result.winning_result_id AS metadata_winner,
 			metadata_result.observed_at AS metadata_observed_at, metadata_result.provenance AS metadata_provenance,
@@ -131,6 +137,7 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 			probe_variant.analysis_policy_version AS probe_policy, probe_variant.inspected_at AS probe_inspected_at,
 			sha_variant.source_sha256,
 			fingerprint_result.fingerprint,
+			fingerprint_result.id AS fingerprint_result_id,
 			fingerprint_result.winning_result_id AS fingerprint_winner,
 			fingerprint_result.reported_duration AS fingerprint_duration,
 			fingerprint_result.fpcalc_version AS fingerprint_version,

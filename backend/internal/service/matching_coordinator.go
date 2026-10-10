@@ -102,7 +102,11 @@ func (coordinator *MatchingCoordinator) Start(ctx context.Context, admissionKey 
 		})
 	}
 	prepared, planRequests = canonicalMatchingProviderRequests(prepared, planRequests)
-	plan := matchingAdmissionPlan{SchemaVersion: 2, GroupingEpoch: state.Revision, Targets: targets, PolicyVersion: MatchingPolicyVersion, EvaluationQueryScope: queryScope, ProviderRequests: planRequests}
+	planVersion := 2
+	if len(queryScope.AcoustIDKeysByFile) != 0 {
+		planVersion = 3
+	}
+	plan := matchingAdmissionPlan{SchemaVersion: planVersion, GroupingEpoch: state.Revision, Targets: targets, PolicyVersion: MatchingPolicyVersion, EvaluationQueryScope: queryScope, ProviderRequests: planRequests}
 	encodedPlan, err := json.Marshal(plan)
 	if err != nil {
 		return nil, fmt.Errorf("encode matching plan: %w", err)
@@ -129,9 +133,10 @@ type matchingAdmissionPlan struct {
 
 func canonicalMatchingQueryScope(scope MatchingEvaluationQueryScope, targets []persistence.MatchingTarget, groups map[uuid.UUID]persistence.IncomingGroupingGroup) (MatchingEvaluationQueryScope, error) {
 	result := MatchingEvaluationQueryScope{
-		GroupIDs:          append([]uuid.UUID(nil), scope.GroupIDs...),
-		ReleaseKeysByFile: make(map[uuid.UUID][]string, len(scope.ReleaseKeysByFile)),
-		SearchKeysByFile:  make(map[uuid.UUID]MatchingSearchKeys, len(scope.SearchKeysByFile)),
+		GroupIDs:           append([]uuid.UUID(nil), scope.GroupIDs...),
+		ReleaseKeysByFile:  make(map[uuid.UUID][]string, len(scope.ReleaseKeysByFile)),
+		SearchKeysByFile:   make(map[uuid.UUID]MatchingSearchKeys, len(scope.SearchKeysByFile)),
+		AcoustIDKeysByFile: make(map[uuid.UUID]string, len(scope.AcoustIDKeysByFile)),
 	}
 	sort.Slice(result.GroupIDs, func(i, j int) bool { return result.GroupIDs[i].String() < result.GroupIDs[j].String() })
 	selectedMembers := make(map[uuid.UUID]struct{})
@@ -160,6 +165,17 @@ func canonicalMatchingQueryScope(scope MatchingEvaluationQueryScope, targets []p
 		}
 		result.ReleaseKeysByFile[member] = append([]string{}, releases...)
 		result.SearchKeysByFile[member] = keys
+		if key, ok := scope.AcoustIDKeysByFile[member]; ok {
+			if key == "" {
+				return MatchingEvaluationQueryScope{}, fmt.Errorf("matching AcoustID cache key must be non-empty")
+			}
+			result.AcoustIDKeysByFile[member] = key
+		}
+	}
+	for member := range scope.AcoustIDKeysByFile {
+		if _, ok := selectedMembers[member]; !ok {
+			return MatchingEvaluationQueryScope{}, fmt.Errorf("matching AcoustID scope contains an unselected file")
+		}
 	}
 	return result, nil
 }
