@@ -33,6 +33,10 @@ type providerOperationDeliveryTransitionRepository interface {
 	TransitionProviderOperationForDelivery(context.Context, uuid.UUID, int, int64, int64, func(*persistence.Operation) error) (bool, error)
 }
 
+type providerMatchingWakeTransitionRepository interface {
+	TransitionProviderOperationForDeliveryWithMatchingWake(context.Context, uuid.UUID, int, int64, int64, persistence.RiverInserter, func(*persistence.Operation) error) (bool, error)
+}
+
 type toolsExecutionClaimRepository interface {
 	ClaimToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) (bool, error)
 	ReleaseToolsExecutionDelivery(context.Context, uuid.UUID, int, int64, string) error
@@ -256,7 +260,7 @@ func (s *Operations) transitionForProviderDelivery(ctx context.Context, expected
 		return fmt.Errorf("provider operation delivery fencing is unavailable")
 	}
 	now := s.now()
-	changed, err := repository.TransitionProviderOperationForDelivery(ctx, expected.ID, expected.Attempt, *expected.RiverJobID, epoch, func(operation *persistence.Operation) error {
+	transition := func(operation *persistence.Operation) error {
 		if operation.State == "succeeded" || operation.State == "failed" {
 			return fmt.Errorf("operation is already final")
 		}
@@ -272,7 +276,14 @@ func (s *Operations) transitionForProviderDelivery(ctx context.Context, expected
 			operation.FinishedAt = &now
 		}
 		return nil
-	})
+	}
+	var changed bool
+	var err error
+	if wakeRepository, ok := s.repository.(providerMatchingWakeTransitionRepository); ok {
+		changed, err = wakeRepository.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, expected.ID, expected.Attempt, *expected.RiverJobID, epoch, s.river, transition)
+	} else {
+		changed, err = repository.TransitionProviderOperationForDelivery(ctx, expected.ID, expected.Attempt, *expected.RiverJobID, epoch, transition)
+	}
 	if err != nil {
 		return err
 	}

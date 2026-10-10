@@ -59,13 +59,10 @@ func (service *ProviderFetchService) WithDurableOperations(repository durablePro
 	return service
 }
 
-// StartProviderOperation records a bounded lookup or search request atomically
-// with its River delivery. A missing successful cache entry is fetched on the
-// worker; setting explicitRefresh requests an intentional refresh.
-func (service *ProviderFetchService) StartProviderOperation(ctx context.Context, kind, queryOrMBID string, offset, limit int, explicitRefresh bool) (*persistence.Operation, error) {
-	if service.operations == nil || service.river == nil {
-		return nil, fmt.Errorf("durable provider operations are unavailable")
-	}
+// PrepareOperation validates and captures an explicit provider request without
+// enqueueing it. Coordinators use this to create the provider operation and
+// their own durable plan in one transaction.
+func (service *ProviderFetchService) PrepareOperation(ctx context.Context, kind, queryOrMBID string, offset, limit int, explicitRefresh bool) (*persistence.Operation, error) {
 	config, err := service.registry.GetMusicBrainzConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read MusicBrainz provider configuration: %w", err)
@@ -81,15 +78,27 @@ func (service *ProviderFetchService) StartProviderOperation(ctx context.Context,
 	var key string
 	switch kind {
 	case "release_lookup":
-		intent.MBID = strings.ToLower(queryOrMBID)
+		intent.MBID = strings.ToLower(strings.TrimSpace(queryOrMBID))
+		if !validProviderMBID(intent.MBID) {
+			return nil, fmt.Errorf("invalid MusicBrainz release id")
+		}
 		key = "release-lookup:" + intent.MBID
 	case "recording_lookup":
-		intent.MBID = strings.ToLower(queryOrMBID)
+		intent.MBID = strings.ToLower(strings.TrimSpace(queryOrMBID))
+		if !validProviderMBID(intent.MBID) {
+			return nil, fmt.Errorf("invalid MusicBrainz recording id")
+		}
 		key = "recording-lookup:" + intent.MBID
 	case "release_search":
+		if strings.TrimSpace(queryOrMBID) == "" || offset < 0 || limit < 1 || limit > 100 {
+			return nil, fmt.Errorf("invalid MusicBrainz search parameters")
+		}
 		intent.Query, intent.Offset, intent.Limit = queryOrMBID, offset, limit
 		key = fmt.Sprintf("release-search:%d:%d:%s", offset, limit, queryOrMBID)
 	case "recording_search":
+		if strings.TrimSpace(queryOrMBID) == "" || offset < 0 || limit < 1 || limit > 100 {
+			return nil, fmt.Errorf("invalid MusicBrainz search parameters")
+		}
 		intent.Query, intent.Offset, intent.Limit = queryOrMBID, offset, limit
 		key = fmt.Sprintf("recording-search:%d:%d:%s", offset, limit, queryOrMBID)
 	default:
@@ -104,12 +113,32 @@ func (service *ProviderFetchService) StartProviderOperation(ctx context.Context,
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: operationKind, State: "queued", Stage: "queued", InputSnapshot: snapshot,
 		ProviderSourceID: &sourceID, ProviderConfigurationIdentity: &identity,
+		ProviderID: &source.ProviderID, ProviderEndpoint: source.Endpoint,
 		ProviderCacheKey: &cacheKey, ProviderExplicitRefresh: explicitRefresh,
+	}
+	return operation, nil
+}
+
+// StartProviderOperation records a bounded lookup or search request atomically
+// with its River delivery. A missing successful cache entry is fetched on the
+// worker; setting explicitRefresh requests an intentional refresh.
+func (service *ProviderFetchService) StartProviderOperation(ctx context.Context, kind, queryOrMBID string, offset, limit int, explicitRefresh bool) (*persistence.Operation, error) {
+	if service.operations == nil || service.river == nil {
+		return nil, fmt.Errorf("durable provider operations are unavailable")
+	}
+	operation, err := service.PrepareOperation(ctx, kind, queryOrMBID, offset, limit, explicitRefresh)
+	if err != nil {
+		return nil, err
 	}
 	if err := service.operations.CreateOperationAndEnqueue(ctx, operation, service.river, ProviderFetchOperationArgs{OperationID: operation.ID}, nil); err != nil {
 		return nil, err
 	}
 	return operation, nil
+}
+
+func validProviderMBID(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && strings.EqualFold(value, parsed.String())
 }
 
 // ExecuteDurableOperation reloads immutable intent from persistence and only

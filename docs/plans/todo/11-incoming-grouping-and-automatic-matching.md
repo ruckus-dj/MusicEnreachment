@@ -566,6 +566,18 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Durable coordinator — admission increment (2026-10-10):** реализованы
+atomic admission explicit finite MusicBrainz plans, canonical intent digest
+с provider source/configuration fences, idempotency/conflict по admission key,
+group generations, parent/child operations и initial delivery ledger.
+Provider terminal settlement атомарно сохраняет dependency outcomes и River
+wakes, включая failure; failed refresh не изменяет accepted cache evidence.
+PostgreSQL tests проверяют concurrent admission/settlement, stale fences,
+River-insert rollback и wake-insert rollback. Independent static review закрыто,
+полный `task verify` прошёл. Parent worker, execution/retry/recovery,
+existing-child terminal-registration handling и atomic fenced publication ещё
+не подключены; coordinator не завершён и automatic pipeline не включён.
+
 **Следующий проверенный increment (2026-10-10):** добавлен immutable
 work-to-media-variant mapping: завершённый анализ выбирает canonical SHA
 identity или отдельный digestless anchor, retry и unchanged rescan сохраняют

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -52,6 +53,8 @@ type Operation struct {
 	SourceAnalysisMode            string     `bun:"source_analysis_mode,nullzero"`
 	ProviderSourceID              *uuid.UUID `bun:"provider_source_id,type:uuid,nullzero"`
 	ProviderConfigurationIdentity *string    `bun:"provider_configuration_identity,nullzero"`
+	ProviderID                    *uuid.UUID `bun:"-"`
+	ProviderEndpoint              string     `bun:"-"`
 	ProviderCacheKey              *string    `bun:"provider_cache_key,nullzero"`
 	ProviderExplicitRefresh       bool       `bun:"provider_explicit_refresh"`
 	ProviderDeliveryClaimedAt     *time.Time `bun:"provider_delivery_claimed_at,nullzero"`
@@ -165,41 +168,48 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 		return fmt.Errorf("enqueue operation: River client is required")
 	}
 	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var gateErr error
-		if operation != nil && operation.Kind == "move_tools_root" && operation.State == "queued" {
-			gateErr = lockOutputAdmissionGateExclusive(ctx, tx)
-		} else {
-			gateErr = AcquireOutputAdmissionGate(ctx, tx)
-		}
-		if gateErr != nil {
-			return fmt.Errorf("enqueue operation: lock output admission gate: %w", gateErr)
-		}
-		if operation != nil && strings.HasPrefix(operation.Kind, "provider_") {
-			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-				return fmt.Errorf("enqueue provider operation: lock configuration: %w", err)
-			}
-			var currentIdentity string
-			if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
-				return fmt.Errorf("enqueue provider operation: read configuration: %w", err)
-			}
-			if operation.ProviderConfigurationIdentity == nil || currentIdentity != *operation.ProviderConfigurationIdentity {
-				return fmt.Errorf("enqueue provider operation: configuration changed")
-			}
-			var sourceIdentity string
-			if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
-				return fmt.Errorf("enqueue provider operation: source configuration changed")
-			}
-		}
-		result, err := client.InsertTx(ctx, tx.Tx, args, options)
-		if err != nil {
-			return fmt.Errorf("insert River job: %w", err)
-		}
-		operation.RiverJobID = &result.Job.ID
-		if err := repository.CreateOperationWith(ctx, tx, operation); err != nil {
-			return err
-		}
-		return nil
+		return repository.createOperationAndEnqueueTx(ctx, tx, operation, client, args, options)
 	})
+}
+
+// createOperationAndEnqueueTx inserts an operation and its River delivery using
+// the caller's transaction. It is shared with coordinators that must atomically
+// admit multiple related operations.
+func (repository *SetupManagerRepository) createOperationAndEnqueueTx(ctx context.Context, tx bun.Tx, operation *Operation, client RiverInserter, args river.JobArgs, options *river.InsertOpts) error {
+	var gateErr error
+	if operation != nil && operation.Kind == "move_tools_root" && operation.State == "queued" {
+		gateErr = lockOutputAdmissionGateExclusive(ctx, tx)
+	} else {
+		gateErr = AcquireOutputAdmissionGate(ctx, tx)
+	}
+	if gateErr != nil {
+		return fmt.Errorf("enqueue operation: lock output admission gate: %w", gateErr)
+	}
+	if operation != nil && strings.HasPrefix(operation.Kind, "provider_") {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("enqueue provider operation: lock configuration: %w", err)
+		}
+		var currentIdentity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
+			return fmt.Errorf("enqueue provider operation: read configuration: %w", err)
+		}
+		if operation.ProviderConfigurationIdentity == nil || currentIdentity != *operation.ProviderConfigurationIdentity {
+			return fmt.Errorf("enqueue provider operation: configuration changed")
+		}
+		var sourceIdentity string
+		if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
+			return fmt.Errorf("enqueue provider operation: source configuration changed")
+		}
+	}
+	result, err := client.InsertTx(ctx, tx.Tx, args, options)
+	if err != nil {
+		return fmt.Errorf("insert River job: %w", err)
+	}
+	operation.RiverJobID = &result.Job.ID
+	if err := repository.CreateOperationWith(ctx, tx, operation); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CreateToolsMoveOperationAndEnqueue records a tools root move and its River job
@@ -986,6 +996,16 @@ func (repository *SetupManagerRepository) ClaimProviderOperationDelivery(ctx con
 // TransitionProviderOperationForDelivery applies a transition only for the
 // currently claimed execution, fencing work from an expired lease.
 func (repository *SetupManagerRepository) TransitionProviderOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, epoch int64, transition func(*Operation) error) (bool, error) {
+	return repository.transitionProviderOperationForDelivery(ctx, id, attempt, riverJobID, epoch, nil, transition)
+}
+
+// TransitionProviderOperationForDeliveryWithMatchingWake also settles matching
+// dependencies and records durable parent wake deliveries in the same commit.
+func (repository *SetupManagerRepository) TransitionProviderOperationForDeliveryWithMatchingWake(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, epoch int64, client RiverInserter, transition func(*Operation) error) (bool, error) {
+	return repository.transitionProviderOperationForDelivery(ctx, id, attempt, riverJobID, epoch, client, transition)
+}
+
+func (repository *SetupManagerRepository) transitionProviderOperationForDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64, epoch int64, client RiverInserter, transition func(*Operation) error) (bool, error) {
 	changed := false
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		operation, err := repository.GetOperationForUpdate(ctx, tx, id)
@@ -1002,10 +1022,49 @@ func (repository *SetupManagerRepository) TransitionProviderOperationForDelivery
 		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("transition provider operation delivery: %w", err)
 		}
+		if operation.State == "succeeded" || operation.State == "failed" {
+			if err := settleMatchingProviderDependencies(ctx, tx, client, operation); err != nil {
+				return err
+			}
+		}
 		changed = true
 		return nil
 	})
 	return changed, err
+}
+
+type matchingDependencyWake struct {
+	RunID uuid.UUID `bun:"parent_run_id"`
+}
+
+func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client RiverInserter, operation *Operation) error {
+	dependencies := make([]matchingDependencyWake, 0)
+	if err := tx.NewRaw(`UPDATE matching_provider_dependency SET terminal_outcome=?, settled_at=now() WHERE request_id=? AND terminal_outcome IS NULL RETURNING parent_run_id`, operation.State, operation.ID).Scan(ctx, &dependencies); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("settle matching provider dependencies: %w", err)
+	}
+	if len(dependencies) == 0 {
+		return nil
+	}
+	if client == nil {
+		return fmt.Errorf("matching dependency settlement requires a River client")
+	}
+	for _, dependency := range dependencies {
+		var parentID uuid.UUID
+		if err := tx.NewRaw(`SELECT operation_id FROM matching_run WHERE id=?`, dependency.RunID).Scan(ctx, &parentID); err != nil {
+			return fmt.Errorf("load matching parent for dependency wake: %w", err)
+		}
+		inserted, err := client.InsertTx(ctx, tx.Tx, MatchingEvaluationWakeArgs{OperationID: parentID}, nil)
+		if err != nil {
+			return fmt.Errorf("enqueue matching dependency wake: %w", err)
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id) VALUES (?, ?) ON CONFLICT (river_job_id) DO NOTHING`, dependency.RunID, inserted.Job.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("record matching dependency wake: %w", err)
+		}
+	}
+	return nil
 }
 
 func isProviderOperationKind(kind string) bool {
