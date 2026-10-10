@@ -96,7 +96,11 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 		t.Fatalf("stale provider projection error = %v, want conflict", err)
 	}
 	_, after = mustIncomingMatchResult(t, ctx, repository, fixture.group.ID)
-	if len(after) != 2 || after[0].Score != first.Score || after[1].Score != second.Score {
+	afterScores = make(map[uuid.UUID]float64, len(after))
+	for _, candidate := range after {
+		afterScores[candidate.FileMemberID] = candidate.Score
+	}
+	if len(after) != 2 || afterScores[first.FileMemberID] != first.Score || afterScores[second.FileMemberID] != second.Score {
 		t.Fatalf("stale provider projection changed previous result: %#v", after)
 	}
 

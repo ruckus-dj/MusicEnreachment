@@ -255,6 +255,9 @@ func (repository *SourceInventoryRepository) ApplySourceSHA256(ctx context.Conte
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == apply.StepAttempt && sameUUID(locked.Step.LastOperationID, apply.OperationID) && locked.Step.SuccessSHAVariantID != nil {
 				canonical = new(SourceMediaVariant)
 				if scanErr := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, *locked.Step.SuccessSHAVariantID).Scan(ctx, canonical); scanErr == nil && string(canonical.SourceSHA256) == string(apply.SHA256) {
+					if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+						return fmt.Errorf("apply source sha256: %w", err)
+					}
 					return nil
 				}
 			}
@@ -287,6 +290,9 @@ func (repository *SourceInventoryRepository) ApplySourceSHA256(ctx context.Conte
 			execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL, last_operation_id=?, updated_at=now()
 			WHERE work_id=? AND step='sha256' AND step_attempt=?`, canonical.ID, apply.OperationID, locked.Work.ID, apply.StepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("apply source sha256: persist step: %w", err)
+		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("apply source sha256: %w", err)
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("apply source sha256: %w", err)
@@ -324,6 +330,9 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 					if err := tx.NewRaw(`SELECT * FROM media_variant WHERE id=?`, id).Scan(ctx, result); err == nil {
 						if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, apply.AudioStreamCount); err != nil {
 							return fmt.Errorf("apply source probe: persist location probe status: %w", err)
+						}
+						if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+							return fmt.Errorf("apply source probe: %w", err)
 						}
 						return nil
 					}
@@ -390,6 +399,9 @@ func (repository *SourceInventoryRepository) ApplySourceProbe(ctx context.Contex
 				return fmt.Errorf("apply source probe: register probe cache: %w", err)
 			}
 		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("apply source probe: %w", err)
+		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("apply source probe: %w", err)
 		}
@@ -420,6 +432,9 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == apply.StepAttempt && sameUUID(locked.Step.LastOperationID, apply.OperationID) && locked.Step.SuccessFingerprintResultID != nil {
 				selected = new(SourceFingerprintResult)
 				if scanErr := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected); scanErr == nil {
+					if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+						return fmt.Errorf("apply source fingerprint: %w", err)
+					}
 					return nil
 				}
 			}
@@ -470,6 +485,9 @@ func (repository *SourceInventoryRepository) ApplySourceFingerprint(ctx context.
 				return fmt.Errorf("apply source fingerprint: clean previous result: %w", err)
 			}
 		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("apply source fingerprint: %w", err)
+		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("apply source fingerprint: %w", err)
 		}
@@ -500,7 +518,23 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 		if err := checkSourceStepApplyFence(locked, apply.StepAttempt); err != nil {
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == apply.StepAttempt && sameUUID(locked.Step.LastOperationID, apply.OperationID) && locked.Step.SuccessMetadataResultID != nil {
 				selected = new(SourceMetadataResult)
-				return tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, *locked.Step.SuccessMetadataResultID).Scan(ctx, selected)
+				if err := tx.NewRaw(`SELECT * FROM media_metadata_result WHERE id=?`, *locked.Step.SuccessMetadataResultID).Scan(ctx, selected); err != nil {
+					return err
+				}
+				var sameResult bool
+				if err := tx.NewRaw(`SELECT EXISTS (
+					SELECT 1 FROM media_metadata_result WHERE id=? AND observed_tags=?::jsonb AND provenance=?::jsonb
+					AND native_matroska IS NOT DISTINCT FROM ?::jsonb AND observed_at=? AND applied_operation_id=?
+				)`, selected.ID, apply.ObservedTags, apply.Provenance, nullableJSON(apply.NativeMatroska), apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
+					return fmt.Errorf("apply source metadata: validate replay: %w", err)
+				}
+				if !sameResult {
+					return fmt.Errorf("apply source metadata: %w", ErrSourceAnalysisStale)
+				}
+				if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+					return fmt.Errorf("apply source metadata: %w", err)
+				}
+				return nil
 			}
 			return fmt.Errorf("apply source metadata: %w", ErrSourceAnalysisStale)
 		}
@@ -545,6 +579,9 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 			if err := deleteUnreferencedSourceMetadataResult(ctx, tx, *previousID); err != nil {
 				return fmt.Errorf("apply source metadata: clean previous result: %w", err)
 			}
+		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("apply source metadata: %w", err)
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("apply source metadata: %w", err)
@@ -593,7 +630,13 @@ func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.
 		if err := checkSourceStepApplyFence(locked, capturedStepAttempt); err != nil {
 			if locked.Step.State == "succeeded" && locked.Step.StepAttempt == capturedStepAttempt && sameUUID(locked.Step.LastOperationID, claim.OperationID) && locked.Step.SuccessFingerprintResultID != nil {
 				selected = new(SourceFingerprintResult)
-				return tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected)
+				if err := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *locked.Step.SuccessFingerprintResultID).Scan(ctx, selected); err != nil {
+					return err
+				}
+				if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+					return fmt.Errorf("reuse source fingerprint: %w", err)
+				}
+				return nil
 			}
 			return fmt.Errorf("reuse source fingerprint: %w", ErrSourceAnalysisStale)
 		}
@@ -604,6 +647,9 @@ func (repository *SourceInventoryRepository) ReuseSourceFingerprint(ctx context.
 				execution_operation_id=NULL, execution_operation_attempt=NULL, execution_job_id=NULL, last_operation_id=?, updated_at=now()
 				WHERE work_id=? AND step='fingerprint' AND step_attempt=?`, selected.ID, claim.OperationID, claim.WorkID, capturedStepAttempt).Exec(ctx); err != nil {
 			return fmt.Errorf("reuse source fingerprint: select cached result: %w", err)
+		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("reuse source fingerprint: %w", err)
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("reuse source fingerprint: %w", err)
@@ -655,6 +701,9 @@ func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Contex
 				if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, *selected.AudioStreamCount); err != nil {
 					return fmt.Errorf("reuse source probe: persist location probe status: %w", err)
 				}
+				if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+					return fmt.Errorf("reuse source probe: %w", err)
+				}
 				return nil
 			}
 			return fmt.Errorf("reuse source probe: %w", ErrSourceAnalysisStale)
@@ -669,6 +718,9 @@ func (repository *SourceInventoryRepository) ReuseSourceProbe(ctx context.Contex
 		}
 		if err := updateSourceLocationProbeStatus(ctx, tx, locked.Location.ID, *selected.AudioStreamCount); err != nil {
 			return fmt.Errorf("reuse source probe: persist location probe status: %w", err)
+		}
+		if err := ensureReadySourceWorkVariant(ctx, tx, locked.Work, locked.Location); err != nil {
+			return fmt.Errorf("reuse source probe: %w", err)
 		}
 		if err := InvalidateIncomingGrouping(ctx, tx); err != nil {
 			return fmt.Errorf("reuse source probe: %w", err)
@@ -733,16 +785,23 @@ func (repository *SourceInventoryRepository) CleanupSourceMediaVariants(ctx cont
 	if len(ids) == 0 {
 		return nil
 	}
-	if _, err := repository.db.NewRaw(`DELETE FROM media_variant v WHERE v.id IN (?) AND v.source_sha256 IS NULL
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("cleanup source media variants: lock source mutation gate: %w", err)
+		}
+		if _, err := tx.NewRaw(`DELETE FROM media_variant v WHERE v.id IN (?) AND v.source_sha256 IS NULL
 		AND NOT EXISTS (SELECT 1 FROM source_location l WHERE l.media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id)
+		AND NOT EXISTS (SELECT 1 FROM source_work_variant_identity i WHERE i.media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM media_probe_cache c WHERE c.result_id=v.id)
+		AND NOT EXISTS (SELECT 1 FROM track_source t WHERE t.media_variant_id=v.id)
 		AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold h JOIN source_analysis_step s ON s.work_id=h.work_id
 			WHERE h.operation_id IN (SELECT id FROM operation WHERE state IN ('queued','running'))
 			AND (s.success_sha_variant_id=v.id OR s.success_probe_variant_id=v.id))`, bun.List(ids)).Exec(ctx); err != nil {
-		return fmt.Errorf("cleanup source media variants: %w", err)
-	}
-	return nil
+			return fmt.Errorf("cleanup source media variants: %w", err)
+		}
+		return nil
+	})
 }
 
 func lockSourceAnalysisStep(ctx context.Context, tx bun.Tx, workID, operationID uuid.UUID, operationAttempt int, jobID int64, stepName SourceStepName) (*lockedSourceStep, error) {

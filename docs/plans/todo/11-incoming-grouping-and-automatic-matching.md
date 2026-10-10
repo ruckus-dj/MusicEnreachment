@@ -566,6 +566,21 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Следующий проверенный increment (2026-10-10):** добавлен immutable
+work-to-media-variant mapping: завершённый анализ выбирает canonical SHA
+identity или отдельный digestless anchor, retry и unchanged rescan сохраняют
+его. Group member IDs не переопределяются; реальный media_variant FK доступен
+отдельно. Cleanup учитывает mapping и все track_source references; позднее
+добавление SHA завершённому digestless input отклоняется. Backfill отсутствует.
+Cache-only evaluator соединяет scoring, release selection, exact assignment
+и atomic multi-group candidate publication. Полный union provider request set
+сохраняется в fences; evaluation CAS baseline фиксируется до чтения inputs.
+Independent review findings закрыты, полный `task verify` прошёл, включая
+PostgreSQL lifecycle/composition/concurrency tests. Evaluator ещё не подключён
+к automatic pipeline. Durable explicit-plan coordinator находится в работе;
+automatic acquisition planning, AcoustID orchestration, automatic apply и UI
+остаются незавершёнными.
+
 **Проверенный increment (2026-10-10):** реализованы cache-only scoring inputs
 с отдельными release/assignment profiles, source-scoped recording credits и
 раздельными release-track/recording durations (null остаётся отсутствующим).

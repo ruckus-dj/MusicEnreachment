@@ -242,6 +242,108 @@ func TestPublishPreparedSourceScanAnalysisDoesNotBackfillUnchangedWork(t *testin
 	}
 }
 
+func TestPreparedRescanPreservesMappedDigestlessWorkIdentity(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	root := publishTestRoot(t, ctx, db, "/srv/publish-mapped-digestless")
+	op := publishTestScan(t, ctx, db, root.ID)
+	stamp := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	location := SourceLocation{ID: uuid.New(), SourceRootID: root.ID, RelativePath: "track.flac", SizeBytes: 9, Mtime: stamp, LastSeenScanGeneration: 1, ProbeStatus: SourceProbeStatusAudio}
+	if _, err := db.NewInsert().Model(&location).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	anchorID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO media_variant(id,size_bytes) VALUES (?,?)`, anchorID, location.SizeBytes).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE source_location SET media_variant_id=? WHERE id=?`, anchorID, location.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	work := &SourceAnalysisWork{ID: uuid.New(), LocationID: location.ID, SourceRootID: root.ID, ConfiguredPath: root.ConfiguredPath, InventoryPath: root.ConfiguredPath, RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: stamp, OriginScanOperationID: op.ID}
+	if _, err := db.NewInsert().Model(work).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, work.ID, anchorID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	metadataID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO media_metadata_result(id,observed_tags,provenance,observed_at,winning_result_id,applied_operation_id) VALUES (?, '{}'::jsonb, '{}'::jsonb, ?, ?, ?)`, metadataID, stamp, metadataID, op.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldProbeID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO media_variant(id,size_bytes,analysis_policy_version,ffprobe_version,ffprobe_json,observed_tags,inspected_at,applied_operation_id,audio_stream_count) VALUES (?, ?, 1, 'old', '{}'::jsonb, '{}'::jsonb, ?, ?, 1)`, oldProbeID, location.SizeBytes, stamp, op.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	probeStep := SourceAnalysisStep{WorkID: work.ID, Step: string(SourceStepProbe), State: "succeeded", SuccessProbeVariantID: &oldProbeID, SuccessReuseOrigin: stringPointer("executed")}
+	metadataStep := SourceAnalysisStep{WorkID: work.ID, Step: string(SourceStepMetadata), State: "succeeded", SuccessMetadataResultID: &metadataID, SuccessReuseOrigin: stringPointer("executed")}
+	for _, step := range []*SourceAnalysisStep{&probeStep, &metadataStep} {
+		if _, err := db.NewInsert().Model(step).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	version, policy, audioCount := "new", 1, 1
+	inspected := stamp.Add(time.Second)
+	prepared := &SourceScanPreparedAnalysis{
+		Version: 1, HashRequested: false, SHA256State: SourcePreparedNotRequested,
+		ProbeState: SourcePreparedSucceeded,
+		ProbeVariant: &SourceMediaVariant{ID: uuid.New(), FFProbeVersion: &version, AnalysisPolicyVersion: &policy,
+			FFProbeJSON: json.RawMessage(`{"format":{"format_name":"flac"}}`), ObservedTags: json.RawMessage(`{}`),
+			InspectedAt: &inspected, AppliedOperationID: &op.ID, AudioStreamCount: &audioCount},
+		FingerprintState: SourcePreparedNotRequested,
+	}
+	if err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		return publishPreparedResults(ctx, tx, work, &location, op.ID, prepared, true, false, nil)
+	}); err != nil {
+		t.Fatalf("publish unchanged-work rescan: %v", err)
+	}
+	var linkedID *uuid.UUID
+	if err := db.NewRaw(`SELECT media_variant_id FROM source_location WHERE id=?`, location.ID).Scan(ctx, &linkedID); err != nil || linkedID == nil || *linkedID != anchorID {
+		t.Fatalf("rescan replaced location identity with probe result: %v, %v; want anchor %s", linkedID, err, anchorID)
+	}
+	captures, err := loadIncomingGroupingCaptures(ctx, db)
+	if err != nil || len(captures) != 1 || captures[0].VariantID != work.ID || captures[0].MediaVariantID == nil || *captures[0].MediaVariantID != anchorID || !captures[0].Ready || captures[0].ProbeWinner == nil || *captures[0].ProbeWinner != prepared.ProbeVariant.ID {
+		t.Fatalf("rescan capture grouping ID/anchor/probe = %#v, %v", captures, err)
+	}
+	if _, err := db.NewRaw(`UPDATE operation SET state='succeeded',finished_at=now() WHERE id=?`, op.ID).Exec(ctx); err != nil {
+		t.Fatalf("finish unchanged-work scan: %v", err)
+	}
+	lateOperation := publishTestScan(t, ctx, db, root.ID)
+	lateDigest := make([]byte, 32)
+	lateDigest[0] = 0x44
+	lateSHA := publishTestSHA(uuid.New(), lateDigest, lateOperation.ID, stamp.Add(2*time.Second))
+	latePrepared := &SourceScanPreparedAnalysis{
+		Version: 1, HashRequested: true, SHA256State: SourcePreparedSucceeded, SHA256Variant: lateSHA,
+		ProbeState: SourcePreparedNotRequested, FingerprintState: SourcePreparedNotRequested,
+		OriginalLocationID: &location.ID, OriginalMediaVariantID: &anchorID,
+	}
+	lateCandidate := []SourceScanCandidateInput{{RelativePath: location.RelativePath, SizeBytes: location.SizeBytes, Mtime: stamp, ProbeStatus: SourceProbeStatusAudio, PreparedAnalysis: latePrepared}}
+	if err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		return publishPreparedSourceScanAnalysis(ctx, tx, *root, *lateOperation, true, lateCandidate)
+	}); !errors.Is(err, ErrSourceAnalysisStale) {
+		t.Fatalf("completed SHA-off work late digest error = %v, want stale refusal", err)
+	}
+	if mappedID := func() uuid.UUID {
+		var id uuid.UUID
+		if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, work.ID).Scan(ctx, &id); err != nil {
+			t.Fatalf("read identity after rejected late SHA: %v", err)
+		}
+		return id
+	}(); mappedID != anchorID {
+		t.Fatalf("rejected late SHA changed work identity to %s", mappedID)
+	}
+	if _, err := db.NewRaw(`UPDATE source_location SET media_variant_id=NULL WHERE id=?`, location.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteOrphanedMediaVariants(ctx, db); err != nil {
+		t.Fatalf("orphan cleanup with mapping-only anchor: %v", err)
+	}
+	var retained int
+	if err := db.NewRaw(`SELECT count(*) FROM media_variant WHERE id=?`, anchorID).Scan(ctx, &retained); err != nil || retained != 1 {
+		t.Fatalf("mapping-only anchor count = %d, %v; want retained", retained, err)
+	}
+}
+
 func TestPublishPreparedSourceScanAnalysisLocksSharedDigestsInOrder(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.OpenMigrated(t)

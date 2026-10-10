@@ -48,6 +48,7 @@ type IncomingGroupingMemberLocation struct {
 type IncomingGroupingCapture struct {
 	WorkID                        uuid.UUID
 	VariantID                     uuid.UUID
+	MediaVariantID                *uuid.UUID
 	CaptureAnalysisID             *uuid.UUID
 	RootID                        uuid.UUID
 	LocationID                    uuid.UUID
@@ -119,6 +120,7 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 	captures := make([]IncomingGroupingCapture, 0)
 	err := database.NewRaw(`
 		SELECT COALESCE(sha.success_sha_variant_id, work.id, location.id) AS variant_id,
+			work_identity.media_variant_id AS media_variant_id,
 			COALESCE(work.id, location.id) AS work_id, metadata.success_metadata_result_id AS capture_analysis_id,
 			root.id AS root_id, location.id AS location_id, root.configured_path, root.inventory_path,
 			location.relative_path, location.size_bytes, location.mtime,
@@ -162,6 +164,7 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 		LEFT JOIN source_analysis_step sha ON sha.work_id=work.id AND sha.step='sha256' AND sha.state='succeeded'
 		LEFT JOIN source_analysis_step probe ON probe.work_id=work.id AND probe.step='probe' AND probe.state='succeeded'
 		LEFT JOIN source_analysis_step fingerprint ON fingerprint.work_id=work.id AND fingerprint.step='fingerprint' AND fingerprint.state='succeeded'
+		LEFT JOIN source_work_variant_identity work_identity ON work_identity.work_id=work.id
 		LEFT JOIN media_variant probe_variant ON probe_variant.id=probe.success_probe_variant_id
 		LEFT JOIN media_variant sha_variant ON sha_variant.id=sha.success_sha_variant_id
 		LEFT JOIN media_fingerprint_result fingerprint_result ON fingerprint_result.id=fingerprint.success_fingerprint_result_id

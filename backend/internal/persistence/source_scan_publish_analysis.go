@@ -234,6 +234,7 @@ func lockPreparedScanSHAs(ctx context.Context, tx bun.Tx, root SourceRoot, opera
 
 func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysisWork, location *SourceLocation, scanOperationID uuid.UUID, prepared *SourceScanPreparedAnalysis, existingWork, sha256Enabled bool, canonicalSHA *SourceMediaVariant) error {
 	var selectedSHA, selectedProbe *SourceMediaVariant
+	var workVariantID *uuid.UUID
 	var err error
 	if existingWork {
 		var current SourceAnalysisStep
@@ -254,6 +255,19 @@ func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysis
 		}
 		if prepared.RetainedSHA256Variant != nil && (selectedSHA == nil || selectedSHA.SizeBytes != work.SizeBytes || !samePreparedSHA(selectedSHA, prepared.RetainedSHA256Variant)) {
 			return fmt.Errorf("retained SHA-256 identity is not selected by the unchanged work")
+		}
+		var identityID uuid.UUID
+		if err := tx.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=? FOR SHARE`, work.ID).Scan(ctx, &identityID); err == nil {
+			workVariantID = &identityID
+		} else if err != sql.ErrNoRows {
+			return fmt.Errorf("read immutable source work identity: %w", err)
+		}
+		if workVariantID != nil && selectedSHA != nil && *workVariantID != selectedSHA.ID {
+			return fmt.Errorf("completed source work cannot change media variant identity")
+		}
+		if workVariantID != nil && prepared.SHA256State == SourcePreparedSucceeded &&
+			(selectedSHA == nil || !bytesEqual(selectedSHA.SourceSHA256, prepared.SHA256Variant.SourceSHA256)) {
+			return fmt.Errorf("completed source work cannot accept a late SHA-256 identity: %w", ErrSourceAnalysisStale)
 		}
 	} else if prepared.SHA256State == SourcePreparedSucceeded {
 		if prepared.SHA256Variant.SHA256AppliedOperationID == nil || *prepared.SHA256Variant.SHA256AppliedOperationID != scanOperationID {
@@ -295,7 +309,9 @@ func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysis
 			}
 		}
 		linkID := selectedProbe.ID
-		if selectedSHA != nil {
+		if workVariantID != nil {
+			linkID = *workVariantID
+		} else if selectedSHA != nil {
 			linkID = selectedSHA.ID
 		}
 		if location.MediaVariantID == nil || *location.MediaVariantID != linkID {
@@ -303,7 +319,7 @@ func publishPreparedResults(ctx context.Context, tx bun.Tx, work *SourceAnalysis
 				return fmt.Errorf("link prepared probe: %w", err)
 			}
 		}
-	} else if selectedSHA != nil && (location.MediaVariantID == nil || *location.MediaVariantID != selectedSHA.ID) {
+	} else if selectedSHA != nil && workVariantID == nil && (location.MediaVariantID == nil || *location.MediaVariantID != selectedSHA.ID) {
 		if _, err := tx.NewRaw(`UPDATE source_location SET media_variant_id=?, updated_at=now() WHERE id=?`, selectedSHA.ID, location.ID).Exec(ctx); err != nil {
 			return fmt.Errorf("link prepared SHA-256: %w", err)
 		}

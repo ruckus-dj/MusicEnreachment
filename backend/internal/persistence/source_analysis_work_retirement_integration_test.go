@@ -34,6 +34,13 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	if err := database.NewRaw(`SELECT id FROM source_analysis_work WHERE current_location_id=?`, location.ID).Scan(ctx, &workID); err != nil {
 		t.Fatalf("read original work: %v", err)
 	}
+	anchorID := uuid.New()
+	if _, err := database.NewRaw(`INSERT INTO media_variant(id,size_bytes) VALUES (?,5)`, anchorID).Exec(ctx); err != nil {
+		t.Fatalf("insert digestless work identity anchor: %v", err)
+	}
+	if _, err := database.NewRaw(`INSERT INTO source_work_variant_identity(work_id,media_variant_id) VALUES (?,?)`, workID, anchorID).Exec(ctx); err != nil {
+		t.Fatalf("insert work identity mapping: %v", err)
+	}
 	insertStagedAnalysisArtifact(t, ctx, database, workID, first.ID, first.Attempt, *first.RiverJobID, "retirement/owned-copy", 5, mtime)
 	setOperationState(t, ctx, database, first.ID, "succeeded")
 
@@ -46,15 +53,18 @@ func TestEnumerationRetainsArtifactWorkAsIrreversibleTombstone(t *testing.T) {
 	if err := inventory.ApplySourceEnumeration(ctx, enumerationApply(second, root, nil)); err != nil {
 		t.Fatalf("apply changed enumeration: %v", err)
 	}
-	var attached, artifacts int
+	var attached, artifacts, mappings int
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_work WHERE id=? AND current_location_id IS NULL`, workID).Scan(ctx, &attached); err != nil {
 		t.Fatalf("read retired work: %v", err)
 	}
 	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_artifact WHERE work_id=?`, workID).Scan(ctx, &artifacts); err != nil {
 		t.Fatalf("read retained artifact: %v", err)
 	}
-	if attached != 1 || artifacts != 1 {
-		t.Fatalf("retired work/artifact counts = %d/%d, want 1/1", attached, artifacts)
+	if err := database.NewRaw(`SELECT count(*) FROM source_work_variant_identity WHERE work_id=?`, workID).Scan(ctx, &mappings); err != nil {
+		t.Fatalf("read retired work identity: %v", err)
+	}
+	if attached != 1 || artifacts != 1 || mappings != 0 {
+		t.Fatalf("retired work/artifact/identity counts = %d/%d/%d, want 1/1/0", attached, artifacts, mappings)
 	}
 	if _, err := database.NewRaw(`UPDATE source_analysis_work SET current_location_id=location_id WHERE id=?`, workID).Exec(ctx); err == nil {
 		t.Fatal("retired work was reattached")

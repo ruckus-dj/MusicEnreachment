@@ -89,7 +89,7 @@ func TestMusicBrainzMatchingSnapshotUsesAcceptedSourceProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Source.ID != source.ID || len(snapshot.Releases) != 1 {
+	if snapshot.Source.ID != source.ID || len(snapshot.Releases) != 1 || snapshot.Releases[0].ID == uuid.Nil {
 		t.Fatalf("source-scoped releases = %#v; source = %s", snapshot.Releases, snapshot.Source.ID)
 	}
 	release := snapshot.Releases[0]

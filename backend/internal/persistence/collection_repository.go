@@ -41,6 +41,9 @@ func (repository *CollectionRepository) UpsertTrackSourceDecision(ctx context.Co
 		return fmt.Errorf("upsert track source: %w", err)
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("upsert track source: lock source mutation gate: %w", err)
+		}
 		var existing TrackSource
 		err := tx.NewSelect().Model(&existing).
 			Where("track_id = ? AND media_variant_id = ?", decision.TrackID, decision.MediaVariantID).
@@ -80,6 +83,9 @@ func (repository *CollectionRepository) RemoveTrackSourceDecision(ctx context.Co
 		return fmt.Errorf("remove track source: method must be manual or automatic")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("remove track source: lock source mutation gate: %w", err)
+		}
 		var existing TrackSource
 		err := tx.NewSelect().Model(&existing).
 			Where("track_id = ? AND media_variant_id = ?", trackID, mediaVariantID).

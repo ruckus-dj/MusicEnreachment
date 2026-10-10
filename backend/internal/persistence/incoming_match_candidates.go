@@ -45,6 +45,7 @@ type IncomingMatchGroupEvaluation struct {
 	GroupRevision string
 	Members       []IncomingMatchMemberFence
 	Candidates    []IncomingMatchCandidate
+	Evidence      json.RawMessage
 }
 
 // IncomingMatchProviderFence is an accepted configuration/cache identity. The
@@ -77,6 +78,8 @@ type IncomingMatchEvaluation struct {
 
 type IncomingMatchEvaluationHeader struct {
 	GroupID                       uuid.UUID
+	EvaluationRevision            string
+	EvaluationEvidence            json.RawMessage
 	GroupRevision                 string
 	GroupsRevision                string
 	GroupingEpoch                 int64
@@ -103,8 +106,31 @@ func NewIncomingMatchCandidateRepository(db *bun.DB) *IncomingMatchCandidateRepo
 // group partition, analysis identities, provider configuration, and cache
 // revision. Existing results remain untouched on every validation/write error.
 func (repository *IncomingMatchCandidateRepository) Replace(ctx context.Context, evaluation IncomingMatchEvaluation) error {
+	return repository.replace(ctx, evaluation, nil)
+}
+
+// ReplaceIfCurrent publishes only if every group's prior evaluation revision
+// still matches the caller's snapshot. A nil revision means never evaluated.
+func (repository *IncomingMatchCandidateRepository) ReplaceIfCurrent(ctx context.Context, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string) error {
+	if expected == nil {
+		return fmt.Errorf("replace incoming matches: expected evaluation revisions are required")
+	}
+	return repository.replace(ctx, evaluation, expected)
+}
+
+func (repository *IncomingMatchCandidateRepository) replace(ctx context.Context, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string) error {
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		return err
+	}
+	if expected != nil {
+		if len(expected) != len(evaluation.Groups) {
+			return fmt.Errorf("replace incoming matches: expected one prior revision per group")
+		}
+		for _, group := range evaluation.Groups {
+			if _, ok := expected[group.GroupID]; !ok {
+				return fmt.Errorf("replace incoming matches: prior revision is missing for group")
+			}
+		}
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		// Match source mutations' canonical order: gate, current source/group state,
@@ -130,6 +156,22 @@ func (repository *IncomingMatchCandidateRepository) Replace(ctx context.Context,
 			return err
 		}
 		for _, group := range evaluation.Groups {
+			if expected != nil {
+				if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+group.GroupID.String()); err != nil {
+					return fmt.Errorf("replace incoming matches: lock prior evaluation: %w", err)
+				}
+				var current sql.NullString
+				err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, group.GroupID).Scan(ctx, &current)
+				if errors.Is(err, sql.ErrNoRows) {
+					if expected[group.GroupID] != nil {
+						return ErrIncomingMatchConflict
+					}
+				} else if err != nil {
+					return fmt.Errorf("replace incoming matches: read prior evaluation revision: %w", err)
+				} else if !current.Valid || expected[group.GroupID] == nil || current.String != *expected[group.GroupID] {
+					return ErrIncomingMatchConflict
+				}
+			}
 			if _, err := tx.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Exec(ctx); err != nil {
 				return fmt.Errorf("replace incoming match evaluation: remove previous result: %w", err)
 			}
@@ -137,11 +179,16 @@ func (repository *IncomingMatchCandidateRepository) Replace(ctx context.Context,
 			if err != nil {
 				return fmt.Errorf("replace incoming match evaluation: encode provider fences: %w", err)
 			}
+			evaluationRevision := uuid.NewString()
+			groupEvidence := group.Evidence
+			if len(groupEvidence) == 0 {
+				groupEvidence = json.RawMessage(`{}`)
+			}
 			if _, err := tx.NewRaw(`INSERT INTO incoming_match_evaluation
-				(group_id, group_revision, groups_revision, grouping_epoch, policy_version,
+				(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
 				 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 					cache_key, cache_revision, provider_snapshot_revision, provider_fences)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, group.GroupRevision,
+					VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
 				evaluation.ExpectedGroupsRevision, evaluation.ExpectedGroupingEpoch, evaluation.PolicyVersion,
 				evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID,
 				evaluation.Provider.ConfigurationIdentity, evaluation.Provider.Namespace, evaluation.Provider.Endpoint,
@@ -180,6 +227,9 @@ func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
 				return fmt.Errorf("replace incoming matches: member fence is invalid")
 			}
 			members[member.FileMemberID] = true
+		}
+		if len(group.Evidence) != 0 && !jsonObject(group.Evidence) {
+			return fmt.Errorf("replace incoming matches: group evidence must be a JSON object")
 		}
 		for _, candidate := range group.Candidates {
 			if !members[candidate.FileMemberID] || candidate.ProviderID != evaluation.Provider.ProviderID || candidate.ProviderSourceID != evaluation.Provider.ProviderSourceID || candidate.ReleaseID == uuid.Nil || math.IsNaN(candidate.Score) || math.IsInf(candidate.Score, 0) || candidate.Score < 0 || candidate.Score > 1 || !jsonObject(candidate.Evidence) {
@@ -409,7 +459,7 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 	var header IncomingMatchEvaluationHeader
 	var candidates []IncomingMatchCandidate
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
-		err := tx.NewRaw(`SELECT group_id, group_revision, groups_revision, grouping_epoch,
+		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at
 		FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)

@@ -31,6 +31,9 @@ func retireSourceAnalysisWork(ctx context.Context, tx bun.IDB, workID uuid.UUID)
 	if active {
 		return fmt.Errorf("retire source analysis work: work has an active hold")
 	}
+	if _, err := tx.NewRaw(`DELETE FROM source_work_variant_identity WHERE work_id=?`, workID).Exec(ctx); err != nil {
+		return fmt.Errorf("retire source analysis work: delete variant identity: %w", err)
+	}
 	var resultIDs []uuid.UUID
 	if err := tx.NewRaw(`SELECT success_fingerprint_result_id FROM source_analysis_step
 		WHERE work_id=? AND success_fingerprint_result_id IS NOT NULL`, workID).Scan(ctx, &resultIDs); err != nil {

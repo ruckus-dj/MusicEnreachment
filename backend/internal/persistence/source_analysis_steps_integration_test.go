@@ -147,6 +147,36 @@ func TestSourceAnalysisStepAppliesAndPromotionWithPostgreSQL(t *testing.T) {
 	if err != nil || reused.ID != winner.ID {
 		t.Fatalf("reuse cached fingerprint = %+v, %v; want first cache winner %s", reused, err, winner.ID)
 	}
+	// A later calculation changes the canonical winner and payload, while the
+	// canonical row identity remains stable. Replaying this delivery must remain
+	// idempotent after that update.
+	newer := *winner
+	newer.ID = uuid.New()
+	newer.WinningResultID = newer.ID
+	newer.Fingerprint = "555,666"
+	newer.CalculatedAt = winner.CalculatedAt.Add(2 * time.Second)
+	newer.SourceSHA256 = nil
+	if _, err := database.NewInsert().Model(&newer).Exec(ctx); err != nil {
+		t.Fatalf("insert replacement fingerprint candidate: %v", err)
+	}
+	if _, err := database.NewUpdate().Model((*persistence.SourceFingerprintResult)(nil)).
+		Set("winning_result_id=?", newer.ID).Set("fingerprint=?", newer.Fingerprint).
+		Set("calculated_at=?", newer.CalculatedAt).Where("id=?", winner.ID).Exec(ctx); err != nil {
+		t.Fatalf("select replacement canonical fingerprint candidate: %v", err)
+	}
+	var currentCacheID uuid.UUID
+	if err := database.NewRaw(`SELECT id FROM media_fingerprint_result WHERE source_sha256=?`, digest).Scan(ctx, &currentCacheID); err != nil || currentCacheID != winner.ID {
+		t.Fatalf("current fingerprint cache identity = %s, %v; want canonical row %s", currentCacheID, err, winner.ID)
+	}
+	// In this canonical-row schema the ID is stable, so the changed selection
+	// is observed through its winning candidate identity and contents.
+	var currentWinningID uuid.UUID
+	if err := database.NewRaw(`SELECT winning_result_id FROM media_fingerprint_result WHERE source_sha256=?`, digest).Scan(ctx, &currentWinningID); err != nil || currentWinningID != newer.ID || currentWinningID == reused.WinningResultID {
+		t.Fatalf("current fingerprint winner = %s, %v; want replacement of retained winner %s", currentWinningID, err, reused.WinningResultID)
+	}
+	if replay, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt); err != nil || replay.ID != reused.ID {
+		t.Fatalf("replay persisted fingerprint success = %+v, %v; want retained canonical result identity %s", replay, err, reused.ID)
+	}
 	if duplicate, err := repository.ReuseSourceFingerprint(ctx, reuseClaim, fingerprintAttempt); err != nil || duplicate.ID != winner.ID {
 		t.Fatalf("idempotent fingerprint reuse = %+v, %v; want cache winner %s", duplicate, err, winner.ID)
 	}

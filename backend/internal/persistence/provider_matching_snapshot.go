@@ -49,6 +49,7 @@ type MatchingSearchScore struct {
 // MatchingRelease and its children contain only persistence-owned values; no
 // MusicBrainz SDK types cross the repository boundary.
 type MatchingRelease struct {
+	ID            uuid.UUID
 	ProviderKey   string
 	Name          string
 	Fields        json.RawMessage
@@ -406,14 +407,15 @@ func cachedMatchingSearchScores(payload json.RawMessage) (map[string]MatchingSea
 }
 
 type matchingEntityRow struct {
-	ProviderKey   string `bun:"provider_key"`
-	Name          string `bun:"name"`
-	Fields        []byte `bun:"fields"`
-	FieldEvidence []byte `bun:"field_evidence"`
-	RawSource     []byte `bun:"raw_source"`
-	Authority     int    `bun:"authority"`
-	FetchOrder    int64  `bun:"fetch_order"`
-	Complete      bool   `bun:"complete"`
+	ID            uuid.UUID `bun:"id"`
+	ProviderKey   string    `bun:"provider_key"`
+	Name          string    `bun:"name"`
+	Fields        []byte    `bun:"fields"`
+	FieldEvidence []byte    `bun:"field_evidence"`
+	RawSource     []byte    `bun:"raw_source"`
+	Authority     int       `bun:"authority"`
+	FetchOrder    int64     `bun:"fetch_order"`
+	Complete      bool      `bun:"complete"`
 }
 
 type matchingCreditRow struct {
@@ -440,15 +442,16 @@ type matchingTrackRow struct {
 
 func readMatchingReleases(ctx context.Context, tx bun.Tx, sourceID, providerID uuid.UUID, keys []string, releases *[]MatchingRelease) error {
 	entities := make([]matchingEntityRow, 0, len(keys))
-	if err := tx.NewRaw(`SELECT e.provider_key, e.name, e.fields, e.field_evidence, e.raw_source, e.authority, e.fetch_order, e.complete
+	if err := tx.NewRaw(`SELECT r.id, e.provider_key, e.name, e.fields, e.field_evidence, e.raw_source, e.authority, e.fetch_order, e.complete
 		FROM provider_source_entity e
+		JOIN provider_release r ON r.provider_id=e.provider_id AND r.provider_key=e.provider_key
 		WHERE e.provider_source_id=? AND e.provider_id=? AND e.entity_kind='release' AND e.provider_key IN (?)
 		ORDER BY e.provider_key`, sourceID, providerID, bun.List(keys)).Scan(ctx, &entities); err != nil {
 		return err
 	}
 	byKey := make(map[string]int, len(entities))
 	for _, row := range entities {
-		release := MatchingRelease{ProviderKey: row.ProviderKey, Name: row.Name, Fields: append(json.RawMessage(nil), row.Fields...), RawSource: append(json.RawMessage(nil), row.RawSource...), Authority: row.Authority, FetchOrder: row.FetchOrder, Complete: row.Complete, FieldEvidence: make(map[string]ProviderFieldEvidence)}
+		release := MatchingRelease{ID: row.ID, ProviderKey: row.ProviderKey, Name: row.Name, Fields: append(json.RawMessage(nil), row.Fields...), RawSource: append(json.RawMessage(nil), row.RawSource...), Authority: row.Authority, FetchOrder: row.FetchOrder, Complete: row.Complete, FieldEvidence: make(map[string]ProviderFieldEvidence)}
 		if err := json.Unmarshal(row.FieldEvidence, &release.FieldEvidence); err != nil {
 			return err
 		}

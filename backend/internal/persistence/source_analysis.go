@@ -83,7 +83,9 @@ func deleteOrphanedMediaVariants(ctx context.Context, tx bun.IDB) error {
 			   AND NOT EXISTS (SELECT 1 FROM source_location AS location WHERE location.media_variant_id = variant.id)
 			   AND NOT EXISTS (SELECT 1 FROM source_analysis_step AS step
 			       WHERE step.success_sha_variant_id = variant.id OR step.success_probe_variant_id = variant.id)
+			   AND NOT EXISTS (SELECT 1 FROM source_work_variant_identity AS identity WHERE identity.media_variant_id = variant.id)
 			   AND NOT EXISTS (SELECT 1 FROM media_probe_cache AS cache WHERE cache.result_id = variant.id)
+			   AND NOT EXISTS (SELECT 1 FROM track_source AS track_source WHERE track_source.media_variant_id = variant.id)
 			   AND NOT EXISTS (SELECT 1 FROM operation_source_work_hold AS hold
 			       JOIN source_analysis_step AS step ON step.work_id = hold.work_id
 			       WHERE hold.operation_id IN (SELECT id FROM operation WHERE state IN ('queued', 'running'))
