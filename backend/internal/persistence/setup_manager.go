@@ -3,7 +3,9 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -172,6 +174,182 @@ func (repository *SetupManagerRepository) CreateOperationAndEnqueue(ctx context.
 	})
 }
 
+// AcoustIDLookupCapture is the immutable source provenance selected while the
+// admission transaction holds the canonical source-mutation fence.
+type AcoustIDLookupCapture struct {
+	WorkID                  uuid.UUID
+	FingerprintRowID        uuid.UUID
+	WinningResultID         uuid.UUID
+	WinnerFingerprint       string
+	AlgorithmNamespace      string
+	AlgorithmID             int
+	FPCalcVersion           string
+	ParserContractVersion   int
+	SavedReportedDuration   float64
+	SHA256                  string
+	ImmutableMemberIdentity string
+	ProviderSourceID        uuid.UUID
+	ConfigurationIdentity   string
+}
+
+// CreateAcoustIDLookupOperationAndEnqueue reads the selected successful
+// fingerprint and provider configuration in the same transaction that saves
+// the operation and River job. The callback may only encode the captured intent.
+func (repository *SetupManagerRepository) CreateAcoustIDLookupOperationAndEnqueue(
+	ctx context.Context,
+	workID uuid.UUID,
+	explicitRefresh bool,
+	client RiverInserter,
+	args river.JobArgs,
+	options *river.InsertOpts,
+	build func(AcoustIDLookupCapture) (*Operation, error),
+) error {
+	if workID == uuid.Nil || client == nil || build == nil {
+		return fmt.Errorf("admit AcoustID lookup: work, River client, and intent builder are required")
+	}
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock output admission gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock source mutation gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock credential configuration: %w", err)
+		}
+		var rootID, locationID uuid.UUID
+		if err := tx.NewRaw(`SELECT source_root_id,location_id FROM source_analysis_work WHERE id=?`, workID).Scan(ctx, &rootID, &locationID); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: select current work: %w", err)
+		}
+		root, location, work := new(SourceRoot), new(SourceLocation), new(SourceAnalysisWork)
+		if err := tx.NewRaw(`SELECT * FROM source_root WHERE id=? FOR UPDATE`, rootID).Scan(ctx, root); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock source root: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT * FROM source_location WHERE id=? AND source_root_id=? FOR UPDATE`, locationID, rootID).Scan(ctx, location); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock source location: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT * FROM source_analysis_work WHERE id=? FOR UPDATE`, workID).Scan(ctx, work); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: lock source work: %w", err)
+		}
+		step := new(SourceAnalysisStep)
+		if err := tx.NewRaw(`SELECT * FROM source_analysis_step WHERE work_id=? AND step='fingerprint' FOR UPDATE`, workID).Scan(ctx, step); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: select successful fingerprint step: %w", err)
+		}
+		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath ||
+			work.CurrentLocationID == nil || *work.CurrentLocationID != location.ID || work.LocationID != location.ID || work.SourceRootID != root.ID ||
+			work.ConfiguredPath != root.ConfiguredPath || work.InventoryPath != *root.InventoryPath ||
+			location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) ||
+			step.State != "succeeded" || step.SuccessFingerprintResultID == nil {
+			return fmt.Errorf("admit AcoustID lookup: %w", ErrSourceAnalysisStale)
+		}
+		fingerprint := new(SourceFingerprintResult)
+		if err := tx.NewRaw(`SELECT * FROM media_fingerprint_result WHERE id=?`, *step.SuccessFingerprintResultID).Scan(ctx, fingerprint); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: read selected fingerprint result: %w", err)
+		}
+		var key, revision string
+		var rows []AppSetting
+		if err := tx.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.List([]string{"acoustid_application_key", "internal_acoustid_config_identity"})).Scan(ctx); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: read credential configuration: %w", err)
+		}
+		present := false
+		for _, row := range rows {
+			switch row.Name {
+			case "acoustid_application_key":
+				key, present = row.Value, true
+			case "internal_acoustid_config_identity":
+				revision = row.Value
+			}
+		}
+		if revision == "" || explicitRefresh && (!present || key == "") {
+			return fmt.Errorf("admit AcoustID lookup: AcoustID credential configuration is unavailable")
+		}
+		source, err := ensureAcoustIDProviderSource(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("admit AcoustID lookup: resolve official provider source: %w", err)
+		}
+		capture := AcoustIDLookupCapture{
+			WorkID: work.ID, FingerprintRowID: fingerprint.ID, WinningResultID: fingerprint.WinningResultID,
+			WinnerFingerprint: fingerprint.Fingerprint, AlgorithmNamespace: fingerprint.AlgorithmNamespace,
+			AlgorithmID: int(fingerprint.AlgorithmID), FPCalcVersion: fingerprint.FPCalcVersion,
+			ParserContractVersion: fingerprint.ParserContractVersion, SavedReportedDuration: fingerprint.ReportedDuration,
+			ImmutableMemberIdentity: work.ID.String(), ProviderSourceID: source.ID, ConfigurationIdentity: revision,
+		}
+		if len(fingerprint.SourceSHA256) != 0 {
+			capture.SHA256 = hex.EncodeToString(fingerprint.SourceSHA256)
+		} else {
+			var digest []byte
+			err := tx.NewRaw(`SELECT variant.source_sha256 FROM source_analysis_step AS selected
+				JOIN media_variant AS variant ON variant.id=selected.success_sha_variant_id
+				WHERE selected.work_id=? AND selected.step='sha256' AND selected.state='succeeded'`, workID).Scan(ctx, &digest)
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("admit AcoustID lookup: read selected SHA-256: %w", err)
+			}
+			if err == nil && len(digest) != 0 {
+				capture.SHA256 = hex.EncodeToString(digest)
+			}
+		}
+		operation, err := build(capture)
+		if err != nil {
+			return err
+		}
+		if operation == nil || operation.ID == uuid.Nil || operation.ProviderSourceID == nil || *operation.ProviderSourceID != source.ID || operation.ProviderConfigurationIdentity == nil || *operation.ProviderConfigurationIdentity != revision {
+			return fmt.Errorf("admit AcoustID lookup: built operation does not match captured provider configuration")
+		}
+		var intent struct {
+			SchemaVersion           int       `json:"schema_version"`
+			WorkID                  uuid.UUID `json:"work_id"`
+			FingerprintRowID        uuid.UUID `json:"fingerprint_row_id"`
+			WinningResultID         uuid.UUID `json:"winning_result_id"`
+			WinnerFingerprint       string    `json:"winner_fingerprint"`
+			AlgorithmNamespace      string    `json:"algorithm_namespace"`
+			AlgorithmID             int       `json:"algorithm_id"`
+			FPCalcVersion           string    `json:"fpcalc_version"`
+			ParserContractVersion   int       `json:"parser_contract_version"`
+			SavedReportedDuration   float64   `json:"saved_reported_duration"`
+			SHA256                  string    `json:"sha256,omitempty"`
+			ImmutableMemberIdentity string    `json:"immutable_member_identity,omitempty"`
+			LookupDuration          int       `json:"lookup_duration"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &intent); err != nil {
+			return fmt.Errorf("admit AcoustID lookup: invalid encoded intent: %w", err)
+		}
+		duration := 0
+		if capture.SavedReportedDuration > 0 && capture.SavedReportedDuration < float64(int(^uint(0)>>1)) {
+			duration = int(capture.SavedReportedDuration)
+		}
+		if intent.SchemaVersion != 1 || intent.WorkID != capture.WorkID || intent.FingerprintRowID != capture.FingerprintRowID ||
+			intent.WinningResultID != capture.WinningResultID || intent.WinnerFingerprint != capture.WinnerFingerprint ||
+			intent.AlgorithmNamespace != capture.AlgorithmNamespace || intent.AlgorithmID != capture.AlgorithmID ||
+			intent.FPCalcVersion != capture.FPCalcVersion || intent.ParserContractVersion != capture.ParserContractVersion ||
+			intent.SavedReportedDuration != capture.SavedReportedDuration || intent.SHA256 != capture.SHA256 ||
+			intent.ImmutableMemberIdentity != capture.ImmutableMemberIdentity || intent.LookupDuration != duration || duration == 0 {
+			return fmt.Errorf("admit AcoustID lookup: encoded intent differs from selected source provenance")
+		}
+		canonical, err := json.Marshal(struct {
+			WorkID                  uuid.UUID `json:"work_id"`
+			FingerprintRowID        uuid.UUID `json:"fingerprint_row_id"`
+			WinningResultID         uuid.UUID `json:"winning_result_id"`
+			WinnerFingerprint       string    `json:"winner_fingerprint"`
+			AlgorithmNamespace      string    `json:"algorithm_namespace"`
+			AlgorithmID             int       `json:"algorithm_id"`
+			FPCalcVersion           string    `json:"fpcalc_version"`
+			ParserContractVersion   int       `json:"parser_contract_version"`
+			SavedReportedDuration   float64   `json:"saved_reported_duration"`
+			SHA256                  string    `json:"sha256,omitempty"`
+			ImmutableMemberIdentity string    `json:"immutable_member_identity,omitempty"`
+		}{capture.WorkID, capture.FingerprintRowID, capture.WinningResultID, capture.WinnerFingerprint, capture.AlgorithmNamespace, capture.AlgorithmID, capture.FPCalcVersion, capture.ParserContractVersion, capture.SavedReportedDuration, capture.SHA256, capture.ImmutableMemberIdentity})
+		if err != nil {
+			return fmt.Errorf("admit AcoustID lookup: encode captured cache identity: %w", err)
+		}
+		digest := sha256.Sum256(canonical)
+		cacheKey := "acoustid-lookup-v1:" + hex.EncodeToString(digest[:])
+		if operation.ProviderCacheKey == nil || *operation.ProviderCacheKey != cacheKey {
+			return fmt.Errorf("admit AcoustID lookup: cache identity differs from selected source provenance")
+		}
+		return repository.createOperationAndEnqueueTx(ctx, tx, operation, client, args, options)
+	})
+}
+
 // createOperationAndEnqueueTx inserts an operation and its River delivery using
 // the caller's transaction. It is shared with coordinators that must atomically
 // admit multiple related operations.
@@ -186,19 +364,36 @@ func (repository *SetupManagerRepository) createOperationAndEnqueueTx(ctx contex
 		return fmt.Errorf("enqueue operation: lock output admission gate: %w", gateErr)
 	}
 	if operation != nil && strings.HasPrefix(operation.Kind, "provider_") {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-			return fmt.Errorf("enqueue provider operation: lock configuration: %w", err)
-		}
-		var currentIdentity string
-		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
-			return fmt.Errorf("enqueue provider operation: read configuration: %w", err)
-		}
-		if operation.ProviderConfigurationIdentity == nil || currentIdentity != *operation.ProviderConfigurationIdentity {
-			return fmt.Errorf("enqueue provider operation: configuration changed")
-		}
-		var sourceIdentity string
-		if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
-			return fmt.Errorf("enqueue provider operation: source configuration changed")
+		if operation.Kind == "provider_acoustid_lookup" {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+				return fmt.Errorf("enqueue AcoustID operation: lock configuration: %w", err)
+			}
+			var currentRevision string
+			if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &currentRevision); err != nil {
+				return fmt.Errorf("enqueue AcoustID operation: read credential revision: %w", err)
+			}
+			if operation.ProviderConfigurationIdentity == nil || currentRevision != *operation.ProviderConfigurationIdentity {
+				return fmt.Errorf("enqueue AcoustID operation: credential configuration changed")
+			}
+			var sourceIdentity string
+			if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != acoustIDSourceIdentity {
+				return fmt.Errorf("enqueue AcoustID operation: source configuration changed")
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+				return fmt.Errorf("enqueue provider operation: lock configuration: %w", err)
+			}
+			var currentIdentity string
+			if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
+				return fmt.Errorf("enqueue provider operation: read configuration: %w", err)
+			}
+			if operation.ProviderConfigurationIdentity == nil || currentIdentity != *operation.ProviderConfigurationIdentity {
+				return fmt.Errorf("enqueue provider operation: configuration changed")
+			}
+			var sourceIdentity string
+			if operation.ProviderSourceID == nil || tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, *operation.ProviderSourceID).Scan(ctx, &sourceIdentity) != nil || sourceIdentity != currentIdentity {
+				return fmt.Errorf("enqueue provider operation: source configuration changed")
+			}
 		}
 	}
 	result, err := client.InsertTx(ctx, tx.Tx, args, options)
@@ -980,7 +1175,7 @@ func (repository *SetupManagerRepository) GetOperationForUpdate(ctx context.Cont
 func (repository *SetupManagerRepository) ClaimProviderOperationDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64) (int64, bool, error) {
 	var epoch int64
 	err := repository.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at = now(), provider_execution_epoch = provider_execution_epoch + 1, updated_at = now()
-		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search')
+		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search', 'provider_acoustid_lookup')
 		AND state IN ('queued', 'running') AND attempt = ? AND river_job_id = ?
 		AND (provider_delivery_claimed_at IS NULL OR provider_delivery_claimed_at < now() - interval '5 minutes')
 		RETURNING provider_execution_epoch`, id, attempt, riverJobID).Scan(ctx, &epoch)
@@ -1070,7 +1265,7 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 
 func isProviderOperationKind(kind string) bool {
 	switch kind {
-	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search":
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_acoustid_lookup":
 		return true
 	default:
 		return false

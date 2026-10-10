@@ -35,6 +35,7 @@ const (
 	SetupCompletedAtKey              = "setup_completed_at"
 	SourceFileConcurrencyKey         = "source_file_concurrency"
 	AcoustIDApplicationKey           = "acoustid_application_key"
+	acoustIDConfigurationIdentityKey = "internal_acoustid_config_identity"
 	MusicBrainzSelfHostedThrottleKey = "musicbrainz_self_hosted_throttle"
 	MusicBrainzSelfHostedDelayKey    = "musicbrainz_self_hosted_delay_seconds"
 )
@@ -69,6 +70,11 @@ type runtimeUpdateStore interface {
 
 type settingDeleteStore interface {
 	Delete(context.Context, string) error
+}
+
+type acoustIDCredentialStore interface {
+	SetOrDeleteAcoustIDCredential(context.Context, *string) error
+	ReadAcoustIDCredential(context.Context) (string, bool, string, error)
 }
 
 type Platform struct{ GOOS, GOARCH string }
@@ -194,17 +200,39 @@ func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) 
 	if value == "" || len(value) > 4096 {
 		return fmt.Errorf("AcoustID application key is invalid")
 	}
-	return r.store.Set(ctx, AcoustIDApplicationKey, value)
+	store, ok := r.store.(acoustIDCredentialStore)
+	if !ok {
+		return r.store.Set(ctx, AcoustIDApplicationKey, value)
+	}
+	return store.SetOrDeleteAcoustIDCredential(ctx, &value)
 }
 
 // DeleteAcoustIDApplicationKey removes the application key entirely. Its
 // absence is the sole signal that AcoustID lookup is unavailable.
 func (r *Registry) DeleteAcoustIDApplicationKey(ctx context.Context) error {
-	store, ok := r.store.(settingDeleteStore)
+	store, ok := r.store.(acoustIDCredentialStore)
+	if ok {
+		return store.SetOrDeleteAcoustIDCredential(ctx, nil)
+	}
+	legacyStore, ok := r.store.(settingDeleteStore)
 	if !ok {
 		return fmt.Errorf("settings storage does not support deleting settings")
 	}
-	return store.Delete(ctx, AcoustIDApplicationKey)
+	return legacyStore.Delete(ctx, AcoustIDApplicationKey)
+}
+
+// ReadAcoustIDCredential returns the secret together with its coherently read
+// opaque configuration revision for internal provider execution only.
+func (r *Registry) ReadAcoustIDCredential(ctx context.Context) (key string, present bool, revision string, err error) {
+	if store, ok := r.store.(acoustIDCredentialStore); ok {
+		return store.ReadAcoustIDCredential(ctx)
+	}
+	key, present, err = r.store.Get(ctx, AcoustIDApplicationKey)
+	if err != nil {
+		return "", false, "", err
+	}
+	revision, _, err = r.store.Get(ctx, acoustIDConfigurationIdentityKey)
+	return key, present, revision, err
 }
 
 func (r *Registry) LoadLogLevel(ctx context.Context) error {

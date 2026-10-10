@@ -125,6 +125,51 @@ func TestMissingKeyDoesNotWaitOrRequest(t *testing.T) {
 	}
 }
 
+func TestLookupScrubsNestedCredentialEchoes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok","secret-application-key-field":"secret-application-key","results":[{"score":0,"secret-application-key":"secret-application-key","recordings":[{"id":"`+recordingID+`","title":"secret-application-key"}]}]}`)
+	}))
+	defer server.Close()
+	result, err := NewClientWithEndpoint(server.Client(), nil, server.URL).Lookup(context.Background(), applicationKey, fingerprint, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range [][]byte{result.Raw, result.Matches[0].Raw} {
+		if strings.Contains(string(raw), applicationKey) {
+			t.Errorf("credential echoed in raw response: %s", raw)
+		}
+	}
+	if !strings.Contains(string(result.Matches[0].Raw), "[REDACTED]") {
+		t.Errorf("redacted raw result not preserved: %s", result.Matches[0].Raw)
+	}
+}
+
+func TestLookupDurationAndMaxScoreProjection(t *testing.T) {
+	if duration, ok := LookupDuration(13.9); !ok || duration != 13 {
+		t.Errorf("LookupDuration(13.9) = %d, %v", duration, ok)
+	}
+	if duration, ok := LookupDuration(0.9); ok || duration != 0 {
+		t.Errorf("LookupDuration(0.9) = %d, %v", duration, ok)
+	}
+	zero, high, unmatched := 0.0, 0.9, 1.0
+	result := LookupResult{Matches: []Match{
+		{Score: &zero, RecordingIDs: []string{recordingID}},
+		{Score: &high, RecordingIDs: []string{strings.ToUpper(recordingID)}},
+		{Score: &unmatched, RecordingIDs: []string{releaseID}},
+		{RecordingIDs: []string{recordingID}},
+	}}
+	if score := MaxScoreForRecording(result, recordingID); score == nil || *score != high {
+		t.Errorf("maximum score = %v, want %v", score, high)
+	}
+	if score := MaxScoreForRecording(LookupResult{Matches: []Match{{RecordingIDs: []string{recordingID}}}}, recordingID); score != nil {
+		t.Errorf("missing score = %v, want nil", score)
+	}
+	if score := MaxScoreForRecording(LookupResult{Matches: []Match{{Score: &zero, RecordingIDs: []string{recordingID}}}}, recordingID); score == nil || *score != 0 {
+		t.Errorf("zero score = %v, want present zero", score)
+	}
+}
+
 func TestLookupRejectsInvalidInputWithoutRequest(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))

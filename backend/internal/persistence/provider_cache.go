@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -20,6 +22,147 @@ type ProviderCacheRepository struct {
 // used by the HTTP adapter before deriving provider-source identity.
 func NormalizeMusicBrainzEndpoint(endpoint string) string {
 	return strings.TrimSuffix(endpoint, "/")
+}
+
+// ResolveAcoustIDSource snapshots the credential revision and returns the one
+// fixed official source. Credential values never enter provider-source identity.
+func (repository *ProviderCacheRepository) ResolveAcoustIDSource(ctx context.Context, expectedRevision string) (ProviderSource, error) {
+	var source ProviderSource
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return fmt.Errorf("resolve AcoustID source: lock credential configuration: %w", err)
+		}
+		var revision string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &revision); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("resolve AcoustID source: read credential revision: %w", err)
+		}
+		if revision != expectedRevision {
+			return fmt.Errorf("resolve AcoustID source: credential configuration changed")
+		}
+		var err error
+		source, err = ensureAcoustIDProviderSource(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("resolve AcoustID source: register official source: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return ProviderSource{}, err
+	}
+	return source, nil
+}
+
+// BeginAcoustIDRefresh fences generation reservation against key replacement.
+func (repository *ProviderCacheRepository) BeginAcoustIDRefresh(ctx context.Context, sourceID uuid.UUID, cacheKey, expectedRevision string) (ProviderRefreshTicket, error) {
+	var ticket ProviderRefreshTicket
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return err
+		}
+		var revision string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &revision); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("begin AcoustID refresh: read credential revision: %w", err)
+		}
+		if revision != expectedRevision {
+			return fmt.Errorf("begin AcoustID refresh: credential configuration changed")
+		}
+		var source ProviderSource
+		if err := tx.NewRaw(`SELECT id,provider_id,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, sourceID).Scan(ctx, &source); err != nil {
+			return err
+		}
+		if source.ConfigurationIdentity != acoustIDSourceIdentity {
+			return fmt.Errorf("begin AcoustID refresh: source changed")
+		}
+		var generation, fetchOrder int64
+		if err := tx.NewRaw(`INSERT INTO provider_response_cache(provider_source_id,provider_id,cache_key,generation,fetch_order)
+			VALUES(?,?,?,1,nextval('provider_fetch_order_seq')) ON CONFLICT(provider_source_id,cache_key) DO UPDATE
+			SET generation=provider_response_cache.generation+1,fetch_order=nextval('provider_fetch_order_seq')
+			WHERE provider_response_cache.provider_id=EXCLUDED.provider_id RETURNING generation,fetch_order`, source.ID, source.ProviderID, cacheKey).Scan(ctx, &generation, &fetchOrder); err != nil {
+			return fmt.Errorf("begin AcoustID refresh: reserve generation: %w", err)
+		}
+		ticket = ProviderRefreshTicket{ProviderSourceID: source.ID, ProviderID: source.ProviderID, CacheKey: cacheKey, Generation: generation, ConfigurationIdentity: acoustIDSourceIdentity, FetchOrder: fetchOrder}
+		return nil
+	})
+	return ticket, err
+}
+
+// GetCurrentAcoustIDResponse reads an accepted cache entry only under the
+// captured credential revision and fixed official source identity.
+func (repository *ProviderCacheRepository) GetCurrentAcoustIDResponse(ctx context.Context, sourceID uuid.UUID, cacheKey string) (*ProviderCachedResponse, error) {
+	var response *ProviderCachedResponse
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return err
+		}
+		var sourceIdentity string
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, sourceID).Scan(ctx, &sourceIdentity); err != nil {
+			return fmt.Errorf("get cached AcoustID response: read source: %w", err)
+		}
+		if sourceIdentity != acoustIDSourceIdentity {
+			return fmt.Errorf("get cached AcoustID response: source configuration changed")
+		}
+		cached := new(ProviderCachedResponse)
+		err := tx.NewRaw(`SELECT provider_source_id,provider_id,cache_key,payload,fetched_at,revision,generation,fetch_order
+			FROM provider_response_cache WHERE provider_source_id=? AND cache_key=?`, sourceID, cacheKey).Scan(ctx, cached)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get cached AcoustID response: read cache: %w", err)
+		}
+		response = cached
+		return nil
+	})
+	return response, err
+}
+
+// ApplyAcoustIDResponse stores a successful raw response only for the captured
+// credential revision, source, generation, and active provider delivery.
+func (repository *ProviderCacheRepository) ApplyAcoustIDResponse(ctx context.Context, ticket ProviderRefreshTicket, expectedRevision string, fetchedAt time.Time, payload []byte, fence ProviderDeliveryFence) error {
+	if ticket.ProviderSourceID == uuid.Nil || ticket.ProviderID == uuid.Nil || ticket.CacheKey == "" || ticket.Generation < 1 || ticket.FetchOrder < 1 || ticket.ConfigurationIdentity != acoustIDSourceIdentity || expectedRevision == "" || fetchedAt.IsZero() || fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
+		return fmt.Errorf("apply AcoustID response: refresh and delivery fences are required")
+	}
+	if err := validProviderJSON(payload, true); err != nil {
+		return fmt.Errorf("apply AcoustID response: invalid payload: %w", err)
+	}
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return err
+		}
+		var revision string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='internal_acoustid_config_identity'`).Scan(ctx, &revision); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("apply AcoustID response: read credential revision: %w", err)
+		}
+		if revision != expectedRevision {
+			return fmt.Errorf("apply AcoustID response: credential configuration changed")
+		}
+		var kind, state, identity, key string
+		var attempt int
+		var jobID sql.NullInt64
+		var epoch int64
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch
+			FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &jobID, &sourceID, &identity, &key, &epoch); err != nil {
+			return err
+		}
+		if kind != "provider_acoustid_lookup" || state != "running" || attempt != fence.Attempt || !jobID.Valid || jobID.Int64 != fence.RiverJobID || epoch != fence.ExecutionEpoch || sourceID != ticket.ProviderSourceID || identity != expectedRevision || key != ticket.CacheKey {
+			return fmt.Errorf("apply AcoustID response: operation delivery is stale")
+		}
+		var sourceIdentity string
+		var providerID uuid.UUID
+		if err := tx.NewRaw(`SELECT provider_id,configuration_identity FROM provider_source WHERE id=? FOR UPDATE`, ticket.ProviderSourceID).Scan(ctx, &providerID, &sourceIdentity); err != nil || providerID != ticket.ProviderID || sourceIdentity != acoustIDSourceIdentity {
+			return fmt.Errorf("apply AcoustID response: source configuration changed")
+		}
+		var generation, order int64
+		if err := tx.NewRaw(`SELECT generation,fetch_order FROM provider_response_cache WHERE provider_source_id=? AND cache_key=? FOR UPDATE`, ticket.ProviderSourceID, ticket.CacheKey).Scan(ctx, &generation, &order); err != nil {
+			return err
+		}
+		if generation != ticket.Generation || order != ticket.FetchOrder {
+			return fmt.Errorf("apply AcoustID response: refresh generation is stale")
+		}
+		_, err := tx.NewRaw(`UPDATE provider_response_cache SET payload=?::jsonb,fetched_at=?,revision=NULL WHERE provider_source_id=? AND cache_key=?`, string(payload), fetchedAt, ticket.ProviderSourceID, ticket.CacheKey).Exec(ctx)
+		return err
+	})
 }
 
 func NewProviderCacheRepository(db *bun.DB) *ProviderCacheRepository {

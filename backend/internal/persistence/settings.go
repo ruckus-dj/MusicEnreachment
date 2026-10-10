@@ -51,6 +51,81 @@ func (r *SettingsRepository) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
+// SetOrDeleteAcoustIDCredential atomically updates the write-only credential,
+// its opaque configuration identity, and the fixed AcoustID source registration.
+func (r *SettingsRepository) SetOrDeleteAcoustIDCredential(ctx context.Context, value *string) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "acoustid-config"); err != nil {
+			return fmt.Errorf("lock AcoustID configuration: %w", err)
+		}
+		var current string
+		err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "acoustid_application_key").Scan(ctx, &current)
+		present := err == nil
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read AcoustID application key: %w", err)
+		}
+		changed := value == nil && present || value != nil && (!present || current != *value)
+		if !changed && value == nil {
+			return nil
+		}
+		var priorRevision string
+		if !changed {
+			err := tx.NewRaw("SELECT setting_value FROM app_setting WHERE setting_name = ?", "internal_acoustid_config_identity").Scan(ctx, &priorRevision)
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("read AcoustID configuration identity: %w", err)
+			}
+			if priorRevision != "" {
+				if parsed, parseErr := uuid.Parse(priorRevision); parseErr == nil && parsed != uuid.Nil && parsed.String() == priorRevision {
+					return nil
+				}
+			}
+		}
+		if value == nil {
+			if _, err := tx.NewDelete().Model((*AppSetting)(nil)).Where("setting_name = ?", "acoustid_application_key").Exec(ctx); err != nil {
+				return fmt.Errorf("delete AcoustID application key: %w", err)
+			}
+		} else if _, err := tx.NewInsert().Model(&AppSetting{Name: "acoustid_application_key", Value: *value}).
+			On("CONFLICT (setting_name) DO UPDATE").
+			Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+			return fmt.Errorf("set AcoustID application key: %w", err)
+		}
+		revision := uuid.NewString()
+		if _, err := tx.NewInsert().Model(&AppSetting{Name: "internal_acoustid_config_identity", Value: revision}).
+			On("CONFLICT (setting_name) DO UPDATE").
+			Set("setting_value = EXCLUDED.setting_value").Set("updated_at = now()").Exec(ctx); err != nil {
+			return fmt.Errorf("advance AcoustID configuration identity: %w", err)
+		}
+		if err := syncAcoustIDProviderSource(ctx, tx, revision); err != nil {
+			return fmt.Errorf("synchronize AcoustID provider source: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReadAcoustIDCredential reads key presence, secret, and revision under the same
+// advisory lock used by credential mutations.
+func (r *SettingsRepository) ReadAcoustIDCredential(ctx context.Context) (string, bool, string, error) {
+	var key, revision string
+	var present bool
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "acoustid-config"); err != nil {
+			return fmt.Errorf("lock AcoustID credential snapshot: %w", err)
+		}
+		values := make(map[string]string, 2)
+		var rows []AppSetting
+		if err := tx.NewSelect().Model(&rows).Where("setting_name IN (?)", bun.List([]string{"acoustid_application_key", "internal_acoustid_config_identity"})).Scan(ctx); err != nil {
+			return fmt.Errorf("read AcoustID credential snapshot: %w", err)
+		}
+		for _, row := range rows {
+			values[row.Name] = row.Value
+		}
+		key, present = values["acoustid_application_key"]
+		revision = values["internal_acoustid_config_identity"]
+		return nil
+	})
+	return key, present, revision, err
+}
+
 func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]string) error {
 	if len(values) == 0 {
 		return nil
@@ -239,6 +314,11 @@ func syncMusicBrainzProviderSource(ctx context.Context, tx bun.Tx) error {
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (provider_id, namespace) DO UPDATE SET endpoint=EXCLUDED.endpoint,
 		configuration_identity=EXCLUDED.configuration_identity, updated_at=now()`, sourceID, providerID, namespace, endpoint, identity).Exec(ctx)
+	return err
+}
+
+func syncAcoustIDProviderSource(ctx context.Context, tx bun.Tx, _ string) error {
+	_, err := ensureAcoustIDProviderSource(ctx, tx)
 	return err
 }
 

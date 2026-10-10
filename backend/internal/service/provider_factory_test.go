@@ -40,6 +40,25 @@ func (s *providerFactoryStore) InitializePlatform(_ context.Context, goos, goarc
 	return goos, goarch, true, nil
 }
 
+type revisionedProviderFactoryStore struct {
+	*providerFactoryStore
+	revision string
+}
+
+func (s *revisionedProviderFactoryStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string) error {
+	if value == nil {
+		delete(s.values, settings.AcoustIDApplicationKey)
+	} else {
+		s.values[settings.AcoustIDApplicationKey] = *value
+	}
+	return nil
+}
+
+func (s *revisionedProviderFactoryStore) ReadAcoustIDCredential(_ context.Context) (string, bool, string, error) {
+	key, present := s.values[settings.AcoustIDApplicationKey]
+	return key, present, s.revision, nil
+}
+
 type providerFactoryWaiter struct{ calls atomic.Int32 }
 
 func (w *providerFactoryWaiter) Wait(context.Context) error {
@@ -113,5 +132,30 @@ func TestProviderFactoryDoesNotLookupAcoustIDWithoutSavedKey(t *testing.T) {
 	}
 	if result.Available || waiter.calls.Load() != 0 || transport.calls.Load() != 0 {
 		t.Fatalf("result=%#v waiter calls=%d requests=%d", result, waiter.calls.Load(), transport.calls.Load())
+	}
+}
+
+func TestProviderFactoryRejectsStaleAcoustIDRevision(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"status":"ok","results":[]}`))
+	}))
+	defer server.Close()
+
+	store := &revisionedProviderFactoryStore{
+		providerFactoryStore: &providerFactoryStore{values: map[string]string{settings.AcoustIDApplicationKey: "replacement-secret"}},
+		revision:             "revision-after-replacement",
+	}
+	registry := settings.New(store, nil)
+	client := acoustid.NewClientWithEndpoint(server.Client(), nil, server.URL)
+	factory := service.NewProviderFactory(registry, nil, nil, nil, client)
+	result, err := factory.LookupAcoustIDUnderRevision(context.Background(), "revision-before-replacement", "fingerprint", 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Available || requests.Load() != 0 {
+		t.Fatalf("result=%#v requests=%d; stale revision must not dispatch", result, requests.Load())
 	}
 }

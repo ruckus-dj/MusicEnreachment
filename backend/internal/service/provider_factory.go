@@ -22,6 +22,14 @@ type ProviderFactory struct {
 	musicBrainzMu  sync.Mutex
 }
 
+// acoustIDCredentialSnapshot is a short-lived execution value, never serialized
+// or persisted as job input.
+type acoustIDCredentialSnapshot struct {
+	key      string
+	present  bool
+	revision string
+}
+
 func NewProviderFactory(registry *settings.Registry, publicGate *musicbrainz.PublicRateGate, selfHostedGate *musicbrainz.SelfHostedRateGate, httpClient *http.Client, acoustIDClient *acoustid.Client) *ProviderFactory {
 	return &ProviderFactory{
 		registry: registry, publicGate: publicGate, selfHostedGate: selfHostedGate,
@@ -73,12 +81,29 @@ func (f *ProviderFactory) MusicBrainzForConfig(ctx context.Context, config setti
 
 // LookupAcoustID never sends a request until the application key is saved.
 func (f *ProviderFactory) LookupAcoustID(ctx context.Context, fingerprint string, durationSeconds int) (acoustid.LookupResult, error) {
-	key, exists, err := f.registry.GetAcoustIDApplicationKey(ctx)
+	key, present, revision, err := f.registry.ReadAcoustIDCredential(ctx)
 	if err != nil {
-		return acoustid.LookupResult{}, fmt.Errorf("read AcoustID application key: %w", err)
+		return acoustid.LookupResult{}, fmt.Errorf("read AcoustID credential configuration: %w", err)
 	}
-	if !exists || key == "" || f.acoustID == nil {
+	snapshot := acoustIDCredentialSnapshot{key: key, present: present, revision: revision}
+	return f.lookupAcoustIDSnapshot(ctx, snapshot, snapshot.revision, fingerprint, durationSeconds)
+}
+
+// LookupAcoustIDUnderRevision executes only against the saved credential
+// snapshot matching expectedRevision. A stale or absent credential never sends
+// an HTTP request; the secret remains confined to this call frame.
+func (f *ProviderFactory) LookupAcoustIDUnderRevision(ctx context.Context, expectedRevision, fingerprint string, durationSeconds int) (acoustid.LookupResult, error) {
+	key, present, revision, err := f.registry.ReadAcoustIDCredential(ctx)
+	if err != nil {
+		return acoustid.LookupResult{}, fmt.Errorf("read AcoustID credential configuration: %w", err)
+	}
+	snapshot := acoustIDCredentialSnapshot{key: key, present: present, revision: revision}
+	return f.lookupAcoustIDSnapshot(ctx, snapshot, expectedRevision, fingerprint, durationSeconds)
+}
+
+func (f *ProviderFactory) lookupAcoustIDSnapshot(ctx context.Context, snapshot acoustIDCredentialSnapshot, expectedRevision, fingerprint string, durationSeconds int) (acoustid.LookupResult, error) {
+	if !snapshot.present || snapshot.key == "" || snapshot.revision != expectedRevision || f.acoustID == nil {
 		return acoustid.LookupResult{Available: false}, nil
 	}
-	return f.acoustID.Lookup(ctx, key, fingerprint, durationSeconds)
+	return f.acoustID.Lookup(ctx, snapshot.key, fingerprint, durationSeconds)
 }

@@ -566,6 +566,38 @@ normalization для score в точности. Если по имеющимся
 
 ### Provider adapters — проверенный bounded increment
 
+**Durable AcoustID increment (2026-10-10):** credential key/revision snapshot
+и explicit replace/delete атомарны, официальный provider source стабилен;
+credential revision отдельно fencing network/write, без TTL или cache reset.
+Admission принимает work ID и в одной транзакции выбирает сохранённый
+successful fingerprint, копирует winner/content/algorithm/duration provenance
+и enqueue ID-only operation. Lookup duration truncation и maximum present
+score для recording соответствуют уточнению владельца; исходные results
+сохраняются с nullable scores и credential-echo redaction. Workers используют
+admitted snapshot, а не изменяемый canonical winner. Реальные HTTP + PostgreSQL
++ River tests покрывают reuse, failed refresh retention, key replace/delete
+in-flight, stale generation/epoch/duplicate writes и saved-work admission.
+Independent review закрыто, полный `task verify` прошёл. AcoustID evidence
+ещё не подключено к evaluator/coordinator automatic acquisition.
+
+**Parent worker increment (2026-10-10):** matching worker зарегистрирован
+в application composition; реальные River attempts проходят delivery claim,
+busy wakes snooze, pending delivery consumed без удержания worker. Новый
+provider wake проходит claim и cache-only evaluation с atomic publication.
+Fenced failure проверяет admitted source/config/group freshness и ownership.
+PostgreSQL test проходит полный original delivery → provider wait → distinct
+terminal wake → evaluated-empty parent success. Independent review findings
+закрыты, полный `task verify` прошёл. Automatic planner/admission hooks,
+AcoustID evaluator integration, confirmed automatic apply и UI ещё не готовы.
+
+**AcoustID — уточнение владельца (2026-10-10):** duration для lookup
+преобразуется в целые секунды отбрасыванием дробной части, как fpcalc TEXT
+и pyacoustid; согласованное ties-to-even округление scoring не меняется.
+Для пары file + recording MBID matching factor использует максимальный
+present score среди всех AcoustID results, содержащих этот recording.
+Все исходные results и связи сохраняются; missing score не становится нулём.
+Частота повторения recording MBID между results не установлена.
+
 **Delivery claims increment (2026-10-10):** durable ownership привязано к
 registered job, parent attempt, caller River attempt и execution epoch.
 Claim разрешён только для running River job; active duplicate возвращает busy,

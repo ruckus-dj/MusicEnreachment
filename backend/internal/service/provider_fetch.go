@@ -28,6 +28,7 @@ type ProviderFetchService struct {
 
 type durableProviderOperationRepository interface {
 	CreateOperationAndEnqueue(context.Context, *persistence.Operation, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) error
+	CreateAcoustIDLookupOperationAndEnqueue(context.Context, uuid.UUID, bool, persistence.RiverInserter, river.JobArgs, *river.InsertOpts, func(persistence.AcoustIDLookupCapture) (*persistence.Operation, error)) error
 	GetOperation(context.Context, uuid.UUID) (*persistence.Operation, error)
 	ClaimProviderOperationDelivery(context.Context, uuid.UUID, int, int64) (int64, bool, error)
 }
@@ -157,6 +158,9 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 	}
 	if !claimed {
 		return fmt.Errorf("provider operation delivery is already claimed")
+	}
+	if operation.Kind == "provider_acoustid_lookup" {
+		return service.executeAcoustIDOperation(ctx, operations, operation, epoch, jobID)
 	}
 	if operation.ProviderSourceID == nil || operation.ProviderConfigurationIdentity == nil || operation.ProviderCacheKey == nil {
 		return service.failProviderOperation(ctx, operations, operation, epoch, fmt.Errorf("provider operation intent is incomplete"))

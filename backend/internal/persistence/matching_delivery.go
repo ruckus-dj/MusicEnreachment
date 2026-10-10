@@ -189,3 +189,124 @@ func (repository *SetupManagerRepository) ConsumePendingMatchingDelivery(ctx con
 	})
 	return consumed, err
 }
+
+// FailMatchingDelivery marks an invalid admitted plan failed only while this
+// River attempt still owns the matching execution fence.
+func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Context, operationID uuid.UUID, operationAttempt int, riverJobID int64, claim MatchingDeliveryClaim, safeMessage string) (bool, error) {
+	if safeMessage == "" {
+		return false, fmt.Errorf("fail matching delivery: safe message is required")
+	}
+	changed := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		var runPlan struct {
+			SourceID uuid.UUID `bun:"provider_source_id"`
+			Identity string    `bun:"provider_configuration_identity"`
+		}
+		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
+			return fmt.Errorf("fail matching delivery: read run identity: %w", err)
+		}
+		var sourceIdentity string
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, runPlan.SourceID).Scan(ctx, &sourceIdentity); err != nil {
+			return fmt.Errorf("fail matching delivery: lock provider source: %w", err)
+		}
+		if sourceIdentity != runPlan.Identity {
+			return nil
+		}
+		var lockedGroups []uuid.UUID
+		if err := tx.NewRaw(`SELECT generation.group_id FROM incoming_matching_generation generation
+			JOIN matching_run_target target ON target.group_id=generation.group_id AND target.run_id=?
+			JOIN incoming_group current_group ON current_group.id=target.group_id
+			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, operationID).Scan(ctx, &lockedGroups); err != nil {
+			return fmt.Errorf("fail matching delivery: lock target groups and generations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("fail matching delivery: lock provider configuration: %w", err)
+		}
+		var configurationIdentity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &configurationIdentity); err != nil {
+			return fmt.Errorf("fail matching delivery: read provider configuration: %w", err)
+		}
+		if configurationIdentity != runPlan.Identity {
+			return nil
+		}
+		var river struct {
+			State   string `bun:"state"`
+			Attempt int    `bun:"attempt"`
+		}
+		if err := tx.NewRaw(`SELECT state, attempt FROM river_job WHERE id=? FOR UPDATE`, riverJobID).Scan(ctx, &river); err != nil {
+			return fmt.Errorf("fail matching delivery: lock River job: %w", err)
+		}
+		if river.State != "running" || river.Attempt != claim.RiverAttempt {
+			return nil
+		}
+		var targets []struct {
+			GroupID          uuid.UUID  `bun:"group_id"`
+			HighWater        int64      `bun:"high_water"`
+			CurrentRunID     *uuid.UUID `bun:"current_run_id"`
+			TargetGeneration int64      `bun:"target_generation"`
+			CurrentRevision  *string    `bun:"current_revision"`
+			CapturedRevision string     `bun:"captured_group_revision"`
+		}
+		if err := tx.NewRaw(`SELECT generation.group_id, generation.high_water, generation.current_run_id,
+			target.target_generation, current_group.revision AS current_revision, target.captured_group_revision
+			FROM matching_run_target target
+			JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+			JOIN incoming_group current_group ON current_group.id=target.group_id
+			WHERE target.run_id=? ORDER BY generation.group_id`, operationID).Scan(ctx, &targets); err != nil {
+			return fmt.Errorf("fail matching delivery: lock target generations: %w", err)
+		}
+		staleTargets := len(targets) == 0
+		for _, target := range targets {
+			if target.CurrentRunID == nil || *target.CurrentRunID != operationID || target.HighWater != target.TargetGeneration || target.CurrentRevision == nil || *target.CurrentRevision != target.CapturedRevision {
+				staleTargets = true
+				break
+			}
+		}
+		var groupingNeedsRefresh bool
+		if err := tx.NewRaw(`SELECT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &groupingNeedsRefresh); err != nil {
+			return fmt.Errorf("fail matching delivery: check grouping freshness: %w", err)
+		}
+		if groupingNeedsRefresh {
+			staleTargets = true
+		}
+		if staleTargets {
+			return nil
+		}
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "matching_evaluation_v1" || operation.Attempt != operationAttempt || operation.State != "running" || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+			return nil
+		}
+		var run matchingClaimRun
+		if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt FROM matching_run WHERE id=? FOR UPDATE`, operationID).Scan(ctx, &run); err != nil {
+			return fmt.Errorf("fail matching delivery: lock run: %w", err)
+		}
+		if run.State != "running" || run.ExecutionEpoch != claim.ExecutionEpoch || run.ActiveRiverJobID == nil || *run.ActiveRiverJobID != riverJobID || run.ActiveRiverAttempt == nil || *run.ActiveRiverAttempt != claim.RiverAttempt {
+			return nil
+		}
+		var registered bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL)`, operationID, riverJobID, operationAttempt).Scan(ctx, &registered); err != nil {
+			return fmt.Errorf("fail matching delivery: validate registration: %w", err)
+		}
+		if !registered {
+			return nil
+		}
+		now := time.Now().UTC()
+		operation.State, operation.Stage, operation.SafeError = "failed", "failed", &safeMessage
+		operation.FinishedAt, operation.UpdatedAt = &now, now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("fail matching delivery: update operation: %w", err)
+		}
+		if _, err := tx.NewRaw(`UPDATE matching_run SET state='failed', active_river_job_id=NULL, active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND execution_epoch=?`, now, operationID, claim.ExecutionEpoch).Exec(ctx); err != nil {
+			return fmt.Errorf("fail matching delivery: update run: %w", err)
+		}
+		if _, err := tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND consumed_at IS NULL`, now, operationID, riverJobID).Exec(ctx); err != nil {
+			return fmt.Errorf("fail matching delivery: consume delivery: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}

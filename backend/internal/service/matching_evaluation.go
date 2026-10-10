@@ -32,6 +32,10 @@ type matchingEvaluationStore interface {
 	ReplaceIfCurrent(context.Context, persistence.IncomingMatchEvaluation, map[uuid.UUID]*string) error
 }
 
+type matchingDeliveryPublisher interface {
+	PublishMatchingEvaluationForDelivery(context.Context, uuid.UUID, int, int64, int64, persistence.IncomingMatchEvaluation, map[uuid.UUID]*string) (bool, error)
+}
+
 type matchingConfigurationReader interface {
 	GetMusicBrainzConfig(context.Context) (settings.MusicBrainzConfig, error)
 }
@@ -182,6 +186,15 @@ func (evaluator *MatchingEvaluationService) Prepare(ctx context.Context, scope M
 	prepared.Results = results
 	prepared.evaluation = combined
 	return prepared, nil
+}
+
+// PublishForDelivery publishes only a prepared evaluation through the durable
+// matching delivery fence. Evaluation and its parent completion share a tx.
+func (evaluator *MatchingEvaluationService) PublishForDelivery(ctx context.Context, publisher matchingDeliveryPublisher, prepared PreparedMatchingEvaluation, operationID uuid.UUID, attempt int, riverJobID int64, executionEpoch int64) (bool, error) {
+	if publisher == nil || len(prepared.ExpectedRevisions) == 0 || len(prepared.evaluation.Groups) == 0 {
+		return false, fmt.Errorf("matching evaluation delivery is not prepared")
+	}
+	return publisher.PublishMatchingEvaluationForDelivery(ctx, operationID, attempt, riverJobID, executionEpoch, prepared.evaluation, prepared.ExpectedRevisions)
 }
 
 func exactMatchingEvaluationScope(scope MatchingEvaluationQueryScope, groups []IncomingGroup) (MatchingEvaluationQueryScope, error) {

@@ -51,19 +51,20 @@ type Client struct {
 
 // LookupResult is unavailable when no application key was configured.
 type LookupResult struct {
-	Available bool
-	Matches   []Match
+	Available bool            `json:"available"`
+	Matches   []Match         `json:"results"`
+	Raw       json.RawMessage `json:"raw"`
 }
 
 // Match preserves the complete result payload alongside normalized ID lists.
 // Score is nil only when the API omitted score; a supplied zero remains non-nil.
 type Match struct {
-	Score           *float64
-	RecordingIDs    []string
-	ReleaseIDs      []string
-	ReleaseGroupIDs []string
-	TrackIDs        []string
-	Raw             json.RawMessage
+	Score           *float64        `json:"score"`
+	RecordingIDs    []string        `json:"recording_ids"`
+	ReleaseIDs      []string        `json:"release_ids"`
+	ReleaseGroupIDs []string        `json:"release_group_ids"`
+	TrackIDs        []string        `json:"track_ids"`
+	Raw             json.RawMessage `json:"raw"`
 }
 
 // NewClient uses the official API and a bounded-timeout default HTTP client.
@@ -153,7 +154,81 @@ func (c *Client) Lookup(ctx context.Context, applicationKey, fingerprint string,
 	if err != nil {
 		return LookupResult{}, ErrResponse
 	}
+	result.Raw, err = scrubCredentialEcho(data, applicationKey)
+	if err != nil {
+		return LookupResult{}, ErrResponse
+	}
+	for index := range result.Matches {
+		result.Matches[index].Raw, err = scrubCredentialEcho(result.Matches[index].Raw, applicationKey)
+		if err != nil {
+			return LookupResult{}, ErrResponse
+		}
+	}
 	return result, nil
+}
+
+// LookupDuration matches fpcalc/pyacoustid's positive float-to-int conversion.
+// A nonpositive or non-finite duration is insufficient input and must not be
+// submitted to AcoustID.
+func LookupDuration(savedReportedDuration float64) (int, bool) {
+	if math.IsNaN(savedReportedDuration) || math.IsInf(savedReportedDuration, 0) || savedReportedDuration <= 0 || savedReportedDuration >= float64(math.MaxInt) {
+		return 0, false
+	}
+	duration := int(savedReportedDuration)
+	return duration, duration > 0
+}
+
+// MaxScoreForRecording is a projection over one file's ordered lookup results.
+// Missing scores remain nil; an actual zero remains a non-nil zero.
+func MaxScoreForRecording(result LookupResult, recordingID string) *float64 {
+	var maximum *float64
+	for _, match := range result.Matches {
+		contains := false
+		for _, id := range match.RecordingIDs {
+			if strings.EqualFold(id, recordingID) {
+				contains = true
+				break
+			}
+		}
+		if contains && match.Score != nil && (maximum == nil || *match.Score > *maximum) {
+			score := *match.Score
+			maximum = &score
+		}
+	}
+	return maximum
+}
+
+func scrubCredentialEcho(data []byte, secret string) (json.RawMessage, error) {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, err
+	}
+	value = redactJSON(value, secret)
+	clean, err := json.Marshal(value)
+	return clean, err
+}
+
+func redactJSON(value any, secret string) any {
+	if secret == "" {
+		return value
+	}
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			cleanKey := strings.ReplaceAll(key, secret, "[REDACTED]")
+			delete(item, key)
+			item[cleanKey] = redactJSON(child, secret)
+		}
+		return item
+	case []any:
+		for index, child := range item {
+			item[index] = redactJSON(child, secret)
+		}
+		return item
+	case string:
+		return strings.ReplaceAll(item, secret, "[REDACTED]")
+	}
+	return value
 }
 
 func validEndpoint(endpoint string) bool {

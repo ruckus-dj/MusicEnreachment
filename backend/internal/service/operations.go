@@ -413,7 +413,7 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 			return nil, fmt.Errorf("retry operation: matching delivery repository is unavailable")
 		}
 		return matching.RetryMatchingEvaluationOperationAndEnqueue(ctx, existing.ID, s.river, MatchingEvaluationOperationArgs{OperationID: existing.ID}, nil)
-	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search":
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_acoustid_lookup":
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, ProviderFetchOperationArgs{OperationID: existing.ID}, nil)
 	case SourceScanOperationKind:
 		if s.scanRetry == nil {

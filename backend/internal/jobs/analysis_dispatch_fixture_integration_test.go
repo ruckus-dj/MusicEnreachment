@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -49,6 +50,7 @@ type analysisDispatchFixture struct {
 	installationID uuid.UUID
 	helperPath     string
 	fpcalcID       uuid.UUID
+	metadataStep   bool
 }
 
 func newAnalysisDispatchFixture(t *testing.T) analysisDispatchFixture {
@@ -143,6 +145,29 @@ func newAnalysisDispatchFixtureConfigured(t *testing.T, preparer service.SourceA
 	}
 }
 
+func newAnalysisDispatchFixtureWithMetadata(t *testing.T) analysisDispatchFixture {
+	fixture := newAnalysisDispatchFixture(t)
+	fixture.metadataStep = true
+	fixture.worker.WithPreparer(service.NewSourceAnalysisPreparer(service.SourceAnalysisPreparerConfig{
+		ProbeExecutable: fixture.helperPath,
+		FFProbeVersion:  analysisDispatchRelease,
+		AnalysisPolicy:  persistence.SourceAnalysisPolicyVersion,
+		ProbeResult:     persistence.SourceMediaVariant{ID: uuid.New(), SizeBytes: fixture.work.SizeBytes},
+		Cache:           fixture.inventory,
+		MetadataReader:  matchingFixtureMetadataReader{},
+	}))
+	return fixture
+}
+
+type matchingFixtureMetadataReader struct{}
+
+func (matchingFixtureMetadataReader) Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
+	return metadata.Capture{
+		Provenance: metadata.Provenance{Name: "matching-worker fixture", Version: "1", Contract: "persisted test tags"},
+		Tags:       map[string][]string{"ARTIST": {"matching fixture"}},
+	}, nil
+}
+
 // installAnalysisDispatchFPCalc adds a verified fake fpcalc executable to the
 // fixture. It copies the native fixture program, so verification uses the same
 // executable behavior as the managed ffmpeg fixture without external tools.
@@ -198,6 +223,15 @@ func (fixture *analysisDispatchFixture) startScheduled(t *testing.T, ctx context
 	return fixture.startWithSchedule(t, ctx, true)
 }
 
+func (fixture *analysisDispatchFixture) startWithMetadata(t *testing.T, ctx context.Context) *persistence.Operation {
+	t.Helper()
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id, step, state) VALUES (?, 'metadata', 'pending')`, fixture.work.ID); err != nil {
+		t.Fatalf("add metadata analysis step to current work: %v", err)
+	}
+	fixture.metadataStep = true
+	return fixture.startWithSchedule(t, ctx, false)
+}
+
 func (fixture *analysisDispatchFixture) startAllRequestedSteps(t *testing.T, ctx context.Context) *persistence.Operation {
 	t.Helper()
 	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_work SET sha256_enabled=true WHERE id=?`, fixture.work.ID); err != nil {
@@ -248,6 +282,9 @@ func (fixture *analysisDispatchFixture) startWithScheduleAndReset(t *testing.T, 
 	selectedSteps := []persistence.SourceAnalysisStepSelection{
 		{WorkID: fixture.work.ID, Step: persistence.SourceStepSHA256},
 		{WorkID: fixture.work.ID, Step: persistence.SourceStepProbe},
+	}
+	if fixture.metadataStep {
+		selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: fixture.work.ID, Step: persistence.SourceStepMetadata})
 	}
 	if fixture.fpcalcID != uuid.Nil {
 		selectedSteps = append(selectedSteps, persistence.SourceAnalysisStepSelection{WorkID: fixture.work.ID, Step: persistence.SourceStepFingerprint})
