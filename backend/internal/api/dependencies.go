@@ -31,6 +31,7 @@ type Dependencies struct {
 	MatchingReview         *service.MatchingReviewService
 	MatchingManual         *service.MatchingManualService
 	ManualReleaseSelection *service.ManualReleaseSelectionService
+	ManualPickerSearch     *service.ManualPickerSearchService
 }
 
 type preflightEntry struct {

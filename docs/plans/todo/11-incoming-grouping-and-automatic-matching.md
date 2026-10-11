@@ -833,6 +833,24 @@ normalization для score в точности. Если по имеющимся
 - Text artist/release search и artist catalog picker ещё не реализованы; unlink
   policy, ranking, automatic trigger и полная приёмка остаются открытыми.
 
+### Durable manual picker search backend — 2026-10-11
+
+- Добавлены group-scoped search/browse admission и result API с explicit query,
+  entity и pagination, request-ID replay protection и captured provider context.
+  Search не изменяет matching generation или evaluation. Artist выбирается явно,
+  без automatic top-1 ограничения. UI поиска пока не подключён.
+- Accepted result snapshot фиксируется delivery-fenced, immutable и отделён от
+  mutable cache. Fresh/reuse hashing использует единое JSONB-normalized serialized
+  representation; replay captured receipt не подменяется новым cached result.
+- API/service tests и реальный PostgreSQL artist-search provider-worker test
+  проверяют оба candidates, payload digest, frozen A после structurally verified
+  replacement cache B и wrong-group isolation. Это не proof browse/release-worker
+  matrix или interruption-before-settlement cases — такое coverage ещё открыто.
+- Независимое review закрыло найденные GET/hash/replay blockers; assertion cache B
+  усилен в primary. Полный `task verify` повторно прошёл в primary session.
+- Search UI, automatic ranking/trigger, unlink policy и полная приёмка остаются
+  открытыми. Ревизия фиксируется коммитом этого backend increment.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

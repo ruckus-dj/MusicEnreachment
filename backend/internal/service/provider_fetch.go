@@ -191,11 +191,29 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 	if err := operations.RunningForProviderDelivery(ctx, operation, epoch, "fetching_provider"); err != nil {
 		return err
 	}
+	if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_artist_release_browse" {
+		captured, err := service.cache.HasCapturedManualPickerSearchResult(ctx, persistence.ProviderDeliveryFence{
+			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+		})
+		if err != nil {
+			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
+		if captured {
+			return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_result_reused")
+		}
+	}
 	response, err := service.cache.GetCurrentCachedResponse(ctx, *operation.ProviderSourceID, *operation.ProviderCacheKey, *operation.ProviderConfigurationIdentity)
 	if err != nil {
 		return service.failProviderOperation(ctx, operations, operation, epoch, err)
 	}
 	if response != nil && len(response.Payload) != 0 && !operation.ProviderExplicitRefresh {
+		if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_artist_release_browse" {
+			if err := service.cache.CaptureManualPickerSearchReuse(ctx, persistence.ProviderDeliveryFence{
+				OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+			}, response); err != nil {
+				return service.failProviderOperation(ctx, operations, operation, epoch, err)
+			}
+		}
 		_, err := service.cache.CaptureSuccessfulManualLookupReuse(ctx, persistence.ProviderDeliveryFence{
 			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
 		}, response)

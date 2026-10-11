@@ -41,6 +41,9 @@ import type {
   ListOperationsParams,
   ListSourceLocationsParams,
   ListToolCatalogParams,
+  ManualPickerSearchBody,
+  ManualPickerSearchOutputBody,
+  ManualPickerSearchResultOutputBody,
   ManualReleaseSelectionBody,
   ManualReleaseSelectionOutputBody,
   MatchingManualBody,
@@ -479,6 +482,256 @@ export const usePreviewIncomingGroups = <TError = ErrorModel,
       > => {
       return useMutation(getPreviewIncomingGroupsMutationOptions(options), queryClient);
     }
+
+export type startIncomingGroupManualPickerSearchResponse202 = {
+  data: ManualPickerSearchOutputBody
+  status: 202
+}
+
+export type startIncomingGroupManualPickerSearchResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type startIncomingGroupManualPickerSearchResponseSuccess = (startIncomingGroupManualPickerSearchResponse202) & {
+  headers: Headers;
+};
+export type startIncomingGroupManualPickerSearchResponseError = (startIncomingGroupManualPickerSearchResponseDefault) & {
+  headers: Headers;
+};
+
+export type startIncomingGroupManualPickerSearchResponse = (startIncomingGroupManualPickerSearchResponseSuccess | startIncomingGroupManualPickerSearchResponseError)
+
+export const getStartIncomingGroupManualPickerSearchUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/manual-search`
+}
+
+/**
+ * @summary Search MusicBrainz for an explicitly selected artist or release
+ */
+export const startIncomingGroupManualPickerSearch = async (groupId: string,
+    manualPickerSearchBody: NonReadonly<ManualPickerSearchBody>, options?: RequestInit): Promise<startIncomingGroupManualPickerSearchResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartIncomingGroupManualPickerSearchUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(manualPickerSearchBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startIncomingGroupManualPickerSearchResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startIncomingGroupManualPickerSearchResponse
+}
+
+
+
+
+
+export const getStartIncomingGroupManualPickerSearchMutationKey = () => ['startIncomingGroupManualPickerSearch'] as const;
+
+export const getStartIncomingGroupManualPickerSearchMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>, TError,StartIncomingGroupManualPickerSearchMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>, TError,StartIncomingGroupManualPickerSearchMutationVariables, TContext> => {
+
+const mutationKey = getStartIncomingGroupManualPickerSearchMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>, StartIncomingGroupManualPickerSearchMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  startIncomingGroupManualPickerSearch(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartIncomingGroupManualPickerSearchMutationResult = NonNullable<Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>>
+    export type StartIncomingGroupManualPickerSearchMutationBody = NonReadonly<ManualPickerSearchBody>
+    export type StartIncomingGroupManualPickerSearchMutationError = ErrorModel
+    export type StartIncomingGroupManualPickerSearchMutationVariables = {groupId: string;data: NonReadonly<ManualPickerSearchBody>}
+
+    /**
+ * @summary Search MusicBrainz for an explicitly selected artist or release
+ */
+export const useStartIncomingGroupManualPickerSearch = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>, TError,StartIncomingGroupManualPickerSearchMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startIncomingGroupManualPickerSearch>>,
+        TError,
+        StartIncomingGroupManualPickerSearchMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartIncomingGroupManualPickerSearchMutationOptions(options), queryClient);
+    }
+
+export type getIncomingGroupManualPickerSearchResponse200 = {
+  data: ManualPickerSearchResultOutputBody
+  status: 200
+}
+
+export type getIncomingGroupManualPickerSearchResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getIncomingGroupManualPickerSearchResponseSuccess = (getIncomingGroupManualPickerSearchResponse200) & {
+  headers: Headers;
+};
+export type getIncomingGroupManualPickerSearchResponseError = (getIncomingGroupManualPickerSearchResponseDefault) & {
+  headers: Headers;
+};
+
+export type getIncomingGroupManualPickerSearchResponse = (getIncomingGroupManualPickerSearchResponseSuccess | getIncomingGroupManualPickerSearchResponseError)
+
+export const getGetIncomingGroupManualPickerSearchUrl = (groupId: string,
+    operationId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/manual-search/${operationId}`
+}
+
+/**
+ * @summary Read accepted results for a manual MusicBrainz picker search
+ */
+export const getIncomingGroupManualPickerSearch = async (groupId: string,
+    operationId: string, options?: RequestInit): Promise<getIncomingGroupManualPickerSearchResponse> => {
+
+  const res = await fetch(getGetIncomingGroupManualPickerSearchUrl(groupId,operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getIncomingGroupManualPickerSearchResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getIncomingGroupManualPickerSearchResponse
+}
+
+
+
+
+
+export const getGetIncomingGroupManualPickerSearchQueryKey = (groupId: string,
+    operationId: string,) => {
+    return [
+    `/api/incoming-groups/${groupId}/manual-search/${operationId}`
+    ] as const;
+    }
+
+
+export const getGetIncomingGroupManualPickerSearchQueryOptions = <TData = Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError = ErrorModel>(groupId: string,
+    operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIncomingGroupManualPickerSearchQueryKey(groupId,operationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>> = ({ signal }) => getIncomingGroupManualPickerSearch(groupId,operationId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined && operationId !== null && operationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIncomingGroupManualPickerSearchQueryResult = NonNullable<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>>
+export type GetIncomingGroupManualPickerSearchQueryError = ErrorModel
+
+
+export function useGetIncomingGroupManualPickerSearch<TData = Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError = ErrorModel>(
+ groupId: string,
+    operationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupManualPickerSearch<TData = Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError = ErrorModel>(
+ groupId: string,
+    operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupManualPickerSearch<TData = Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError = ErrorModel>(
+ groupId: string,
+    operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read accepted results for a manual MusicBrainz picker search
+ */
+
+export function useGetIncomingGroupManualPickerSearch<TData = Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError = ErrorModel>(
+ groupId: string,
+    operationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupManualPickerSearch>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIncomingGroupManualPickerSearchQueryOptions(groupId,operationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type getIncomingGroupMatchingResponse200 = {
   data: MatchingReview

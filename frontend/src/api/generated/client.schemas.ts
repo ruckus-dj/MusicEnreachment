@@ -268,6 +268,46 @@ export interface InstallationsBody {
   installations: InstallationResponse[] | null;
 }
 
+export type ManualPickerSearchBodyEntity = typeof ManualPickerSearchBodyEntity[keyof typeof ManualPickerSearchBodyEntity];
+
+
+export const ManualPickerSearchBodyEntity = {
+  artist: 'artist',
+  release: 'release',
+} as const;
+
+export interface ManualPickerSearchBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  artist_id?: string;
+  entity: ManualPickerSearchBodyEntity;
+  /** @minLength 1 */
+  expected_group_revision: string;
+  /** @nullable */
+  limit: number | null;
+  /** @nullable */
+  offset: number | null;
+  query: string;
+  request_id: string;
+}
+
+export interface ManualPickerSearchOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  operation_id: string;
+}
+
+export interface ManualPickerSearchResultOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  cache_revision?: string;
+  group_id: string;
+  kind: string;
+  operation_id: string;
+  payload: unknown;
+  payload_sha256: string;
+}
+
 export interface ManualReleaseSelectionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;

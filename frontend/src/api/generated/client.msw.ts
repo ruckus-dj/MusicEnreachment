@@ -23,6 +23,8 @@ import type {
   IncomingGroupsBody,
   InstallPreflightBody,
   InstallationsBody,
+  ManualPickerSearchOutputBody,
+  ManualPickerSearchResultOutputBody,
   ManualReleaseSelectionOutputBody,
   MatchingManualPreview,
   MatchingReview,
@@ -49,6 +51,10 @@ export const getConfirmIncomingGroupsResponseMock = (overrideResponse: Partial<E
 export const getPreviewIncomingGroupsResponseMock = (overrideResponse: Partial<Extract<IncomingGroupsBody, object>> = {}): IncomingGroupsBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), draft_revision: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), epoch: faker.number.int(), files: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({capture_analysis_id: faker.string.alpha({length: {min: 10, max: 20}}), capture_identity: faker.string.alpha({length: {min: 10, max: 20}}), locations: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({configured_path: faker.string.alpha({length: {min: 10, max: 20}}), inventory_path: faker.string.alpha({length: {min: 10, max: 20}}), location_id: faker.string.alpha({length: {min: 10, max: 20}}), mtime: faker.string.alpha({length: {min: 10, max: 20}}), relative_path: faker.string.alpha({length: {min: 10, max: 20}}), root_id: faker.string.alpha({length: {min: 10, max: 20}}), size_bytes: faker.number.int(), technical_identity: faker.string.alpha({length: {min: 10, max: 20}}), work_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), tags: {
         [faker.string.alphanumeric(5)]: Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}})))
       }, variant_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), groups: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({diagnostics: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({code: faker.string.alpha({length: {min: 10, max: 20}}), values: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null]), variant_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), id: faker.string.alpha({length: {min: 10, max: 20}}), manual: faker.datatype.boolean(), members: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null]), revision: faker.string.alpha({length: {min: 10, max: 20}}), unready_members: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null])})), null]), revision: faker.string.alpha({length: {min: 10, max: 20}}), ...overrideResponse})
+
+export const getStartIncomingGroupManualPickerSearchResponseMock = (overrideResponse: Partial<Extract<ManualPickerSearchOutputBody, object>> = {}): ManualPickerSearchOutputBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), operation_id: faker.string.alpha({length: {min: 10, max: 20}}), ...overrideResponse})
+
+export const getGetIncomingGroupManualPickerSearchResponseMock = (overrideResponse: Partial<Extract<ManualPickerSearchResultOutputBody, object>> = {}): ManualPickerSearchResultOutputBody => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), cache_revision: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), group_id: faker.string.alpha({length: {min: 10, max: 20}}), kind: faker.string.alpha({length: {min: 10, max: 20}}), operation_id: faker.string.alpha({length: {min: 10, max: 20}}), payload: {}, payload_sha256: faker.string.alpha({length: {min: 10, max: 20}}), ...overrideResponse})
 
 export const getGetIncomingGroupMatchingResponseMock = (overrideResponse: Partial<Extract<MatchingReview, object>> = {}): MatchingReview => ({$schema: faker.helpers.arrayElement([faker.internet.url(), undefined]), candidates: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({edges: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({})), null]), file_member_id: faker.string.alpha({length: {min: 10, max: 20}}), positions: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({assignment_confidence: faker.helpers.arrayElement([faker.number.float({fractionDigits: 2}), undefined]), displayed_number: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), medium: faker.number.int(), position: faker.number.int(), track_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), release_confidence: faker.number.float({fractionDigits: 2}), release_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), evaluated: faker.datatype.boolean(), evaluation_revision: faker.helpers.arrayElement([faker.string.alpha({length: {min: 10, max: 20}}), undefined]), group_id: faker.string.alpha({length: {min: 10, max: 20}}), members: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => (faker.string.alpha({length: {min: 10, max: 20}}))), null]), proposal: faker.helpers.arrayElement([{}, undefined]), proposal_available: faker.datatype.boolean(), releases: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({positions: faker.helpers.arrayElement([Array.from({ length: faker.number.int({min: 1, max: 10}) }, (_, i) => i + 1).map(() => ({displayed_number: faker.string.alpha({length: {min: 10, max: 20}}), medium: faker.number.int(), position: faker.number.int(), recording_id: faker.string.alpha({length: {min: 10, max: 20}}), title: faker.string.alpha({length: {min: 10, max: 20}}), track_id: faker.string.alpha({length: {min: 10, max: 20}})})), null]), provider_release_id: faker.string.alpha({length: {min: 10, max: 20}}), release_id: faker.string.alpha({length: {min: 10, max: 20}}), title: faker.string.alpha({length: {min: 10, max: 20}}), tracklist_complete: faker.datatype.boolean()})), null]), ...overrideResponse})
 
@@ -150,6 +156,30 @@ export const getPreviewIncomingGroupsMockHandler = (overrideResponse?: IncomingG
     return HttpResponse.json(overrideResponse !== undefined
     ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
     : getPreviewIncomingGroupsResponseMock(),
+      { status: 200
+      })
+  }, options)
+}
+
+export const getStartIncomingGroupManualPickerSearchMockHandler = (overrideResponse?: ManualPickerSearchOutputBody | ((info: Parameters<Parameters<typeof http.post>[1]>[0]) => Promise<ManualPickerSearchOutputBody> | ManualPickerSearchOutputBody), options?: RequestHandlerOptions) => {
+  return http.post('*/incoming-groups/:groupId/manual-search', async (info: Parameters<Parameters<typeof http.post>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getStartIncomingGroupManualPickerSearchResponseMock(),
+      { status: 202
+      })
+  }, options)
+}
+
+export const getGetIncomingGroupManualPickerSearchMockHandler = (overrideResponse?: ManualPickerSearchResultOutputBody | ((info: Parameters<Parameters<typeof http.get>[1]>[0]) => Promise<ManualPickerSearchResultOutputBody> | ManualPickerSearchResultOutputBody), options?: RequestHandlerOptions) => {
+  return http.get('*/incoming-groups/:groupId/manual-search/:operationId', async (info: Parameters<Parameters<typeof http.get>[1]>[0]) => {
+
+
+    return HttpResponse.json(overrideResponse !== undefined
+    ? (typeof overrideResponse === "function" ? await overrideResponse(info) : overrideResponse)
+    : getGetIncomingGroupManualPickerSearchResponseMock(),
       { status: 200
       })
   }, options)
@@ -668,6 +698,8 @@ export const getMeloTroveAPIMock = () => [
   getGetIncomingGroupsMockHandler(),
   getConfirmIncomingGroupsMockHandler(),
   getPreviewIncomingGroupsMockHandler(),
+  getStartIncomingGroupManualPickerSearchMockHandler(),
+  getGetIncomingGroupManualPickerSearchMockHandler(),
   getGetIncomingGroupMatchingMockHandler(),
   getConfirmIncomingGroupManualMatchingMockHandler(),
   getStartIncomingGroupManualReleaseSelectionMockHandler(),

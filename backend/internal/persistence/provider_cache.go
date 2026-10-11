@@ -631,6 +631,9 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 			return fmt.Errorf("apply successful provider response: save graph: %w", err)
 		}
 		if response.Delivery != nil {
+			if err := repository.captureManualPickerSearchResult(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
+				return fmt.Errorf("apply successful provider response: capture manual picker result: %w", err)
+			}
 			var selectedMBID uuid.UUID
 			manualErr := tx.NewRaw(`SELECT admission.selected_release_mbid FROM manual_matching_admission admission
 				JOIN operation ON operation.id=admission.lookup_operation_id
@@ -681,6 +684,104 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		return err
 	}
 	return nil
+}
+
+// CaptureManualPickerSearchReuse freezes the cache payload observed by a
+// registered picker delivery. The cache/configuration locks precede the
+// operation lock, matching the provider response write path.
+func (repository *ProviderCacheRepository) CaptureManualPickerSearchReuse(ctx context.Context, fence ProviderDeliveryFence, expected *ProviderCachedResponse) error {
+	if expected == nil || fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
+		return fmt.Errorf("capture manual picker cache reuse: delivery and cached response are required")
+	}
+	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return err
+		}
+		var identity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil {
+			return err
+		}
+		var configurationIdentity string
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=?`, expected.ProviderSourceID).Scan(ctx, &configurationIdentity); err != nil {
+			return err
+		}
+		if identity == "" || identity != configurationIdentity {
+			return fmt.Errorf("capture manual picker cache reuse: provider configuration changed")
+		}
+		current := new(ProviderCachedResponse)
+		if err := tx.NewRaw(`SELECT provider_source_id,provider_id,cache_key,payload,fetched_at,revision,generation,fetch_order FROM provider_response_cache WHERE provider_source_id=? AND cache_key=? FOR SHARE`, expected.ProviderSourceID, expected.CacheKey).Scan(ctx, current); err != nil {
+			return err
+		}
+		if current.Generation != expected.Generation || current.FetchOrder != expected.FetchOrder || !equalPayload(current.Payload, expected.Payload) || (current.Revision == nil) != (expected.Revision == nil) || current.Revision != nil && *current.Revision != *expected.Revision {
+			return fmt.Errorf("capture manual picker cache reuse: cached response changed")
+		}
+		var kind, state, operationIdentity, operationCacheKey string
+		var attempt int
+		var epoch int64
+		var jobID sql.NullInt64
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &jobID, &sourceID, &operationIdentity, &operationCacheKey, &epoch); err != nil {
+			return err
+		}
+		if kind != "provider_artist_search" && kind != "provider_release_search" && kind != "provider_artist_release_browse" {
+			return fmt.Errorf("capture manual picker cache reuse: operation is not a picker search")
+		}
+		if state != "running" || attempt != fence.Attempt || !jobID.Valid || jobID.Int64 != fence.RiverJobID || epoch != fence.ExecutionEpoch || sourceID != expected.ProviderSourceID || operationIdentity != identity || operationCacheKey != expected.CacheKey {
+			return fmt.Errorf("capture manual picker cache reuse: delivery is stale")
+		}
+		ticket := ProviderRefreshTicket{ProviderSourceID: current.ProviderSourceID, ProviderID: current.ProviderID, CacheKey: current.CacheKey, Generation: current.Generation, ConfigurationIdentity: identity, FetchOrder: current.FetchOrder}
+		return repository.captureManualPickerSearchResult(ctx, tx, fence, ticket, current.Payload, nullableString(current.Revision))
+	})
+}
+
+// HasCapturedManualPickerSearchResult reports whether this currently claimed
+// delivery already owns an immutable picker result. It deliberately does not
+// consult the mutable response cache: after a crash, a newer cache generation
+// must not replace the result captured by the earlier delivery.
+func (repository *ProviderCacheRepository) HasCapturedManualPickerSearchResult(ctx context.Context, fence ProviderDeliveryFence) (bool, error) {
+	if fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
+		return false, fmt.Errorf("read captured manual picker result: delivery fence is required")
+	}
+	var captured bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		var kind, state, operationIdentity, operationCacheKey string
+		var attempt int
+		var epoch int64
+		var jobID sql.NullInt64
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch
+			FROM operation WHERE id=? FOR SHARE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &jobID, &sourceID, &operationIdentity, &operationCacheKey, &epoch); err != nil {
+			return err
+		}
+		if (kind != "provider_artist_search" && kind != "provider_release_search" && kind != "provider_artist_release_browse") ||
+			state != "running" || attempt != fence.Attempt || !jobID.Valid || jobID.Int64 != fence.RiverJobID || epoch != fence.ExecutionEpoch {
+			return fmt.Errorf("read captured manual picker result: delivery is stale")
+		}
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM manual_picker_search search
+			JOIN manual_picker_search_result result USING(operation_id)
+			WHERE search.operation_id=? AND search.provider_source_id=?
+			AND search.configuration_identity=? AND search.cache_key=?
+			AND result.group_id=search.group_id AND result.search_kind=search.search_kind
+			AND result.provider_source_id=search.provider_source_id
+			AND result.configuration_identity=search.configuration_identity AND result.cache_key=search.cache_key
+			AND search.configuration_identity=? AND search.cache_key=?)`,
+			fence.OperationID, sourceID, operationIdentity, operationCacheKey, operationIdentity, operationCacheKey).Scan(ctx, &captured); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("read captured manual picker result: %w", err)
+	}
+	return captured, nil
+}
+
+func nullableString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func applyProviderSourceGraph(ctx context.Context, tx bun.Tx, ticket ProviderRefreshTicket, graph ProviderGraph) error {
