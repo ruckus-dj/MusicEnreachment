@@ -702,6 +702,14 @@ normalization для score в точности. Если по имеющимся
   trigger, durable apply invocation и UI остаются не завершены; это не приёмка
   всего плана. Ревизия фиксируется коммитом этого increment.
 
+### Дополнение к hydration coverage — 2026-10-11
+
+- Добавлены PostgreSQL regressions: repeated admission не дублирует lookup
+  children; ошибка River insert откатывает phase, children и delivery state,
+  после чего тот же корректный запрос успешно admitted повторно. Полный
+  `task verify` повторно прошёл в primary session. Concurrent-CAS race test
+  остаётся отдельным незакрытым coverage пунктом.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
