@@ -3,19 +3,100 @@ package persistence
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
+// MatchingRunFenceSnapshot is the immutable target authority a v2 evaluator
+// binds into its result. Capture is the admission-time capture, never rebuilt
+// from the mutable grouping tables by this reader.
+type MatchingRunFenceSnapshot struct {
+	Version       int
+	GroupID       uuid.UUID
+	GroupRevision string
+	Capture       json.RawMessage
+	CaptureDigest string
+}
+
+func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Context, runID uuid.UUID) (MatchingRunFenceSnapshot, bool, error) {
+	var result MatchingRunFenceSnapshot
+	if runID == uuid.Nil {
+		return result, false, fmt.Errorf("read matching run fence: run id is required")
+	}
+	var row struct {
+		IntentVersion int    `bun:"intent_version"`
+		Intent        []byte `bun:"intent"`
+		Plan          []byte `bun:"immutable_plan"`
+		PlanDigest    []byte `bun:"plan_digest"`
+	}
+	err := repository.db.NewRaw(`SELECT a.intent_version,a.intent,r.immutable_plan,r.plan_digest FROM matching_acquisition a JOIN matching_run r ON r.id=a.run_id WHERE a.run_id=?`, runID).Scan(ctx, &row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, false, nil
+		}
+		return result, false, fmt.Errorf("read matching run fence: %w", err)
+	}
+	var intent MatchingAcquisitionIntent
+	var plan struct {
+		SchemaVersion       int    `json:"schema_version"`
+		Mode                string `json:"mode"`
+		TargetCaptureDigest string `json:"target_capture_digest"`
+	}
+	canonicalPlan, err := canonicalMatchingJSON(row.Plan)
+	if err != nil || json.Unmarshal(row.Intent, &intent) != nil || json.Unmarshal(row.Plan, &plan) != nil {
+		return result, false, fmt.Errorf("read matching run fence: immutable run is not a supported version-2 automatic target")
+	}
+	if row.IntentVersion != matchingAutomaticAcquisitionIntentVersion || intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion || intent.FenceVersion != 2 {
+		return result, false, nil
+	}
+	if plan.SchemaVersion != 4 || plan.Mode != "automatic" {
+		return result, false, fmt.Errorf("read matching run fence: immutable plan is invalid")
+	}
+	planDigest := sha256.Sum256(canonicalPlan)
+	if !equalDigest(row.PlanDigest, planDigest[:]) {
+		return result, false, fmt.Errorf("read matching run fence: immutable plan digest changed")
+	}
+	var targets []struct {
+		GroupID  uuid.UUID       `bun:"group_id"`
+		Revision string          `bun:"captured_group_revision"`
+		Capture  json.RawMessage `bun:"target_capture"`
+		Digest   []byte          `bun:"target_capture_digest"`
+	}
+	if err := repository.db.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest FROM matching_run_target WHERE run_id=? ORDER BY group_id`, runID).Scan(ctx, &targets); err != nil {
+		return result, false, fmt.Errorf("read matching run fence: %w", err)
+	}
+	if len(targets) != 1 {
+		return result, false, fmt.Errorf("read matching run fence: version-2 target cardinality is invalid")
+	}
+	canonicalCapture, digest, err := automaticArtistTargetCaptureDigest(targets[0].Capture)
+	if err != nil || !equalDigest(digest[:], targets[0].Digest) || hex.EncodeToString(digest[:]) != plan.TargetCaptureDigest {
+		return result, false, fmt.Errorf("read matching run fence: target capture digest changed")
+	}
+	result = MatchingRunFenceSnapshot{Version: 2, GroupID: targets[0].GroupID, GroupRevision: targets[0].Revision, Capture: canonicalCapture, CaptureDigest: hex.EncodeToString(digest[:])}
+	return result, true, nil
+}
+
 // validateMatchingRunFence validates the semantic target fence for a run. The
 // caller has already acquired the provider-configuration and source-mutation
 // gates. Version 1 deliberately retains the legacy global-epoch checks at its
 // call sites; version 2 binds the original complete target capture instead.
 func validateMatchingRunFence(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int) error {
+	return validateMatchingRunFenceWithFreshness(ctx, tx, runID, fenceVersion, true)
+}
+
+// validateMatchingRunFenceCurrentTarget ignores unrelated grouping refreshes;
+// exact target capture, authority, and source identities are still revalidated.
+func validateMatchingRunFenceCurrentTarget(ctx context.Context, tx bun.Tx, runID uuid.UUID) error {
+	return validateMatchingRunFenceWithFreshness(ctx, tx, runID, 2, false)
+}
+
+func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping bool) error {
 	if fenceVersion != 2 {
 		return fmt.Errorf("matching run fence version is unsupported")
 	}
@@ -23,7 +104,7 @@ func validateMatchingRunFence(ctx context.Context, tx bun.Tx, runID uuid.UUID, f
 	if err := tx.NewRaw(`SELECT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &dirty); err != nil {
 		return fmt.Errorf("validate matching target fence: read grouping freshness: %w", err)
 	}
-	if dirty {
+	if dirty && requireFreshGrouping {
 		return ErrMatchingTargetNeedsRefresh
 	}
 	var run struct {

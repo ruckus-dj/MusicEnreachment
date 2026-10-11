@@ -13,6 +13,36 @@ import (
 // saved by the acquisition seal. It deliberately supplies no search keys, so
 // the existing scoring kernel treats those factors as missing.
 func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, input persistence.MatchingAcquisitionEvaluationInput) (PreparedMatchingEvaluation, error) {
+	return evaluator.prepareSealed(ctx, input, nil)
+}
+
+type matchingRunFenceReader interface {
+	GetMatchingRunFence(context.Context, uuid.UUID) (persistence.MatchingRunFenceSnapshot, bool, error)
+}
+
+// PrepareSealedForRun binds acquisition results to the immutable target capture
+// registered at admission. It does not widen the sealed cache-key scope.
+func (evaluator *MatchingEvaluationService) PrepareSealedForRun(ctx context.Context, reader matchingRunFenceReader, runID uuid.UUID, input persistence.MatchingAcquisitionEvaluationInput) (PreparedMatchingEvaluation, error) {
+	if reader == nil {
+		return PreparedMatchingEvaluation{}, fmt.Errorf("matching run fence reader is unavailable")
+	}
+	fence, exists, err := reader.GetMatchingRunFence(ctx, runID)
+	if err != nil {
+		return PreparedMatchingEvaluation{}, err
+	}
+	if !exists || fence.Version != 2 || len(input.GroupIDs) != 1 || input.GroupIDs[0] != fence.GroupID {
+		return PreparedMatchingEvaluation{}, fmt.Errorf("sealed matching scope differs from immutable target")
+	}
+	prepared, err := evaluator.prepareSealed(ctx, input, &fence)
+	if err != nil {
+		return prepared, err
+	}
+	prepared.evaluation.TargetFenceVersion = 2
+	prepared.evaluation.TargetCaptureDigest = fence.CaptureDigest
+	return prepared, nil
+}
+
+func (evaluator *MatchingEvaluationService) prepareSealed(ctx context.Context, input persistence.MatchingAcquisitionEvaluationInput, fence *persistence.MatchingRunFenceSnapshot) (PreparedMatchingEvaluation, error) {
 	var prepared PreparedMatchingEvaluation
 	if evaluator == nil || evaluator.groups == nil || evaluator.captures == nil || evaluator.provider == nil || evaluator.results == nil || evaluator.config == nil {
 		return prepared, fmt.Errorf("matching evaluation dependencies are unavailable")
@@ -33,6 +63,9 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 	groups, err := requestedMatchingGroups(grouping.Groups, input.GroupIDs)
 	if err != nil {
 		return prepared, err
+	}
+	if fence != nil && (len(groups) != 1 || groups[0].Revision != fence.GroupRevision) {
+		return prepared, ErrMatchingEvaluationDeferred
 	}
 	for _, group := range groups {
 		if len(group.UnreadyMembers) != 0 {
@@ -127,7 +160,7 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 	}
 	results, err := EvaluateMatchingSnapshot(ctx, MatchingEvaluationSnapshot{
 		Grouping: grouping, Captures: captures, Provider: providerSnapshot,
-		RequestedGroupIDs: input.GroupIDs, ReleaseKeysByFile: releasesByFile, SearchKeysByFile: searchKeysByFile,
+		RequestedGroupIDs: input.GroupIDs, TargetFenceVersion: targetFenceVersion(fence), ReleaseKeysByFile: releasesByFile, SearchKeysByFile: searchKeysByFile,
 		allowMissingSearchKeys: true,
 	})
 	if err != nil {
@@ -144,6 +177,17 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 		return prepared, err
 	}
 	combined.ScopeVersion = 4
+	if fence != nil {
+		combined.TargetFenceVersion = 2
+		combined.TargetCaptureDigest = fence.CaptureDigest
+	}
 	prepared.Results, prepared.evaluation = results, combined
 	return prepared, nil
+}
+
+func targetFenceVersion(fence *persistence.MatchingRunFenceSnapshot) int {
+	if fence == nil {
+		return 0
+	}
+	return fence.Version
 }

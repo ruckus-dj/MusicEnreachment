@@ -41,10 +41,13 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("publish matching evaluation: lock output gate: %w", err)
 		}
-		if err := validateIncomingMatchEvaluation(evaluation); err != nil {
+		if err := validateIncomingMatchEvaluationStructure(evaluation, false); err != nil {
 			return err
 		}
 		if err := validateMatchingPlanEvaluation(ctx, tx, operationID, &evaluation); err != nil {
+			return err
+		}
+		if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 			return err
 		}
 		// The shared helper locks source/group, authority, provider, and evaluation
@@ -312,6 +315,7 @@ type matchingPublisherRunPlan struct {
 	PolicyVersion         string          `bun:"policy_version"`
 	ProviderSourceID      uuid.UUID       `bun:"provider_source_id"`
 	ConfigurationIdentity string          `bun:"provider_configuration_identity"`
+	FenceVersion          int             `bun:"fence_version"`
 }
 
 func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation *IncomingMatchEvaluation) error {
@@ -319,7 +323,7 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 		return fmt.Errorf("publish matching evaluation: evaluation is missing")
 	}
 	var run matchingPublisherRunPlan
-	if err := tx.NewRaw(`SELECT immutable_plan, grouping_epoch, policy_version, provider_source_id, provider_configuration_identity
+	if err := tx.NewRaw(`SELECT immutable_plan, grouping_epoch, policy_version, provider_source_id, provider_configuration_identity, fence_version
 		FROM matching_run WHERE id=?`, runID).Scan(ctx, &run); err != nil {
 		return fmt.Errorf("publish matching evaluation: load admitted plan: %w", err)
 	}
@@ -336,6 +340,56 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 	var plan matchingPublisherPlan
 	if err := json.Unmarshal(run.Plan, &plan); err != nil {
 		return fmt.Errorf("publish matching evaluation: decode admitted plan: %w", err)
+	}
+	var schema struct {
+		SchemaVersion       int    `json:"schema_version"`
+		TargetCaptureDigest string `json:"target_capture_digest"`
+		PolicyVersion       string `json:"policy_version"`
+	}
+	if json.Unmarshal(run.Plan, &schema) == nil && schema.SchemaVersion == 4 {
+		if run.FenceVersion != 2 || evaluation.TargetFenceVersion != 2 || evaluation.TargetCaptureDigest == "" || evaluation.TargetCaptureDigest != schema.TargetCaptureDigest ||
+			evaluation.PolicyVersion != schema.PolicyVersion || evaluation.PolicyVersion != run.PolicyVersion ||
+			len(evaluation.Groups) != 1 || evaluation.ScopeVersion != 4 {
+			return fmt.Errorf("publish matching evaluation: target-fenced evaluation differs from admitted run")
+		}
+		var target struct {
+			GroupID  uuid.UUID       `bun:"group_id"`
+			Revision string          `bun:"captured_group_revision"`
+			Capture  json.RawMessage `bun:"target_capture"`
+			Digest   []byte          `bun:"target_capture_digest"`
+		}
+		// Read the immutable capture unlocked: lockAndValidateMatchingPrelude
+		// takes the matching_run_target row lock under the source-mutation gate
+		// and revalidates this derived capture, its digest, the group authority,
+		// and the target generation before any write. Locking the target here,
+		// before the gate, inverts the shared admission lock order.
+		if err := tx.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest FROM matching_run_target WHERE run_id=?`, runID).Scan(ctx, &target); err != nil || target.GroupID != evaluation.Groups[0].GroupID || target.Revision != evaluation.Groups[0].GroupRevision || len(target.Capture) == 0 || !equalDigest(target.Digest, mustDecodeSHA256(schema.TargetCaptureDigest)) {
+			return fmt.Errorf("publish matching evaluation: evaluated target differs from immutable capture")
+		}
+		canonicalCapture, captureDigest, err := automaticArtistTargetCaptureDigest(target.Capture)
+		if err != nil || !equalDigest(target.Digest, captureDigest[:]) {
+			return fmt.Errorf("publish matching evaluation: immutable target capture is invalid")
+		}
+		if evaluation.TargetRunID != uuid.Nil && evaluation.TargetRunID != runID {
+			return fmt.Errorf("publish matching evaluation: caller target run differs from immutable run")
+		}
+		if len(evaluation.TargetCapture) != 0 {
+			callerCapture, err := canonicalMatchingJSON(evaluation.TargetCapture)
+			if err != nil || !bytes.Equal(callerCapture, canonicalCapture) {
+				return fmt.Errorf("publish matching evaluation: caller target capture differs from immutable capture")
+			}
+		}
+		evaluation.TargetRunID = runID
+		evaluation.TargetCapture = canonicalCapture
+		evaluation.TargetCaptureDigest = schema.TargetCaptureDigest
+		if err := validateSealedMatchingEvaluation(ctx, tx, runID, *evaluation); err != nil {
+			return err
+		}
+		if evaluation.Provider.ProviderSourceID != run.ProviderSourceID || evaluation.Provider.ConfigurationIdentity != run.ConfigurationIdentity {
+			return fmt.Errorf("publish matching evaluation: provider identity differs from admitted plan")
+		}
+		evaluation.MatchingAuthorityMode = "automatic"
+		return captureMatchingRunTargetAuthorities(ctx, tx, runID, evaluation)
 	}
 	if plan.SchemaVersion != 2 && plan.SchemaVersion != 3 {
 		return fmt.Errorf("publish matching evaluation: admitted plan schema version is unsupported")
@@ -390,7 +444,11 @@ func captureMatchingRunTargetAuthorities(ctx context.Context, tx bun.Tx, runID u
 		GroupID  uuid.UUID `bun:"group_id"`
 		Revision int64     `bun:"authority_revision"`
 	}
-	if err := tx.NewRaw(`SELECT group_id,authority_revision FROM matching_run_target WHERE run_id=? ORDER BY group_id FOR SHARE`, runID).Scan(ctx, &rows); err != nil {
+	// Read the captured authority revisions unlocked; replaceIncomingMatchesTx
+	// re-locks each group authority under the source-mutation gate and rejects a
+	// group whose revision no longer matches, so the target row lock belongs
+	// after the gate, never before it.
+	if err := tx.NewRaw(`SELECT group_id,authority_revision FROM matching_run_target WHERE run_id=? ORDER BY group_id`, runID).Scan(ctx, &rows); err != nil {
 		return fmt.Errorf("publish matching evaluation: read captured authority revisions: %w", err)
 	}
 	if len(rows) != len(evaluation.Groups) {

@@ -401,6 +401,7 @@ type MatchingEvaluationSnapshot struct {
 	Captures               []persistence.IncomingGroupingCapture
 	Provider               persistence.ProviderMatchingSnapshot
 	RequestedGroupIDs      []uuid.UUID
+	TargetFenceVersion     int
 	ReleaseKeysByFile      map[uuid.UUID][]string
 	SearchKeysByFile       map[uuid.UUID]MatchingSearchKeys
 	allowMissingSearchKeys bool
@@ -433,7 +434,15 @@ func EvaluateMatchingSnapshot(ctx context.Context, snapshot MatchingEvaluationSn
 	if snapshot.Grouping.Epoch < 0 || len(snapshot.Grouping.Groups) == 0 {
 		return nil, fmt.Errorf("matching evaluation requires a current grouping snapshot")
 	}
-	groupsRevision, err := IncomingGroupsRevision(snapshot.Grouping.Groups)
+	var err error
+	groupsForRevision := snapshot.Grouping.Groups
+	if snapshot.TargetFenceVersion == 2 {
+		groupsForRevision, err = requestedMatchingGroups(snapshot.Grouping.Groups, snapshot.RequestedGroupIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	groupsRevision, err := IncomingGroupsRevision(groupsForRevision)
 	if err != nil {
 		return nil, err
 	}

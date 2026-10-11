@@ -96,7 +96,22 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 				worker.operations.Notify(operation.ID)
 				return nil
 			}
-			prepared, err := worker.evaluator.PrepareSealed(ctx, sealed)
+			var prepared service.PreparedMatchingEvaluation
+			if reader, ok := worker.repository.(interface {
+				GetMatchingRunFence(context.Context, uuid.UUID) (persistence.MatchingRunFenceSnapshot, bool, error)
+			}); ok {
+				fence, exists, fenceErr := reader.GetMatchingRunFence(ctx, operation.ID)
+				if fenceErr != nil {
+					return fenceErr
+				}
+				if exists && fence.Version == 2 {
+					prepared, err = worker.evaluator.PrepareSealedForRun(ctx, reader, operation.ID, sealed)
+				} else {
+					prepared, err = worker.evaluator.PrepareSealed(ctx, sealed)
+				}
+			} else {
+				prepared, err = worker.evaluator.PrepareSealed(ctx, sealed)
+			}
 			if err != nil {
 				if errors.Is(err, service.ErrMatchingEvaluationDeferred) {
 					changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The sealed matching input is no longer ready for evaluation.")

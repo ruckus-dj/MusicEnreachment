@@ -974,6 +974,21 @@ normalization для score в точности. Если по имеющимся
   повторно прошёл в primary. Evaluation/publication/apply fence propagation и
   production consumer ещё не завершены; automatic trigger пока не включён.
 
+### Durable v2 evaluation/publication/apply fences — 2026-10-12
+
+- Evaluation headers сохраняют versioned target run/capture/digest. Publisher
+  самостоятельно derives immutable authority до complete validation; target
+  locks/revalidation выполняются после source-mutation gate. Legacy epoch
+  checks сохранены, v2 проверяет exact target вместо unrelated global epoch.
+- Реальный HTTP/PostgreSQL regression проходит reconciliation event → v2
+  admission → acquisition/ranking/hydration/seal → evaluation/publication после
+  unrelated epoch change и проверяет persisted header run/digest/candidates.
+  Forged digest regression проверяет отсутствие publication/apply side effects.
+- Independent review одобрило bounded source scope; полный `task verify` прошёл
+  в primary session. Dedicated successful direct-v2-apply regression и полная
+  pending-job drainage ещё не доказаны этим test. Production consumer остаётся
+  inactive; automatic trigger/full-plan acceptance не завершены.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

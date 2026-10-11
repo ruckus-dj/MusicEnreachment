@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,7 +36,7 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 			policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 			cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
-			matching_authority_mode, matching_authority_revision
+			matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest
 			FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrIncomingMatchConflict
@@ -62,6 +63,17 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	evaluation := IncomingMatchEvaluation{
 		ExpectedGroupsRevision: header.GroupsRevision, ExpectedGroupingEpoch: header.GroupingEpoch,
 		PolicyVersion: header.PolicyVersion, Provider: fence, Groups: []IncomingMatchGroupEvaluation{group},
+	}
+	if header.FenceVersion == 2 {
+		if header.TargetRunID == uuid.Nil || len(header.TargetCapture) == 0 || len(header.TargetCaptureDigest) != 32 {
+			return ErrIncomingMatchConflict
+		}
+		evaluation.TargetFenceVersion = 2
+		evaluation.TargetRunID = header.TargetRunID
+		evaluation.TargetCapture = append(json.RawMessage(nil), header.TargetCapture...)
+		evaluation.TargetCaptureDigest = hex.EncodeToString(header.TargetCaptureDigest)
+	} else if header.FenceVersion != 1 || header.TargetRunID != uuid.Nil || len(header.TargetCapture) != 0 || len(header.TargetCaptureDigest) != 0 {
+		return ErrIncomingMatchConflict
 	}
 	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "apply matching evaluation"); err != nil {
 		return err
@@ -188,28 +200,47 @@ func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Con
 				operation.SafeError = &reason
 			} else {
 				candidateRepo := NewIncomingMatchCandidateRepository(repository.db)
-				if _, err := tx.ExecContext(ctx, `SAVEPOINT matching_apply_materialization`); err != nil {
-					return fmt.Errorf("apply matching operation: create materialization savepoint: %w", err)
+				var headerFence struct {
+					FenceVersion int        `bun:"fence_version"`
+					TargetRunID  *uuid.UUID `bun:"target_run_id"`
 				}
-				err := candidateRepo.applyCurrentMatchingEvaluationTx(ctx, tx, intent.GroupID, intent.EvaluationRevision)
-				if errors.Is(err, ErrIncomingMatchConflict) || errors.Is(err, ErrMatchingManualProtection) {
-					if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matching_apply_materialization`); rollbackErr != nil {
-						return fmt.Errorf("apply matching operation: rollback conflicted materialization: %w", rollbackErr)
+				if err := tx.NewRaw(`SELECT fence_version,target_run_id FROM incoming_match_evaluation WHERE group_id=? AND evaluation_revision=?`, intent.GroupID, intent.EvaluationRevision).Scan(ctx, &headerFence); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						operation.State, operation.Stage = "succeeded", "review_required"
+						reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
+						operation.SafeError = &reason
+					} else {
+						return fmt.Errorf("apply matching operation: read evaluation target fence: %w", err)
 					}
-					if _, releaseErr := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); releaseErr != nil {
-						return fmt.Errorf("apply matching operation: release materialization savepoint: %w", releaseErr)
-					}
+				} else if headerFence.FenceVersion == 2 && (headerFence.TargetRunID == nil || *headerFence.TargetRunID != intent.ParentRunID) ||
+					(headerFence.FenceVersion == 1 && headerFence.TargetRunID != nil) || (headerFence.FenceVersion != 1 && headerFence.FenceVersion != 2) {
 					operation.State, operation.Stage = "succeeded", "review_required"
 					reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
 					operation.SafeError = &reason
-				} else if err != nil {
-					return err
 				} else {
-					if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
-						return fmt.Errorf("apply matching operation: release materialization savepoint: %w", err)
+					if _, err := tx.ExecContext(ctx, `SAVEPOINT matching_apply_materialization`); err != nil {
+						return fmt.Errorf("apply matching operation: create materialization savepoint: %w", err)
 					}
-					operation.State, operation.Stage = "succeeded", "applied"
-					operation.SafeError = nil
+					err := candidateRepo.applyCurrentMatchingEvaluationTx(ctx, tx, intent.GroupID, intent.EvaluationRevision)
+					if errors.Is(err, ErrIncomingMatchConflict) || errors.Is(err, ErrMatchingManualProtection) {
+						if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matching_apply_materialization`); rollbackErr != nil {
+							return fmt.Errorf("apply matching operation: rollback conflicted materialization: %w", rollbackErr)
+						}
+						if _, releaseErr := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); releaseErr != nil {
+							return fmt.Errorf("apply matching operation: release materialization savepoint: %w", releaseErr)
+						}
+						operation.State, operation.Stage = "succeeded", "review_required"
+						reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
+						operation.SafeError = &reason
+					} else if err != nil {
+						return err
+					} else {
+						if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
+							return fmt.Errorf("apply matching operation: release materialization savepoint: %w", err)
+						}
+						operation.State, operation.Stage = "succeeded", "applied"
+						operation.SafeError = nil
+					}
 				}
 			}
 		}

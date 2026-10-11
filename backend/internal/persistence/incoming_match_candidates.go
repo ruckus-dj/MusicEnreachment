@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -104,7 +105,13 @@ type IncomingMatchAcoustIDSourceInputFence struct {
 type IncomingMatchEvaluation struct {
 	// ScopeVersion 4 marks a persisted acquisition seal, rather than an
 	// immutable search-key plan, as the authority for candidate scope.
-	ScopeVersion               int
+	ScopeVersion int
+	// TargetFenceVersion 2 binds an acquisition evaluation to its immutable,
+	// single-group target capture. Zero retains legacy global-epoch semantics.
+	TargetFenceVersion         int
+	TargetCaptureDigest        string
+	TargetRunID                uuid.UUID
+	TargetCapture              json.RawMessage
 	ExpectedGroupsRevision     string
 	ExpectedGroupingEpoch      int64
 	PolicyVersion              string
@@ -134,6 +141,10 @@ type IncomingMatchEvaluationHeader struct {
 	EvaluatedAt                   time.Time
 	MatchingAuthorityMode         string
 	MatchingAuthorityRevision     int64
+	FenceVersion                  int
+	TargetRunID                   uuid.UUID
+	TargetCapture                 json.RawMessage
+	TargetCaptureDigest           []byte
 }
 
 type IncomingMatchReviewSnapshot struct {
@@ -190,11 +201,44 @@ func lockAndValidateMatchingPrelude(ctx context.Context, tx bun.Tx, evaluation I
 	if err := tx.NewRaw(`SELECT revision, needs_refresh FROM incoming_grouping_state WHERE singleton=true FOR SHARE`).Scan(ctx, &state); err != nil {
 		return fmt.Errorf("%s: lock grouping state: %w", operation, err)
 	}
-	if state.Revision != evaluation.ExpectedGroupingEpoch || state.NeedsRefresh {
+	if state.NeedsRefresh || evaluation.TargetFenceVersion != 2 && state.Revision != evaluation.ExpectedGroupingEpoch {
 		return ErrIncomingMatchConflict
 	}
 	if err := validateCurrentMatchGroups(ctx, tx, evaluation); err != nil {
 		return err
+	}
+	if evaluation.TargetFenceVersion == 2 {
+		var target struct {
+			GroupID uuid.UUID       `bun:"group_id"`
+			Capture json.RawMessage `bun:"target_capture"`
+			Digest  []byte          `bun:"target_capture_digest"`
+		}
+		if err := tx.NewRaw(`SELECT group_id,target_capture,target_capture_digest FROM matching_run_target WHERE run_id=?`, evaluation.TargetRunID).Scan(ctx, &target); err != nil ||
+			target.GroupID != evaluation.Groups[0].GroupID || len(target.Digest) != sha256.Size || !equalDigest(target.Digest, mustDecodeSHA256(evaluation.TargetCaptureDigest)) {
+			return ErrIncomingMatchConflict
+		}
+		canonicalCapture, err := canonicalMatchingJSON(evaluation.TargetCapture)
+		canonicalTarget, targetErr := canonicalMatchingJSON(target.Capture)
+		if err != nil || targetErr != nil || !bytes.Equal(canonicalCapture, canonicalTarget) {
+			return ErrIncomingMatchConflict
+		}
+		if err := validateMatchingRunFenceCurrentTarget(ctx, tx, evaluation.TargetRunID); err != nil {
+			return err
+		}
+		var generationCurrent bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				WHERE target.run_id=? AND target.group_id=?
+				AND generation.current_run_id=target.run_id AND generation.high_water=target.target_generation
+				AND COALESCE((SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),'automatic')='automatic'
+				AND COALESCE((SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),0)=target.authority_revision
+			)`, evaluation.TargetRunID, evaluation.Groups[0].GroupID).Scan(ctx, &generationCurrent); err != nil {
+			return fmt.Errorf("%s: validate target generation: %w", operation, err)
+		}
+		if !generationCurrent {
+			return ErrIncomingMatchConflict
+		}
 	}
 	return nil
 }
@@ -223,6 +267,9 @@ func (repository *IncomingMatchCandidateRepository) replace(ctx context.Context,
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		return err
 	}
+	if evaluation.TargetFenceVersion == 2 && (evaluation.TargetRunID == uuid.Nil || len(evaluation.TargetCapture) == 0) {
+		return fmt.Errorf("replace incoming matches: version-2 target authority is required")
+	}
 	if expected != nil {
 		if len(expected) != len(evaluation.Groups) {
 			return fmt.Errorf("replace incoming matches: expected one prior revision per group")
@@ -247,6 +294,9 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 	}
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		return err
+	}
+	if evaluation.TargetFenceVersion == 2 && (evaluation.TargetRunID == uuid.Nil || len(evaluation.TargetCapture) == 0) {
+		return fmt.Errorf("replace incoming matches: version-2 target authority is required")
 	}
 	if expected != nil {
 		if len(expected) != len(evaluation.Groups) {
@@ -334,13 +384,15 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 		}
 		if _, err := tx.NewRaw(`INSERT INTO incoming_match_evaluation
 				(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
-				 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-				 cache_key, cache_revision, provider_snapshot_revision, provider_fences, matching_authority_mode, matching_authority_revision)
-			VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
+				provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
+				cache_key, cache_revision, provider_snapshot_revision, provider_fences, matching_authority_mode, matching_authority_revision,
+				fence_version, target_run_id, target_capture, target_capture_digest)
+			VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?::jsonb, ?)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
 			evaluation.ExpectedGroupsRevision, evaluation.ExpectedGroupingEpoch, evaluation.PolicyVersion,
 			evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID,
 			evaluation.Provider.ConfigurationIdentity, evaluation.Provider.Namespace, evaluation.Provider.Endpoint,
-			evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences), allowedAuthorityMode, authority.Revision).Exec(ctx); err != nil {
+			evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences), allowedAuthorityMode, authority.Revision,
+			persistedMatchingFenceVersion(evaluation.TargetFenceVersion), nullableMatchingRunID(evaluation.TargetFenceVersion, evaluation.TargetRunID), nullableJSON(evaluation.TargetCapture), nullableMatchingTargetDigest(evaluation.TargetFenceVersion, evaluation.TargetCaptureDigest)).Exec(ctx); err != nil {
 			return fmt.Errorf("replace incoming match evaluation: insert header: %w", err)
 		}
 		if err := copyIncomingMatchMembers(ctx, tx, group); err != nil {
@@ -354,10 +406,22 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 }
 
 func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
-	if (evaluation.ScopeVersion != 0 && evaluation.ScopeVersion != 4) || evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || !matchingpolicy.Supported(evaluation.PolicyVersion) ||
+	return validateIncomingMatchEvaluationStructure(evaluation, true)
+}
+
+// validateIncomingMatchEvaluationStructure checks the caller-controlled shape
+// before publisher authority is read. A delivery publisher may defer requiring
+// the v2 run and capture until it derives those fields from the immutable run.
+func validateIncomingMatchEvaluationStructure(evaluation IncomingMatchEvaluation, requireTargetAuthority bool) error {
+	if evaluation.TargetFenceVersion != 0 && (evaluation.TargetFenceVersion != 2 || evaluation.TargetCaptureDigest == "" || len(evaluation.Groups) != 1) ||
+		(evaluation.ScopeVersion != 0 && evaluation.ScopeVersion != 4) || evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || !matchingpolicy.Supported(evaluation.PolicyVersion) ||
 		evaluation.Provider.ProviderID == uuid.Nil || evaluation.Provider.ProviderSourceID == uuid.Nil ||
 		evaluation.Provider.Namespace == "" || evaluation.Provider.Endpoint == "" || evaluation.Provider.ConfigurationIdentity == "" || evaluation.Provider.CacheKey == "" || evaluation.Provider.AcceptedProjectionRevision == "" || len(evaluation.Groups) == 0 {
 		return fmt.Errorf("replace incoming matches: complete snapshot and provider fences are required")
+	}
+	if evaluation.TargetFenceVersion == 2 && (requireTargetAuthority && (evaluation.TargetRunID == uuid.Nil || !jsonObject(evaluation.TargetCapture)) ||
+		len(evaluation.TargetCapture) > 0 && !jsonObject(evaluation.TargetCapture) || len(mustDecodeSHA256(evaluation.TargetCaptureDigest)) != sha256.Size) {
+		return fmt.Errorf("replace incoming matches: version-2 target authority is incomplete")
 	}
 	if !canonicalReleaseKeys(evaluation.Provider.ReleaseKeys) {
 		return fmt.Errorf("replace incoming matches: evaluated release keys must be sorted, deduplicated, and individually non-empty")
@@ -467,6 +531,27 @@ func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
 	return nil
 }
 
+func nullableMatchingRunID(version int, runID uuid.UUID) any {
+	if version != 2 {
+		return nil
+	}
+	return runID
+}
+
+func persistedMatchingFenceVersion(version int) int {
+	if version == 2 {
+		return 2
+	}
+	return 1
+}
+
+func nullableMatchingTargetDigest(version int, digest string) any {
+	if version != 2 {
+		return nil
+	}
+	return mustDecodeSHA256(digest)
+}
+
 func canonicalReleaseKeys(keys []string) bool {
 	for index, key := range keys {
 		if key == "" || index > 0 && keys[index-1] >= key {
@@ -486,7 +571,21 @@ func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation Incom
 		ID       uuid.UUID `bun:"id"`
 		Revision string    `bun:"revision"`
 	}
-	if err := tx.NewRaw(`SELECT id, revision FROM incoming_group ORDER BY id FOR SHARE`).Scan(ctx, &currentGroups); err != nil {
+	query := `SELECT id, revision FROM incoming_group ORDER BY id FOR SHARE`
+	if evaluation.TargetFenceVersion == 2 {
+		query = `SELECT id, revision FROM incoming_group WHERE id IN (?) ORDER BY id FOR SHARE`
+	}
+	var err error
+	if evaluation.TargetFenceVersion == 2 {
+		ids := make([]uuid.UUID, 0, len(evaluation.Groups))
+		for _, group := range evaluation.Groups {
+			ids = append(ids, group.GroupID)
+		}
+		err = tx.NewRaw(query, bun.List(ids)).Scan(ctx, &currentGroups)
+	} else {
+		err = tx.NewRaw(query).Scan(ctx, &currentGroups)
+	}
+	if err != nil {
 		return fmt.Errorf("replace incoming matches: lock current groups: %w", err)
 	}
 	identities := make([]struct {
@@ -517,7 +616,7 @@ func validateCurrentMatchGroups(ctx context.Context, tx bun.Tx, evaluation Incom
 		return fmt.Errorf("replace incoming matches: encode current groups revision: %w", err)
 	}
 	revision := sha256.Sum256(encoded)
-	if evaluation.ExpectedGroupsRevision == "" || hex.EncodeToString(revision[:]) != evaluation.ExpectedGroupsRevision {
+	if evaluation.ExpectedGroupsRevision == "" || evaluation.TargetFenceVersion != 2 && hex.EncodeToString(revision[:]) != evaluation.ExpectedGroupsRevision {
 		return ErrIncomingMatchConflict
 	}
 	for _, expected := range evaluation.Groups {
@@ -795,7 +894,7 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
-		matching_authority_mode, matching_authority_revision
+		matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest
 		FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -835,7 +934,7 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
-		matching_authority_mode, matching_authority_revision FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
+		matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
