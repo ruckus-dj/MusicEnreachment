@@ -206,6 +206,11 @@ func (repository *SourceInventoryRepository) settleNormalizedSourceAnalysisOpera
 		).WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("settle source analysis: update terminal operation: %w", err)
 		}
+		if state == "succeeded" {
+			if err := insertIncomingMatchingReconcileEvent(ctx, tx, operation, "analysis_success"); err != nil {
+				return fmt.Errorf("settle source analysis: persist matching reconciliation event: %w", err)
+			}
+		}
 		return nil
 	})
 }

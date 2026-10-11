@@ -56,7 +56,7 @@ type riverJobLiveness func(context.Context, *int64) (bool, error)
 // repository the composition root passes implements it; the recovery of an
 // install or a tools-root move never asks for it.
 type interruptedSourceScanRecovery interface {
-	RecoverInterruptedSourceScan(context.Context, uuid.UUID) (bool, error)
+	FinishRecoveredSourceScanWithMatchingReconcileEvent(context.Context, uuid.UUID, int, string) (bool, error)
 }
 
 // interruptedSourceAnalysisRecovery is the analysis-specific half of startup
@@ -434,12 +434,13 @@ func recoverInterruptedSourceScan(ctx context.Context, repository interruptedOpe
 	if !ok {
 		return fmt.Errorf("recover source scan %s: the repository does not support source scan recovery", operation.ID)
 	}
-	applied, err := recovery.RecoverInterruptedSourceScan(ctx, operation.ID)
+	applied, err := recovery.FinishRecoveredSourceScanWithMatchingReconcileEvent(ctx, operation.ID, operation.Attempt, scanSucceededStage)
 	if err != nil {
 		return fmt.Errorf("recover source scan %s: %w", operation.ID, err)
 	}
 	if applied {
-		return operations.Succeed(ctx, operation.ID, scanSucceededStage)
+		operations.Notify(operation.ID)
+		return nil
 	}
 	return operations.Fail(ctx, operation.ID, operation.Stage, scanSafeInterrupted)
 }

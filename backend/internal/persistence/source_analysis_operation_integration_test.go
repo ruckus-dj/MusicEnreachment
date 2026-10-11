@@ -97,6 +97,81 @@ func TestNormalizedSourceAnalysisAdmissionClaimAndTerminalReleaseWithPostgreSQL(
 	}
 }
 
+func TestSuccessfulNormalizedAnalysisEmitsOneDurableMatchingEventWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	fixture := newNormalizedWorkOperation(t, "/srv/matching-reconcile-success", true,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
+	ctx := context.Background()
+	operation := fixture.batchOperation(t)
+	if err := fixture.admit(t, ctx, operation); err != nil {
+		t.Fatalf("admit analysis: %v", err)
+	}
+	if _, err := fixture.database.NewRaw(`UPDATE operation SET state='running' WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A succeeded step must reference its actual result
+	// (source_analysis_step_success_has_result). Record the real SHA-256 result
+	// before settlement, mirroring the production worker: the digest is captured
+	// as immutable input, never a synthetic late success.
+	digest := make([]byte, 32)
+	digest[0] = 1
+	shaResultID := uuid.New()
+	if _, err := fixture.database.ExecContext(ctx, `INSERT INTO media_variant
+		(id,size_bytes,source_sha256,sha256_calculated_at,sha256_algorithm,sha256_applied_operation_id)
+		VALUES (?,?,?,?,?,?)`, shaResultID, fixture.work.SizeBytes, digest, time.Now().UTC(), "SHA-256", operation.ID); err != nil {
+		t.Fatalf("insert successful SHA result: %v", err)
+	}
+	if _, err := fixture.database.NewRaw(`UPDATE source_analysis_step SET state='succeeded',success_sha_variant_id=?,success_reuse_origin='executed' WHERE work_id=? AND step='sha256'`, shaResultID, fixture.work.ID).Exec(ctx); err != nil {
+		t.Fatalf("commit successful SHA result: %v", err)
+	}
+	delivery := persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: *operation.RiverJobID}
+	if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, "succeeded", "completed", ""); err != nil {
+		t.Fatalf("settle successful analysis: %v", err)
+	}
+	if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, "succeeded", "completed", ""); err != nil {
+		t.Fatalf("replay successful settlement: %v", err)
+	}
+	var count int
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE source_operation_id=? AND source_attempt=? AND reason='analysis_success'`, operation.ID, operation.Attempt).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("successful settlement created %d matching events, want exactly one", count)
+	}
+}
+
+func TestIncompleteNormalizedAnalysisDoesNotEmitMatchingEventWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	fixture := newNormalizedWorkOperation(t, "/srv/matching-reconcile-incomplete", true,
+		[]persistence.SourceAnalysisStepInput{{Step: persistence.SourceStepSHA256, State: "pending"}})
+	ctx := context.Background()
+	operation := fixture.batchOperation(t)
+	if err := fixture.admit(t, ctx, operation); err != nil {
+		t.Fatalf("admit analysis: %v", err)
+	}
+	if _, err := fixture.database.NewRaw(`UPDATE operation SET state='running' WHERE id=?`, operation.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.repository.SettleNormalizedSourceAnalysisDelivery(ctx, operation.ID,
+		persistence.SourceAnalysisOperationDelivery{Attempt: operation.Attempt, JobID: *operation.RiverJobID}, "succeeded", "completed", ""); err != nil {
+		t.Fatalf("settle incomplete success request: %v", err)
+	}
+	stored, err := persistence.NewSetupManagerRepository(fixture.database).GetOperation(ctx, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != "failed" || stored.Stage != "incomplete" {
+		t.Fatalf("incomplete requested success settled as %s/%s", stored.State, stored.Stage)
+	}
+	var count int
+	if err := fixture.database.NewRaw(`SELECT count(*) FROM incoming_matching_reconcile_event WHERE source_operation_id=?`, operation.ID).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("incomplete analysis emitted %d matching events", count)
+	}
+}
+
 func TestEnumeratedWorkAdmitsPendingMetadataWithoutToolsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)

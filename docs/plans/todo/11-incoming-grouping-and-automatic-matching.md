@@ -927,6 +927,22 @@ normalization для score в точности. Если по имеющимся
 - Return-to-automatic, его durable reconciliation, unlink API/UI и post-analysis
   trigger ещё не подключены. Полная приёмка плана остаётся открытой.
 
+### Durable reconciliation outbox core — 2026-10-12
+
+- Actual successful analysis settlement и qualifying scan success сохраняют
+  reconciliation event в той же transaction; requested success, преобразованный
+  в incomplete failure, событие не создаёт. Recovered scan success использует
+  atomic receipt-validated settlement, а не generic success без handoff.
+- Dispatch atomically inserts ID-only River job и сохраняет event/job identity;
+  delivery claims/completion/release fenced по job, River attempt и epoch.
+  Populated-event rollback запрещён, чтобы не потерять work/deduplication.
+- PostgreSQL tests покрывают successful/incomplete analysis, attempt fencing,
+  release/retry и dispatch failure после реального insert → rollback → retry.
+  Dedicated recovered-scan crash matrix требует дальнейшего расширения.
+- Independent review одобрило bounded core; полный `task verify` повторно прошёл
+  в primary session. Consumer ещё не зарегистрирован, automatic group admission
+  не подключён: этот increment не является post-analysis end-to-end приёмкой.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

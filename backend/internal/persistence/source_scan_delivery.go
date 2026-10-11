@@ -78,6 +78,16 @@ func (repository *SourceInventoryRepository) FinishSourceScanDelivery(ctx contex
 		if operation.State != "queued" && operation.State != "running" {
 			return fmt.Errorf("finish source scan delivery: %w", ErrSourceAnalysisStale)
 		}
+		var hasSuccessfulRetainedAnalysis bool
+		if state == "succeeded" {
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM source_analysis_work work
+				JOIN source_analysis_step step ON step.work_id=work.id AND step.state='succeeded'
+				WHERE work.origin_scan_operation_id=?
+			)`, operationID).Scan(ctx, &hasSuccessfulRetainedAnalysis); err != nil {
+				return fmt.Errorf("finish source scan delivery: check retained successful analysis: %w", err)
+			}
+		}
 		if state == "failed" {
 			if _, err := tx.NewDelete().Model((*SourceScanCandidate)(nil)).Where("operation_id = ?", operationID).Exec(ctx); err != nil {
 				return fmt.Errorf("finish source scan delivery: delete candidates: %w", err)
@@ -102,6 +112,11 @@ func (repository *SourceInventoryRepository) FinishSourceScanDelivery(ctx contex
 		operation.RerunTarget = false
 		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at", "target_work_id", "target_step", "target_source_root_id", "target_source_location_id", "tools_read_required", "rerun_target").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("finish source scan delivery: %w", err)
+		}
+		if state == "succeeded" && hasSuccessfulRetainedAnalysis {
+			if err := insertIncomingMatchingReconcileEvent(ctx, tx, operation, "scan_success"); err != nil {
+				return fmt.Errorf("finish source scan delivery: persist matching reconciliation event: %w", err)
+			}
 		}
 		return nil
 	})
