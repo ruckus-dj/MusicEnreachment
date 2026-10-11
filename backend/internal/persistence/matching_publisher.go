@@ -1,12 +1,18 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -141,6 +147,13 @@ type matchingApplyIntent struct {
 }
 
 func (repository *SetupManagerRepository) enqueueEligibleMatchingApplies(ctx context.Context, tx bun.Tx, runID uuid.UUID, executionEpoch int64, evaluation IncomingMatchEvaluation) error {
+	var manualRun bool
+	if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM manual_matching_admission WHERE run_id=?)`, runID).Scan(ctx, &manualRun); err != nil {
+		return fmt.Errorf("check manual matching authority: %w", err)
+	}
+	if manualRun {
+		return nil
+	}
 	for _, group := range evaluation.Groups {
 		var header struct {
 			Revision string          `bun:"evaluation_revision"`
@@ -302,6 +315,12 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 		FROM matching_run WHERE id=?`, runID).Scan(ctx, &run); err != nil {
 		return fmt.Errorf("publish matching evaluation: load admitted plan: %w", err)
 	}
+	var planEnvelope struct {
+		Mode string `json:"mode"`
+	}
+	if json.Unmarshal(run.Plan, &planEnvelope) == nil && planEnvelope.Mode == "manual_review" {
+		return validateManualMatchingPlanEvaluation(ctx, tx, runID, run, evaluation)
+	}
 	var plan matchingPublisherPlan
 	if err := json.Unmarshal(run.Plan, &plan); err != nil {
 		return fmt.Errorf("publish matching evaluation: decode admitted plan: %w", err)
@@ -351,6 +370,167 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 		return fmt.Errorf("publish matching evaluation: admitted provider request is missing")
 	}
 	return nil
+}
+
+func validateManualMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, run matchingPublisherRunPlan, evaluation IncomingMatchEvaluation) error {
+	var plan struct {
+		SchemaVersion int             `json:"schema_version"`
+		Mode          string          `json:"mode"`
+		RequestID     uuid.UUID       `json:"request_id"`
+		GroupID       uuid.UUID       `json:"group_id"`
+		GroupRevision string          `json:"group_revision"`
+		Evaluation    *string         `json:"evaluation_revision"`
+		ReleaseMBID   uuid.UUID       `json:"selected_release_mbid"`
+		Plan          json.RawMessage `json:"plan"`
+		GroupContext  json.RawMessage `json:"group_context"`
+		SourceContext json.RawMessage `json:"source_context"`
+		LookupID      uuid.UUID       `json:"lookup_operation_id"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(run.Plan))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&plan); err != nil || decoder.Decode(new(any)) != io.EOF || plan.SchemaVersion != 1 || plan.Mode != "manual_review" || plan.RequestID == uuid.Nil || plan.GroupID == uuid.Nil || plan.GroupRevision == "" || plan.Evaluation != nil && *plan.Evaluation == "" || plan.ReleaseMBID == uuid.Nil || plan.LookupID == uuid.Nil || !jsonObject(plan.Plan) || !jsonObject(plan.GroupContext) || !jsonObject(plan.SourceContext) {
+		return fmt.Errorf("publish matching evaluation: manual plan is invalid")
+	}
+	if evaluation.ScopeVersion != 4 || evaluation.ExpectedGroupingEpoch != run.GroupingEpoch || evaluation.PolicyVersion != run.PolicyVersion || len(evaluation.Groups) != 1 || evaluation.Groups[0].GroupID != plan.GroupID || evaluation.Groups[0].GroupRevision != plan.GroupRevision || evaluation.Provider.ProviderSourceID != run.ProviderSourceID || evaluation.Provider.ConfigurationIdentity != run.ConfigurationIdentity {
+		return fmt.Errorf("publish matching evaluation: manual evaluation differs from admitted scope")
+	}
+	var capturedSource struct {
+		ProviderID            uuid.UUID `json:"provider_id"`
+		ProviderSourceID      uuid.UUID `json:"provider_source_id"`
+		Endpoint              string    `json:"endpoint"`
+		ConfigurationIdentity string    `json:"configuration_identity"`
+	}
+	if err := json.Unmarshal(plan.SourceContext, &capturedSource); err != nil || capturedSource.ProviderID == uuid.Nil || capturedSource.ProviderSourceID != run.ProviderSourceID || capturedSource.Endpoint == "" || capturedSource.ConfigurationIdentity != run.ConfigurationIdentity {
+		return fmt.Errorf("publish matching evaluation: captured manual provider scope is invalid")
+	}
+	var providerSource struct {
+		ProviderID            uuid.UUID `bun:"provider_id"`
+		Endpoint              string    `bun:"endpoint"`
+		ConfigurationIdentity string    `bun:"configuration_identity"`
+	}
+	if err := tx.NewRaw(`SELECT provider_id,endpoint,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, capturedSource.ProviderSourceID).Scan(ctx, &providerSource); err != nil || providerSource.ProviderID != capturedSource.ProviderID || providerSource.Endpoint != capturedSource.Endpoint || providerSource.ConfigurationIdentity != capturedSource.ConfigurationIdentity || evaluation.Provider.ProviderID != capturedSource.ProviderID || evaluation.Provider.Endpoint != capturedSource.Endpoint {
+		return fmt.Errorf("publish matching evaluation: captured manual provider source changed")
+	}
+	var admission struct {
+		RunID              uuid.UUID       `bun:"run_id"`
+		GroupID            uuid.UUID       `bun:"group_id"`
+		GroupRevision      string          `bun:"group_revision"`
+		EvaluationRevision *string         `bun:"evaluation_revision"`
+		ReleaseMBID        uuid.UUID       `bun:"selected_release_mbid"`
+		LookupID           uuid.UUID       `bun:"lookup_operation_id"`
+		CacheKey           string          `bun:"cache_key"`
+		Members            json.RawMessage `bun:"original_members"`
+	}
+	if err := tx.NewRaw(`SELECT run_id,group_id,group_revision,evaluation_revision,selected_release_mbid,lookup_operation_id,cache_key,original_members FROM manual_matching_admission WHERE request_id=? FOR SHARE`, plan.RequestID).Scan(ctx, &admission); err != nil {
+		return fmt.Errorf("publish matching evaluation: read manual authority: %w", err)
+	}
+	if admission.RunID != runID || admission.GroupID != plan.GroupID || admission.GroupRevision != plan.GroupRevision || !equalOptionalString(admission.EvaluationRevision, plan.Evaluation) || admission.ReleaseMBID != plan.ReleaseMBID || admission.LookupID != plan.LookupID || admission.CacheKey != "release-lookup:"+strings.ToLower(plan.ReleaseMBID.String()) {
+		return fmt.Errorf("publish matching evaluation: manual plan differs from immutable admission")
+	}
+	var authority struct {
+		Version             int       `json:"version"`
+		ExecutionMode       string    `json:"execution_mode"`
+		SelectedReleaseMBID uuid.UUID `json:"selected_release_mbid"`
+	}
+	var evidence map[string]json.RawMessage
+	if json.Unmarshal(evaluation.Groups[0].Evidence, &evidence) != nil {
+		return fmt.Errorf("publish matching evaluation: manual evidence is invalid")
+	}
+	rawAuthority, exists := evidence["manual_authority"]
+	if !exists {
+		return fmt.Errorf("publish matching evaluation: manual authority evidence is missing")
+	}
+	decoder = json.NewDecoder(bytes.NewReader(rawAuthority))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&authority); err != nil || decoder.Decode(new(any)) != io.EOF || authority.Version != 1 || authority.ExecutionMode != "manual_review" || authority.SelectedReleaseMBID != plan.ReleaseMBID {
+		return fmt.Errorf("publish matching evaluation: manual authority evidence differs from admission")
+	}
+	var lookupEvidence struct {
+		RequestID         uuid.UUID `json:"request_id"`
+		GroupID           uuid.UUID `json:"group_id"`
+		LookupOperationID uuid.UUID `json:"lookup_operation_id"`
+		PayloadSHA256     string    `json:"payload_sha256"`
+	}
+	rawLookup, exists := evidence["manual_lookup"]
+	if !exists {
+		return fmt.Errorf("publish matching evaluation: accepted manual lookup evidence is missing")
+	}
+	decoder = json.NewDecoder(bytes.NewReader(rawLookup))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&lookupEvidence); err != nil || decoder.Decode(new(any)) != io.EOF || lookupEvidence.RequestID != plan.RequestID || lookupEvidence.GroupID != plan.GroupID || lookupEvidence.LookupOperationID != plan.LookupID || len(lookupEvidence.PayloadSHA256) != 64 {
+		return fmt.Errorf("publish matching evaluation: accepted manual lookup evidence differs from admission")
+	}
+	var lookupSeal struct {
+		RequestID             uuid.UUID `bun:"request_id"`
+		LookupID              uuid.UUID `bun:"lookup_operation_id"`
+		ProviderSourceID      uuid.UUID `bun:"provider_source_id"`
+		ConfigurationIdentity string    `bun:"configuration_identity"`
+		CacheKey              string    `bun:"cache_key"`
+		PayloadSHA256         []byte    `bun:"payload_sha256"`
+		CacheRevision         *string   `bun:"cache_revision"`
+		ProjectionSHA256      []byte    `bun:"projection_sha256"`
+	}
+	if err := tx.NewRaw(`SELECT seal.request_id,seal.lookup_operation_id,seal.provider_source_id,seal.configuration_identity,
+		seal.cache_key,seal.payload_sha256,seal.cache_revision,seal.projection_sha256
+		FROM manual_matching_lookup_seal seal
+		JOIN manual_matching_admission admission ON admission.request_id=seal.request_id
+		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=admission.run_id AND dependency.request_id=seal.lookup_operation_id AND dependency.cache_key=seal.cache_key
+		JOIN operation lookup ON lookup.id=seal.lookup_operation_id
+		WHERE seal.request_id=? AND seal.lookup_operation_id=? AND seal.sealed_at IS NOT NULL
+		AND dependency.terminal_outcome='succeeded' AND lookup.state='succeeded'
+		FOR SHARE OF seal,dependency,lookup`, plan.RequestID, plan.LookupID).Scan(ctx, &lookupSeal); err != nil {
+		return fmt.Errorf("publish matching evaluation: read sealed manual lookup: %w", err)
+	}
+	evidencePayloadDigest := mustDecodeSHA256(lookupEvidence.PayloadSHA256)
+	evaluationProjectionDigest := mustDecodeSHA256(evaluation.Provider.AcceptedProjectionRevision)
+	if lookupSeal.RequestID != plan.RequestID || lookupSeal.LookupID != plan.LookupID || lookupSeal.ProviderSourceID != capturedSource.ProviderSourceID ||
+		lookupSeal.ConfigurationIdentity != capturedSource.ConfigurationIdentity || lookupSeal.CacheKey != admission.CacheKey ||
+		len(lookupSeal.PayloadSHA256) != sha256.Size || len(lookupSeal.ProjectionSHA256) != sha256.Size ||
+		len(evidencePayloadDigest) != sha256.Size || len(evaluationProjectionDigest) != sha256.Size ||
+		!equalDigest(lookupSeal.PayloadSHA256, evidencePayloadDigest) || !equalDigest(lookupSeal.ProjectionSHA256, evaluationProjectionDigest) {
+		return fmt.Errorf("publish matching evaluation: manual lookup does not match its immutable seal")
+	}
+	cacheRevisions := effectiveMatchCacheRevisions(evaluation.Provider)
+	cacheRevision, hasCacheRevision := cacheRevisions[lookupSeal.CacheKey]
+	if len(cacheRevisions) != 1 || !hasCacheRevision || !equalOptionalString(cacheRevision, lookupSeal.CacheRevision) || len(evaluation.Provider.ReleaseKeys) != 1 || evaluation.Provider.ReleaseKeys[0] != plan.ReleaseMBID.String() {
+		return fmt.Errorf("publish matching evaluation: manual provider scope differs from sealed lookup")
+	}
+	var accepted struct {
+		Payload []byte `bun:"payload"`
+		Outcome string `bun:"terminal_outcome"`
+	}
+	if err := tx.NewRaw(`SELECT cache.payload,dependency.terminal_outcome FROM matching_provider_dependency dependency JOIN matching_run run ON run.id=dependency.parent_run_id JOIN provider_response_cache cache ON cache.provider_source_id=run.provider_source_id AND cache.cache_key=dependency.cache_key WHERE dependency.parent_run_id=? AND dependency.request_id=? AND dependency.terminal_outcome='succeeded' FOR SHARE OF dependency,cache`, runID, plan.LookupID).Scan(ctx, &accepted); err != nil {
+		return fmt.Errorf("publish matching evaluation: accepted manual lookup is unavailable: %w", err)
+	}
+	sum := sha256.Sum256(accepted.Payload)
+	if hex.EncodeToString(sum[:]) != strings.ToLower(lookupEvidence.PayloadSHA256) {
+		return fmt.Errorf("publish matching evaluation: accepted manual lookup changed")
+	}
+	var captured []IncomingMatchMemberFence
+	if json.Unmarshal(admission.Members, &captured) != nil || !sameManualMembers(captured, evaluation.Groups[0].Members) {
+		return fmt.Errorf("publish matching evaluation: captured manual member scope changed")
+	}
+	return nil
+}
+
+func mustDecodeSHA256(value string) []byte {
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != sha256.Size {
+		return nil
+	}
+	return decoded
+}
+
+func sameManualMembers(left, right []IncomingMatchMemberFence) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].FileMemberID != right[i].FileMemberID || left[i].WorkID != right[i].WorkID || !reflect.DeepEqual(left[i].SourceSHA256, right[i].SourceSHA256) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateSealedMatchingEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation IncomingMatchEvaluation) error {

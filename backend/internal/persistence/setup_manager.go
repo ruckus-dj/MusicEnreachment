@@ -1220,11 +1220,39 @@ func (repository *SetupManagerRepository) transitionProviderOperationForDelivery
 		if err := transition(operation); err != nil {
 			return err
 		}
+		if operation.State == "succeeded" && operation.Kind == "provider_release_lookup" {
+			var manual bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM manual_matching_admission WHERE lookup_operation_id=?)`, operation.ID).Scan(ctx, &manual); err != nil {
+				return fmt.Errorf("check manual lookup receipt: %w", err)
+			}
+			if manual {
+				var receipt bool
+				if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM manual_matching_lookup_seal seal
+					WHERE seal.lookup_operation_id=? AND seal.provider_source_id=? AND seal.configuration_identity=?
+					AND seal.cache_key=? AND seal.sealed_at IS NULL)`, operation.ID, operation.ProviderSourceID,
+					operation.ProviderConfigurationIdentity, operation.ProviderCacheKey).Scan(ctx, &receipt); err != nil {
+					return fmt.Errorf("check accepted manual lookup receipt: %w", err)
+				}
+				if !receipt {
+					return fmt.Errorf("succeed manual lookup: accepted response receipt is required")
+				}
+			}
+		}
 		operation.UpdatedAt = time.Now().UTC()
 		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "bytes_completed", "bytes_total", "safe_error", "attempt", "started_at", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
 			return fmt.Errorf("transition provider operation delivery: %w", err)
 		}
 		if operation.State == "succeeded" || operation.State == "failed" {
+			if operation.State == "succeeded" {
+				result, err := tx.NewRaw(`UPDATE manual_matching_lookup_seal SET sealed_at=now()
+						WHERE lookup_operation_id=? AND sealed_at IS NULL`, operation.ID).Exec(ctx)
+				if err != nil {
+					return fmt.Errorf("seal accepted manual lookup response: %w", err)
+				}
+				if _, err := result.RowsAffected(); err != nil {
+					return fmt.Errorf("seal accepted manual lookup response: %w", err)
+				}
+			}
 			if err := settleMatchingProviderDependencies(ctx, tx, client, operation); err != nil {
 				return err
 			}

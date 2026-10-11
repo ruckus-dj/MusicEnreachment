@@ -44,6 +44,9 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	if header.EvaluationRevision != expectedEvaluationRevision {
 		return ErrIncomingMatchConflict
 	}
+	if err := rejectManualOnlyMatchingEvaluation(header.EvaluationEvidence); err != nil {
+		return err
+	}
 	decision, err := decodePersistedMatchingDecision(header.EvaluationEvidence)
 	if err != nil {
 		return err
@@ -89,6 +92,35 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 		return ErrIncomingMatchConflict
 	}
 	return applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+}
+
+// rejectManualOnlyMatchingEvaluation protects the automatic apply entry point
+// from evaluations that carry explicit manual-review authority. Keep this
+// independent of the solver decision: a uniquely solved diagnostic result is
+// still not authorization to apply a manually selected release.
+func rejectManualOnlyMatchingEvaluation(evidence json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(evidence, &envelope); err != nil {
+		return fmt.Errorf("apply matching evaluation: persisted evidence is invalid")
+	}
+	raw, exists := envelope["manual_authority"]
+	if !exists {
+		return nil
+	}
+	var authority struct {
+		Version             int       `json:"version"`
+		ExecutionMode       string    `json:"execution_mode"`
+		SelectedReleaseMBID uuid.UUID `json:"selected_release_mbid"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&authority); err != nil || authority.Version != 1 || authority.ExecutionMode != "manual_review" || authority.SelectedReleaseMBID == uuid.Nil {
+		return fmt.Errorf("apply matching evaluation: manual authority is invalid")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return fmt.Errorf("apply matching evaluation: trailing manual authority data")
+	}
+	return fmt.Errorf("apply matching evaluation: manual-review evaluations cannot be applied automatically")
 }
 
 // ApplyMatchingOperation applies one immutable automatic group intent and

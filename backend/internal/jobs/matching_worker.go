@@ -68,6 +68,14 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	default:
 		return fmt.Errorf("matching delivery claim outcome is invalid")
 	}
+	// Manual plans have their own immutable schema. Inspect the mode before
+	// decoding the legacy automatic plan, which intentionally rejects it.
+	var mode struct {
+		Mode string `json:"mode"`
+	}
+	if json.Unmarshal(operation.InputSnapshot, &mode) == nil && mode.Mode == "manual_review" {
+		return worker.workManualReleaseLookup(ctx, operation, claim, job.ID)
+	}
 	if worker.acquisition != nil {
 		sealed, exists, err := worker.acquisition.EvaluationSeal(ctx, operation.ID)
 		if err != nil {
@@ -182,6 +190,79 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 		worker.operations.Notify(operation.ID)
 	}
 	return nil
+}
+
+func (worker *MatchingEvaluationWorker) workManualReleaseLookup(ctx context.Context, operation *persistence.Operation, claim persistence.MatchingDeliveryClaim, jobID int64) error {
+	var input struct {
+		SchemaVersion int             `json:"schema_version"`
+		Mode          string          `json:"mode"`
+		RequestID     uuid.UUID       `json:"request_id"`
+		GroupID       uuid.UUID       `json:"group_id"`
+		GroupRevision string          `json:"group_revision"`
+		Evaluation    *string         `json:"evaluation_revision"`
+		ReleaseMBID   uuid.UUID       `json:"selected_release_mbid"`
+		Plan          json.RawMessage `json:"plan"`
+		GroupContext  json.RawMessage `json:"group_context"`
+		SourceContext json.RawMessage `json:"source_context"`
+		LookupID      uuid.UUID       `json:"lookup_operation_id"`
+	}
+	fail := func() error {
+		changed, err := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, jobID, claim, "The saved manual matching lookup is invalid or no longer current.")
+		if err != nil {
+			return err
+		}
+		if changed {
+			worker.operations.Notify(operation.ID)
+		}
+		return nil
+	}
+	if decodeMatchingJSON(operation.InputSnapshot, &input) != nil || input.SchemaVersion != 1 || input.Mode != "manual_review" ||
+		input.RequestID == uuid.Nil || input.GroupID == uuid.Nil || input.GroupRevision == "" || input.Evaluation != nil && *input.Evaluation == "" ||
+		input.ReleaseMBID == uuid.Nil || input.LookupID == uuid.Nil || !json.Valid(input.Plan) || !json.Valid(input.GroupContext) || !json.Valid(input.SourceContext) {
+		return fail()
+	}
+	getter, ok := worker.repository.(interface {
+		GetManualReleaseMatchingRun(context.Context, uuid.UUID) (persistence.ManualMatchingRunSnapshot, bool, error)
+	})
+	if !ok {
+		return fail()
+	}
+	snapshot, exists, err := getter.GetManualReleaseMatchingRun(ctx, input.RequestID)
+	if err != nil {
+		return err
+	}
+	if !exists || snapshot.RunID != operation.ID || snapshot.GroupID != input.GroupID || snapshot.LookupOperationID != input.LookupID || snapshot.SelectedReleaseMBID != input.ReleaseMBID || snapshot.GroupRevision != input.GroupRevision || !manualRevisionMatches(snapshot.ExpectedEvaluationRevision, input.Evaluation) {
+		return fail()
+	}
+	if snapshot.Pending {
+		consumed, err := worker.repository.ConsumePendingMatchingDelivery(ctx, operation.ID, operation.Attempt, jobID, claim)
+		if err != nil {
+			return err
+		}
+		if consumed {
+			worker.operations.Notify(operation.ID)
+		}
+		return nil
+	}
+	prepared, err := worker.evaluator.PrepareManualReleaseLookup(ctx, snapshot)
+	if err != nil {
+		return fail()
+	}
+	changed, err := worker.evaluator.PublishForDelivery(ctx, worker.repository, prepared, operation.ID, operation.Attempt, jobID, claim.ExecutionEpoch)
+	if err != nil {
+		return err
+	}
+	if changed {
+		worker.operations.Notify(operation.ID)
+	}
+	return nil
+}
+
+func manualRevisionMatches(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (worker *MatchingEvaluationWorker) failInvalidPlan(ctx context.Context, operation *persistence.Operation, claim persistence.MatchingDeliveryClaim, jobID int64) error {

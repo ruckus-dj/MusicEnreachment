@@ -445,6 +445,125 @@ func (repository *ProviderCacheRepository) GetCurrentCachedResponse(ctx context.
 	return response, err
 }
 
+// CaptureSuccessfulManualLookupReuse seals the exact cache response observed by
+// a durable manual lookup delivery. Cache/configuration gates are acquired
+// before the operation row so a concurrent refresh cannot substitute a newer
+// response between the cache read and receipt capture.
+func (repository *ProviderCacheRepository) CaptureSuccessfulManualLookupReuse(ctx context.Context, fence ProviderDeliveryFence, expected *ProviderCachedResponse) (bool, error) {
+	if expected == nil || fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 || expected.ProviderSourceID == uuid.Nil || expected.CacheKey == "" {
+		return false, fmt.Errorf("capture manual lookup cache reuse: delivery and cached response are required")
+	}
+	var manual bool
+	if err := repository.db.NewRaw(`SELECT EXISTS(SELECT 1 FROM manual_matching_admission WHERE lookup_operation_id=? AND cache_key=?)`, fence.OperationID, expected.CacheKey).Scan(ctx, &manual); err != nil {
+		return false, fmt.Errorf("capture manual lookup cache reuse: check admission: %w", err)
+	}
+	if !manual {
+		return false, nil
+	}
+	payloadDigest := sha256.Sum256(expected.Payload)
+	var captured bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: lock configuration: %w", err)
+		}
+		var identity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read configuration: %w", err)
+		}
+		var source ProviderSource
+		if err := tx.NewRaw(`SELECT id,provider_id,endpoint,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, expected.ProviderSourceID).Scan(ctx, &source); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read source: %w", err)
+		}
+		if identity == "" || identity != source.ConfigurationIdentity {
+			return fmt.Errorf("capture manual lookup cache reuse: provider configuration changed")
+		}
+		current := new(ProviderCachedResponse)
+		if err := tx.NewRaw(`SELECT provider_source_id,provider_id,cache_key,payload,fetched_at,revision,generation,fetch_order
+			FROM provider_response_cache WHERE provider_source_id=? AND cache_key=? FOR SHARE`, source.ID, expected.CacheKey).Scan(ctx, current); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read cached response: %w", err)
+		}
+		if current.ProviderID != expected.ProviderID || current.CacheKey != expected.CacheKey || current.Revision != nil && expected.Revision != nil && *current.Revision != *expected.Revision || (current.Revision == nil) != (expected.Revision == nil) || !equalPayload(current.Payload, expected.Payload) {
+			return fmt.Errorf("capture manual lookup cache reuse: cached response changed")
+		}
+		var kind, state, configurationIdentity, cacheKey string
+		var attempt int
+		var executionEpoch int64
+		var riverJobID sql.NullInt64
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch
+			FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &riverJobID, &sourceID, &configurationIdentity, &cacheKey, &executionEpoch); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read delivery: %w", err)
+		}
+		if kind != "provider_release_lookup" || state != "running" || attempt != fence.Attempt || !riverJobID.Valid || riverJobID.Int64 != fence.RiverJobID || executionEpoch != fence.ExecutionEpoch || sourceID != source.ID || configurationIdentity != identity || cacheKey != expected.CacheKey {
+			return fmt.Errorf("capture manual lookup cache reuse: delivery is stale")
+		}
+		var requestID, selectedMBID uuid.UUID
+		if err := tx.NewRaw(`SELECT request_id,selected_release_mbid FROM manual_matching_admission WHERE lookup_operation_id=? AND cache_key=?`, fence.OperationID, expected.CacheKey).Scan(ctx, &requestID, &selectedMBID); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read manual admission: %w", err)
+		}
+		if expected.CacheKey != "release-lookup:"+strings.ToLower(selectedMBID.String()) || len(expected.Payload) == 0 {
+			return fmt.Errorf("capture manual lookup cache reuse: selected release response is invalid")
+		}
+		snapshot, err := readMusicBrainzMatchingSnapshot(ctx, tx, source.Endpoint, identity, []string{selectedMBID.String()}, []string{expected.CacheKey}, false)
+		if err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: read accepted projection: %w", err)
+		}
+		if len(snapshot.Releases) != 1 || snapshot.Releases[0].ProviderKey != selectedMBID.String() || !snapshot.Releases[0].Complete {
+			return fmt.Errorf("capture manual lookup cache reuse: accepted release projection is incomplete")
+		}
+		accepted := snapshot.Responses[expected.CacheKey]
+		if accepted == nil || !equalPayload(accepted.Payload, expected.Payload) || !equalOptionalString(accepted.Revision, expected.Revision) {
+			return fmt.Errorf("capture manual lookup cache reuse: accepted response changed")
+		}
+		projectionDigest, err := hex.DecodeString(snapshot.AcceptedProjectionRevision)
+		if err != nil || len(projectionDigest) != sha256.Size {
+			return fmt.Errorf("capture manual lookup cache reuse: accepted projection revision is invalid")
+		}
+		result, err := tx.NewRaw(`INSERT INTO manual_matching_lookup_seal
+			(request_id,lookup_operation_id,provider_source_id,configuration_identity,cache_key,payload_sha256,cache_revision,projection_sha256)
+			VALUES(?,?,?,?,?,?,NULLIF(?,''),?) ON CONFLICT(request_id) DO NOTHING`, requestID, fence.OperationID, source.ID, identity,
+			expected.CacheKey, payloadDigest[:], optionalStringValue(expected.Revision), projectionDigest).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: save accepted receipt: %w", err)
+		}
+		if n, err := result.RowsAffected(); err == nil && n == 1 {
+			captured = true
+		}
+		var storedOperation uuid.UUID
+		var storedSource uuid.UUID
+		var storedIdentity, storedKey string
+		var storedPayload, storedProjection []byte
+		var storedRevision sql.NullString
+		if err := tx.NewRaw(`SELECT lookup_operation_id,provider_source_id,configuration_identity,cache_key,payload_sha256,cache_revision,projection_sha256
+			FROM manual_matching_lookup_seal WHERE request_id=?`, requestID).Scan(ctx, &storedOperation, &storedSource, &storedIdentity, &storedKey, &storedPayload, &storedRevision, &storedProjection); err != nil {
+			return fmt.Errorf("capture manual lookup cache reuse: verify accepted receipt: %w", err)
+		}
+		if storedOperation != fence.OperationID || storedSource != source.ID || storedIdentity != identity || storedKey != expected.CacheKey || !equalPayload(storedPayload, payloadDigest[:]) || !equalOptionalString(nullStringPointer(storedRevision), expected.Revision) || !equalPayload(storedProjection, projectionDigest) {
+			return fmt.Errorf("capture manual lookup cache reuse: another response is already captured")
+		}
+		return nil
+	})
+	return captured, err
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func nullStringPointer(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
+}
+
+func equalPayload(left, right []byte) bool {
+	return string(left) == string(right)
+}
+
 // ApplySuccessfulResponse commits the successful raw response and its normalized
 // graph only while both the reserved generation and source configuration remain
 // current. Failed requests must not call this method.
@@ -487,7 +606,7 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 			}
 		}
 		var source ProviderSource
-		if err := tx.NewRaw(`SELECT id, provider_id, configuration_identity FROM provider_source WHERE id = ? FOR UPDATE`, ticket.ProviderSourceID).Scan(ctx, &source); err != nil {
+		if err := tx.NewRaw(`SELECT id, provider_id, endpoint, configuration_identity FROM provider_source WHERE id = ? FOR UPDATE`, ticket.ProviderSourceID).Scan(ctx, &source); err != nil {
 			return fmt.Errorf("apply successful provider response: read source: %w", err)
 		}
 		if source.ProviderID != ticket.ProviderID || source.ConfigurationIdentity != ticket.ConfigurationIdentity {
@@ -510,6 +629,51 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		}
 		if err := applyProviderGraph(ctx, tx, ticket, response.Graph); err != nil {
 			return fmt.Errorf("apply successful provider response: save graph: %w", err)
+		}
+		if response.Delivery != nil {
+			var selectedMBID uuid.UUID
+			manualErr := tx.NewRaw(`SELECT admission.selected_release_mbid FROM manual_matching_admission admission
+				JOIN operation ON operation.id=admission.lookup_operation_id
+				WHERE admission.lookup_operation_id=? AND admission.cache_key=? AND operation.kind='provider_release_lookup'`, response.Delivery.OperationID, ticket.CacheKey).Scan(ctx, &selectedMBID)
+			if manualErr != nil && !errors.Is(manualErr, sql.ErrNoRows) {
+				return fmt.Errorf("apply successful provider response: resolve manual lookup: %w", manualErr)
+			}
+			if manualErr == nil {
+				if ticket.CacheKey != "release-lookup:"+strings.ToLower(selectedMBID.String()) || !response.Graph.Complete {
+					return fmt.Errorf("apply successful provider response: manual release projection is incomplete or mismatched")
+				}
+				projectionSnapshot, err := readMusicBrainzMatchingSnapshot(ctx, tx, source.Endpoint, ticket.ConfigurationIdentity,
+					[]string{selectedMBID.String()}, []string{ticket.CacheKey}, false)
+				if err != nil {
+					return fmt.Errorf("apply successful provider response: read accepted manual projection: %w", err)
+				}
+				if len(projectionSnapshot.Releases) != 1 || projectionSnapshot.Releases[0].ProviderKey != selectedMBID.String() || !projectionSnapshot.Releases[0].Complete {
+					return fmt.Errorf("apply successful provider response: accepted manual release projection is incomplete")
+				}
+				acceptedResponse := projectionSnapshot.Responses[ticket.CacheKey]
+				if acceptedResponse == nil || len(acceptedResponse.Payload) == 0 {
+					return fmt.Errorf("apply successful provider response: accepted manual response is missing")
+				}
+				projectionDigest, err := hex.DecodeString(projectionSnapshot.AcceptedProjectionRevision)
+				if err != nil || len(projectionDigest) != sha256.Size {
+					return fmt.Errorf("apply successful provider response: accepted manual projection revision is invalid")
+				}
+				payloadDigest := sha256.Sum256(acceptedResponse.Payload)
+				if _, err := tx.NewRaw(`INSERT INTO manual_matching_lookup_seal
+					(request_id,lookup_operation_id,provider_source_id,configuration_identity,cache_key,payload_sha256,cache_revision,projection_sha256)
+					SELECT admission.request_id,admission.lookup_operation_id,?,?,?, ?,NULLIF(?,''),?
+					FROM manual_matching_admission admission
+					WHERE admission.lookup_operation_id=? AND admission.cache_key=? AND EXISTS (
+						SELECT 1 FROM operation WHERE id=admission.lookup_operation_id AND kind='provider_release_lookup')
+					ON CONFLICT (request_id) DO UPDATE SET lookup_operation_id=EXCLUDED.lookup_operation_id,
+					provider_source_id=EXCLUDED.provider_source_id,configuration_identity=EXCLUDED.configuration_identity,
+					cache_key=EXCLUDED.cache_key,payload_sha256=EXCLUDED.payload_sha256,cache_revision=EXCLUDED.cache_revision,
+					projection_sha256=EXCLUDED.projection_sha256
+					WHERE manual_matching_lookup_seal.sealed_at IS NULL`, ticket.ProviderSourceID, ticket.ConfigurationIdentity, ticket.CacheKey,
+					payloadDigest[:], response.Revision, projectionDigest, response.Delivery.OperationID, ticket.CacheKey).Exec(ctx); err != nil {
+					return fmt.Errorf("apply successful provider response: capture manual lookup response: %w", err)
+				}
+			}
 		}
 		return nil
 	})

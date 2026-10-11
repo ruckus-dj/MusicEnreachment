@@ -795,6 +795,27 @@ normalization для score в точности. Если по имеющимся
 - Arbitrary artist/release picker, manual unlink policy, retrieval ranking и
   automatic trigger ещё открыты. Полная приёмка и packaging/corpus не завершены.
 
+### Manual selected-release acquisition core — 2026-10-11
+
+- Explicit release admission создаёт новый immutable manual-review run, захватывая
+  current group/source/provider fences и target generation. Nil expected evaluation
+  revision означает отсутствие header; request replay не создаёт новую generation.
+  Принадлежность automatic artist catalog не требуется для ручного target.
+- Accepted lookup receipt фиксируется delivery-fenced при успешном cache write
+  либо cache reuse и seals вместе с dependency settlement. Consumer использует
+  frozen payload/projection identity, а publisher независимо проверяет settled
+  run-owned seal и current accepted freshness. Manual authority остаётся отдельной
+  от kernel decision: такие evaluations не допускают automatic apply.
+- Реальные PostgreSQL worker paths покрывают never-evaluated admission, fetched
+  lookup publication → explicit subset confirm и cache-hit provider worker без
+  HTTP. SHA остаётся optional. Повторный полный `task verify` прошёл в primary;
+  независимое review не выявило production blockers ограниченного manual core.
+- Coverage gaps: direct forged-B publication against seal A и source-mutation
+  admission matrix ещё не покрыты focused regressions. Source/projection guards
+  проверены review; это не заменяет указанные tests.
+- Picker search/API/URL parsing и UI ещё не подключены. Ranking, automatic trigger,
+  unlink policy, packaging/corpus и полная приёмка остаются открытыми.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

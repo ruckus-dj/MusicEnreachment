@@ -196,6 +196,12 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 		return service.failProviderOperation(ctx, operations, operation, epoch, err)
 	}
 	if response != nil && len(response.Payload) != 0 && !operation.ProviderExplicitRefresh {
+		_, err := service.cache.CaptureSuccessfulManualLookupReuse(ctx, persistence.ProviderDeliveryFence{
+			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+		}, response)
+		if err != nil {
+			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
 		return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_cache_reused")
 	}
 	config, err := service.registry.GetMusicBrainzConfig(ctx)
