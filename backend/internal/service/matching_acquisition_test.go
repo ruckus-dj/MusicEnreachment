@@ -20,6 +20,10 @@ type matchingAcquisitionRepositoryFixture struct {
 	parked   []persistence.MatchingAcquisitionPhase
 }
 
+func (repository *matchingAcquisitionRepositoryFixture) GetMatchingAcquisitionMetadataCapture(context.Context, uuid.UUID, string) ([]persistence.MatchingAcquisitionCapturedMember, string, bool, error) {
+	return []persistence.MatchingAcquisitionCapturedMember{{MemberID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), Tags: json.RawMessage(`{"ALBUMARTIST":["Fixture Artist"]}`)}}, "fixture-capture-digest", true, nil
+}
+
 func (repository *matchingAcquisitionRepositoryFixture) ParkMatchingAcquisitionForDelivery(_ context.Context, _ uuid.UUID, _ int, _ int64, _ persistence.MatchingDeliveryClaim, _ int64, phase persistence.MatchingAcquisitionPhase) (bool, error) {
 	repository.parked = append(repository.parked, phase)
 	return true, nil
@@ -74,7 +78,7 @@ func TestMatchingAcquisitionPaginatesAcceptedCatalogToCatalogReady(t *testing.T)
 		Input: json.RawMessage(`{"schema_version":1,"query":"artist","offset":0,"limit":100}`),
 	}}}
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{
-		initialKey: []byte(`{"artists":[{"id":"` + artistID + `"}],"count":1,"offset":0}`),
+		initialKey: []byte(`{"artists":[{"id":"` + artistID + `","name":"Fixture Artist"}],"count":1,"offset":0}`),
 	}}
 	for page := 0; page < 3; page++ {
 		offset := page * matchingCatalogPageSize
@@ -139,7 +143,7 @@ func matchingAcquisitionCatalogFixture(artistID string, browsePayload []byte) (*
 	}}}
 	browseKey := fmt.Sprintf("artist-release-browse:%s:0:%d", artistID, matchingCatalogPageSize)
 	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{
-		initialKey: []byte(`{"artists":[{"id":"` + artistID + `"}],"count":1,"offset":0}`),
+		initialKey: []byte(`{"artists":[{"id":"` + artistID + `","name":"Fixture Artist"}],"count":1,"offset":0}`),
 		browseKey:  browsePayload,
 	}}
 	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{

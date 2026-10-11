@@ -4,7 +4,6 @@ package persistence_test
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -14,7 +13,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
-func TestMatchingAcquisitionSealIsWriteOnceAndSchedulesOneContinuationPostgreSQL(t *testing.T) {
+func TestMatchingAcquisitionLegacySealRejectsActiveCatalogWakePostgreSQL(t *testing.T) {
 	fixture := newMatchingAcquisitionGuardFixture(t)
 	fixture.settleInitialArtistAndClaimWake()
 	fixture.advanceFirstCatalogPage()
@@ -70,6 +69,7 @@ func TestMatchingAcquisitionSealIsWriteOnceAndSchedulesOneContinuationPostgreSQL
 	if err != nil || !changed {
 		t.Fatalf("complete accepted catalog: changed=%v err=%v", changed, err)
 	}
+	wakeID, claim := claimCatalogRankingWake(fixture)
 
 	var manifest []struct {
 		Revision   int64     `json:"revision"`
@@ -105,36 +105,23 @@ func TestMatchingAcquisitionSealIsWriteOnceAndSchedulesOneContinuationPostgreSQL
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
+	if len(manifest) != 3 {
+		t.Fatalf("catalog provenance manifest entries=%d, want 3", len(manifest))
 	}
-	manifestSHA := sha256.Sum256(manifestJSON)
 	var groups []uuid.UUID
 	if err := fixture.db.NewRaw(`SELECT group_id FROM matching_run_target WHERE run_id=? ORDER BY group_id`, fixture.parentID).Scan(fixture.ctx, &groups); err != nil {
 		t.Fatal(err)
 	}
 	inputSeal := persistence.MatchingAcquisitionEvaluationInput{SchemaVersion: 1, GroupIDs: groups, ReleaseIDs: []string{allIDs[0], allIDs[1]}}
-	jobID, created, err := fixture.repository.SealMatchingAcquisitionEvaluation(fixture.ctx, fixture.river, fixture.parentID,
-		persistence.MatchingAcquisitionSealRequest{ExpectedRevision: 3, ExpectedCatalogSHA: hex.EncodeToString(manifestSHA[:]), Input: inputSeal})
-	if err != nil || !created || jobID < 1 {
-		t.Fatalf("seal catalog: job=%d created=%v err=%v", jobID, created, err)
-	}
-	jobAgain, createdAgain, err := fixture.repository.SealMatchingAcquisitionEvaluation(fixture.ctx, fixture.river, fixture.parentID,
-		persistence.MatchingAcquisitionSealRequest{ExpectedRevision: 3, ExpectedCatalogSHA: hex.EncodeToString(manifestSHA[:]), Input: inputSeal})
-	if err != nil || createdAgain || jobAgain != jobID {
-		t.Fatalf("repeat identical seal: job=%d created=%v err=%v", jobAgain, createdAgain, err)
-	}
-	inputSeal.ReleaseIDs = []string{allIDs[2]}
-	if _, _, err := fixture.repository.SealMatchingAcquisitionEvaluation(fixture.ctx, fixture.river, fixture.parentID,
-		persistence.MatchingAcquisitionSealRequest{ExpectedRevision: 3, ExpectedCatalogSHA: hex.EncodeToString(manifestSHA[:]), Input: inputSeal}); err == nil {
-		t.Fatal("different selection replaced the sealed input")
+	sealRequest := persistence.MatchingAcquisitionSealRequest{ExpectedRevision: 3, Input: inputSeal, Delivery: &claim, RiverJobID: wakeID, Attempt: fixture.parent.Attempt}
+	if _, _, err := fixture.repository.SealMatchingAcquisitionEvaluation(fixture.ctx, fixture.river, fixture.parentID, sealRequest); err == nil {
+		t.Fatal("legacy seal accepted while the catalog-ranking wake remained active")
 	}
 	var sealCount, deliveryCount int
 	if err := fixture.db.NewRaw(`SELECT count(*),(SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL) FROM matching_acquisition_seal WHERE run_id=?`, fixture.parentID, fixture.parentID).Scan(fixture.ctx, &sealCount, &deliveryCount); err != nil {
 		t.Fatal(err)
 	}
-	if sealCount != 1 || deliveryCount != 1 {
-		t.Fatalf("durable seal/continuation counts = %d/%d, want 1/1", sealCount, deliveryCount)
+	if sealCount != 0 || deliveryCount != 1 {
+		t.Fatalf("durable seal/active ranking wake counts = %d/%d, want 0/1", sealCount, deliveryCount)
 	}
 }

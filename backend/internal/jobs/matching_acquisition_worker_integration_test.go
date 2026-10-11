@@ -310,7 +310,17 @@ func TestMatchingAcquisitionWorkerPaginatesArtistCatalogPostgreSQL(t *testing.T)
 	if err != nil || !exists || acquisitionSnapshot.Phase != "catalog_ready" {
 		t.Fatalf("final acquisition phase=%q exists=%t err=%v; want catalog_ready", acquisitionSnapshot.Phase, exists, err)
 	}
-	assertParentWaiting("catalog_ready")
+	finalOperation, err := repository.GetOperation(ctx, parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalOperation.State != "running" || finalOperation.Stage != "ranking_pending" {
+		t.Fatalf("parent state/stage=%s/%s; want running/ranking_pending", finalOperation.State, finalOperation.Stage)
+	}
+	var rankingWakeCount int
+	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &rankingWakeCount); err != nil || rankingWakeCount != 1 {
+		t.Fatalf("catalog completion registered %d pending wakes; want exactly one, err=%v", rankingWakeCount, err)
+	}
 	matchHeader, matchCandidates, err := persistence.NewIncomingMatchCandidateRepository(database).Get(ctx, group.ID)
 	if err != nil || matchHeader != nil || len(matchCandidates) != 0 {
 		t.Fatalf("finite evaluation published header=%+v candidates=%d err=%v; acquisition should park before scoring", matchHeader, len(matchCandidates), err)
@@ -323,8 +333,8 @@ func TestMatchingAcquisitionWorkerPaginatesArtistCatalogPostgreSQL(t *testing.T)
 	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &pendingDeliveries); err != nil {
 		t.Fatal(err)
 	}
-	if consumedDeliveries != 4 || pendingDeliveries != 0 {
-		t.Fatalf("matching delivery counts consumed=%d pending=%d; want 4 consumed and no pending wake", consumedDeliveries, pendingDeliveries)
+	if consumedDeliveries != 4 || pendingDeliveries != 1 {
+		t.Fatalf("matching delivery counts consumed=%d pending=%d; want 4 consumed and one ranking wake", consumedDeliveries, pendingDeliveries)
 	}
 	var finalGroupingEpoch int64
 	if err := database.NewRaw(`SELECT grouping_epoch FROM matching_run WHERE id=?`, parentID).Scan(ctx, &finalGroupingEpoch); err != nil || finalGroupingEpoch != groupingEpoch {

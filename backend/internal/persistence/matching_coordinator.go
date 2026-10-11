@@ -57,6 +57,9 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 	if client == nil || admission.Parent == nil || len(admission.Targets) == 0 || admission.AdmissionKey == "" || len(admission.Plan) == 0 || !matchingpolicy.Supported(admission.PolicyVersion) || admission.AcquisitionIntentVersion < 0 || admission.AcquisitionIntentVersion > matchingAcquisitionIntentVersion {
 		return nil, fmt.Errorf("matching admission is incomplete")
 	}
+	if admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion && len(admission.Targets) != 1 {
+		return nil, fmt.Errorf("matching admission: automatic acquisition currently requires exactly one target group; admit each group separately")
+	}
 	if admission.Parent.ID == uuid.Nil {
 		admission.Parent.ID = uuid.New()
 	}
@@ -70,9 +73,13 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 			return nil, fmt.Errorf("matching admission targets are invalid")
 		}
 	}
-	digest := sha256.Sum256(admission.Plan)
+	canonicalPlan, err := canonicalMatchingJSON(admission.Plan)
+	if err != nil {
+		return nil, fmt.Errorf("matching admission plan is invalid: %w", err)
+	}
+	digest := sha256.Sum256(canonicalPlan)
 	var result *Operation
-	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("matching admission: lock output gate: %w", err)
 		}
@@ -116,25 +123,6 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", "matching-admission", admission.AdmissionKey); err != nil {
 			return fmt.Errorf("matching admission: lock idempotency key: %w", err)
 		}
-		var current matchingRunAdmissionRow
-		err := tx.NewRaw(`SELECT mr.operation_id, mr.plan_digest FROM matching_run mr WHERE mr.plan_admission_key=?`, admission.AdmissionKey).Scan(ctx, &current)
-		if err == nil {
-			if !equalDigest(current.PlanDigest, digest[:]) {
-				return fmt.Errorf("matching admission key was already used for a different plan")
-			}
-			var hasAcquisitionIntent bool
-			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_acquisition WHERE run_id=?)`, current.OperationID).Scan(ctx, &hasAcquisitionIntent); err != nil {
-				return fmt.Errorf("matching admission: check acquisition intent identity: %w", err)
-			}
-			if hasAcquisitionIntent != (admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion) {
-				return fmt.Errorf("matching admission key was already used with a different acquisition intent")
-			}
-			result, err = repository.GetOperationForUpdate(ctx, tx, current.OperationID)
-			return err
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("matching admission: check idempotency key: %w", err)
-		}
 		var grouping struct {
 			Revision     int64 `bun:"revision"`
 			NeedsRefresh bool  `bun:"needs_refresh"`
@@ -152,6 +140,44 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 				return fmt.Errorf("matching admission: selected group changed")
 			}
 		}
+		var capturedMembers []MatchingAcquisitionCapturedMember
+		var err error
+		if admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion {
+			capturedMembers, err = captureMatchingAdmissionMetadata(ctx, tx, targets)
+			if err != nil {
+				return err
+			}
+		}
+		var current matchingRunAdmissionRow
+		err = tx.NewRaw(`SELECT mr.operation_id, mr.plan_digest FROM matching_run mr WHERE mr.plan_admission_key=?`, admission.AdmissionKey).Scan(ctx, &current)
+		if err == nil {
+			if !equalDigest(current.PlanDigest, digest[:]) {
+				return fmt.Errorf("matching admission key was already used for a different plan")
+			}
+			var savedIntent []byte
+			intentErr := tx.NewRaw(`SELECT intent FROM matching_acquisition WHERE run_id=?`, current.OperationID).Scan(ctx, &savedIntent)
+			if admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion {
+				if intentErr != nil {
+					return fmt.Errorf("matching admission: read saved acquisition capture: %w", intentErr)
+				}
+				var saved MatchingAcquisitionIntent
+				if json.Unmarshal(savedIntent, &saved) != nil {
+					return fmt.Errorf("matching admission key was already used for a different metadata capture")
+				}
+				storedCaptureDigest, digestErr := matchingMetadataCaptureDigest(saved.CapturedMembers)
+				equalCapture, equalityErr := equalCapturedMatchingMembers(saved.CapturedMembers, capturedMembers)
+				if digestErr != nil || saved.CaptureDigest != storedCaptureDigest || equalityErr != nil || !equalCapture {
+					return fmt.Errorf("matching admission key was already used for a different metadata capture")
+				}
+			} else if !errors.Is(intentErr, sql.ErrNoRows) {
+				return fmt.Errorf("matching admission key was already used with a different acquisition intent")
+			}
+			result, err = repository.GetOperationForUpdate(ctx, tx, current.OperationID)
+			return err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("matching admission: check idempotency key: %w", err)
+		}
 		if err := repository.createOperationAndEnqueueTx(ctx, tx, admission.Parent, client, admission.ParentArgs, nil); err != nil {
 			return err
 		}
@@ -159,7 +185,7 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 			return fmt.Errorf("matching admission: create run: %w", err)
 		}
 		if admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion {
-			intent, err := matchingAcquisitionIntentFromAdmission(admission, digest)
+			intent, err := matchingAcquisitionIntentFromAdmission(admission, digest, capturedMembers)
 			if err != nil {
 				return err
 			}
@@ -200,6 +226,126 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 		return nil, err
 	}
 	return result, nil
+}
+
+func captureMatchingAdmissionMetadata(ctx context.Context, tx bun.Tx, targets []MatchingTarget) ([]MatchingAcquisitionCapturedMember, error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("matching admission: metadata capture requires selected groups")
+	}
+	var rows []struct {
+		MemberID          uuid.UUID       `bun:"member_id"`
+		WorkID            uuid.UUID       `bun:"work_id"`
+		CaptureAnalysisID *uuid.UUID      `bun:"capture_analysis_id"`
+		AnalysisInput     json.RawMessage `bun:"analysis_input"`
+		Tags              json.RawMessage `bun:"tags"`
+	}
+	if err := tx.NewRaw(`SELECT DISTINCT ON (member.variant_id)
+		member.variant_id AS member_id, location.work_id,
+		metadata.success_metadata_result_id AS capture_analysis_id,
+		COALESCE(metadata.input_snapshot, '{}'::jsonb) AS analysis_input,
+		COALESCE(metadata_result.observed_tags, '{}'::jsonb) AS tags
+		FROM incoming_group_member member
+		JOIN incoming_group_member_location location ON location.group_id=member.group_id AND location.variant_id=member.variant_id
+		LEFT JOIN source_analysis_step metadata ON metadata.work_id=location.work_id AND metadata.step='metadata'
+		LEFT JOIN media_metadata_result metadata_result ON metadata_result.id=metadata.success_metadata_result_id
+		WHERE member.group_id IN (?)
+		ORDER BY member.variant_id, location.work_id`, bun.List(targetGroupIDs(targets))).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("matching admission: capture persisted metadata: %w", err)
+	}
+	memberIDs := make(map[uuid.UUID]struct{})
+	for _, target := range targets {
+		var ids []uuid.UUID
+		if err := tx.NewRaw(`SELECT variant_id FROM incoming_group_member WHERE group_id=? ORDER BY variant_id`, target.GroupID).Scan(ctx, &ids); err != nil {
+			return nil, fmt.Errorf("matching admission: read selected members: %w", err)
+		}
+		for _, id := range ids {
+			memberIDs[id] = struct{}{}
+		}
+	}
+	if len(rows) != len(memberIDs) {
+		return nil, fmt.Errorf("matching admission: selected member metadata capture is incomplete")
+	}
+	captured := make([]MatchingAcquisitionCapturedMember, 0, len(rows))
+	for _, row := range rows {
+		if row.MemberID == uuid.Nil || row.WorkID == uuid.Nil {
+			return nil, fmt.Errorf("matching admission: selected member work identity is unavailable")
+		}
+		if _, ok := memberIDs[row.MemberID]; !ok {
+			return nil, fmt.Errorf("matching admission: metadata capture contains an unselected member")
+		}
+		if len(row.Tags) == 0 || !json.Valid(row.Tags) {
+			return nil, fmt.Errorf("matching admission: selected member tags are invalid")
+		}
+		member := MatchingAcquisitionCapturedMember{
+			MemberID: row.MemberID, WorkID: row.WorkID, CaptureAnalysisID: row.CaptureAnalysisID,
+			Tags: append(json.RawMessage(nil), row.Tags...),
+		}
+		if len(row.AnalysisInput) != 0 && string(row.AnalysisInput) != `{}` {
+			digest := sha256.Sum256(row.AnalysisInput)
+			member.AnalysisInputSHA256 = fmt.Sprintf("%x", digest[:])
+		}
+		captured = append(captured, member)
+	}
+	sort.Slice(captured, func(i, j int) bool { return captured[i].MemberID.String() < captured[j].MemberID.String() })
+	return captured, nil
+}
+
+func normalizeCapturedMatchingMembers(members []MatchingAcquisitionCapturedMember) ([]MatchingAcquisitionCapturedMember, error) {
+	normalized := append([]MatchingAcquisitionCapturedMember(nil), members...)
+	for index := range normalized {
+		canonicalTags, err := canonicalMatchingJSON(normalized[index].Tags)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize captured matching member tags: %w", err)
+		}
+		normalized[index].Tags = canonicalTags
+	}
+	return normalized, nil
+}
+
+func equalCapturedMatchingMembers(left, right []MatchingAcquisitionCapturedMember) (bool, error) {
+	left, err := normalizeCapturedMatchingMembers(left)
+	if err != nil {
+		return false, err
+	}
+	right, err = normalizeCapturedMatchingMembers(right)
+	if err != nil {
+		return false, err
+	}
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	if leftErr != nil {
+		return false, fmt.Errorf("encode left captured matching members: %w", leftErr)
+	}
+	if rightErr != nil {
+		return false, fmt.Errorf("encode right captured matching members: %w", rightErr)
+	}
+	if len(leftJSON) != len(rightJSON) {
+		return false, nil
+	}
+	leftDigest, rightDigest := sha256.Sum256(leftJSON), sha256.Sum256(rightJSON)
+	return equalDigest(leftDigest[:], rightDigest[:]), nil
+}
+
+func matchingMetadataCaptureDigest(members []MatchingAcquisitionCapturedMember) (string, error) {
+	var err error
+	members, err = normalizeCapturedMatchingMembers(members)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return "", fmt.Errorf("encode matching metadata capture: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func targetGroupIDs(targets []MatchingTarget) []uuid.UUID {
+	ids := make([]uuid.UUID, len(targets))
+	for i, target := range targets {
+		ids[i] = target.GroupID
+	}
+	return ids
 }
 
 // RetryMatchingEvaluationOperationAndEnqueue advances only the run's delivery

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -47,6 +48,21 @@ type matchingAcquisitionSealWriter interface {
 
 type matchingAcquisitionCatalogKeyReader interface {
 	GetMatchingAcquisitionCatalogCacheKeys(context.Context, uuid.UUID) ([]string, error)
+}
+
+type matchingAcquisitionCaptureReader interface {
+	GetMatchingAcquisitionMetadataCapture(context.Context, uuid.UUID, string) ([]persistence.MatchingAcquisitionCapturedMember, string, bool, error)
+}
+
+// Catalog phase provenance is needed here because a provider cache scope may be
+// replaced after admission. Ranking must consume the bytes accepted by each
+// durable phase, not a newer response found under the same key.
+type matchingAcquisitionCatalogPhaseReader interface {
+	GetMatchingAcquisitionCatalogPhases(context.Context, uuid.UUID) ([]persistence.MatchingAcquisitionPhase, error)
+}
+
+type matchingDeliveryReleaseHydrationStarter interface {
+	StartMatchingReleaseHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error)
 }
 
 // MatchingAcquisitionService advances only from accepted cached provider
@@ -154,7 +170,7 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 		return false, true, ErrMatchingAcquisitionProviderFailed
 	}
 	if snapshot.Phase == "catalog_ready" {
-		return false, true, nil
+		return acquisition.rankAcceptedCatalog(ctx, snapshot, runID, attempt, riverJobID, claim)
 	}
 	if snapshot.Phase == persistence.MatchingAcquisitionReleaseHydration {
 		return acquisition.sealReleaseHydration(ctx, snapshot, runID, attempt, riverJobID, claim)
@@ -257,7 +273,8 @@ func (acquisition *MatchingAcquisitionService) startArtistBrowse(ctx context.Con
 	}
 	var page struct {
 		Artists *[]struct {
-			ID string `json:"id"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"artists"`
 	}
 	if err := json.Unmarshal(response.Payload, &page); err != nil {
@@ -273,9 +290,27 @@ func (acquisition *MatchingAcquisitionService) startArtistBrowse(ctx context.Con
 			acquisitionPhase(snapshot.Revision+1, "waiting_policy", input, output, initial.OperationID, initial.CacheKey, response.Payload))
 		return changed, true, err
 	}
+	if strings.TrimSpace((*page.Artists)[0].Name) == "" {
+		return false, true, fmt.Errorf("accepted artist search top result is invalid: %w", ErrInvalidMatchingAcquisitionResponse)
+	}
 	artistID, err := canonicalMBID((*page.Artists)[0].ID)
 	if err != nil {
 		return false, true, fmt.Errorf("accepted artist search top result is invalid: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
+	}
+	capture, err := acquisition.validatedCapture(ctx, runID, "admitted")
+	if err != nil {
+		return false, true, err
+	}
+	fit, available, err := MatchingArtistFit(capture, (*page.Artists)[0].Name)
+	if err != nil {
+		return false, true, err
+	}
+	if !available || fit < 0.70 {
+		input := json.RawMessage(initial.Input)
+		output, _ := json.Marshal(map[string]string{"state": "waiting_policy", "reason": "artist_not_fit"})
+		changed, err := acquisition.repository.ParkMatchingAcquisitionForDelivery(ctx, runID, attempt, riverJobID, claim, snapshot.Revision,
+			acquisitionPhase(snapshot.Revision+1, "waiting_policy", input, output, initial.OperationID, initial.CacheKey, response.Payload))
+		return changed, true, err
 	}
 	input, _ := json.Marshal(map[string]any{"artist_mbid": artistID, "offset": 0, "limit": matchingCatalogPageSize})
 	child, err := acquisition.providers.PrepareOperation(ctx, "artist_release_browse", artistID, 0, matchingCatalogPageSize, false)
@@ -286,6 +321,325 @@ func (acquisition *MatchingAcquisitionService) startArtistBrowse(ctx context.Con
 	changed, err := acquisition.repository.AdvanceMatchingAcquisitionForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision,
 		acquisitionPhase(snapshot.Revision+1, persistence.MatchingAcquisitionArtistCatalogPage, input, output, initial.OperationID, initial.CacheKey, response.Payload),
 		[]persistence.MatchingProviderRequest{{Operation: child, Args: ProviderFetchOperationArgs{OperationID: child.ID}}})
+	return changed, true, err
+}
+
+func (acquisition *MatchingAcquisitionService) validatedCapture(ctx context.Context, runID uuid.UUID, phase string) ([]persistence.MatchingAcquisitionCapturedMember, error) {
+	reader, ok := acquisition.repository.(matchingAcquisitionCaptureReader)
+	if !ok {
+		return nil, fmt.Errorf("matching acquisition metadata capture reader is unavailable")
+	}
+	captured, digest, exists, err := reader.GetMatchingAcquisitionMetadataCapture(ctx, runID, phase)
+	if err != nil {
+		return nil, err
+	}
+	if !exists || digest == "" || len(captured) == 0 {
+		return nil, fmt.Errorf("validated matching acquisition metadata capture is unavailable")
+	}
+	return captured, nil
+}
+
+func (acquisition *MatchingAcquisitionService) rankAcceptedCatalog(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
+	if len(snapshot.Intent.Targets) != 1 {
+		return false, true, fmt.Errorf("automatic matching acquisition currently requires exactly one target group")
+	}
+	var manifest struct {
+		ArtistMBID string   `json:"artist_mbid"`
+		Complete   bool     `json:"complete"`
+		Count      *int     `json:"catalog_count"`
+		Covered    *int     `json:"covered_releases"`
+		ReleaseIDs []string `json:"release_ids"`
+	}
+	if json.Unmarshal(snapshot.Output, &manifest) != nil || canonicalArtistCursor(manifest.ArtistMBID, 0) != nil || !manifest.Complete || manifest.Count == nil || manifest.Covered == nil || *manifest.Count < 0 || *manifest.Count != *manifest.Covered {
+		return false, true, fmt.Errorf("saved matching catalog manifest is invalid")
+	}
+	keysReader, ok := acquisition.repository.(matchingAcquisitionCatalogKeyReader)
+	if !ok {
+		return false, true, fmt.Errorf("matching acquisition catalog key reader is unavailable")
+	}
+	keys, err := keysReader.GetMatchingAcquisitionCatalogCacheKeys(ctx, runID)
+	if err != nil {
+		return false, true, err
+	}
+	phaseReader, ok := acquisition.repository.(matchingAcquisitionCatalogPhaseReader)
+	if !ok {
+		return false, true, fmt.Errorf("matching acquisition catalog phase provenance reader is unavailable")
+	}
+	phases, err := phaseReader.GetMatchingAcquisitionCatalogPhases(ctx, runID)
+	if err != nil {
+		return false, true, err
+	}
+	// The first artist_catalog_page transition records the accepted artist-search
+	// response that admitted the first browse request. It is provenance for the
+	// transition, not a catalog page. Exclude only that exact request captured in
+	// the immutable admission intent; every browse response remains mandatory.
+	if len(snapshot.Intent.InitialProviderInputs) != 1 || snapshot.Intent.InitialProviderInputs[0].Kind != "provider_artist_search" ||
+		snapshot.Intent.InitialProviderInputs[0].OperationID == uuid.Nil || snapshot.Intent.InitialProviderInputs[0].CacheKey == "" {
+		return false, true, fmt.Errorf("matching acquisition initial artist search intent is invalid")
+	}
+	initialSearchKey := snapshot.Intent.InitialProviderInputs[0].CacheKey
+	searchProvenanceCount := 0
+	filteredPhases := make([]persistence.MatchingAcquisitionPhase, 0, len(phases))
+	for _, phase := range phases {
+		var provenance []struct {
+			CacheKey string `json:"cache_key"`
+		}
+		if json.Unmarshal(phase.ResponseProvenance, &provenance) != nil || len(provenance) != 1 {
+			return false, true, fmt.Errorf("accepted matching catalog page provenance is invalid")
+		}
+		if phase.Revision == 1 && phase.Phase == persistence.MatchingAcquisitionArtistCatalogPage && provenance[0].CacheKey == initialSearchKey {
+			searchProvenanceCount++
+			continue
+		}
+		filteredPhases = append(filteredPhases, phase)
+	}
+	if searchProvenanceCount != 1 {
+		return false, true, fmt.Errorf("accepted initial artist search provenance is missing or duplicated")
+	}
+	phases = filteredPhases
+	filteredKeys := make([]string, 0, len(keys))
+	initialSearchKeyCount := 0
+	for _, key := range keys {
+		if key == initialSearchKey {
+			initialSearchKeyCount++
+			continue
+		}
+		filteredKeys = append(filteredKeys, key)
+	}
+	if initialSearchKeyCount != 1 {
+		return false, true, fmt.Errorf("accepted initial artist search cache scope is missing or duplicated")
+	}
+	keys = filteredKeys
+	if len(keys) == 0 || len(keys) != len(phases) {
+		return false, true, fmt.Errorf("accepted matching catalog pages do not match their phase ledger")
+	}
+	phasesByKey := make(map[string]persistence.MatchingAcquisitionPhase, len(phases))
+	readyPhases := 0
+	for _, phase := range phases {
+		if phase.Phase == "catalog_ready" {
+			readyPhases++
+			if phase.Revision != snapshot.Revision || !bytes.Equal(phase.Output, snapshot.Output) {
+				return false, true, fmt.Errorf("accepted matching catalog manifest differs from its completion phase")
+			}
+		}
+		var provenance []struct {
+			CacheKey string `json:"cache_key"`
+		}
+		if json.Unmarshal(phase.ResponseProvenance, &provenance) != nil || len(provenance) != 1 || provenance[0].CacheKey == "" {
+			return false, true, fmt.Errorf("accepted matching catalog page provenance is invalid")
+		}
+		if _, exists := phasesByKey[provenance[0].CacheKey]; exists {
+			return false, true, fmt.Errorf("accepted matching catalog page provenance is duplicated")
+		}
+		phasesByKey[provenance[0].CacheKey] = phase
+	}
+	if readyPhases != 1 {
+		return false, true, fmt.Errorf("accepted matching catalog must have one completion phase")
+	}
+	type catalogPage struct {
+		Count    *int `json:"release-count"`
+		Offset   *int `json:"release-offset"`
+		Releases *[]struct {
+			ID             string `json:"id"`
+			Title          string `json:"title"`
+			Disambiguation string `json:"disambiguation"`
+			Date           string `json:"date"`
+			ArtistCredit   []struct {
+				Name       string `json:"name"`
+				JoinPhrase string `json:"joinphrase"`
+			} `json:"artist-credit"`
+			LabelInfo []struct {
+				CatalogNumber string `json:"catalog-number"`
+			} `json:"label-info"`
+		} `json:"releases"`
+	}
+	type verifiedCatalogPage struct {
+		offset  int
+		count   int
+		length  int
+		payload []byte
+	}
+	ids := make([]string, 0, len(manifest.ReleaseIDs))
+	candidatesByID := make(map[string]MatchingRetrievalCandidate, len(manifest.ReleaseIDs))
+	verifiedPages := make(map[string]verifiedCatalogPage, len(keys))
+	for _, id := range manifest.ReleaseIDs {
+		canonical, err := canonicalMBID(id)
+		if err != nil || canonical != id {
+			return false, true, fmt.Errorf("saved matching catalog manifest contains a noncanonical release id")
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) != *manifest.Count {
+		return false, true, fmt.Errorf("saved matching catalog manifest count is inconsistent")
+	}
+	seenKeys := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		phase, exists := phasesByKey[key]
+		if seenKeys[key] || !exists || phase.Phase != persistence.MatchingAcquisitionArtistCatalogPage && phase.Phase != "catalog_ready" {
+			return false, true, fmt.Errorf("accepted matching catalog page ledger is invalid")
+		}
+		seenKeys[key] = true
+		var provenance []struct {
+			CacheKey   string `json:"cache_key"`
+			PayloadSHA string `json:"payload_sha256"`
+		}
+		if json.Unmarshal(phase.ResponseProvenance, &provenance) != nil || len(provenance) != 1 || provenance[0].CacheKey != key || provenance[0].PayloadSHA == "" {
+			return false, true, fmt.Errorf("accepted matching catalog page provenance is invalid")
+		}
+		response, err := acquisition.providers.CachedResponse(ctx, key)
+		if err != nil {
+			return false, true, err
+		}
+		if response == nil || len(response.Payload) == 0 {
+			return false, true, fmt.Errorf("accepted matching catalog page is unavailable")
+		}
+		digest := sha256.Sum256(response.Payload)
+		if fmt.Sprintf("%x", digest[:]) != provenance[0].PayloadSHA {
+			return false, true, fmt.Errorf("accepted matching catalog page payload changed")
+		}
+		var page catalogPage
+		if err := json.Unmarshal(response.Payload, &page); err != nil {
+			return false, true, fmt.Errorf("accepted matching catalog page is malformed: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
+		}
+		if page.Count == nil || page.Offset == nil || page.Releases == nil || *page.Count != *manifest.Count || *page.Offset < 0 || len(*page.Releases) == 0 && *page.Offset < *page.Count || *page.Offset+len(*page.Releases) > *page.Count {
+			return false, true, fmt.Errorf("accepted matching catalog page is malformed (count=%v offset=%v releases=%v manifest_count=%d): %w", page.Count, page.Offset, page.Releases != nil, *manifest.Count, ErrInvalidMatchingAcquisitionResponse)
+		}
+		verifiedPages[key] = verifiedCatalogPage{offset: *page.Offset, count: *page.Count, length: len(*page.Releases), payload: append([]byte(nil), response.Payload...)}
+		for _, release := range *page.Releases {
+			id, err := canonicalMBID(release.ID)
+			if err != nil || id != release.ID {
+				return false, true, fmt.Errorf("accepted matching catalog release id is invalid")
+			}
+			if _, duplicate := candidatesByID[id]; duplicate {
+				return false, true, fmt.Errorf("accepted matching catalog contains duplicate release ids")
+			}
+			var credit strings.Builder
+			for _, item := range release.ArtistCredit {
+				credit.WriteString(item.Name)
+				credit.WriteString(item.JoinPhrase)
+			}
+			catalogNumbers := make([]string, 0, len(release.LabelInfo))
+			for _, label := range release.LabelInfo {
+				catalogNumbers = append(catalogNumbers, label.CatalogNumber)
+			}
+			candidatesByID[id] = MatchingRetrievalCandidate{ID: id, Title: release.Title, Disambiguation: release.Disambiguation, Date: release.Date, ArtistCredit: credit.String(), CatalogNumbers: catalogNumbers}
+		}
+	}
+	// The cache-key reader is sorted; the payload pages still must cover every
+	// offset once. Manifest ID equality alone would not detect holes/overlap.
+	type keyedOffset struct {
+		key    string
+		offset int
+	}
+	pageOffsets := make([]keyedOffset, len(keys))
+	for index, key := range keys {
+		var artist string
+		var offset, limit int
+		if _, err := fmt.Sscanf(key, "artist-release-browse:%36s:%d:%d", &artist, &offset, &limit); err != nil || limit != matchingCatalogPageSize || canonicalArtistCursor(artist, offset) != nil {
+			return false, true, fmt.Errorf("accepted matching catalog key is invalid")
+		}
+		pageOffsets[index] = keyedOffset{key: key, offset: offset}
+	}
+	sort.Slice(pageOffsets, func(i, j int) bool { return pageOffsets[i].offset < pageOffsets[j].offset })
+	covered := 0
+	for _, item := range pageOffsets {
+		if item.offset != covered {
+			return false, true, fmt.Errorf("accepted matching catalog pages have a gap or overlap")
+		}
+		var input struct {
+			ArtistMBID string `json:"artist_mbid"`
+			Offset     int    `json:"offset"`
+			Limit      int    `json:"limit"`
+		}
+		pagePhase := phasesByKey[item.key]
+		if json.Unmarshal(pagePhase.Input, &input) != nil || input.ArtistMBID != manifest.ArtistMBID || input.Offset != item.offset || input.Limit != matchingCatalogPageSize {
+			return false, true, fmt.Errorf("accepted matching catalog page input does not match its cache scope")
+		}
+		page, exists := verifiedPages[item.key]
+		if !exists || page.offset != item.offset || page.count != *manifest.Count {
+			return false, true, fmt.Errorf("accepted matching catalog page snapshot is inconsistent")
+		}
+		covered += page.length
+	}
+	if covered != *manifest.Count || len(candidatesByID) != len(ids) {
+		return false, true, fmt.Errorf("accepted matching catalog pages do not cover the manifest")
+	}
+	for _, id := range ids {
+		if _, exists := candidatesByID[id]; !exists {
+			return false, true, fmt.Errorf("accepted matching catalog manifest differs from catalog pages")
+		}
+	}
+	if len(candidatesByID) == 0 {
+		var finalPage *persistence.MatchingAcquisitionPhase
+		var finalPayload []byte
+		for index := range phases {
+			phase := &phases[index]
+			var provenance []struct {
+				RequestID uuid.UUID `json:"request_id"`
+				CacheKey  string    `json:"cache_key"`
+			}
+			if json.Unmarshal(phase.ResponseProvenance, &provenance) == nil && len(provenance) == 1 {
+				if page, ok := verifiedPages[provenance[0].CacheKey]; ok && page.offset+page.length == *manifest.Count {
+					finalPage = phase
+					finalPayload = page.payload
+				}
+			}
+		}
+		if finalPage == nil {
+			return false, true, fmt.Errorf("accepted empty catalog completion page is unavailable")
+		}
+		var provenance []struct {
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		}
+		if json.Unmarshal(finalPage.ResponseProvenance, &provenance) != nil || len(provenance) != 1 {
+			return false, true, fmt.Errorf("accepted empty catalog completion provenance is invalid")
+		}
+		if len(finalPayload) == 0 {
+			return false, true, fmt.Errorf("accepted empty catalog completion page is unavailable")
+		}
+		input := append(json.RawMessage(nil), snapshot.Output...)
+		output, _ := json.Marshal(map[string]string{"state": "waiting_policy", "reason": "catalog_no_results"})
+		changed, err := acquisition.repository.ParkMatchingAcquisitionForDelivery(ctx, runID, attempt, riverJobID, claim, snapshot.Revision,
+			acquisitionPhase(snapshot.Revision+1, "waiting_policy", input, output, provenance[0].RequestID, provenance[0].CacheKey, finalPayload))
+		return changed, true, err
+	}
+	captured, err := acquisition.validatedCapture(ctx, runID, "catalog_ready")
+	if err != nil {
+		return false, true, err
+	}
+	candidates := make([]MatchingRetrievalCandidate, 0, len(candidatesByID))
+	for _, candidate := range candidatesByID {
+		candidates = append(candidates, candidate)
+	}
+	shortlist, err := RankMatchingCatalog(captured, candidates)
+	if err != nil {
+		return false, true, err
+	}
+	if len(shortlist) > 10 {
+		shortlist = shortlist[:10]
+	}
+	children := make([]persistence.MatchingProviderRequest, 0, len(shortlist))
+	lookups := make([]map[string]any, 0, len(shortlist))
+	for _, id := range shortlist {
+		child, err := acquisition.providers.PrepareOperation(ctx, "release_lookup", id, 0, 0, false)
+		if err != nil {
+			return false, true, err
+		}
+		if child.ProviderCacheKey == nil || child.ID == uuid.Nil || *child.ProviderCacheKey != "release-lookup:"+id {
+			return false, true, fmt.Errorf("prepared release lookup has an invalid cache scope")
+		}
+		children = append(children, persistence.MatchingProviderRequest{Operation: child, Args: ProviderFetchOperationArgs{OperationID: child.ID}})
+		lookups = append(lookups, map[string]any{"release_id": id, "request_id": child.ID, "cache_key": *child.ProviderCacheKey})
+	}
+	input, _ := json.Marshal(map[string]any{"release_ids": shortlist})
+	output, _ := json.Marshal(map[string]any{"lookups": lookups})
+	phase := persistence.MatchingAcquisitionPhase{Revision: snapshot.Revision + 1, Phase: persistence.MatchingAcquisitionReleaseHydration, Input: input, Output: output, ResponseProvenance: json.RawMessage("[]")}
+	starter, ok := acquisition.repository.(matchingDeliveryReleaseHydrationStarter)
+	if !ok {
+		return false, true, fmt.Errorf("claim-aware matching release hydration persistence is unavailable")
+	}
+	changed, err := starter.StartMatchingReleaseHydrationForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, phase, children)
 	return changed, true, err
 }
 

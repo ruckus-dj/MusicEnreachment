@@ -155,6 +155,18 @@ func newMatchingAcquisitionGuardFixture(t *testing.T) *matchingAcquisitionGuardF
 	if err != nil || admitted.RiverJobID == nil {
 		t.Fatalf("admit acquisition: operation=%+v err=%v", admitted, err)
 	}
+	captured, captureDigest, exists, err := repository.GetMatchingAcquisitionMetadataCapture(ctx, parentID, "admitted")
+	if err != nil || !exists || captureDigest == "" || len(captured) == 0 {
+		t.Fatalf("read admitted metadata capture: members=%+v digest=%q exists=%v err=%v", captured, captureDigest, exists, err)
+	}
+	for _, member := range captured {
+		if member.MemberID == uuid.Nil || member.WorkID == uuid.Nil || !json.Valid(member.Tags) {
+			t.Fatalf("admitted metadata capture is incomplete: %+v", member)
+		}
+	}
+	if _, _, _, err := repository.GetMatchingAcquisitionMetadataCapture(ctx, parentID, "catalog_ready"); err == nil {
+		t.Fatal("metadata capture accepted an unexpected acquisition phase")
+	}
 	parentJobID := *admitted.RiverJobID
 	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, parentJobID).Exec(ctx); err != nil {
 		t.Fatal(err)

@@ -24,9 +24,10 @@ import (
 func TestMatchingReleaseHydrationRepeatAdmissionDoesNotDuplicateChildrenPostgreSQL(t *testing.T) {
 	f := newMatchingAcquisitionGuardFixture(t)
 	f.matchingAcquisitionCatalogReady()
+	wakeID, claim := claimCatalogRankingWake(f)
 	ids := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
 	phase, children := matchingHydrationRequest(f, 3, ids)
-	changed, err := f.repository.StartMatchingReleaseHydration(f.ctx, f.river, f.parentID, 3, phase, children)
+	changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
 	if err != nil || !changed {
 		t.Fatalf("start hydration: changed=%v err=%v", changed, err)
 	}
@@ -34,7 +35,7 @@ func TestMatchingReleaseHydrationRepeatAdmissionDoesNotDuplicateChildrenPostgreS
 	if err := f.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, f.parentID).Scan(f.ctx, &before); err != nil {
 		t.Fatal(err)
 	}
-	changed, err = f.repository.StartMatchingReleaseHydration(f.ctx, f.river, f.parentID, 3, phase, children)
+	changed, err = f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
 	if err != nil || changed {
 		t.Fatalf("repeat hydration admission: changed=%v err=%v", changed, err)
 	}
@@ -48,6 +49,25 @@ func TestMatchingReleaseHydrationRepeatAdmissionDoesNotDuplicateChildrenPostgreS
 	if after != before || jobs != 2 {
 		t.Fatalf("repeat admission changed durable children: before=%d after=%d operations=%d", before, after, jobs)
 	}
+	if changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children); err != nil || changed {
+		t.Fatalf("replay consumed ranking claim changed=%v err=%v", changed, err)
+	}
+}
+
+func claimCatalogRankingWake(f *matchingAcquisitionGuardFixture) (int64, persistence.MatchingDeliveryClaim) {
+	f.t.Helper()
+	var wakeID int64
+	if err := f.db.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL ORDER BY id DESC LIMIT 1`, f.parentID).Scan(f.ctx, &wakeID); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, wakeID).Exec(f.ctx); err != nil {
+		f.t.Fatal(err)
+	}
+	claim, outcome, err := f.repository.ClaimMatchingDelivery(f.ctx, f.parentID, f.parent.Attempt, wakeID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		f.t.Fatalf("claim catalog-ranking wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
+	}
+	return wakeID, claim
 }
 
 func matchingHydrationRequest(f *matchingAcquisitionGuardFixture, revision int64, ids []string) (persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) {
@@ -124,10 +144,11 @@ func (f *matchingAcquisitionGuardFixture) matchingAcquisitionCatalogReady() {
 func TestMatchingReleaseHydrationEnqueueFailureRollsBackAdmissionPostgreSQL(t *testing.T) {
 	f := newMatchingAcquisitionGuardFixture(t)
 	f.matchingAcquisitionCatalogReady()
+	wakeID, claim := claimCatalogRankingWake(f)
 	ids := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
 	phase, children := matchingHydrationRequest(f, 3, ids)
 	before := matchingAcquisitionGuardState(t, f)
-	changed, err := f.repository.StartMatchingReleaseHydration(f.ctx, matchingHydrationFailingInserter{}, f.parentID, 3, phase, children)
+	changed, err := f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, matchingHydrationFailingInserter{}, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
 	if err == nil || changed {
 		t.Fatalf("hydration with failing enqueue: changed=%v err=%v", changed, err)
 	}
@@ -148,7 +169,7 @@ func TestMatchingReleaseHydrationEnqueueFailureRollsBackAdmissionPostgreSQL(t *t
 	if children[0].Operation.RiverJobID != nil || children[1].Operation.RiverJobID != nil {
 		t.Fatalf("failed hydration assigned in-memory River job ids")
 	}
-	changed, err = f.repository.StartMatchingReleaseHydration(f.ctx, f.river, f.parentID, 3, phase, children)
+	changed, err = f.repository.StartMatchingReleaseHydrationForDelivery(f.ctx, f.river, f.parentID, f.parent.Attempt, wakeID, claim, 3, phase, children)
 	if err != nil || !changed {
 		t.Fatalf("retry hydration with real inserter: changed=%v err=%v", changed, err)
 	}

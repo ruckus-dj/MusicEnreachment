@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -32,6 +33,44 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 	expectedRevision int64,
 	phase MatchingAcquisitionPhase,
 	children []MatchingProviderRequest,
+) (bool, error) {
+	return repository.startMatchingReleaseHydration(ctx, client, runID, expectedRevision, phase, children, nil)
+}
+
+// StartMatchingReleaseHydrationForDelivery atomically admits selected release
+// lookups while consuming the currently claimed catalog-ranking delivery.
+func (repository *SetupManagerRepository) StartMatchingReleaseHydrationForDelivery(
+	ctx context.Context,
+	client RiverInserter,
+	runID uuid.UUID,
+	attempt int,
+	riverJobID int64,
+	claim MatchingDeliveryClaim,
+	expectedRevision int64,
+	phase MatchingAcquisitionPhase,
+	children []MatchingProviderRequest,
+) (bool, error) {
+	if attempt < 1 || riverJobID < 1 || claim.ExecutionEpoch < 1 || claim.RiverAttempt < 1 {
+		return false, fmt.Errorf("start matching release hydration: invalid delivery fence")
+	}
+	delivery := &matchingHydrationDelivery{attempt: attempt, riverJobID: riverJobID, claim: claim}
+	return repository.startMatchingReleaseHydration(ctx, client, runID, expectedRevision, phase, children, delivery)
+}
+
+type matchingHydrationDelivery struct {
+	attempt    int
+	riverJobID int64
+	claim      MatchingDeliveryClaim
+}
+
+func (repository *SetupManagerRepository) startMatchingReleaseHydration(
+	ctx context.Context,
+	client RiverInserter,
+	runID uuid.UUID,
+	expectedRevision int64,
+	phase MatchingAcquisitionPhase,
+	children []MatchingProviderRequest,
+	delivery *matchingHydrationDelivery,
 ) (bool, error) {
 	if client == nil || runID == uuid.Nil || expectedRevision < 0 || phase.Revision != expectedRevision+1 || phase.Phase != MatchingAcquisitionReleaseHydration {
 		return false, fmt.Errorf("start matching release hydration: invalid transition fence")
@@ -85,6 +124,24 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, source.SourceID).Scan(ctx, &sourceIdentity); err != nil || sourceIdentity != source.Identity {
 			return fmt.Errorf("start matching release hydration: provider source configuration changed")
 		}
+		// Target groups/generations are the outer row-lock fence for matching
+		// delivery work. Acquire them before locking acquisition, operation, or
+		// run rows so a hydration wake cannot invert the claim lock order.
+		var lockedGroups []uuid.UUID
+		if err := tx.NewRaw(`SELECT generation.group_id FROM incoming_matching_generation generation
+			JOIN matching_run_target target ON target.group_id=generation.group_id AND target.run_id=?
+			JOIN incoming_group current_group ON current_group.id=target.group_id
+			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, runID).Scan(ctx, &lockedGroups); err != nil {
+			return err
+		}
+		var currentSource matchingAcquisitionSourceFence
+		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, runID).Scan(ctx, &currentSource); err != nil {
+			return err
+		}
+		if currentSource != source {
+			return nil
+		}
 		var acquisition struct {
 			Phase    string `bun:"current_phase"`
 			Revision int64  `bun:"revision"`
@@ -94,20 +151,6 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 		}
 		if acquisition.Phase != "catalog_ready" || acquisition.Revision != expectedRevision {
 			return nil
-		}
-		var runState string
-		if err := tx.NewRaw(`SELECT state FROM matching_run WHERE id=? FOR UPDATE`, runID).Scan(ctx, &runState); err != nil {
-			return err
-		}
-		if runState != "waiting_policy" {
-			return fmt.Errorf("start matching release hydration: matching run is not waiting for policy")
-		}
-		var lockedGroups []uuid.UUID
-		if err := tx.NewRaw(`SELECT generation.group_id FROM incoming_matching_generation generation
-			JOIN matching_run_target target ON target.group_id=generation.group_id AND target.run_id=?
-			JOIN incoming_group current_group ON current_group.id=target.group_id
-			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, runID).Scan(ctx, &lockedGroups); err != nil {
-			return err
 		}
 		var stale bool
 		if err := tx.NewRaw(`SELECT EXISTS (
@@ -172,8 +215,35 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 		if err != nil {
 			return err
 		}
-		if operation.Kind != "matching_evaluation_v1" || operation.State != "running" && operation.State != "queued" {
+		if operation.Kind != "matching_evaluation_v1" || (delivery == nil && operation.State != "running" && operation.State != "queued") || (delivery != nil && (operation.State != "running" || operation.Attempt != delivery.attempt || operation.RiverJobID == nil || *operation.RiverJobID != delivery.riverJobID)) {
 			return fmt.Errorf("start matching release hydration: parent operation is not waiting for policy")
+		}
+		var runState string
+		if err := tx.NewRaw(`SELECT state FROM matching_run WHERE id=? FOR UPDATE`, runID).Scan(ctx, &runState); err != nil {
+			return err
+		}
+		if delivery == nil {
+			if runState != "waiting_policy" {
+				return fmt.Errorf("start matching release hydration: matching run is not waiting for policy")
+			}
+		} else if runState != "running" {
+			return nil
+		}
+		if delivery != nil {
+			var run matchingClaimRun
+			if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt FROM matching_run WHERE id=? FOR UPDATE`, runID).Scan(ctx, &run); err != nil {
+				return err
+			}
+			if run.State != "running" || run.ExecutionEpoch != delivery.claim.ExecutionEpoch || run.ActiveRiverJobID == nil || *run.ActiveRiverJobID != delivery.riverJobID || run.ActiveRiverAttempt == nil || *run.ActiveRiverAttempt != delivery.claim.RiverAttempt {
+				return nil
+			}
+			var registered bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL)`, runID, delivery.riverJobID, delivery.attempt).Scan(ctx, &registered); err != nil {
+				return err
+			}
+			if !registered {
+				return nil
+			}
 		}
 		var pending int
 		if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND terminal_outcome IS NULL`, runID).Scan(ctx, &pending); err != nil {
@@ -181,6 +251,15 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 		}
 		if pending != 0 {
 			return fmt.Errorf("start matching release hydration: previous provider children are still pending")
+		}
+		if delivery != nil {
+			result, err := tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL`, time.Now().UTC(), runID, delivery.riverJobID, delivery.attempt).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+				return nil
+			}
 		}
 		for _, child := range children {
 			if err := repository.createOperationAndEnqueueTx(ctx, tx, child.Operation, client, child.Args, nil); err != nil {
@@ -196,14 +275,31 @@ func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
 		}
 		affected, err := result.RowsAffected()
 		if err != nil || affected != 1 {
-			return nil
+			return fmt.Errorf("start matching release hydration: acquisition revision changed during admission")
 		}
 		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id, revision, phase, input, output, response_provenance) VALUES (?, ?, ?, ?::jsonb, ?::jsonb, '[]'::jsonb)`, runID, phase.Revision, phase.Phase, string(phase.Input), string(phase.Output)).Exec(ctx); err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		if _, err := tx.NewRaw(`UPDATE matching_run SET state='waiting_provider', updated_at=? WHERE id=?`, now, runID).Exec(ctx); err != nil {
+		var runUpdate string
+		if delivery == nil {
+			runUpdate = `UPDATE matching_run SET state='waiting_provider', updated_at=? WHERE id=?`
+		} else {
+			runUpdate = `UPDATE matching_run SET state='waiting_provider', active_river_job_id=NULL, active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=? WHERE id=? AND state='running' AND execution_epoch=? AND active_river_job_id=? AND active_river_attempt=?`
+		}
+		var runResult sql.Result
+		if delivery == nil {
+			runResult, err = tx.NewRaw(runUpdate, now, runID).Exec(ctx)
+		} else {
+			runResult, err = tx.NewRaw(runUpdate, now, runID, delivery.claim.ExecutionEpoch, delivery.riverJobID, delivery.claim.RiverAttempt).Exec(ctx)
+		}
+		if err != nil {
 			return err
+		}
+		if delivery != nil {
+			if affected, err := runResult.RowsAffected(); err != nil || affected != 1 {
+				return fmt.Errorf("start matching release hydration: delivery claim changed during admission")
+			}
 		}
 		operation.Stage, operation.UpdatedAt = "waiting_provider", now
 		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
@@ -219,9 +315,22 @@ type MatchingAcquisitionIntent struct {
 	SchemaVersion         int                                  `json:"schema_version"`
 	GroupingEpoch         int64                                `json:"grouping_epoch"`
 	PlanDigest            string                               `json:"evaluation_plan_digest"`
+	CaptureDigest         string                               `json:"capture_digest"`
+	CapturedMembers       []MatchingAcquisitionCapturedMember  `json:"captured_members"`
 	PolicyVersion         string                               `json:"policy_version"`
 	Targets               []MatchingTarget                     `json:"targets"`
 	InitialProviderInputs []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
+}
+
+// MatchingAcquisitionCapturedMember is the exact persisted metadata snapshot
+// attached to one selected group member at admission. It is intentionally
+// neutral data: later matching stages must not reread source files or metadata.
+type MatchingAcquisitionCapturedMember struct {
+	MemberID            uuid.UUID       `json:"member_id"`
+	WorkID              uuid.UUID       `json:"work_id"`
+	CaptureAnalysisID   *uuid.UUID      `json:"capture_analysis_id,omitempty"`
+	AnalysisInputSHA256 string          `json:"analysis_input_sha256,omitempty"`
+	Tags                json.RawMessage `json:"tags"`
 }
 
 type MatchingAcquisitionProviderRequest struct {
@@ -304,7 +413,7 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionCatalogCacheKeys
 	return keys, nil
 }
 
-func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDigest [32]byte) (MatchingAcquisitionIntent, error) {
+func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDigest [32]byte, captured []MatchingAcquisitionCapturedMember) (MatchingAcquisitionIntent, error) {
 	if len(admission.Providers) != 1 || admission.Providers[0].Operation == nil || admission.Providers[0].Operation.Kind != "provider_artist_search" {
 		return MatchingAcquisitionIntent{}, fmt.Errorf("matching acquisition currently requires exactly one initial artist search")
 	}
@@ -322,9 +431,20 @@ func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDig
 	}
 	targets := append([]MatchingTarget(nil), admission.Targets...)
 	sort.Slice(targets, func(i, j int) bool { return targets[i].GroupID.String() < targets[j].GroupID.String() })
+	captured = append([]MatchingAcquisitionCapturedMember(nil), captured...)
+	sort.Slice(captured, func(i, j int) bool { return captured[i].MemberID.String() < captured[j].MemberID.String() })
+	captured, err := normalizeCapturedMatchingMembers(captured)
+	if err != nil {
+		return MatchingAcquisitionIntent{}, fmt.Errorf("canonicalize matching metadata capture: %w", err)
+	}
+	captureDigest, err := matchingMetadataCaptureDigest(captured)
+	if err != nil {
+		return MatchingAcquisitionIntent{}, fmt.Errorf("digest matching metadata capture: %w", err)
+	}
 	intent := MatchingAcquisitionIntent{
 		SchemaVersion: matchingAcquisitionIntentVersion, GroupingEpoch: admission.GroupingEpoch,
-		PlanDigest: fmt.Sprintf("%x", planDigest[:]), PolicyVersion: admission.PolicyVersion,
+		PlanDigest: fmt.Sprintf("%x", planDigest[:]), CaptureDigest: captureDigest,
+		CapturedMembers: captured, PolicyVersion: admission.PolicyVersion,
 		Targets:               targets,
 		InitialProviderInputs: make([]MatchingAcquisitionProviderRequest, 0, len(admission.Providers)),
 	}
@@ -341,8 +461,149 @@ func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDig
 	return intent, nil
 }
 
+// GetMatchingAcquisitionMetadataCapture returns the immutable metadata captured
+// at admission only when the durable acquisition is in the requested phase.
+func (repository *SetupManagerRepository) GetMatchingAcquisitionMetadataCapture(ctx context.Context, runID uuid.UUID, expectedPhase string) ([]MatchingAcquisitionCapturedMember, string, bool, error) {
+	if runID == uuid.Nil || expectedPhase == "" {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: run and expected phase are required")
+	}
+	var intentBytes, intentDigest, planDigest, planBytes []byte
+	var phase string
+	err := repository.db.NewRaw(`SELECT acquisition.intent, acquisition.intent_digest, acquisition.current_phase,
+		run.plan_digest, run.immutable_plan
+		FROM matching_acquisition acquisition
+		JOIN matching_run run ON run.id=acquisition.run_id
+		WHERE acquisition.run_id=?`, runID).Scan(ctx, &intentBytes, &intentDigest, &phase, &planDigest, &planBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", false, nil
+	}
+	if err != nil {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: %w", err)
+	}
+	if phase != expectedPhase {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: acquisition phase changed")
+	}
+	var intent MatchingAcquisitionIntent
+	if err := json.Unmarshal(intentBytes, &intent); err != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion || intent.CaptureDigest == "" {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: saved capture is invalid")
+	}
+	if err := validateCanonicalMatchingAcquisitionIntent(intent, intentDigest, planDigest, planBytes); err != nil {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: %w", err)
+	}
+	var targets []MatchingTarget
+	if err := repository.db.NewRaw(`SELECT group_id, captured_group_revision AS revision FROM matching_run_target WHERE run_id=? ORDER BY group_id`, runID).Scan(ctx, &targets); err != nil {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: read immutable targets: %w", err)
+	}
+	if !equalMatchingTargets(intent.Targets, targets) {
+		return nil, "", false, fmt.Errorf("read matching metadata capture: saved targets differ from immutable run targets")
+	}
+	return append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...), intent.CaptureDigest, true, nil
+}
+
+func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent, intentDigest, planDigest, planBytes []byte) error {
+	canonicalIntent := intent
+	var err error
+	canonicalIntent.CapturedMembers, err = normalizeCapturedMatchingMembers(intent.CapturedMembers)
+	if err != nil {
+		return fmt.Errorf("saved capture is invalid")
+	}
+	canonicalIntent.InitialProviderInputs = append([]MatchingAcquisitionProviderRequest(nil), intent.InitialProviderInputs...)
+	for index := range canonicalIntent.InitialProviderInputs {
+		request := &canonicalIntent.InitialProviderInputs[index]
+		if request.Kind != "provider_artist_search" {
+			return fmt.Errorf("saved initial provider input is invalid")
+		}
+		canonicalInput, err := canonicalMatchingJSON(request.Input)
+		if err != nil {
+			return fmt.Errorf("saved initial provider input is invalid")
+		}
+		request.Input = canonicalInput
+	}
+	encodedIntent, err := canonicalMatchingAcquisitionIntentBytes(canonicalIntent)
+	if err != nil {
+		return fmt.Errorf("saved intent is invalid")
+	}
+	actualIntentDigest := sha256.Sum256(encodedIntent)
+	if !equalDigest(intentDigest, actualIntentDigest[:]) {
+		return fmt.Errorf("saved intent digest changed")
+	}
+	actualCaptureDigest, err := matchingMetadataCaptureDigest(canonicalIntent.CapturedMembers)
+	if err != nil || intent.CaptureDigest != actualCaptureDigest {
+		return fmt.Errorf("saved capture digest changed")
+	}
+	canonicalPlan, err := canonicalMatchingJSON(planBytes)
+	if err != nil {
+		return fmt.Errorf("immutable matching plan is invalid")
+	}
+	actualPlanDigest := sha256.Sum256(canonicalPlan)
+	if !equalDigest(planDigest, actualPlanDigest[:]) || intent.PlanDigest != fmt.Sprintf("%x", actualPlanDigest[:]) {
+		return fmt.Errorf("saved intent does not match immutable matching plan")
+	}
+	var planEnvelope struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(planBytes, &planEnvelope); err != nil {
+		return fmt.Errorf("immutable matching plan is invalid")
+	}
+	if planEnvelope.SchemaVersion == 2 || planEnvelope.SchemaVersion == 3 {
+		var plan matchingPublisherPlan
+		if err := json.Unmarshal(planBytes, &plan); err != nil || plan.GroupingEpoch != intent.GroupingEpoch ||
+			plan.PolicyVersion != intent.PolicyVersion || !equalMatchingTargets(plan.Targets, intent.Targets) {
+			return fmt.Errorf("saved intent scope differs from immutable matching plan")
+		}
+	}
+	return nil
+}
+
+func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) ([]byte, error) {
+	intent.CapturedMembers = append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...)
+	for index := range intent.CapturedMembers {
+		canonicalTags, err := canonicalMatchingJSON(intent.CapturedMembers[index].Tags)
+		if err != nil {
+			return nil, err
+		}
+		intent.CapturedMembers[index].Tags = canonicalTags
+	}
+	intent.InitialProviderInputs = append([]MatchingAcquisitionProviderRequest(nil), intent.InitialProviderInputs...)
+	for index := range intent.InitialProviderInputs {
+		canonicalInput, err := canonicalMatchingJSON(intent.InitialProviderInputs[index].Input)
+		if err != nil {
+			return nil, err
+		}
+		intent.InitialProviderInputs[index].Input = canonicalInput
+	}
+	return json.Marshal(intent)
+}
+
+func canonicalMatchingJSON(value json.RawMessage) (json.RawMessage, error) {
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(string(value)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("JSON has trailing data")
+	}
+	encoded, err := json.Marshal(decoded)
+	return encoded, err
+}
+
+func equalMatchingTargets(left, right []MatchingTarget) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func createMatchingAcquisitionLedger(ctx context.Context, tx bun.Tx, runID uuid.UUID, intent MatchingAcquisitionIntent) error {
-	encoded, err := json.Marshal(intent)
+	encoded, err := canonicalMatchingAcquisitionIntentBytes(intent)
 	if err != nil {
 		return fmt.Errorf("encode matching acquisition intent: %w", err)
 	}
@@ -601,7 +862,18 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 		}
 		runState, operationStage := "waiting_provider", "waiting_provider"
 		if phase.Phase == "catalog_ready" {
-			runState, operationStage = "waiting_policy", "catalog_ready"
+			inserted, err := client.InsertTx(ctx, tx.Tx, MatchingEvaluationWakeArgs{OperationID: operationID}, nil)
+			if err != nil {
+				return fmt.Errorf("advance matching acquisition: enqueue catalog evaluation wake: %w", err)
+			}
+			if inserted == nil || inserted.Job == nil || inserted.Job.ID < 1 {
+				return fmt.Errorf("advance matching acquisition: catalog evaluation wake has no River job")
+			}
+			if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt)
+				VALUES (?, ?, ?)`, operationID, inserted.Job.ID, attempt).Exec(ctx); err != nil {
+				return fmt.Errorf("advance matching acquisition: register catalog evaluation wake: %w", err)
+			}
+			runState, operationStage = "queued", "ranking_pending"
 		}
 		if _, err := tx.NewRaw(`UPDATE matching_run SET state=?, active_river_job_id=NULL,
 			active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=?

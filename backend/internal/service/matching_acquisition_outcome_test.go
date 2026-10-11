@@ -48,3 +48,22 @@ func TestMatchingAcquisitionClassifiesMalformedAcceptedSearch(t *testing.T) {
 		t.Fatalf("advance error=%v; expected invalid accepted-response sentinel", err)
 	}
 }
+
+func TestMatchingAcquisitionRejectsAcceptedSearchWithoutArtistName(t *testing.T) {
+	const cacheKey = "artist-search:0:100:missing-name"
+	intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1, InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{
+		OperationID: uuid.New(), Kind: "provider_artist_search", CacheKey: cacheKey,
+		Input: json.RawMessage(`{"schema_version":1,"query":"missing-name","offset":0,"limit":100}`),
+	}}}
+	repository := &matchingAcquisitionRepositoryFixture{snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Phase: "admitted"}}
+	provider := &matchingAcquisitionProviderFixture{responses: map[string][]byte{cacheKey: []byte(`{"artists":[{"id":"11111111-1111-4111-8111-111111111111"}]}`)}}
+	acquisition := NewMatchingAcquisitionService(repository, provider, matchingAcquisitionRiverFixture{})
+
+	_, _, err := acquisition.Advance(context.Background(), uuid.New(), 1, 3, persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1})
+	if !errors.Is(err, ErrInvalidMatchingAcquisitionResponse) {
+		t.Fatalf("advance error=%v; expected invalid accepted-response sentinel", err)
+	}
+	if len(repository.phases) != 0 || len(repository.parked) != 0 || len(provider.prepared) != 0 {
+		t.Fatalf("malformed artist response performed work: phases=%d parked=%d prepared=%d", len(repository.phases), len(repository.parked), len(provider.prepared))
+	}
+}

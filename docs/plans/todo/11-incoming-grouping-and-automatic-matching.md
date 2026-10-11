@@ -877,6 +877,36 @@ normalization для score в точности. Если по имеющимся
 - Automatic ranking/trigger, manual unlink policy и end-to-end/corpus/packaging
   acceptance остаются открытыми. План не завершён.
 
+### Owner decisions — retrieval, artist-fit, unlink, 2026-10-11
+
+- Утверждены предложенные retrieval formula и top-1 artist-fit; точные правила
+  синхронизированы в `docs/design/decisions.md`. DATE/CATALOGNUMBER используются
+  только при равном текстовом ранге; missing не mismatch и DATE не сокращается.
+  Artist-fit >=0.70 — отдельное routing правило, не release veto.
+- После unlink остаётся manual mode без связи до explicit возврата в automatic;
+  queued automatic apply должен быть fenced и не восстанавливать снятую связь.
+- Эти решения утверждены владельцем, но реализация/приёмка ещё ожидаются.
+
+### Approved automatic retrieval loop — 2026-10-11
+
+- Реализованы утверждённые ranking и artist-fit по frozen metadata capture.
+  Canonical JSON hashing сохраняет member/value order и проверяет immutable
+  intent/plan/targets без подмены сохранённого digest после JSONB round-trip.
+- Complete catalog атомарно регистрирует ranking wake; claimed hydration
+  атомарно consumes delivery и создаёт lookup dependencies/jobs. Ranking читает
+  исходный ledger provenance и использует только один hash-verified page snapshot.
+  Empty catalog и неподходящий top-1 artist переходят в provenance-bound manual
+  wait; persistence независимо recomputes общий artist-fit policy.
+- Ограниченный single-group acquisition loop прошёл independent review и
+  повторный полный `task verify` в primary session. Реальный HTTP/PostgreSQL
+  worker test исполняет catalog → ranking → hydration → seal → publication.
+  Acquisition admission отклоняет multi-group input до mutation; это техническая
+  граница данного increment, не продуктовый запрет обработки нескольких групп.
+- Dedicated PostgreSQL empty-catalog parking, полный capture admission/replay/
+  tamper matrix и concurrency lock-order regression ещё требуют расширения.
+  Post-analysis trigger и multi-group orchestration не реализованы; unlink,
+  packaging/corpus и полная end-to-end приёмка остаются открытыми.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

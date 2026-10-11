@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -150,6 +151,7 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 		changed, acquired, err := worker.acquisition.Advance(ctx, operation.ID, operation.Attempt, job.ID, claim)
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidMatchingAcquisitionResponse) {
+				slog.WarnContext(ctx, "accepted matching acquisition response is invalid", "operation", operation.ID, "cause", err)
 				changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The accepted provider response is invalid for matching.")
 				if failErr != nil {
 					return failErr

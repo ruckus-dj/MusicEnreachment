@@ -514,6 +514,25 @@ copies. Нет квот, произвольного размера или in-pla
 - **Уточнение владельца от 2026-10-11 — manual search pagination:** размер
   страницы ручного MusicBrainz picker по умолчанию — 10, пользователь может
   изменить его. Это не меняет automatic group shortlist либо retrieval ranking.
+- **Уточнение владельца от 2026-10-11 — automatic retrieval policy:** для
+  каждого уникального файла вычисляется среднее доступных текстовых сходств
+  полного album artist с полными release artist credits и ALBUM с лучшим из
+  release title / title + disambiguation. Missing factor исключается из среднего.
+  Ранг release — сумма по файлам с текстовым evidence. При равенстве выше число
+  точных совпадений полных DATE/CATALOGNUMBER строк (каждое поле каждого файла
+  даёт одну единицу); missing не mismatch, DATE не сокращается до года. Последняя
+  ничья разрешается порядком MBID только для воспроизводимого shortlist, не
+  для итогового automatic winner. Итоговые release/assignment profiles не меняются.
+- **Уточнение владельца от 2026-10-11 — top-1 artist-fit:** среднее существующего
+  локального текстового сходства имени artist с полными ALBUMARTIST values файлов,
+  при их отсутствии — полными ARTIST values, должно быть >=0.70. Файлы без artist
+  evidence исключаются; отсутствие сравнимого evidence означает manual review.
+  Лучшее отдельное имя из multi-values не подставляется вместо полного artist.
+  Это stage routing criterion, а не отдельный veto release/assignment candidates.
+- **Уточнение владельца от 2026-10-11 — unlink:** после снятия ручной связи группа
+  остаётся в manual mode без связи до явного возврата в automatic mode. Уже queued
+  automatic apply не должен восстановить снятую связь. Файлы/provider metadata
+  не удаляются; unlink сам по себе не запускает automatic rematching.
 - **Уточнение от 2026-10-10 — текстовая метрика:** официальный RapidFuzz C++
   `token_set_ratio` через C ABI/cgo с Unicode code-point input; нормализация,
   транслитерация, coverage penalty и остальные factors/weights сохраняются.

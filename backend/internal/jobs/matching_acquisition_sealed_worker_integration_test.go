@@ -77,8 +77,7 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 		case strings.HasPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/"):
 			releaseID := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/")
 			if releaseID != "00000001-4444-4444-8444-000000000001" {
-				t.Errorf("unexpected release lookup: %s", r.URL.String())
-				http.Error(w, "unexpected release", http.StatusNotFound)
+				_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Unrelated Release","artist-credit":[{"name":"Unrelated Artist","artist":{"id":%q,"name":"Unrelated Artist"}}],"media":[]}`, releaseID, artistID)
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"55555555-5555-4555-8555-555555555555","number":"1","title":"Fixture Track","recording":{"id":"66666666-6666-4666-8666-666666666666","title":"Fixture Track","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}]}}]}]}`, releaseID, artistID, artistID)
@@ -318,7 +317,28 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err != nil || !exists || acquisitionSnapshot.Phase != "catalog_ready" {
 		t.Fatalf("final acquisition phase=%q exists=%t err=%v; want catalog_ready", acquisitionSnapshot.Phase, exists, err)
 	}
-	assertParentWaiting("catalog_ready")
+	assertParentWaiting("ranking_pending")
+	// The catalog completion wake is itself the durable ranking trigger. Drive it
+	// through the real worker so ranking and its selected lookup children are
+	// exercised before any caller-authored shortlist can be considered.
+	runMatchingDelivery(nextWake())
+	acquisitionSnapshot, exists, err = repository.GetMatchingAcquisition(ctx, parentID)
+	if err != nil || !exists || acquisitionSnapshot.Phase != persistence.MatchingAcquisitionReleaseHydration {
+		operation, operationErr := repository.GetOperation(ctx, parentID)
+		var latestWake int64
+		var safeError string
+		if operation.SafeError != nil {
+			safeError = *operation.SafeError
+		}
+		_ = database.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL ORDER BY river_job_id DESC LIMIT 1`, parentID).Scan(ctx, &latestWake)
+		t.Fatalf("after ranking acquisition phase=%q exists=%t err=%v operation=%+v safeError=%q operationErr=%v latestWake=%d", acquisitionSnapshot.Phase, exists, err, operation, safeError, operationErr, latestWake)
+	}
+	var rankedHydration struct {
+		ReleaseIDs []string `json:"release_ids"`
+	}
+	if err := json.Unmarshal(acquisitionSnapshot.Input, &rankedHydration); err != nil || len(rankedHydration.ReleaseIDs) != 10 {
+		t.Fatalf("ranked hydration input=%s err=%v; want ten selected catalog releases", acquisitionSnapshot.Input, err)
+	}
 	releaseKeys := make([]string, 101)
 	for index := range releaseKeys {
 		releaseKeys[index] = fmt.Sprintf("%08x-4444-4444-8444-%012x", index+1, index+1)
@@ -369,8 +389,8 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &pendingDeliveries); err != nil {
 		t.Fatal(err)
 	}
-	if consumedDeliveries != 4 || pendingDeliveries != 0 {
-		t.Fatalf("matching delivery counts consumed=%d pending=%d; want 4 consumed and no pending wake", consumedDeliveries, pendingDeliveries)
+	if consumedDeliveries != 5 || pendingDeliveries != 0 {
+		t.Fatalf("matching delivery counts consumed=%d pending=%d; want ranking wake consumed and no pending wake", consumedDeliveries, pendingDeliveries)
 	}
 	var finalGroupingEpoch int64
 	if err := database.NewRaw(`SELECT grouping_epoch FROM matching_run WHERE id=?`, parentID).Scan(ctx, &finalGroupingEpoch); err != nil || finalGroupingEpoch != groupingEpoch {
@@ -408,25 +428,26 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 		t.Fatalf("accepted sparse provider graph releases=%d err=%v; want 101 persisted releases", len(graph.Releases), err)
 	}
 
-	// Explicitly select one catalog release, fetch its detail through the real
-	// provider worker, then let the matching wake write and consume the seal.
-	hydrated, err := acquisition.HydrateShortlist(ctx, parentID, acquisitionSnapshot.Revision, []string{releaseKeys[0]})
-	if err != nil || !hydrated {
-		t.Fatalf("admit explicit release shortlist: changed=%v err=%v", hydrated, err)
+	// Fetch each ranked lookup using the real provider worker. Every settlement
+	// wakes the matching worker; the final wake seals the complete ranked set.
+	var lookupIDs []uuid.UUID
+	if err := database.NewRaw(`SELECT operation.id FROM matching_provider_dependency dependency JOIN operation ON operation.id=dependency.request_id WHERE dependency.parent_run_id=? AND operation.kind='provider_release_lookup' ORDER BY operation.id`, parentID).Scan(ctx, &lookupIDs); err != nil {
+		t.Fatalf("read ranked release lookup operations: %v", err)
 	}
-	var lookupID uuid.UUID
-	if err := database.NewRaw(`SELECT operation.id FROM matching_provider_dependency dependency JOIN operation ON operation.id=dependency.request_id WHERE dependency.parent_run_id=? AND operation.kind='provider_release_lookup'`, parentID).Scan(ctx, &lookupID); err != nil {
-		t.Fatalf("read selected release lookup operation: %v", err)
+	if len(lookupIDs) != len(rankedHydration.ReleaseIDs) {
+		t.Fatalf("ranked release lookup count=%d; want %d", len(lookupIDs), len(rankedHydration.ReleaseIDs))
 	}
-	runProviderDelivery(lookupID)
-	runMatchingDelivery(nextWake())
+	for _, lookupID := range lookupIDs {
+		runProviderDelivery(lookupID)
+		runMatchingDelivery(nextWake())
+	}
 	parentAfterSeal, err := repository.GetOperation(ctx, parentID)
 	if err != nil || parentAfterSeal.State != "queued" || parentAfterSeal.Stage != "evaluation_queued" || parentAfterSeal.RiverJobID == nil {
 		t.Fatalf("hydration did not seal and queue evaluation: operation=%+v err=%v", parentAfterSeal, err)
 	}
 	evaluationJobID := *parentAfterSeal.RiverJobID
 	sealed, exists, err := acquisition.EvaluationSeal(ctx, parentID)
-	if err != nil || !exists || sealed.SchemaVersion != 2 || len(sealed.ReleaseIDs) != 1 || sealed.ReleaseIDs[0] != releaseKeys[0] || len(sealed.ReleaseLookupCacheKeys) != 1 || sealed.ReleaseLookupCacheKeys[0] != "release-lookup:"+releaseKeys[0] {
+	if err != nil || !exists || sealed.SchemaVersion != 2 || len(sealed.ReleaseIDs) != len(rankedHydration.ReleaseIDs) || len(sealed.ReleaseLookupCacheKeys) != len(rankedHydration.ReleaseIDs) {
 		t.Fatalf("read persisted evaluation seal: input=%+v exists=%v err=%v", sealed, exists, err)
 	}
 	setMatchingRiverJobRunning(t, ctx, database, evaluationJobID)

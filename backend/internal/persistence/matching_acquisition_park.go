@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/matchingfit"
 	"github.com/uptrace/bun"
 )
 
-// ParkMatchingAcquisitionForDelivery records an accepted empty initial artist
-// search as a manual-review wait and consumes its current delivery atomically.
+// ParkMatchingAcquisitionForDelivery records an evidence-backed acquisition
+// policy wait and consumes its current delivery atomically.
 func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 	ctx context.Context,
 	operationID uuid.UUID,
@@ -45,9 +46,12 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 		State  string `json:"state"`
 		Reason string `json:"reason"`
 	}
-	if err := json.Unmarshal(phase.Output, &output); err != nil || output.State != "waiting_policy" || output.Reason != "artist_search_no_results" {
+	if err := json.Unmarshal(phase.Output, &output); err != nil || output.State != "waiting_policy" ||
+		(output.Reason != "artist_search_no_results" && output.Reason != "artist_not_fit" && output.Reason != "catalog_no_results" && output.Reason != "no_candidates") {
 		return false, fmt.Errorf("park matching acquisition: empty search outcome is invalid")
 	}
+	catalogEmpty := output.Reason == "catalog_no_results" || output.Reason == "no_candidates"
+	artistNotFit := output.Reason == "artist_not_fit"
 
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
@@ -134,56 +138,140 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			Phase    string `bun:"current_phase"`
 			Revision int64  `bun:"revision"`
 			Intent   []byte `bun:"intent"`
+			Digest   []byte `bun:"intent_digest"`
 		}
-		if err := tx.NewRaw(`SELECT intent_version, current_phase, revision, intent FROM matching_acquisition WHERE run_id=? FOR UPDATE`, operationID).Scan(ctx, &acquisition); err != nil {
+		if err := tx.NewRaw(`SELECT intent_version, current_phase, revision, intent, intent_digest FROM matching_acquisition WHERE run_id=? FOR UPDATE`, operationID).Scan(ctx, &acquisition); err != nil {
 			return fmt.Errorf("park matching acquisition: lock acquisition intent: %w", err)
 		}
-		if acquisition.Version != matchingAcquisitionIntentVersion || acquisition.Phase != "admitted" || acquisition.Revision != expectedRevision {
+		expectedPhase := "admitted"
+		if catalogEmpty {
+			expectedPhase = "catalog_ready"
+		}
+		if acquisition.Version != matchingAcquisitionIntentVersion || acquisition.Phase != expectedPhase || acquisition.Revision != expectedRevision {
 			return nil
 		}
 		var intent MatchingAcquisitionIntent
-		if json.Unmarshal(acquisition.Intent, &intent) != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion || len(intent.InitialProviderInputs) != 1 {
+		if json.Unmarshal(acquisition.Intent, &intent) != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion {
 			return fmt.Errorf("park matching acquisition: saved acquisition intent is invalid")
 		}
-		initial := intent.InitialProviderInputs[0]
-		if initial.Kind != "provider_artist_search" || initial.OperationID == uuid.Nil || initial.CacheKey == "" || !json.Valid(initial.Input) || string(initial.Input) != string(phase.Input) ||
-			provenance[0].RequestID != initial.OperationID || provenance[0].CacheKey != initial.CacheKey {
-			return fmt.Errorf("park matching acquisition: phase does not match the captured initial search")
+		var runPlan struct {
+			Digest []byte `bun:"plan_digest"`
+			Plan   []byte `bun:"immutable_plan"`
 		}
-		var request struct {
-			SchemaVersion int    `json:"schema_version"`
-			Query         string `json:"query"`
-			Offset        int    `json:"offset"`
-			Limit         int    `json:"limit"`
+		if err := tx.NewRaw(`SELECT plan_digest, immutable_plan FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
+			return fmt.Errorf("park matching acquisition: read immutable matching plan: %w", err)
 		}
-		if json.Unmarshal(initial.Input, &request) != nil || request.SchemaVersion != 1 || strings.TrimSpace(request.Query) == "" ||
-			request.Offset != 0 || request.Limit < 1 || request.Limit > 100 ||
-			initial.CacheKey != fmt.Sprintf("artist-search:0:%d:%s", request.Limit, strings.TrimSpace(request.Query)) {
-			return fmt.Errorf("park matching acquisition: captured initial search is invalid")
+		if err := validateCanonicalMatchingAcquisitionIntent(intent, acquisition.Digest, runPlan.Digest, runPlan.Plan); err != nil {
+			return fmt.Errorf("park matching acquisition: %w", err)
+		}
+		var targets []MatchingTarget
+		if err := tx.NewRaw(`SELECT group_id, captured_group_revision AS revision FROM matching_run_target WHERE run_id=? ORDER BY group_id`, operationID).Scan(ctx, &targets); err != nil {
+			return fmt.Errorf("park matching acquisition: read immutable targets: %w", err)
+		}
+		if !equalMatchingTargets(intent.Targets, targets) {
+			return fmt.Errorf("park matching acquisition: saved targets differ from immutable run targets")
 		}
 		previous := new(MatchingAcquisitionPhase)
 		if err := tx.NewRaw(`SELECT revision, phase, input, output, response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, operationID, expectedRevision).Scan(ctx, previous); err != nil {
 			return fmt.Errorf("park matching acquisition: read previous phase: %w", err)
 		}
-		if previous.Revision != expectedRevision || previous.Phase != "admitted" {
+		if previous.Revision != expectedRevision || previous.Phase != expectedPhase {
 			return fmt.Errorf("park matching acquisition: saved phase cursor is inconsistent")
 		}
-		kind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, operationID, provenance[0])
-		if err != nil {
-			return err
-		}
-		var accepted struct {
-			Artists *[]json.RawMessage `json:"artists"`
-			Count   *int               `json:"count"`
-			Offset  *int               `json:"offset"`
-		}
-		if kind != "provider_artist_search" || json.Unmarshal(payload, &accepted) != nil || accepted.Artists == nil || len(*accepted.Artists) != 0 ||
-			accepted.Count == nil || *accepted.Count != 0 || accepted.Offset == nil || *accepted.Offset != request.Offset {
-			return fmt.Errorf("park matching acquisition: accepted search does not prove an empty initial result")
-		}
-		resultHash := sha256.Sum256(payload)
-		if fmt.Sprintf("%x", resultHash[:]) != provenance[0].PayloadSHA {
-			return fmt.Errorf("park matching acquisition: accepted search payload changed")
+		if catalogEmpty {
+			if !json.Valid(phase.Input) || !json.Valid(previous.Output) || string(phase.Input) != string(previous.Output) {
+				return fmt.Errorf("park matching acquisition: catalog wait does not match the saved manifest")
+			}
+			kind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, operationID, provenance[0])
+			if err != nil {
+				return err
+			}
+			var page struct {
+				Count    *int               `json:"release-count"`
+				Offset   *int               `json:"release-offset"`
+				Releases *[]json.RawMessage `json:"releases"`
+			}
+			var manifest struct {
+				Count *int     `json:"catalog_count"`
+				IDs   []string `json:"release_ids"`
+			}
+			if kind != "provider_artist_release_browse" || json.Unmarshal(payload, &page) != nil || page.Count == nil || *page.Count != 0 || page.Offset == nil || *page.Offset != 0 || page.Releases == nil || len(*page.Releases) != 0 ||
+				json.Unmarshal(phase.Input, &manifest) != nil || manifest.Count == nil || *manifest.Count != 0 || len(manifest.IDs) != 0 {
+				return fmt.Errorf("park matching acquisition: accepted catalog does not prove an empty result")
+			}
+			resultHash := sha256.Sum256(payload)
+			if fmt.Sprintf("%x", resultHash[:]) != provenance[0].PayloadSHA {
+				return fmt.Errorf("park matching acquisition: accepted catalog payload changed")
+			}
+		} else {
+			if len(intent.InitialProviderInputs) != 1 {
+				return fmt.Errorf("park matching acquisition: saved initial search intent is invalid")
+			}
+			initial := intent.InitialProviderInputs[0]
+			if initial.Kind != "provider_artist_search" || initial.OperationID == uuid.Nil || initial.CacheKey == "" || !json.Valid(initial.Input) || string(initial.Input) != string(phase.Input) ||
+				provenance[0].RequestID != initial.OperationID || provenance[0].CacheKey != initial.CacheKey {
+				return fmt.Errorf("park matching acquisition: phase does not match the captured initial search")
+			}
+			var request struct {
+				SchemaVersion int    `json:"schema_version"`
+				Query         string `json:"query"`
+				Offset        int    `json:"offset"`
+				Limit         int    `json:"limit"`
+			}
+			if json.Unmarshal(initial.Input, &request) != nil || request.SchemaVersion != 1 || strings.TrimSpace(request.Query) == "" ||
+				request.Offset != 0 || request.Limit < 1 || request.Limit > 100 ||
+				initial.CacheKey != fmt.Sprintf("artist-search:0:%d:%s", request.Limit, strings.TrimSpace(request.Query)) {
+				return fmt.Errorf("park matching acquisition: captured initial search is invalid")
+			}
+			kind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, operationID, provenance[0])
+			if err != nil {
+				return err
+			}
+			var accepted struct {
+				Artists *[]json.RawMessage `json:"artists"`
+				Count   *int               `json:"count"`
+				Offset  *int               `json:"offset"`
+			}
+			if kind != "provider_artist_search" || json.Unmarshal(payload, &accepted) != nil || accepted.Artists == nil ||
+				accepted.Count == nil || accepted.Offset == nil || *accepted.Offset != request.Offset {
+				return fmt.Errorf("park matching acquisition: accepted search result is invalid")
+			}
+			if artistNotFit {
+				if *accepted.Count < 1 || len(*accepted.Artists) == 0 {
+					return fmt.Errorf("park matching acquisition: accepted search does not contain a result for artist-fit review")
+				}
+				var top struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				}
+				if json.Unmarshal((*accepted.Artists)[0], &top) != nil || strings.TrimSpace(top.Name) == "" {
+					return fmt.Errorf("park matching acquisition: accepted top artist is invalid")
+				}
+				parsedID, parseErr := uuid.Parse(top.ID)
+				if parseErr != nil || parsedID == uuid.Nil || parsedID.String() != strings.ToLower(top.ID) {
+					return fmt.Errorf("park matching acquisition: accepted top artist id is invalid")
+				}
+				if len(intent.CapturedMembers) == 0 {
+					return fmt.Errorf("park matching acquisition: saved metadata capture is empty")
+				}
+				tags := make([]json.RawMessage, 0, len(intent.CapturedMembers))
+				for _, member := range intent.CapturedMembers {
+					tags = append(tags, member.Tags)
+				}
+				fit, available, fitErr := matchingfit.Fit(tags, top.Name)
+				if fitErr != nil {
+					return fmt.Errorf("park matching acquisition: evaluate accepted artist fit: %w", fitErr)
+				}
+				if available && fit >= 0.70 {
+					return fmt.Errorf("park matching acquisition: accepted artist satisfies the fit policy")
+				}
+			} else if *accepted.Count != 0 || len(*accepted.Artists) != 0 {
+				return fmt.Errorf("park matching acquisition: accepted search does not prove an empty initial result")
+			}
+			resultHash := sha256.Sum256(payload)
+			if fmt.Sprintf("%x", resultHash[:]) != provenance[0].PayloadSHA {
+				return fmt.Errorf("park matching acquisition: accepted search payload changed")
+			}
 		}
 
 		now := time.Now().UTC()
