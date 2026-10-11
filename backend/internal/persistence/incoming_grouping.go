@@ -121,8 +121,14 @@ func (repository *IncomingGroupingRepository) CurrentCaptures(ctx context.Contex
 }
 
 func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]IncomingGroupingCapture, error) {
+	return loadIncomingGroupingCapturesForLocations(ctx, database, nil)
+}
+
+// loadIncomingGroupingCapturesForLocations preserves the global reader when no
+// scope is supplied, while allowing target captures to be constrained in SQL.
+func loadIncomingGroupingCapturesForLocations(ctx context.Context, database bun.IDB, locationIDs []uuid.UUID) ([]IncomingGroupingCapture, error) {
 	captures := make([]IncomingGroupingCapture, 0)
-	err := database.NewRaw(`
+	query := `
 		SELECT COALESCE(sha.success_sha_variant_id, work.id, location.id) AS variant_id,
 			work_identity.media_variant_id AS media_variant_id,
 			COALESCE(work.id, location.id) AS work_id, metadata.success_metadata_result_id AS capture_analysis_id,
@@ -175,7 +181,14 @@ func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]Inco
 		LEFT JOIN media_variant probe_variant ON probe_variant.id=probe.success_probe_variant_id
 		LEFT JOIN media_variant sha_variant ON sha_variant.id=sha.success_sha_variant_id
 		LEFT JOIN media_fingerprint_result fingerprint_result ON fingerprint_result.id=fingerprint.success_fingerprint_result_id
-		ORDER BY variant_id, root.id, location.relative_path, work.id`).Scan(ctx, &captures)
+		`
+	args := make([]any, 0, 1)
+	if len(locationIDs) > 0 {
+		query += ` WHERE location.id IN (?)`
+		args = append(args, bun.List(locationIDs))
+	}
+	query += ` ORDER BY variant_id, root.id, location.relative_path, work.id`
+	err := database.NewRaw(query, args...).Scan(ctx, &captures)
 	if err != nil {
 		return nil, fmt.Errorf("read current incoming grouping captures: %w", err)
 	}

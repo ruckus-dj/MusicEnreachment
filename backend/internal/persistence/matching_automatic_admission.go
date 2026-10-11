@@ -74,8 +74,8 @@ type automaticArtistAnalysisInput struct {
 
 // AdmitAutomaticArtistMatchingRun fences and captures one current group and
 // atomically records its permanent semantic admission receipt and durable work.
-// The event delivery fence is mandatory; consumer-side version propagation is
-// intentionally handled by the next rollout slice.
+// The event delivery fence is mandatory; the immutable run carries the
+// versioned target fence consumed by delivery persistence.
 func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx context.Context, client RiverInserter, admission AutomaticArtistMatchingAdmission) (AutomaticArtistMatchingAdmissionResult, error) {
 	if client == nil || admission.Parent == nil || admission.GroupID == uuid.Nil || admission.ExpectedGroupRevision == "" ||
 		admission.EventID == uuid.Nil || admission.EventRiverJobID < 1 || admission.EventRiverAttempt < 1 || admission.EventDeliveryEpoch < 1 ||
@@ -223,6 +223,10 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err != nil {
 			return err
 		}
+		planBytes, err = canonicalMatchingJSON(planBytes)
+		if err != nil {
+			return fmt.Errorf("canonicalize automatic artist matching plan: %w", err)
+		}
 		planDigest := sha256.Sum256(planBytes)
 		if err := repository.createOperationAndEnqueueTx(ctx, tx, admission.Parent, client, admission.ParentArgs, nil); err != nil {
 			return err
@@ -253,17 +257,19 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id,request_id,cache_key) VALUES (?,?,?)`, admission.Parent.ID, provider.ID, *provider.ProviderCacheKey).Exec(ctx); err != nil {
 			return err
 		}
-		intent := map[string]any{
-			"schema_version": 2, "intent": "automatic_artist_acquisition",
-			"plan_digest": hex.EncodeToString(planDigest[:]), "target_capture_digest": hex.EncodeToString(captureDigest[:]),
-			"metadata_capture_digest": metadataDigest, "captured_members": metadataCapture,
-			"provider_source_id":              *provider.ProviderSourceID,
-			"provider_configuration_identity": *provider.ProviderConfigurationIdentity,
-			"query_descriptor":                descriptor, "artist_query_plan_version": admission.ArtistQueryPlanVersion,
-			"policy_version": admission.PolicyVersion,
-			"targets":        []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}},
+		intent := MatchingAcquisitionIntent{
+			SchemaVersion: matchingAutomaticAcquisitionIntentVersion, FenceVersion: 2,
+			GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planDigest[:]),
+			CaptureDigest: metadataDigest, CapturedMembers: metadataCapture,
+			PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: hex.EncodeToString(captureDigest[:]),
+			QueryDescriptor: descriptor, ArtistQueryPlanVersion: admission.ArtistQueryPlanVersion,
+			Targets: []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}},
+			InitialProviderInputs: []MatchingAcquisitionProviderRequest{{
+				OperationID: provider.ID, Kind: provider.Kind, CacheKey: *provider.ProviderCacheKey,
+				Input: append(json.RawMessage(nil), provider.InputSnapshot...),
+			}},
 		}
-		intentBytes, err := json.Marshal(intent)
+		intentBytes, err := canonicalMatchingAcquisitionIntentBytes(intent)
 		if err != nil {
 			return err
 		}
@@ -320,18 +326,19 @@ func captureAutomaticArtistTarget(ctx context.Context, tx bun.Tx, groupID uuid.U
 	if err := tx.NewRaw(`SELECT variant_id,ready FROM incoming_group_member WHERE group_id=? ORDER BY variant_id FOR SHARE`, groupID).Scan(ctx, &members); err != nil {
 		return capture, err
 	}
-	groups, err := loadIncomingGroupingGroups(ctx, tx)
-	if err != nil {
-		return capture, err
-	}
 	var locations []IncomingGroupingMemberLocation
-	for _, g := range groups {
-		if g.ID == groupID {
-			locations = g.Locations
-			break
-		}
+	if err := tx.NewRaw(`SELECT variant_id, source_root_id AS root_id, work_id, location_id, configured_path, inventory_path, relative_path, size_bytes, mtime
+		FROM incoming_group_member_location WHERE group_id=? ORDER BY variant_id, source_root_id, relative_path`, groupID).Scan(ctx, &locations); err != nil {
+		return capture, fmt.Errorf("load automatic artist target locations: %w", err)
 	}
-	captures, err := loadIncomingGroupingCaptures(ctx, tx)
+	locationIDs := make([]uuid.UUID, 0, len(locations))
+	for _, location := range locations {
+		locationIDs = append(locationIDs, location.LocationID)
+	}
+	if len(locationIDs) == 0 {
+		return capture, fmt.Errorf("automatic artist matching target capture has no persisted location")
+	}
+	captures, err := loadIncomingGroupingCapturesForLocations(ctx, tx, locationIDs)
 	if err != nil {
 		return capture, err
 	}

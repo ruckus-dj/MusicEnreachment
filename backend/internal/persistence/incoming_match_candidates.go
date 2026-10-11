@@ -20,6 +20,10 @@ import (
 
 var ErrIncomingMatchConflict = errors.New("incoming matching snapshot changed")
 
+// ErrMatchingTargetNeedsRefresh defers a version-2 automatic delivery while
+// source grouping is dirty; the delivery must be retried after reconciliation.
+var ErrMatchingTargetNeedsRefresh = errors.New("automatic matching target needs refresh")
+
 // IncomingMatchMemberFence identifies a file member without retaining a
 // foreign-key reference to the inventory or media-variant tables.
 type IncomingMatchMemberFence struct {

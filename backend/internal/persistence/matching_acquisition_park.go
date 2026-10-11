@@ -65,8 +65,10 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			return fmt.Errorf("park matching acquisition: lock provider configuration: %w", err)
 		}
 		var sourceFence matchingAcquisitionSourceFence
-		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint
-			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, operationID).Scan(ctx, &sourceFence); err != nil {
+		var fenceVersion int
+		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint, run.fence_version
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, operationID).Scan(ctx,
+			&sourceFence.SourceID, &sourceFence.Identity, &sourceFence.ProviderID, &sourceFence.Endpoint, &fenceVersion); err != nil {
 			return fmt.Errorf("park matching acquisition: read run source fence: %w", err)
 		}
 		var configIdentity, sourceIdentity string
@@ -84,7 +86,21 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			return fmt.Errorf("park matching acquisition: lock target groups: %w", err)
 		}
 		var stale bool
-		if err := tx.NewRaw(`SELECT EXISTS (
+		switch fenceVersion {
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, operationID, fenceVersion); err != nil {
+				return err
+			}
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR current_group.revision IS DISTINCT FROM target.captured_group_revision))`, operationID).Scan(ctx, &stale); err != nil {
+				return fmt.Errorf("park matching acquisition: validate target generations: %w", err)
+			}
+		case 1:
+			if err := tx.NewRaw(`SELECT EXISTS (
 			SELECT 1 FROM matching_run_target target
 			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
@@ -92,7 +108,10 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 				generation.high_water IS DISTINCT FROM target.target_generation OR
 				current_group.revision IS DISTINCT FROM target.captured_group_revision)
 			) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, operationID).Scan(ctx, &stale); err != nil {
-			return fmt.Errorf("park matching acquisition: validate target generations: %w", err)
+				return fmt.Errorf("park matching acquisition: validate target generations: %w", err)
+			}
+		default:
+			return fmt.Errorf("park matching acquisition: unsupported fence version %d", fenceVersion)
 		}
 		if stale {
 			return nil
@@ -147,11 +166,11 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 		if catalogEmpty {
 			expectedPhase = "catalog_ready"
 		}
-		if acquisition.Version != matchingAcquisitionIntentVersion || acquisition.Phase != expectedPhase || acquisition.Revision != expectedRevision {
+		if !supportedMatchingAcquisitionIntentVersion(acquisition.Version) || acquisition.Phase != expectedPhase || acquisition.Revision != expectedRevision {
 			return nil
 		}
 		var intent MatchingAcquisitionIntent
-		if json.Unmarshal(acquisition.Intent, &intent) != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion {
+		if json.Unmarshal(acquisition.Intent, &intent) != nil || intent.SchemaVersion != acquisition.Version {
 			return fmt.Errorf("park matching acquisition: saved acquisition intent is invalid")
 		}
 		var runPlan struct {

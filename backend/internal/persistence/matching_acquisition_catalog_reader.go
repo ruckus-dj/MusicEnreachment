@@ -25,35 +25,41 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionCatalogPhases(ct
 	defer func() { _ = tx.Rollback() }()
 
 	var run struct {
-		OperationID uuid.UUID `bun:"operation_id"`
-		Kind        string    `bun:"kind"`
-		PlanDigest  []byte    `bun:"plan_digest"`
-		Plan        []byte    `bun:"immutable_plan"`
+		OperationID  uuid.UUID `bun:"operation_id"`
+		Kind         string    `bun:"kind"`
+		PlanDigest   []byte    `bun:"plan_digest"`
+		Plan         []byte    `bun:"immutable_plan"`
+		FenceVersion int       `bun:"fence_version"`
 	}
 	var intentBytes, intentDigest []byte
 	var version int
 	var currentPhase string
 	var currentRevision int64
-	err = tx.NewRaw(`SELECT run.operation_id, operation.kind, run.plan_digest, run.immutable_plan,
+	err = tx.NewRaw(`SELECT run.operation_id, operation.kind, run.plan_digest, run.immutable_plan, run.fence_version,
 		acquisition.intent, acquisition.intent_digest, acquisition.intent_version,
 		acquisition.current_phase, acquisition.revision
 		FROM matching_run run
 		JOIN operation ON operation.id=run.operation_id
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
 		WHERE run.id=?`, runID).Scan(ctx, &run.OperationID, &run.Kind, &run.PlanDigest, &run.Plan,
-		&intentBytes, &intentDigest, &version, &currentPhase, &currentRevision)
+		&run.FenceVersion, &intentBytes, &intentDigest, &version, &currentPhase, &currentRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("read matching acquisition catalog phases: acquisition run is missing")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read matching acquisition catalog phases: read run: %w", err)
 	}
-	if run.OperationID != runID || run.Kind != "matching_evaluation_v1" || version != matchingAcquisitionIntentVersion {
+	if run.OperationID != runID || run.Kind != "matching_evaluation_v1" || !supportedMatchingAcquisitionIntentVersion(version) {
 		return nil, fmt.Errorf("read matching acquisition catalog phases: run is not owned by an acquisition")
 	}
 	var intent MatchingAcquisitionIntent
-	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion {
+	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != version {
 		return nil, fmt.Errorf("read matching acquisition catalog phases: saved intent is invalid")
+	}
+	if (run.FenceVersion == 1 && intent.SchemaVersion != matchingAcquisitionIntentVersion) ||
+		(run.FenceVersion == 2 && intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion) ||
+		(run.FenceVersion != 1 && run.FenceVersion != 2) {
+		return nil, fmt.Errorf("read matching acquisition catalog phases: run fence version differs from saved intent")
 	}
 	if err := validateCanonicalMatchingAcquisitionIntent(intent, intentDigest, run.PlanDigest, run.Plan); err != nil {
 		return nil, fmt.Errorf("read matching acquisition catalog phases: %w", err)

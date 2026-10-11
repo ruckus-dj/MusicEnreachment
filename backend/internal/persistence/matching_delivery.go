@@ -36,11 +36,15 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 			return fmt.Errorf("claim matching delivery: lock provider configuration: %w", err)
 		}
 		var runPlan struct {
-			SourceID uuid.UUID `bun:"provider_source_id"`
-			Identity string    `bun:"provider_configuration_identity"`
+			SourceID     uuid.UUID `bun:"provider_source_id"`
+			Identity     string    `bun:"provider_configuration_identity"`
+			FenceVersion int       `bun:"fence_version"`
 		}
-		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
+		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
 			return fmt.Errorf("claim matching delivery: read run: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("claim matching delivery: lock source mutation gate: %w", err)
 		}
 		var sourceIdentity string
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, runPlan.SourceID).Scan(ctx, &sourceIdentity); err != nil {
@@ -64,15 +68,34 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 			return nil
 		}
 		var stale bool
-		if err := tx.NewRaw(`SELECT EXISTS (
-			SELECT 1 FROM matching_run_target target
-			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
-			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
-			WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
-				generation.high_water IS DISTINCT FROM target.target_generation OR
-				current_group.revision IS DISTINCT FROM target.captured_group_revision)
-		) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, operationID).Scan(ctx, &stale); err != nil {
-			return fmt.Errorf("claim matching delivery: validate target generations: %w", err)
+		switch runPlan.FenceVersion {
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, operationID, runPlan.FenceVersion); err != nil {
+				return err
+			}
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR
+					current_group.revision IS DISTINCT FROM target.captured_group_revision)
+			)`, operationID).Scan(ctx, &stale); err != nil {
+				return fmt.Errorf("claim matching delivery: validate target generations: %w", err)
+			}
+		case 1:
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR
+					current_group.revision IS DISTINCT FROM target.captured_group_revision)
+			) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, operationID).Scan(ctx, &stale); err != nil {
+				return fmt.Errorf("claim matching delivery: validate target generations: %w", err)
+			}
+		default:
+			return fmt.Errorf("claim matching delivery: unsupported fence version %d", runPlan.FenceVersion)
 		}
 		if stale {
 			return nil
@@ -201,11 +224,18 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		var runPlan struct {
-			SourceID uuid.UUID `bun:"provider_source_id"`
-			Identity string    `bun:"provider_configuration_identity"`
+			SourceID     uuid.UUID `bun:"provider_source_id"`
+			Identity     string    `bun:"provider_configuration_identity"`
+			FenceVersion int       `bun:"fence_version"`
 		}
-		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("fail matching delivery: lock provider configuration: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
 			return fmt.Errorf("fail matching delivery: read run identity: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("fail matching delivery: lock source mutation gate: %w", err)
 		}
 		var sourceIdentity string
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, runPlan.SourceID).Scan(ctx, &sourceIdentity); err != nil {
@@ -220,9 +250,6 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 			JOIN incoming_group current_group ON current_group.id=target.group_id
 			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, operationID).Scan(ctx, &lockedGroups); err != nil {
 			return fmt.Errorf("fail matching delivery: lock target groups and generations: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-			return fmt.Errorf("fail matching delivery: lock provider configuration: %w", err)
 		}
 		var configurationIdentity string
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &configurationIdentity); err != nil {
@@ -264,12 +291,21 @@ func (repository *SetupManagerRepository) FailMatchingDelivery(ctx context.Conte
 				break
 			}
 		}
-		var groupingNeedsRefresh bool
-		if err := tx.NewRaw(`SELECT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &groupingNeedsRefresh); err != nil {
-			return fmt.Errorf("fail matching delivery: check grouping freshness: %w", err)
-		}
-		if groupingNeedsRefresh {
-			staleTargets = true
+		switch runPlan.FenceVersion {
+		case 1:
+			var groupingNeedsRefresh bool
+			if err := tx.NewRaw(`SELECT needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &groupingNeedsRefresh); err != nil {
+				return fmt.Errorf("fail matching delivery: check grouping freshness: %w", err)
+			}
+			if groupingNeedsRefresh {
+				staleTargets = true
+			}
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, operationID, runPlan.FenceVersion); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("fail matching delivery: unsupported fence version %d", runPlan.FenceVersion)
 		}
 		if staleTargets {
 			return nil

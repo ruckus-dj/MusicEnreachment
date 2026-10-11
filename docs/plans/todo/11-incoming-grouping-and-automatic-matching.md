@@ -959,6 +959,21 @@ normalization для score в точности. Если по имеющимся
   production reconciliation consumer не подключён. Этот increment не включает
   automatic trigger и не является end-to-end приёмкой.
 
+### Target-fence persistence propagation — 2026-10-12
+
+- Versioned delivery/phase guards поддерживают fence-v2 target captures без
+  инвалидирования из-за unrelated grouping epoch; legacy global fences сохранены.
+  Dirty grouping — retry barrier, а не подтверждение незавершённой delivery.
+  Immutable acquisition readers проверяют plan/intent/targets/capture binding.
+- Canonical hashing включает nested query descriptor и plan; JSONB round-trip
+  не подменяет digest. PostgreSQL tests проверяют v2 readers/claim при unrelated
+  epoch change, target-source rejection и сохранение original metadata capture.
+- Target capture SQL ограничен target locations и works; global legacy reader
+  не изменён. Dedicated query-scoping/concurrency matrix ещё требует расширения.
+- Независимое review одобрило bounded persistence scope; полный `task verify`
+  повторно прошёл в primary. Evaluation/publication/apply fence propagation и
+  production consumer ещё не завершены; automatic trigger пока не включён.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

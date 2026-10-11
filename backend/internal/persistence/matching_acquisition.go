@@ -17,6 +17,7 @@ import (
 )
 
 const matchingAcquisitionIntentVersion = 1
+const matchingAutomaticAcquisitionIntentVersion = 2
 
 const (
 	MatchingAcquisitionArtistCatalogPage = "artist_catalog_page"
@@ -112,8 +113,10 @@ func (repository *SetupManagerRepository) startMatchingReleaseHydration(
 			return err
 		}
 		var source matchingAcquisitionSourceFence
-		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint
-			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, runID).Scan(ctx, &source); err != nil {
+		var fenceVersion int
+		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint, run.fence_version
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, runID).Scan(ctx,
+			&source.SourceID, &source.Identity, &source.ProviderID, &source.Endpoint, &fenceVersion); err != nil {
 			return err
 		}
 		var configIdentity string
@@ -153,14 +156,31 @@ func (repository *SetupManagerRepository) startMatchingReleaseHydration(
 			return nil
 		}
 		var stale bool
-		if err := tx.NewRaw(`SELECT EXISTS (
+		switch fenceVersion {
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, runID, fenceVersion); err != nil {
+				return err
+			}
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR current_group.revision IS DISTINCT FROM target.captured_group_revision))`, runID).Scan(ctx, &stale); err != nil {
+				return err
+			}
+		case 1:
+			if err := tx.NewRaw(`SELECT EXISTS (
 			SELECT 1 FROM matching_run_target target
 			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
 			WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
 				generation.high_water IS DISTINCT FROM target.target_generation OR current_group.revision IS DISTINCT FROM target.captured_group_revision))
 			OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, runID).Scan(ctx, &stale); err != nil {
-			return err
+				return err
+			}
+		default:
+			return fmt.Errorf("start matching release hydration: unsupported fence version %d", fenceVersion)
 		}
 		if stale {
 			return fmt.Errorf("start matching release hydration: captured targets are stale")
@@ -312,14 +332,18 @@ func (repository *SetupManagerRepository) startMatchingReleaseHydration(
 }
 
 type MatchingAcquisitionIntent struct {
-	SchemaVersion         int                                  `json:"schema_version"`
-	GroupingEpoch         int64                                `json:"grouping_epoch"`
-	PlanDigest            string                               `json:"evaluation_plan_digest"`
-	CaptureDigest         string                               `json:"capture_digest"`
-	CapturedMembers       []MatchingAcquisitionCapturedMember  `json:"captured_members"`
-	PolicyVersion         string                               `json:"policy_version"`
-	Targets               []MatchingTarget                     `json:"targets"`
-	InitialProviderInputs []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
+	SchemaVersion          int                                  `json:"schema_version"`
+	FenceVersion           int                                  `json:"fence_version,omitempty"`
+	GroupingEpoch          int64                                `json:"grouping_epoch"`
+	PlanDigest             string                               `json:"evaluation_plan_digest"`
+	CaptureDigest          string                               `json:"capture_digest"`
+	CapturedMembers        []MatchingAcquisitionCapturedMember  `json:"captured_members"`
+	PolicyVersion          string                               `json:"policy_version"`
+	TargetCaptureDigest    string                               `json:"target_capture_digest,omitempty"`
+	QueryDescriptor        json.RawMessage                      `json:"query_descriptor,omitempty"`
+	ArtistQueryPlanVersion int                                  `json:"artist_query_plan_version,omitempty"`
+	Targets                []MatchingTarget                     `json:"targets"`
+	InitialProviderInputs  []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
 }
 
 // MatchingAcquisitionCapturedMember is the exact persisted metadata snapshot
@@ -372,22 +396,29 @@ type MatchingAcquisitionSnapshot struct {
 
 func (repository *SetupManagerRepository) GetMatchingAcquisition(ctx context.Context, runID uuid.UUID) (MatchingAcquisitionSnapshot, bool, error) {
 	var snapshot MatchingAcquisitionSnapshot
-	var intent []byte
+	var intent, intentDigest, planDigest, planBytes []byte
+	var intentVersion int
 	err := repository.db.NewRaw(`SELECT acquisition.intent, acquisition.revision, acquisition.current_phase,
 		phase.input, phase.output,
 		EXISTS (SELECT 1 FROM matching_provider_dependency dependency
-			WHERE dependency.parent_run_id=acquisition.run_id AND dependency.terminal_outcome='failed')
+			WHERE dependency.parent_run_id=acquisition.run_id AND dependency.terminal_outcome='failed'),
+		acquisition.intent_digest, run.plan_digest, run.immutable_plan, acquisition.intent_version
 		FROM matching_acquisition acquisition
+		JOIN matching_run run ON run.id=acquisition.run_id
 		JOIN matching_acquisition_phase phase ON phase.run_id=acquisition.run_id AND phase.revision=acquisition.revision
-		WHERE acquisition.run_id=?`, runID).Scan(ctx, &intent, &snapshot.Revision, &snapshot.Phase, &snapshot.Input, &snapshot.Output, &snapshot.FailedProviderDependency)
+		WHERE acquisition.run_id=?`, runID).Scan(ctx, &intent, &snapshot.Revision, &snapshot.Phase, &snapshot.Input, &snapshot.Output,
+		&snapshot.FailedProviderDependency, &intentDigest, &planDigest, &planBytes, &intentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MatchingAcquisitionSnapshot{}, false, nil
 	}
 	if err != nil {
 		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: %w", err)
 	}
-	if err := json.Unmarshal(intent, &snapshot.Intent); err != nil || snapshot.Intent.SchemaVersion != matchingAcquisitionIntentVersion {
+	if err := json.Unmarshal(intent, &snapshot.Intent); err != nil || intentVersion != snapshot.Intent.SchemaVersion {
 		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: saved intent is invalid")
+	}
+	if err := repository.validateMatchingAcquisitionRead(ctx, runID, snapshot.Intent, intentDigest, planDigest, planBytes); err != nil {
+		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: %w", err)
 	}
 	return snapshot, true, nil
 }
@@ -468,12 +499,13 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionMetadataCapture(
 		return nil, "", false, fmt.Errorf("read matching metadata capture: run and expected phase are required")
 	}
 	var intentBytes, intentDigest, planDigest, planBytes []byte
+	var intentVersion int
 	var phase string
 	err := repository.db.NewRaw(`SELECT acquisition.intent, acquisition.intent_digest, acquisition.current_phase,
-		run.plan_digest, run.immutable_plan
+		run.plan_digest, run.immutable_plan, acquisition.intent_version
 		FROM matching_acquisition acquisition
 		JOIN matching_run run ON run.id=acquisition.run_id
-		WHERE acquisition.run_id=?`, runID).Scan(ctx, &intentBytes, &intentDigest, &phase, &planDigest, &planBytes)
+		WHERE acquisition.run_id=?`, runID).Scan(ctx, &intentBytes, &intentDigest, &phase, &planDigest, &planBytes, &intentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", false, nil
 	}
@@ -484,23 +516,68 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionMetadataCapture(
 		return nil, "", false, fmt.Errorf("read matching metadata capture: acquisition phase changed")
 	}
 	var intent MatchingAcquisitionIntent
-	if err := json.Unmarshal(intentBytes, &intent); err != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion || intent.CaptureDigest == "" {
+	if err := json.Unmarshal(intentBytes, &intent); err != nil || !supportedMatchingAcquisitionIntentVersion(intent.SchemaVersion) ||
+		intentVersion != intent.SchemaVersion || intent.CaptureDigest == "" {
 		return nil, "", false, fmt.Errorf("read matching metadata capture: saved capture is invalid")
 	}
-	if err := validateCanonicalMatchingAcquisitionIntent(intent, intentDigest, planDigest, planBytes); err != nil {
+	if err := repository.validateMatchingAcquisitionRead(ctx, runID, intent, intentDigest, planDigest, planBytes); err != nil {
 		return nil, "", false, fmt.Errorf("read matching metadata capture: %w", err)
-	}
-	var targets []MatchingTarget
-	if err := repository.db.NewRaw(`SELECT group_id, captured_group_revision AS revision FROM matching_run_target WHERE run_id=? ORDER BY group_id`, runID).Scan(ctx, &targets); err != nil {
-		return nil, "", false, fmt.Errorf("read matching metadata capture: read immutable targets: %w", err)
-	}
-	if !equalMatchingTargets(intent.Targets, targets) {
-		return nil, "", false, fmt.Errorf("read matching metadata capture: saved targets differ from immutable run targets")
 	}
 	return append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...), intent.CaptureDigest, true, nil
 }
 
+// validateMatchingAcquisitionRead verifies only durable, immutable run inputs.
+// It deliberately does not inspect mutable grouping/source tables: readers must
+// continue to expose the original capture even when a later fence will reject it.
+func (repository *SetupManagerRepository) validateMatchingAcquisitionRead(
+	ctx context.Context,
+	runID uuid.UUID,
+	intent MatchingAcquisitionIntent,
+	intentDigest, planDigest, planBytes []byte,
+) error {
+	if err := validateCanonicalMatchingAcquisitionIntent(intent, intentDigest, planDigest, planBytes); err != nil {
+		return err
+	}
+	type immutableTarget struct {
+		GroupID       uuid.UUID       `bun:"group_id"`
+		Revision      string          `bun:"captured_group_revision"`
+		Capture       json.RawMessage `bun:"target_capture"`
+		CaptureDigest []byte          `bun:"target_capture_digest"`
+	}
+	var stored []immutableTarget
+	if err := repository.db.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest
+		FROM matching_run_target WHERE run_id=? ORDER BY group_id`, runID).Scan(ctx, &stored); err != nil {
+		return fmt.Errorf("read immutable targets: %w", err)
+	}
+	targets := make([]MatchingTarget, 0, len(stored))
+	for _, target := range stored {
+		targets = append(targets, MatchingTarget{GroupID: target.GroupID, Revision: target.Revision})
+	}
+	if !equalMatchingTargets(intent.Targets, targets) {
+		return fmt.Errorf("saved targets differ from immutable run targets")
+	}
+	if intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion {
+		return nil
+	}
+	if intent.FenceVersion != 2 || len(stored) != 1 || len(stored[0].Capture) == 0 || len(stored[0].CaptureDigest) != sha256.Size {
+		return fmt.Errorf("version-2 immutable target capture is missing")
+	}
+	canonicalCapture, captureHash, err := automaticArtistTargetCaptureDigest(stored[0].Capture)
+	if err != nil || !equalDigest(captureHash[:], stored[0].CaptureDigest) || fmt.Sprintf("%x", captureHash[:]) != intent.TargetCaptureDigest {
+		return fmt.Errorf("immutable target capture digest changed")
+	}
+	var capture automaticArtistTargetCapture
+	if json.Unmarshal(canonicalCapture, &capture) != nil || capture.SchemaVersion != 2 ||
+		capture.GroupID != stored[0].GroupID || capture.GroupRevision != stored[0].Revision {
+		return fmt.Errorf("immutable target capture is invalid")
+	}
+	return nil
+}
+
 func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent, intentDigest, planDigest, planBytes []byte) error {
+	if !supportedMatchingAcquisitionIntentVersion(intent.SchemaVersion) {
+		return fmt.Errorf("saved intent schema version is unsupported")
+	}
 	canonicalIntent := intent
 	var err error
 	canonicalIntent.CapturedMembers, err = normalizeCapturedMatchingMembers(intent.CapturedMembers)
@@ -545,17 +622,58 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 	if err := json.Unmarshal(planBytes, &planEnvelope); err != nil {
 		return fmt.Errorf("immutable matching plan is invalid")
 	}
-	if planEnvelope.SchemaVersion == 2 || planEnvelope.SchemaVersion == 3 {
+	switch planEnvelope.SchemaVersion {
+	case 1:
+		if intent.SchemaVersion != matchingAcquisitionIntentVersion || intent.FenceVersion != 0 {
+			return fmt.Errorf("saved intent scope differs from immutable matching plan")
+		}
+	case 2, 3:
 		var plan matchingPublisherPlan
-		if err := json.Unmarshal(planBytes, &plan); err != nil || plan.GroupingEpoch != intent.GroupingEpoch ||
+		if intent.SchemaVersion != matchingAcquisitionIntentVersion || intent.FenceVersion != 0 ||
+			json.Unmarshal(planBytes, &plan) != nil || plan.GroupingEpoch != intent.GroupingEpoch ||
 			plan.PolicyVersion != intent.PolicyVersion || !equalMatchingTargets(plan.Targets, intent.Targets) {
 			return fmt.Errorf("saved intent scope differs from immutable matching plan")
 		}
+	case 4:
+		var plan struct {
+			SchemaVersion          int             `json:"schema_version"`
+			Intent                 string          `json:"intent"`
+			Mode                   string          `json:"mode"`
+			TargetCaptureDigest    string          `json:"target_capture_digest"`
+			PolicyVersion          string          `json:"policy_version"`
+			ArtistQueryPlanVersion int             `json:"artist_query_plan_version"`
+			QueryDescriptor        json.RawMessage `json:"query_descriptor"`
+		}
+		if json.Unmarshal(planBytes, &plan) != nil || intent.SchemaVersion != 2 || intent.FenceVersion != 2 ||
+			plan.Intent != "automatic_artist_acquisition" || plan.Mode != "automatic" ||
+			intent.TargetCaptureDigest == "" || intent.TargetCaptureDigest != plan.TargetCaptureDigest ||
+			intent.PolicyVersion != plan.PolicyVersion || intent.ArtistQueryPlanVersion != plan.ArtistQueryPlanVersion ||
+			len(intent.QueryDescriptor) == 0 || len(plan.QueryDescriptor) == 0 {
+			return fmt.Errorf("saved intent scope differs from immutable matching plan")
+		}
+		intentQuery, intentQueryErr := canonicalMatchingJSON(intent.QueryDescriptor)
+		planQuery, planQueryErr := canonicalMatchingJSON(plan.QueryDescriptor)
+		if intentQueryErr != nil || planQueryErr != nil || !equalDigest(intentQuery, planQuery) {
+			return fmt.Errorf("saved intent query differs from immutable matching plan")
+		}
+	default:
+		return fmt.Errorf("immutable matching plan version is unsupported")
 	}
 	return nil
 }
 
+func supportedMatchingAcquisitionIntentVersion(version int) bool {
+	return version == matchingAcquisitionIntentVersion || version == matchingAutomaticAcquisitionIntentVersion
+}
+
 func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) ([]byte, error) {
+	if len(intent.QueryDescriptor) != 0 {
+		canonicalQuery, err := canonicalMatchingJSON(intent.QueryDescriptor)
+		if err != nil {
+			return nil, err
+		}
+		intent.QueryDescriptor = canonicalQuery
+	}
 	intent.CapturedMembers = append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...)
 	for index := range intent.CapturedMembers {
 		canonicalTags, err := canonicalMatchingJSON(intent.CapturedMembers[index].Tags)
@@ -667,8 +785,10 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 			return fmt.Errorf("advance matching acquisition: lock provider configuration: %w", err)
 		}
 		var sourceFence matchingAcquisitionSourceFence
-		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint
-			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, operationID).Scan(ctx, &sourceFence); err != nil {
+		var fenceVersion int
+		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint, run.fence_version
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, operationID).Scan(ctx,
+			&sourceFence.SourceID, &sourceFence.Identity, &sourceFence.ProviderID, &sourceFence.Endpoint, &fenceVersion); err != nil {
 			return fmt.Errorf("advance matching acquisition: read run source fence: %w", err)
 		}
 		var configIdentity, sourceIdentity string
@@ -686,7 +806,22 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 			return fmt.Errorf("advance matching acquisition: lock target groups: %w", err)
 		}
 		var stale bool
-		if err := tx.NewRaw(`SELECT EXISTS (
+		switch fenceVersion {
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, operationID, fenceVersion); err != nil {
+				return err
+			}
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR
+					current_group.revision IS DISTINCT FROM target.captured_group_revision))`, operationID).Scan(ctx, &stale); err != nil {
+				return fmt.Errorf("advance matching acquisition: validate target generations: %w", err)
+			}
+		case 1:
+			if err := tx.NewRaw(`SELECT EXISTS (
 			SELECT 1 FROM matching_run_target target
 			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
@@ -694,7 +829,10 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 				generation.high_water IS DISTINCT FROM target.target_generation OR
 				current_group.revision IS DISTINCT FROM target.captured_group_revision)
 			) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, operationID).Scan(ctx, &stale); err != nil {
-			return fmt.Errorf("advance matching acquisition: validate target generations: %w", err)
+				return fmt.Errorf("advance matching acquisition: validate target generations: %w", err)
+			}
+		default:
+			return fmt.Errorf("advance matching acquisition: unsupported fence version %d", fenceVersion)
 		}
 		if stale {
 			return nil
@@ -744,12 +882,12 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 		if err := tx.NewRaw(`SELECT intent_version, current_phase, revision, intent FROM matching_acquisition WHERE run_id=? FOR UPDATE`, operationID).Scan(ctx, &acquisition); err != nil {
 			return fmt.Errorf("advance matching acquisition: lock acquisition intent: %w", err)
 		}
-		if acquisition.Version != matchingAcquisitionIntentVersion || acquisition.Revision != expectedRevision ||
+		if !supportedMatchingAcquisitionIntentVersion(acquisition.Version) || acquisition.Revision != expectedRevision ||
 			!validMatchingAcquisitionTransition(acquisition.Phase, phase.Phase, children) {
 			return nil
 		}
 		var intent MatchingAcquisitionIntent
-		if err := json.Unmarshal(acquisition.Intent, &intent); err != nil || intent.SchemaVersion != matchingAcquisitionIntentVersion || len(intent.InitialProviderInputs) != 1 {
+		if err := json.Unmarshal(acquisition.Intent, &intent); err != nil || intent.SchemaVersion != acquisition.Version || len(intent.InitialProviderInputs) != 1 {
 			return fmt.Errorf("advance matching acquisition: saved acquisition intent is invalid")
 		}
 		var previous MatchingAcquisitionPhase

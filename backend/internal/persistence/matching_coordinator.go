@@ -373,6 +373,9 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
 			return fmt.Errorf("retry matching evaluation: lock provider configuration: %w", err)
 		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("retry matching evaluation: lock source mutation gate: %w", err)
+		}
 		locked, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
@@ -381,11 +384,12 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 			return fmt.Errorf("only failed matching evaluations can be retried")
 		}
 		var run struct {
-			State    string    `bun:"state"`
-			SourceID uuid.UUID `bun:"provider_source_id"`
-			Identity string    `bun:"provider_configuration_identity"`
+			State        string    `bun:"state"`
+			SourceID     uuid.UUID `bun:"provider_source_id"`
+			Identity     string    `bun:"provider_configuration_identity"`
+			FenceVersion int       `bun:"fence_version"`
 		}
-		if err := tx.NewRaw(`SELECT state, provider_source_id, provider_configuration_identity FROM matching_run WHERE id=? FOR UPDATE`, id).Scan(ctx, &run); err != nil {
+		if err := tx.NewRaw(`SELECT state, provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=? FOR UPDATE`, id).Scan(ctx, &run); err != nil {
 			return fmt.Errorf("retry matching evaluation: lock run: %w", err)
 		}
 		if run.State != "failed" {
@@ -400,7 +404,23 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 			return fmt.Errorf("retry matching evaluation: provider source changed")
 		}
 		var stale bool
-		if err := tx.NewRaw(`SELECT EXISTS (
+		switch run.FenceVersion {
+		case 2:
+			if err := validateMatchingRunFence(ctx, tx, id, run.FenceVersion); err != nil {
+				return err
+			}
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_run_target target
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+				LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+				WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+					generation.high_water IS DISTINCT FROM target.target_generation OR
+					current_group.revision IS DISTINCT FROM target.captured_group_revision)
+			)`, id).Scan(ctx, &stale); err != nil {
+				return fmt.Errorf("retry matching evaluation: validate captured targets: %w", err)
+			}
+		case 1:
+			if err := tx.NewRaw(`SELECT EXISTS (
 			SELECT 1 FROM matching_run_target target
 			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
 			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
@@ -408,7 +428,10 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 				generation.high_water IS DISTINCT FROM target.target_generation OR
 				current_group.revision IS DISTINCT FROM target.captured_group_revision)
 		) OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, id).Scan(ctx, &stale); err != nil {
-			return fmt.Errorf("retry matching evaluation: validate captured targets: %w", err)
+				return fmt.Errorf("retry matching evaluation: validate captured targets: %w", err)
+			}
+		default:
+			return fmt.Errorf("retry matching evaluation: unsupported fence version %d", run.FenceVersion)
 		}
 		if stale {
 			return fmt.Errorf("retry matching evaluation: captured groups were superseded")
