@@ -26,13 +26,19 @@ type matchingWorkerRepository interface {
 
 type MatchingEvaluationWorker struct {
 	river.WorkerDefaults[service.MatchingEvaluationOperationArgs]
-	repository matchingWorkerRepository
-	evaluator  *service.MatchingEvaluationService
-	operations *service.Operations
+	repository  matchingWorkerRepository
+	evaluator   *service.MatchingEvaluationService
+	operations  *service.Operations
+	acquisition *service.MatchingAcquisitionService
 }
 
 func NewMatchingEvaluationWorker(repository matchingWorkerRepository, evaluator *service.MatchingEvaluationService, operations *service.Operations) *MatchingEvaluationWorker {
 	return &MatchingEvaluationWorker{repository: repository, evaluator: evaluator, operations: operations}
+}
+
+func (worker *MatchingEvaluationWorker) WithAcquisition(acquisition *service.MatchingAcquisitionService) *MatchingEvaluationWorker {
+	worker.acquisition = acquisition
+	return worker
 }
 
 func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job[service.MatchingEvaluationOperationArgs]) error {
@@ -88,6 +94,38 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	} else if consumed {
 		worker.operations.Notify(operation.ID)
 		return nil
+	}
+	if worker.acquisition != nil {
+		changed, acquired, err := worker.acquisition.Advance(ctx, operation.ID, operation.Attempt, job.ID, claim)
+		if err != nil {
+			if errors.Is(err, service.ErrInvalidMatchingAcquisitionResponse) {
+				changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The accepted provider response is invalid for matching.")
+				if failErr != nil {
+					return failErr
+				}
+				if changed {
+					worker.operations.Notify(operation.ID)
+				}
+				return nil
+			}
+			if errors.Is(err, service.ErrMatchingAcquisitionProviderFailed) {
+				changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "A required provider response failed, so matching cannot continue.")
+				if failErr != nil {
+					return failErr
+				}
+				if changed {
+					worker.operations.Notify(operation.ID)
+				}
+				return nil
+			}
+			return err
+		}
+		if acquired {
+			if changed {
+				worker.operations.Notify(operation.ID)
+			}
+			return nil
+		}
 	}
 	prepared, err := worker.evaluator.Prepare(ctx, plan.EvaluationQueryScope)
 	if err != nil {

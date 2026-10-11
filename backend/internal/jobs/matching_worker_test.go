@@ -67,7 +67,7 @@ func (r *matchingOperationTestRepository) DeleteSucceededBefore(context.Context,
 func matchingWorkerTestOperation() *persistence.Operation {
 	id, jobID := uuid.New(), int64(41)
 	return &persistence.Operation{ID: id, Kind: (service.MatchingEvaluationOperationArgs{}).Kind(), State: "running", Attempt: 2, RiverJobID: &jobID,
-		InputSnapshot: []byte(`{"schema_version":1,"plan":{"schema_version":2,"targets":[{"group_id":"00000000-0000-4000-8000-000000000001","revision":"r1"}],"evaluation_query_scope":{"group_ids":["00000000-0000-4000-8000-000000000001"]}}}`)}
+		InputSnapshot: []byte(`{"schema_version":1,"plan":{"schema_version":2,"policy_version":"` + service.MatchingPolicyVersion + `","targets":[{"group_id":"00000000-0000-4000-8000-000000000001","revision":"r1"}],"evaluation_query_scope":{"group_ids":["00000000-0000-4000-8000-000000000001"]}}}`)}
 }
 
 func TestMatchingWorkerNotClaimedDoesNotConsume(t *testing.T) {
@@ -80,6 +80,20 @@ func TestMatchingWorkerNotClaimedDoesNotConsume(t *testing.T) {
 	}
 	if repo.claimCalls != 1 || repo.consumeCalls != 0 {
 		t.Fatalf("claim=%d consume=%d; not-claimed must not consume", repo.claimCalls, repo.consumeCalls)
+	}
+}
+
+func TestMatchingWorkerConsumesPendingDeliveryBeforeAcquisition(t *testing.T) {
+	op := matchingWorkerTestOperation()
+	repo := &matchingWorkerTestRepository{operation: op, outcome: persistence.MatchingDeliveryClaimed, consume: true}
+	worker := NewMatchingEvaluationWorker(repo, &service.MatchingEvaluationService{}, service.NewOperations(&matchingOperationTestRepository{op: op})).
+		WithAcquisition(&service.MatchingAcquisitionService{})
+	job := &river.Job[service.MatchingEvaluationOperationArgs]{JobRow: &rivertype.JobRow{ID: *op.RiverJobID, Attempt: 1}, Args: service.MatchingEvaluationOperationArgs{OperationID: op.ID}}
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if repo.consumeCalls != 1 || repo.failCalls != 0 {
+		t.Fatalf("consume=%d fail=%d; pending delivery should be consumed before acquisition", repo.consumeCalls, repo.failCalls)
 	}
 }
 

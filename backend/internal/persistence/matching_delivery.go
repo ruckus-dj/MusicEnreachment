@@ -30,6 +30,11 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 	var claim MatchingDeliveryClaim
 	outcome := MatchingDeliveryNotClaimed
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// Provider configuration is the outer fence for every provider-source
+		// read/lock. Admission and cache publication use this same order.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("claim matching delivery: lock provider configuration: %w", err)
+		}
 		var runPlan struct {
 			SourceID uuid.UUID `bun:"provider_source_id"`
 			Identity string    `bun:"provider_configuration_identity"`
@@ -50,9 +55,6 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 			JOIN incoming_group current_group ON current_group.id=target.group_id
 			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, operationID).Scan(ctx, &lockedGroups); err != nil {
 			return fmt.Errorf("claim matching delivery: lock target groups and generations: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-			return fmt.Errorf("claim matching delivery: lock provider configuration: %w", err)
 		}
 		var identity string
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil {

@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,174 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
+
+func TestMatchingAcquisitionAdvancesArtistResponseToBrowseAtomicallyPostgres(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+	const identity = "matching-acquisition-config"
+	if _, err := db.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES('musicbrainz_config_identity',?) ON CONFLICT(setting_name) DO UPDATE SET setting_value=EXCLUDED.setting_value`, identity).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE provider_source SET configuration_identity=? WHERE id=?`, identity, fixture.source).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var group persistence.IncomingGroupingGroup
+	if err := db.NewRaw(`SELECT id,revision FROM incoming_group ORDER BY id LIMIT 1`).Scan(ctx, &group); err != nil {
+		t.Fatal(err)
+	}
+	var grouping persistence.IncomingGroupingState
+	if err := db.NewRaw(`SELECT revision,needs_refresh FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &grouping); err != nil {
+		t.Fatal(err)
+	}
+	var source persistence.ProviderSource
+	if err := db.NewRaw(`SELECT id,provider_id,endpoint,configuration_identity FROM provider_source WHERE id=?`, fixture.source).Scan(ctx, &source); err != nil {
+		t.Fatal(err)
+	}
+	const artistID = "11111111-1111-4111-8111-111111111111"
+	artistCacheKey := "artist-search:0:100:artist"
+	artistSnapshot := json.RawMessage(`{"schema_version":1,"query":"artist","offset":0,"limit":100}`)
+	parentID, artistRequestID := uuid.New(), uuid.New()
+	plan := matchingTestPlan(t, "artist acquisition", source, identity)
+	parent := &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{"schema_version":1,"plan":{}}`)}
+	artistOperation := &persistence.Operation{
+		ID: artistRequestID, Kind: "provider_artist_search", State: "queued", Stage: "fetch", InputSnapshot: artistSnapshot,
+		ProviderSourceID: &source.ID, ProviderConfigurationIdentity: matchingCoordinatorStringPtr(identity),
+		ProviderID: &source.ProviderID, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &artistCacheKey,
+	}
+	repo := persistence.NewSetupManagerRepository(db)
+	riverClient := openScanEnqueueRiver(t, db)
+	admitted, err := repo.AdmitMatchingRun(ctx, riverClient, persistence.MatchingAdmission{
+		AdmissionKey: "artist-acquisition", GroupingEpoch: grouping.Revision,
+		Targets: []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}},
+		Plan:    plan, AcquisitionIntentVersion: 1, PolicyVersion: service.MatchingPolicyVersion,
+		Parent: parent, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
+		Providers: []persistence.MatchingProviderRequest{{Operation: artistOperation, Args: service.ProviderFetchOperationArgs{OperationID: artistRequestID}}},
+	})
+	if err != nil {
+		t.Fatalf("admit acquisition intent: %v", err)
+	}
+	if admitted.RiverJobID == nil {
+		t.Fatal("initial parent delivery has no River ID")
+	}
+	initialParentJobID := *admitted.RiverJobID
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, initialParentJobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	initialClaim, initialOutcome, err := repo.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, initialParentJobID, 1)
+	if err != nil || initialOutcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim initial parent delivery: outcome=%v err=%v", initialOutcome, err)
+	}
+	if consumed, err := repo.ConsumePendingMatchingDelivery(ctx, parentID, admitted.Attempt, initialParentJobID, initialClaim); err != nil || !consumed {
+		t.Fatalf("park parent behind artist child: consumed=%v err=%v", consumed, err)
+	}
+	cache := persistence.NewProviderCacheRepository(db)
+	ticket, err := cache.BeginRefresh(ctx, source.ID, artistCacheKey, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artistPayload := json.RawMessage(`{"artists":[{"id":"` + artistID + `"}],"count":1,"offset":0}`)
+	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: artistPayload}); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := cache.GetCachedResponse(ctx, source.ID, artistCacheKey)
+	if err != nil || accepted == nil {
+		t.Fatalf("read accepted artist response: response=%+v err=%v", accepted, err)
+	}
+	var artistJobID int64
+	if err := db.NewRaw(`SELECT river_job_id FROM operation WHERE id=?`, artistRequestID).Scan(ctx, &artistJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, artistJobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	epoch, claimed, err := repo.ClaimProviderOperationDelivery(ctx, artistRequestID, 1, artistJobID)
+	if err != nil || !claimed {
+		t.Fatalf("claim artist child: claimed=%v err=%v", claimed, err)
+	}
+	if changed, err := repo.TransitionProviderOperationForDeliveryWithMatchingWake(ctx, artistRequestID, 1, artistJobID, epoch, riverClient, func(operation *persistence.Operation) error {
+		operation.State, operation.Stage = "succeeded", "provider_response_saved"
+		finished := time.Now().UTC()
+		operation.FinishedAt = &finished
+		return nil
+	}); err != nil || !changed {
+		t.Fatalf("settle artist child and wake parent: changed=%v err=%v", changed, err)
+	}
+	var parentJobID int64
+	if err := db.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? ORDER BY id DESC LIMIT 1`, parentID).Scan(ctx, &parentJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, parentJobID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	claim, outcome, err := repo.ClaimMatchingDelivery(ctx, parentID, admitted.Attempt, parentJobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim parent wake: outcome=%v err=%v", outcome, err)
+	}
+	browseID := uuid.New()
+	browseKey := "artist-release-browse:" + artistID + ":0:100"
+	browseInput := json.RawMessage(`{"schema_version":1,"mbid":"` + artistID + `","offset":0,"limit":100}`)
+	browse := persistence.MatchingProviderRequest{
+		Operation: &persistence.Operation{
+			ID: browseID, Kind: "provider_artist_release_browse", State: "queued", Stage: "fetch", InputSnapshot: browseInput,
+			ProviderSourceID: &source.ID, ProviderConfigurationIdentity: matchingCoordinatorStringPtr(identity),
+			ProviderID: &source.ProviderID, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &browseKey,
+		},
+		Args: service.ProviderFetchOperationArgs{OperationID: browseID},
+	}
+	digest := sha256.Sum256(accepted.Payload)
+	phase := persistence.MatchingAcquisitionPhase{
+		Revision: 1, Phase: persistence.MatchingAcquisitionArtistCatalogPage,
+		Input:              json.RawMessage(`{"artist_mbid":"` + artistID + `","offset":0,"limit":100}`),
+		Output:             json.RawMessage(`{"artist_mbid":"` + artistID + `","next_offset":0,"complete":false}`),
+		ResponseProvenance: json.RawMessage(`[{"request_id":"` + artistRequestID.String() + `","cache_key":"` + artistCacheKey + `","payload_sha256":"` + fmt.Sprintf("%x", digest[:]) + `"}]`),
+	}
+	failing := &matchingCoordinatorFailingInserter{delegate: riverClient, failAt: 1, err: errors.New("injected browse enqueue failure")}
+	if changed, err := repo.AdvanceMatchingAcquisitionForDelivery(ctx, failing, parentID, admitted.Attempt, parentJobID, claim, 0, phase, []persistence.MatchingProviderRequest{browse}); err == nil || changed {
+		t.Fatalf("failed child insert advanced acquisition: changed=%v err=%v", changed, err)
+	}
+	var phases, browseOperations, consumed int
+	if err := db.NewRaw(`SELECT count(*) FROM matching_acquisition_phase WHERE run_id=?`, parentID).Scan(ctx, &phases); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM operation WHERE id=?`, browseID).Scan(ctx, &browseOperations); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND river_job_id=? AND consumed_at IS NOT NULL`, parentID, parentJobID).Scan(ctx, &consumed); err != nil {
+		t.Fatal(err)
+	}
+	if phases != 1 || browseOperations != 0 || consumed != 0 {
+		t.Fatalf("failed atomic advance left phases/child/consumed-delivery=%d/%d/%d", phases, browseOperations, consumed)
+	}
+	changed, err := repo.AdvanceMatchingAcquisitionForDelivery(ctx, riverClient, parentID, admitted.Attempt, parentJobID, claim, 0, phase, []persistence.MatchingProviderRequest{browse})
+	if err != nil || !changed {
+		t.Fatalf("advance artist response to browse: changed=%v err=%v", changed, err)
+	}
+	var parentState, runState, currentPhase string
+	var revision int64
+	if err := db.NewRaw(`SELECT operation.state, run.state, acquisition.current_phase, acquisition.revision
+		FROM operation JOIN matching_run run ON run.id=operation.id JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
+		WHERE operation.id=?`, parentID).Scan(ctx, &parentState, &runState, &currentPhase, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if parentState != "running" || runState != "waiting_provider" || currentPhase != persistence.MatchingAcquisitionArtistCatalogPage || revision != 1 {
+		t.Fatalf("parent/run/phase/revision after advance=%q/%q/%q/%d", parentState, runState, currentPhase, revision)
+	}
+	storedBrowse, err := repo.GetOperation(ctx, browseID)
+	if err != nil || storedBrowse.State != "queued" || storedBrowse.RiverJobID == nil {
+		t.Fatalf("browse child after advance=%+v err=%v", storedBrowse, err)
+	}
+	// Reconstruct the repository as a restarted worker process; replaying the old
+	// delivery cannot create a second child after the transaction committed.
+	repo = persistence.NewSetupManagerRepository(db)
+	if changed, err := repo.AdvanceMatchingAcquisitionForDelivery(ctx, riverClient, parentID, admitted.Attempt, parentJobID, claim, 0, phase, []persistence.MatchingProviderRequest{browse}); err != nil || changed {
+		t.Fatalf("duplicate old delivery advanced twice: changed=%v err=%v", changed, err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND request_id=?`, parentID, browseID).Scan(ctx, &browseOperations); err != nil || browseOperations != 1 {
+		t.Fatalf("browse dependency count=%d err=%v", browseOperations, err)
+	}
+}
 
 func TestMatchingCoordinatorAdmissionIdempotencyAndFencesPostgres(t *testing.T) {
 	t.Parallel()

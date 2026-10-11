@@ -176,7 +176,8 @@ func Run(ctx context.Context, config Config) error {
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
 	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
-	matchingEvaluationWorker := jobs.NewMatchingEvaluationWorker(setupManagerRepository, matchingEvaluation, operationService)
+	matchingAcquisition := service.NewMatchingAcquisitionService(setupManagerRepository, providerFetch, riverSlot)
+	matchingEvaluationWorker := jobs.NewMatchingEvaluationWorker(setupManagerRepository, matchingEvaluation, operationService).WithAcquisition(matchingAcquisition)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{

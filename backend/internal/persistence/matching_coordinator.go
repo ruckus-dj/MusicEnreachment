@@ -40,20 +40,21 @@ func (MatchingEvaluationWakeArgs) Kind() string { return "matching_evaluation_v1
 
 // MatchingAdmission is the immutable portion of a matching run.
 type MatchingAdmission struct {
-	AdmissionKey  string
-	GroupingEpoch int64
-	Targets       []MatchingTarget
-	Plan          json.RawMessage
-	PolicyVersion string
-	Parent        *Operation
-	ParentArgs    river.JobArgs
-	Providers     []MatchingProviderRequest
+	AdmissionKey             string
+	GroupingEpoch            int64
+	Targets                  []MatchingTarget
+	Plan                     json.RawMessage
+	AcquisitionIntentVersion int
+	PolicyVersion            string
+	Parent                   *Operation
+	ParentArgs               river.JobArgs
+	Providers                []MatchingProviderRequest
 }
 
 // AdmitMatchingRun atomically fences the selected groups, stores the parent,
 // provider requests and dependency rows, and inserts every ID-only delivery.
 func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, client RiverInserter, admission MatchingAdmission) (*Operation, error) {
-	if client == nil || admission.Parent == nil || len(admission.Targets) == 0 || admission.AdmissionKey == "" || len(admission.Plan) == 0 || !matchingpolicy.Supported(admission.PolicyVersion) {
+	if client == nil || admission.Parent == nil || len(admission.Targets) == 0 || admission.AdmissionKey == "" || len(admission.Plan) == 0 || !matchingpolicy.Supported(admission.PolicyVersion) || admission.AcquisitionIntentVersion < 0 || admission.AcquisitionIntentVersion > matchingAcquisitionIntentVersion {
 		return nil, fmt.Errorf("matching admission is incomplete")
 	}
 	if admission.Parent.ID == uuid.Nil {
@@ -109,11 +110,24 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 			source.ProviderID != *first.ProviderID || source.Endpoint != first.ProviderEndpoint || source.ConfigurationIdentity != configIdentity {
 			return fmt.Errorf("matching admission: provider source changed")
 		}
+		// Serialize an idempotency key without locking matching_run ahead of its
+		// operation row. Delivery settlement consistently locks operation first,
+		// then run; reversing those locks here can deadlock a concurrent claim.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", "matching-admission", admission.AdmissionKey); err != nil {
+			return fmt.Errorf("matching admission: lock idempotency key: %w", err)
+		}
 		var current matchingRunAdmissionRow
-		err := tx.NewRaw(`SELECT mr.operation_id, mr.plan_digest FROM matching_run mr WHERE mr.plan_admission_key=? FOR UPDATE`, admission.AdmissionKey).Scan(ctx, &current)
+		err := tx.NewRaw(`SELECT mr.operation_id, mr.plan_digest FROM matching_run mr WHERE mr.plan_admission_key=?`, admission.AdmissionKey).Scan(ctx, &current)
 		if err == nil {
 			if !equalDigest(current.PlanDigest, digest[:]) {
 				return fmt.Errorf("matching admission key was already used for a different plan")
+			}
+			var hasAcquisitionIntent bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_acquisition WHERE run_id=?)`, current.OperationID).Scan(ctx, &hasAcquisitionIntent); err != nil {
+				return fmt.Errorf("matching admission: check acquisition intent identity: %w", err)
+			}
+			if hasAcquisitionIntent != (admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion) {
+				return fmt.Errorf("matching admission key was already used with a different acquisition intent")
 			}
 			result, err = repository.GetOperationForUpdate(ctx, tx, current.OperationID)
 			return err
@@ -143,6 +157,15 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 		}
 		if _, err := tx.NewRaw(`INSERT INTO matching_run(id, operation_id, plan_admission_key, plan_digest, immutable_plan, grouping_revision, grouping_epoch, provider_source_id, provider_configuration_identity, policy_version, state) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, 'queued')`, admission.Parent.ID, admission.Parent.ID, admission.AdmissionKey, digest[:], string(admission.Plan), epoch, epoch, *first.ProviderSourceID, configIdentity, admission.PolicyVersion).Exec(ctx); err != nil {
 			return fmt.Errorf("matching admission: create run: %w", err)
+		}
+		if admission.AcquisitionIntentVersion == matchingAcquisitionIntentVersion {
+			intent, err := matchingAcquisitionIntentFromAdmission(admission, digest)
+			if err != nil {
+				return err
+			}
+			if err := createMatchingAcquisitionLedger(ctx, tx, admission.Parent.ID, intent); err != nil {
+				return fmt.Errorf("matching admission: create acquisition ledger: %w", err)
+			}
 		}
 		if admission.Parent.RiverJobID == nil || *admission.Parent.RiverJobID <= 0 {
 			return fmt.Errorf("matching admission: parent River delivery identity is missing")

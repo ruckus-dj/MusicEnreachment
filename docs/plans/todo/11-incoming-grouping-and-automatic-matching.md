@@ -626,6 +626,37 @@ normalization для score в точности. Если по имеющимся
   orchestration этим increment не реализованы. Предложенные точные ranking,
   OR-query и group-level stopping rules ещё требуют подтверждения владельца.
 
+### Acquisition runtime — 2026-10-11: ограниченный backend-этап
+
+- Для явно admitted acquisition intent добавлены durable ledger и worker
+  dispatch: accepted artist search → top-1 artist → постраничный release browse
+  → persisted `catalog_ready`. Старые finite plans не интерпретируются как
+  acquisition. Child admission, phase CAS, dependencies, consume/park текущей
+  delivery фиксируются одной транзакцией; catalog completion оставляет parent
+  нетерминальным в `waiting_policy`, не объявляя matching успешным.
+- Пустой accepted artist search сохраняется как manual-review wait. Failed
+  provider dependency и malformed accepted browse получают fenced failure с
+  безопасным сообщением; accepted cache при этом не удаляется. Pending delivery
+  потребляется до acquisition dispatch; provider settlement сохраняет wake
+  атомарно. Lock order исправлен для configuration/source и duplicate admission.
+- Проверка inventory защищает уникальность numeric migration prefixes и
+  up/down pairs. HTTP/worker pagination использует raw `release-count` и
+  `release-offset`, а не search envelope. Нулевой offset, пропущенный через
+  `omitempty` в provider intent, учитывается как ноль при binding child cursor.
+- Это не завершение automatic matching: shortlist/ranking, fallback при
+  отсутствии artist tags, pre-evaluation seal, automatic post-analysis admission,
+  apply invocation и incoming/manual picker UI остаются не завершены. До
+  использования manifest как evaluation scope требуется transactional проверка
+  точного накопления release IDs из accepted страниц.
+- Полный `task verify` прошёл после исправления обнаруженных integration
+  дефектов; независимое финальное review одобрило backend pagination до
+  `catalog_ready`. HTTP fixture проходит настоящие workers с persisted River
+  deliveries и восстановлением worker между страницами 100+1 (count=101);
+  это не проверка автоматического исполнения matching scheduler. PostgreSQL
+  tests покрывают phase/cursor/provenance tampering, rollback и empty-search
+  parking; failed-child → parent failure пока покрыт только unit tests, не
+  полным PostgreSQL worker cycle. Ревизия фиксируется коммитом этого increment.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
