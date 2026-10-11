@@ -943,6 +943,22 @@ normalization для score в точности. Если по имеющимся
   в primary session. Consumer ещё не зарегистрирован, automatic group admission
   не подключён: этот increment не является post-analysis end-to-end приёмкой.
 
+### Target-scoped automatic artist admission — 2026-10-12
+
+- Добавлен persistence-only fence-v2 admission с permanent semantic receipt,
+  independent от operation/run cleanup. Fingerprint включает target captures,
+  canonical analysis inputs/results, policy/query descriptor и provider/authority
+  identities, но не global epoch, event ID или случайные delivery identities.
+- Receipt lookup предшествует созданию нового work; actual reconciliation
+  event/job/attempt/epoch проверяется до deduplication. PostgreSQL tests проверяют
+  original-run replay без новых rows/generation, stale-attempt rejection и
+  изменение input fingerprint при сохранённом result reference.
+- Independent review одобрило bounded admission-only core; полный `task verify`
+  прошёл в primary session после исправления Bun source-column alias.
+- Versioned consumer/continuation/publication/apply guards ещё не propagated;
+  production reconciliation consumer не подключён. Этот increment не включает
+  automatic trigger и не является end-to-end приёмкой.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
