@@ -14,6 +14,14 @@ import (
 
 const IncomingMatchingReconcileJobKind = "incoming_matching_reconcile_v1"
 
+type IncomingMatchingReconciliationClaimOutcome int
+
+const (
+	IncomingMatchingReconciliationNotClaimed IncomingMatchingReconciliationClaimOutcome = iota
+	IncomingMatchingReconciliationClaimed
+	IncomingMatchingReconciliationBusy
+)
+
 // IncomingMatchingReconcileJobArgs carries only the durable event identity.
 type IncomingMatchingReconcileJobArgs struct {
 	EventID uuid.UUID `json:"event_id"`
@@ -81,12 +89,36 @@ func (repository *SourceInventoryRepository) DispatchPendingMatchingReconciliati
 // ClaimIncomingMatchingReconciliationDelivery fences any future consumer's
 // work against stale River leases while leaving the original event identity intact.
 func (repository *SourceInventoryRepository) ClaimIncomingMatchingReconciliationDelivery(ctx context.Context, eventID uuid.UUID, registeredJobID int64, riverAttempt int) (int64, bool, error) {
+	epoch, outcome, err := repository.ClaimIncomingMatchingReconciliationDeliveryWithOutcome(ctx, eventID, registeredJobID, riverAttempt)
+	return epoch, outcome == IncomingMatchingReconciliationClaimed, err
+}
+
+// ClaimIncomingMatchingReconciliationDeliveryWithOutcome distinguishes an
+// active delivery from stale or completed work so consumers can snooze rather
+// than exhaust River retries while another delivery owns the event.
+func (repository *SourceInventoryRepository) ClaimIncomingMatchingReconciliationDeliveryWithOutcome(ctx context.Context, eventID uuid.UUID, registeredJobID int64, riverAttempt int) (int64, IncomingMatchingReconciliationClaimOutcome, error) {
 	if eventID == uuid.Nil || registeredJobID < 1 || riverAttempt < 1 {
-		return 0, false, fmt.Errorf("claim matching reconciliation delivery: valid event, job, and River attempt identities are required")
+		return 0, IncomingMatchingReconciliationNotClaimed, fmt.Errorf("claim matching reconciliation delivery: valid event, job, and River attempt identities are required")
 	}
 	var epoch int64
-	var claimed bool
+	outcome := IncomingMatchingReconciliationNotClaimed
 	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var event struct {
+			State                  string `bun:"state"`
+			RegisteredJobID        *int64 `bun:"registered_job_id"`
+			HighestDeliveryAttempt int    `bun:"highest_delivery_attempt"`
+			DeliveryClaimed        bool   `bun:"delivery_claimed"`
+		}
+		if err := tx.NewRaw(`SELECT state,registered_job_id,highest_delivery_attempt,delivery_claimed FROM incoming_matching_reconcile_event WHERE id=? FOR UPDATE`, eventID).Scan(ctx, &event); err != nil {
+			return fmt.Errorf("claim matching reconciliation delivery: read event: %w", err)
+		}
+		if event.State != "dispatched" || event.RegisteredJobID == nil || *event.RegisteredJobID != registeredJobID || event.HighestDeliveryAttempt > riverAttempt {
+			return nil
+		}
+		if event.HighestDeliveryAttempt == riverAttempt && event.DeliveryClaimed {
+			outcome = IncomingMatchingReconciliationBusy
+			return nil
+		}
 		result, err := tx.NewRaw(`UPDATE incoming_matching_reconcile_event
 			SET delivery_epoch=delivery_epoch+1, highest_delivery_attempt=?, delivery_claimed=true
 			WHERE id=? AND state='dispatched' AND registered_job_id=?
@@ -99,15 +131,15 @@ func (repository *SourceInventoryRepository) ClaimIncomingMatchingReconciliation
 		if err != nil {
 			return err
 		}
-		claimed = rows == 1
-		if claimed {
+		if rows == 1 {
+			outcome = IncomingMatchingReconciliationClaimed
 			if err := tx.NewRaw(`SELECT delivery_epoch FROM incoming_matching_reconcile_event WHERE id=?`, eventID).Scan(ctx, &epoch); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-	return epoch, claimed, err
+	return epoch, outcome, err
 }
 
 // MarkIncomingMatchingReconciliationComplete is a fenced completion hook for

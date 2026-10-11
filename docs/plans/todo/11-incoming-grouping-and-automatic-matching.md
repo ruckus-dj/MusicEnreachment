@@ -1024,6 +1024,19 @@ normalization для score в точности. Если по имеющимся
   Independent review and repeated primary `task verify` passed.
 - Production consumer/runtime relay remain unwired; full acceptance stays open.
 
+### Fenced reconciliation consumer — 2026-10-12
+
+- Consumer refreshes saved grouping, processes all planned groups with exact
+  event/job/attempt/epoch admission fences and semantic receipts. Busy work
+  snoozes; missing configuration/artistless groups release their claim and defer
+  without completion or permanent manual authority changes.
+- Worker unit contracts and hand-driven PostgreSQL analysis event → dispatch →
+  real consumer → provider preparation/admission → completion passed. Completed
+  event redispatch preserves counts; partial-failure replay, cancellation and
+  live River takeover matrix remain additional coverage, not proved here.
+- Independent review approved bounded unwired scope; primary full `task verify`
+  passed. App queue/startup/periodic relay wiring remains to be implemented.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

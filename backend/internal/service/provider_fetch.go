@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
+
+var ErrMusicBrainzConfigurationMissing = errors.New("MusicBrainz provider configuration is not saved")
 
 // ProviderFetchService performs only caller-requested MusicBrainz network
 // operations. Cache reads are separate and never trigger a refresh.
@@ -69,7 +72,7 @@ func (service *ProviderFetchService) PrepareOperation(ctx context.Context, kind,
 		return nil, fmt.Errorf("read MusicBrainz provider configuration: %w", err)
 	}
 	if config.Identity == "" {
-		return nil, fmt.Errorf("MusicBrainz provider configuration is not saved")
+		return nil, ErrMusicBrainzConfigurationMissing
 	}
 	source, err := service.cache.ResolveMusicBrainzSource(ctx, musicBrainzEndpoint(config), config.Identity)
 	if err != nil {
