@@ -21,6 +21,7 @@ import type {
   MatchingReviewRelease,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { ManualReleasePicker } from "./ManualReleasePicker";
 
 type ProposalFile = {
   file_member_id: string;
@@ -119,6 +120,7 @@ function IncomingGroupReviewContent() {
   const groups = groupsQuery.data?.groups ?? [];
   const [groupId, setGroupId] = useState("");
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
+  const [preparedReleaseMBID, setPreparedReleaseMBID] = useState("");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [preview, setPreview] = useState<PreviewState>();
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>();
@@ -134,12 +136,13 @@ function IncomingGroupReviewContent() {
   }>();
   const generation = useRef(0);
   const scopeRef = useRef({ groupId: "", releaseId: "", generation: 0 });
+  const evaluationRevisionRef = useRef("");
   const requestId = useRef(0);
   const seededGroup = useRef("");
 
   function scopeIdentity() {
     const scope = scopeRef.current;
-    return `${scope.groupId}:${scope.releaseId}:${scope.generation}`;
+    return `${scope.groupId}:${scope.releaseId}:${scope.generation}:${evaluationRevisionRef.current}`;
   }
 
   function invalidateIntent() {
@@ -182,10 +185,29 @@ function IncomingGroupReviewContent() {
     enabled: Boolean(groupId),
   });
   const review = reviewQuery.data;
+  evaluationRevisionRef.current = review?.evaluation_revision ?? "";
   const proposal = parsedProposal(review);
   const group = groups.find((candidate) => candidate.id === groupId);
   const releases = review?.releases ?? [];
   const savedSelectedId = proposal.selected_release?.provider_release_id ?? "";
+
+  useEffect(() => {
+    if (!preparedReleaseMBID || !groupId) return;
+    const chosen = releases.find(
+      (item) => item.release_id === preparedReleaseMBID,
+    );
+    if (!chosen) return;
+    setSelectedReleaseId(chosen.provider_release_id);
+    scopeRef.current = {
+      groupId,
+      releaseId: chosen.provider_release_id,
+      generation: ++generation.current,
+    };
+    setPreview(undefined);
+    setConfirmIntent(undefined);
+    setReceipt(undefined);
+    setPreparedReleaseMBID("");
+  }, [groupId, preparedReleaseMBID, releases]);
 
   useEffect(() => {
     if (!groupId || !review || seededGroup.current === groupId) return;
@@ -265,6 +287,7 @@ function IncomingGroupReviewContent() {
     };
     setGroupId(nextGroupId);
     setSelectedReleaseId("");
+    setPreparedReleaseMBID("");
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
@@ -490,6 +513,16 @@ function IncomingGroupReviewContent() {
               Сохраненные данные предложения недоступны или неполны. Ручной
               просмотр для этой оценки невозможен.
             </p>
+          ) : null}
+
+          {group ? (
+            <ManualReleasePicker
+              groupId={groupId}
+              groupRevision={group.revision}
+              evaluationRevision={review?.evaluation_revision || undefined}
+              disabled={!review}
+              onPrepared={setPreparedReleaseMBID}
+            />
           ) : null}
           {review?.evaluated &&
           review.proposal_available &&

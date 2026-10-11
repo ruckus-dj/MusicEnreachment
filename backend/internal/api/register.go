@@ -23,6 +23,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerIncomingGroups(api, dependencies.IncomingGroups)
 	registerMatchingReview(api, dependencies.MatchingReview)
 	registerMatchingManual(api, dependencies.MatchingManual)
+	registerManualReleaseSelection(api, dependencies.ManualReleaseSelection)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

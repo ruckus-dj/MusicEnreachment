@@ -25,11 +25,12 @@ type Dependencies struct {
 	// SourceLocationDetails serves the read-only inspector of one location. It
 	// never probes the source, so it stays available while the platform is
 	// diagnostic or Setup is unfinished.
-	SourceLocationDetails *service.SourceLocationDetails
-	SourceArtifactCleanup *service.SourceAnalysisArtifactCleanup
-	IncomingGroups        *service.IncomingGroups
-	MatchingReview        *service.MatchingReviewService
-	MatchingManual        *service.MatchingManualService
+	SourceLocationDetails  *service.SourceLocationDetails
+	SourceArtifactCleanup  *service.SourceAnalysisArtifactCleanup
+	IncomingGroups         *service.IncomingGroups
+	MatchingReview         *service.MatchingReviewService
+	MatchingManual         *service.MatchingManualService
+	ManualReleaseSelection *service.ManualReleaseSelectionService
 }
 
 type preflightEntry struct {

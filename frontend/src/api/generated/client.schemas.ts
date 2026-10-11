@@ -268,6 +268,23 @@ export interface InstallationsBody {
   installations: InstallationResponse[] | null;
 }
 
+export interface ManualReleaseSelectionBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_evaluation_revision?: string;
+  /** @minLength 1 */
+  expected_group_revision: string;
+  request_id: string;
+  /** @minLength 1 */
+  selected_release: string;
+}
+
+export interface ManualReleaseSelectionOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  operation_id: string;
+}
+
 export interface MatchingManualAssignment {
   file_member_id: string;
   medium: number;

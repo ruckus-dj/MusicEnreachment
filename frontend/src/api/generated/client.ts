@@ -41,6 +41,8 @@ import type {
   ListOperationsParams,
   ListSourceLocationsParams,
   ListToolCatalogParams,
+  ManualReleaseSelectionBody,
+  ManualReleaseSelectionOutputBody,
   MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
@@ -718,6 +720,121 @@ export const useConfirmIncomingGroupManualMatching = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getConfirmIncomingGroupManualMatchingMutationOptions(options), queryClient);
+    }
+
+export type startIncomingGroupManualReleaseSelectionResponse202 = {
+  data: ManualReleaseSelectionOutputBody
+  status: 202
+}
+
+export type startIncomingGroupManualReleaseSelectionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type startIncomingGroupManualReleaseSelectionResponseSuccess = (startIncomingGroupManualReleaseSelectionResponse202) & {
+  headers: Headers;
+};
+export type startIncomingGroupManualReleaseSelectionResponseError = (startIncomingGroupManualReleaseSelectionResponseDefault) & {
+  headers: Headers;
+};
+
+export type startIncomingGroupManualReleaseSelectionResponse = (startIncomingGroupManualReleaseSelectionResponseSuccess | startIncomingGroupManualReleaseSelectionResponseError)
+
+export const getStartIncomingGroupManualReleaseSelectionUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/manual-release`
+}
+
+/**
+ * @summary Prepare an explicitly selected MusicBrainz release for incoming group matching
+ */
+export const startIncomingGroupManualReleaseSelection = async (groupId: string,
+    manualReleaseSelectionBody: NonReadonly<ManualReleaseSelectionBody>, options?: RequestInit): Promise<startIncomingGroupManualReleaseSelectionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getStartIncomingGroupManualReleaseSelectionUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(manualReleaseSelectionBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startIncomingGroupManualReleaseSelectionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startIncomingGroupManualReleaseSelectionResponse
+}
+
+
+
+
+
+export const getStartIncomingGroupManualReleaseSelectionMutationKey = () => ['startIncomingGroupManualReleaseSelection'] as const;
+
+export const getStartIncomingGroupManualReleaseSelectionMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>, TError,StartIncomingGroupManualReleaseSelectionMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>, TError,StartIncomingGroupManualReleaseSelectionMutationVariables, TContext> => {
+
+const mutationKey = getStartIncomingGroupManualReleaseSelectionMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>, StartIncomingGroupManualReleaseSelectionMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  startIncomingGroupManualReleaseSelection(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartIncomingGroupManualReleaseSelectionMutationResult = NonNullable<Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>>
+    export type StartIncomingGroupManualReleaseSelectionMutationBody = NonReadonly<ManualReleaseSelectionBody>
+    export type StartIncomingGroupManualReleaseSelectionMutationError = ErrorModel
+    export type StartIncomingGroupManualReleaseSelectionMutationVariables = {groupId: string;data: NonReadonly<ManualReleaseSelectionBody>}
+
+    /**
+ * @summary Prepare an explicitly selected MusicBrainz release for incoming group matching
+ */
+export const useStartIncomingGroupManualReleaseSelection = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>, TError,StartIncomingGroupManualReleaseSelectionMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startIncomingGroupManualReleaseSelection>>,
+        TError,
+        StartIncomingGroupManualReleaseSelectionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartIncomingGroupManualReleaseSelectionMutationOptions(options), queryClient);
     }
 
 export type previewIncomingGroupManualMatchingResponse200 = {

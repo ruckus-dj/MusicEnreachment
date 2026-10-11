@@ -816,6 +816,23 @@ normalization для score в точности. Если по имеющимся
 - Picker search/API/URL parsing и UI ещё не подключены. Ranking, automatic trigger,
   unlink policy, packaging/corpus и полная приёмка остаются открытыми.
 
+### Direct manual release selector — 2026-10-11
+
+- Добавлен 202 API admission и Incoming picker для release MBID либо exact
+  HTTPS MusicBrainz release URL. URL разбирается как identifier и не fetch-ится;
+  service строит captured group/provider context, а admission проверяет revisions.
+  Подготовленный release проходит существующий manual-only worker pipeline.
+- Page-local tracking сохраняет original group/request/operation при navigation;
+  completion invalidates соответствующую group query, не выбирая release в другой
+  группе. Definitive 4xx допускает новый intent с актуальными revisions; network
+  uncertainty сохраняет прежний request ID/body. Async review scope включает
+  evaluation revision, предотвращая stale callback mutations при reevaluation.
+- URL validation и RTL/MSW retry/navigation tests прошли вместе с повторным
+  полным `task verify` в primary session; независимое focused review закрыло
+  найденные UI race issues. OpenAPI/client обновлены штатным generation pipeline.
+- Text artist/release search и artist catalog picker ещё не реализованы; unlink
+  policy, ranking, automatic trigger и полная приёмка остаются открытыми.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
