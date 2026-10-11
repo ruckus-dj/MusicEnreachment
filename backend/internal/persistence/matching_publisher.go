@@ -201,6 +201,12 @@ func (repository *SetupManagerRepository) GetMatchingAcquisitionEvaluationSeal(c
 		if !equalDigest(row.CatalogDigest, catalogDigest[:]) {
 			return fmt.Errorf("read matching acquisition evaluation seal: accepted catalog manifest changed")
 		}
+		if input.SchemaVersion == 2 {
+			if validateMatchingCatalogCacheKeys(ctx, tx, runID, input.CatalogCacheKeys) != nil || row.SealedRevision < 2 ||
+				validateMatchingReleaseHydration(ctx, tx, runID, row.SealedRevision-1, input.ReleaseIDs, input.ReleaseLookupCacheKeys, input.ReleaseLookupPayloadSHA256) != nil {
+				return fmt.Errorf("read matching acquisition evaluation seal: accepted hydration manifest changed")
+			}
+		}
 		exists = true
 		return nil
 	})
@@ -341,7 +347,7 @@ func validateSealedMatchingEvaluation(ctx context.Context, tx bun.Tx, runID uuid
 			return fmt.Errorf("publish matching evaluation: evaluated group is outside sealed scope")
 		}
 	}
-	if len(input.EvidenceCacheKeysByFile) != len(memberIDs) {
+	if input.SchemaVersion == 1 && len(input.EvidenceCacheKeysByFile) != len(memberIDs) || input.SchemaVersion == 2 && len(input.EvidenceCacheKeysByFile) != 0 {
 		return fmt.Errorf("publish matching evaluation: sealed response provenance does not cover evaluated files")
 	}
 	var provenanceRows []struct {
@@ -358,6 +364,15 @@ func validateSealedMatchingEvaluation(ctx context.Context, tx bun.Tx, runID uuid
 			return fmt.Errorf("publish matching evaluation: accepted response provenance is invalid")
 		}
 		acceptedCacheKeys[provenance[0].CacheKey] = true
+	}
+	if input.SchemaVersion == 2 {
+		if validateMatchingCatalogCacheKeys(ctx, tx, runID, input.CatalogCacheKeys) != nil || row.Revision < 2 ||
+			validateMatchingReleaseHydration(ctx, tx, runID, row.Revision-1, input.ReleaseIDs, input.ReleaseLookupCacheKeys, input.ReleaseLookupPayloadSHA256) != nil {
+			return fmt.Errorf("publish matching evaluation: accepted hydration provenance is invalid")
+		}
+		for _, key := range input.ReleaseLookupCacheKeys {
+			acceptedCacheKeys[key] = true
+		}
 	}
 	if len(acceptedCacheKeys) == 0 {
 		return fmt.Errorf("publish matching evaluation: accepted response provenance is empty")

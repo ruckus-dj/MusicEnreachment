@@ -5,8 +5,6 @@ package jobs
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -76,6 +74,14 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 				fmt.Fprintf(&releases, `{"id":%q,"title":"Fixture Release %03d","date":"2001","disambiguation":"sparse catalog entry","unknown_release_field":"preserve-release-%03d"}`, releaseID, index, index)
 			}
 			_, _ = fmt.Fprintf(w, `{"release-count":%d,"release-offset":%d,"releases":[%s],"unknown_browse_field":"preserve-artist-release-browse-%d"}`, count, offset, releases.String(), offset)
+		case strings.HasPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/"):
+			releaseID := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/ws/2/release/")
+			if releaseID != "00000001-4444-4444-8444-000000000001" {
+				t.Errorf("unexpected release lookup: %s", r.URL.String())
+				http.Error(w, "unexpected release", http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Fixture Album","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}],"media":[{"position":1,"tracks":[{"id":"55555555-5555-4555-8555-555555555555","number":"1","title":"Fixture Track","recording":{"id":"66666666-6666-4666-8666-666666666666","title":"Fixture Track","artist-credit":[{"name":"Fixture Artist","artist":{"id":%q,"name":"Fixture Artist"}}]}}]}]}`, releaseID, artistID, artistID)
 		default:
 			t.Errorf("unexpected MusicBrainz request: %s", r.URL.String())
 			http.Error(w, "unexpected request", http.StatusNotFound)
@@ -313,6 +319,44 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 		t.Fatalf("final acquisition phase=%q exists=%t err=%v; want catalog_ready", acquisitionSnapshot.Phase, exists, err)
 	}
 	assertParentWaiting("catalog_ready")
+	releaseKeys := make([]string, 101)
+	for index := range releaseKeys {
+		releaseKeys[index] = fmt.Sprintf("%08x-4444-4444-8444-%012x", index+1, index+1)
+	}
+	// Admission is fenced by the provider_source identity independently of the
+	// app-setting identity; a stale source row must not add phase/child writes.
+	staleLookup, err := fetch.PrepareOperation(ctx, "release_lookup", releaseKeys[0], 0, 0, false)
+	if err != nil {
+		t.Fatalf("prepare source-fence lookup child: %v", err)
+	}
+	staleInput, _ := json.Marshal(map[string]any{"release_ids": []string{releaseKeys[0]}})
+	staleOutput, _ := json.Marshal(map[string]any{"lookups": []map[string]any{{"release_id": releaseKeys[0], "request_id": staleLookup.ID, "cache_key": *staleLookup.ProviderCacheKey}}})
+	stalePhase := persistence.MatchingAcquisitionPhase{Revision: acquisitionSnapshot.Revision + 1, Phase: persistence.MatchingAcquisitionReleaseHydration,
+		Input: staleInput, Output: staleOutput, ResponseProvenance: json.RawMessage("[]")}
+	var sourceID uuid.UUID
+	if err := database.NewRaw(`SELECT provider_source_id FROM matching_run WHERE id=?`, parentID).Scan(ctx, &sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.NewRaw(`UPDATE provider_source SET configuration_identity='stale-hydration-test' WHERE id=?`, sourceID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := repository.StartMatchingReleaseHydration(ctx, client, parentID, acquisitionSnapshot.Revision, stalePhase,
+		[]persistence.MatchingProviderRequest{{Operation: staleLookup, Args: service.ProviderFetchOperationArgs{OperationID: staleLookup.ID}}}); err == nil || changed {
+		t.Fatalf("stale provider source identity admitted hydration: changed=%v err=%v", changed, err)
+	}
+	if _, err := database.NewRaw(`UPDATE provider_source SET configuration_identity=(SELECT provider_configuration_identity FROM matching_run WHERE id=?) WHERE id=?`, parentID, sourceID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var staleChildCount, phaseCount int
+	if err := database.NewRaw(`SELECT count(*) FROM operation WHERE id=?`, staleLookup.ID).Scan(ctx, &staleChildCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.NewRaw(`SELECT count(*) FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, parentID, stalePhase.Revision).Scan(ctx, &phaseCount); err != nil {
+		t.Fatal(err)
+	}
+	if staleChildCount != 0 || phaseCount != 0 {
+		t.Fatalf("rejected hydration wrote child=%d phase=%d", staleChildCount, phaseCount)
+	}
 	matchHeader, matchCandidates, err := persistence.NewIncomingMatchCandidateRepository(database).Get(ctx, group.ID)
 	if err != nil || matchHeader != nil || len(matchCandidates) != 0 {
 		t.Fatalf("finite evaluation published header=%+v candidates=%d err=%v; acquisition should park before scoring", matchHeader, len(matchCandidates), err)
@@ -359,71 +403,30 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseKeys := make([]string, 101)
-	for index := range releaseKeys {
-		releaseKeys[index] = fmt.Sprintf("%08x-4444-4444-8444-%012x", index+1, index+1)
-	}
 	graph, err := cache.GetMusicBrainzMatchingSnapshot(ctx, server.URL+"/ws/2", configuration.Identity, releaseKeys, nil)
 	if err != nil || len(graph.Releases) != 101 {
 		t.Fatalf("accepted sparse provider graph releases=%d err=%v; want 101 persisted releases", len(graph.Releases), err)
 	}
 
-	// Seal one explicit accepted release, then run the persisted continuation
-	// through the real registered worker and transactional publisher.
-	type manifestPage struct {
-		Revision   int64     `json:"revision"`
-		RequestID  uuid.UUID `json:"request_id"`
-		CacheKey   string    `json:"cache_key"`
-		PayloadSHA string    `json:"payload_sha256"`
+	// Explicitly select one catalog release, fetch its detail through the real
+	// provider worker, then let the matching wake write and consume the seal.
+	hydrated, err := acquisition.HydrateShortlist(ctx, parentID, acquisitionSnapshot.Revision, []string{releaseKeys[0]})
+	if err != nil || !hydrated {
+		t.Fatalf("admit explicit release shortlist: changed=%v err=%v", hydrated, err)
 	}
-	var manifest []manifestPage
-	var evidenceKeys []string
-	rows, err := database.QueryContext(ctx, `SELECT revision, response_provenance FROM matching_acquisition_phase WHERE run_id=? AND phase IN ('artist_catalog_page','catalog_ready') ORDER BY revision`, parentID)
-	if err != nil {
-		t.Fatal(err)
+	var lookupID uuid.UUID
+	if err := database.NewRaw(`SELECT operation.id FROM matching_provider_dependency dependency JOIN operation ON operation.id=dependency.request_id WHERE dependency.parent_run_id=? AND operation.kind='provider_release_lookup'`, parentID).Scan(ctx, &lookupID); err != nil {
+		t.Fatalf("read selected release lookup operation: %v", err)
 	}
-	for rows.Next() {
-		var revision int64
-		var raw []byte
-		if err := rows.Scan(&revision, &raw); err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
-		var provenance []struct {
-			RequestID  uuid.UUID `json:"request_id"`
-			CacheKey   string    `json:"cache_key"`
-			PayloadSHA string    `json:"payload_sha256"`
-		}
-		if err := json.Unmarshal(raw, &provenance); err != nil || len(provenance) != 1 {
-			rows.Close()
-			t.Fatalf("decode acquisition provenance at revision %d: %v", revision, err)
-		}
-		manifest = append(manifest, manifestPage{revision, provenance[0].RequestID, provenance[0].CacheKey, provenance[0].PayloadSHA})
-		evidenceKeys = append(evidenceKeys, provenance[0].CacheKey)
+	runProviderDelivery(lookupID)
+	runMatchingDelivery(nextWake())
+	parentAfterSeal, err := repository.GetOperation(ctx, parentID)
+	if err != nil || parentAfterSeal.State != "queued" || parentAfterSeal.Stage != "evaluation_queued" || parentAfterSeal.RiverJobID == nil {
+		t.Fatalf("hydration did not seal and queue evaluation: operation=%+v err=%v", parentAfterSeal, err)
 	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestSHA := sha256.Sum256(manifestJSON)
-	sealInput := persistence.MatchingAcquisitionEvaluationInput{
-		SchemaVersion: 1, GroupIDs: []uuid.UUID{group.ID}, ReleaseIDs: []string{releaseKeys[0]},
-		EvidenceCacheKeysByFile: map[uuid.UUID][]string{memberID: evidenceKeys},
-	}
-	evaluationJobID, created, err := repository.SealMatchingAcquisitionEvaluation(ctx, client, parentID,
-		persistence.MatchingAcquisitionSealRequest{ExpectedRevision: acquisitionSnapshot.Revision, ExpectedCatalogSHA: hex.EncodeToString(manifestSHA[:]), Input: sealInput})
-	if err != nil || !created || evaluationJobID < 1 {
-		t.Fatalf("seal accepted catalog: job=%d created=%v err=%v", evaluationJobID, created, err)
-	}
-	var persistedCatalogSHA string
-	if err := database.NewRaw(`SELECT encode(catalog_digest, 'hex') FROM matching_acquisition_seal WHERE run_id=?`, parentID).Scan(ctx, &persistedCatalogSHA); err != nil || persistedCatalogSHA != hex.EncodeToString(manifestSHA[:]) {
-		t.Fatalf("persisted catalog digest=%s err=%v; expected %s", persistedCatalogSHA, err, hex.EncodeToString(manifestSHA[:]))
-	}
+	evaluationJobID := *parentAfterSeal.RiverJobID
 	sealed, exists, err := acquisition.EvaluationSeal(ctx, parentID)
-	if err != nil || !exists || len(sealed.ReleaseIDs) != 1 || sealed.ReleaseIDs[0] != releaseKeys[0] {
+	if err != nil || !exists || sealed.SchemaVersion != 2 || len(sealed.ReleaseIDs) != 1 || sealed.ReleaseIDs[0] != releaseKeys[0] || len(sealed.ReleaseLookupCacheKeys) != 1 || sealed.ReleaseLookupCacheKeys[0] != "release-lookup:"+releaseKeys[0] {
 		t.Fatalf("read persisted evaluation seal: input=%+v exists=%v err=%v", sealed, exists, err)
 	}
 	setMatchingRiverJobRunning(t, ctx, database, evaluationJobID)
@@ -442,6 +445,9 @@ func TestMatchingAcquisitionSealedWorkerPublishesPostgreSQL(t *testing.T) {
 	header, candidates, err = persistence.NewIncomingMatchCandidateRepository(database).Get(ctx, group.ID)
 	if err != nil || header == nil || header.PolicyVersion != service.MatchingPolicyVersion {
 		t.Fatalf("sealed matching publication header=%+v candidates=%d err=%v", header, len(candidates), err)
+	}
+	if len(candidates) != 1 || candidates[0].Score < .7 || len(candidates[0].Positions) != 1 || candidates[0].Positions[0].Medium != 0 || candidates[0].Positions[0].Position != 0 {
+		t.Fatalf("hydrated release candidate=%+v; want a confident assignment at actual medium/track position", candidates)
 	}
 	var publishedGroupingEpoch int64
 	if err := database.NewRaw(`SELECT grouping_epoch FROM matching_run WHERE id=?`, parentID).Scan(ctx, &publishedGroupingEpoch); err != nil || publishedGroupingEpoch != groupingEpoch {

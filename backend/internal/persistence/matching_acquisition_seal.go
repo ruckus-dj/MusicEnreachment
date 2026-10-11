@@ -19,17 +19,23 @@ import (
 // catalog acquisition to the future evaluator. It contains no scores or policy
 // decisions; callers must explicitly select the releases to consider.
 type MatchingAcquisitionEvaluationInput struct {
-	SchemaVersion           int                             `json:"schema_version"`
-	GroupIDs                []uuid.UUID                     `json:"group_ids"`
-	ReleaseIDs              []string                        `json:"release_ids"`
-	EvidenceCacheKeysByFile map[uuid.UUID][]string          `json:"evidence_cache_keys_by_file,omitempty"`
-	SearchKeysByFile        map[uuid.UUID]map[string]string `json:"search_keys_by_file,omitempty"`
+	SchemaVersion              int                             `json:"schema_version"`
+	GroupIDs                   []uuid.UUID                     `json:"group_ids"`
+	ReleaseIDs                 []string                        `json:"release_ids"`
+	CatalogCacheKeys           []string                        `json:"catalog_cache_keys,omitempty"`
+	ReleaseLookupCacheKeys     []string                        `json:"release_lookup_cache_keys,omitempty"`
+	ReleaseLookupPayloadSHA256 map[string]string               `json:"release_lookup_payload_sha256,omitempty"`
+	EvidenceCacheKeysByFile    map[uuid.UUID][]string          `json:"evidence_cache_keys_by_file,omitempty"`
+	SearchKeysByFile           map[uuid.UUID]map[string]string `json:"search_keys_by_file,omitempty"`
 }
 
 type MatchingAcquisitionSealRequest struct {
 	ExpectedRevision   int64
 	ExpectedCatalogSHA string
 	Input              MatchingAcquisitionEvaluationInput
+	Delivery           *MatchingDeliveryClaim
+	RiverJobID         int64
+	Attempt            int
 }
 
 // SealMatchingAcquisitionEvaluation freezes explicit catalog selections and
@@ -41,7 +47,7 @@ func (repository *SetupManagerRepository) SealMatchingAcquisitionEvaluation(
 	runID uuid.UUID,
 	request MatchingAcquisitionSealRequest,
 ) (int64, bool, error) {
-	if client == nil || runID == uuid.Nil || request.ExpectedRevision < 0 || len(request.ExpectedCatalogSHA) != 64 {
+	if client == nil || runID == uuid.Nil || request.ExpectedRevision < 0 || request.Delivery == nil && len(request.ExpectedCatalogSHA) != 64 || request.Delivery != nil && request.ExpectedCatalogSHA != "" {
 		return 0, false, fmt.Errorf("seal matching acquisition: invalid seal fence")
 	}
 	input, encoded, digest, err := canonicalMatchingAcquisitionInput(request.Input)
@@ -138,13 +144,43 @@ func (repository *SetupManagerRepository) SealMatchingAcquisitionEvaluation(
 		} else if err != sql.ErrNoRows {
 			return fmt.Errorf("seal matching acquisition: read existing seal: %w", err)
 		}
-		if acquisition.Phase != "catalog_ready" || acquisition.Revision != request.ExpectedRevision || operation.Kind != "matching_evaluation_v1" ||
+		hydrating := acquisition.Phase == MatchingAcquisitionReleaseHydration && request.Delivery != nil
+		if (acquisition.Phase != "catalog_ready" && !hydrating) || acquisition.Revision != request.ExpectedRevision || operation.Kind != "matching_evaluation_v1" ||
 			(operation.State != "running" && operation.State != "queued") || operation.RiverJobID == nil {
 			return fmt.Errorf("seal matching acquisition: catalog or operation fence changed")
 		}
 		var currentDelivery bool
 		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL)`, runID).Scan(ctx, &currentDelivery); err != nil {
 			return err
+		}
+		if hydrating {
+			if !currentDelivery || request.Attempt != operation.Attempt || request.RiverJobID < 1 || request.Delivery.ExecutionEpoch < 1 || request.Delivery.RiverAttempt < 1 {
+				return fmt.Errorf("seal matching acquisition: hydration delivery fence changed")
+			}
+			var run struct {
+				State       string `bun:"state"`
+				Epoch       int64  `bun:"execution_epoch"`
+				JobID       *int64 `bun:"active_river_job_id"`
+				RiverTry    *int   `bun:"active_river_attempt"`
+				ActiveEpoch *int64 `bun:"active_execution_epoch"`
+			}
+			if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt, active_execution_epoch FROM matching_run WHERE id=? FOR NO KEY UPDATE`, runID).Scan(ctx, &run); err != nil || run.State != "running" || run.Epoch != request.Delivery.ExecutionEpoch || run.JobID == nil || *run.JobID != request.RiverJobID || run.RiverTry == nil || *run.RiverTry != request.Delivery.RiverAttempt || run.ActiveEpoch == nil || *run.ActiveEpoch != request.Delivery.ExecutionEpoch {
+				return fmt.Errorf("seal matching acquisition: hydration execution claim changed")
+			}
+			if err := validateMatchingCatalogCacheKeys(ctx, tx, runID, input.CatalogCacheKeys); err != nil {
+				return err
+			}
+			if err := validateMatchingReleaseHydration(ctx, tx, runID, acquisition.Revision, input.ReleaseIDs, input.ReleaseLookupCacheKeys, input.ReleaseLookupPayloadSHA256); err != nil {
+				return err
+			}
+			consumed, err := tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL`, time.Now().UTC(), runID, request.RiverJobID, request.Attempt).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if count, err := consumed.RowsAffected(); err != nil || count != 1 {
+				return fmt.Errorf("seal matching acquisition: hydration delivery is no longer active")
+			}
+			currentDelivery = false
 		}
 		if currentDelivery {
 			return fmt.Errorf("seal matching acquisition: an active delivery remains")
@@ -153,13 +189,16 @@ func (repository *SetupManagerRepository) SealMatchingAcquisitionEvaluation(
 		if err != nil {
 			return err
 		}
-		if hex.EncodeToString(catalogDigest[:]) != strings.ToLower(request.ExpectedCatalogSHA) {
+		if request.ExpectedCatalogSHA != "" && hex.EncodeToString(catalogDigest[:]) != strings.ToLower(request.ExpectedCatalogSHA) {
 			return fmt.Errorf("seal matching acquisition: accepted catalog changed")
 		}
 		for _, id := range input.ReleaseIDs {
 			if _, ok := catalogReleaseIDs[id]; !ok {
 				return fmt.Errorf("seal matching acquisition: selected release is absent from accepted catalog")
 			}
+		}
+		if !hydrating && len(input.ReleaseLookupCacheKeys) != 0 {
+			return fmt.Errorf("seal matching acquisition: release lookup cache keys require a hydration phase")
 		}
 		job, err := client.InsertTx(ctx, tx.Tx, MatchingEvaluationWakeArgs{OperationID: runID}, nil)
 		if err != nil {
@@ -196,7 +235,8 @@ func (repository *SetupManagerRepository) SealMatchingAcquisitionEvaluation(
 }
 
 func canonicalMatchingAcquisitionInput(input MatchingAcquisitionEvaluationInput) (MatchingAcquisitionEvaluationInput, []byte, [32]byte, error) {
-	if input.SchemaVersion != 1 || len(input.GroupIDs) == 0 || len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) > 10 {
+	if (input.SchemaVersion != 1 && input.SchemaVersion != 2) || len(input.GroupIDs) == 0 || len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) > 10 ||
+		input.SchemaVersion == 1 && len(input.ReleaseLookupCacheKeys) != 0 || input.SchemaVersion == 2 && len(input.ReleaseLookupCacheKeys) == 0 {
 		return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: evaluation input scope is invalid")
 	}
 	input.GroupIDs = append([]uuid.UUID(nil), input.GroupIDs...)
@@ -212,6 +252,34 @@ func canonicalMatchingAcquisitionInput(input MatchingAcquisitionEvaluationInput)
 		parsed, err := uuid.Parse(id)
 		if err != nil || parsed.String() != id || i > 0 && input.ReleaseIDs[i-1] == id {
 			return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: release ids must be canonical unique UUIDs")
+		}
+	}
+	input.ReleaseLookupCacheKeys = append([]string(nil), input.ReleaseLookupCacheKeys...)
+	sort.Strings(input.ReleaseLookupCacheKeys)
+	input.CatalogCacheKeys = append([]string(nil), input.CatalogCacheKeys...)
+	sort.Strings(input.CatalogCacheKeys)
+	if input.SchemaVersion == 1 && (len(input.CatalogCacheKeys) != 0 || len(input.ReleaseLookupPayloadSHA256) != 0) ||
+		input.SchemaVersion == 2 && (len(input.ReleaseLookupPayloadSHA256) != len(input.ReleaseLookupCacheKeys) || len(input.CatalogCacheKeys) == 0) {
+		return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: release lookup payload digests do not match lookup keys")
+	}
+	for i, key := range input.ReleaseLookupCacheKeys {
+		if strings.TrimSpace(key) == "" || i > 0 && input.ReleaseLookupCacheKeys[i-1] == key {
+			return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: release lookup cache keys must be non-empty and unique")
+		}
+		digest, ok := input.ReleaseLookupPayloadSHA256[key]
+		decoded, decodeErr := hex.DecodeString(digest)
+		if input.SchemaVersion == 2 && (!ok || decodeErr != nil || len(decoded) != sha256.Size) {
+			return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: release lookup payload digest is invalid")
+		}
+	}
+	for i, key := range input.CatalogCacheKeys {
+		if strings.TrimSpace(key) == "" || i > 0 && input.CatalogCacheKeys[i-1] == key {
+			return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: catalog cache keys must be non-empty and unique")
+		}
+	}
+	for key := range input.ReleaseLookupPayloadSHA256 {
+		if !containsString(input.ReleaseLookupCacheKeys, key) {
+			return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: release lookup payload digest is outside lookup scope")
 		}
 	}
 	for _, keys := range input.EvidenceCacheKeysByFile {
@@ -233,6 +301,131 @@ func canonicalMatchingAcquisitionInput(input MatchingAcquisitionEvaluationInput)
 		return input, nil, [32]byte{}, fmt.Errorf("seal matching acquisition: encode input: %w", err)
 	}
 	return input, encoded, sha256.Sum256(encoded), nil
+}
+
+func validateMatchingCatalogCacheKeys(ctx context.Context, tx bun.Tx, runID uuid.UUID, supplied []string) error {
+	var rows []struct {
+		ResponseProvenance []byte `bun:"response_provenance"`
+	}
+	if err := tx.NewRaw(`SELECT response_provenance FROM matching_acquisition_phase WHERE run_id=? AND phase IN ('artist_catalog_page','catalog_ready') ORDER BY revision`, runID).Scan(ctx, &rows); err != nil {
+		return fmt.Errorf("seal matching acquisition: read accepted catalog keys: %w", err)
+	}
+	accepted := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var provenance []matchingAcquisitionResponseProvenance
+		if json.Unmarshal(row.ResponseProvenance, &provenance) != nil || len(provenance) != 1 || provenance[0].CacheKey == "" {
+			return fmt.Errorf("seal matching acquisition: accepted catalog cache keys are invalid")
+		}
+		accepted = append(accepted, provenance[0].CacheKey)
+	}
+	sort.Strings(accepted)
+	keys := append([]string(nil), supplied...)
+	sort.Strings(keys)
+	if len(keys) != len(accepted) {
+		return fmt.Errorf("seal matching acquisition: catalog cache key scope is incomplete")
+	}
+	for i := range keys {
+		if keys[i] != accepted[i] {
+			return fmt.Errorf("seal matching acquisition: catalog cache key scope changed")
+		}
+	}
+	return nil
+}
+
+func validateMatchingReleaseHydration(ctx context.Context, tx bun.Tx, runID uuid.UUID, revision int64, releaseIDs, suppliedKeys []string, suppliedDigests map[string]string) error {
+	var phase struct {
+		Input  []byte `bun:"input"`
+		Output []byte `bun:"output"`
+	}
+	if err := tx.NewRaw(`SELECT input, output FROM matching_acquisition_phase WHERE run_id=? AND revision=? AND phase=? FOR SHARE`, runID, revision, MatchingAcquisitionReleaseHydration).Scan(ctx, &phase); err != nil {
+		return fmt.Errorf("seal matching acquisition: read hydration manifest: %w", err)
+	}
+	var manifest struct {
+		ReleaseIDs []string `json:"release_ids"`
+	}
+	var output struct {
+		Lookups []struct {
+			ReleaseID string    `json:"release_id"`
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		} `json:"lookups"`
+	}
+	if json.Unmarshal(phase.Input, &manifest) != nil || json.Unmarshal(phase.Output, &output) != nil || len(manifest.ReleaseIDs) != len(releaseIDs) || len(output.Lookups) != len(releaseIDs) || len(suppliedKeys) != len(releaseIDs) || len(suppliedDigests) != len(releaseIDs) {
+		return fmt.Errorf("seal matching acquisition: hydration manifest is incomplete")
+	}
+	for i, id := range releaseIDs {
+		if manifest.ReleaseIDs[i] != id || output.Lookups[i].ReleaseID != id || output.Lookups[i].RequestID == uuid.Nil || output.Lookups[i].CacheKey != "release-lookup:"+id {
+			return fmt.Errorf("seal matching acquisition: hydration manifest differs from selected releases")
+		}
+	}
+	keys := append([]string(nil), suppliedKeys...)
+	sort.Strings(keys)
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if seen[key] {
+			return fmt.Errorf("seal matching acquisition: duplicate release lookup cache key")
+		}
+		seen[key] = true
+	}
+	for _, lookup := range output.Lookups {
+		if !seen[lookup.CacheKey] {
+			return fmt.Errorf("seal matching acquisition: accepted lookup key does not match hydration manifest")
+		}
+		var dependency struct {
+			Outcome string `bun:"terminal_outcome"`
+		}
+		if err := tx.NewRaw(`SELECT dependency.terminal_outcome FROM matching_provider_dependency dependency WHERE dependency.parent_run_id=? AND dependency.request_id=? AND dependency.cache_key=? FOR SHARE`, runID, lookup.RequestID, lookup.CacheKey).Scan(ctx, &dependency); err != nil || dependency.Outcome != "succeeded" {
+			return fmt.Errorf("seal matching acquisition: a selected release lookup has not succeeded")
+		}
+		var accepted struct {
+			Kind string `bun:"kind"`
+			Body []byte `bun:"payload"`
+		}
+		if err := tx.NewRaw(`SELECT operation.kind, cache.payload FROM matching_provider_dependency dependency
+			JOIN operation ON operation.id=dependency.request_id
+			JOIN matching_run run ON run.id=dependency.parent_run_id
+			JOIN provider_response_cache cache ON cache.provider_source_id=run.provider_source_id AND cache.cache_key=dependency.cache_key
+			WHERE dependency.parent_run_id=? AND dependency.request_id=? AND dependency.cache_key=? AND dependency.terminal_outcome='succeeded' AND cache.payload IS NOT NULL FOR SHARE OF cache`, runID, lookup.RequestID, lookup.CacheKey).Scan(ctx, &accepted); err != nil {
+			return fmt.Errorf("seal matching acquisition: accepted release lookup is unavailable: %w", err)
+		}
+		if accepted.Kind != "provider_release_lookup" {
+			return fmt.Errorf("seal matching acquisition: selected dependency is not a release lookup")
+		}
+		digest := sha256.Sum256(accepted.Body)
+		payloadSHA := fmt.Sprintf("%x", digest[:])
+		if suppliedDigests[lookup.CacheKey] != payloadSHA {
+			return fmt.Errorf("seal matching acquisition: accepted release lookup payload changed")
+		}
+		response := matchingAcquisitionResponseProvenance{RequestID: lookup.RequestID, CacheKey: lookup.CacheKey, PayloadSHA: payloadSHA}
+		acceptedKind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, runID, response)
+		if err != nil || acceptedKind != accepted.Kind {
+			return fmt.Errorf("seal matching acquisition: accepted release lookup changed")
+		}
+		var release struct {
+			ID    string `json:"id"`
+			Media *[]struct {
+				Tracks *[]json.RawMessage `json:"tracks"`
+			} `json:"media"`
+		}
+		if json.Unmarshal(payload, &release) != nil || release.ID != lookup.ReleaseID || release.Media == nil {
+			return fmt.Errorf("seal matching acquisition: accepted release lookup is incomplete")
+		}
+		for _, medium := range *release.Media {
+			if medium.Tracks == nil {
+				return fmt.Errorf("seal matching acquisition: accepted release track list is incomplete")
+			}
+		}
+	}
+	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func matchingAcquisitionCatalogManifest(ctx context.Context, tx bun.Tx, runID uuid.UUID) ([32]byte, map[string]struct{}, error) {

@@ -19,7 +19,201 @@ const matchingAcquisitionIntentVersion = 1
 
 const (
 	MatchingAcquisitionArtistCatalogPage = "artist_catalog_page"
+	MatchingAcquisitionReleaseHydration  = "release_hydration"
 )
+
+// StartMatchingReleaseHydration atomically records an explicit catalog shortlist
+// and admits its release-lookup children. It is deliberately separate from the
+// delivery-driven catalog cursor: policy callers must provide the shortlist.
+func (repository *SetupManagerRepository) StartMatchingReleaseHydration(
+	ctx context.Context,
+	client RiverInserter,
+	runID uuid.UUID,
+	expectedRevision int64,
+	phase MatchingAcquisitionPhase,
+	children []MatchingProviderRequest,
+) (bool, error) {
+	if client == nil || runID == uuid.Nil || expectedRevision < 0 || phase.Revision != expectedRevision+1 || phase.Phase != MatchingAcquisitionReleaseHydration {
+		return false, fmt.Errorf("start matching release hydration: invalid transition fence")
+	}
+	if err := validateAcquisitionJSON(phase.Input, "input"); err != nil {
+		return false, err
+	}
+	if err := validateAcquisitionJSON(phase.Output, "output"); err != nil {
+		return false, err
+	}
+	if string(phase.ResponseProvenance) != "[]" {
+		return false, fmt.Errorf("start matching release hydration: initial provenance must be empty")
+	}
+	var input struct {
+		ReleaseIDs []string `json:"release_ids"`
+	}
+	if err := json.Unmarshal(phase.Input, &input); err != nil || len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) > 10 || len(children) != len(input.ReleaseIDs) {
+		return false, fmt.Errorf("start matching release hydration: shortlist is invalid")
+	}
+	var output struct {
+		Lookups []struct {
+			ReleaseID string    `json:"release_id"`
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		} `json:"lookups"`
+	}
+	if err := json.Unmarshal(phase.Output, &output); err != nil || len(output.Lookups) != len(children) {
+		return false, fmt.Errorf("start matching release hydration: lookup descriptors are invalid")
+	}
+	changed := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return err
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return err
+		}
+		var source matchingAcquisitionSourceFence
+		if err := tx.NewRaw(`SELECT run.provider_source_id, run.provider_configuration_identity, source.provider_id, source.endpoint
+			FROM matching_run run JOIN provider_source source ON source.id=run.provider_source_id WHERE run.id=?`, runID).Scan(ctx, &source); err != nil {
+			return err
+		}
+		var configIdentity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &configIdentity); err != nil || configIdentity != source.Identity {
+			return fmt.Errorf("start matching release hydration: provider configuration changed")
+		}
+		var sourceIdentity string
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, source.SourceID).Scan(ctx, &sourceIdentity); err != nil || sourceIdentity != source.Identity {
+			return fmt.Errorf("start matching release hydration: provider source configuration changed")
+		}
+		var acquisition struct {
+			Phase    string `bun:"current_phase"`
+			Revision int64  `bun:"revision"`
+		}
+		if err := tx.NewRaw(`SELECT current_phase, revision FROM matching_acquisition WHERE run_id=? FOR UPDATE`, runID).Scan(ctx, &acquisition); err != nil {
+			return err
+		}
+		if acquisition.Phase != "catalog_ready" || acquisition.Revision != expectedRevision {
+			return nil
+		}
+		var runState string
+		if err := tx.NewRaw(`SELECT state FROM matching_run WHERE id=? FOR UPDATE`, runID).Scan(ctx, &runState); err != nil {
+			return err
+		}
+		if runState != "waiting_policy" {
+			return fmt.Errorf("start matching release hydration: matching run is not waiting for policy")
+		}
+		var lockedGroups []uuid.UUID
+		if err := tx.NewRaw(`SELECT generation.group_id FROM incoming_matching_generation generation
+			JOIN matching_run_target target ON target.group_id=generation.group_id AND target.run_id=?
+			JOIN incoming_group current_group ON current_group.id=target.group_id
+			ORDER BY generation.group_id FOR UPDATE OF generation, current_group`, runID).Scan(ctx, &lockedGroups); err != nil {
+			return err
+		}
+		var stale bool
+		if err := tx.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM matching_run_target target
+			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+			WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+				generation.high_water IS DISTINCT FROM target.target_generation OR current_group.revision IS DISTINCT FROM target.captured_group_revision))
+			OR EXISTS (SELECT 1 FROM incoming_grouping_state WHERE singleton=true AND needs_refresh=true)`, runID).Scan(ctx, &stale); err != nil {
+			return err
+		}
+		if stale {
+			return fmt.Errorf("start matching release hydration: captured targets are stale")
+		}
+		_, catalogIDs, err := matchingAcquisitionCatalogManifest(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		seen := make(map[string]bool, len(input.ReleaseIDs))
+		seenOperations := make(map[uuid.UUID]bool, len(children))
+		seenCacheKeys := make(map[string]bool, len(children))
+		for index, id := range input.ReleaseIDs {
+			parsed, parseErr := uuid.Parse(id)
+			if parseErr != nil || parsed.String() != id || seen[id] {
+				return fmt.Errorf("start matching release hydration: release ids must be canonical and unique")
+			}
+			if index > 0 && input.ReleaseIDs[index-1] >= id {
+				return fmt.Errorf("start matching release hydration: shortlist must be canonically ordered")
+			}
+			if _, ok := catalogIDs[id]; !ok {
+				return fmt.Errorf("start matching release hydration: selected release is outside accepted catalog")
+			}
+			seen[id] = true
+			child := children[index].Operation
+			if child == nil || child.Kind != "provider_release_lookup" || child.ProviderSourceID == nil || *child.ProviderSourceID != source.SourceID || child.ProviderConfigurationIdentity == nil || *child.ProviderConfigurationIdentity != source.Identity || child.ProviderID == nil || *child.ProviderID != source.ProviderID || child.ProviderEndpoint != source.Endpoint || child.ProviderCacheKey == nil || *child.ProviderCacheKey != "release-lookup:"+id || child.ProviderExplicitRefresh {
+				return fmt.Errorf("start matching release hydration: lookup child fence is invalid")
+			}
+			if child.ID == uuid.Nil || seenOperations[child.ID] || seenCacheKeys[*child.ProviderCacheKey] {
+				return fmt.Errorf("start matching release hydration: duplicate lookup child")
+			}
+			seenOperations[child.ID] = true
+			seenCacheKeys[*child.ProviderCacheKey] = true
+			if output.Lookups[index].ReleaseID != id || output.Lookups[index].RequestID != child.ID || output.Lookups[index].CacheKey != *child.ProviderCacheKey {
+				return fmt.Errorf("start matching release hydration: lookup descriptor differs from prepared child")
+			}
+			var intent struct {
+				MBID string `json:"mbid"`
+			}
+			if json.Unmarshal(child.InputSnapshot, &intent) != nil || !strings.EqualFold(intent.MBID, id) || children[index].Args == nil || children[index].Args.Kind() != "provider_fetch_v1" {
+				return fmt.Errorf("start matching release hydration: lookup child identity is invalid")
+			}
+			var args struct {
+				OperationID uuid.UUID `json:"operation_id"`
+			}
+			encodedArgs, err := json.Marshal(children[index].Args)
+			if err != nil || json.Unmarshal(encodedArgs, &args) != nil || args.OperationID != child.ID {
+				return fmt.Errorf("start matching release hydration: lookup child delivery identity is invalid")
+			}
+		}
+		var operation *Operation
+		operation, err = repository.GetOperationForUpdate(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		if operation.Kind != "matching_evaluation_v1" || operation.State != "running" && operation.State != "queued" {
+			return fmt.Errorf("start matching release hydration: parent operation is not waiting for policy")
+		}
+		var pending int
+		if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND terminal_outcome IS NULL`, runID).Scan(ctx, &pending); err != nil {
+			return err
+		}
+		if pending != 0 {
+			return fmt.Errorf("start matching release hydration: previous provider children are still pending")
+		}
+		for _, child := range children {
+			if err := repository.createOperationAndEnqueueTx(ctx, tx, child.Operation, client, child.Args, nil); err != nil {
+				return err
+			}
+			if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id, request_id, cache_key) VALUES (?, ?, ?)`, runID, child.Operation.ID, *child.Operation.ProviderCacheKey).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		result, err := tx.NewRaw(`UPDATE matching_acquisition SET current_phase=?, revision=? WHERE run_id=? AND revision=? AND current_phase='catalog_ready'`, phase.Phase, phase.Revision, runID, expectedRevision).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return nil
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id, revision, phase, input, output, response_provenance) VALUES (?, ?, ?, ?::jsonb, ?::jsonb, '[]'::jsonb)`, runID, phase.Revision, phase.Phase, string(phase.Input), string(phase.Output)).Exec(ctx); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if _, err := tx.NewRaw(`UPDATE matching_run SET state='waiting_provider', updated_at=? WHERE id=?`, now, runID).Exec(ctx); err != nil {
+			return err
+		}
+		operation.Stage, operation.UpdatedAt = "waiting_provider", now
+		if _, err := tx.NewUpdate().Model(operation).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
 
 type MatchingAcquisitionIntent struct {
 	SchemaVersion         int                                  `json:"schema_version"`
@@ -87,6 +281,27 @@ func (repository *SetupManagerRepository) GetMatchingAcquisition(ctx context.Con
 		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: saved intent is invalid")
 	}
 	return snapshot, true, nil
+}
+
+// GetMatchingAcquisitionCatalogCacheKeys returns the exact accepted response
+// keys recorded by the durable artist catalog phases.
+func (repository *SetupManagerRepository) GetMatchingAcquisitionCatalogCacheKeys(ctx context.Context, runID uuid.UUID) ([]string, error) {
+	var rows []struct {
+		Provenance []byte `bun:"response_provenance"`
+	}
+	if err := repository.db.NewRaw(`SELECT response_provenance FROM matching_acquisition_phase WHERE run_id=? AND phase IN ('artist_catalog_page','catalog_ready') ORDER BY revision`, runID).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("read matching acquisition catalog response keys: %w", err)
+	}
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var provenance []matchingAcquisitionResponseProvenance
+		if json.Unmarshal(row.Provenance, &provenance) != nil || len(provenance) != 1 || provenance[0].CacheKey == "" {
+			return nil, fmt.Errorf("read matching acquisition catalog response keys: provenance is invalid")
+		}
+		keys = append(keys, provenance[0].CacheKey)
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 func matchingAcquisitionIntentFromAdmission(admission MatchingAdmission, planDigest [32]byte) (MatchingAcquisitionIntent, error) {

@@ -683,6 +683,25 @@ normalization для score в точности. Если по имеющимся
   fallback, partial review proposals, durable apply invocation и Incoming UI
   остаются следующими задачами. План не завершён; ревизия фиксируется коммитом.
 
+### Explicit shortlist hydration — 2026-10-11
+
+- Internal `HydrateShortlist` принимает явный group shortlist (до десяти
+  distinct release IDs из verified catalog), CAS-проверяет phase и source/
+  configuration/target fences и атомарно admits lookup children. Automatic
+  retrieval ranking либо новый пользовательский endpoint не вводятся.
+- Worker consumes accepted release lookups, затем сохраняет write-once seal
+  версии 2 с catalog-plus-lookup evidence и schedules sealed evaluation.
+  Accepted lookup payload hashes и release projections повторно проверяются
+  при seal read/publication; версия 1 catalog-only сохраняет отдельный контракт.
+- PostgreSQL/HTTP worker regression проходит настоящий lookup → publication,
+  проверяет candidate confidence и provider track position, а также rejection
+  при stale provider-source identity. Полный `task verify` повторно прошёл в
+  primary session; независимое review не выявило блокеров этого increment.
+- Ограничения coverage: competing/repeated hydration admission и enqueue-failure
+  rollback отдельно новыми regression tests пока не покрыты. Automatic ranking,
+  trigger, durable apply invocation и UI остаются не завершены; это не приёмка
+  всего плана. Ревизия фиксируется коммитом этого increment.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

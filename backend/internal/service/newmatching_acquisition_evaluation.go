@@ -17,7 +17,8 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 	if evaluator == nil || evaluator.groups == nil || evaluator.captures == nil || evaluator.provider == nil || evaluator.results == nil || evaluator.config == nil {
 		return prepared, fmt.Errorf("matching evaluation dependencies are unavailable")
 	}
-	if input.SchemaVersion != 1 || len(input.GroupIDs) == 0 || len(input.ReleaseIDs) > 10 {
+	if (input.SchemaVersion != 1 && input.SchemaVersion != 2) || len(input.GroupIDs) == 0 || len(input.ReleaseIDs) > 10 ||
+		input.SchemaVersion == 2 && (len(input.ReleaseLookupCacheKeys) != len(input.ReleaseIDs) || len(input.CatalogCacheKeys) == 0) {
 		return prepared, fmt.Errorf("sealed matching evaluation scope is invalid")
 	}
 	expected, err := captureMatchingEvaluationRevisions(ctx, input.GroupIDs, evaluator.results)
@@ -55,7 +56,8 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 			memberIDs[member] = true
 		}
 	}
-	if len(input.EvidenceCacheKeysByFile) != len(memberIDs) {
+	if input.SchemaVersion == 1 && len(input.EvidenceCacheKeysByFile) != len(memberIDs) ||
+		input.SchemaVersion == 2 && len(input.EvidenceCacheKeysByFile) != 0 {
 		return prepared, fmt.Errorf("sealed matching evaluation response provenance does not cover its members")
 	}
 	releaseSet, evidenceSet := make(map[string]bool), make(map[string]bool)
@@ -77,6 +79,24 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 			evidenceSet[key] = true
 		}
 	}
+	for _, key := range input.ReleaseLookupCacheKeys {
+		if strings.TrimSpace(key) == "" || !strings.HasPrefix(key, "release-lookup:") {
+			return prepared, fmt.Errorf("sealed matching release lookup scope is invalid")
+		}
+		evidenceSet[key] = true
+	}
+	for _, key := range input.CatalogCacheKeys {
+		if strings.TrimSpace(key) == "" {
+			return prepared, fmt.Errorf("sealed matching catalog response scope is invalid")
+		}
+		if evidenceSet[key] {
+			return prepared, fmt.Errorf("sealed matching response scope contains duplicate keys")
+		}
+		evidenceSet[key] = true
+	}
+	if input.SchemaVersion == 2 && len(evidenceSet) != len(input.ReleaseLookupCacheKeys)+len(input.CatalogCacheKeys) {
+		return prepared, fmt.Errorf("sealed matching release lookup scope contains duplicates")
+	}
 	releaseKeys, evidenceKeys := sortedMatchingKeys(releaseSet), sortedMatchingKeys(evidenceSet)
 	providerSnapshot, err := evaluator.provider.GetMusicBrainzMatchingSnapshot(ctx,
 		musicBrainzEndpoint(config), config.Identity, releaseKeys, evidenceKeys)
@@ -87,8 +107,16 @@ func (evaluator *MatchingEvaluationService) PrepareSealed(ctx context.Context, i
 		return prepared, fmt.Errorf("sealed matching release graph is incomplete")
 	}
 	for index, release := range providerSnapshot.Releases {
-		if release.ProviderKey != releaseKeys[index] {
+		if release.ProviderKey != releaseKeys[index] || input.SchemaVersion == 2 && !release.Complete {
 			return prepared, fmt.Errorf("sealed matching release graph differs from selected catalog identities")
+		}
+	}
+	if input.SchemaVersion == 2 {
+		for _, key := range input.ReleaseLookupCacheKeys {
+			response := providerSnapshot.Responses[key]
+			if response == nil || response.FetchedAt == nil || len(response.Payload) == 0 {
+				return prepared, fmt.Errorf("sealed matching accepted release lookup projection is incomplete")
+			}
 		}
 	}
 	releasesByFile := make(map[uuid.UUID][]string, len(memberIDs))

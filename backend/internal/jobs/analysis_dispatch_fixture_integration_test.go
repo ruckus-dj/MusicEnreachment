@@ -164,7 +164,10 @@ type matchingFixtureMetadataReader struct{}
 func (matchingFixtureMetadataReader) Read(context.Context, string, metadata.ReadRequest) (metadata.Capture, error) {
 	return metadata.Capture{
 		Provenance: metadata.Provenance{Name: "matching-worker fixture", Version: "1", Contract: "persisted test tags"},
-		Tags:       map[string][]string{"ARTIST": {"matching fixture"}},
+		Tags: map[string][]string{
+			"ARTIST": {"Fixture Artist"}, "ALBUM": {"Fixture Album"}, "TITLE": {"Fixture Track"},
+			"TRACKNUMBER": {"1"},
+		},
 	}, nil
 }
 
