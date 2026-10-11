@@ -777,6 +777,24 @@ normalization для score в точности. Если по имеющимся
 - Picker, Incoming UI, retrieval ranking, automatic post-analysis trigger,
   manual unlink policy и полная приёмка остаются открытыми. План не завершён.
 
+### Incoming review UI — 2026-10-11
+
+- Route «Входящие» показывает всех members, metadata, persisted release layouts
+  и раздельные release/assignment confidence. Release выбирается явно, drafts
+  page-local и независимы по release; partial назначения не выводятся автоматически.
+- Preview invalidation и async callbacks fenced по group/release/draft generation.
+  Confirm network retry сохраняет тот же request ID и body; conflict не удаляет
+  draft. Receipt виден независимо от refreshed evaluation/proposal availability,
+  а counts берутся из immutable response. Partial success не удаляет группу.
+- GET layout coordinates остаются zero-based; POST assignments переводятся в
+  one-based. Accessible labels всегда различают носители даже при одинаковых
+  displayed numbers/recording/title. RTL/MSW tests покрывают drafts, retry,
+  deferred-response races, unavailable states, receipt stability и координаты.
+- Независимое финальное source review не выявило блокеров; полный `task verify`
+  повторно прошёл в primary session после исправления test fixture typing.
+- Arbitrary artist/release picker, manual unlink policy, retrieval ranking и
+  automatic trigger ещё открыты. Полная приёмка и packaging/corpus не завершены.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

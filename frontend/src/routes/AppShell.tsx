@@ -8,11 +8,12 @@ import {
 import { getSetupState } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
+import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
 
-type Route = "/" | "/settings" | "/setup" | "/sources";
+type Route = "/" | "/settings" | "/setup" | "/sources" | "/incoming-groups";
 
 // The inventory screen owns its own #/sources/{id} address, so any string
 // under #/sources maps to the same shell route.
@@ -22,6 +23,7 @@ function currentRoute(): Route {
   if (hash === "#/settings") return "/settings";
   if (hash === "#/setup") return "/setup";
   if (sourcesRoute.test(hash)) return "/sources";
+  if (hash === "#/incoming-groups") return "/incoming-groups";
   return "/";
 }
 function subscribe(onChange: () => void) {
@@ -101,6 +103,13 @@ export function AppShell() {
             <nav className="flex gap-2">
               <AppButton
                 onPress={() => {
+                  window.location.hash = "/incoming-groups";
+                }}
+              >
+                Входящие
+              </AppButton>
+              <AppButton
+                onPress={() => {
                   window.location.hash = "/sources";
                 }}
               >
@@ -148,6 +157,8 @@ export function AppShell() {
           <SettingsScreen />
         ) : state && route === "/sources" ? (
           <SourcesScreen />
+        ) : state && route === "/incoming-groups" ? (
+          <IncomingGroupReviewScreen />
         ) : state ? (
           "Приложение готово к настройке."
         ) : null}
