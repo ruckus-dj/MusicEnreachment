@@ -227,6 +227,17 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err != nil {
 			return fmt.Errorf("canonicalize automatic artist matching plan: %w", err)
 		}
+		parentSnapshot, err := json.Marshal(struct {
+			SchemaVersion int             `json:"schema_version"`
+			Plan          json.RawMessage `json:"plan"`
+		}{1, planBytes})
+		if err != nil {
+			return err
+		}
+		admission.Parent.InputSnapshot, err = canonicalMatchingJSON(parentSnapshot)
+		if err != nil {
+			return fmt.Errorf("canonicalize automatic artist matching parent snapshot: %w", err)
+		}
 		planDigest := sha256.Sum256(planBytes)
 		if err := repository.createOperationAndEnqueueTx(ctx, tx, admission.Parent, client, admission.ParentArgs, nil); err != nil {
 			return err

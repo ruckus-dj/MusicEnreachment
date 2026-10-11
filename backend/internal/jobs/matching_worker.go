@@ -77,6 +77,20 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	if json.Unmarshal(operation.InputSnapshot, &mode) == nil && mode.Mode == "manual_review" {
 		return worker.workManualReleaseLookup(ctx, operation, claim, job.ID)
 	}
+	var runFence persistence.MatchingRunFenceSnapshot
+	var hasRunFence bool
+	if reader, ok := worker.repository.(interface {
+		GetMatchingRunFence(context.Context, uuid.UUID) (persistence.MatchingRunFenceSnapshot, bool, error)
+	}); ok {
+		var fenceErr error
+		runFence, hasRunFence, fenceErr = reader.GetMatchingRunFence(ctx, operation.ID)
+		if fenceErr != nil {
+			return worker.failInvalidPlan(ctx, operation, claim, job.ID)
+		}
+	}
+	if hasRunFence && runFence.Version == 2 && worker.acquisition == nil {
+		return worker.failInvalidPlan(ctx, operation, claim, job.ID)
+	}
 	if worker.acquisition != nil {
 		sealed, exists, err := worker.acquisition.EvaluationSeal(ctx, operation.ID)
 		if err != nil {
@@ -134,6 +148,43 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 			}
 			return nil
 		}
+	}
+
+	if hasRunFence && runFence.Version == 2 {
+		if consumed, err := worker.repository.ConsumePendingMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim); err != nil {
+			return err
+		} else if consumed {
+			worker.operations.Notify(operation.ID)
+			return nil
+		}
+		changed, acquired, err := worker.acquisition.Advance(ctx, operation.ID, operation.Attempt, job.ID, claim)
+		if err != nil {
+			var safeError string
+			switch {
+			case errors.Is(err, service.ErrInvalidMatchingAcquisitionResponse):
+				slog.WarnContext(ctx, "accepted matching acquisition response is invalid", "operation", operation.ID, "cause", err)
+				safeError = "The accepted provider response is invalid for matching."
+			case errors.Is(err, service.ErrMatchingAcquisitionProviderFailed):
+				safeError = "A required provider response failed, so matching cannot continue."
+			default:
+				return err
+			}
+			changed, err = worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, safeError)
+			if err != nil {
+				return err
+			}
+			if changed {
+				worker.operations.Notify(operation.ID)
+			}
+			return nil
+		}
+		if changed {
+			worker.operations.Notify(operation.ID)
+		}
+		if !acquired {
+			return worker.failInvalidPlan(ctx, operation, claim, job.ID)
+		}
+		return nil
 	}
 
 	var intent struct {

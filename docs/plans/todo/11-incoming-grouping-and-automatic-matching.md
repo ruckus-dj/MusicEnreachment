@@ -1002,6 +1002,16 @@ normalization для score в точности. Если по имеющимся
   passed again in primary. Production reconciliation consumer, no-artist
   fallback, return-to-automatic/API/UI and full-plan acceptance remain open.
 
+### Immutable plan4 routing — 2026-10-12
+
+- Automatic admission persists the repository-generated canonical plan4 parent
+  envelope. Worker routes unsealed fence2 runs by validated immutable run data,
+  without fabricated legacy search keys; invalid v2 cannot fall back to legacy.
+- Real v2 acquisition-to-apply regression uses this actual envelope and rejects
+  unknown plan versions. Manual/legacy routing remains unchanged.
+- Independent review approved the bounded fix; full `task verify` passed again
+  in primary. Production reconciliation consumer/queue/relay remain unwired.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

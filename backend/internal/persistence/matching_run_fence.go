@@ -35,7 +35,7 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 		Plan          []byte `bun:"immutable_plan"`
 		PlanDigest    []byte `bun:"plan_digest"`
 	}
-	err := repository.db.NewRaw(`SELECT a.intent_version,a.intent,r.immutable_plan,r.plan_digest FROM matching_acquisition a JOIN matching_run r ON r.id=a.run_id WHERE a.run_id=?`, runID).Scan(ctx, &row)
+	err := repository.db.NewRaw(`SELECT COALESCE(a.intent_version,0) AS intent_version,COALESCE(a.intent,'null'::jsonb) AS intent,r.immutable_plan,r.plan_digest FROM matching_run r LEFT JOIN matching_acquisition a ON a.run_id=r.id WHERE r.id=?`, runID).Scan(ctx, &row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, false, nil
@@ -49,14 +49,24 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 		TargetCaptureDigest string `json:"target_capture_digest"`
 	}
 	canonicalPlan, err := canonicalMatchingJSON(row.Plan)
-	if err != nil || json.Unmarshal(row.Intent, &intent) != nil || json.Unmarshal(row.Plan, &plan) != nil {
+	if err != nil || json.Unmarshal(row.Plan, &plan) != nil {
 		return result, false, fmt.Errorf("read matching run fence: immutable run is not a supported version-2 automatic target")
 	}
-	if row.IntentVersion != matchingAutomaticAcquisitionIntentVersion || intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion || intent.FenceVersion != 2 {
+	if plan.SchemaVersion == 2 || plan.SchemaVersion == 3 {
 		return result, false, nil
 	}
-	if plan.SchemaVersion != 4 || plan.Mode != "automatic" {
-		return result, false, fmt.Errorf("read matching run fence: immutable plan is invalid")
+	if row.IntentVersion == matchingAutomaticAcquisitionIntentVersion {
+		if json.Unmarshal(row.Intent, &intent) != nil || intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion || intent.FenceVersion != 2 {
+			return result, false, fmt.Errorf("read matching run fence: version-2 acquisition intent is invalid")
+		}
+		if plan.SchemaVersion != 4 {
+			return result, false, fmt.Errorf("read matching run fence: version-2 immutable plan is invalid")
+		}
+	} else {
+		return result, false, fmt.Errorf("read matching run fence: immutable plan version is unsupported")
+	}
+	if plan.Mode != "automatic" {
+		return result, false, fmt.Errorf("read matching run fence: version-2 acquisition intent is invalid or missing")
 	}
 	planDigest := sha256.Sum256(canonicalPlan)
 	if !equalDigest(row.PlanDigest, planDigest[:]) {

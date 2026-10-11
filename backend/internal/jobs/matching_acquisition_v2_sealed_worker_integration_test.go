@@ -161,41 +161,8 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		t.Fatalf("prepare initial artist search: %v", err)
 	}
 	queryDescriptor := append(json.RawMessage(nil), artistSearch.InputSnapshot...)
-	// MatchingEvaluationWorker validates its versioned routing envelope before
-	// consulting the persisted acquisition ledger. The v2 run itself is admitted
-	// below through AdmitAutomaticArtistMatchingRun; these exact cache identities
-	// are only the worker's compatible evaluation-scope envelope.
-	releaseSearch, err := fetch.PrepareOperation(ctx, "release_search", "release:unused-worker-envelope", 0, 1, false)
-	if err != nil {
-		t.Fatalf("prepare worker routing release identity: %v", err)
-	}
-	recordingSearch, err := fetch.PrepareOperation(ctx, "recording_search", "recording:unused-worker-envelope", 0, 1, false)
-	if err != nil {
-		t.Fatalf("prepare worker routing recording identity: %v", err)
-	}
-	workerPlan, err := json.Marshal(struct {
-		SchemaVersion        int                                  `json:"schema_version"`
-		GroupingEpoch        int64                                `json:"grouping_epoch"`
-		Targets              []persistence.MatchingTarget         `json:"targets"`
-		PolicyVersion        string                               `json:"policy_version"`
-		EvaluationQueryScope service.MatchingEvaluationQueryScope `json:"evaluation_query_scope"`
-	}{2, groupingEpoch, []persistence.MatchingTarget{{GroupID: group.ID, Revision: group.Revision}}, service.MatchingPolicyVersion,
-		service.MatchingEvaluationQueryScope{
-			GroupIDs: []uuid.UUID{group.ID}, ReleaseKeysByFile: map[uuid.UUID][]string{group.Members[0]: {}},
-			SearchKeysByFile: map[uuid.UUID]service.MatchingSearchKeys{group.Members[0]: {Release: *releaseSearch.ProviderCacheKey, Recording: *recordingSearch.ProviderCacheKey}},
-		}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerInput, err := json.Marshal(struct {
-		SchemaVersion int             `json:"schema_version"`
-		Plan          json.RawMessage `json:"plan"`
-	}{1, workerPlan})
-	if err != nil {
-		t.Fatal(err)
-	}
 	parentID := uuid.New()
-	parent := &persistence.Operation{ID: parentID, Kind: (service.MatchingEvaluationOperationArgs{}).Kind(), State: "queued", Stage: "waiting_provider", InputSnapshot: workerInput, Attempt: 1}
+	parent := &persistence.Operation{ID: parentID, Kind: (service.MatchingEvaluationOperationArgs{}).Kind(), State: "queued", Stage: "waiting_provider", Attempt: 1}
 	providerID, sourceID := *artistSearch.ProviderID, *artistSearch.ProviderSourceID
 	artistSearch.ProviderID = &providerID
 	artistSearch.ProviderSourceID = &sourceID
@@ -213,6 +180,18 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		t.Fatalf("automatic matching admission did not persist initial deliveries: %+v", admitted)
 	}
 	parentID = admitted.OriginalRunID
+	var persistedParentInput struct {
+		SchemaVersion int `json:"schema_version"`
+		Plan          struct {
+			SchemaVersion int    `json:"schema_version"`
+			Intent        string `json:"intent"`
+			Mode          string `json:"mode"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(admitted.Operation.InputSnapshot, &persistedParentInput); err != nil || persistedParentInput.SchemaVersion != 1 ||
+		persistedParentInput.Plan.SchemaVersion != 4 || persistedParentInput.Plan.Intent != "automatic_artist_acquisition" || persistedParentInput.Plan.Mode != "automatic" {
+		t.Fatalf("admitted parent routing snapshot=%s err=%v; want repository-generated plan-4 envelope", admitted.Operation.InputSnapshot, err)
+	}
 	var admissionCaptureDigest []byte
 	if err := database.NewRaw(`SELECT target_capture_digest FROM matching_run_target WHERE run_id=?`, parentID).Scan(ctx, &admissionCaptureDigest); err != nil || len(admissionCaptureDigest) == 0 {
 		t.Fatalf("read admitted target capture digest: digest=%x err=%v", admissionCaptureDigest, err)
@@ -527,6 +506,12 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	var pendingMatchingDeliveries int
 	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &pendingMatchingDeliveries); err != nil || pendingMatchingDeliveries != 0 {
 		t.Fatalf("pending matching deliveries for completed parent=%d err=%v; want none (provider wakes are settled and consumed)", pendingMatchingDeliveries, err)
+	}
+	if _, err := database.NewRaw(`UPDATE matching_run SET immutable_plan=jsonb_set(immutable_plan,'{schema_version}','99'::jsonb) WHERE id=?`, parentID).Exec(ctx); err != nil {
+		t.Fatalf("corrupt completed run plan version for negative fence check: %v", err)
+	}
+	if _, exists, err := repository.GetMatchingRunFence(ctx, parentID); err == nil || exists {
+		t.Fatalf("unknown matching run fence exists=%t err=%v; want a validation error", exists, err)
 	}
 }
 
