@@ -100,12 +100,14 @@ type IncomingMatchAcoustIDSourceInputFence struct {
 type IncomingMatchEvaluation struct {
 	// ScopeVersion 4 marks a persisted acquisition seal, rather than an
 	// immutable search-key plan, as the authority for candidate scope.
-	ScopeVersion           int
-	ExpectedGroupsRevision string
-	ExpectedGroupingEpoch  int64
-	PolicyVersion          string
-	Provider               IncomingMatchProviderFence
-	Groups                 []IncomingMatchGroupEvaluation
+	ScopeVersion               int
+	ExpectedGroupsRevision     string
+	ExpectedGroupingEpoch      int64
+	PolicyVersion              string
+	MatchingAuthorityMode      string
+	MatchingAuthorityRevisions map[uuid.UUID]int64
+	Provider                   IncomingMatchProviderFence
+	Groups                     []IncomingMatchGroupEvaluation
 }
 
 type IncomingMatchEvaluationHeader struct {
@@ -126,6 +128,8 @@ type IncomingMatchEvaluationHeader struct {
 	ProviderSnapshotRevision      string
 	ProviderFences                json.RawMessage
 	EvaluatedAt                   time.Time
+	MatchingAuthorityMode         string
+	MatchingAuthorityRevision     int64
 }
 
 type IncomingMatchReviewSnapshot struct {
@@ -226,14 +230,17 @@ func (repository *IncomingMatchCandidateRepository) replace(ctx context.Context,
 		}
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		return replaceIncomingMatchesTx(ctx, tx, evaluation, expected)
+		return replaceIncomingMatchesTx(ctx, tx, evaluation, expected, "automatic")
 	})
 }
 
 // replaceIncomingMatchesTx publishes evaluated results inside a caller-owned
 // transaction. Keep the shared validation, lock, CAS, and write path here so
 // standalone evaluation and durable delivery publication have identical fences.
-func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string) error {
+func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation IncomingMatchEvaluation, expected map[uuid.UUID]*string, allowedAuthorityMode string) error {
+	if allowedAuthorityMode != "automatic" && allowedAuthorityMode != "manual_review" {
+		return fmt.Errorf("replace incoming matches: invalid authority mode")
+	}
 	if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 		return err
 	}
@@ -248,10 +255,38 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 		}
 	}
 	// Canonical lock order: source mutation gate, AcoustID configuration,
-	// ordered cache-key gates, current source/group state, provider rows, then
-	// evaluation revisions. Apply and publication share this exact prelude.
+	// ordered cache-key gates, current source/group state, group authority,
+	// provider rows, then evaluation revisions. Apply and publication share this
+	// exact prelude.
 	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "replace incoming matches"); err != nil {
 		return err
+	}
+	if evaluation.MatchingAuthorityMode != "" && evaluation.MatchingAuthorityMode != allowedAuthorityMode {
+		return fmt.Errorf("replace incoming matches: evaluation authority mode is invalid")
+	}
+	if len(evaluation.MatchingAuthorityRevisions) != 0 && len(evaluation.MatchingAuthorityRevisions) != len(evaluation.Groups) {
+		return fmt.Errorf("replace incoming matches: captured authority scope differs from evaluation")
+	}
+	authorities := make(map[uuid.UUID]IncomingGroupMatchingAuthority, len(evaluation.Groups))
+	for _, group := range evaluation.Groups {
+		authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, group.GroupID)
+		if err != nil {
+			return err
+		}
+		expectedAuthorityRevision, hasAuthorityRevision := evaluation.MatchingAuthorityRevisions[group.GroupID]
+		if len(evaluation.MatchingAuthorityRevisions) == 0 {
+			expectedAuthorityRevision = authority.Revision
+		} else if !hasAuthorityRevision {
+			return fmt.Errorf("replace incoming matches: captured authority is missing for group")
+		}
+		modeAllowed := authority.Mode == "automatic"
+		if allowedAuthorityMode == "manual_review" {
+			modeAllowed = authority.Mode == "automatic" || authority.Mode == "manual"
+		}
+		if !modeAllowed || authority.Revision != expectedAuthorityRevision {
+			return fmt.Errorf("replace incoming matches: group authority changed: %w", ErrIncomingMatchConflict)
+		}
+		authorities[group.GroupID] = authority
 	}
 	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
 		return err
@@ -280,6 +315,7 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 	// All group revisions are locked and compared before the first header is
 	// removed, so no group can be published from a partially acquired snapshot.
 	for _, group := range evaluation.Groups {
+		authority := authorities[group.GroupID]
 		if _, err := tx.NewRaw(`DELETE FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Exec(ctx); err != nil {
 			return fmt.Errorf("replace incoming match evaluation: remove previous result: %w", err)
 		}
@@ -293,14 +329,14 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 			groupEvidence = json.RawMessage(`{}`)
 		}
 		if _, err := tx.NewRaw(`INSERT INTO incoming_match_evaluation
-			(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
-			 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-			 cache_key, cache_revision, provider_snapshot_revision, provider_fences)
-			VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
+				(group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch, policy_version,
+				 provider_source_id, provider_id, provider_configuration_identity, provider_namespace, provider_endpoint,
+				 cache_key, cache_revision, provider_snapshot_revision, provider_fences, matching_authority_mode, matching_authority_revision)
+			VALUES (?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)`, group.GroupID, evaluationRevision, string(groupEvidence), group.GroupRevision,
 			evaluation.ExpectedGroupsRevision, evaluation.ExpectedGroupingEpoch, evaluation.PolicyVersion,
 			evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID,
 			evaluation.Provider.ConfigurationIdentity, evaluation.Provider.Namespace, evaluation.Provider.Endpoint,
-			evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences)).Exec(ctx); err != nil {
+			evaluation.Provider.CacheKey, evaluation.Provider.CacheRevision, evaluation.Provider.AcceptedProjectionRevision, string(providerFences), allowedAuthorityMode, authority.Revision).Exec(ctx); err != nil {
 			return fmt.Errorf("replace incoming match evaluation: insert header: %w", err)
 		}
 		if err := copyIncomingMatchMembers(ctx, tx, group); err != nil {
@@ -754,7 +790,8 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at
+		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
+		matching_authority_mode, matching_authority_revision
 		FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -793,7 +830,8 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 		var header IncomingMatchEvaluationHeader
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
+		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
+		matching_authority_mode, matching_authority_revision FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

@@ -121,6 +121,55 @@ func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
 	if manualTracks != 1 || manualLinks < 1 || receipts != 1 {
 		t.Fatalf("manual track mappings=%d source links=%d receipts=%d", manualTracks, manualLinks, receipts)
 	}
+	var groupRevision string
+	if err := db.NewRaw(`SELECT revision FROM incoming_group WHERE id=?`, fixture.group.ID).Scan(ctx, &groupRevision); err != nil {
+		t.Fatal(err)
+	}
+	var authority persistence.IncomingGroupMatchingAuthority
+	if err := db.NewRaw(`SELECT group_id,mode,revision FROM incoming_group_matching_authority WHERE group_id=?`, fixture.group.ID).Scan(ctx, &authority); err != nil {
+		t.Fatal(err)
+	}
+	if authority.Mode != "manual" || authority.Revision != 1 {
+		t.Fatalf("manual confirmation authority = %+v", authority)
+	}
+	var sourceID uuid.UUID
+	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, fixture.workA).Scan(ctx, &sourceID); err != nil {
+		t.Fatal(err)
+	}
+	unlinkID := uuid.New()
+	unlinked, err := repository.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{sourceID}, unlinkID)
+	if err != nil {
+		t.Fatalf("unlink selected manual association: %v", err)
+	}
+	if unlinked.Mode != "manual" || unlinked.AuthorityRevision != 2 || len(unlinked.RemovedSourceIDs) != 1 || unlinked.RemovedSourceIDs[0] != sourceID {
+		t.Fatalf("unlink result = %+v", unlinked)
+	}
+	replayed, err := repository.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{sourceID}, unlinkID)
+	if err != nil || !reflect.DeepEqual(replayed, unlinked) {
+		t.Fatalf("unlink receipt replay = %+v, %v", replayed, err)
+	}
+	if _, err := repository.UnlinkIncomingGroupMatching(ctx, fixture.group.ID, groupRevision, authority.Revision, []uuid.UUID{fixture.group.Members[1]}, unlinkID); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+		t.Fatalf("changed unlink intent with same request ID error = %v", err)
+	}
+	var remainingLinks, retainedTrackMappings, retainedProviderReleases int
+	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE media_variant_id=?`, sourceID).Scan(ctx, &remainingLinks); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM provider_local_track WHERE provider_id=? AND provider_track_id=?`, fixture.provider, fixture.trackID).Scan(ctx, &retainedTrackMappings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewRaw(`SELECT count(*) FROM provider_local_release WHERE provider_id=? AND provider_release_id=?`, fixture.provider, fixture.releaseID).Scan(ctx, &retainedProviderReleases); err != nil {
+		t.Fatal(err)
+	}
+	if remainingLinks != 0 || retainedTrackMappings != 1 || retainedProviderReleases != 1 {
+		t.Fatalf("unlink side effects: links=%d track mappings=%d release mappings=%d", remainingLinks, retainedTrackMappings, retainedProviderReleases)
+	}
+	if err := repository.ApplyCurrentMatchingEvaluation(ctx, fixture.group.ID, preview.EvaluationRevision); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+		t.Fatalf("automatic apply after manual authority error = %v", err)
+	}
+	if err := repository.Replace(ctx, fixture.evaluation(nil)); !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+		t.Fatalf("automatic publication after manual authority error = %v", err)
+	}
 	if _, err := db.NewRaw(`UPDATE incoming_match_evaluation SET evaluation_revision='changed-after-confirmation' WHERE group_id=?`, fixture.group.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}

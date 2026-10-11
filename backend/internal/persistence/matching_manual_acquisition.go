@@ -255,6 +255,10 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id,river_job_id,operation_attempt) VALUES(?,?,?)`, parentID, *parent.RiverJobID, parent.Attempt).Exec(ctx); err != nil {
 			return err
 		}
+		authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.NewRaw(`INSERT INTO incoming_matching_generation(group_id,high_water) VALUES(?,0) ON CONFLICT(group_id) DO NOTHING`, groupID).Exec(ctx); err != nil {
 			return err
 		}
@@ -262,7 +266,7 @@ func (repository *SetupManagerRepository) AdmitManualReleaseMatchingRun(
 		if err := tx.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1,current_run_id=?,updated_at=now() WHERE group_id=? RETURNING high_water`, parentID, groupID).Scan(ctx, &generation); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation) VALUES(?,?,?,?)`, parentID, groupID, expectedGroupRevision, generation).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision) VALUES(?,?,?,?,?)`, parentID, groupID, expectedGroupRevision, generation, authority.Revision).Exec(ctx); err != nil {
 			return err
 		}
 		if err := repository.createOperationAndEnqueueTx(ctx, tx, operation, client, child.Args, nil); err != nil {

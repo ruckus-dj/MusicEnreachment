@@ -34,7 +34,8 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	var header IncomingMatchEvaluationHeader
 	if err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 			policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-			cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at
+			cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
+			matching_authority_mode, matching_authority_revision
 			FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrIncomingMatchConflict
@@ -43,16 +44,6 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	}
 	if header.EvaluationRevision != expectedEvaluationRevision {
 		return ErrIncomingMatchConflict
-	}
-	if err := rejectManualOnlyMatchingEvaluation(header.EvaluationEvidence); err != nil {
-		return err
-	}
-	decision, err := decodePersistedMatchingDecision(header.EvaluationEvidence)
-	if err != nil {
-		return err
-	}
-	if decision.GroupID != groupID || decision.PolicyVersion != header.PolicyVersion || decision.Outcome != "unique" || decision.SelectedRelease == nil {
-		return fmt.Errorf("apply matching evaluation: persisted decision is not uniquely applicable")
 	}
 	var fence IncomingMatchProviderFence
 	if err := json.Unmarshal(header.ProviderFences, &fence); err != nil {
@@ -74,6 +65,26 @@ func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluati
 	}
 	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "apply matching evaluation"); err != nil {
 		return err
+	}
+	if header.MatchingAuthorityMode != "automatic" {
+		return fmt.Errorf("apply matching evaluation: persisted evaluation authority is not automatic: %w", ErrIncomingMatchConflict)
+	}
+	currentAuthorityRevision, err := requireAutomaticMatchingAuthority(ctx, tx, groupID)
+	if err != nil {
+		return fmt.Errorf("apply matching evaluation: group authority is not automatic: %w", err)
+	}
+	if currentAuthorityRevision != header.MatchingAuthorityRevision {
+		return ErrIncomingMatchConflict
+	}
+	if err := rejectManualOnlyMatchingEvaluation(header.EvaluationEvidence); err != nil {
+		return err
+	}
+	decision, err := decodePersistedMatchingDecision(header.EvaluationEvidence)
+	if err != nil {
+		return err
+	}
+	if decision.GroupID != groupID || decision.PolicyVersion != header.PolicyVersion || decision.Outcome != "unique" || decision.SelectedRelease == nil {
+		return fmt.Errorf("apply matching evaluation: persisted decision is not uniquely applicable")
 	}
 	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
 		return err
@@ -166,6 +177,8 @@ func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Con
 				WHERE request.group_id=? AND request.parent_run_id=? AND request.apply_operation_id=?
 				AND request.evaluation_revision=? AND run.execution_epoch=?
 				AND generation.current_run_id=run.id AND generation.high_water=target.target_generation
+				AND COALESCE((SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=request.group_id),'automatic')='automatic'
+				AND COALESCE((SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=request.group_id),0)=target.authority_revision
 			)`, intent.GroupID, intent.ParentRunID, operationID, intent.EvaluationRevision, intent.ExecutionEpoch).Scan(ctx, &current); err != nil {
 				return fmt.Errorf("apply matching operation: validate original run authority: %w", err)
 			}

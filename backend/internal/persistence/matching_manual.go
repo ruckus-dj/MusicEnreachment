@@ -177,6 +177,9 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 		if err := materializeManualMatching(ctx, tx, state, result, explicitAssignments); err != nil {
 			return err
 		}
+		if _, err := promoteIncomingGroupMatchingManual(ctx, tx, groupID); err != nil {
+			return err
+		}
 		var localReleaseID uuid.UUID
 		if err := tx.NewRaw(`SELECT local_release_id FROM provider_local_release WHERE provider_id=? AND provider_release_id=?`, state.fence.ProviderID, providerReleaseID).Scan(ctx, &localReleaseID); err != nil {
 			return fmt.Errorf("confirm manual matching: read local release mapping: %w", err)
@@ -211,7 +214,7 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		return result, state, err
 	}
 	var err error
-	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
+	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at,matching_authority_mode,matching_authority_revision FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, state, ErrIncomingMatchConflict
 	}
@@ -237,6 +240,13 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 	evaluation := IncomingMatchEvaluation{ExpectedGroupsRevision: state.header.GroupsRevision, ExpectedGroupingEpoch: state.header.GroupingEpoch, PolicyVersion: state.header.PolicyVersion, Provider: state.fence, Groups: []IncomingMatchGroupEvaluation{group}}
 	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "manual matching"); err != nil {
 		return result, state, err
+	}
+	authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, groupID)
+	if err != nil {
+		return result, state, err
+	}
+	if (state.header.MatchingAuthorityMode != "automatic" && state.header.MatchingAuthorityMode != "manual_review") || authority.Revision != state.header.MatchingAuthorityRevision {
+		return result, state, ErrIncomingMatchConflict
 	}
 	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
 		return result, state, err
@@ -386,11 +396,12 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		return result, state, err
 	}
 	digestInput, err := json.Marshal(struct {
-		Header  IncomingMatchEvaluationHeader `json:"header"`
-		Release MatchingRelease               `json:"release"`
-		Members []MatchingManualMember        `json:"members"`
-		Current manualCurrentState            `json:"current"`
-	}{state.header, release, result.Members, current})
+		Header    IncomingMatchEvaluationHeader  `json:"header"`
+		Release   MatchingRelease                `json:"release"`
+		Members   []MatchingManualMember         `json:"members"`
+		Current   manualCurrentState             `json:"current"`
+		Authority IncomingGroupMatchingAuthority `json:"authority"`
+	}{state.header, release, result.Members, current, authority})
 	if err != nil {
 		return result, state, err
 	}

@@ -44,11 +44,16 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 		if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 			return err
 		}
-		if err := validateMatchingPlanEvaluation(ctx, tx, operationID, evaluation); err != nil {
+		if err := validateMatchingPlanEvaluation(ctx, tx, operationID, &evaluation); err != nil {
 			return err
 		}
-		// The shared helper acquires source/group/provider/evaluation locks first.
-		if err := replaceIncomingMatchesTx(ctx, tx, evaluation, expected); err != nil {
+		// The shared helper locks source/group, authority, provider, and evaluation
+		// state before replacing any published result.
+		allowedAuthorityMode := "automatic"
+		if evaluation.MatchingAuthorityMode == "manual_review" {
+			allowedAuthorityMode = "manual_review"
+		}
+		if err := replaceIncomingMatchesTx(ctx, tx, evaluation, expected, allowedAuthorityMode); err != nil {
 			return err
 		}
 		var targetIDs []uuid.UUID
@@ -309,7 +314,10 @@ type matchingPublisherRunPlan struct {
 	ConfigurationIdentity string          `bun:"provider_configuration_identity"`
 }
 
-func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation IncomingMatchEvaluation) error {
+func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation *IncomingMatchEvaluation) error {
+	if evaluation == nil {
+		return fmt.Errorf("publish matching evaluation: evaluation is missing")
+	}
 	var run matchingPublisherRunPlan
 	if err := tx.NewRaw(`SELECT immutable_plan, grouping_epoch, policy_version, provider_source_id, provider_configuration_identity
 		FROM matching_run WHERE id=?`, runID).Scan(ctx, &run); err != nil {
@@ -319,7 +327,11 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 		Mode string `json:"mode"`
 	}
 	if json.Unmarshal(run.Plan, &planEnvelope) == nil && planEnvelope.Mode == "manual_review" {
-		return validateManualMatchingPlanEvaluation(ctx, tx, runID, run, evaluation)
+		if err := validateManualMatchingPlanEvaluation(ctx, tx, runID, run, *evaluation); err != nil {
+			return err
+		}
+		evaluation.MatchingAuthorityMode = "manual_review"
+		return captureMatchingRunTargetAuthorities(ctx, tx, runID, evaluation)
 	}
 	var plan matchingPublisherPlan
 	if err := json.Unmarshal(run.Plan, &plan); err != nil {
@@ -352,10 +364,10 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 		}
 	}
 	if evaluation.ScopeVersion == 4 {
-		if err := validateSealedMatchingEvaluation(ctx, tx, runID, evaluation); err != nil {
+		if err := validateSealedMatchingEvaluation(ctx, tx, runID, *evaluation); err != nil {
 			return err
 		}
-	} else if err := validateMatchingPlanQueryScope(plan.Scope, evaluation); err != nil {
+	} else if err := validateMatchingPlanQueryScope(plan.Scope, *evaluation); err != nil {
 		return err
 	}
 	if evaluation.Provider.ProviderSourceID != run.ProviderSourceID || evaluation.Provider.ConfigurationIdentity != run.ConfigurationIdentity {
@@ -368,6 +380,25 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 	}
 	if len(plan.Providers) == 0 {
 		return fmt.Errorf("publish matching evaluation: admitted provider request is missing")
+	}
+	evaluation.MatchingAuthorityMode = "automatic"
+	return captureMatchingRunTargetAuthorities(ctx, tx, runID, evaluation)
+}
+
+func captureMatchingRunTargetAuthorities(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation *IncomingMatchEvaluation) error {
+	var rows []struct {
+		GroupID  uuid.UUID `bun:"group_id"`
+		Revision int64     `bun:"authority_revision"`
+	}
+	if err := tx.NewRaw(`SELECT group_id,authority_revision FROM matching_run_target WHERE run_id=? ORDER BY group_id FOR SHARE`, runID).Scan(ctx, &rows); err != nil {
+		return fmt.Errorf("publish matching evaluation: read captured authority revisions: %w", err)
+	}
+	if len(rows) != len(evaluation.Groups) {
+		return fmt.Errorf("publish matching evaluation: captured authority scope differs from evaluation")
+	}
+	evaluation.MatchingAuthorityRevisions = make(map[uuid.UUID]int64, len(rows))
+	for _, row := range rows {
+		evaluation.MatchingAuthorityRevisions[row.GroupID] = row.Revision
 	}
 	return nil
 }

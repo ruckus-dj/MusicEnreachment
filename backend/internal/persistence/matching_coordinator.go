@@ -200,6 +200,10 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 			return fmt.Errorf("matching admission: register initial parent delivery: %w", err)
 		}
 		for _, target := range targets {
+			authorityRevision, err := requireAutomaticMatchingAuthority(ctx, tx, target.GroupID)
+			if err != nil {
+				return fmt.Errorf("matching admission: group authority is not automatic: %w", err)
+			}
 			if _, err := tx.NewRaw(`INSERT INTO incoming_matching_generation(group_id, high_water) VALUES (?, 0) ON CONFLICT (group_id) DO NOTHING`, target.GroupID).Exec(ctx); err != nil {
 				return fmt.Errorf("matching admission: initialize target generation: %w", err)
 			}
@@ -207,7 +211,7 @@ func (repository *SetupManagerRepository) AdmitMatchingRun(ctx context.Context, 
 			if err := tx.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1, current_run_id=?, updated_at=now() WHERE group_id=? RETURNING high_water`, admission.Parent.ID, target.GroupID).Scan(ctx, &generation); err != nil {
 				return fmt.Errorf("matching admission: advance target generation: %w", err)
 			}
-			if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id, group_id, captured_group_revision, target_generation) VALUES (?, ?, ?, ?)`, admission.Parent.ID, target.GroupID, target.Revision, generation).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id, group_id, captured_group_revision, target_generation, authority_revision) VALUES (?, ?, ?, ?, ?)`, admission.Parent.ID, target.GroupID, target.Revision, generation, authorityRevision).Exec(ctx); err != nil {
 				return fmt.Errorf("matching admission: save target: %w", err)
 			}
 		}

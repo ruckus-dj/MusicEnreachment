@@ -907,6 +907,26 @@ normalization для score в точности. Если по имеющимся
   Post-analysis trigger и multi-group orchestration не реализованы; unlink,
   packaging/corpus и полная end-to-end приёмка остаются открытыми.
 
+### Durable manual authority and unlink core — 2026-10-12
+
+- Matching authority отделена от manual grouping corrections и сохраняется при
+  замене grouping read model. Admission/publication/evaluation/apply используют
+  captured mode/revision; manual confirmation promotes authority, preview digest
+  включает текущую authority. Повторная manual publication разрешена для её run.
+- Explicit manual association unlink сохраняет manual mode, advances revision,
+  сохраняет source files/local/provider mappings и immutable replay receipt.
+  Membership проверяется через actual location work IDs → media identities,
+  поддерживая metadata-only и SHA-coalesced grouping без обязательного SHA.
+- Реальный worker regression: pending apply → manual confirm → unlink → old
+  delivery создаёт review_required receipt без восстановления links; replay
+  стабилен и materialization counts не меняются. Это worker-only fixture, не
+  proof publisher admission или concurrent ordering.
+- Независимое финальное review одобрило bounded core; полный `task verify`
+  повторно прошёл в primary session. Dedicated SHA unlink, concurrent race и
+  authority-cycle regression matrix ещё требуют расширения.
+- Return-to-automatic, его durable reconciliation, unlink API/UI и post-analysis
+  trigger ещё не подключены. Полная приёмка плана остаётся открытой.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
