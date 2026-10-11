@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/matchingpolicy"
 	"github.com/uptrace/bun"
 )
+
+var ErrMatchingManualProtection = errors.New("matching apply blocked by manual protection")
 
 // ApplyCurrentMatchingEvaluation materializes only the persisted, unique
 // evaluation decision for groupID. Evaluation evidence and all current source
@@ -23,59 +26,162 @@ func (repository *IncomingMatchCandidateRepository) ApplyCurrentMatchingEvaluati
 		return fmt.Errorf("apply matching evaluation: group and evaluation revision are required")
 	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		var header IncomingMatchEvaluationHeader
-		if err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
+		return repository.applyCurrentMatchingEvaluationTx(ctx, tx, groupID, expectedEvaluationRevision)
+	})
+}
+
+func (repository *IncomingMatchCandidateRepository) applyCurrentMatchingEvaluationTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, expectedEvaluationRevision string) error {
+	var header IncomingMatchEvaluationHeader
+	if err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 			policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
 			cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at
 			FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIncomingMatchConflict
-			}
-			return fmt.Errorf("apply matching evaluation: read evaluation: %w", err)
-		}
-		if header.EvaluationRevision != expectedEvaluationRevision {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrIncomingMatchConflict
 		}
-		decision, err := decodePersistedMatchingDecision(header.EvaluationEvidence)
+		return fmt.Errorf("apply matching evaluation: read evaluation: %w", err)
+	}
+	if header.EvaluationRevision != expectedEvaluationRevision {
+		return ErrIncomingMatchConflict
+	}
+	decision, err := decodePersistedMatchingDecision(header.EvaluationEvidence)
+	if err != nil {
+		return err
+	}
+	if decision.GroupID != groupID || decision.PolicyVersion != header.PolicyVersion || decision.Outcome != "unique" || decision.SelectedRelease == nil {
+		return fmt.Errorf("apply matching evaluation: persisted decision is not uniquely applicable")
+	}
+	var fence IncomingMatchProviderFence
+	if err := json.Unmarshal(header.ProviderFences, &fence); err != nil {
+		return fmt.Errorf("apply matching evaluation: decode provider fences: %w", err)
+	}
+	if fence.ProviderID != header.ProviderID || fence.ProviderSourceID != header.ProviderSourceID || fence.ConfigurationIdentity != header.ProviderConfigurationIdentity || fence.Namespace != header.ProviderNamespace || fence.Endpoint != header.ProviderEndpoint || fence.CacheKey != header.CacheKey || !equalOptionalString(fence.CacheRevision, header.CacheRevision) || fence.AcceptedProjectionRevision != header.ProviderSnapshotRevision {
+		return ErrIncomingMatchConflict
+	}
+	group := IncomingMatchGroupEvaluation{GroupID: groupID, GroupRevision: header.GroupRevision, Evidence: header.EvaluationEvidence}
+	if err := tx.NewRaw(`SELECT file_member_id, work_id, source_sha256 FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &group.Members); err != nil {
+		return fmt.Errorf("apply matching evaluation: read evaluated members: %w", err)
+	}
+	if len(group.Members) == 0 {
+		return ErrIncomingMatchConflict
+	}
+	evaluation := IncomingMatchEvaluation{
+		ExpectedGroupsRevision: header.GroupsRevision, ExpectedGroupingEpoch: header.GroupingEpoch,
+		PolicyVersion: header.PolicyVersion, Provider: fence, Groups: []IncomingMatchGroupEvaluation{group},
+	}
+	if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "apply matching evaluation"); err != nil {
+		return err
+	}
+	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
+		return fmt.Errorf("apply matching evaluation: lock evaluation: %w", err)
+	}
+	var currentRevision string
+	if err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &currentRevision); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
+		return fmt.Errorf("apply matching evaluation: read locked revision: %w", err)
+	}
+	if currentRevision != expectedEvaluationRevision {
+		return ErrIncomingMatchConflict
+	}
+	return applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+}
+
+// ApplyMatchingOperation applies one immutable automatic group intent and
+// settles the child operation with its receipt in the same transaction.
+func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Context, operationID uuid.UUID, riverJobID int64, executionEpoch int64) (bool, error) {
+	changed := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("apply matching operation: lock output admission gate: %w", err)
+		}
+		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
 		if err != nil {
 			return err
 		}
-		if decision.GroupID != groupID || decision.PolicyVersion != header.PolicyVersion || decision.Outcome != "unique" || decision.SelectedRelease == nil {
-			return fmt.Errorf("apply matching evaluation: persisted decision is not uniquely applicable")
+		if operation.Kind != MatchingApplyOperationKind || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID || operation.ProviderExecutionEpoch != executionEpoch || operation.ProviderDeliveryClaimedAt == nil || operation.ProviderDeliveryClaimedAt.Before(time.Now().UTC().Add(-5*time.Minute)) || (operation.State != "queued" && operation.State != "running") {
+			return nil
 		}
-		var fence IncomingMatchProviderFence
-		if err := json.Unmarshal(header.ProviderFences, &fence); err != nil {
-			return fmt.Errorf("apply matching evaluation: decode provider fences: %w", err)
+		var intent matchingApplyIntent
+		if err := json.Unmarshal(operation.InputSnapshot, &intent); err != nil || intent.SchemaVersion != 1 || intent.ParentRunID == uuid.Nil || intent.GroupID == uuid.Nil || intent.EvaluationRevision == "" || intent.ExecutionEpoch < 1 {
+			return fmt.Errorf("apply matching operation: immutable snapshot is invalid")
 		}
-		if fence.ProviderID != header.ProviderID || fence.ProviderSourceID != header.ProviderSourceID || fence.ConfigurationIdentity != header.ProviderConfigurationIdentity || fence.Namespace != header.ProviderNamespace || fence.Endpoint != header.ProviderEndpoint || fence.CacheKey != header.CacheKey || !equalOptionalString(fence.CacheRevision, header.CacheRevision) || fence.AcceptedProjectionRevision != header.ProviderSnapshotRevision {
-			return ErrIncomingMatchConflict
+		var receiptOutcome string
+		if err := tx.NewRaw(`SELECT outcome FROM matching_apply_receipt WHERE apply_operation_id=? AND group_id=?`, operationID, intent.GroupID).Scan(ctx, &receiptOutcome); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("apply matching operation: check receipt: %w", err)
 		}
-		group := IncomingMatchGroupEvaluation{GroupID: groupID, GroupRevision: header.GroupRevision, Evidence: header.EvaluationEvidence}
-		if err := tx.NewRaw(`SELECT file_member_id, work_id, source_sha256 FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &group.Members); err != nil {
-			return fmt.Errorf("apply matching evaluation: read evaluated members: %w", err)
+		receipt := receiptOutcome != ""
+		now := time.Now().UTC()
+		if receipt {
+			operation.State, operation.Stage = "succeeded", receiptOutcome
+			if receiptOutcome == "review_required" {
+				reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
+				operation.SafeError = &reason
+			} else {
+				operation.SafeError = nil
+			}
+		} else {
+			var current bool
+			if err := tx.NewRaw(`SELECT EXISTS (
+				SELECT 1 FROM matching_apply_request request
+				JOIN matching_run run ON run.id=request.parent_run_id
+				JOIN matching_run_target target ON target.run_id=run.id AND target.group_id=request.group_id
+				JOIN incoming_matching_generation generation ON generation.group_id=request.group_id
+				WHERE request.group_id=? AND request.parent_run_id=? AND request.apply_operation_id=?
+				AND request.evaluation_revision=? AND run.execution_epoch=?
+				AND generation.current_run_id=run.id AND generation.high_water=target.target_generation
+			)`, intent.GroupID, intent.ParentRunID, operationID, intent.EvaluationRevision, intent.ExecutionEpoch).Scan(ctx, &current); err != nil {
+				return fmt.Errorf("apply matching operation: validate original run authority: %w", err)
+			}
+			if !current {
+				operation.State, operation.Stage = "succeeded", "review_required"
+				reason := "The original matching run is no longer current; review this group manually."
+				operation.SafeError = &reason
+			} else {
+				candidateRepo := NewIncomingMatchCandidateRepository(repository.db)
+				if _, err := tx.ExecContext(ctx, `SAVEPOINT matching_apply_materialization`); err != nil {
+					return fmt.Errorf("apply matching operation: create materialization savepoint: %w", err)
+				}
+				err := candidateRepo.applyCurrentMatchingEvaluationTx(ctx, tx, intent.GroupID, intent.EvaluationRevision)
+				if errors.Is(err, ErrIncomingMatchConflict) || errors.Is(err, ErrMatchingManualProtection) {
+					if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matching_apply_materialization`); rollbackErr != nil {
+						return fmt.Errorf("apply matching operation: rollback conflicted materialization: %w", rollbackErr)
+					}
+					if _, releaseErr := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); releaseErr != nil {
+						return fmt.Errorf("apply matching operation: release materialization savepoint: %w", releaseErr)
+					}
+					operation.State, operation.Stage = "succeeded", "review_required"
+					reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
+					operation.SafeError = &reason
+				} else if err != nil {
+					return err
+				} else {
+					if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
+						return fmt.Errorf("apply matching operation: release materialization savepoint: %w", err)
+					}
+					operation.State, operation.Stage = "succeeded", "applied"
+					operation.SafeError = nil
+				}
+			}
 		}
-		if len(group.Members) == 0 {
-			return ErrIncomingMatchConflict
+		if !receipt {
+			if _, err := tx.NewRaw(`INSERT INTO matching_apply_receipt(apply_operation_id,group_id,outcome) VALUES (?,?,?)`, operationID, intent.GroupID, operation.Stage).Exec(ctx); err != nil {
+				return fmt.Errorf("apply matching operation: persist receipt: %w", err)
+			}
 		}
-		evaluation := IncomingMatchEvaluation{
-			ExpectedGroupsRevision: header.GroupsRevision, ExpectedGroupingEpoch: header.GroupingEpoch,
-			PolicyVersion: header.PolicyVersion, Provider: fence, Groups: []IncomingMatchGroupEvaluation{group},
+		operation.FinishedAt = &now
+		operation.UpdatedAt = now
+		if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("apply matching operation: complete operation: %w", err)
 		}
-		if err := lockAndValidateMatchingPrelude(ctx, tx, evaluation, "apply matching evaluation"); err != nil {
-			return err
-		}
-		if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
-			return fmt.Errorf("apply matching evaluation: lock evaluation: %w", err)
-		}
-		var currentRevision string
-		if err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &currentRevision); err != nil || currentRevision != expectedEvaluationRevision {
-			return ErrIncomingMatchConflict
-		}
-		return applyPersistedMatchingDecision(ctx, tx, group, decision, fence, header.PolicyVersion)
+		changed = true
+		return nil
 	})
+	return changed, err
 }
 
 type persistedMatchingDecision struct {
@@ -93,6 +199,42 @@ type persistedMatchingDecision struct {
 		Medium          int       `json:"medium"`
 		Position        int       `json:"position"`
 	} `json:"assignments"`
+}
+
+type persistedMatchingOutcome struct {
+	Version         int             `json:"version"`
+	GroupID         uuid.UUID       `json:"group_id"`
+	PolicyVersion   string          `json:"policy_version"`
+	Outcome         string          `json:"outcome"`
+	SelectedRelease json.RawMessage `json:"selected_release,omitempty"`
+	Assignments     json.RawMessage `json:"assignments"`
+}
+
+func decodeMatchingApplyOutcome(evidence json.RawMessage) (persistedMatchingOutcome, error) {
+	var envelope struct {
+		Decision json.RawMessage `json:"evaluation_decision"`
+	}
+	if err := json.Unmarshal(evidence, &envelope); err != nil || len(envelope.Decision) == 0 {
+		return persistedMatchingOutcome{}, fmt.Errorf("apply matching evaluation: persisted decision is missing or invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(envelope.Decision))
+	decoder.DisallowUnknownFields()
+	var outcome persistedMatchingOutcome
+	if err := decoder.Decode(&outcome); err != nil {
+		return persistedMatchingOutcome{}, fmt.Errorf("apply matching evaluation: decode persisted outcome: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return persistedMatchingOutcome{}, fmt.Errorf("apply matching evaluation: trailing decision data")
+	}
+	if outcome.Version != 1 || outcome.GroupID == uuid.Nil || !matchingpolicy.Supported(outcome.PolicyVersion) {
+		return persistedMatchingOutcome{}, fmt.Errorf("apply matching evaluation: persisted outcome identity is invalid")
+	}
+	switch outcome.Outcome {
+	case "unique", "tie", "infeasible", "review":
+		return outcome, nil
+	default:
+		return persistedMatchingOutcome{}, fmt.Errorf("apply matching evaluation: persisted outcome is unsupported")
+	}
 }
 
 func decodePersistedMatchingDecision(evidence json.RawMessage) (persistedMatchingDecision, error) {
@@ -142,7 +284,13 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 	var releaseFields, releaseEvidence string
 	var releaseID uuid.UUID
 	if err := tx.NewRaw(`SELECT e.name, r.id, r.provider_key, e.fields, e.field_evidence FROM provider_release r JOIN provider_source_entity e ON e.provider_id=r.provider_id AND e.provider_key=r.provider_key
-		WHERE r.provider_id=? AND r.id=? AND e.provider_source_id=? AND e.entity_kind='release' AND e.complete=true`, fence.ProviderID, decision.SelectedRelease.ProviderReleaseID, fence.ProviderSourceID).Scan(ctx, &releaseTitle, &releaseID, &releaseKey, &releaseFields, &releaseEvidence); err != nil || releaseID != decision.SelectedRelease.ProviderReleaseID {
+		WHERE r.provider_id=? AND r.id=? AND e.provider_source_id=? AND e.entity_kind='release' AND e.complete=true`, fence.ProviderID, decision.SelectedRelease.ProviderReleaseID, fence.ProviderSourceID).Scan(ctx, &releaseTitle, &releaseID, &releaseKey, &releaseFields, &releaseEvidence); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
+		return fmt.Errorf("apply matching evaluation: read selected release: %w", err)
+	}
+	if releaseID != decision.SelectedRelease.ProviderReleaseID {
 		return ErrIncomingMatchConflict
 	}
 	if releaseKey != decision.SelectedRelease.ProviderReleaseKey {
@@ -181,7 +329,10 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 			FROM provider_release_track t JOIN provider_source_release_track st ON st.provider_id=t.provider_id AND st.track_id=t.id
 			LEFT JOIN provider_source_entity e ON e.provider_source_id=st.provider_source_id AND e.provider_id=t.provider_id AND e.entity_kind='recording' AND e.provider_key=(SELECT provider_key FROM provider_recording WHERE id=t.recording_id AND provider_id=t.provider_id)
 				WHERE t.id=? AND t.provider_id=? AND st.release_id=? AND st.present=true AND st.provider_source_id=?`, assignment.ProviderTrackID, fence.ProviderID, releaseID, fence.ProviderSourceID).Scan(ctx, &providerTrack, &providerRecording, &medium, &position, &recordingTitle, &recordingEvidence); err != nil {
-			return ErrIncomingMatchConflict
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("apply matching evaluation: read assigned track: %w", err)
 		}
 		if medium+1 != assignment.Medium || position+1 != assignment.Position {
 			return ErrIncomingMatchConflict
@@ -579,7 +730,7 @@ func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variant
 	}
 	for _, source := range existing {
 		if source.Method == "manual" && source.TrackID != trackID {
-			return fmt.Errorf("apply matching evaluation: source variant is manually mapped to another track")
+			return fmt.Errorf("apply matching evaluation: %w", ErrMatchingManualProtection)
 		}
 	}
 	for _, source := range existing {

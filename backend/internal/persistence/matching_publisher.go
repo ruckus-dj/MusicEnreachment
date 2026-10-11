@@ -30,6 +30,11 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 	}
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		// Acquire the output gate before reading or locking any source/output rows.
+		// This preserves the admission lock order shared with publication.
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("publish matching evaluation: lock output gate: %w", err)
+		}
 		if err := validateIncomingMatchEvaluation(evaluation); err != nil {
 			return err
 		}
@@ -92,6 +97,11 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 		if unsettled != 0 {
 			return fmt.Errorf("publish matching evaluation: provider dependencies are still pending")
 		}
+		if repository.riverInserter != nil {
+			if err := repository.enqueueEligibleMatchingApplies(ctx, tx, operationID, run.ExecutionEpoch, evaluation); err != nil {
+				return fmt.Errorf("publish matching evaluation: admit automatic applies: %w", err)
+			}
+		}
 		now := time.Now().UTC()
 		operation.State, operation.Stage = "succeeded", "succeeded"
 		operation.SafeError = nil
@@ -120,6 +130,62 @@ func (repository *SetupManagerRepository) PublishMatchingEvaluationForDelivery(
 		return nil
 	})
 	return changed, err
+}
+
+type matchingApplyIntent struct {
+	SchemaVersion      int       `json:"schema_version"`
+	ParentRunID        uuid.UUID `json:"parent_run_id"`
+	GroupID            uuid.UUID `json:"group_id"`
+	EvaluationRevision string    `json:"evaluation_revision"`
+	ExecutionEpoch     int64     `json:"execution_epoch"`
+}
+
+func (repository *SetupManagerRepository) enqueueEligibleMatchingApplies(ctx context.Context, tx bun.Tx, runID uuid.UUID, executionEpoch int64, evaluation IncomingMatchEvaluation) error {
+	for _, group := range evaluation.Groups {
+		var header struct {
+			Revision string          `bun:"evaluation_revision"`
+			Evidence json.RawMessage `bun:"evaluation_evidence"`
+		}
+		if err := tx.NewRaw(`SELECT evaluation_revision, evaluation_evidence FROM incoming_match_evaluation WHERE group_id=?`, group.GroupID).Scan(ctx, &header); err != nil {
+			return fmt.Errorf("read persisted decision for group %s: %w", group.GroupID, err)
+		}
+		outcome, err := decodeMatchingApplyOutcome(header.Evidence)
+		if err != nil {
+			return fmt.Errorf("decode persisted decision for group %s: %w", group.GroupID, err)
+		}
+		// Only existing uniquely qualified assignments are automatic. Review,
+		// tie, and infeasible partial-layout decisions remain manual work.
+		if outcome.GroupID != group.GroupID || outcome.Outcome != "unique" {
+			continue
+		}
+		_, err = decodePersistedMatchingDecision(header.Evidence)
+		if err != nil {
+			return fmt.Errorf("decode unique persisted decision for group %s: %w", group.GroupID, err)
+		}
+		var alreadyRequested bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_apply_request WHERE group_id=? AND evaluation_revision=?)`, group.GroupID, header.Revision).Scan(ctx, &alreadyRequested); err != nil {
+			return fmt.Errorf("check existing apply request: %w", err)
+		}
+		if alreadyRequested {
+			continue
+		}
+		operationID := uuid.New()
+		snapshot, err := json.Marshal(matchingApplyIntent{
+			SchemaVersion: 1, ParentRunID: runID, GroupID: group.GroupID,
+			EvaluationRevision: header.Revision, ExecutionEpoch: executionEpoch,
+		})
+		if err != nil {
+			return fmt.Errorf("encode apply snapshot: %w", err)
+		}
+		operation := &Operation{ID: operationID, Kind: MatchingApplyOperationKind, State: "queued", Stage: "queued", InputSnapshot: snapshot}
+		if err := repository.createOperationAndEnqueueTx(ctx, tx, operation, repository.riverInserter, MatchingApplyOperationArgs{OperationID: operationID}, nil); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_apply_request(group_id,parent_run_id,evaluation_revision,apply_operation_id) VALUES (?,?,?,?)`, group.GroupID, runID, header.Revision, operationID).Exec(ctx); err != nil {
+			return fmt.Errorf("persist apply request: %w", err)
+		}
+	}
+	return nil
 }
 
 type matchingPublisherGeneration struct {

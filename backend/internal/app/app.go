@@ -162,6 +162,7 @@ func Run(ctx context.Context, config Config) error {
 		return fmt.Errorf("recover output reset: %w", err)
 	}
 	riverSlot := &riverClientSlot{}
+	setupManagerRepository.SetRiverInserter(riverSlot)
 	sourceInventory := persistence.NewSourceInventoryRepository(db)
 	incomingGroups := service.NewIncomingGroups(persistence.NewIncomingGroupingRepository(db))
 	if err := incomingGroups.RefreshIfNeeded(ctx); err != nil {
@@ -178,6 +179,7 @@ func Run(ctx context.Context, config Config) error {
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
 	matchingAcquisition := service.NewMatchingAcquisitionService(setupManagerRepository, providerFetch, riverSlot)
 	matchingEvaluationWorker := jobs.NewMatchingEvaluationWorker(setupManagerRepository, matchingEvaluation, operationService).WithAcquisition(matchingAcquisition)
+	matchingApplyWorker := jobs.NewMatchingApplyWorker(setupManagerRepository, operationService)
 	artifactCleanup := service.NewSourceAnalysisArtifactCleanup(setupManagerRepository, registry, riverSlot)
 	catalog := tools.NewDefaultCatalog(nil)
 	installWorker := jobs.NewInstallationWorker(setupManagerRepository, operationService, catalog, registry, tools.Platform{
@@ -221,6 +223,7 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, artifactCleanupWorker)
 		river.AddWorker(workers, providerFetchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
+		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}
 	// Keep exactly one base analysis slot on the main client. Additional River

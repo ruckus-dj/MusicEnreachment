@@ -80,6 +80,10 @@ type matchingRetryEnqueuer interface {
 	RetryMatchingEvaluationOperationAndEnqueue(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts) (*persistence.Operation, error)
 }
 
+type matchingApplyRetryEnqueuer interface {
+	RequeueMatchingApplyOperation(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts, bool) (*persistence.Operation, error)
+}
+
 // sourceAnalysisRetryer recreates a normalized single-step retry through the
 // source-analysis service, which owns current-work validation and atomic admission.
 type sourceAnalysisRetryer interface {
@@ -370,6 +374,9 @@ func (s *Operations) Retry(ctx context.Context, id uuid.UUID) (*persistence.Oper
 	if existing.Kind == "matching_evaluation_v1" {
 		return nil, fmt.Errorf("retry operation: matching delivery repository is unavailable")
 	}
+	if existing.Kind == persistence.MatchingApplyOperationKind {
+		return nil, fmt.Errorf("retry operation: matching apply repository is unavailable")
+	}
 	existing.State = "queued"
 	if !strings.HasPrefix(existing.Stage, "retry:") {
 		existing.Stage = "retry:" + existing.Stage
@@ -413,6 +420,12 @@ func (s *Operations) enqueueRetry(ctx context.Context, existing *persistence.Ope
 			return nil, fmt.Errorf("retry operation: matching delivery repository is unavailable")
 		}
 		return matching.RetryMatchingEvaluationOperationAndEnqueue(ctx, existing.ID, s.river, MatchingEvaluationOperationArgs{OperationID: existing.ID}, nil)
+	case persistence.MatchingApplyOperationKind:
+		apply, ok := s.enqueuer.(matchingApplyRetryEnqueuer)
+		if !ok || s.river == nil {
+			return nil, fmt.Errorf("retry operation: matching apply repository is unavailable")
+		}
+		return apply.RequeueMatchingApplyOperation(ctx, existing.ID, s.river, persistence.MatchingApplyOperationArgs{OperationID: existing.ID}, nil, false)
 	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup":
 		return s.enqueuer.RetryOperationAndEnqueue(ctx, existing.ID, s.river, ProviderFetchOperationArgs{OperationID: existing.ID}, nil)
 	case SourceScanOperationKind:

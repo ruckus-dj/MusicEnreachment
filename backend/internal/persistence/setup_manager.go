@@ -81,13 +81,20 @@ type Operation struct {
 }
 
 type SetupManagerRepository struct {
-	db *bun.DB
+	db            *bun.DB
+	riverInserter RiverInserter
 }
 
 const existingSourceAnalysisArtifactCleanupOperationKind = SourceAnalysisArtifactCleanupOperationKind
 
 func NewSetupManagerRepository(db *bun.DB) *SetupManagerRepository {
 	return &SetupManagerRepository{db: db}
+}
+
+// SetRiverInserter wires atomic operation admission after the River client is
+// constructed and before workers start consuming jobs.
+func (repository *SetupManagerRepository) SetRiverInserter(client RiverInserter) {
+	repository.riverInserter = client
 }
 
 func (repository *SetupManagerRepository) CreateInstallation(ctx context.Context, installation *ToolInstallation) error {
@@ -1175,7 +1182,7 @@ func (repository *SetupManagerRepository) GetOperationForUpdate(ctx context.Cont
 func (repository *SetupManagerRepository) ClaimProviderOperationDelivery(ctx context.Context, id uuid.UUID, attempt int, riverJobID int64) (int64, bool, error) {
 	var epoch int64
 	err := repository.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at = now(), provider_execution_epoch = provider_execution_epoch + 1, updated_at = now()
-		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search', 'provider_artist_search', 'provider_artist_release_browse', 'provider_acoustid_lookup')
+		WHERE id = ? AND kind IN ('provider_release_lookup', 'provider_recording_lookup', 'provider_release_search', 'provider_recording_search', 'provider_artist_search', 'provider_artist_release_browse', 'provider_acoustid_lookup', 'matching_apply_v1')
 		AND state IN ('queued', 'running') AND attempt = ? AND river_job_id = ?
 		AND (provider_delivery_claimed_at IS NULL OR provider_delivery_claimed_at < now() - interval '5 minutes')
 		RETURNING provider_execution_epoch`, id, attempt, riverJobID).Scan(ctx, &epoch)
@@ -1265,7 +1272,7 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 
 func isProviderOperationKind(kind string) bool {
 	switch kind {
-	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup":
+	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup", MatchingApplyOperationKind:
 		return true
 	default:
 		return false
@@ -1585,6 +1592,65 @@ func (repository *SetupManagerRepository) RetryOperationAndEnqueue(ctx context.C
 		return nil, err
 	}
 	return operation, nil
+}
+
+// RequeueMatchingApplyOperation preserves the child's immutable intent while
+// replacing a dead or explicitly failed River delivery in the same transaction.
+func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx context.Context, id uuid.UUID, client RiverInserter, args river.JobArgs, options *river.InsertOpts, recoverActive bool) (*Operation, error) {
+	if client == nil {
+		client = repository.riverInserter
+	}
+	if client == nil {
+		return nil, fmt.Errorf("requeue matching apply: River client is required")
+	}
+	var operation *Operation
+	err := repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("requeue matching apply: lock output admission gate: %w", err)
+		}
+		current, err := repository.GetOperationForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if current.Kind != MatchingApplyOperationKind || (current.State != "failed" && (!recoverActive || (current.State != "queued" && current.State != "running"))) {
+			return fmt.Errorf("requeue matching apply: operation is not retryable")
+		}
+		var intent matchingApplyIntent
+		if err := json.Unmarshal(current.InputSnapshot, &intent); err != nil || intent.SchemaVersion != 1 || intent.GroupID == uuid.Nil || intent.ParentRunID == uuid.Nil || intent.EvaluationRevision == "" {
+			return fmt.Errorf("requeue matching apply: immutable snapshot is invalid")
+		}
+		var receipt bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_apply_receipt WHERE apply_operation_id=? AND group_id=?)`, id, intent.GroupID).Scan(ctx, &receipt); err != nil {
+			return fmt.Errorf("requeue matching apply: check receipt: %w", err)
+		}
+		if receipt {
+			return fmt.Errorf("requeue matching apply: operation already has a receipt")
+		}
+		var requested bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_apply_request WHERE group_id=? AND apply_operation_id=? AND parent_run_id=? AND evaluation_revision=?)`, intent.GroupID, id, intent.ParentRunID, intent.EvaluationRevision).Scan(ctx, &requested); err != nil {
+			return fmt.Errorf("requeue matching apply: validate request: %w", err)
+		}
+		if !requested {
+			return fmt.Errorf("requeue matching apply: request does not match immutable snapshot")
+		}
+		inserted, err := client.InsertTx(ctx, tx.Tx, args, options)
+		if err != nil {
+			return fmt.Errorf("requeue matching apply: insert River job: %w", err)
+		}
+		now := time.Now().UTC()
+		current.State, current.Stage = "queued", "retry:queued"
+		current.SafeError, current.StartedAt, current.FinishedAt = nil, nil, nil
+		current.RiverJobID = &inserted.Job.ID
+		current.ProviderDeliveryClaimedAt = nil
+		current.Attempt++
+		current.UpdatedAt = now
+		if _, err := tx.NewUpdate().Model(current).Column("state", "stage", "safe_error", "started_at", "finished_at", "river_job_id", "provider_delivery_claimed_at", "attempt", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("requeue matching apply: update operation: %w", err)
+		}
+		operation = current
+		return nil
+	})
+	return operation, err
 }
 
 func verifyToolsOperationRootForRetry(ctx context.Context, tx bun.Tx, operation *Operation) error {

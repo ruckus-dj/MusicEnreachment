@@ -710,6 +710,31 @@ normalization для score в точности. Если по имеющимся
   `task verify` повторно прошёл в primary session. Concurrent-CAS race test
   остаётся отдельным незакрытым coverage пунктом.
 
+### Durable automatic apply — ограниченный backend increment, 2026-10-11
+
+- Реализован transactional publisher handoff к ID-only apply operation для
+  unique assignments всех локальных файлов. Полное покрытие provider tracklist
+  не требуется. Evaluation-only parent сохраняет прежний completion contract;
+  apply child имеет собственные immutable intent и terminal receipt.
+- Review/tie/infeasible outcomes не должны блокировать publication. При позднем
+  manual/stale conflict materialization откатывается savepoint до записи review
+  receipt. Infrastructure errors остаются retryable; active busy delivery не
+  подтверждается как успешно исполненная, failed execution освобождает только
+  собственный epoch claim.
+- Request deduplication scoped по group + evaluation revision, receipt — по
+  конкретной apply operation. Replay прежней operation не подменяется новой
+  evaluation и не запрещает дальнейший apply другой revision той же группы.
+- Ограниченный backend increment принят после independent production/test review
+  и повторного полного `task verify` в primary session. PostgreSQL tests покрывают
+  worker infrastructure failure → immediate retry, exact operation receipts,
+  неизменность replay после новой evaluation, recovery двух revisions одной
+  группы, а также настоящий publisher handoff для unique/review outcomes.
+  Publisher failure injection до River insert проверяет rollback evaluation и
+  отсутствие handoff, но не rollback уже созданного child/job. Mixed-group и
+  late-conflict savepoint regressions остаются незакрытым coverage пунктом.
+  Automatic ranking, post-analysis trigger, manual review/picker и Incoming UI
+  по-прежнему не завершены.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

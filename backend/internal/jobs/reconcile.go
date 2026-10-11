@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -148,6 +149,18 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 				}
 				if err := recovery.RecoverInterruptedSourceAnalysisArtifactCleanupAtStartup(ctx, operation.ID, operation.Attempt, *operation.RiverJobID); err != nil {
 					return fmt.Errorf("recover source analysis artifact cleanup %s: %w", operation.ID, err)
+				}
+				return nil
+			}
+			if operation.Kind == persistence.MatchingApplyOperationKind {
+				requeue, ok := repository.(interface {
+					RequeueMatchingApplyOperation(context.Context, uuid.UUID, persistence.RiverInserter, river.JobArgs, *river.InsertOpts, bool) (*persistence.Operation, error)
+				})
+				if !ok {
+					return fmt.Errorf("recover matching apply: exact operation requeue is unavailable")
+				}
+				if _, err := requeue.RequeueMatchingApplyOperation(ctx, operation.ID, nil, persistence.MatchingApplyOperationArgs{OperationID: operation.ID}, nil, true); err != nil {
+					return fmt.Errorf("recover matching apply %s: %w", operation.ID, err)
 				}
 				return nil
 			}
