@@ -1012,6 +1012,18 @@ normalization для score в точности. Если по имеющимся
 - Independent review approved the bounded fix; full `task verify` passed again
   in primary. Production reconciliation consumer/queue/relay remain unwired.
 
+### Saved-capture reconciliation planner — 2026-10-12
+
+- Persisted projection includes matching authority independently of grouping
+  corrections. Planner enumerates every automatic-ready group in stable order,
+  uses existing selected/ready metadata conflict checks and builds one escaped
+  full-value artist OR query with approved normalized/transliterated alternatives.
+  Artistless groups remain deferred pending fallback implementation.
+- Unit tests cover multiple groups, mixed-ready locations and conflicting
+  metadata; PostgreSQL projection covers optional SHA and authority distinctions.
+  Independent review and repeated primary `task verify` passed.
+- Production consumer/runtime relay remain unwired; full acceptance stays open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

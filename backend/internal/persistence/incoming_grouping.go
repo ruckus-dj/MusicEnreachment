@@ -83,6 +83,16 @@ type IncomingGroupingCapture struct {
 	Ready                         bool
 }
 
+type IncomingMatchingReconcileGroup struct {
+	Group          IncomingGroupingGroup
+	Authority      IncomingGroupMatchingAuthority
+	MemberCaptures map[uuid.UUID][]IncomingGroupingCapture
+}
+
+type IncomingMatchingReconcileSnapshot struct {
+	Groups []IncomingMatchingReconcileGroup
+}
+
 type IncomingGroupingRepository struct{ db *bun.DB }
 
 func NewIncomingGroupingRepository(db *bun.DB) *IncomingGroupingRepository {
@@ -118,6 +128,45 @@ func (repository *IncomingGroupingRepository) List(ctx context.Context) ([]Incom
 // selections when available and an explicit readiness bit. It performs no source IO.
 func (repository *IncomingGroupingRepository) CurrentCaptures(ctx context.Context) ([]IncomingGroupingCapture, error) {
 	return loadIncomingGroupingCaptures(ctx, repository.db)
+}
+
+// MatchingReconcileSnapshot combines saved grouping state, current persisted
+// captures, and authority. It never reads source paths or derives authority from
+// the group's manual-correction bit.
+func (repository *IncomingGroupingRepository) MatchingReconcileSnapshot(ctx context.Context) (IncomingMatchingReconcileSnapshot, error) {
+	groups, err := loadIncomingGroupingGroups(ctx, repository.db)
+	if err != nil {
+		return IncomingMatchingReconcileSnapshot{}, err
+	}
+	captures, err := loadIncomingGroupingCaptures(ctx, repository.db)
+	if err != nil {
+		return IncomingMatchingReconcileSnapshot{}, err
+	}
+	var rows []IncomingGroupMatchingAuthority
+	if err := repository.db.NewRaw(`SELECT group_id, mode, revision FROM incoming_group_matching_authority ORDER BY group_id`).Scan(ctx, &rows); err != nil {
+		return IncomingMatchingReconcileSnapshot{}, fmt.Errorf("load incoming group matching authority: %w", err)
+	}
+	authorities := make(map[uuid.UUID]IncomingGroupMatchingAuthority, len(rows))
+	for _, authority := range rows {
+		authorities[authority.GroupID] = authority
+	}
+	byVariant := make(map[uuid.UUID][]IncomingGroupingCapture)
+	for _, capture := range captures {
+		byVariant[capture.VariantID] = append(byVariant[capture.VariantID], capture)
+	}
+	snapshot := IncomingMatchingReconcileSnapshot{Groups: make([]IncomingMatchingReconcileGroup, 0, len(groups))}
+	for _, group := range groups {
+		authority, ok := authorities[group.ID]
+		if !ok {
+			authority = IncomingGroupMatchingAuthority{GroupID: group.ID, Mode: "automatic"}
+		}
+		memberCaptures := make(map[uuid.UUID][]IncomingGroupingCapture, len(group.Members)+len(group.UnreadyMembers))
+		for _, variantID := range append(append([]uuid.UUID(nil), group.Members...), group.UnreadyMembers...) {
+			memberCaptures[variantID] = append([]IncomingGroupingCapture(nil), byVariant[variantID]...)
+		}
+		snapshot.Groups = append(snapshot.Groups, IncomingMatchingReconcileGroup{Group: group, Authority: authority, MemberCaptures: memberCaptures})
+	}
+	return snapshot, nil
 }
 
 func loadIncomingGroupingCaptures(ctx context.Context, database bun.IDB) ([]IncomingGroupingCapture, error) {
