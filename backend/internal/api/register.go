@@ -21,6 +21,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerSourceAnalysis(api, dependencies)
 	registerSourceArtifactCleanup(api, dependencies.SourceArtifactCleanup, dependencies.Operations, dependencies.Setup)
 	registerIncomingGroups(api, dependencies.IncomingGroups)
+	registerMatchingReview(api, dependencies.MatchingReview)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

@@ -41,6 +41,7 @@ import type {
   ListOperationsParams,
   ListSourceLocationsParams,
   ListToolCatalogParams,
+  MatchingReview,
   MovePreflightBody,
   MovePreflightInputBody,
   OperationResponse,
@@ -473,6 +474,133 @@ export const usePreviewIncomingGroups = <TError = ErrorModel,
       > => {
       return useMutation(getPreviewIncomingGroupsMutationOptions(options), queryClient);
     }
+
+export type getIncomingGroupMatchingResponse200 = {
+  data: MatchingReview
+  status: 200
+}
+
+export type getIncomingGroupMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getIncomingGroupMatchingResponseSuccess = (getIncomingGroupMatchingResponse200) & {
+  headers: Headers;
+};
+export type getIncomingGroupMatchingResponseError = (getIncomingGroupMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type getIncomingGroupMatchingResponse = (getIncomingGroupMatchingResponseSuccess | getIncomingGroupMatchingResponseError)
+
+export const getGetIncomingGroupMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching`
+}
+
+/**
+ * @summary Read persisted incoming group matching review
+ */
+export const getIncomingGroupMatching = async (groupId: string, options?: RequestInit): Promise<getIncomingGroupMatchingResponse> => {
+
+  const res = await fetch(getGetIncomingGroupMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getIncomingGroupMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getIncomingGroupMatchingResponse
+}
+
+
+
+
+
+export const getGetIncomingGroupMatchingQueryKey = (groupId: string,) => {
+    return [
+    `/api/incoming-groups/${groupId}/matching`
+    ] as const;
+    }
+
+
+export const getGetIncomingGroupMatchingQueryOptions = <TData = Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError = ErrorModel>(groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIncomingGroupMatchingQueryKey(groupId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncomingGroupMatching>>> = ({ signal }) => getIncomingGroupMatching(groupId, { signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: groupId !== null && groupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetIncomingGroupMatchingQueryResult = NonNullable<Awaited<ReturnType<typeof getIncomingGroupMatching>>>
+export type GetIncomingGroupMatchingQueryError = ErrorModel
+
+
+export function useGetIncomingGroupMatching<TData = Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError = ErrorModel>(
+ groupId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupMatching>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupMatching>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupMatching<TData = Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getIncomingGroupMatching>>,
+          TError,
+          Awaited<ReturnType<typeof getIncomingGroupMatching>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetIncomingGroupMatching<TData = Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Read persisted incoming group matching review
+ */
+
+export function useGetIncomingGroupMatching<TData = Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError = ErrorModel>(
+ groupId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getIncomingGroupMatching>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetIncomingGroupMatchingQueryOptions(groupId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type listOperationsResponse200 = {
   data: OperationsBody

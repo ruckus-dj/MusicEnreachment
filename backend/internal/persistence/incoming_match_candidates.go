@@ -128,6 +128,12 @@ type IncomingMatchEvaluationHeader struct {
 	EvaluatedAt                   time.Time
 }
 
+type IncomingMatchReviewSnapshot struct {
+	Header     *IncomingMatchEvaluationHeader
+	Candidates []IncomingMatchCandidate
+	Members    []uuid.UUID
+}
+
 type IncomingMatchCandidateRepository struct{ db *bun.DB }
 
 func NewIncomingMatchCandidateRepository(db *bun.DB) *IncomingMatchCandidateRepository {
@@ -777,4 +783,62 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 		return nil, nil, err
 	}
 	return &header, candidates, nil
+}
+
+// GetReviewSnapshot reads only persisted evaluation state in one consistent
+// transaction; candidate positions are batched to avoid per-candidate queries.
+func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx context.Context, groupID uuid.UUID) (*IncomingMatchReviewSnapshot, error) {
+	result := &IncomingMatchReviewSnapshot{}
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		var header IncomingMatchEvaluationHeader
+		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
+		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
+		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
+		if errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err != nil {
+			return fmt.Errorf("get incoming match review: %w", err)
+		}
+		result.Header = &header
+		result.Candidates = make([]IncomingMatchCandidate, 0)
+		if err := tx.NewRaw(`SELECT file_member_id, provider_id, provider_source_id, release_id, score, evidence FROM incoming_match_candidate WHERE group_id=? ORDER BY file_member_id, release_id`, groupID).Scan(ctx, &result.Candidates); err != nil {
+			return fmt.Errorf("get incoming match review candidates: %w", err)
+		}
+		result.Members = make([]uuid.UUID, 0)
+		if err := tx.NewRaw(`SELECT file_member_id FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &result.Members); err != nil {
+			return fmt.Errorf("get incoming match review members: %w", err)
+		}
+		type positionRow struct {
+			FileMemberID     uuid.UUID `bun:"file_member_id"`
+			ProviderSourceID uuid.UUID `bun:"provider_source_id"`
+			ReleaseID        uuid.UUID `bun:"release_id"`
+			TrackID          uuid.UUID `bun:"track_id"`
+			Medium           int
+			Position         int
+		}
+		positions := make([]positionRow, 0)
+		if err := tx.NewRaw(`SELECT file_member_id, provider_source_id, release_id, track_id, medium, position FROM incoming_match_candidate_track WHERE group_id=? ORDER BY file_member_id, release_id, medium, position, track_id`, groupID).Scan(ctx, &positions); err != nil {
+			return fmt.Errorf("get incoming match review positions: %w", err)
+		}
+		byCandidate := make(map[string]int, len(result.Candidates))
+		for i := range result.Candidates {
+			c := &result.Candidates[i]
+			byCandidate[c.FileMemberID.String()+"/"+c.ReleaseID.String()] = i
+			c.Positions = make([]IncomingMatchPosition, 0)
+		}
+		for _, position := range positions {
+			if i, ok := byCandidate[position.FileMemberID.String()+"/"+position.ReleaseID.String()]; ok {
+				result.Candidates[i].Positions = append(result.Candidates[i].Positions, IncomingMatchPosition{TrackID: position.TrackID, Medium: position.Medium, Position: position.Position})
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }

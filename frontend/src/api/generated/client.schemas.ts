@@ -268,6 +268,58 @@ export interface InstallationsBody {
   installations: InstallationResponse[] | null;
 }
 
+export interface MatchingReviewPosition {
+  assignment_confidence?: number;
+  displayed_number?: string;
+  medium: number;
+  position: number;
+  track_id: string;
+}
+
+export interface MatchingReviewCandidate {
+  /** @nullable */
+  edges: unknown[] | null;
+  file_member_id: string;
+  /** @nullable */
+  positions: MatchingReviewPosition[] | null;
+  release_confidence: number;
+  release_id: string;
+}
+
+export interface MatchingReviewLayoutPosition {
+  displayed_number: string;
+  medium: number;
+  position: number;
+  recording_id: string;
+  title: string;
+  track_id: string;
+}
+
+export interface MatchingReviewRelease {
+  /** @nullable */
+  positions: MatchingReviewLayoutPosition[] | null;
+  provider_release_id: string;
+  release_id: string;
+  title: string;
+  tracklist_complete: boolean;
+}
+
+export interface MatchingReview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  candidates: MatchingReviewCandidate[] | null;
+  evaluated: boolean;
+  evaluation_revision?: string;
+  group_id: string;
+  /** @nullable */
+  members: string[] | null;
+  proposal?: unknown;
+  proposal_available: boolean;
+  /** @nullable */
+  releases: MatchingReviewRelease[] | null;
+}
+
 export interface MovePreflightBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;

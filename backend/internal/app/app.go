@@ -177,6 +177,7 @@ func Run(ctx context.Context, config Config) error {
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
 	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
+	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingAcquisition := service.NewMatchingAcquisitionService(setupManagerRepository, providerFetch, riverSlot)
 	matchingEvaluationWorker := jobs.NewMatchingEvaluationWorker(setupManagerRepository, matchingEvaluation, operationService).WithAcquisition(matchingAcquisition)
 	matchingApplyWorker := jobs.NewMatchingApplyWorker(setupManagerRepository, operationService)
@@ -351,7 +352,7 @@ func Run(ctx context.Context, config Config) error {
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
-		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups,
+		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups, MatchingReview: matchingReview,
 	}))
 	router.Handle("/*", static.Handler())
 	server := &http.Server{

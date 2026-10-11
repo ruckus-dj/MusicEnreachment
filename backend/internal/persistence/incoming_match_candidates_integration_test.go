@@ -60,6 +60,35 @@ func TestIncomingMatchCandidatesPersistAndFenceWithPostgreSQL(t *testing.T) {
 	if got[0].FileMemberID == got[1].FileMemberID || len(got[0].Positions) != 1 || len(got[1].Positions) != 1 || got[0].Positions[0] != position || got[1].Positions[0] != position {
 		t.Fatalf("same provider position was not retained for distinct file members: %#v", got)
 	}
+	var candidateRowsBefore, memberRowsBefore, positionRowsBefore int
+	if err := db.NewRaw(`SELECT (SELECT count(*) FROM incoming_match_candidate WHERE group_id=?),
+		(SELECT count(*) FROM incoming_match_evaluation_member WHERE group_id=?),
+		(SELECT count(*) FROM incoming_match_candidate_track WHERE group_id=?)`, fixture.group.ID, fixture.group.ID, fixture.group.ID).
+		Scan(ctx, &candidateRowsBefore, &memberRowsBefore, &positionRowsBefore); err != nil {
+		t.Fatalf("count persisted matching rows before review read: %v", err)
+	}
+	review, err := repository.GetReviewSnapshot(ctx, fixture.group.ID)
+	if err != nil {
+		t.Fatalf("read matching review snapshot: %v", err)
+	}
+	if review == nil || review.Header == nil || len(review.Members) != 2 || len(review.Candidates) != 2 {
+		t.Fatalf("review snapshot omitted evaluated members or candidates: %#v", review)
+	}
+	for _, candidate := range review.Candidates {
+		if len(candidate.Positions) != 1 || candidate.Positions[0] != position {
+			t.Fatalf("review snapshot did not batch-load candidate positions: %#v", candidate)
+		}
+	}
+	var candidateRowsAfter, memberRowsAfter, positionRowsAfter int
+	if err := db.NewRaw(`SELECT (SELECT count(*) FROM incoming_match_candidate WHERE group_id=?),
+		(SELECT count(*) FROM incoming_match_evaluation_member WHERE group_id=?),
+		(SELECT count(*) FROM incoming_match_candidate_track WHERE group_id=?)`, fixture.group.ID, fixture.group.ID, fixture.group.ID).
+		Scan(ctx, &candidateRowsAfter, &memberRowsAfter, &positionRowsAfter); err != nil {
+		t.Fatalf("count persisted matching rows after review read: %v", err)
+	}
+	if candidateRowsBefore != candidateRowsAfter || memberRowsBefore != memberRowsAfter || positionRowsBefore != positionRowsAfter {
+		t.Fatalf("review read changed durable matching rows: before=(%d,%d,%d), after=(%d,%d,%d)", candidateRowsBefore, memberRowsBefore, positionRowsBefore, candidateRowsAfter, memberRowsAfter, positionRowsAfter)
+	}
 
 	// A failed insert after the old rows have been deleted must roll back the
 	// previous accepted result. The candidate is otherwise a valid provider hit.

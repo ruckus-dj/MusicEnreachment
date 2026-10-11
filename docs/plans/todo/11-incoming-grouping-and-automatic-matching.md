@@ -735,6 +735,26 @@ normalization для score в точности. Если по имеющимся
   Automatic ranking, post-analysis trigger, manual review/picker и Incoming UI
   по-прежнему не завершены.
 
+### Persisted matching review GET — 2026-10-11
+
+- Evaluation сохраняет full layouts всех releases из scope данной группы,
+  включая позиции без edges; selected release хранится отдельно. Proposal не
+  выбирает partial assignments и не меняет solver/automatic apply eligibility.
+- GET читает header, всех evaluated members, candidates и saved layouts в одном
+  read-only Repeatable Read snapshot с batched position reads. Source/provider
+  I/O, refresh, enqueue и materialization при чтении отсутствуют. Release
+  confidence отделён от assignment confidence каждой persisted edge.
+- Legacy/unsupported/incomplete proposal явно unavailable без backfill и потери
+  readable members/candidates. Displayed numbering, multidisc coordinates и
+  repeated recording identities сохраняются; duplicate coordinates invalid.
+- Service/API/PostgreSQL tests и writer-to-reader round-trip покрывают ambiguous
+  release choice, alternatives, missing-edge members/positions, group scope и
+  неизменность GET после изменения provider snapshot. Независимое финальное
+  review одобрило ограниченный read model; обычный полный `task verify` повторно
+  прошёл в primary session. OpenAPI/client обновлены через generation pipeline.
+- Manual preview/confirm, picker, Incoming UI, ranking и automatic trigger ещё
+  не завершены. Этот increment не завершает план.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

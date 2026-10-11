@@ -823,6 +823,7 @@ func makeMatchingGroupResult(
 		"schema_version": 1, "group_decision": decision, "decision_reason": reason,
 		"selected_release_key": selectedRelease, "release_selection": releaseSelection, "files": fileEvidence,
 		"evaluation_decision": evaluationDecision,
+		"review_proposal":     makeMatchingReviewProposal(snapshot, group, members, releaseKeys, selectedRelease),
 	})
 	if err != nil {
 		return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("encode group matching evidence: %w", err)
@@ -907,6 +908,64 @@ func makeMatchingGroupResult(
 	providerFence := persistence.IncomingMatchProviderFence{ProviderID: snapshot.Provider.Source.ProviderID, ProviderSourceID: snapshot.Provider.Source.ID, Namespace: snapshot.Provider.Source.Namespace, Endpoint: snapshot.Provider.Source.Endpoint, ConfigurationIdentity: snapshot.Provider.Source.ConfigurationIdentity, CacheKey: cacheKey, CacheRevision: cacheRevision, CacheRevisions: cacheRevisions, AcceptedProjectionRevision: snapshot.Provider.AcceptedProjectionRevision, ReleaseKeys: releaseKeys, AcoustID: acoustIDFences, AcoustIDSources: acoustIDSources}
 	evaluation := persistence.IncomingMatchEvaluation{ExpectedGroupsRevision: groupsRevision, ExpectedGroupingEpoch: snapshot.Grouping.Epoch, PolicyVersion: MatchingPolicyVersion, Provider: providerFence, Groups: []persistence.IncomingMatchGroupEvaluation{groupEval}}
 	return evaluation, decision, reason, nil
+}
+
+// makeMatchingReviewProposal snapshots every group-scoped release layout and saved
+// source facts. It deliberately does not assign local files to provider tracks.
+func makeMatchingReviewProposal(snapshot MatchingEvaluationSnapshot, group IncomingGroup, members []persistence.IncomingMatchMemberFence, releaseKeys []string, selectedKey string) map[string]any {
+	releases := make([]map[string]any, 0, len(releaseKeys))
+	var selected any
+	allowed := make(map[string]bool, len(releaseKeys))
+	for _, key := range releaseKeys {
+		allowed[key] = true
+	}
+	providerReleases := append([]persistence.MatchingRelease(nil), snapshot.Provider.Releases...)
+	sort.Slice(providerReleases, func(i, j int) bool { return providerReleases[i].ProviderKey < providerReleases[j].ProviderKey })
+	for _, release := range providerReleases {
+		if !allowed[release.ProviderKey] {
+			continue
+		}
+		positions := make([]map[string]any, 0, len(release.Tracks))
+		for _, track := range release.Tracks {
+			positions = append(positions, map[string]any{
+				"track_id": track.ID, "medium": track.Medium, "position": track.Position,
+				"displayed_number": track.DisplayedNumber, "recording_id": track.RecordingProviderKey,
+				"title": track.RecordingTitle,
+			})
+		}
+		sort.Slice(positions, func(i, j int) bool {
+			if positions[i]["medium"] != positions[j]["medium"] {
+				return positions[i]["medium"].(int) < positions[j]["medium"].(int)
+			}
+			if positions[i]["position"] != positions[j]["position"] {
+				return positions[i]["position"].(int) < positions[j]["position"].(int)
+			}
+			return positions[i]["track_id"].(uuid.UUID).String() < positions[j]["track_id"].(uuid.UUID).String()
+		})
+		layout := map[string]any{"provider_release_id": release.ID, "release_id": release.ProviderKey,
+			"title": release.Name, "tracklist_complete": release.Complete, "positions": positions}
+		releases = append(releases, layout)
+		if release.ProviderKey == selectedKey {
+			selected = layout
+		}
+	}
+	files := make([]map[string]any, 0, len(members))
+	for _, member := range members {
+		file := findIncomingFile(snapshot.Grouping.Files, member.FileMemberID)
+		files = append(files, map[string]any{"file_member_id": member.FileMemberID,
+			"raw_tags": matchingRawTags(file), "diagnostics": memberDiagnostics(group, member.FileMemberID)})
+	}
+	return map[string]any{"version": 1, "group_id": group.ID, "selected_release": selected, "releases": releases, "files": files}
+}
+
+func memberDiagnostics(group IncomingGroup, memberID uuid.UUID) []IncomingGroupingDiagnostic {
+	var out []IncomingGroupingDiagnostic
+	for _, diagnostic := range group.Diagnostics {
+		if diagnostic.VariantID == memberID {
+			out = append(out, diagnostic)
+		}
+	}
+	return out
 }
 
 func matchingAcoustIDEvidence(snapshot MatchingEvaluationSnapshot, fileID uuid.UUID) any {
