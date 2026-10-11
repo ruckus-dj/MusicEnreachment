@@ -96,8 +96,10 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	fetch := service.NewProviderFetchService(registry, factory, cache)
 	operations := service.NewOperations(repository)
 	providerWorker := NewProviderFetchWorker(fetch, operations)
+	applyWorker := NewMatchingApplyWorker(repository, operations)
 	client, listenerPool, err := PrepareWithWorkers(ctx, fixture.databaseURL, database.DB, func(workers *river.Workers) {
 		river.AddWorker(workers, &MatchingEvaluationWorker{})
+		river.AddWorker(workers, applyWorker)
 		river.AddWorker(workers, providerWorker)
 		river.AddWorker(workers, &matchingReconciliationRegistrationWorker{})
 	})
@@ -106,7 +108,9 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	}
 	t.Cleanup(listenerPool.Close)
 	operations = service.NewOperationsWithRiver(repository, client)
+	repository.SetRiverInserter(client)
 	providerWorker.operations = operations
+	applyWorker.operations = operations
 
 	// Use source-analysis output to form the real staged group, as production
 	// matching does; no hand-written source rows or provider graph fixtures.
@@ -443,6 +447,86 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	var currentGroupingEpoch int64
 	if err := database.NewRaw(`SELECT revision FROM incoming_grouping_state WHERE singleton=true`).Scan(ctx, &currentGroupingEpoch); err != nil || currentGroupingEpoch == groupingEpoch {
 		t.Fatalf("unrelated grouping epoch=%d err=%v; expected advance from %d", currentGroupingEpoch, err, groupingEpoch)
+	}
+
+	// Apply is target-scoped: advancing the unrelated grouping epoch again must
+	// not invalidate this sealed run's unchanged group, generation, or authority.
+	if _, err := database.NewRaw(`UPDATE incoming_grouping_state SET revision=revision+1,needs_refresh=false WHERE singleton=true`).Exec(ctx); err != nil {
+		t.Fatalf("advance unrelated grouping epoch before matching apply: %v", err)
+	}
+	var apply struct {
+		OperationID uuid.UUID `bun:"id"`
+		RiverJobID  int64     `bun:"river_job_id"`
+		Attempt     int       `bun:"attempt"`
+	}
+	if err := database.NewRaw(`SELECT operation.id,operation.river_job_id,operation.attempt
+		FROM matching_apply_request request JOIN operation ON operation.id=request.apply_operation_id
+		WHERE request.group_id=? AND request.parent_run_id=?`, group.ID, parentID).Scan(ctx, &apply); err != nil {
+		t.Fatalf("read durable matching apply child: %v", err)
+	}
+	if apply.OperationID == uuid.Nil || apply.RiverJobID < 1 || apply.Attempt < 1 {
+		t.Fatalf("durable matching apply child=%+v; want operation, River delivery, and attempt", apply)
+	}
+	if err := applyWorker.Work(ctx, &river.Job[persistence.MatchingApplyOperationArgs]{
+		JobRow: &rivertype.JobRow{ID: apply.RiverJobID, Attempt: apply.Attempt},
+		Args:   persistence.MatchingApplyOperationArgs{OperationID: apply.OperationID},
+	}); err != nil {
+		t.Fatalf("run real matching apply worker: %v", err)
+	}
+	applied, err := repository.GetOperation(ctx, apply.OperationID)
+	if err != nil || applied.State != "succeeded" || applied.Stage != "applied" {
+		t.Fatalf("matching apply child state/stage=%s/%s err=%v; want succeeded/applied", applied.State, applied.Stage, err)
+	}
+	var receiptOutcome string
+	if err := database.NewRaw(`SELECT outcome FROM matching_apply_receipt WHERE apply_operation_id=? AND group_id=?`, apply.OperationID, group.ID).Scan(ctx, &receiptOutcome); err != nil || receiptOutcome != "applied" {
+		t.Fatalf("matching apply receipt outcome=%q err=%v; want applied", receiptOutcome, err)
+	}
+	var materialized struct {
+		Count          int    `bun:"count"`
+		Selected       bool   `bun:"selected"`
+		Compatible     bool   `bun:"compatible"`
+		DecisionMethod string `bun:"decision_method"`
+	}
+	if err := database.NewRaw(`SELECT count(*) AS count, bool_and(selected) AS selected, bool_and(compatible) AS compatible,
+		min(decision_method) AS decision_method FROM track_source WHERE media_variant_id=?`, group.Members[0]).Scan(ctx, &materialized); err != nil {
+		t.Fatalf("read automatically materialized source association: %v", err)
+	}
+	if materialized.Count != 1 || materialized.Selected || !materialized.Compatible || materialized.DecisionMethod != "automatic" {
+		t.Fatalf("automatically materialized source association=%+v; want exactly one compatible, unselected automatic association", materialized)
+	}
+	var afterApply struct {
+		EvaluationRevision string    `bun:"evaluation_revision"`
+		TargetRunID        uuid.UUID `bun:"target_run_id"`
+		FenceVersion       int       `bun:"fence_version"`
+		AuthorityMode      string    `bun:"matching_authority_mode"`
+		AuthorityRevision  int64     `bun:"matching_authority_revision"`
+		CaptureDigest      []byte    `bun:"target_capture_digest"`
+	}
+	if err := database.NewRaw(`SELECT evaluation_revision,target_run_id,fence_version,matching_authority_mode,
+		matching_authority_revision,target_capture_digest FROM incoming_match_evaluation WHERE group_id=?`, group.ID).Scan(ctx, &afterApply); err != nil {
+		t.Fatalf("read evaluation authority after apply: %v", err)
+	}
+	if afterApply.EvaluationRevision != header.EvaluationRevision || afterApply.TargetRunID != parentID || afterApply.FenceVersion != 2 ||
+		afterApply.AuthorityMode != header.MatchingAuthorityMode || afterApply.AuthorityRevision != header.MatchingAuthorityRevision ||
+		!bytes.Equal(afterApply.CaptureDigest, admissionCaptureDigest) {
+		t.Fatalf("evaluation header authority changed during apply: %+v; original=%+v", afterApply, header)
+	}
+	var runAuthority struct {
+		TargetGeneration    int64 `bun:"target_generation"`
+		AuthorityRevision   int64 `bun:"authority_revision"`
+		GenerationHighWater int64 `bun:"high_water"`
+	}
+	if err := database.NewRaw(`SELECT target.target_generation,target.authority_revision,generation.high_water
+		FROM matching_run_target target JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+		WHERE target.run_id=? AND target.group_id=? AND generation.current_run_id=target.run_id`, parentID, group.ID).Scan(ctx, &runAuthority); err != nil {
+		t.Fatalf("read current matching run generation after apply: %v", err)
+	}
+	if runAuthority.TargetGeneration != runAuthority.GenerationHighWater || runAuthority.AuthorityRevision != header.MatchingAuthorityRevision {
+		t.Fatalf("matching run authority/generation after apply=%+v; want unchanged current target", runAuthority)
+	}
+	var pendingMatchingDeliveries int
+	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &pendingMatchingDeliveries); err != nil || pendingMatchingDeliveries != 0 {
+		t.Fatalf("pending matching deliveries for completed parent=%d err=%v; want none (provider wakes are settled and consumed)", pendingMatchingDeliveries, err)
 	}
 }
 

@@ -789,7 +789,9 @@ func makeMatchingGroupResult(
 				if fmt.Sprintf("%s/%d/%d", selectedRelease, edge.input.Medium, edge.input.Track) == selectedEdge.PositionID {
 					trackID = matchingTrackID(snapshot.Provider, selectedRelease, edge.input.Medium, edge.input.Track)
 					if trackID != uuid.Nil {
-						decisionAssignments = append(decisionAssignments, MatchingDecisionAssignment{FileMemberID: fileUUID, ProviderTrackID: trackID, Medium: edge.input.Medium, Position: edge.input.Track})
+						// Matching inputs and solver positions are zero-based layout
+						// indices; persisted decisions use one-based layout coordinates.
+						decisionAssignments = append(decisionAssignments, MatchingDecisionAssignment{FileMemberID: fileUUID, ProviderTrackID: trackID, Medium: edge.input.Medium + 1, Position: edge.input.Track + 1})
 					}
 					break
 				}

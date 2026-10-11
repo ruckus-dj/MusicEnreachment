@@ -989,6 +989,19 @@ normalization для score в точности. Если по имеющимся
   pending-job drainage ещё не доказаны этим test. Production consumer остаётся
   inactive; automatic trigger/full-plan acceptance не завершены.
 
+### Real v2 automatic apply proof — 2026-10-12
+
+- Automatic persisted decisions convert zero-based layout indices to one-based
+  coordinates exactly once; kernel, review and manual coordinate contracts
+  remain unchanged. Unit tests cover first and higher layout coordinates.
+- Real HTTP/PostgreSQL v2 acquisition test now registers/enqueues/drives the
+  actual apply worker after unrelated epoch advancement. It verifies applied
+  receipt, selected=false association, unchanged authority/generation and no
+  unconsumed parent matching deliveries.
+- Independent review approved this bounded correction/proof; full `task verify`
+  passed again in primary. Production reconciliation consumer, no-artist
+  fallback, return-to-automatic/API/UI and full-plan acceptance remain open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

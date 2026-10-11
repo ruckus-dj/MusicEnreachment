@@ -262,13 +262,13 @@ func TestMatchingEvaluationPersistsExactUniqueSolverAssignmentDeterministically(
 		Source:                     persistence.ProviderSource{ID: uuid.New(), ProviderID: uuid.New(), Namespace: "mb", Endpoint: "https://mb.example", ConfigurationIdentity: "config"},
 		AcceptedProjectionRevision: "projection-r1",
 		Releases: []persistence.MatchingRelease{{ID: releaseID, ProviderKey: "release-key", Tracks: []persistence.MatchingReleaseTrack{
-			{ID: trackOne, Medium: 1, Position: 1}, {ID: trackTwo, Medium: 1, Position: 2},
+			{ID: trackOne, Medium: 0, Position: 0}, {ID: trackTwo, Medium: 1, Position: 2},
 		}}},
 	}
 	inputs := []MatchingInput{
-		syntheticMatchingInput(fileA, "release-key", 1, 1, .95, .80),
+		syntheticMatchingInput(fileA, "release-key", 0, 0, .95, .80),
 		syntheticMatchingInput(fileA, "release-key", 1, 2, .95, .95),
-		syntheticMatchingInput(fileB, "release-key", 1, 1, .95, .94),
+		syntheticMatchingInput(fileB, "release-key", 0, 0, .95, .94),
 		syntheticMatchingInput(fileB, "release-key", 1, 2, .95, .80),
 	}
 	snapshot := MatchingEvaluationSnapshot{
@@ -309,6 +309,13 @@ func TestMatchingEvaluationPersistsExactUniqueSolverAssignmentDeterministically(
 	for _, assignment := range first.Assignments {
 		if want[assignment.FileMemberID] != assignment.ProviderTrackID {
 			t.Errorf("solver assignment for %s = %s, want %s (all assignments: %#v)", assignment.FileMemberID, assignment.ProviderTrackID, want[assignment.FileMemberID], first.Assignments)
+		}
+		wantMedium, wantPosition := 1, 1
+		if assignment.FileMemberID == fileA {
+			wantMedium, wantPosition = 2, 3
+		}
+		if assignment.Medium != wantMedium || assignment.Position != wantPosition {
+			t.Errorf("persisted assignment coordinates for %s = medium %d, position %d, want medium %d, position %d", assignment.FileMemberID, assignment.Medium, assignment.Position, wantMedium, wantPosition)
 		}
 	}
 	firstJSON, _ := json.Marshal(first)
