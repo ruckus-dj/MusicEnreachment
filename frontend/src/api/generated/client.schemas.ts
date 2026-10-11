@@ -268,22 +268,45 @@ export interface InstallationsBody {
   installations: InstallationResponse[] | null;
 }
 
-export interface MatchingReviewPosition {
-  assignment_confidence?: number;
-  displayed_number?: string;
+export interface MatchingManualAssignment {
+  file_member_id: string;
   medium: number;
   position: number;
-  track_id: string;
+  provider_track_id: string;
 }
 
-export interface MatchingReviewCandidate {
+export interface MatchingManualAssignmentBody {
+  file_member_id: string;
+  medium: number;
+  position: number;
+  provider_track_id: string;
+}
+
+export interface MatchingManualBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /** @nullable */
-  edges: unknown[] | null;
+  assignments: MatchingManualAssignmentBody[] | null;
+  expected_evaluation_revision: string;
+  provider_release_id: string;
+}
+
+export interface MatchingManualConfirmBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  assignments: MatchingManualAssignmentBody[] | null;
+  expected_evaluation_revision: string;
+  preview_digest: string;
+  provider_release_id: string;
+  request_id: string;
+}
+
+export interface MatchingManualMember {
+  assignment?: MatchingManualAssignment;
   file_member_id: string;
   /** @nullable */
-  positions: MatchingReviewPosition[] | null;
-  release_confidence: number;
-  release_id: string;
+  locations: string[] | null;
 }
 
 export interface MatchingReviewLayoutPosition {
@@ -302,6 +325,39 @@ export interface MatchingReviewRelease {
   release_id: string;
   title: string;
   tracklist_complete: boolean;
+}
+
+export interface MatchingManualPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  evaluation_revision: string;
+  group_id: string;
+  local_release_id?: string;
+  /** @nullable */
+  members: MatchingManualMember[] | null;
+  /** @nullable */
+  omitted_member_ids: string[] | null;
+  preview_digest: string;
+  provider_release_id: string;
+  selected_release: MatchingReviewRelease;
+}
+
+export interface MatchingReviewPosition {
+  assignment_confidence?: number;
+  displayed_number?: string;
+  medium: number;
+  position: number;
+  track_id: string;
+}
+
+export interface MatchingReviewCandidate {
+  /** @nullable */
+  edges: unknown[] | null;
+  file_member_id: string;
+  /** @nullable */
+  positions: MatchingReviewPosition[] | null;
+  release_confidence: number;
+  release_id: string;
 }
 
 export interface MatchingReview {

@@ -29,6 +29,7 @@ type Dependencies struct {
 	SourceArtifactCleanup *service.SourceAnalysisArtifactCleanup
 	IncomingGroups        *service.IncomingGroups
 	MatchingReview        *service.MatchingReviewService
+	MatchingManual        *service.MatchingManualService
 }
 
 type preflightEntry struct {

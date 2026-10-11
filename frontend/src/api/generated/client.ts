@@ -41,6 +41,9 @@ import type {
   ListOperationsParams,
   ListSourceLocationsParams,
   ListToolCatalogParams,
+  MatchingManualBody,
+  MatchingManualConfirmBody,
+  MatchingManualPreview,
   MatchingReview,
   MovePreflightBody,
   MovePreflightInputBody,
@@ -601,6 +604,236 @@ export function useGetIncomingGroupMatching<TData = Awaited<ReturnType<typeof ge
 
 
 
+
+export type confirmIncomingGroupManualMatchingResponse200 = {
+  data: MatchingManualPreview
+  status: 200
+}
+
+export type confirmIncomingGroupManualMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmIncomingGroupManualMatchingResponseSuccess = (confirmIncomingGroupManualMatchingResponse200) & {
+  headers: Headers;
+};
+export type confirmIncomingGroupManualMatchingResponseError = (confirmIncomingGroupManualMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmIncomingGroupManualMatchingResponse = (confirmIncomingGroupManualMatchingResponseSuccess | confirmIncomingGroupManualMatchingResponseError)
+
+export const getConfirmIncomingGroupManualMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/confirm`
+}
+
+/**
+ * @summary Confirm explicit incoming group matching assignments
+ */
+export const confirmIncomingGroupManualMatching = async (groupId: string,
+    matchingManualConfirmBody: NonReadonly<MatchingManualConfirmBody>, options?: RequestInit): Promise<confirmIncomingGroupManualMatchingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getConfirmIncomingGroupManualMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingManualConfirmBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmIncomingGroupManualMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmIncomingGroupManualMatchingResponse
+}
+
+
+
+
+
+export const getConfirmIncomingGroupManualMatchingMutationKey = () => ['confirmIncomingGroupManualMatching'] as const;
+
+export const getConfirmIncomingGroupManualMatchingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>, TError,ConfirmIncomingGroupManualMatchingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>, TError,ConfirmIncomingGroupManualMatchingMutationVariables, TContext> => {
+
+const mutationKey = getConfirmIncomingGroupManualMatchingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>, ConfirmIncomingGroupManualMatchingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  confirmIncomingGroupManualMatching(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmIncomingGroupManualMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>>
+    export type ConfirmIncomingGroupManualMatchingMutationBody = NonReadonly<MatchingManualConfirmBody>
+    export type ConfirmIncomingGroupManualMatchingMutationError = ErrorModel
+    export type ConfirmIncomingGroupManualMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingManualConfirmBody>}
+
+    /**
+ * @summary Confirm explicit incoming group matching assignments
+ */
+export const useConfirmIncomingGroupManualMatching = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>, TError,ConfirmIncomingGroupManualMatchingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmIncomingGroupManualMatching>>,
+        TError,
+        ConfirmIncomingGroupManualMatchingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmIncomingGroupManualMatchingMutationOptions(options), queryClient);
+    }
+
+export type previewIncomingGroupManualMatchingResponse200 = {
+  data: MatchingManualPreview
+  status: 200
+}
+
+export type previewIncomingGroupManualMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewIncomingGroupManualMatchingResponseSuccess = (previewIncomingGroupManualMatchingResponse200) & {
+  headers: Headers;
+};
+export type previewIncomingGroupManualMatchingResponseError = (previewIncomingGroupManualMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewIncomingGroupManualMatchingResponse = (previewIncomingGroupManualMatchingResponseSuccess | previewIncomingGroupManualMatchingResponseError)
+
+export const getPreviewIncomingGroupManualMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/preview`
+}
+
+/**
+ * @summary Preview explicit incoming group matching assignments
+ */
+export const previewIncomingGroupManualMatching = async (groupId: string,
+    matchingManualBody: NonReadonly<MatchingManualBody>, options?: RequestInit): Promise<previewIncomingGroupManualMatchingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreviewIncomingGroupManualMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingManualBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewIncomingGroupManualMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewIncomingGroupManualMatchingResponse
+}
+
+
+
+
+
+export const getPreviewIncomingGroupManualMatchingMutationKey = () => ['previewIncomingGroupManualMatching'] as const;
+
+export const getPreviewIncomingGroupManualMatchingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>, TError,PreviewIncomingGroupManualMatchingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>, TError,PreviewIncomingGroupManualMatchingMutationVariables, TContext> => {
+
+const mutationKey = getPreviewIncomingGroupManualMatchingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>, PreviewIncomingGroupManualMatchingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  previewIncomingGroupManualMatching(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewIncomingGroupManualMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>>
+    export type PreviewIncomingGroupManualMatchingMutationBody = NonReadonly<MatchingManualBody>
+    export type PreviewIncomingGroupManualMatchingMutationError = ErrorModel
+    export type PreviewIncomingGroupManualMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingManualBody>}
+
+    /**
+ * @summary Preview explicit incoming group matching assignments
+ */
+export const usePreviewIncomingGroupManualMatching = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>, TError,PreviewIncomingGroupManualMatchingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewIncomingGroupManualMatching>>,
+        TError,
+        PreviewIncomingGroupManualMatchingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreviewIncomingGroupManualMatchingMutationOptions(options), queryClient);
+    }
 
 export type listOperationsResponse200 = {
   data: OperationsBody

@@ -395,9 +395,26 @@ func applyPersistedMatchingDecision(ctx context.Context, tx bun.Tx, group Incomi
 }
 
 func ensureAutomaticLocalRelease(ctx context.Context, tx bun.Tx, providerID, providerReleaseID uuid.UUID, title, policy string) (uuid.UUID, bool, error) {
+	return ensureLocalRelease(ctx, tx, providerID, providerReleaseID, title, materializationAuthority{method: "automatic", policyVersion: &policy})
+}
+
+type materializationAuthority struct {
+	method        string
+	policyVersion *string
+}
+
+func ensureLocalRelease(ctx context.Context, tx bun.Tx, providerID, providerReleaseID uuid.UUID, title string, authority materializationAuthority) (uuid.UUID, bool, error) {
 	var localID uuid.UUID
-	err := tx.NewRaw(`SELECT local_release_id FROM provider_local_release WHERE provider_id=? AND provider_release_id=? FOR UPDATE`, providerID, providerReleaseID).Scan(ctx, &localID)
+	var method string
+	err := tx.NewRaw(`SELECT local_release_id, method FROM provider_local_release WHERE provider_id=? AND provider_release_id=? FOR UPDATE`, providerID, providerReleaseID).Scan(ctx, &localID, &method)
 	if err == nil {
+		if method == "automatic" && authority.method == "manual" {
+			if _, err := tx.NewRaw(`UPDATE provider_local_release SET method='manual', policy_version=NULL WHERE provider_id=? AND provider_release_id=?`, providerID, providerReleaseID).Exec(ctx); err != nil {
+				return uuid.Nil, false, fmt.Errorf("apply matching evaluation: promote local release mapping: %w", err)
+			}
+		} else if method != authority.method {
+			return uuid.Nil, false, ErrMatchingManualProtection
+		}
 		return localID, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -407,17 +424,32 @@ func ensureAutomaticLocalRelease(ctx context.Context, tx bun.Tx, providerID, pro
 	if _, err := tx.NewRaw(`INSERT INTO local_release(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
 		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: create local release: %w", err)
 	}
-	if _, err := tx.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method,policy_version) VALUES (?,?,?,'automatic',?)`, providerID, providerReleaseID, localID, policy).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerReleaseID, localID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: map provider release: %w", err)
 	}
 	return localID, true, nil
 }
 
 func ensureAutomaticLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, title, policy string) (uuid.UUID, uuid.UUID, bool, bool, error) {
+	return ensureLocalTrack(ctx, tx, providerID, providerTrackID, providerRecordingID, releaseID, medium, position, title, materializationAuthority{method: "automatic", policyVersion: &policy})
+}
+
+func ensureLocalTrack(ctx context.Context, tx bun.Tx, providerID, providerTrackID, providerRecordingID, releaseID uuid.UUID, medium, position int, title string, authority materializationAuthority) (uuid.UUID, uuid.UUID, bool, bool, error) {
 	var localID uuid.UUID
-	err := tx.NewRaw(`SELECT local_track_id FROM provider_local_track WHERE provider_id=? AND provider_track_id=? FOR UPDATE`, providerID, providerTrackID).Scan(ctx, &localID)
+	var method string
+	err := tx.NewRaw(`SELECT local_track_id, method FROM provider_local_track WHERE provider_id=? AND provider_track_id=? FOR UPDATE`, providerID, providerTrackID).Scan(ctx, &localID, &method)
 	if err == nil {
+		if method == "automatic" && authority.method == "manual" {
+			if _, err := tx.NewRaw(`UPDATE provider_local_track SET method='manual', policy_version=NULL WHERE provider_id=? AND provider_track_id=?`, providerID, providerTrackID).Exec(ctx); err != nil {
+				return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: promote local track mapping: %w", err)
+			}
+		} else if method != authority.method {
+			return uuid.Nil, uuid.Nil, false, false, ErrMatchingManualProtection
+		}
 		var recordingID uuid.UUID
+		if err := ensureManualRecordingAuthority(ctx, tx, providerID, providerRecordingID, authority); err != nil {
+			return uuid.Nil, uuid.Nil, false, false, err
+		}
 		if err := tx.NewRaw(`SELECT local_recording_id FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=?`, providerID, providerRecordingID).Scan(ctx, &recordingID); err != nil {
 			return uuid.Nil, uuid.Nil, false, false, err
 		}
@@ -434,24 +466,50 @@ func ensureAutomaticLocalTrack(ctx context.Context, tx bun.Tx, providerID, provi
 		if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,?)`, recordingID, title).Exec(ctx); err != nil {
 			return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: create local recording: %w", err)
 		}
-		if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,'automatic',?)`, providerID, providerRecordingID, recordingID, policy).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerRecordingID, recordingID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 			return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: map provider recording: %w", err)
 		}
 		recordingCreated = true
 	} else if err != nil {
 		return uuid.Nil, uuid.Nil, false, false, err
+	} else if authority.method == "manual" {
+		if err := ensureManualRecordingAuthority(ctx, tx, providerID, providerRecordingID, authority); err != nil {
+			return uuid.Nil, uuid.Nil, false, false, err
+		}
 	}
 	localID = uuid.New()
 	if _, err := tx.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: create local track: %w", err)
 	}
-	if _, err := tx.NewRaw(`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method,policy_version) VALUES (?,?,?,'automatic',?)`, providerID, providerTrackID, localID, policy).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_track(provider_id,provider_track_id,local_track_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerTrackID, localID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: map provider track: %w", err)
 	}
 	if _, err := tx.NewRaw(`INSERT INTO release_track(release_id,medium,position,track_id,recording_id) VALUES (?,?,?,?,?)`, releaseID, medium, position, localID, recordingID).Exec(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, false, false, fmt.Errorf("apply matching evaluation: add local release track: %w", err)
 	}
 	return localID, recordingID, recordingCreated, true, nil
+}
+
+// Manual mapping a track also promotes its shared recording mapping, whether
+// the provider track mapping already existed or is being created now.
+func ensureManualRecordingAuthority(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, authority materializationAuthority) error {
+	var localID uuid.UUID
+	var method string
+	err := tx.NewRaw(`SELECT local_recording_id,method FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=? FOR UPDATE`, providerID, providerRecordingID).Scan(ctx, &localID, &method)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if method == authority.method {
+		return nil
+	}
+	if method == "automatic" && authority.method == "manual" {
+		_, err = tx.NewRaw(`UPDATE provider_local_recording SET method='manual',policy_version=NULL WHERE provider_id=? AND provider_recording_id=?`, providerID, providerRecordingID).Exec(ctx)
+		return err
+	}
+	return ErrMatchingManualProtection
 }
 
 type acceptedArtistCredit struct {
@@ -608,6 +666,14 @@ func acceptedTrackTitle(fields json.RawMessage, medium, position int, recordingK
 }
 
 func writeAutomaticMetadata(ctx context.Context, tx bun.Tx, table string, id uuid.UUID, field, entityKey string, sourceID, providerID uuid.UUID, revision string, fieldEvidence json.RawMessage) error {
+	return writeMatchingMetadata(ctx, tx, table, id, field, entityKey, sourceID, providerID, revision, fieldEvidence, "automatic_matching")
+}
+
+func writeManualMetadata(ctx context.Context, tx bun.Tx, table string, id uuid.UUID, field, entityKey string, sourceID, providerID uuid.UUID, revision string, fieldEvidence json.RawMessage) error {
+	return writeMatchingMetadata(ctx, tx, table, id, field, entityKey, sourceID, providerID, revision, fieldEvidence, "manual_matching")
+}
+
+func writeMatchingMetadata(ctx context.Context, tx bun.Tx, table string, id uuid.UUID, field, entityKey string, sourceID, providerID uuid.UUID, revision string, fieldEvidence json.RawMessage, provenanceKey string) error {
 	if table != "local_artist" && table != "local_release" && table != "local_recording" && table != "local_track" {
 		return fmt.Errorf("apply matching evaluation: invalid provenance table")
 	}
@@ -619,7 +685,7 @@ func writeAutomaticMetadata(ctx context.Context, tx bun.Tx, table string, id uui
 	if table == "local_track" && field == "title" {
 		entityKind = "recording"
 	}
-	metadata, err := json.Marshal(map[string]any{"automatic_matching": map[string]any{
+	metadata, err := json.Marshal(map[string]any{provenanceKey: map[string]any{
 		"source_id": sourceID, "provider_id": providerID, "source_entity_id": entityKey,
 		"projection_revision": revision, "field_evidence": map[string]ProviderFieldEvidence{field: evidence[field]},
 		"provider_fields_reference": map[string]any{
@@ -640,7 +706,8 @@ func recordingProviderKey(ctx context.Context, tx bun.Tx, providerID, recordingI
 	return key
 }
 
-func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, sourceID, parentID uuid.UUID, relation string, credits []acceptedArtistCredit, policy, projectionRevision string) error {
+func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, sourceID, parentID uuid.UUID, relation string, credits []acceptedArtistCredit, policy, projectionRevision string, manualAuthority ...bool) error {
+	manual := len(manualAuthority) != 0 && manualAuthority[0]
 	parentColumn := map[string]string{"release_artist": "release_id", "recording_artist": "recording_id", "track_artist": "track_id"}[relation]
 	if parentColumn == "" {
 		return fmt.Errorf("apply matching evaluation: invalid artist relation")
@@ -694,7 +761,11 @@ func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, source
 					sourceKey = credit.SourceKey
 				}
 			}
-			provenance, marshalErr := json.Marshal(map[string]any{"automatic_matching": map[string]any{
+			provenanceKey, mappingMethod := "automatic_matching", "automatic"
+			if manual {
+				provenanceKey, mappingMethod = "manual_matching", "manual"
+			}
+			provenance, marshalErr := json.Marshal(map[string]any{provenanceKey: map[string]any{
 				"source_id": sourceID, "provider_id": providerID, "provider_artist_id": providerArtistID,
 				"projection_revision": projectionRevision, "policy_version": policy,
 				"source_entity_id": sourceKey, "field_evidence": map[string]ProviderFieldEvidence{nameField: nameEvidence},
@@ -707,7 +778,7 @@ func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, source
 			if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name,metadata) VALUES (?,?,?::jsonb)`, artistID, acceptedName, string(provenance)).Exec(ctx); err != nil {
 				return fmt.Errorf("apply matching evaluation: create local artist: %w", err)
 			}
-			if _, err := tx.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method,policy_version) VALUES (?,?,?,'automatic',?)`, providerID, providerArtistID, artistID, policy).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerArtistID, artistID, mappingMethod, optionalPolicy(policy, manual)).Exec(ctx); err != nil {
 				return fmt.Errorf("apply matching evaluation: map provider artist: %w", err)
 			}
 		} else if err != nil {
@@ -720,7 +791,18 @@ func materializeArtistCredits(ctx context.Context, tx bun.Tx, providerID, source
 	return nil
 }
 
+func optionalPolicy(policy string, manual bool) any {
+	if manual {
+		return nil
+	}
+	return policy
+}
+
 func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, policy string) error {
+	return attachTrackSource(ctx, tx, trackID, variantID, materializationAuthority{method: "automatic", policyVersion: &policy})
+}
+
+func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.UUID, authority materializationAuthority) error {
 	var existing []struct {
 		TrackID uuid.UUID `bun:"track_id"`
 		Method  string    `bun:"decision_method"`
@@ -735,10 +817,17 @@ func attachAutomaticTrackSource(ctx context.Context, tx bun.Tx, trackID, variant
 	}
 	for _, source := range existing {
 		if source.TrackID == trackID {
+			if source.Method == "automatic" && authority.method == "manual" {
+				if _, err := tx.NewRaw(`UPDATE track_source SET decision_method='manual', policy_version=NULL WHERE track_id=? AND media_variant_id=?`, trackID, variantID).Exec(ctx); err != nil {
+					return fmt.Errorf("apply matching evaluation: promote source association: %w", err)
+				}
+			} else if source.Method != authority.method {
+				return fmt.Errorf("apply matching evaluation: %w", ErrMatchingManualProtection)
+			}
 			return nil
 		}
 	}
-	if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version) VALUES (?,?,?,false,true,'automatic',?)`, uuid.New(), trackID, variantID, policy).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version) VALUES (?,?,?,false,true,?,?)`, uuid.New(), trackID, variantID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 		return fmt.Errorf("apply matching evaluation: attach source variant: %w", err)
 	}
 	return nil

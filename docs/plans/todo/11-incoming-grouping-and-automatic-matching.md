@@ -755,6 +755,28 @@ normalization для score в точности. Если по имеющимся
 - Manual preview/confirm, picker, Incoming UI, ranking и automatic trigger ещё
   не завершены. Этот increment не завершает план.
 
+### Explicit manual subset preview/confirm — 2026-10-11
+
+- Добавлены preview/confirm API для явно выбранного subset позиций release из
+  persisted review scope. Partial manual selection не требует automatic threshold
+  или unique decision; omitted members/links не удаляются и группа не объявляется
+  resolved. Shared materialization сохраняет отдельную manual authority с NULL
+  policy, selected/compatible прежних source links и unselected новые links.
+- Preview digest связывает явный intent с whole-group source/provider/evaluation
+  fences и target state. Confirm атомарно materializes subset и immutable receipt;
+  receipt lookup под source-mutation gate предшествует freshness validation.
+  Concurrent exact confirms и replay после новой evaluation возвращают одинаковый
+  сохранённый ответ, включая full selected layout, без current-review read.
+- Real evaluator writer → persistence → preview/confirm round-trip, partial
+  materialization, replay и service/API tests прошли вместе с повторным полным
+  `task verify`. Независимое финальное review одобрило ограниченный subset scope.
+  Manual protection возвращает conflict (409), structural validation — 422.
+- Coverage gaps: focused PostgreSQL all-location folder collisions, late-failure
+  rollback и title/provenance assertions пока не закрыты. Authority/provenance
+  fixes проверены review; это не заменяет указанные regression tests.
+- Picker, Incoming UI, retrieval ranking, automatic post-analysis trigger,
+  manual unlink policy и полная приёмка остаются открытыми. План не завершён.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
