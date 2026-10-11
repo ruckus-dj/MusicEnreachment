@@ -195,6 +195,64 @@ it("keeps admission and operation tracking with the original group across naviga
   expect(await screen.findByText("Издание подготовлено.")).toBeInTheDocument();
 });
 
+it("preserves the submitted release operation when a newer search selection arrives", async () => {
+  const admission = deferred<Response>();
+  const onPrepared = vi.fn();
+  server.use(
+    http.post(
+      "*/incoming-groups/:groupId/matching/manual-release",
+      () => admission.promise,
+    ),
+    http.get("*/operations/operation-selection", () =>
+      HttpResponse.json({
+        id: "operation-selection",
+        kind: "matching_evaluation_v1",
+        state: "succeeded",
+        stage: "complete",
+        bytes_completed: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = (searchRelease: string) => (
+    <QueryClientProvider client={client}>
+      <ManualReleasePicker
+        groupId="group-a"
+        groupRevision="revision-a"
+        evaluationRevision="evaluation-a"
+        searchRelease={searchRelease}
+        onPrepared={onPrepared}
+      />
+    </QueryClientProvider>
+  );
+  const rendered = render(view("11111111-1111-4111-8111-111111111111"));
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("MBID или официальная ссылка на издание"),
+    ).toHaveValue("11111111-1111-4111-8111-111111111111"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Подготовить издание" }));
+  rendered.rerender(view("22222222-2222-4222-8222-222222222222"));
+  admission.resolve(
+    HttpResponse.json(
+      { operation_id: "operation-selection" },
+      { status: 202 },
+    ) as Response,
+  );
+  await waitFor(() =>
+    expect(onPrepared).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    ),
+  );
+  expect(
+    screen.getByLabelText("MBID или официальная ссылка на издание"),
+  ).toHaveValue("22222222-2222-4222-8222-222222222222");
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {

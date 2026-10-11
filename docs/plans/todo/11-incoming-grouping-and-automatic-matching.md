@@ -851,6 +851,32 @@ normalization для score в точности. Если по имеющимся
 - Search UI, automatic ranking/trigger, unlink policy и полная приёмка остаются
   открытыми. Ревизия фиксируется коммитом этого backend increment.
 
+### Owner decision — manual search pagination, 2026-10-11
+
+- Владелец выбрал «10, можно менять»: manual picker работает с default page size
+  10, доступным для изменения. Ввод размера страницы перед каждым первым поиском
+  не обязателен. Это решение не относится к automatic group shortlist/ranking.
+- Search UI ещё не принят: исправляются найденные contract/pagination и async
+  state issues; успешный прежний gate не заменяет их повторную проверку.
+
+### Manual search picker UI — 2026-10-11
+
+- Editable artist/release search и explicit artist browse подключены к durable
+  operations/result API. Можно выбрать не первого артиста. Release selection
+  только заполняет explicit preparation input и не запускает prepare автоматически.
+- Owner-approved default page size 10 доступен для изменения. Artist browse
+  использует API entity=artist с artist_id, отображая release results; pagination
+  читает правильные browse count/offset fields. Malformed payload не выдаётся за
+  корректный пустой результат; identifiers проверяются как MBIDs.
+- Unknown operation snapshot сохраняет pending lock; request freshness включает
+  group revision и page limit. Query/entity edit очищает browse context, сохраняя
+  admitted operation tracking. Direct preparation не теряется при search selection.
+- RTL/MSW tests покрывают second-artist browse, pagination и request/control
+  transitions; это не live-provider UI acceptance. Независимое финальное review
+  закрыло найденные issues; полный `task verify` повторно прошёл в primary session.
+- Automatic ranking/trigger, manual unlink policy и end-to-end/corpus/packaging
+  acceptance остаются открытыми. План не завершён.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

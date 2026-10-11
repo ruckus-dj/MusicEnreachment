@@ -11,6 +11,7 @@ type Props = {
   groupRevision: string;
   evaluationRevision?: string;
   disabled?: boolean;
+  searchRelease?: string;
   onPrepared: (releaseMBID: string) => void;
 };
 
@@ -22,6 +23,7 @@ type RequestBody = {
 };
 type GroupState = {
   value: string;
+  searchRelease?: string;
   body?: RequestBody;
   admitting?: boolean;
   operationId?: string;
@@ -34,6 +36,7 @@ export function ManualReleasePicker({
   groupRevision,
   evaluationRevision,
   disabled = false,
+  searchRelease,
   onPrepared,
 }: Props) {
   const queryClient = useQueryClient();
@@ -43,6 +46,19 @@ export function ManualReleasePicker({
   const currentRevisionsRef = useRef({ groupRevision, evaluationRevision });
   currentRevisionsRef.current = { groupRevision, evaluationRevision };
   const state = states[groupId] ?? { value: "" };
+  useEffect(() => {
+    if (!searchRelease) return;
+    setStates((current) => ({
+      ...current,
+      [groupId]: {
+        ...current[groupId],
+        value: searchRelease,
+        searchRelease,
+        error: undefined,
+        finished: false,
+      },
+    }));
+  }, [groupId, searchRelease]);
   const operationQueries = useQueries({
     queries: Object.entries(states)
       .flatMap(([, item]) =>
@@ -103,15 +119,22 @@ export function ManualReleasePicker({
         const releaseID = selected?.includes("/")
           ? selected.slice(selected.lastIndexOf("/") + 1)
           : selected;
-        if (
+        const canonicalReleaseID =
           releaseID &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            releaseID,
+          )
+            ? releaseID.toLowerCase()
+            : undefined;
+        if (
+          canonicalReleaseID &&
           currentGroupRef.current === submittedGroupId &&
           currentRevisionsRef.current.groupRevision ===
             submitted.body?.expected_group_revision &&
           currentRevisionsRef.current.evaluationRevision ===
             submitted.body?.expected_evaluation_revision
         )
-          onPrepared(releaseID.toLowerCase());
+          onPrepared(canonicalReleaseID);
         setStates((current) => ({
           ...current,
           [submittedGroupId]: {
@@ -225,7 +248,9 @@ export function ManualReleasePicker({
             setStates((current) => ({
               ...current,
               [groupId]: {
+                ...current[groupId],
                 value: event.target.value,
+                body: undefined,
                 error: undefined,
                 finished: false,
               },

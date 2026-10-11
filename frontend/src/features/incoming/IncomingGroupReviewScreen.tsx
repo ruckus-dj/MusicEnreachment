@@ -22,6 +22,7 @@ import type {
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { ManualReleasePicker } from "./ManualReleasePicker";
+import { ManualSearchPicker } from "./ManualSearchPicker";
 
 type ProposalFile = {
   file_member_id: string;
@@ -121,6 +122,9 @@ function IncomingGroupReviewContent() {
   const [groupId, setGroupId] = useState("");
   const [selectedReleaseId, setSelectedReleaseId] = useState("");
   const [preparedReleaseMBID, setPreparedReleaseMBID] = useState("");
+  const [searchReleaseSelections, setSearchReleaseSelections] = useState<
+    Record<string, string>
+  >({});
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [preview, setPreview] = useState<PreviewState>();
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>();
@@ -516,13 +520,27 @@ function IncomingGroupReviewContent() {
           ) : null}
 
           {group ? (
-            <ManualReleasePicker
-              groupId={groupId}
-              groupRevision={group.revision}
-              evaluationRevision={review?.evaluation_revision || undefined}
-              disabled={!review}
-              onPrepared={setPreparedReleaseMBID}
-            />
+            <>
+              <ManualSearchPicker
+                groupId={groupId}
+                groupRevision={group.revision}
+                disabled={!review}
+                onSelectRelease={(releaseId) =>
+                  setSearchReleaseSelections((current) => ({
+                    ...current,
+                    [groupId]: releaseId,
+                  }))
+                }
+              />
+              <ManualReleasePicker
+                groupId={groupId}
+                groupRevision={group.revision}
+                evaluationRevision={review?.evaluation_revision || undefined}
+                disabled={!review}
+                searchRelease={searchReleaseSelections[groupId]}
+                onPrepared={setPreparedReleaseMBID}
+              />
+            </>
           ) : null}
           {review?.evaluated &&
           review.proposal_available &&

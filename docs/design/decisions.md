@@ -511,6 +511,9 @@ copies. Нет квот, произвольного размера или in-pla
   но не удаляет исходные файлы или provider metadata. Само снятие не
   подразумевает запуск automatic rematching: его дальнейшее поведение
   ещё требует согласования.
+- **Уточнение владельца от 2026-10-11 — manual search pagination:** размер
+  страницы ручного MusicBrainz picker по умолчанию — 10, пользователь может
+  изменить его. Это не меняет automatic group shortlist либо retrieval ranking.
 - **Уточнение от 2026-10-10 — текстовая метрика:** официальный RapidFuzz C++
   `token_set_ratio` через C ABI/cgo с Unicode code-point input; нормализация,
   транслитерация, coverage penalty и остальные factors/weights сохраняются.
