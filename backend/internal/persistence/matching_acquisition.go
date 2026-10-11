@@ -333,7 +333,7 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 				if kind != "provider_artist_search" || !responseIsTopArtist(payload, phase.Output) {
 					return fmt.Errorf("advance matching acquisition: first browse target is not the top artist from accepted search")
 				}
-			} else if kind != "provider_artist_release_browse" || !responseCursorMatches(payload, phase.Input, phase.Output) {
+			} else if kind != "provider_artist_release_browse" || !responseCursorMatches(payload, phase.Input, phase.Output, previous.Output) {
 				return fmt.Errorf("advance matching acquisition: next browse cursor does not follow the accepted page")
 			}
 		}
@@ -528,7 +528,7 @@ func responseIsTopArtist(payload, phaseOutput json.RawMessage) bool {
 		len(response.Artists) > 0 && strings.EqualFold(response.Artists[0].ID, output.ArtistMBID)
 }
 
-func responseCursorMatches(payload, phaseInput, phaseOutput json.RawMessage) bool {
+func responseCursorMatches(payload, phaseInput, phaseOutput, previousOutput json.RawMessage) bool {
 	// The cached payload is the raw MusicBrainz artist release browse envelope,
 	// which reports hyphenated release-count/release-offset keys. Parse them
 	// strictly so an absent or null count/offset is never read as a real zero.
@@ -548,18 +548,68 @@ func responseCursorMatches(payload, phaseInput, phaseOutput json.RawMessage) boo
 		Covered      int      `json:"covered_releases"`
 		ReleaseIDs   []string `json:"release_ids"`
 	}
+	var previous struct {
+		ReleaseIDs   []string `json:"release_ids"`
+		CatalogCount *int     `json:"catalog_count"`
+	}
 	if json.Unmarshal(payload, &response) != nil || json.Unmarshal(phaseInput, &input) != nil || json.Unmarshal(phaseOutput, &output) != nil ||
+		json.Unmarshal(previousOutput, &previous) != nil ||
 		response.Offset == nil || response.Count == nil || response.Releases == nil ||
 		input.Offset < 0 || input.Limit < 1 || *response.Offset != input.Offset || *response.Count < 0 || len(*response.Releases) > input.Limit ||
 		len(*response.Releases) == 0 && *response.Offset < *response.Count || output.NextOffset != *response.Offset+len(*response.Releases) ||
 		output.NextOffset > *response.Count || output.Complete != (output.NextOffset >= *response.Count) {
 		return false
 	}
-	if output.CatalogCount != nil && *output.CatalogCount != *response.Count {
+	// Every appended catalog page must seal the accepted raw release count. An
+	// omitted or null catalog_count is not a valid zero, and a sealed count that
+	// differs from the accepted browse envelope is a tampered manifest.
+	if output.CatalogCount == nil || *output.CatalogCount != *response.Count {
 		return false
 	}
-	if output.Covered != 0 && output.Covered != output.NextOffset || output.ReleaseIDs != nil && len(output.ReleaseIDs) != output.NextOffset {
+	// The prior page's sealed count is the same catalog the accepted raw response
+	// reports. It is legitimately absent only before the first browse establishes
+	// it (offset zero with no prior releases); any continuation at a nonzero
+	// offset must carry it, so a dropped count cannot silently reset the accepted
+	// catalog size while keeping an exact release-id prefix.
+	if previous.CatalogCount == nil {
+		if input.Offset != 0 {
+			return false
+		}
+	} else if *previous.CatalogCount != *response.Count {
 		return false
+	}
+	if output.Covered != output.NextOffset || len(output.ReleaseIDs) != output.NextOffset || input.Offset != len(previous.ReleaseIDs) {
+		return false
+	}
+	if len(output.ReleaseIDs) != len(previous.ReleaseIDs)+len(*response.Releases) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(output.ReleaseIDs))
+	for index, id := range previous.ReleaseIDs {
+		parsed, err := uuid.Parse(id)
+		if err != nil || parsed.String() != id || output.ReleaseIDs[index] != id {
+			return false
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	for index, release := range *response.Releases {
+		var item struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(release, &item) != nil {
+			return false
+		}
+		parsed, err := uuid.Parse(item.ID)
+		if err != nil || parsed.String() != strings.ToLower(item.ID) || output.ReleaseIDs[len(previous.ReleaseIDs)+index] != parsed.String() {
+			return false
+		}
+		if _, duplicate := seen[parsed.String()]; duplicate {
+			return false
+		}
+		seen[parsed.String()] = struct{}{}
 	}
 	return true
 }

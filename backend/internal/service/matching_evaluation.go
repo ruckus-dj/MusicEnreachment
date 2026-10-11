@@ -397,17 +397,18 @@ func combineMatchingGroupResults(results []MatchingGroupEvaluationResult, provid
 // keys and release keys are explicit per-file cache identities; a full provider
 // union snapshot is retained for its projection fence and filtered only here.
 type MatchingEvaluationSnapshot struct {
-	Grouping             IncomingGroupingSnapshot
-	Captures             []persistence.IncomingGroupingCapture
-	Provider             persistence.ProviderMatchingSnapshot
-	RequestedGroupIDs    []uuid.UUID
-	ReleaseKeysByFile    map[uuid.UUID][]string
-	SearchKeysByFile     map[uuid.UUID]MatchingSearchKeys
-	acoustIDScores       map[MatchingAcoustIDKey]float64
-	acoustIDResponses    map[string]*persistence.ProviderCachedResponse
-	acoustIDKeysByFile   map[uuid.UUID]string
-	acoustIDSourceInputs map[uuid.UUID][]persistence.IncomingMatchAcoustIDSourceInputFence
-	acoustIDDiagnostics  map[uuid.UUID]string
+	Grouping               IncomingGroupingSnapshot
+	Captures               []persistence.IncomingGroupingCapture
+	Provider               persistence.ProviderMatchingSnapshot
+	RequestedGroupIDs      []uuid.UUID
+	ReleaseKeysByFile      map[uuid.UUID][]string
+	SearchKeysByFile       map[uuid.UUID]MatchingSearchKeys
+	allowMissingSearchKeys bool
+	acoustIDScores         map[MatchingAcoustIDKey]float64
+	acoustIDResponses      map[string]*persistence.ProviderCachedResponse
+	acoustIDKeysByFile     map[uuid.UUID]string
+	acoustIDSourceInputs   map[uuid.UUID][]persistence.IncomingMatchAcoustIDSourceInputFence
+	acoustIDDiagnostics    map[uuid.UUID]string
 }
 
 type MatchingGroupDecision string
@@ -545,20 +546,19 @@ func evaluateMatchingGroup(
 			}
 		}
 		keys, ok := snapshot.SearchKeysByFile[memberID]
-		if !ok || keys.Release == "" || keys.Recording == "" {
+		if !ok || !snapshot.allowMissingSearchKeys && (keys.Release == "" || keys.Recording == "") {
 			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("matching evaluation requires exactly one release and recording search key per member")
 		}
 		searchKeys[memberID] = keys
-		if _, ok := snapshot.Provider.Responses[keys.Release]; !ok {
-			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact release search key")
-		}
-		if _, ok := snapshot.Provider.Responses[keys.Recording]; !ok {
-			return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact recording search key")
-		}
 		if keys.Release != "" {
+			if _, ok := snapshot.Provider.Responses[keys.Release]; !ok {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact release search key")
+			}
+			if _, ok := snapshot.Provider.Responses[keys.Recording]; !ok {
+				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact recording search key")
+			}
 			cacheRevisions[keys.Release] = matchingCachedRevision(snapshot.Provider.Responses[keys.Release])
-		}
-		if keys.Recording != "" {
+			cacheRevisions[keys.Recording] = matchingCachedRevision(snapshot.Provider.Responses[keys.Recording])
 			cacheRevisions[keys.Recording] = matchingCachedRevision(snapshot.Provider.Responses[keys.Recording])
 		}
 		keysForFile, ok := snapshot.ReleaseKeysByFile[memberID]

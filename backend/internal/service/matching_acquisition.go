@@ -32,6 +32,10 @@ type matchingAcquisitionProvider interface {
 	PrepareOperation(context.Context, string, string, int, int, bool) (*persistence.Operation, error)
 }
 
+type matchingAcquisitionEvaluationSealReader interface {
+	GetMatchingAcquisitionEvaluationSeal(context.Context, uuid.UUID) (persistence.MatchingAcquisitionEvaluationInput, bool, error)
+}
+
 // MatchingAcquisitionService advances only from accepted cached provider
 // responses. It never performs network I/O inside a matching delivery.
 type MatchingAcquisitionService struct {
@@ -42,6 +46,34 @@ type MatchingAcquisitionService struct {
 
 func NewMatchingAcquisitionService(repository matchingAcquisitionRepository, providers matchingAcquisitionProvider, river persistence.RiverInserter) *MatchingAcquisitionService {
 	return &MatchingAcquisitionService{repository: repository, providers: providers, river: river}
+}
+
+// EvaluationSeal returns only the persisted write-once handoff. It is separate
+// from Advance so a sealed continuation cannot be mistaken for an acquisition
+// page or decoded as the legacy caller-authored evaluation plan.
+func (acquisition *MatchingAcquisitionService) EvaluationSeal(ctx context.Context, runID uuid.UUID) (persistence.MatchingAcquisitionEvaluationInput, bool, error) {
+	if acquisition == nil || acquisition.repository == nil {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, fmt.Errorf("matching acquisition service is unavailable")
+	}
+	snapshot, exists, err := acquisition.repository.GetMatchingAcquisition(ctx, runID)
+	if err != nil || !exists {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, err
+	}
+	if snapshot.Phase != "evaluation_sealed" {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, nil
+	}
+	reader, ok := acquisition.repository.(matchingAcquisitionEvaluationSealReader)
+	if !ok {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, fmt.Errorf("matching acquisition seal reader is unavailable")
+	}
+	input, exists, err := reader.GetMatchingAcquisitionEvaluationSeal(ctx, runID)
+	if err != nil {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, err
+	}
+	if !exists {
+		return persistence.MatchingAcquisitionEvaluationInput{}, false, fmt.Errorf("matching acquisition evaluation seal is missing")
+	}
+	return input, true, nil
 }
 
 func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {

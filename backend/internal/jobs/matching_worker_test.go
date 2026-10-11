@@ -83,11 +83,25 @@ func TestMatchingWorkerNotClaimedDoesNotConsume(t *testing.T) {
 	}
 }
 
+type pendingAcquisitionTestRepository struct{}
+
+func (pendingAcquisitionTestRepository) GetMatchingAcquisition(context.Context, uuid.UUID) (persistence.MatchingAcquisitionSnapshot, bool, error) {
+	return persistence.MatchingAcquisitionSnapshot{}, false, nil
+}
+
+func (pendingAcquisitionTestRepository) AdvanceMatchingAcquisitionForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error) {
+	return false, errors.New("unexpected acquisition advance")
+}
+
+func (pendingAcquisitionTestRepository) ParkMatchingAcquisitionForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase) (bool, error) {
+	return false, errors.New("unexpected acquisition park")
+}
+
 func TestMatchingWorkerConsumesPendingDeliveryBeforeAcquisition(t *testing.T) {
 	op := matchingWorkerTestOperation()
 	repo := &matchingWorkerTestRepository{operation: op, outcome: persistence.MatchingDeliveryClaimed, consume: true}
 	worker := NewMatchingEvaluationWorker(repo, &service.MatchingEvaluationService{}, service.NewOperations(&matchingOperationTestRepository{op: op})).
-		WithAcquisition(&service.MatchingAcquisitionService{})
+		WithAcquisition(service.NewMatchingAcquisitionService(pendingAcquisitionTestRepository{}, nil, nil))
 	job := &river.Job[service.MatchingEvaluationOperationArgs]{JobRow: &rivertype.JobRow{ID: *op.RiverJobID, Attempt: 1}, Args: service.MatchingEvaluationOperationArgs{OperationID: op.ID}}
 	if err := worker.Work(context.Background(), job); err != nil {
 		t.Fatal(err)

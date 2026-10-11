@@ -1,0 +1,3 @@
+DROP TRIGGER matching_acquisition_seal_write_once ON matching_acquisition_seal;
+DROP FUNCTION reject_matching_acquisition_seal_mutation();
+DROP TABLE matching_acquisition_seal;

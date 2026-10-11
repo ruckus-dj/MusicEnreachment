@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -155,6 +156,60 @@ type matchingPublisherQueryScope struct {
 	} `json:"search_keys_by_file"`
 }
 
+// GetMatchingAcquisitionEvaluationSeal returns the immutable evaluator handoff
+// only while its acquisition ledger still points at the sealing phase. The
+// digest and accepted-catalog manifest are rechecked on every read.
+func (repository *SetupManagerRepository) GetMatchingAcquisitionEvaluationSeal(ctx context.Context, runID uuid.UUID) (MatchingAcquisitionEvaluationInput, bool, error) {
+	var input MatchingAcquisitionEvaluationInput
+	var exists bool
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(ctx context.Context, tx bun.Tx) error {
+		var row struct {
+			Input           []byte `bun:"input"`
+			InputDigest     []byte `bun:"input_digest"`
+			CatalogDigest   []byte `bun:"catalog_digest"`
+			SealedRevision  int64  `bun:"acquisition_revision"`
+			CurrentRevision int64  `bun:"revision"`
+			CurrentPhase    string `bun:"current_phase"`
+			PhaseName       string `bun:"phase"`
+		}
+		err := tx.NewRaw(`SELECT seal.input, seal.input_digest, seal.catalog_digest,
+			seal.acquisition_revision, acquisition.revision, acquisition.current_phase, phase.phase
+			FROM matching_acquisition_seal seal
+			JOIN matching_acquisition acquisition ON acquisition.run_id=seal.run_id
+			JOIN matching_acquisition_phase phase ON phase.run_id=seal.run_id AND phase.revision=acquisition.revision
+			WHERE seal.run_id=?`, runID).Scan(ctx, &row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read matching acquisition evaluation seal: %w", err)
+		}
+		if row.CurrentPhase != "evaluation_sealed" || row.PhaseName != "evaluation_sealed" || row.SealedRevision != row.CurrentRevision {
+			return fmt.Errorf("read matching acquisition evaluation seal: ledger phase does not match immutable seal")
+		}
+		if err := json.Unmarshal(row.Input, &input); err != nil {
+			return fmt.Errorf("read matching acquisition evaluation seal: decode input: %w", err)
+		}
+		_, _, digest, err := canonicalMatchingAcquisitionInput(input)
+		if err != nil || !equalDigest(row.InputDigest, digest[:]) {
+			return fmt.Errorf("read matching acquisition evaluation seal: input digest or encoding is invalid")
+		}
+		catalogDigest, _, err := matchingAcquisitionCatalogManifest(ctx, tx, runID)
+		if err != nil {
+			return fmt.Errorf("read matching acquisition evaluation seal: accepted catalog manifest: %w", err)
+		}
+		if !equalDigest(row.CatalogDigest, catalogDigest[:]) {
+			return fmt.Errorf("read matching acquisition evaluation seal: accepted catalog manifest changed")
+		}
+		exists = true
+		return nil
+	})
+	if err != nil {
+		return MatchingAcquisitionEvaluationInput{}, false, err
+	}
+	return input, exists, nil
+}
+
 type matchingPublisherPlanProvider struct {
 	ProviderSourceID              uuid.UUID `json:"provider_source_id"`
 	EndpointConfigurationIdentity string    `json:"endpoint_configuration_identity"`
@@ -205,7 +260,11 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 			return fmt.Errorf("publish matching evaluation: evaluated group differs from admitted target")
 		}
 	}
-	if err := validateMatchingPlanQueryScope(plan.Scope, evaluation); err != nil {
+	if evaluation.ScopeVersion == 4 {
+		if err := validateSealedMatchingEvaluation(ctx, tx, runID, evaluation); err != nil {
+			return err
+		}
+	} else if err := validateMatchingPlanQueryScope(plan.Scope, evaluation); err != nil {
 		return err
 	}
 	if evaluation.Provider.ProviderSourceID != run.ProviderSourceID || evaluation.Provider.ConfigurationIdentity != run.ConfigurationIdentity {
@@ -218,6 +277,137 @@ func validateMatchingPlanEvaluation(ctx context.Context, tx bun.Tx, runID uuid.U
 	}
 	if len(plan.Providers) == 0 {
 		return fmt.Errorf("publish matching evaluation: admitted provider request is missing")
+	}
+	return nil
+}
+
+func validateSealedMatchingEvaluation(ctx context.Context, tx bun.Tx, runID uuid.UUID, evaluation IncomingMatchEvaluation) error {
+	var row struct {
+		Input         []byte `bun:"input"`
+		InputDigest   []byte `bun:"input_digest"`
+		CatalogDigest []byte `bun:"catalog_digest"`
+		Revision      int64  `bun:"acquisition_revision"`
+		Current       int64  `bun:"revision"`
+		Phase         string `bun:"current_phase"`
+		PhaseName     string `bun:"phase"`
+	}
+	if err := tx.NewRaw(`SELECT seal.input, seal.input_digest, seal.catalog_digest, seal.acquisition_revision,
+		acquisition.revision, acquisition.current_phase, phase.phase
+		FROM matching_acquisition_seal seal
+		JOIN matching_acquisition acquisition ON acquisition.run_id=seal.run_id
+		JOIN matching_acquisition_phase phase ON phase.run_id=seal.run_id AND phase.revision=acquisition.revision
+		WHERE seal.run_id=? FOR SHARE OF seal, acquisition, phase`, runID).Scan(ctx, &row); err != nil {
+		return fmt.Errorf("publish matching evaluation: read sealed catalog scope: %w", err)
+	}
+	if row.Phase != "evaluation_sealed" || row.PhaseName != row.Phase || row.Revision != row.Current {
+		return fmt.Errorf("publish matching evaluation: acquisition seal is not current")
+	}
+	var input MatchingAcquisitionEvaluationInput
+	if err := json.Unmarshal(row.Input, &input); err != nil {
+		return fmt.Errorf("publish matching evaluation: decode sealed scope: %w", err)
+	}
+	_, _, digest, err := canonicalMatchingAcquisitionInput(input)
+	if err != nil || !equalDigest(row.InputDigest, digest[:]) {
+		return fmt.Errorf("publish matching evaluation: sealed scope digest is invalid")
+	}
+	catalogDigest, acceptedIDs, err := matchingAcquisitionCatalogManifest(ctx, tx, runID)
+	if err != nil {
+		return fmt.Errorf("publish matching evaluation: read accepted catalog manifest: %w", err)
+	}
+	if !equalDigest(row.CatalogDigest, catalogDigest[:]) {
+		return fmt.Errorf("publish matching evaluation: accepted catalog manifest changed")
+	}
+	if len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) > 10 || len(evaluation.Provider.ReleaseKeys) != len(input.ReleaseIDs) {
+		return fmt.Errorf("publish matching evaluation: evaluated releases differ from sealed selection")
+	}
+	for index, releaseID := range input.ReleaseIDs {
+		if _, ok := acceptedIDs[releaseID]; !ok || evaluation.Provider.ReleaseKeys[index] != releaseID {
+			return fmt.Errorf("publish matching evaluation: evaluated release is outside sealed catalog scope")
+		}
+	}
+	memberIDs := make(map[uuid.UUID]bool)
+	if len(input.GroupIDs) != len(evaluation.Groups) {
+		return fmt.Errorf("publish matching evaluation: evaluated groups differ from sealed scope")
+	}
+	evaluatedGroups := make(map[uuid.UUID]bool, len(evaluation.Groups))
+	for _, group := range evaluation.Groups {
+		evaluatedGroups[group.GroupID] = true
+		for _, member := range group.Members {
+			memberIDs[member.FileMemberID] = true
+		}
+	}
+	for _, groupID := range input.GroupIDs {
+		if !evaluatedGroups[groupID] {
+			return fmt.Errorf("publish matching evaluation: evaluated group is outside sealed scope")
+		}
+	}
+	if len(input.EvidenceCacheKeysByFile) != len(memberIDs) {
+		return fmt.Errorf("publish matching evaluation: sealed response provenance does not cover evaluated files")
+	}
+	var provenanceRows []struct {
+		ResponseProvenance []byte `bun:"response_provenance"`
+	}
+	if err := tx.NewRaw(`SELECT response_provenance FROM matching_acquisition_phase
+		WHERE run_id=? AND phase IN ('artist_catalog_page','catalog_ready') ORDER BY revision`, runID).Scan(ctx, &provenanceRows); err != nil {
+		return fmt.Errorf("publish matching evaluation: read accepted response provenance: %w", err)
+	}
+	acceptedCacheKeys := make(map[string]bool)
+	for _, row := range provenanceRows {
+		var provenance []matchingAcquisitionResponseProvenance
+		if err := json.Unmarshal(row.ResponseProvenance, &provenance); err != nil || len(provenance) != 1 || provenance[0].CacheKey == "" {
+			return fmt.Errorf("publish matching evaluation: accepted response provenance is invalid")
+		}
+		acceptedCacheKeys[provenance[0].CacheKey] = true
+	}
+	if len(acceptedCacheKeys) == 0 {
+		return fmt.Errorf("publish matching evaluation: accepted response provenance is empty")
+	}
+	expectedCacheKeys := make(map[string]bool, len(acceptedCacheKeys))
+	for key := range acceptedCacheKeys {
+		expectedCacheKeys[key] = true
+	}
+	for memberID, keys := range input.EvidenceCacheKeysByFile {
+		if !memberIDs[memberID] || len(keys) == 0 {
+			return fmt.Errorf("publish matching evaluation: sealed response provenance contains an invalid member")
+		}
+		if len(keys) != len(acceptedCacheKeys) {
+			return fmt.Errorf("publish matching evaluation: sealed response provenance differs from accepted catalog pages")
+		}
+		seenKeys := make(map[string]bool, len(keys))
+		for _, key := range keys {
+			if !acceptedCacheKeys[key] || seenKeys[key] {
+				return fmt.Errorf("publish matching evaluation: sealed response key is not an accepted catalog page")
+			}
+			seenKeys[key] = true
+		}
+	}
+	if len(expectedCacheKeys) != len(evaluation.Provider.CacheRevisions) {
+		return fmt.Errorf("publish matching evaluation: accepted response fences differ from sealed provenance")
+	}
+	for key := range expectedCacheKeys {
+		if _, exists := evaluation.Provider.CacheRevisions[key]; !exists {
+			return fmt.Errorf("publish matching evaluation: sealed accepted response fence is missing")
+		}
+	}
+	var releaseIDs []uuid.UUID
+	if len(input.ReleaseIDs) > 0 {
+		if err := tx.NewRaw(`SELECT release.id FROM provider_release release JOIN provider_source_entity entity
+			ON entity.provider_id=release.provider_id AND entity.provider_key=release.provider_key
+			WHERE entity.provider_source_id=? AND entity.provider_id=? AND entity.entity_kind='release' AND entity.provider_key IN (?)
+			ORDER BY entity.provider_key`, evaluation.Provider.ProviderSourceID, evaluation.Provider.ProviderID, bun.List(input.ReleaseIDs)).Scan(ctx, &releaseIDs); err != nil {
+			return fmt.Errorf("publish matching evaluation: resolve selected release graph: %w", err)
+		}
+	}
+	selected := make(map[uuid.UUID]bool, len(releaseIDs))
+	for _, id := range releaseIDs {
+		selected[id] = true
+	}
+	for _, group := range evaluation.Groups {
+		for _, candidate := range group.Candidates {
+			if !selected[candidate.ReleaseID] {
+				return fmt.Errorf("publish matching evaluation: candidate is outside sealed release selection")
+			}
+		}
 	}
 	return nil
 }

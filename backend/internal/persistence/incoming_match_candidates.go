@@ -98,6 +98,9 @@ type IncomingMatchAcoustIDSourceInputFence struct {
 }
 
 type IncomingMatchEvaluation struct {
+	// ScopeVersion 4 marks a persisted acquisition seal, rather than an
+	// immutable search-key plan, as the authority for candidate scope.
+	ScopeVersion           int
 	ExpectedGroupsRevision string
 	ExpectedGroupingEpoch  int64
 	PolicyVersion          string
@@ -305,7 +308,7 @@ func replaceIncomingMatchesTx(ctx context.Context, tx bun.Tx, evaluation Incomin
 }
 
 func validateIncomingMatchEvaluation(evaluation IncomingMatchEvaluation) error {
-	if evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || !matchingpolicy.Supported(evaluation.PolicyVersion) ||
+	if (evaluation.ScopeVersion != 0 && evaluation.ScopeVersion != 4) || evaluation.ExpectedGroupsRevision == "" || evaluation.ExpectedGroupingEpoch < 0 || !matchingpolicy.Supported(evaluation.PolicyVersion) ||
 		evaluation.Provider.ProviderID == uuid.Nil || evaluation.Provider.ProviderSourceID == uuid.Nil ||
 		evaluation.Provider.Namespace == "" || evaluation.Provider.Endpoint == "" || evaluation.Provider.ConfigurationIdentity == "" || evaluation.Provider.CacheKey == "" || evaluation.Provider.AcceptedProjectionRevision == "" || len(evaluation.Groups) == 0 {
 		return fmt.Errorf("replace incoming matches: complete snapshot and provider fences are required")

@@ -657,6 +657,32 @@ normalization для score в точности. Если по имеющимся
   parking; failed-child → parent failure пока покрыт только unit tests, не
   полным PostgreSQL worker cycle. Ревизия фиксируется коммитом этого increment.
 
+### Acquisition seal / evaluation handoff — 2026-10-11
+
+- Catalog manifest проверяется по exact accumulated canonical release IDs,
+  previous prefix и неизменному count; missing/null output count, invented IDs
+  и premature completion отвергаются. Write-once input seal фиксируется перед
+  evaluation вместе с единственной registered continuation delivery, без нового
+  run или смены target generation. Different repeated input конфликтует.
+- Worker читает persisted seal до legacy-plan evaluation. Новый scope допускает
+  отсутствие search-score keys при наличии настоящих acquisition evidence keys;
+  artist search/browse не становятся release/recording search factors. Старые
+  finite-plan требования остаются прежними. Publisher проверяет sealed release
+  scope, catalog provenance и current accepted projection перед completion.
+- Интеграционный HTTP/PostgreSQL test проходит acquisition → seal → worker →
+  transactional publication исходного parent, сохраняя policy/epoch. Он проверяет
+  publication lifecycle, но не доказывает состав candidate assignments или
+  missing-score factors. Sparse catalog fixture не является acceptance полной
+  tracklist hydration либо качества выбора release.
+- В verification исправлены sealing-revision mismatch, сравнение raw JSONB
+  bytes вместо canonical digest и путаница present nullable cache revision с
+  отсутствующим evidence key. Accepted payload/projection fences сохранены;
+  фиктивные revisions не создаются. Полный `task verify` прошёл после исправлений,
+  независимое финальное review одобрило этот ограниченный handoff increment.
+- Automatic admission, retrieval ranking, tracklist hydration orchestration,
+  fallback, partial review proposals, durable apply invocation и Incoming UI
+  остаются следующими задачами. План не завершён; ревизия фиксируется коммитом.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

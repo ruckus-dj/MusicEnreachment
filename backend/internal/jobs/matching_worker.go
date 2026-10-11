@@ -68,6 +68,49 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	default:
 		return fmt.Errorf("matching delivery claim outcome is invalid")
 	}
+	if worker.acquisition != nil {
+		sealed, exists, err := worker.acquisition.EvaluationSeal(ctx, operation.ID)
+		if err != nil {
+			changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The sealed matching evaluation input is invalid or unavailable.")
+			if failErr != nil {
+				return failErr
+			}
+			if changed {
+				worker.operations.Notify(operation.ID)
+			}
+			return nil
+		}
+		if exists {
+			if consumed, err := worker.repository.ConsumePendingMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim); err != nil {
+				return err
+			} else if consumed {
+				worker.operations.Notify(operation.ID)
+				return nil
+			}
+			prepared, err := worker.evaluator.PrepareSealed(ctx, sealed)
+			if err != nil {
+				if errors.Is(err, service.ErrMatchingEvaluationDeferred) {
+					changed, failErr := worker.repository.FailMatchingDelivery(ctx, operation.ID, operation.Attempt, job.ID, claim, "The sealed matching input is no longer ready for evaluation.")
+					if failErr != nil {
+						return failErr
+					}
+					if changed {
+						worker.operations.Notify(operation.ID)
+					}
+					return nil
+				}
+				return err
+			}
+			changed, err := worker.evaluator.PublishForDelivery(ctx, worker.repository, prepared, operation.ID, operation.Attempt, job.ID, claim.ExecutionEpoch)
+			if err != nil {
+				return err
+			}
+			if changed {
+				worker.operations.Notify(operation.ID)
+			}
+			return nil
+		}
+	}
 
 	var intent struct {
 		SchemaVersion int             `json:"schema_version"`

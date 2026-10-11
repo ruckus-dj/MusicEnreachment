@@ -255,8 +255,9 @@ func (fixture *matchingAcquisitionGuardFixture) settleFirstBrowseAndClaimWake() 
 	releases := make([]map[string]string, 100)
 	releaseIDs := make([]string, 100)
 	for index := range releases {
-		releases[index] = map[string]string{"id": fmt.Sprintf("release-%d", index)}
-		releaseIDs[index] = fmt.Sprintf("release-%d", index)
+		releaseID := fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1)
+		releases[index] = map[string]string{"id": releaseID}
+		releaseIDs[index] = releaseID
 	}
 	payload, err := json.Marshal(map[string]any{"release-offset": 0, "release-count": 200, "releases": releases})
 	if err != nil {
@@ -285,7 +286,7 @@ func (fixture *matchingAcquisitionGuardFixture) nextCatalogPage() (persistence.M
 	child := fixture.browseChild(requestID, key, input)
 	releaseIDs := make([]string, 100)
 	for index := range releaseIDs {
-		releaseIDs[index] = fmt.Sprintf("release-%d", index)
+		releaseIDs[index] = fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1)
 	}
 	phase := persistence.MatchingAcquisitionPhase{Revision: 2, Phase: persistence.MatchingAcquisitionArtistCatalogPage,
 		Input:              json.RawMessage(fmt.Sprintf(`{"artist_mbid":"%s","offset":0,"limit":100}`, matchingAcquisitionGuardArtistID)),
