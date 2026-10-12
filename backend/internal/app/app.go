@@ -54,6 +54,15 @@ type analysisConsumerHandle struct {
 	closeOnce    sync.Once
 }
 
+type incomingMatchingReconcileDispatcher struct {
+	repository *persistence.SourceInventoryRepository
+	river      persistence.RiverInserter
+}
+
+func (dispatcher incomingMatchingReconcileDispatcher) DispatchPendingMatchingReconciliations(ctx context.Context) error {
+	return dispatcher.repository.DispatchPendingMatchingReconciliations(ctx, dispatcher.river)
+}
+
 func (consumer *analysisConsumerHandle) Stop(ctx context.Context) error {
 	err := consumer.client.Stop(ctx)
 	if err == nil {
@@ -175,6 +184,16 @@ func Run(ctx context.Context, config Config) error {
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
+	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, river: riverSlot}
+	incomingMatchingReconciliation := service.NewIncomingMatchingReconciliation(
+		incomingGroups,
+		persistence.NewIncomingGroupingRepository(db),
+		providerFetch,
+		setupManagerRepository,
+		riverSlot,
+	)
+	incomingMatchingReconcileWorker := jobs.NewIncomingMatchingReconcileWorker(sourceInventory, incomingMatchingReconciliation)
+	incomingMatchingReconcileDispatchWorker := jobs.NewIncomingMatchingReconcileDispatchWorker(matchingReconcileDispatcher)
 	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
@@ -201,12 +220,14 @@ func Run(ctx context.Context, config Config) error {
 		operationService, sourceRoots, registry, platform, tools.NewLifecycle(nil),
 	)
 	scanWorker.SetIncomingGroupsRefresher(incomingGroups)
+	scanWorker.SetIncomingMatchingReconcileDispatcher(matchingReconcileDispatcher)
 	scanWorker.SetPendingDispatcher(sourceAnalysis)
 	analysisWorker := jobs.NewSourceAnalysisWorker(
 		analysisWorkerRepository{SetupManagerRepository: setupManagerRepository, SourceInventoryRepository: sourceInventory},
 		operationService, registry, registry, platform,
 	)
 	analysisWorker.SetIncomingGroupsRefresher(incomingGroups)
+	analysisWorker.SetIncomingMatchingReconcileDispatcher(matchingReconcileDispatcher)
 	analysisWorker.WithInputPreparer(service.NewSourceAnalysisInputPreparer(
 		sourceInventory, persistence.NewSourceAnalysisArtifactRepository(db), registry, nil, nil,
 	))
@@ -228,12 +249,14 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, providerFetchWorker)
 		river.AddWorker(workers, matchingEvaluationWorker)
 		river.AddWorker(workers, matchingApplyWorker)
+		river.AddWorker(workers, incomingMatchingReconcileWorker)
+		river.AddWorker(workers, incomingMatchingReconcileDispatchWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob())
 	if err != nil {
 		return err
 	}
@@ -246,6 +269,9 @@ func Run(ctx context.Context, config Config) error {
 	}
 	if err := sourceAnalysis.DispatchPending(ctx); err != nil {
 		return fmt.Errorf("dispatch pending source analysis: %w", err)
+	}
+	if err := matchingReconcileDispatcher.DispatchPendingMatchingReconciliations(ctx); err != nil {
+		return fmt.Errorf("dispatch pending incoming matching reconciliations: %w", err)
 	}
 
 	if err := riverClient.Start(ctx); err != nil {

@@ -70,6 +70,10 @@ type pendingDispatcher interface {
 	AdmitPending(context.Context, uuid.UUID) (*persistence.Operation, error)
 }
 
+type incomingMatchingReconcileDispatcher interface {
+	DispatchPendingMatchingReconciliations(context.Context) error
+}
+
 type SourceAnalysisWorker struct {
 	river.WorkerDefaults[service.SourceAnalysisJobArgs]
 	repository           analysisWorkerRepository
@@ -83,6 +87,7 @@ type SourceAnalysisWorker struct {
 	verifyFFProbeVersion func(context.Context, string) (string, error)
 	pendingDispatcher    pendingDispatcher
 	incomingGroups       incomingGroupsRefresher
+	matchingReconciles   incomingMatchingReconcileDispatcher
 	fileLimiter          *sourceFileLimiter
 }
 
@@ -247,6 +252,10 @@ func (worker *SourceAnalysisWorker) SetPendingDispatcher(dispatcher pendingDispa
 
 func (worker *SourceAnalysisWorker) SetIncomingGroupsRefresher(refresher incomingGroupsRefresher) {
 	worker.incomingGroups = refresher
+}
+
+func (worker *SourceAnalysisWorker) SetIncomingMatchingReconcileDispatcher(dispatcher incomingMatchingReconcileDispatcher) {
+	worker.matchingReconciles = dispatcher
 }
 
 // RefreshSourceFileConcurrency rereads the configured limit and wakes active
@@ -1058,7 +1067,17 @@ func (worker *SourceAnalysisWorker) settleDelivery(ctx context.Context, operatio
 func (worker *SourceAnalysisWorker) finishNormalizedDelivery(ctx context.Context, operation *persistence.Operation) {
 	worker.operations.Notify(operation.ID)
 	worker.refreshIncomingGroups(ctx, operation)
+	worker.dispatchIncomingMatchingReconciles(ctx, operation)
 	worker.wakePending(ctx, operation)
+}
+
+func (worker *SourceAnalysisWorker) dispatchIncomingMatchingReconciles(ctx context.Context, operation *persistence.Operation) {
+	if worker.matchingReconciles == nil {
+		return
+	}
+	if err := worker.matchingReconciles.DispatchPendingMatchingReconciliations(context.WithoutCancel(ctx)); err != nil {
+		slog.WarnContext(ctx, "dispatch incoming matching reconciliations after source analysis", "operation", operation.ID, "error", err)
+	}
 }
 
 func (worker *SourceAnalysisWorker) refreshIncomingGroups(ctx context.Context, operation *persistence.Operation) {

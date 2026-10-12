@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -53,7 +53,10 @@ func Open(t *testing.T) *bun.DB {
 	createDatabase(t, admin, name, "")
 	registerResource(name)
 	databaseURL := databaseURL(t, name)
-	database := openPool(databaseURL)
+	database, err := openPool(databaseURL)
+	if err != nil {
+		t.Fatalf("open isolated PostgreSQL database: %v", err)
+	}
 	if err := database.PingContext(context.Background()); err != nil {
 		_ = database.Close()
 		t.Fatalf("connect to isolated PostgreSQL database: %v", err)
@@ -77,7 +80,10 @@ func OpenMigrated(t *testing.T) *bun.DB {
 	name := resourcePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, template)
 	registerResource(name)
-	database := openPool(databaseURL(t, name))
+	database, err := openPool(databaseURL(t, name))
+	if err != nil {
+		t.Fatalf("open migrated PostgreSQL database: %v", err)
+	}
 	if err := database.PingContext(context.Background()); err != nil {
 		_ = database.Close()
 		t.Fatalf("connect to migrated PostgreSQL database: %v", err)
@@ -166,7 +172,11 @@ func adminDatabase(t *testing.T) *bun.DB {
 			process.serverErr = fmt.Errorf("TEST_DATABASE_URL must be a PostgreSQL URL with a host")
 			return
 		}
-		process.adminDB = openPoolLimit(process.adminURL, adminPoolLimit)
+		process.adminDB, err = openPoolLimit(process.adminURL, adminPoolLimit)
+		if err != nil {
+			process.serverErr = fmt.Errorf("open PostgreSQL admin endpoint: %w", err)
+			return
+		}
 		if err := process.adminDB.PingContext(context.Background()); err != nil {
 			_ = process.adminDB.Close()
 			process.adminDB = nil
@@ -189,7 +199,10 @@ func migratedTemplate(t *testing.T, admin *bun.DB) string {
 	name := resourcePrefix + "template_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	createDatabase(t, admin, name, "")
 	registerResource(name)
-	templateDB := openPool(databaseURL(t, name))
+	templateDB, err := openPool(databaseURL(t, name))
+	if err != nil {
+		t.Fatalf("open migrated PostgreSQL template: %v", err)
+	}
 	defer func() {
 		if err := templateDB.Close(); err != nil {
 			t.Errorf("close migrated PostgreSQL template: %v", err)
@@ -240,15 +253,18 @@ func databaseURL(t *testing.T, name string) string {
 	return parsed.String()
 }
 
-func openPool(databaseURL string) *bun.DB {
+func openPool(databaseURL string) (*bun.DB, error) {
 	return openPoolLimit(databaseURL, poolMaxOpen)
 }
 
-func openPoolLimit(databaseURL string, maxOpen int) *bun.DB {
-	database := bun.NewDB(sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(databaseURL))), pgdialect.New())
+func openPoolLimit(databaseURL string, maxOpen int) (*bun.DB, error) {
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL pool: %w", err)
+	}
 	database.SetMaxOpenConns(maxOpen)
 	database.SetMaxIdleConns(maxOpen / 2)
-	return database
+	return bun.NewDB(database, pgdialect.New()), nil
 }
 
 func registerResource(name string) {

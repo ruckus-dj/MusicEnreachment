@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 func TestSourceAnalysisArtifactOwnershipConstraintsWithPostgreSQL(t *testing.T) {
@@ -73,8 +73,8 @@ func TestSourceAnalysisArtifactOwnershipConstraintsWithPostgreSQL(t *testing.T) 
 
 func requireArtifactConstraintCode(t *testing.T, err error, code, constraint string) {
 	t.Helper()
-	var pgErr pgdriver.Error
-	if !errors.As(err, &pgErr) || pgErr.Field('C') != code || pgErr.Field('n') != constraint {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.SQLState() != code || pgErr.ConstraintName != constraint {
 		t.Fatalf("error = %v, want PostgreSQL %s for constraint %s", err, code, constraint)
 	}
 }

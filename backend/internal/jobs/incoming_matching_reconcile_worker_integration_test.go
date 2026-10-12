@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -38,6 +39,7 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	// used below; the reconciliation consumer receives no hand-built projection.
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
+	stopRiverClient(t, fixture.client)
 
 	if err := fixture.registry.SetMusicBrainzConfig(ctx, "self-hosted", "http://127.0.0.1:9/ws/2"); err != nil {
 		t.Fatalf("save MusicBrainz provider configuration: %v", err)
@@ -76,17 +78,41 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	inserter := &incomingMatchingReconcileInserterSlot{}
 	consumer := service.NewIncomingMatchingReconciliation(groups, groupingRepository, provider, fixture.setup, inserter)
 	worker := NewIncomingMatchingReconcileWorker(fixture.inventory, consumer)
-	client, listenerPool, err := PrepareWithWorkers(ctx, fixture.databaseURL, fixture.database.DB, func(workers *river.Workers) {
-		river.AddWorker(workers, worker)
-		river.AddWorker(workers, &ProviderFetchWorker{})
-		river.AddWorker(workers, &MatchingEvaluationWorker{})
-	})
+	_, listenerPool, err := PrepareWithWorkers(ctx, fixture.databaseURL, fixture.database.DB, nil)
 	if err != nil {
 		t.Fatalf("prepare River with actual reconciliation, provider, and matching workers: %v", err)
 	}
-	t.Cleanup(func() { listenerPool.Close() })
-	inserter.inserter = client
-	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, client); err != nil {
+	driver := riverdatabasesql.NewWithPgxListener(fixture.database.DB, listenerPool)
+	workers := river.NewWorkers()
+	river.AddWorker(workers, worker)
+	client, err := river.NewClient(driver, &river.Config{
+		Workers: workers,
+		Queues:  map[string]river.QueueConfig{"matching": {MaxWorkers: 1}},
+	})
+	if err != nil {
+		listenerPool.Close()
+		t.Fatalf("create isolated reconciliation consumer: %v", err)
+	}
+	enqueueClient, err := river.NewClient(driver, &river.Config{})
+	if err != nil {
+		listenerPool.Close()
+		t.Fatalf("create insert-only reconciliation client: %v", err)
+	}
+	clientLifetime, cancelClientLifetime := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancelClientLifetime()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := client.Stop(shutdown); err != nil {
+			t.Errorf("stop live River matching consumer: %v", err)
+		}
+		listenerPool.Close()
+	})
+	inserter.inserter = enqueueClient
+	if err := client.Start(clientLifetime); err != nil {
+		t.Fatalf("start live River matching consumer: %v", err)
+	}
+	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, enqueueClient); err != nil {
 		t.Fatalf("dispatch successful-analysis reconciliation event: %v", err)
 	}
 	var event persistence.IncomingMatchingReconcileEvent
@@ -95,13 +121,6 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	}
 	if event.State != "dispatched" || event.RegisteredJobID == nil || *event.RegisteredJobID < 1 {
 		t.Fatalf("event was not registered to a River job: %+v", event)
-	}
-	job := &river.Job[persistence.IncomingMatchingReconcileJobArgs]{
-		JobRow: &rivertype.JobRow{ID: *event.RegisteredJobID, Attempt: 1},
-		Args:   persistence.IncomingMatchingReconcileJobArgs{EventID: eventID},
-	}
-	if err := worker.Work(ctx, job); err != nil {
-		t.Fatalf("run the registered real incoming matching reconciliation worker: %v", err)
 	}
 	awaitIncomingMatchingReconcileEventDone(t, ctx, fixture.inventory, eventID)
 
@@ -142,7 +161,7 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	if err := fixture.database.NewRaw(`SELECT COALESCE(sum(high_water),0) FROM incoming_matching_generation`).Scan(ctx, &beforeGenerations); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, client); err != nil {
+	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, enqueueClient); err != nil {
 		t.Fatalf("replay pending reconciliation dispatch: %v", err)
 	}
 	var afterJobs, afterGenerations, afterReceipts, afterParents int

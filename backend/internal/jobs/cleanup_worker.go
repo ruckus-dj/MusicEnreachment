@@ -7,6 +7,8 @@ import (
 	"github.com/riverqueue/river"
 )
 
+const infrastructurePeriodicInterval = time.Hour
+
 type CleanupArgs struct{}
 
 func (CleanupArgs) Kind() string { return "operation_cleanup_v1" }
@@ -30,7 +32,7 @@ func (worker *CleanupWorker) Work(ctx context.Context, _ *river.Job[CleanupArgs]
 
 func NewCleanupPeriodicJob() *river.PeriodicJob {
 	return river.NewPeriodicJob(
-		river.PeriodicInterval(time.Hour),
+		river.PeriodicInterval(infrastructurePeriodicInterval),
 		func() (river.JobArgs, *river.InsertOpts) { return CleanupArgs{}, nil },
 		&river.PeriodicJobOpts{ID: "setup-operation-cleanup", RunOnStart: true},
 	)

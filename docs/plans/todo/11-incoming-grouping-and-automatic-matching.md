@@ -1037,6 +1037,22 @@ normalization для score в точности. Если по имеющимся
 - Independent review approved bounded unwired scope; primary full `task verify`
   passed. App queue/startup/periodic relay wiring remains to be implemented.
 
+### Runtime reconciliation queue and relay — 2026-10-12
+
+- Main runtime registers consumer/dispatch relay and matching queue, dispatches
+  pending events after recovery, and retries through periodic relay plus
+  best-effort post-settlement hooks without reversing successful analysis.
+- Live River PostgreSQL test consumes an actual analysis event through real
+  reconciliation/admission and verifies completion/redispatch counts. Its
+  matching-only consumer and insert-only client isolate this boundary from
+  unrelated fixture workers; it does not claim a combined HTTP/apply E2E.
+- Test PostgreSQL pools now use production pgx driver, avoiding pgdriver's River
+  SQL-comment interpolation failure; exact SQLSTATE/constraint checks remain.
+  Completion timestamps are checked as absolute instants, not decoded zones.
+- Independent review approved bounded runtime; primary full `task verify`
+  passed. Startup-ready groups without existing events remain unreconciled;
+  this is outstanding technical work, not a new product decision.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

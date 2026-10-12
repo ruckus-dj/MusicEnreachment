@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 // TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL fails the commit
@@ -72,14 +72,14 @@ func TestSourceAnalysisEnqueueRollsBackAtCommitWithPostgreSQL(t *testing.T) {
 // never certify the rollback behavior under test.
 func requirePostgresError(t *testing.T, err error, code, messageFragment string) {
 	t.Helper()
-	var pgErr pgdriver.Error
+	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
 		t.Fatalf("error = %v, want a PostgreSQL error with SQLSTATE %s", err, code)
 	}
-	if got := pgErr.Field('C'); got != code {
+	if got := pgErr.SQLState(); got != code {
 		t.Fatalf("error SQLSTATE = %s (%v), want %s", got, err, code)
 	}
-	if message := pgErr.Field('M'); !strings.Contains(message, messageFragment) {
+	if message := pgErr.Message; !strings.Contains(message, messageFragment) {
 		t.Fatalf("error message = %q, want it to contain %q", message, messageFragment)
 	}
 }

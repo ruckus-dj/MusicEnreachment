@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -228,8 +228,8 @@ func TestSourceMediaVariantSchemaWithPostgreSQL(t *testing.T) {
 		operationID, workID := insertHeldBatchAnalysis(t, ctx, database, rootID, locationID)
 
 		deleteErr := execError(ctx, database, "DELETE FROM source_location WHERE id = ?", locationID)
-		var postgresErr pgdriver.Error
-		if !errors.As(deleteErr, &postgresErr) || postgresErr.Field('C') != "P0001" ||
+		var postgresErr *pgconn.PgError
+		if !errors.As(deleteErr, &postgresErr) || postgresErr.SQLState() != "P0001" ||
 			!strings.Contains(deleteErr.Error(), "active source analysis work cannot be retired") {
 			t.Fatalf("delete active analysis location error = %v, want active-work retirement guard", deleteErr)
 		}
@@ -756,8 +756,8 @@ func constraintDefinition(t *testing.T, database *bun.DB, name string) string {
 
 func requirePostgresCheckViolation(t *testing.T, err error) {
 	t.Helper()
-	var pgErr pgdriver.Error
-	if !errors.As(err, &pgErr) || pgErr.Field('C') != "23514" {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.SQLState() != "23514" {
 		t.Fatalf("error = %v, want a PostgreSQL check violation (SQLSTATE 23514)", err)
 	}
 }

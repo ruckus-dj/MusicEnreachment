@@ -131,18 +131,30 @@ func TestManualLookupCacheReuseRunsProviderWorkerAndSealsExactResponsePostgreSQL
 		t.Fatal("manual admission did not enqueue parent and lookup jobs")
 	}
 
+	workerStarted := time.Now()
 	if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{
 		JobRow: &rivertype.JobRow{ID: *child.Operation.RiverJobID, Attempt: 1},
 		Args:   service.ProviderFetchOperationArgs{OperationID: childID},
 	}); err != nil {
 		t.Fatalf("run admitted cache-hit provider job: %v", err)
 	}
+	workerFinished := time.Now()
 	completed, err := repository.GetOperation(ctx, childID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.State != "succeeded" || completed.Stage != "provider_cache_reused" || completed.FinishedAt == nil || completed.FinishedAt.IsZero() || completed.FinishedAt.Location() != time.UTC {
-		t.Fatalf("cache reuse operation completion = state %q stage %q finished_at %v; want successful UTC completion", completed.State, completed.Stage, completed.FinishedAt)
+	if completed.State != "succeeded" || completed.Stage != "provider_cache_reused" {
+		t.Fatalf("cache reuse operation completion = state %q stage %q; want succeeded/provider_cache_reused", completed.State, completed.Stage)
+	}
+	// finished_at is a PostgreSQL timestamptz, which stores only an absolute
+	// instant; pgx decodes it in the session's local zone, so its Location is
+	// not part of the contract. Assert the instant is present and falls inside
+	// the window the worker actually ran in.
+	if completed.FinishedAt == nil || completed.FinishedAt.IsZero() {
+		t.Fatalf("cache reuse operation finished_at = %v; want a non-zero completion instant", completed.FinishedAt)
+	}
+	if completed.FinishedAt.Before(workerStarted) || completed.FinishedAt.After(workerFinished) {
+		t.Fatalf("cache reuse finished_at %v outside worker window [%v, %v]", completed.FinishedAt, workerStarted, workerFinished)
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("cache-hit delivery made %d provider HTTP requests, want 0", requests.Load())

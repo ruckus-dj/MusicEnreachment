@@ -81,13 +81,14 @@ type sourceAnalysisPendingDispatcher interface {
 // the two.
 type SourceScanWorker struct {
 	river.WorkerDefaults[service.ScanSourceJobArgs]
-	repository     scanWorkerRepository
-	operations     *service.Operations
-	paths          service.SourceScanPathValidator
-	settings       scanWorkerSettings
-	platform       settings.PlatformState
-	pending        sourceAnalysisPendingDispatcher
-	incomingGroups incomingGroupsRefresher
+	repository         scanWorkerRepository
+	operations         *service.Operations
+	paths              service.SourceScanPathValidator
+	settings           scanWorkerSettings
+	platform           settings.PlatformState
+	pending            sourceAnalysisPendingDispatcher
+	incomingGroups     incomingGroupsRefresher
+	matchingReconciles incomingMatchingReconcileDispatcher
 }
 
 // SetPendingDispatcher installs the best-effort handoff that starts analysis
@@ -98,6 +99,10 @@ func (worker *SourceScanWorker) SetPendingDispatcher(dispatcher sourceAnalysisPe
 
 func (worker *SourceScanWorker) SetIncomingGroupsRefresher(refresher incomingGroupsRefresher) {
 	worker.incomingGroups = refresher
+}
+
+func (worker *SourceScanWorker) SetIncomingMatchingReconcileDispatcher(dispatcher incomingMatchingReconcileDispatcher) {
+	worker.matchingReconciles = dispatcher
 }
 
 func NewSourceScanWorker(repository scanWorkerRepository, operations *service.Operations, paths service.SourceScanPathValidator, runtimeSettings scanWorkerSettings, platform settings.PlatformState, _ *tools.Lifecycle) *SourceScanWorker {
@@ -248,6 +253,11 @@ func (worker *SourceScanWorker) finishAndDispatch(ctx context.Context, operation
 	if worker.incomingGroups != nil {
 		if err := worker.incomingGroups.RefreshIfNeeded(context.WithoutCancel(ctx)); err != nil {
 			slog.Warn("refresh incoming groups after source scan", "operation", operation.ID, "error", err)
+		}
+	}
+	if worker.matchingReconciles != nil {
+		if err := worker.matchingReconciles.DispatchPendingMatchingReconciliations(context.WithoutCancel(ctx)); err != nil {
+			slog.Warn("dispatch incoming matching reconciliations after source scan", "operation", operation.ID, "error", err)
 		}
 	}
 	if worker.pending != nil {
