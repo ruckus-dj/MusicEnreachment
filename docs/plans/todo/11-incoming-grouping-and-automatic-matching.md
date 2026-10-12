@@ -1184,6 +1184,21 @@ normalization для score в точности. Если по имеющимся
   Applicability scoring, finite next-stage routing, seal3 and production fallback
   activation remain outstanding; this is not full-plan acceptance.
 
+### Pure frozen fallback applicability calculator — 2026-10-12
+
+- Stage-zero calculator uses complete frozen captures and each release's own
+  accepted projection with the existing combined-assignment kernel. All edges
+  reaching 0.70 qualify without field veto, group coverage or winner selection;
+  recording search scores remain scoped to explicitly associated releases.
+- Required source/request authority and actual metadata inputs/tags are checked;
+  full-input digest canonicalizes copied authority inventories. Tests cover
+  >10 releases, missing/zero scores, projection isolation, repeated analysis
+  inventories, metadata tampering, determinism and input nonmutation.
+- Independent review and repeated primary full `task verify` passed. Capture
+  fixtures use synthesized complete persisted shape; plan5 validation remains
+  upstream. DB applicability advancement, next-stage routing, seal3 and runtime
+  fallback activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

@@ -563,11 +563,12 @@ func evaluateMatchingGroup(
 			if _, ok := snapshot.Provider.Responses[keys.Release]; !ok {
 				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact release search key")
 			}
+			cacheRevisions[keys.Release] = matchingCachedRevision(snapshot.Provider.Responses[keys.Release])
+		}
+		if keys.Recording != "" {
 			if _, ok := snapshot.Provider.Responses[keys.Recording]; !ok {
 				return persistence.IncomingMatchEvaluation{}, "", "", fmt.Errorf("provider snapshot omitted the exact recording search key")
 			}
-			cacheRevisions[keys.Release] = matchingCachedRevision(snapshot.Provider.Responses[keys.Release])
-			cacheRevisions[keys.Recording] = matchingCachedRevision(snapshot.Provider.Responses[keys.Recording])
 			cacheRevisions[keys.Recording] = matchingCachedRevision(snapshot.Provider.Responses[keys.Recording])
 		}
 		keysForFile, ok := snapshot.ReleaseKeysByFile[memberID]
