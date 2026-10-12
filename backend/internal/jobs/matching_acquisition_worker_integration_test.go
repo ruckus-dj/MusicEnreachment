@@ -5,7 +5,9 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -289,8 +291,25 @@ func TestMatchingAcquisitionWorkerPaginatesArtistCatalogPostgreSQL(t *testing.T)
 		t.Fatalf("after first browse page acquisition phase=%q exists=%t err=%v", acquisitionSnapshot.Phase, exists, err)
 	}
 	var secondBrowseID uuid.UUID
-	if err := database.NewRaw(`SELECT id FROM operation WHERE kind='provider_artist_release_browse' AND id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?) AND id<>?`, parentID, firstBrowseID).Scan(ctx, &secondBrowseID); err != nil {
-		t.Fatalf("read second browse operation admitted by first page: %v", err)
+	// The provider's terminal state can become visible before the competing
+	// River worker has consumed the parent wake and committed its continuation.
+	// Wait for the durable child rather than assuming those transactions finish
+	// synchronously with the provider delivery.
+	deadline := time.NewTicker(10 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		err := database.NewRaw(`SELECT id FROM operation WHERE kind='provider_artist_release_browse' AND id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?) AND id<>?`, parentID, firstBrowseID).Scan(ctx, &secondBrowseID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("read second browse operation admitted by first page: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for second browse operation admitted by first page: %v", ctx.Err())
+		case <-deadline.C:
+		}
 	}
 	secondBrowse, err := repository.GetOperation(ctx, secondBrowseID)
 	if err != nil {

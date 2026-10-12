@@ -1147,6 +1147,19 @@ normalization для score в точности. Если по имеющимся
 - Independent review and repeated primary full `task verify` passed. Later
   hydration/applicability continuation and final fallback publication remain open.
 
+### Frozen fallback lookup projections — 2026-10-12
+
+- Lookup acceptance captures immutable raw payload and actual materialized source
+  projection inside its transaction. Receipt ownership binds plan5/intent3,
+  query-stage identity, registered child input and source authority; search
+  capture skips lookup operations without weakening search validation.
+- Real lookup-worker PostgreSQL proof verifies fresh HTTP acceptance A and
+  preservation of both receipt payload/projection after mutable cache/graph B.
+  Independent review and primary full `task verify` passed.
+- Lookup cache-reuse capture and interrupted-retry paths are reviewed but not
+  demonstrated by this test. Hydration completion, applicability, seal3 and
+  production fallback activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

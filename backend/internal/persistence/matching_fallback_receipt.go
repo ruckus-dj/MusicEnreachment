@@ -159,20 +159,24 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	var sourceID uuid.UUID
 	var configurationIdentity, cacheKey string
 	var inputBytes []byte
+	var operationKind string
 	err := tx.NewRaw(`SELECT run.id,acquisition.intent,run.provider_source_id,run.provider_configuration_identity,
-		dependency.cache_key,operation.input_snapshot
+		dependency.cache_key,operation.input_snapshot,operation.kind
 		FROM matching_run run
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
 		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=run.id AND dependency.request_id=?
 		JOIN operation ON operation.id=dependency.request_id
 		WHERE run.id=dependency.parent_run_id AND operation.id=?
 		FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
-		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes)
+		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes, &operationKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // This operation is not the registered initial automatic fallback dependency.
 	}
 	if err != nil {
 		return err
+	}
+	if operationKind != "provider_release_search" && operationKind != "provider_recording_search" {
+		return nil // Lookup receipts are captured by the independent lookup manifest.
 	}
 	var intent MatchingAcquisitionIntent
 	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion ||

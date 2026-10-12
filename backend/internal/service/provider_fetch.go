@@ -222,6 +222,17 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 			return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_fallback_result_reused")
 		}
 	}
+	if operation.Kind == "provider_release_lookup" {
+		receipt, err := service.cache.ReplayAutomaticFallbackLookupReceipt(ctx, persistence.ProviderDeliveryFence{
+			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+		})
+		if err != nil {
+			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
+		if receipt != nil {
+			return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_fallback_lookup_reused")
+		}
+	}
 	if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_artist_release_browse" {
 		captured, err := service.cache.HasCapturedManualPickerSearchResult(ctx, persistence.ProviderDeliveryFence{
 			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
@@ -250,6 +261,14 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 		}, response)
 		if err != nil {
 			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
+		if operation.Kind == "provider_release_lookup" {
+			_, err = service.cache.CaptureSuccessfulAutomaticFallbackLookupReuse(ctx, persistence.ProviderDeliveryFence{
+				OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+			}, response)
+			if err != nil {
+				return service.failProviderOperation(ctx, operations, operation, epoch, err)
+			}
 		}
 		return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_cache_reused")
 	}

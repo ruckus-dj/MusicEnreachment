@@ -631,6 +631,9 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 			return fmt.Errorf("apply successful provider response: save graph: %w", err)
 		}
 		if response.Delivery != nil {
+			if err := repository.captureAutomaticFallbackLookupReceipt(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
+				return fmt.Errorf("apply successful provider response: capture automatic fallback lookup receipt: %w", err)
+			}
 			if err := repository.captureManualPickerSearchResult(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
 				return fmt.Errorf("apply successful provider response: capture manual picker result: %w", err)
 			}
@@ -687,6 +690,76 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 		return err
 	}
 	return nil
+}
+
+// CaptureSuccessfulAutomaticFallbackLookupReuse freezes the response and its
+// currently materialized source projection actually observed by a fallback child.
+func (repository *ProviderCacheRepository) CaptureSuccessfulAutomaticFallbackLookupReuse(ctx context.Context, fence ProviderDeliveryFence, expected *ProviderCachedResponse) (bool, error) {
+	if expected == nil || fence.OperationID == uuid.Nil || fence.Attempt < 1 || fence.RiverJobID < 1 || fence.ExecutionEpoch < 1 {
+		return false, fmt.Errorf("capture fallback lookup cache reuse: delivery and cached response are required")
+	}
+	captured := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return err
+		}
+		var registered bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_provider_dependency dependency
+			JOIN matching_run run ON run.id=dependency.parent_run_id
+			JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
+			JOIN operation ON operation.id=dependency.request_id
+			WHERE operation.id=? AND operation.kind='provider_release_lookup'
+			AND acquisition.current_phase='fallback_release_hydration')`, fence.OperationID).Scan(ctx, &registered); err != nil {
+			return err
+		}
+		if !registered {
+			return nil
+		}
+		var identity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil {
+			return err
+		}
+		var source ProviderSource
+		if err := tx.NewRaw(`SELECT id,provider_id,endpoint,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, expected.ProviderSourceID).Scan(ctx, &source); err != nil {
+			return err
+		}
+		if identity != source.ConfigurationIdentity {
+			return fmt.Errorf("capture fallback lookup cache reuse: provider configuration changed")
+		}
+		current := new(ProviderCachedResponse)
+		if err := tx.NewRaw(`SELECT provider_source_id,provider_id,cache_key,payload,fetched_at,revision,generation,fetch_order
+			FROM provider_response_cache WHERE provider_source_id=? AND cache_key=? FOR SHARE`, expected.ProviderSourceID, expected.CacheKey).Scan(ctx, current); err != nil {
+			return err
+		}
+		if current.Generation != expected.Generation || current.FetchOrder != expected.FetchOrder || !equalPayload(current.Payload, expected.Payload) ||
+			(current.Revision == nil) != (expected.Revision == nil) || current.Revision != nil && *current.Revision != *expected.Revision {
+			return fmt.Errorf("capture fallback lookup cache reuse: cached response changed")
+		}
+		var kind, state, opIdentity, cacheKey string
+		var attempt int
+		var epoch int64
+		var jobID sql.NullInt64
+		var sourceID uuid.UUID
+		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch
+			FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &jobID, &sourceID, &opIdentity, &cacheKey, &epoch); err != nil {
+			return err
+		}
+		if kind != "provider_release_lookup" || state != "running" || attempt != fence.Attempt || !jobID.Valid || jobID.Int64 != fence.RiverJobID || epoch != fence.ExecutionEpoch || sourceID != source.ID || opIdentity != identity || cacheKey != expected.CacheKey {
+			return fmt.Errorf("capture fallback lookup cache reuse: delivery is stale")
+		}
+		ticket := ProviderRefreshTicket{ProviderSourceID: current.ProviderSourceID, ProviderID: current.ProviderID, CacheKey: current.CacheKey,
+			Generation: current.Generation, ConfigurationIdentity: identity, FetchOrder: current.FetchOrder}
+		if err := repository.captureAutomaticFallbackLookupReceipt(ctx, tx, fence, ticket, current.Payload, nullableString(current.Revision)); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_fallback_lookup_receipt WHERE request_id=?)`, fence.OperationID).Scan(ctx, &exists); err != nil {
+			return err
+		}
+		captured = exists
+		return nil
+	})
+	return captured, err
 }
 
 // CaptureManualPickerSearchReuse freezes the cache payload observed by a
