@@ -53,6 +53,17 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	if operation.Kind != (service.MatchingEvaluationOperationArgs{}).Kind() {
 		return fmt.Errorf("operation is not a matching evaluation")
 	}
+	if reader, ok := worker.repository.(interface {
+		GetMatchingAcquisitionPhase(context.Context, uuid.UUID) (string, bool, error)
+	}); ok {
+		phase, exists, err := reader.GetMatchingAcquisitionPhase(ctx, operation.ID)
+		if err != nil {
+			return err
+		}
+		if exists && phase == persistence.MatchingAcquisitionFallbackEvaluationSealed {
+			return fmt.Errorf("fallback publication is not available")
+		}
+	}
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return nil
 	}

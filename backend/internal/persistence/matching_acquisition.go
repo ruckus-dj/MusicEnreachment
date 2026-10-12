@@ -498,10 +498,36 @@ func (repository *SetupManagerRepository) GetMatchingAcquisition(ctx context.Con
 	if err := json.Unmarshal(intent, &snapshot.Intent); err != nil || intentVersion != snapshot.Intent.SchemaVersion {
 		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: saved intent is invalid")
 	}
+	if snapshot.Phase == MatchingAcquisitionFallbackEvaluationSealed {
+		var plan struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		if snapshot.Intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || json.Unmarshal(planBytes, &plan) != nil || plan.SchemaVersion != 5 {
+			return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: fallback evaluation phase is not bound to a version-5 fallback plan")
+		}
+	}
 	if err := repository.validateMatchingAcquisitionRead(ctx, runID, snapshot.Intent, intentDigest, planDigest, planBytes); err != nil {
 		return MatchingAcquisitionSnapshot{}, false, fmt.Errorf("read matching acquisition: %w", err)
 	}
 	return snapshot, true, nil
+}
+
+// GetMatchingAcquisitionPhase reads only the durable phase header. Workers use
+// it to route manual plans before decoding/validating the automatic acquisition
+// intent, whose digest contract is intentionally different.
+func (repository *SetupManagerRepository) GetMatchingAcquisitionPhase(ctx context.Context, runID uuid.UUID) (string, bool, error) {
+	if runID == uuid.Nil {
+		return "", false, fmt.Errorf("read matching acquisition phase: run is required")
+	}
+	var phase string
+	err := repository.db.NewRaw(`SELECT current_phase FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &phase)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read matching acquisition phase: %w", err)
+	}
+	return phase, true, nil
 }
 
 // GetMatchingAcquisitionCatalogCacheKeys returns the exact accepted response

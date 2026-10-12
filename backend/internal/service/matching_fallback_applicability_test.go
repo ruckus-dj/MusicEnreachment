@@ -152,6 +152,23 @@ func TestPrepareFrozenFallbackEvaluationUsesSealedCalculationContext(t *testing.
 	}
 }
 
+func TestFrozenFallbackAuthorityViewPopulatesNoQueryRunAuthority(t *testing.T) {
+	seal := persistence.MatchingFallbackSealAuthority{
+		SourceID: uuid.New(), ProviderID: uuid.New(), Endpoint: "https://provider.example",
+		RunProviderConfiguration: "{}",
+	}
+
+	authority := frozenFallbackAuthorityView(seal)
+	if authority.RunSourceID != seal.SourceID || authority.RunProviderID != seal.ProviderID ||
+		authority.RunEndpoint != seal.Endpoint || authority.RunConfiguration != seal.RunProviderConfiguration {
+		t.Fatalf("no-query run authority = %#v, want values copied from seal", authority)
+	}
+	if authority.CalculationStageIndex != 0 || len(authority.FullEvaluationContext) != 0 ||
+		len(authority.CalculationLookups) != 0 || len(authority.CalculationReceipts) != 0 {
+		t.Fatalf("no-query authority contains fabricated calculation data: %#v", authority)
+	}
+}
+
 func TestFallbackScoreQualifiesAtExactExistingThreshold(t *testing.T) {
 	for _, test := range []struct {
 		confidence float64

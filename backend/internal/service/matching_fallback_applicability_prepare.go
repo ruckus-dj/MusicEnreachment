@@ -28,9 +28,28 @@ type matchingFallbackSealReader interface {
 // calculate the result. It is intentionally not an application UUID and cannot
 // be passed to the legacy evaluation publisher.
 type FrozenFallbackEvaluationAuthority struct {
-	RunID        uuid.UUID
-	WaitRevision int64
-	Digest       string
+	RunID                 uuid.UUID
+	WaitRevision          int64
+	Digest                string
+	Disposition           string
+	TargetFenceVersion    int
+	TargetCaptureDigest   string
+	TargetCapture         json.RawMessage
+	Intent                persistence.MatchingAcquisitionIntent
+	SourceID              uuid.UUID
+	ProviderID            uuid.UUID
+	Endpoint              string
+	SourceConfiguration   string
+	RunProviderConfig     string
+	GroupAuthority        persistence.IncomingGroupMatchingAuthority
+	FullEvaluationContext json.RawMessage
+	RunSourceID           uuid.UUID
+	RunProviderID         uuid.UUID
+	RunEndpoint           string
+	RunConfiguration      string
+	CalculationStageIndex int
+	CalculationLookups    []persistence.MatchingFallbackCalculationLookupAuthority
+	CalculationReceipts   []persistence.MatchingFallbackLookupReceipt
 }
 
 // MatchingFrozenGroupInventory is the complete frozen grouping inventory used by
@@ -87,7 +106,7 @@ func PrepareFrozenFallbackEvaluation(
 		if err != nil {
 			return PreparedFrozenFallbackEvaluation{}, false, err
 		}
-		prepared.Authority = FrozenFallbackEvaluationAuthority{RunID: runID, WaitRevision: waitRevision, Digest: seal.Digest}
+		prepared.Authority = frozenFallbackAuthorityView(seal)
 		return prepared, true, nil
 	}
 	ref := seal.SelectedCalculation
@@ -138,10 +157,37 @@ func PrepareFrozenFallbackEvaluation(
 		return PreparedFrozenFallbackEvaluation{}, false, err
 	}
 	return PreparedFrozenFallbackEvaluation{
-		Authority:   FrozenFallbackEvaluationAuthority{RunID: runID, WaitRevision: waitRevision, Digest: seal.Digest},
+		Authority:   frozenFallbackAuthorityView(seal),
 		Calculation: ref, Result: result, KernelResult: kernelResult,
 		ReviewInventory: append([]MatchingFallbackCandidate(nil), result.AllCandidates...), FrozenInventory: frozenInventory,
 	}, true, nil
+}
+
+func frozenFallbackAuthorityView(seal persistence.MatchingFallbackSealAuthority) FrozenFallbackEvaluationAuthority {
+	authority := FrozenFallbackEvaluationAuthority{
+		RunID: seal.RunID, WaitRevision: seal.WaitRevision, Digest: seal.Digest, Disposition: seal.Disposition,
+		TargetFenceVersion:  seal.Target.Version,
+		TargetCaptureDigest: seal.Target.CaptureDigest, TargetCapture: append(json.RawMessage(nil), seal.Target.Capture...),
+		Intent: seal.Intent, SourceID: seal.SourceID, ProviderID: seal.ProviderID, Endpoint: seal.Endpoint,
+		SourceConfiguration: seal.SourceConfiguration, RunProviderConfig: seal.RunProviderConfiguration,
+		RunSourceID: seal.SourceID, RunProviderID: seal.ProviderID, RunEndpoint: seal.Endpoint,
+		RunConfiguration:      seal.RunProviderConfiguration,
+		GroupAuthority:        seal.GroupAuthority,
+		FullEvaluationContext: append(json.RawMessage(nil), seal.FullEvaluationContext...),
+	}
+	if len(seal.FullEvaluationContext) != 0 {
+		var context persistence.MatchingFallbackCalculationContext
+		if decodeFallbackStrict(seal.FullEvaluationContext, &context) == nil {
+			authority.RunSourceID = context.RunSourceID
+			authority.RunProviderID = context.RunProviderID
+			authority.RunEndpoint = context.RunEndpoint
+			authority.RunConfiguration = context.RunConfiguration
+			authority.CalculationStageIndex = context.StageIndex
+			authority.CalculationLookups = append([]persistence.MatchingFallbackCalculationLookupAuthority(nil), context.Lookups...)
+			authority.CalculationReceipts = append([]persistence.MatchingFallbackLookupReceipt(nil), context.LookupReceipts...)
+		}
+	}
+	return authority
 }
 
 func prepareSealedReviewOnly(ctx context.Context, seal persistence.MatchingFallbackSealAuthority) (PreparedFrozenFallbackEvaluation, error) {

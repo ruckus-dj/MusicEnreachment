@@ -145,6 +145,10 @@ type IncomingMatchEvaluationHeader struct {
 	TargetRunID                   uuid.UUID
 	TargetCapture                 json.RawMessage
 	TargetCaptureDigest           []byte
+	FrozenAuthorityVersion        *int
+	FrozenRunID                   *uuid.UUID
+	FrozenWaitRevision            *int64
+	FrozenSealDigest              []byte
 }
 
 type IncomingMatchReviewSnapshot struct {
@@ -932,9 +936,10 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		var header IncomingMatchEvaluationHeader
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
-		policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
-		cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
-		matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
+			policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
+			cache_key, cache_revision, provider_snapshot_revision, provider_fences, evaluated_at,
+			matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest,
+			frozen_authority_version, frozen_run_id, frozen_wait_revision, frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

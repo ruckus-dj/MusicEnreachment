@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,11 @@ import (
 )
 
 func TestAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, false, false)
+}
+
+func TestAutomaticFallbackQualifiedContinuationSealsAndRegistersOneWakePostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, true, false)
 }
 
 type fallbackSealWriteState struct {
@@ -72,18 +77,26 @@ func snapshotFallbackSealWriteState(t *testing.T, ctx context.Context, database 
 }
 
 func TestAutomaticFallbackHistoricalStageLookupsDoNotBlockStageOnePostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, true, false, false)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, true, false, false, false, false)
 }
 
 func TestAutomaticFallbackEmptyPlanParksForReviewPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, true, false)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, true, false, false, false)
+}
+
+func TestAutomaticFallbackEmptyPlanPublishesFrozenReviewPostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, true, false, false, true)
 }
 
 func TestAutomaticFallbackFiniteThreeStageExhaustionParksForReviewPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, false, false)
 }
 
-func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan bool) {
+func TestAutomaticFallbackExhaustedFiniteFlowPublishesFrozenReviewPostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, false, true)
+}
+
+func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
@@ -310,6 +323,10 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 			Scan(ctx, &runState, &opStage, &hasActiveDelivery); err != nil || runState != "waiting_policy" || opStage != "review_pending" || hasActiveDelivery {
 			t.Fatalf("empty plan did not park without manual mode or clear its active delivery: run=%s stage=%s active=%v err=%v", runState, opStage, hasActiveDelivery, err)
 		}
+		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET endpoint=?,configuration_identity=? WHERE id=?`, originalAuthority.Endpoint, originalAuthority.SourceConfiguration, originalAuthority.SourceID).Exec(ctx); err != nil {
+			t.Fatalf("restore frozen provider source after authority check: %v", err)
+		}
+		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, parked.Revision, publishReview)
 		return
 	}
 	stageZeroOperation, err = fixture.repository.GetOperation(ctx, stageZeroID)
@@ -488,7 +505,13 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if err != nil {
 			t.Fatalf("reserve final-stage accepted response: %v", err)
 		}
+		const finalRecordingID = "90000000-0000-4000-8000-0000000000f7"
+		const finalReleaseID = "90000000-0000-4000-8000-0000000000f8"
+		const finalTrackID = "90000000-0000-4000-8000-0000000000f9"
 		stageTwoPayload := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"recordings":[{"id":"90000000-0000-4000-8000-0000000000f7","title":"Unrelated Recording","releases":[]}]}`)
+		if publishReview {
+			stageTwoPayload = json.RawMessage(fmt.Sprintf(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"recordings":[{"id":%q,"title":"Completely Different Song","releases":[{"id":%q,"title":"Unrelated Release"}]}]}`, finalRecordingID, finalReleaseID))
+		}
 		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: stageTwoTicket, FetchedAt: time.Now().UTC(), Payload: stageTwoPayload}); err != nil {
 			t.Fatalf("accept final-stage nonempty below-threshold response: %v", err)
 		}
@@ -505,8 +528,63 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		wakeID, claim = claimWake()
 		advance(wakeID, claim)
 		stageTwoApplicability, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
-		if err != nil || !exists || stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
+		if err != nil || !exists {
+			t.Fatalf("read final-stage search handoff: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
+		}
+		if publishReview && stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackHydration {
+			t.Fatalf("final-stage search did not register release lookup hydration: snapshot=%+v", stageTwoApplicability)
+		}
+		if !publishReview && stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
 			t.Fatalf("final-stage search did not reach applicability: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
+		}
+		finalLookupRequestIDs := make(map[uuid.UUID]bool)
+		if publishReview {
+			var finalHydration struct {
+				StageIndex int `json:"stage_index"`
+				Lookups    []struct {
+					RequestID uuid.UUID `json:"request_id"`
+					CacheKey  string    `json:"cache_key"`
+				} `json:"lookups"`
+			}
+			if err := json.Unmarshal(stageTwoApplicability.Output, &finalHydration); err != nil || finalHydration.StageIndex != 2 || len(finalHydration.Lookups) == 0 {
+				t.Fatalf("final-stage recording releases did not register release lookup hydration: output=%s manifest=%+v err=%v", stageTwoApplicability.Output, finalHydration, err)
+			}
+			finalLookupRequestIDs = make(map[uuid.UUID]bool, len(finalHydration.Lookups))
+			for _, lookup := range finalHydration.Lookups {
+				lookupOperation, err := fixture.repository.GetOperation(ctx, lookup.RequestID)
+				if err != nil || lookupOperation.RiverJobID == nil || lookupOperation.Kind != "provider_release_lookup" {
+					t.Fatalf("read final-stage release lookup registration: operation=%+v err=%v", lookupOperation, err)
+				}
+				lookupPayload := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Unrelated Release","artist-credit":[{"name":"Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"recording":{"id":%q,"title":"Completely Different Song","artist-credit":[{"name":"Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist"}}]}}]}]}`, finalReleaseID, finalTrackID, finalRecordingID))
+				lookupGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: lookupPayload}})
+				if err != nil {
+					t.Fatalf("normalize final-stage release lookup: %v", err)
+				}
+				lookupTicket, err := cache.BeginRefresh(ctx, source.ID, lookup.CacheKey, config.Identity)
+				if err != nil {
+					t.Fatalf("reserve final-stage release lookup: %v", err)
+				}
+				if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: lookupTicket, FetchedAt: time.Now().UTC(), Payload: lookupPayload, Graph: lookupGraph}); err != nil {
+					t.Fatalf("accept final-stage release lookup response: %v", err)
+				}
+				if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *lookupOperation.RiverJobID).Exec(ctx); err != nil {
+					t.Fatalf("mark final-stage lookup job running: %v", err)
+				}
+				if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *lookupOperation.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: lookup.RequestID}}); err != nil {
+					t.Fatalf("run actual final-stage release lookup worker: %v", err)
+				}
+				lookupReceipt, err := fixture.repository.GetMatchingFallbackLookupReceipt(ctx, parentID, lookup.RequestID)
+				if err != nil || lookupReceipt == nil || lookupReceipt.StageIndex != 2 {
+					t.Fatalf("read actual final-stage release lookup receipt: receipt=%+v err=%v", lookupReceipt, err)
+				}
+				finalLookupRequestIDs[lookup.RequestID] = true
+			}
+			wakeID, claim = claimWake()
+			advance(wakeID, claim)
+			stageTwoApplicability, exists, err = fixture.repository.GetMatchingAcquisition(ctx, parentID)
+			if err != nil || !exists || stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
+				t.Fatalf("final-stage lookup receipts did not complete hydration: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
+			}
 		}
 		wakeID, claim = claimWake()
 		advance(wakeID, claim)
@@ -552,9 +630,47 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		var fullContext persistence.MatchingFallbackCalculationContext
 		if err := json.Unmarshal(authority.FullEvaluationContext, &fullContext); err != nil ||
 			fullContext.StageIndex != 2 || fullContext.SearchReceipt.RequestID != stageTwoOutput.RequestID || fullContext.SearchReceipt.RequestID == stageZeroID ||
-			len(fullContext.LookupReceipts) != 0 || !jsonEqual(fullContext.SearchReceipt.Payload, stageTwoPayload) ||
+			len(fullContext.LookupReceipts) != len(finalLookupRequestIDs) || !jsonEqual(fullContext.SearchReceipt.Payload, stageTwoPayload) ||
 			len(fullContext.Intent.CapturedMembers) != len(parked.Intent.CapturedMembers) {
 			t.Fatalf("exhausted authority dropped the actual final-stage inventory/evidence: context=%+v err=%v", fullContext, err)
+		}
+		for _, lookupReceipt := range fullContext.LookupReceipts {
+			if lookupReceipt.StageIndex != 2 || !finalLookupRequestIDs[lookupReceipt.RequestID] {
+				t.Fatalf("final-stage authority contains unscoped or foreign lookup receipt: %+v", lookupReceipt)
+			}
+		}
+		var finalCalculation struct {
+			SchemaVersion     int `json:"schema_version"`
+			CalculatorVersion int `json:"calculator_version"`
+			DigestVersion     int `json:"digest_version"`
+			StageIndex        int `json:"stage_index"`
+			Edges             []struct {
+				MemberID        uuid.UUID `json:"member_id"`
+				WorkID          uuid.UUID `json:"work_id"`
+				ProviderTrackID uuid.UUID `json:"provider_track_id"`
+				LookupRequestID uuid.UUID `json:"lookup_request_id"`
+				Confidence      float64   `json:"confidence"`
+			} `json:"edge_calculations"`
+		}
+		var finalCalculationRaw json.RawMessage
+		if err := fixture.db.NewRaw(`SELECT schema_version,calculator_version,digest_version,stage_index,edge_calculations
+			FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, parentID, stageTwoApplicability.Revision).
+			Scan(ctx, &finalCalculation.SchemaVersion, &finalCalculation.CalculatorVersion, &finalCalculation.DigestVersion, &finalCalculation.StageIndex, &finalCalculationRaw); err != nil {
+			t.Fatalf("read final-stage calculation proof: %v", err)
+		}
+		if publishReview {
+			if err := json.Unmarshal(finalCalculationRaw, &finalCalculation.Edges); err != nil || finalCalculation.SchemaVersion != 3 || finalCalculation.CalculatorVersion != 3 ||
+				finalCalculation.DigestVersion != 3 || finalCalculation.StageIndex != 2 || len(finalCalculation.Edges) == 0 {
+				t.Fatalf("final-stage calculation proof is not current schema-3 evidence: calculation=%+v edges=%+v err=%v", finalCalculation, finalCalculation.Edges, err)
+			}
+			if err := persistence.ValidateMatchingFallbackCalculationEdges(fullContext, finalCalculationRaw); err != nil {
+				t.Fatalf("final-stage calculation edge set is not complete for its original accepted context: %v", err)
+			}
+			for _, edge := range finalCalculation.Edges {
+				if edge.MemberID == uuid.Nil || edge.WorkID == uuid.Nil || edge.ProviderTrackID == uuid.Nil || !finalLookupRequestIDs[edge.LookupRequestID] || edge.Confidence >= 0.70 {
+					t.Fatalf("final-stage edge is incomplete, unscoped, or unexpectedly qualifying: %+v lookupIDs=%v", edge, finalLookupRequestIDs)
+				}
+			}
 		}
 		var requestCount, calculationCount int
 		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=? AND role='search'`, parentID).Scan(ctx, &requestCount); err != nil {
@@ -578,6 +694,9 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if err != nil || !readFound || readSeal.Digest != sealed.Digest || readSeal.Disposition != "review_exhausted" ||
 			readSeal.SelectedCalculation == nil || readSeal.SelectedCalculation.StageIndex != 2 || len(readSeal.FullEvaluationContext) == 0 {
 			t.Fatalf("read persisted exhausted authority: authority=%+v found=%v err=%v", readSeal, readFound, err)
+		}
+		if continueSeal || publishReview {
+			assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, parked.Revision, publishReview)
 		}
 		return
 	}
@@ -672,7 +791,7 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	if err != nil || !exists || final.Phase != "pending_seal" {
 		t.Fatalf("real fallback calculation did not seal qualified applicability: snapshot=%+v exists=%v err=%v", final, exists, err)
 	}
-	if !historicalStageLookup {
+	if !historicalStageLookup && !continueSeal {
 		// A source resolved after admission must not replace the frozen run source
 		// authority when the first persistence write is attempted.
 		if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/changed/ws/2"); err != nil {
@@ -741,9 +860,531 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	expectedDependencies, expectedRegistrations, expectedLookupJobs := 3, 3, 1
 	if historicalStageLookup {
 		expectedDependencies, expectedRegistrations, expectedLookupJobs = 4, 4, 2
+	} else if publishReview {
+		expectedDependencies, expectedRegistrations, expectedLookupJobs = 4, 4, 2
 	}
 	if inputCount != 1 || dependencyCount != expectedDependencies || registrationCount != expectedRegistrations || searchJobCount != 0 || lookupJobCount != expectedLookupJobs {
 		t.Fatalf("finite flow wrote unexpected request/dependency work: initialInputs=%d dependencies=%d registrations=%d stage2Jobs=%d lookupJobs=%d", inputCount, dependencyCount, registrationCount, searchJobCount, lookupJobCount)
+	}
+	if continueSeal || publishReview {
+		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, final.Revision, false)
+	}
+}
+
+func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fixture automaticTargetFenceFixture, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, waitRevision int64, publishReview bool) {
+	t.Helper()
+	before := snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
+	var seals, handoffs int
+	readRows := func() {
+		t.Helper()
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=?`, runID).Scan(ctx, &seals); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_evaluation_handoff WHERE run_id=?`, runID).Scan(ctx, &handoffs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readRows()
+	initialSeals, initialHandoffs := seals, handoffs
+	assertNoWrites := func(label string) {
+		t.Helper()
+		after := snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
+		readRows()
+		if before != after || seals != initialSeals || handoffs != initialHandoffs {
+			t.Fatalf("%s changed fallback continuation state: before=%+v after=%+v seals=%d handoffs=%d", label, before, after, seals, handoffs)
+		}
+	}
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 2, waitRevision); err == nil || found {
+		t.Fatalf("stale operation attempt was accepted: found=%v err=%v", found, err)
+	}
+	assertNoWrites("stale operation attempt")
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision-1); err == nil || found {
+		t.Fatalf("stale wait revision was accepted: found=%v err=%v", found, err)
+	}
+	assertNoWrites("stale wait revision")
+	if _, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION reject_test_fallback_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test handoff insert failure'; END $$`); err != nil {
+		t.Fatalf("create handoff rollback fault: %v", err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `CREATE TRIGGER reject_test_fallback_handoff BEFORE INSERT ON matching_fallback_evaluation_handoff FOR EACH ROW EXECUTE FUNCTION reject_test_fallback_handoff()`); err != nil {
+		t.Fatalf("install handoff rollback fault: %v", err)
+	}
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision); err == nil || found || !strings.Contains(err.Error(), "test handoff insert failure") {
+		t.Fatalf("injected handoff failure succeeded: found=%v err=%v", found, err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `DROP TRIGGER reject_test_fallback_handoff ON matching_fallback_evaluation_handoff`); err != nil {
+		t.Fatalf("remove handoff rollback fault: %v", err)
+	}
+	if _, err := fixture.db.ExecContext(ctx, `DROP FUNCTION reject_test_fallback_handoff()`); err != nil {
+		t.Fatalf("drop handoff rollback fault: %v", err)
+	}
+	assertNoWrites("handoff SQL failure")
+
+	wakeCalls := inserter.wakeCalls
+	handoff, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision)
+	if err != nil || !found || handoff.RunID != runID || handoff.WaitRevision != waitRevision || handoff.OperationAttempt != 1 || handoff.RiverJobID < 1 || handoff.SealDigest == "" {
+		t.Fatalf("continue qualified fallback wait: handoff=%+v found=%v err=%v", handoff, found, err)
+	}
+	if inserter.wakeCalls != wakeCalls+1 {
+		t.Fatalf("continuation wake insert calls=%d, want exactly one", inserter.wakeCalls-wakeCalls)
+	}
+	var currentPhase string
+	var currentRevision int64
+	if err := fixture.db.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &currentPhase, &currentRevision); err != nil || currentPhase != persistence.MatchingAcquisitionFallbackEvaluationSealed || currentRevision != waitRevision+1 {
+		t.Fatalf("continuation phase=%q revision=%d err=%v", currentPhase, currentRevision, err)
+	}
+	var registeredJobID int64
+	if err := fixture.db.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? AND operation_attempt=1 AND river_job_id=? AND consumed_at IS NULL`, runID, handoff.RiverJobID).Scan(ctx, &registeredJobID); err != nil || registeredJobID != handoff.RiverJobID {
+		t.Fatalf("registered wake=%d handoff=%d err=%v", registeredJobID, handoff.RiverJobID, err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, handoff.RiverJobID).Exec(ctx); err != nil {
+		t.Fatalf("make registered continuation wake claimable: %v", err)
+	}
+	claim, outcome, err := fixture.repository.ClaimMatchingDelivery(ctx, runID, 1, handoff.RiverJobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim actual continuation wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
+	}
+	seal, exists, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, runID, waitRevision)
+	if err != nil || !exists || seal.Digest != handoff.SealDigest || seal.RunID != runID || seal.WaitRevision != waitRevision {
+		t.Fatalf("read historical seal after cursor advancement: seal=%+v exists=%v err=%v", seal, exists, err)
+	}
+	prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, runID, waitRevision)
+	if err != nil || !exists || prepared.Authority.Digest != handoff.SealDigest || prepared.Authority.RunID != runID || prepared.Authority.WaitRevision != waitRevision ||
+		len(prepared.FrozenInventory.MemberFences) != len(seal.CapturedMetadata) || len(prepared.FrozenInventory.Files) != len(seal.CapturedMetadata) {
+		t.Fatalf("prepare full evaluation from historical seal: prepared=%+v exists=%v err=%v", prepared, exists, err)
+	}
+	if publishReview {
+		publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+		expectedEdges := 0
+		if prepared.Calculation != nil {
+			expectedEdges = 1
+		}
+		if err != nil || publication.Evaluation.Outcome != "review" || publication.Evaluation.Decision != "review" ||
+			(expectedEdges == 0 && (len(publication.Edges) != 0 || len(publication.Inventory.Releases) != 0)) ||
+			(expectedEdges > 0 && len(publication.Edges) == 0) {
+			t.Fatalf("serialize edge-bearing frozen review: outcome=%q decision=%q edges=%d err=%v", publication.Evaluation.Outcome, publication.Evaluation.Decision, len(publication.Edges), err)
+		}
+		type frozenCoordinate struct {
+			releaseID uuid.UUID
+			medium    int
+			position  int
+		}
+		coordinates := make(map[uuid.UUID]frozenCoordinate)
+		for _, release := range publication.Inventory.Releases {
+			for _, track := range release.Tracks {
+				coordinates[track.ID] = frozenCoordinate{releaseID: release.ID, medium: track.Medium, position: track.Position}
+			}
+		}
+		for _, edge := range publication.Edges {
+			coordinate, ok := coordinates[edge.ProviderTrackID]
+			if !ok || coordinate.releaseID != edge.ProviderReleaseID || coordinate.medium != edge.Medium+1 || coordinate.position != edge.Position+1 {
+				t.Fatalf("serialized edge is outside the frozen provider graph: edge=%+v coordinate=%+v found=%v", edge, coordinate, ok)
+			}
+		}
+		groupID := publication.Authority.GroupID
+		reviewRepository := persistence.NewIncomingMatchCandidateRepository(fixture.db)
+		beforeHeader, beforeCandidates, err := reviewRepository.Get(ctx, groupID)
+		if err != nil || beforeHeader != nil || len(beforeCandidates) != 0 {
+			t.Fatalf("initial frozen review publication state: header=%+v candidates=%d err=%v", beforeHeader, len(beforeCandidates), err)
+		}
+		assertFrozenReviewPublicationRejected := func(label string, candidate persistence.FrozenMatchingPublication, expected map[uuid.UUID]*string, expectedError string, expectConflict bool) {
+			t.Helper()
+			if changed, err := fixture.repository.PublishFrozenMatchingEvaluationForDelivery(ctx, runID, 1, handoff.RiverJobID, claim, candidate, expected); err == nil || changed {
+				t.Fatalf("%s frozen review publication accepted: changed=%v err=%v", label, changed, err)
+			} else if expectConflict {
+				if !errors.Is(err, persistence.ErrIncomingMatchConflict) {
+					t.Fatalf("%s rejection error = %v, want ErrIncomingMatchConflict", label, err)
+				}
+			} else if expectedError != "" && !strings.Contains(err.Error(), expectedError) {
+				t.Fatalf("%s rejection error = %v, want message containing %q", label, err, expectedError)
+			}
+			header, candidates, err := reviewRepository.Get(ctx, groupID)
+			if err != nil || header != nil || len(candidates) != 0 {
+				t.Fatalf("%s rejection wrote review state: header=%+v candidates=%d err=%v", label, header, len(candidates), err)
+			}
+			var operationState, runState string
+			var consumed bool
+			if err := fixture.db.NewRaw(`SELECT operation.state,run.state,delivery.consumed_at IS NOT NULL
+				FROM operation JOIN matching_run run ON run.id=operation.id JOIN matching_delivery delivery ON delivery.run_id=run.id
+				WHERE run.id=? AND delivery.river_job_id=?`, runID, handoff.RiverJobID).Scan(ctx, &operationState, &runState, &consumed); err != nil || operationState != "running" || runState != "running" || consumed {
+				t.Fatalf("%s rejection changed active delivery: operation=%q run=%q consumed=%v err=%v", label, operationState, runState, consumed, err)
+			}
+		}
+		wrongDigest := publication
+		wrongDigest.Authority.SealDigest = strings.Repeat("0", len(wrongDigest.Authority.SealDigest))
+		assertFrozenReviewPublicationRejected("wrong seal digest", wrongDigest, map[uuid.UUID]*string{groupID: nil}, "persisted seal digest does not match caller authority", false)
+		wrongWait := publication
+		wrongWait.Authority.WaitRevision++
+		assertFrozenReviewPublicationRejected("wrong wait revision", wrongWait, map[uuid.UUID]*string{groupID: nil}, "persisted fallback evaluation handoff is not current", false)
+		if len(publication.Edges) > 0 {
+			missingEdge := publication
+			missingEdge.Edges = append([]persistence.FrozenMatchingScoredEdge(nil), publication.Edges[:len(publication.Edges)-1]...)
+			assertFrozenReviewPublicationRejected("missing calculation edge", missingEdge, map[uuid.UUID]*string{groupID: nil}, "caller edges do not match the persisted calculation universe", false)
+			foreignEdge := publication
+			foreignEdge.Edges = append([]persistence.FrozenMatchingScoredEdge(nil), publication.Edges...)
+			foreignEdge.Edges[0].FileMemberID = uuid.New()
+			assertFrozenReviewPublicationRejected("foreign calculation edge", foreignEdge, map[uuid.UUID]*string{groupID: nil}, "caller edges do not match the persisted calculation universe", false)
+			wrongCoordinate := publication
+			wrongCoordinate.Edges = append([]persistence.FrozenMatchingScoredEdge(nil), publication.Edges...)
+			wrongCoordinate.Edges[0].Position++
+			assertFrozenReviewPublicationRejected("substituted edge coordinate", wrongCoordinate, map[uuid.UUID]*string{groupID: nil}, "caller edges do not match the persisted calculation universe", false)
+		}
+		if len(publication.Edges) > 0 {
+			staleCAS := "stale-evaluation-revision"
+			assertFrozenReviewPublicationRejected("stale evaluation CAS", publication, map[uuid.UUID]*string{groupID: &staleCAS}, "", true)
+		}
+		if len(publication.Inventory.Releases) != 0 {
+			tamperedLocations := publication
+			tamperedLocations.Inventory.Members = append([]persistence.FrozenMatchingReviewMember(nil), publication.Inventory.Members...)
+			tamperedLocations.Inventory.Members[0].Locations = json.RawMessage(`[]`)
+			assertFrozenReviewPublicationRejected("tampered member locations", tamperedLocations, map[uuid.UUID]*string{groupID: nil}, "frozen target inventory differs from persisted capture", false)
+			for _, tamper := range []struct {
+				name string
+				edit func(*persistence.MatchingRelease)
+			}{
+				{"title", func(release *persistence.MatchingRelease) { release.Name += " forged" }},
+				{"completeness", func(release *persistence.MatchingRelease) { release.Complete = !release.Complete }},
+				{"credits", func(release *persistence.MatchingRelease) {
+					release.Credits = append(release.Credits, persistence.MatchingReleaseCredit{Position: len(release.Credits), Name: "forged"})
+				}},
+				{"extra track", func(release *persistence.MatchingRelease) {
+					release.Tracks = append(release.Tracks, persistence.MatchingReleaseTrack{ID: uuid.New(), Medium: 99, Position: 99})
+				}},
+			} {
+				candidate := publication
+				candidate.Inventory.Releases = append([]persistence.MatchingRelease(nil), publication.Inventory.Releases...)
+				candidate.Inventory.Releases[0].Credits = append([]persistence.MatchingReleaseCredit(nil), publication.Inventory.Releases[0].Credits...)
+				candidate.Inventory.Releases[0].Tracks = append([]persistence.MatchingReleaseTrack(nil), publication.Inventory.Releases[0].Tracks...)
+				tamper.edit(&candidate.Inventory.Releases[0])
+				assertFrozenReviewPublicationRejected("tampered provider "+tamper.name, candidate, map[uuid.UUID]*string{groupID: nil}, "review inventory differs from accepted release projections", false)
+			}
+		}
+
+		changed, err := fixture.repository.PublishFrozenMatchingEvaluationForDelivery(ctx, runID, 1, handoff.RiverJobID, claim, publication, map[uuid.UUID]*string{groupID: nil})
+		if err != nil || !changed {
+			t.Fatalf("publish frozen fallback review: changed=%v err=%v", changed, err)
+		}
+		snapshot, err := reviewRepository.GetReviewSnapshot(ctx, groupID)
+		if err != nil || snapshot == nil || snapshot.Header == nil || snapshot.Header.FrozenAuthorityVersion == nil || *snapshot.Header.FrozenAuthorityVersion != 3 ||
+			snapshot.Header.FrozenRunID == nil || *snapshot.Header.FrozenRunID != runID || snapshot.Header.FrozenWaitRevision == nil || *snapshot.Header.FrozenWaitRevision != waitRevision ||
+			fmt.Sprintf("%x", snapshot.Header.FrozenSealDigest) != handoff.SealDigest || len(snapshot.Members) != len(publication.Inventory.Members) {
+			t.Fatalf("published frozen review header or inventory mismatch: snapshot=%+v err=%v", snapshot, err)
+		}
+		var envelope struct {
+			FrozenPublication persistence.FrozenMatchingPublication `json:"frozen_publication"`
+			ReviewProposal    json.RawMessage                       `json:"review_proposal"`
+		}
+		if err := json.Unmarshal(snapshot.Header.EvaluationEvidence, &envelope); err != nil || envelope.FrozenPublication.Authority.RunID != runID ||
+			envelope.FrozenPublication.Authority.WaitRevision != waitRevision || envelope.FrozenPublication.Authority.SealDigest != handoff.SealDigest ||
+			len(envelope.FrozenPublication.Edges) != len(publication.Edges) || len(publication.Edges) > 0 && len(snapshot.Candidates) == 0 {
+			t.Fatalf("published review evidence lost frozen graph: evidence=%s edges=%d candidates=%d err=%v", snapshot.Header.EvaluationEvidence, len(publication.Edges), len(snapshot.Candidates), err)
+		}
+		expectedPublication, err := json.Marshal(publication)
+		persistedPublication, marshalErr := json.Marshal(envelope.FrozenPublication)
+		if err != nil || marshalErr != nil || !jsonEqual(expectedPublication, persistedPublication) {
+			t.Fatalf("published frozen publication differs from the complete source publication: expected=%s actual=%s err=%v marshalErr=%v", expectedPublication, persistedPublication, err, marshalErr)
+		}
+		if len(snapshot.Members) != len(publication.Inventory.Members) {
+			t.Fatalf("published review member scope differs from frozen group: snapshot=%v inventory=%+v", snapshot.Members, publication.Inventory.Members)
+		}
+		memberIDs := make(map[uuid.UUID]bool, len(publication.Inventory.Members))
+		for _, member := range publication.Inventory.Members {
+			memberIDs[member.FileMemberID] = true
+		}
+		for _, memberID := range snapshot.Members {
+			if !memberIDs[memberID] {
+				t.Fatalf("published review contains a member outside the frozen group: %s", memberID)
+			}
+			delete(memberIDs, memberID)
+		}
+		if len(memberIDs) != 0 {
+			t.Fatalf("published review omitted frozen group members: %v", memberIDs)
+		}
+		type proposalLayout struct {
+			ProviderReleaseID uuid.UUID        `json:"provider_release_id"`
+			ReleaseID         string           `json:"release_id"`
+			Title             string           `json:"title"`
+			TracklistComplete bool             `json:"tracklist_complete"`
+			Positions         []map[string]any `json:"positions"`
+		}
+		expectedLayouts := make([]proposalLayout, 0, len(publication.Inventory.Releases))
+		for _, release := range publication.Inventory.Releases {
+			positions := make([]map[string]any, 0, len(release.Tracks))
+			for _, track := range release.Tracks {
+				positions = append(positions, map[string]any{"track_id": track.ID, "medium": track.Medium, "position": track.Position,
+					"displayed_number": track.DisplayedNumber, "recording_id": track.RecordingProviderKey, "title": track.RecordingTitle})
+			}
+			expectedLayouts = append(expectedLayouts, proposalLayout{ProviderReleaseID: release.ID, ReleaseID: release.ProviderKey,
+				Title: release.Name, TracklistComplete: release.Complete, Positions: positions})
+		}
+		expectedFiles := make([]map[string]any, 0, len(publication.Inventory.Members))
+		for _, member := range publication.Inventory.Members {
+			var rawTags map[string][]string
+			if err := json.Unmarshal(member.Tags, &rawTags); err != nil {
+				t.Fatalf("decode frozen review member tags: %v", err)
+			}
+			expectedFiles = append(expectedFiles, map[string]any{"file_member_id": member.FileMemberID, "raw_tags": rawTags, "diagnostics": []any{}})
+		}
+		expectedProposal, err := json.Marshal(map[string]any{"version": 1, "group_id": groupID, "selected_release": nil,
+			"releases": expectedLayouts, "files": expectedFiles})
+		if err != nil || !jsonEqual(expectedProposal, envelope.ReviewProposal) {
+			t.Fatalf("published review proposal differs from complete transformed frozen review DTO: expected=%s actual=%s err=%v", expectedProposal, envelope.ReviewProposal, err)
+		}
+		if len(publication.Edges) == 0 {
+			reader := service.NewMatchingReviewService(reviewRepository)
+			review, err := reader.Get(ctx, groupID)
+			if err != nil || !review.Evaluated || !review.ProposalAvailable || len(review.Releases) != 0 || len(review.Candidates) != 0 {
+				t.Fatalf("no-query frozen review was not available from the persisted reader: review=%+v err=%v", review, err)
+			}
+			var policyVersion string
+			if err := fixture.db.NewRaw(`SELECT policy_version FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &policyVersion); err != nil || policyVersion != service.MatchingPolicyVersion {
+				t.Fatalf("frozen header policy version=%q, want approved %q: %v", policyVersion, service.MatchingPolicyVersion, err)
+			}
+			var operationState, runState string
+			var consumed bool
+			if err := fixture.db.NewRaw(`SELECT operation.state,run.state,delivery.consumed_at IS NOT NULL
+				FROM operation JOIN matching_run run ON run.id=operation.id JOIN matching_delivery delivery ON delivery.run_id=run.id
+				WHERE run.id=? AND delivery.river_job_id=?`, runID, handoff.RiverJobID).Scan(ctx, &operationState, &runState, &consumed); err != nil || operationState != "succeeded" || runState != "succeeded" || !consumed {
+				t.Fatalf("no-query frozen review settlement: operation=%q run=%q consumed=%v err=%v", operationState, runState, consumed, err)
+			}
+			return
+		}
+		expectedCandidateEdges := make(map[string][]persistence.FrozenMatchingScoredEdge)
+		for _, edge := range publication.Edges {
+			key := edge.FileMemberID.String() + "/" + edge.ProviderReleaseID.String()
+			expectedCandidateEdges[key] = append(expectedCandidateEdges[key], edge)
+		}
+		if len(snapshot.Candidates) != len(expectedCandidateEdges) {
+			t.Fatalf("published candidate identities do not cover frozen edges: candidates=%d edgeGroups=%d", len(snapshot.Candidates), len(expectedCandidateEdges))
+		}
+		for _, candidate := range snapshot.Candidates {
+			key := candidate.FileMemberID.String() + "/" + candidate.ReleaseID.String()
+			expectedEdges, ok := expectedCandidateEdges[key]
+			wantEdges := len(expectedEdges)
+			if !ok || len(candidate.Positions) != wantEdges {
+				t.Fatalf("published candidate layout is not the frozen edge layout: candidate=%+v expectedEdges=%d found=%v", candidate, wantEdges, ok)
+			}
+			delete(expectedCandidateEdges, key)
+			type positionIdentity struct {
+				TrackID  uuid.UUID
+				Medium   int
+				Position int
+			}
+			positions := make(map[positionIdentity]bool, len(candidate.Positions))
+			for _, position := range candidate.Positions {
+				positions[positionIdentity{TrackID: position.TrackID, Medium: position.Medium, Position: position.Position}] = true
+			}
+			for _, edge := range expectedEdges {
+				identity := positionIdentity{TrackID: edge.ProviderTrackID, Medium: edge.Medium + 1, Position: edge.Position + 1}
+				if !positions[identity] {
+					t.Fatalf("published review layout changed frozen edge coordinates: candidate=%+v expected=%+v positions=%+v", candidate, identity, candidate.Positions)
+				}
+				delete(positions, identity)
+			}
+			if len(positions) != 0 {
+				t.Fatalf("published review layout contains positions outside frozen edges: candidate=%+v extra=%+v", candidate, positions)
+			}
+			var candidateEvidence struct {
+				EdgeEvidence []struct {
+					Medium            int `json:"medium"`
+					Position          int `json:"position"`
+					AssignmentProfile struct {
+						Profile    string  `json:"profile"`
+						Confidence float64 `json:"confidence"`
+					} `json:"assignment_profile"`
+				} `json:"edge_evidence"`
+			}
+			if err := json.Unmarshal(candidate.Evidence, &candidateEvidence); err != nil || len(candidateEvidence.EdgeEvidence) != wantEdges {
+				t.Fatalf("published candidate evidence omitted its frozen edge coordinates: evidence=%s edges=%+v err=%v", candidate.Evidence, candidateEvidence.EdgeEvidence, err)
+			}
+			var maximumReleaseConfidence float64
+			for _, edge := range expectedEdges {
+				var releaseScore struct {
+					Profile    string  `json:"profile"`
+					Confidence float64 `json:"confidence"`
+				}
+				if err := json.Unmarshal(edge.ReleaseScore, &releaseScore); err != nil || releaseScore.Profile != "release" {
+					t.Fatalf("frozen edge has unexpected release score profile: score=%s err=%v", edge.ReleaseScore, err)
+				}
+				if releaseScore.Confidence > maximumReleaseConfidence {
+					maximumReleaseConfidence = releaseScore.Confidence
+				}
+				var assignmentScore struct {
+					Profile    string  `json:"profile"`
+					Confidence float64 `json:"confidence"`
+				}
+				if err := json.Unmarshal(edge.AssignmentScore, &assignmentScore); err != nil || assignmentScore.Profile != "recording_release" {
+					t.Fatalf("frozen edge has unexpected assignment score profile: score=%s err=%v", edge.AssignmentScore, err)
+				}
+				found := false
+				for _, actual := range candidateEvidence.EdgeEvidence {
+					if actual.Medium == edge.Medium+1 && actual.Position == edge.Position+1 {
+						if actual.AssignmentProfile.Profile != "recording_release" || actual.AssignmentProfile.Confidence != assignmentScore.Confidence {
+							t.Fatalf("published edge assignment score differs from its frozen edge: actual=%+v expected=%+v", actual.AssignmentProfile, assignmentScore)
+						}
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("published candidate evidence changed frozen edge coordinates: candidate=%+v edge=%+v evidence=%+v", candidate, edge, candidateEvidence.EdgeEvidence)
+				}
+			}
+			if candidate.Score != maximumReleaseConfidence {
+				t.Fatalf("published candidate release confidence=%v, want maximum frozen release confidence %v", candidate.Score, maximumReleaseConfidence)
+			}
+		}
+		if len(expectedCandidateEdges) != 0 {
+			t.Fatalf("published candidates omitted frozen edge groups: %v", expectedCandidateEdges)
+		}
+		review, err := service.NewMatchingReviewService(reviewRepository).Get(ctx, groupID)
+		if err != nil || !review.Evaluated || !review.ProposalAvailable || len(review.Candidates) != len(snapshot.Candidates) {
+			t.Fatalf("read score projections through matching review service: review=%+v err=%v", review, err)
+		}
+		for _, reviewedCandidate := range review.Candidates {
+			var maximumReleaseConfidence float64
+			for _, edge := range publication.Edges {
+				if edge.FileMemberID != reviewedCandidate.FileMemberID || edge.ProviderReleaseID != reviewedCandidate.ReleaseID {
+					continue
+				}
+				var releaseScore struct {
+					Profile    string  `json:"profile"`
+					Confidence float64 `json:"confidence"`
+				}
+				if err := json.Unmarshal(edge.ReleaseScore, &releaseScore); err != nil || releaseScore.Profile != "release" {
+					t.Fatalf("frozen edge has unexpected release score profile: score=%s err=%v", edge.ReleaseScore, err)
+				}
+				if releaseScore.Confidence > maximumReleaseConfidence {
+					maximumReleaseConfidence = releaseScore.Confidence
+				}
+			}
+			if reviewedCandidate.ReleaseConfidence != maximumReleaseConfidence {
+				t.Fatalf("matching review release confidence=%v, want maximum frozen release confidence %v", reviewedCandidate.ReleaseConfidence, maximumReleaseConfidence)
+			}
+			for _, position := range reviewedCandidate.Positions {
+				if position.AssignmentConfidence == nil {
+					t.Fatalf("matching review omitted assignment confidence for candidate position: candidate=%+v position=%+v", reviewedCandidate, position)
+				}
+				var matchedEdge *persistence.FrozenMatchingScoredEdge
+				for i := range publication.Edges {
+					edge := &publication.Edges[i]
+					if edge.FileMemberID == reviewedCandidate.FileMemberID && edge.ProviderReleaseID == reviewedCandidate.ReleaseID &&
+						edge.Medium+1 == position.Medium && edge.Position+1 == position.Position && edge.ProviderTrackID == position.TrackID {
+						matchedEdge = edge
+						break
+					}
+				}
+				if matchedEdge == nil {
+					t.Fatalf("matching review position does not identify a frozen edge: candidate=%+v position=%+v", reviewedCandidate, position)
+				}
+				var assignmentScore struct {
+					Profile    string  `json:"profile"`
+					Confidence float64 `json:"confidence"`
+				}
+				if err := json.Unmarshal(matchedEdge.AssignmentScore, &assignmentScore); err != nil || assignmentScore.Profile != "recording_release" || *position.AssignmentConfidence != assignmentScore.Confidence {
+					t.Fatalf("matching review assignment confidence differs from frozen edge score: position=%+v score=%s err=%v", position, matchedEdge.AssignmentScore, err)
+				}
+			}
+		}
+		var operationState, runState string
+		var consumed bool
+		if err := fixture.db.NewRaw(`SELECT operation.state,run.state,delivery.consumed_at IS NOT NULL
+			FROM operation JOIN matching_run run ON run.id=operation.id JOIN matching_delivery delivery ON delivery.run_id=run.id
+			WHERE run.id=? AND delivery.river_job_id=?`, runID, handoff.RiverJobID).Scan(ctx, &operationState, &runState, &consumed); err != nil || operationState != "succeeded" || runState != "succeeded" || !consumed {
+			t.Fatalf("published frozen review settlement: operation=%q run=%q consumed=%v err=%v", operationState, runState, consumed, err)
+		}
+		var applyJobs int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE kind=? AND input_snapshot->>'parent_run_id'=?`, persistence.MatchingApplyOperationKind, runID.String()).Scan(ctx, &applyJobs); err != nil || applyJobs != 0 {
+			t.Fatalf("review publication created apply work: jobs=%d err=%v", applyJobs, err)
+		}
+		var applyRequests, applyOperations, applyRiverJobs int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?`, runID).Scan(ctx, &applyRequests); err != nil {
+			t.Fatalf("count apply requests for published review: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE kind=? AND
+			(input_snapshot->>'parent_run_id'=? OR input_snapshot->>'run_id'=? OR input_snapshot->>'source_run_id'=? )`,
+			persistence.MatchingApplyOperationKind, runID.String(), runID.String(), runID.String()).Scan(ctx, &applyOperations); err != nil {
+			t.Fatalf("count apply operations referencing published review: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_apply_v1' AND args->>'operation_id' IN
+			(SELECT id::text FROM operation WHERE kind=?)`, persistence.MatchingApplyOperationKind).Scan(ctx, &applyRiverJobs); err != nil {
+			t.Fatalf("count apply River jobs for published review: %v", err)
+		}
+		if applyRequests != 0 || applyOperations != 0 || applyRiverJobs != 0 {
+			t.Fatalf("review publication left apply request or child work: requests=%d operations=%d riverJobs=%d", applyRequests, applyOperations, applyRiverJobs)
+		}
+		return
+	}
+	wakeCalls = inserter.wakeCalls
+	replayed, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision)
+	if err != nil || !found || replayed != handoff || inserter.wakeCalls != wakeCalls {
+		t.Fatalf("exact replay changed handoff or inserted another wake: replay=%+v original=%+v found=%v wakeCalls=%d/%d err=%v", replayed, handoff, found, inserter.wakeCalls, wakeCalls, err)
+	}
+	// A historical handoff remains readable, but a later target generation must
+	// not authorize replaying its continuation. Mutate the persisted generation
+	// directly to model a subsequent admission without coupling this test to its
+	// unrelated scheduling machinery.
+	var groupID uuid.UUID
+	var generation int64
+	if err := fixture.db.NewRaw(`SELECT generation.group_id,generation.high_water FROM incoming_matching_generation generation
+		JOIN matching_run_target target ON target.group_id=generation.group_id WHERE target.run_id=?`, runID).
+		Scan(ctx, &groupID, &generation); err != nil {
+		t.Fatalf("read current target generation: %v", err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1 WHERE group_id=?`, groupID).Exec(ctx); err != nil {
+		t.Fatalf("supersede target generation: %v", err)
+	}
+	before = snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
+	readRows()
+	initialSeals, initialHandoffs = seals, handoffs
+	wakeCalls = inserter.wakeCalls
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision); err == nil || found || !strings.Contains(err.Error(), "current target authority changed") {
+		t.Fatalf("superseded target generation authorized replay: found=%v err=%v", found, err)
+	}
+	assertNoWrites("superseded target-generation replay")
+	if inserter.wakeCalls != wakeCalls {
+		t.Fatalf("superseded target-generation replay inserted wake: calls=%d want=%d", inserter.wakeCalls, wakeCalls)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE incoming_matching_generation SET high_water=? WHERE group_id=?`, generation, groupID).Exec(ctx); err != nil {
+		t.Fatalf("restore target generation after replay check: %v", err)
+	}
+	// Model an owner-authorized manual-mode change after the handoff. The
+	// authority row is normally created by manual confirmation; this fixture
+	// changes only that persisted authority, leaving the historical seal intact.
+	if _, err := fixture.db.NewRaw(`INSERT INTO incoming_group_matching_authority(group_id,mode,revision,updated_at)
+		VALUES (?,'manual',1,now()) ON CONFLICT (group_id) DO UPDATE SET mode='manual',revision=incoming_group_matching_authority.revision+1,updated_at=now()`, groupID).Exec(ctx); err != nil {
+		t.Fatalf("promote target group to manual authority: %v", err)
+	}
+	before = snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
+	readRows()
+	initialSeals, initialHandoffs = seals, handoffs
+	wakeCalls = inserter.wakeCalls
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision); err == nil || found || !strings.Contains(err.Error(), "current group authority changed") {
+		t.Fatalf("manual target authority authorized replay: found=%v err=%v", found, err)
+	}
+	assertNoWrites("manual-authority replay")
+	if inserter.wakeCalls != wakeCalls {
+		t.Fatalf("manual-authority replay inserted wake: calls=%d want=%d", inserter.wakeCalls, wakeCalls)
+	}
+	seal, exists, err = fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, runID, waitRevision)
+	if err != nil || !exists || seal.Digest != handoff.SealDigest {
+		t.Fatalf("read historical seal after manual authority change: seal=%+v exists=%v err=%v", seal, exists, err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE app_setting SET setting_value='stale-provider-configuration' WHERE setting_name='musicbrainz_config_identity'`).Exec(ctx); err != nil {
+		t.Fatalf("change current provider configuration: %v", err)
+	}
+	before = snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
+	readRows()
+	initialSeals, initialHandoffs = seals, handoffs
+	wakeCalls = inserter.wakeCalls
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision); err == nil || found || !strings.Contains(err.Error(), "provider configuration changed") {
+		t.Fatalf("stale provider configuration authorized replay: found=%v err=%v", found, err)
+	}
+	assertNoWrites("stale provider configuration replay")
+	if inserter.wakeCalls != wakeCalls {
+		t.Fatalf("stale provider configuration replay inserted wake: calls=%d want=%d", inserter.wakeCalls, wakeCalls)
+	}
+	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision-1); err == nil || found {
+		t.Fatalf("stale replay revision authorized an unrelated wait: found=%v err=%v", found, err)
 	}
 }
 

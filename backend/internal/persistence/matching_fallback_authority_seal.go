@@ -117,42 +117,51 @@ func (repository *SetupManagerRepository) SealMatchingFallbackAuthority(
 		if !found {
 			return fmt.Errorf("seal fallback authority: expected durable wait is not current")
 		}
-		encoded, err := json.Marshal(authority)
-		if err != nil {
-			return fmt.Errorf("seal fallback authority: encode authority: %w", err)
-		}
-		digest, err := hex.DecodeString(authority.Digest)
-		if err != nil || len(digest) != sha256.Size {
-			return fmt.Errorf("seal fallback authority: derived digest is invalid")
-		}
-		var existing struct {
-			Schema  int             `bun:"schema_version"`
-			Payload json.RawMessage `bun:"authority"`
-			Digest  []byte          `bun:"authority_digest"`
-		}
-		err = tx.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
-			WHERE run_id=? AND wait_revision=?`, runID, expectedWaitRevision).Scan(ctx, &existing)
-		if err == nil {
-			existingCanonical, canonicalErr := canonicalMatchingJSON(existing.Payload)
-			newCanonical, newCanonicalErr := canonicalMatchingJSON(encoded)
-			if existing.Schema != matchingFallbackSealAuthoritySchemaVersion || canonicalErr != nil || newCanonicalErr != nil || !bytes.Equal(existingCanonical, newCanonical) || !equalDigest(existing.Digest, digest) {
-				return fmt.Errorf("seal fallback authority: existing seal conflicts with derived authority")
-			}
-			result = authority
-			return nil
-		}
-		if err != sql.ErrNoRows {
-			return fmt.Errorf("seal fallback authority: read existing seal: %w", err)
-		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_fallback_authority_seal
-			(run_id,wait_revision,schema_version,authority,authority_digest) VALUES (?,?,3,?::jsonb,?)`,
-			runID, expectedWaitRevision, string(encoded), digest).Exec(ctx); err != nil {
-			return fmt.Errorf("seal fallback authority: persist seal: %w", err)
+		if err := persistMatchingFallbackAuthoritySeal(ctx, tx, authority); err != nil {
+			return err
 		}
 		result = authority
 		return nil
 	})
 	return result, err == nil, err
+}
+
+// persistMatchingFallbackAuthoritySeal is shared by the receipt-only writer and
+// the atomic evaluation continuation. The authority is always derived by the
+// caller from this transaction's persisted wait and receipts.
+func persistMatchingFallbackAuthoritySeal(ctx context.Context, tx bun.Tx, authority MatchingFallbackSealAuthority) error {
+	encoded, err := json.Marshal(authority)
+	if err != nil {
+		return fmt.Errorf("seal fallback authority: encode authority: %w", err)
+	}
+	digest, err := hex.DecodeString(authority.Digest)
+	if err != nil || len(digest) != sha256.Size {
+		return fmt.Errorf("seal fallback authority: derived digest is invalid")
+	}
+	var existing struct {
+		Schema  int             `bun:"schema_version"`
+		Payload json.RawMessage `bun:"authority"`
+		Digest  []byte          `bun:"authority_digest"`
+	}
+	err = tx.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
+		WHERE run_id=? AND wait_revision=?`, authority.RunID, authority.WaitRevision).Scan(ctx, &existing)
+	if err == nil {
+		existingCanonical, canonicalErr := canonicalMatchingJSON(existing.Payload)
+		newCanonical, newCanonicalErr := canonicalMatchingJSON(encoded)
+		if existing.Schema != matchingFallbackSealAuthoritySchemaVersion || canonicalErr != nil || newCanonicalErr != nil || !bytes.Equal(existingCanonical, newCanonical) || !equalDigest(existing.Digest, digest) {
+			return fmt.Errorf("seal fallback authority: existing seal conflicts with derived authority")
+		}
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("seal fallback authority: read existing seal: %w", err)
+	}
+	if _, err := tx.NewRaw(`INSERT INTO matching_fallback_authority_seal
+		(run_id,wait_revision,schema_version,authority,authority_digest) VALUES (?,?,3,?::jsonb,?)`,
+		authority.RunID, authority.WaitRevision, string(encoded), digest).Exec(ctx); err != nil {
+		return fmt.Errorf("seal fallback authority: persist seal: %w", err)
+	}
+	return nil
 }
 
 // GetMatchingFallbackAuthoritySeal reads only the immutable seal and its

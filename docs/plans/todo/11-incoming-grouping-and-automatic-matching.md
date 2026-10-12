@@ -1369,6 +1369,47 @@ normalization для score в точности. Если по имеющимся
   or activate artistless runtime admission. Next: durable continuation, separate
   immutable provider authority and apply materialization from sealed metadata.
 
+### Continuation/publication integration in progress — 2026-10-12
+
+- Durable seal continuation and frozen publication serialization are implemented
+  but their combined publication increment is not accepted yet. Current review
+  publication is deliberately dormant and unique/apply remains unsupported.
+- Real finite-flow tests now hydrate the last exhausted stage and verify the
+  complete below-threshold edge universe, exact snapshot and no apply work.
+  Source fixes for historical loading, full inventory authentication, reader
+  contracts and SQL header binding are still being verified. No end-to-end PASS
+  or runtime activation is claimed by this progress entry.
+- Runtime wiring must atomically continue terminal fallback waits and recover
+  existing parked parents before generic interrupted-operation failure. Sealed
+  delivery replacement requires separate epoch-fenced recovery, not replay.
+  Activation waits for frozen unique publication/apply and real-process proofs.
+- Treatment of invalidated historical parked waits is an unresolved product
+  question; no visible disposition has been selected or approved here.
+
+### Dormant frozen review publication and apply foundations — 2026-10-12
+
+- Accepted this bounded increment: exact parked-wait continuation atomically
+  seals, advances the cursor and registers one wake. Current authority freshness
+  gates precede replay; manual plans bypass automatic-intent decoding.
+- Frozen serialization and review-only publication authenticate original target,
+  full release-local layout/metadata and complete scored edge universe. Real
+  exhausted/nonempty and no-query PostgreSQL flows publish readable whole-group
+  review snapshots, settle parents and create no apply work. Review positions
+  and assignment evidence are one-based; candidate confidence is the maximum
+  release-profile confidence, not an assignment score.
+- SQL constraints bind all required header fields, target fence 2, automatic
+  authority and original seal digest. Populated rollback is guarded. Negative
+  tests cover forged inventory/edges/authority and stale CAS; continuation replay
+  covers configuration/manual/generation fence changes via fixture mutations.
+- Pure materialization and schema2 apply snapshot builder/validator are accepted
+  foundations only. They preserve selected accepted projection values/provenance,
+  exact track identity, title precedence and credit overrides. Snapshot validation
+  binds selection, execution epoch and original lookup ordinal to sealed input.
+- Independent bounded reviews, primary repeated full `task verify` and diff
+  checks passed. Unique publication, transactional apply child admission, schema2
+  apply worker, provider graph A/B materialization proof, recovery and runtime
+  activation remain outstanding. No full pipeline or plan completion is claimed.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

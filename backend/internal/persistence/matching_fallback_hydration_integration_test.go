@@ -753,15 +753,91 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 			prepared.Authority.RunID != parentID || prepared.Authority.WaitRevision != qualifiedSnapshot.Revision ||
 			prepared.Calculation == nil || prepared.Calculation.InputDigest != calculationReceipt.InputDigest ||
 			prepared.Result.InputDigest != baselinePrepared.Result.InputDigest || prepared.Result.QualifyingEdges == 0 ||
-			prepared.Authority != baselinePrepared.Authority ||
+			!reflect.DeepEqual(prepared.Authority, baselinePrepared.Authority) ||
 			!reflect.DeepEqual(prepared.KernelResult, baselinePrepared.KernelResult) ||
 			!reflect.DeepEqual(prepared.FrozenInventory, baselinePrepared.FrozenInventory) {
 			t.Fatalf("prepare frozen calculation after source rotation: prepared=%+v baseline=%+v exists=%v err=%v", prepared, baselinePrepared, preparedExists, err)
 		}
 		replayedPrepared, preparedExists, err := service.PrepareFrozenFallbackEvaluation(ctx, freshRepository, parentID, qualifiedSnapshot.Revision)
-		if err != nil || !preparedExists || replayedPrepared.Authority != prepared.Authority ||
+		if err != nil || !preparedExists || !reflect.DeepEqual(replayedPrepared.Authority, prepared.Authority) ||
 			!reflect.DeepEqual(replayedPrepared.Result, prepared.Result) || !reflect.DeepEqual(replayedPrepared.KernelResult, prepared.KernelResult) {
 			t.Fatalf("frozen calculation changed on replay after source rotation: first=%+v replay=%+v exists=%v err=%v", prepared, replayedPrepared, preparedExists, err)
+		}
+		publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+		if err != nil {
+			t.Fatalf("serialize actual sealed frozen calculation: %v", err)
+		}
+		if publication.Authority.TargetCaptureDigest != persistedAuthority.Target.CaptureDigest || len(publication.Edges) == 0 {
+			t.Fatalf("serialized target/edge authority is incomplete: authority=%+v edges=%d", publication.Authority, len(publication.Edges))
+		}
+		if !reflect.DeepEqual(publication.Authority.FullEvaluationContext, prepared.Authority.FullEvaluationContext) ||
+			publication.Authority.CalculationStageIndex != prepared.Authority.CalculationStageIndex {
+			t.Fatalf("serialized publication does not retain the sealed calculation context: authority=%+v", publication.Authority)
+		}
+		lookupByRelease := make(map[string]persistence.MatchingFallbackCalculationLookupAuthority, len(prepared.Authority.CalculationLookups))
+		for _, lookup := range prepared.Authority.CalculationLookups {
+			lookupByRelease[lookup.ReleaseID] = lookup
+		}
+		receiptByRequest := make(map[uuid.UUID]persistence.MatchingFallbackLookupReceipt, len(prepared.Authority.CalculationReceipts))
+		for _, receipt := range prepared.Authority.CalculationReceipts {
+			receiptByRequest[receipt.RequestID] = receipt
+		}
+		for _, edge := range publication.Edges {
+			if edge.LookupRequestID == uuid.Nil || len(edge.LookupPayloadSHA) != 64 || len(edge.LookupProjectionSHA) != 64 {
+				t.Fatalf("serialized edge lost persisted lookup receipt authority: %+v", edge)
+			}
+			lookup, lookupFound := lookupByRelease[edge.ReleaseID]
+			receipt, receiptFound := receiptByRequest[edge.LookupRequestID]
+			if !lookupFound || !receiptFound || lookup.RequestID != edge.LookupRequestID || lookup.StageIndex != edge.LookupStageIndex ||
+				!reflect.DeepEqual(lookup.Input, edge.LookupRequestInput) || receipt.PayloadSHA256 != edge.LookupPayloadSHA ||
+				receipt.ProjectionSHA256 != edge.LookupProjectionSHA {
+				t.Fatalf("serialized edge lookup evidence differs from its original release-scoped receipt: edge=%+v lookup=%+v receipt=%+v", edge, lookup, receipt)
+			}
+			canonicalPayload := canonicalFrozenTestJSON(t, receipt.Payload)
+			canonicalProjection := canonicalFrozenTestJSON(t, receipt.AcceptedProjection)
+			payloadDigest := sha256.Sum256(canonicalPayload)
+			projectionDigest := sha256.Sum256(canonicalProjection)
+			if hex.EncodeToString(payloadDigest[:]) != edge.LookupPayloadSHA || hex.EncodeToString(projectionDigest[:]) != edge.LookupProjectionSHA {
+				t.Fatalf("serialized edge lookup hashes do not bind persisted raw payload and accepted projection: %+v", edge)
+			}
+		}
+		// Real-PostgreSQL coordinate proof: the published review inventory carries
+		// one-based coordinates derived from the zero-based kernel layouts, matched
+		// by stable release key and track identity, while the prepared layouts stay
+		// zero-based and the scored edges keep their zero-based kernel coordinates.
+		// Repeated serialization of the same prepared evaluation must be identical.
+		layoutTracks := make(map[string]persistence.MatchingReleaseTrack, len(prepared.Result.ReleaseLayouts))
+		for _, release := range prepared.Result.ReleaseLayouts {
+			for _, track := range release.Tracks {
+				if track.Medium != 0 || track.Position != 0 {
+					t.Fatalf("prepared kernel layout is not zero-based after serialization: release=%s track=%+v", release.ProviderKey, track)
+				}
+				layoutTracks[release.ProviderKey+"\x00"+track.ID.String()] = track
+			}
+		}
+		if len(publication.Inventory.Releases) != len(prepared.Result.ReleaseLayouts) {
+			t.Fatalf("published review inventory does not cover the prepared releases: published=%d prepared=%d", len(publication.Inventory.Releases), len(prepared.Result.ReleaseLayouts))
+		}
+		for _, release := range publication.Inventory.Releases {
+			for _, track := range release.Tracks {
+				layout, ok := layoutTracks[release.ProviderKey+"\x00"+track.ID.String()]
+				if !ok || track.Medium != layout.Medium+1 || track.Position != layout.Position+1 {
+					t.Fatalf("published track coordinate is not the zero-based kernel coordinate plus one: release=%s track=%+v layout=%+v found=%v", release.ProviderKey, track, layout, ok)
+				}
+			}
+		}
+		for _, edge := range publication.Edges {
+			layout, ok := layoutTracks[edge.ReleaseID+"\x00"+edge.ProviderTrackID.String()]
+			if !ok || edge.Medium != layout.Medium || edge.Position != layout.Position {
+				t.Fatalf("serialized edge did not keep its zero-based kernel coordinate: edge=%+v layout=%+v found=%v", edge, layout, ok)
+			}
+		}
+		if prepared.Result.ReleaseLayouts[0].Tracks[0].Medium != 0 || prepared.Result.ReleaseLayouts[0].Tracks[0].Position != 0 {
+			t.Fatalf("serialization mutated the prepared kernel layout: %+v", prepared.Result.ReleaseLayouts[0].Tracks[0])
+		}
+		replayedPublication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+		if err != nil || !reflect.DeepEqual(replayedPublication, publication) {
+			t.Fatalf("repeated serialization of the same prepared evaluation changed the publication: err=%v replay=%+v first=%+v", err, replayedPublication, publication)
 		}
 		if err := tamperLegacyFallbackSearchPayloadForTest(ctx, fixture.db, parentID, complete.Revision); err != nil {
 			t.Fatalf("tamper legacy search payload fixture: %v", err)
@@ -997,6 +1073,21 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	if beforeReplayJobs != afterReplayJobs || beforeReplayDeliveries != afterReplayDeliveries {
 		t.Fatalf("stale replay created duplicate work: jobs=%d/%d deliveries=%d/%d", beforeReplayJobs, afterReplayJobs, beforeReplayDeliveries, afterReplayDeliveries)
 	}
+}
+
+func canonicalFrozenTestJSON(t *testing.T, raw json.RawMessage) []byte {
+	t.Helper()
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatalf("decode canonical frozen fixture JSON: %v", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode canonical frozen fixture JSON: %v", err)
+	}
+	return canonical
 }
 
 func rewriteFallbackCalculationAsLegacyV1ForTest(t *testing.T, ctx context.Context, database *bun.DB, runID uuid.UUID, revision int64, preserveCalculationTuple bool) {

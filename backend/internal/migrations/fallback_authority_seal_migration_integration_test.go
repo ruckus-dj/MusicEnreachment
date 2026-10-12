@@ -4,6 +4,7 @@ package migrations_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
@@ -29,8 +30,8 @@ func TestFallbackAuthoritySealMigrationRollbackRefusesStoredSealWithPostgreSQL(t
 		t.Fatalf("insert stored authority seal: %v", err)
 	}
 
-	if err := rollbackFallbackAuthoritySealMigration(t, ctx, database, collection); err == nil {
-		t.Fatal("rollback removed a populated fallback authority seal table")
+	if err := rollbackFallbackAuthoritySealMigration(t, ctx, database, collection); err == nil || !strings.Contains(err.Error(), "cannot remove populated matching fallback authority seals") {
+		t.Fatalf("rollback error = %v, want populated-seal safety guard", err)
 	}
 	var retained int
 	if err := database.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=1`, runID).Scan(ctx, &retained); err != nil || retained != 1 {
