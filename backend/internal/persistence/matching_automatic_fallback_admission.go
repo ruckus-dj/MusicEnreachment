@@ -285,6 +285,9 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id,request_id,cache_key) VALUES (?,?,?)`, admission.Parent.ID, provider.ID, *provider.ProviderCacheKey).Exec(ctx); err != nil {
 				return err
 			}
+			if err := registerFallbackRequest(ctx, tx, admission.Parent.ID, 0, "search", sourceID, configuration, provider); err != nil {
+				return err
+			}
 			providerInputs = append(providerInputs, MatchingAcquisitionProviderRequest{OperationID: provider.ID, Kind: provider.Kind, CacheKey: *provider.ProviderCacheKey, Input: append(json.RawMessage(nil), provider.InputSnapshot...)})
 		}
 		intent := MatchingAcquisitionIntent{SchemaVersion: 3, FenceVersion: 2, GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planHash[:]), CaptureDigest: metadataDigest, CapturedMembers: metadata, PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest, FallbackQueryPlan: planBytes, Targets: []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, InitialProviderInputs: providerInputs}

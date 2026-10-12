@@ -51,6 +51,7 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 	var intentBytes []byte
 	var runSourceID uuid.UUID
 	var runConfigurationIdentity string
+	var registration fallbackRequestRegistration
 	err := database.NewRaw(`SELECT receipt.run_id,receipt.request_id,receipt.stage_index,
 		receipt.provider_source_id,receipt.configuration_identity,receipt.cache_key,
 		receipt.request_input,receipt.payload::text,receipt.payload_sha256,receipt.cache_revision,
@@ -97,6 +98,12 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 		runSourceID != receipt.ProviderSourceID || runConfigurationIdentity != receipt.ConfigurationIdentity ||
 		intent.InitialProviderInputs[0].Kind != "provider_release_search" && intent.InitialProviderInputs[0].Kind != "provider_recording_search" {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved request scope is invalid")
+	}
+	registration, err = loadFallbackRequestRegistration(ctx, database, runID, receipt.StageIndex, "search", requestID)
+	if err != nil || registration.ProviderSourceID != receipt.ProviderSourceID || registration.ConfigurationIdentity != receipt.ConfigurationIdentity ||
+		validateFallbackRequestRegistration(registration, "search", intent, runID, requestID, receipt.ProviderSourceID, receipt.ConfigurationIdentity, intent.InitialProviderInputs[0].Kind, receipt.CacheKey, receipt.RequestInput) != nil ||
+		!fallbackStageMatchesRequest(intent, "search", intent.InitialProviderInputs[0].Kind, receipt.RequestInput) {
+		return nil, fmt.Errorf("read matching fallback search receipt: immutable request registration is unavailable or invalid")
 	}
 	receipt.PayloadSHA256 = hex.EncodeToString(digest)
 	return receipt, nil
@@ -160,23 +167,28 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	var configurationIdentity, cacheKey string
 	var inputBytes []byte
 	var operationKind string
+	var registered bool
 	err := tx.NewRaw(`SELECT run.id,acquisition.intent,run.provider_source_id,run.provider_configuration_identity,
-		dependency.cache_key,operation.input_snapshot,operation.kind
+		dependency.cache_key,operation.input_snapshot,operation.kind,
+		EXISTS(SELECT 1 FROM matching_fallback_request_registration registration WHERE registration.run_id=run.id AND registration.stage_index=0 AND registration.role='search' AND registration.request_id=operation.id)
 		FROM matching_run run
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
 		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=run.id AND dependency.request_id=?
 		JOIN operation ON operation.id=dependency.request_id
 		WHERE run.id=dependency.parent_run_id AND operation.id=?
 		FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
-		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes, &operationKind)
+		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes, &operationKind, &registered)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // This operation is not the registered initial automatic fallback dependency.
 	}
 	if err != nil {
 		return err
 	}
-	if operationKind != "provider_release_search" && operationKind != "provider_recording_search" {
+	if !registered && operationKind != "provider_release_search" && operationKind != "provider_recording_search" {
 		return nil // Lookup receipts are captured by the independent lookup manifest.
+	}
+	if !registered || operationKind != "provider_release_search" && operationKind != "provider_recording_search" {
+		return errors.New("accepted fallback response has no immutable request registration")
 	}
 	var intent MatchingAcquisitionIntent
 	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion ||
@@ -194,6 +206,11 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 		ProviderCacheKey: fallbackStringPointer(cacheKey),
 	}); err != nil {
 		return fmt.Errorf("accepted fallback response request scope is invalid: %w", err)
+	}
+	registration, err := loadFallbackRequestRegistration(ctx, tx, runID, 0, "search", fence.OperationID)
+	if err != nil || registration.ProviderSourceID != sourceID || registration.ConfigurationIdentity != configurationIdentity ||
+		validateFallbackRequestRegistration(registration, "search", intent, runID, fence.OperationID, sourceID, configurationIdentity, operationKind, cacheKey, inputBytes) != nil {
+		return errors.New("accepted fallback response immutable request registration is invalid")
 	}
 	canonicalInput, err := canonicalMatchingJSON(inputBytes)
 	if err != nil || !matchingJSONEqual(canonicalInput, intent.InitialProviderInputs[0].Input) {

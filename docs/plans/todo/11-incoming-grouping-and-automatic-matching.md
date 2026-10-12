@@ -1225,6 +1225,18 @@ normalization для score в точности. Если по имеющимся
   test now waits for its durable continuation child rather than race parent wake.
   Finite next-stage routing, final sealing and runtime fallback remain outstanding.
 
+### Immutable fallback request-registration foundation — 2026-10-12
+
+- Fresh stage-zero search and every derived lookup register immutable request
+  authority atomically with operations/dependencies/jobs. Receipt capture fails
+  closed without valid source, descriptor, input and digest binding.
+- PostgreSQL tests cover search/12-lookup counts, empty-plan absence and rollback;
+  validators reject wrong kind/input/hash/source/configuration/run/descriptor.
+  Migration guards registration mutation and populated rollback.
+- Independent review and repeated primary full `task verify` passed. Approval
+  covers the stage-zero foundation only; later-stage execution, applicability
+  advancement, sealing and runtime activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

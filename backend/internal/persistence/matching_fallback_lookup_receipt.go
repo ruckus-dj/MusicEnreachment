@@ -109,6 +109,11 @@ func getMatchingFallbackLookupReceipt(ctx context.Context, database bun.IDB, run
 		!matchingJSONEqual(operationInput, r.RequestInput) {
 		return nil, fmt.Errorf("read matching fallback lookup receipt: immutable source scope is invalid")
 	}
+	registration, registrationErr := loadFallbackRequestRegistration(ctx, database, runID, r.StageIndex, "lookup", requestID)
+	if registrationErr != nil || registration.ProviderSourceID != r.ProviderSourceID || registration.ConfigurationIdentity != r.ConfigurationIdentity ||
+		validateFallbackRequestRegistration(registration, "lookup", intent, runID, requestID, r.ProviderSourceID, r.ConfigurationIdentity, operationKind, r.CacheKey, operationInput) != nil {
+		return nil, fmt.Errorf("read matching fallback lookup receipt: immutable request registration is unavailable or invalid")
+	}
 	if err := validateFallbackLookupRunAuthority(ctx, database, runID, intent); err != nil {
 		return nil, fmt.Errorf("read matching fallback lookup receipt: %w", err)
 	}
@@ -244,20 +249,28 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 	var inputBytes []byte
 	var operationSource uuid.UUID
 	var operationIdentity, operationCacheKey, operationKind string
+	var registered bool
 	err := tx.NewRaw(`SELECT run.id,run.provider_source_id,run.provider_configuration_identity,
 		dependency.cache_key,operation.input_snapshot,operation.provider_source_id,operation.provider_configuration_identity,
-		operation.provider_cache_key,operation.kind FROM matching_run run
+		operation.provider_cache_key,operation.kind,EXISTS(SELECT 1 FROM matching_fallback_request_registration registration
+		WHERE registration.run_id=run.id AND registration.stage_index=0 AND registration.role='lookup' AND registration.request_id=operation.id) FROM matching_run run
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
 		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=run.id AND dependency.request_id=?
 	JOIN operation ON operation.id=dependency.request_id
 	WHERE run.id=dependency.parent_run_id AND acquisition.current_phase='fallback_release_hydration'
-	AND operation.id=? AND operation.kind='provider_release_lookup' FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
-		Scan(ctx, &runID, &sourceID, &identity, &cacheKey, &inputBytes, &operationSource, &operationIdentity, &operationCacheKey, &operationKind)
+	AND operation.id=? FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
+		Scan(ctx, &runID, &sourceID, &identity, &cacheKey, &inputBytes, &operationSource, &operationIdentity, &operationCacheKey, &operationKind, &registered)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if !registered && operationKind != "provider_release_lookup" {
+		return nil
+	}
+	if !registered || operationKind != "provider_release_lookup" {
+		return errors.New("accepted fallback lookup has no valid immutable request registration")
 	}
 	var request struct {
 		SchemaVersion int    `json:"schema_version"`
@@ -279,6 +292,11 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 	}
 	if err := validateFallbackLookupRunAuthority(ctx, tx, runID, intent); err != nil {
 		return fmt.Errorf("accepted fallback lookup run authority is invalid: %w", err)
+	}
+	registration, registrationErr := loadFallbackRequestRegistration(ctx, tx, runID, 0, "lookup", fence.OperationID)
+	if registrationErr != nil || registration.ProviderSourceID != sourceID || registration.ConfigurationIdentity != identity ||
+		validateFallbackRequestRegistration(registration, "lookup", intent, runID, fence.OperationID, sourceID, identity, operationKind, cacheKey, inputBytes) != nil {
+		return errors.New("accepted fallback lookup registration is invalid")
 	}
 	var manifest struct {
 		Input  []byte `bun:"input"`

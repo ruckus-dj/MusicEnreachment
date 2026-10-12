@@ -1231,6 +1231,11 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 			if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id, request_id, cache_key) VALUES (?, ?, ?)`, operationID, child.Operation.ID, *child.Operation.ProviderCacheKey).Exec(ctx); err != nil {
 				return fmt.Errorf("advance matching acquisition: register provider child: %w", err)
 			}
+			if fallbackProof != nil {
+				if err := registerFallbackRequest(ctx, tx, operationID, 0, "lookup", sourceFence.SourceID, sourceFence.Identity, child.Operation); err != nil {
+					return fmt.Errorf("advance matching acquisition: register fallback lookup: %w", err)
+				}
+			}
 		}
 		result, err := tx.NewRaw(`UPDATE matching_acquisition SET current_phase=?, revision=?
 			WHERE run_id=? AND revision=?`, phase.Phase, phase.Revision, operationID, expectedRevision).Exec(ctx)

@@ -181,6 +181,15 @@ func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.Raw
 	if err != nil {
 		t.Fatalf("admit automatic fallback run: %v", err)
 	}
+	var registrations int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, parentID).Scan(ctx, &registrations); err != nil || registrations != 1 {
+		t.Fatalf("initial fallback request registrations=%d want=1; err=%v", registrations, err)
+	}
+	if _, err := fixture.db.NewRaw(`INSERT INTO matching_fallback_request_registration
+		(run_id,stage_index,role,request_id,provider_source_id,configuration_identity,kind,cache_key,canonical_input,input_sha256)
+		VALUES (?,0,'search',?,?,?,'provider_release_lookup','invalid', '{}'::jsonb, decode(repeat('00',32),'hex'))`, parentID, uuid.New(), source.ID, config.Identity).Exec(ctx); err == nil {
+		t.Fatal("database accepted a lookup operation as a fallback search registration")
+	}
 	child, err = fixture.repository.GetOperation(ctx, childID)
 	if err != nil || child.RiverJobID == nil {
 		t.Fatalf("read registered fallback child: operation=%+v err=%v", child, err)
@@ -218,7 +227,7 @@ func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.Raw
 	acquisition := service.NewMatchingAcquisitionService(fixture.repository,
 		service.NewProviderFetchService(registry, factory, cache), riverInserter)
 	wakeCallsBefore := riverInserter.wakeCalls
-	var beforeConsumed, beforeUnconsumed, beforeRunJobs, beforeDependencies, beforeOperations int
+	var beforeConsumed, beforeUnconsumed, beforeRunJobs, beforeDependencies, beforeOperations, beforeRegistrations int
 	if err := fixture.db.NewRaw(`SELECT count(*) FILTER (WHERE consumed_at IS NOT NULL), count(*) FILTER (WHERE consumed_at IS NULL) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &beforeConsumed, &beforeUnconsumed); err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +238,9 @@ func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.Raw
 		t.Fatal(err)
 	}
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &beforeOperations); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, parentID).Scan(ctx, &beforeRegistrations); err != nil {
 		t.Fatal(err)
 	}
 	riverInserter.failWake = !positive
@@ -244,7 +256,7 @@ func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.Raw
 	if err != nil || !exists || snapshot.Phase != persistence.MatchingAcquisitionFallbackSearch || snapshot.Revision != 0 {
 		t.Fatalf("failed handoff changed acquisition snapshot=%+v exists=%v err=%v", snapshot, exists, err)
 	}
-	var consumed, unconsumed, runJobs, dependencies int
+	var consumed, unconsumed, runJobs, dependencies, registrationsAfter int
 	if err := fixture.db.NewRaw(`SELECT count(*) FILTER (WHERE consumed_at IS NOT NULL), count(*) FILTER (WHERE consumed_at IS NULL) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &consumed, &unconsumed); err != nil {
 		t.Fatal(err)
 	}
@@ -258,8 +270,11 @@ func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.Raw
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &operationsCount); err != nil {
 		t.Fatal(err)
 	}
-	if consumed != beforeConsumed || unconsumed != beforeUnconsumed || dependencies != beforeDependencies || runJobs != beforeRunJobs || operationsCount != beforeOperations {
-		t.Fatalf("failed handoff did not roll back source state: before=%d/%d/%d/%d/%d after=%d/%d/%d/%d/%d", beforeConsumed, beforeUnconsumed, beforeDependencies, beforeRunJobs, beforeOperations, consumed, unconsumed, dependencies, runJobs, operationsCount)
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, parentID).Scan(ctx, &registrationsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if consumed != beforeConsumed || unconsumed != beforeUnconsumed || dependencies != beforeDependencies || runJobs != beforeRunJobs || operationsCount != beforeOperations || registrationsAfter != beforeRegistrations {
+		t.Fatalf("failed handoff did not roll back source state: before=%d/%d/%d/%d/%d/%d after=%d/%d/%d/%d/%d/%d", beforeConsumed, beforeUnconsumed, beforeDependencies, beforeRunJobs, beforeOperations, beforeRegistrations, consumed, unconsumed, dependencies, runJobs, operationsCount, registrationsAfter)
 	}
 
 	// Change the live cache after receipt capture. Retrying must still derive
@@ -392,9 +407,12 @@ func assertPositiveFallbackHydration(
 	if err := json.Unmarshal(snapshot.Output, &output); err != nil || len(output.Lookups) != len(wantIDs) {
 		t.Fatalf("fallback lookup output=%s count=%d err=%v", snapshot.Output, len(output.Lookups), err)
 	}
-	var dependencies int
+	var dependencies, registrations int
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, runID).Scan(ctx, &dependencies); err != nil || dependencies != 13 {
 		t.Fatalf("hydration dependencies=%d want initial plus 12 children; err=%v", dependencies, err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, runID).Scan(ctx, &registrations); err != nil || registrations != 13 {
+		t.Fatalf("hydration request registrations=%d want initial plus 12 children; err=%v", registrations, err)
 	}
 	for index, lookup := range output.Lookups {
 		if lookup.ReleaseID != wantIDs[index] || lookup.RequestID == uuid.Nil || lookup.CacheKey != "release-lookup:"+wantIDs[index] {

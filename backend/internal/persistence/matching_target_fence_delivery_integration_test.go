@@ -303,6 +303,10 @@ func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgr
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, manualID).Scan(fixture.ctx, &childCount); err != nil || childCount != 0 {
 		t.Fatalf("empty plan registered provider child: count=%d err=%v", childCount, err)
 	}
+	var registrationCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, manualID).Scan(fixture.ctx, &registrationCount); err != nil || registrationCount != 0 {
+		t.Fatalf("empty plan registered fallback request: count=%d err=%v", registrationCount, err)
+	}
 	if _, err := fixture.db.NewRaw(`UPDATE matching_acquisition SET intent=jsonb_set(intent,'{fallback_query_plan,stages,0,query}',to_jsonb('forged'::text)) WHERE run_id=?`, first.OriginalRunID).Exec(fixture.ctx); err != nil {
 		t.Fatalf("forge saved fallback plan for reader test: %v", err)
 	}
