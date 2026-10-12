@@ -61,6 +61,14 @@ type matchingAcquisitionCatalogPhaseReader interface {
 	GetMatchingAcquisitionCatalogPhases(context.Context, uuid.UUID) ([]persistence.MatchingAcquisitionPhase, error)
 }
 
+type matchingFallbackSearchReceiptReader interface {
+	GetMatchingFallbackSearchReceipt(context.Context, uuid.UUID, uuid.UUID) (*persistence.MatchingFallbackSearchReceipt, error)
+}
+
+type matchingFallbackSearchAdvancer interface {
+	AdvanceFallbackSearchForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackSearchProof, []persistence.MatchingProviderRequest, json.RawMessage) (bool, error)
+}
+
 type matchingDeliveryReleaseHydrationStarter interface {
 	StartMatchingReleaseHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error)
 }
@@ -169,11 +177,17 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 	if snapshot.FailedProviderDependency {
 		return false, true, ErrMatchingAcquisitionProviderFailed
 	}
+	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == "fallback_search" {
+		return acquisition.advanceFallbackSearch(ctx, snapshot, runID, attempt, riverJobID, claim)
+	}
 	if snapshot.Phase == "catalog_ready" {
 		return acquisition.rankAcceptedCatalog(ctx, snapshot, runID, attempt, riverJobID, claim)
 	}
 	if snapshot.Phase == persistence.MatchingAcquisitionReleaseHydration {
 		return acquisition.sealReleaseHydration(ctx, snapshot, runID, attempt, riverJobID, claim)
+	}
+	if snapshot.Phase == persistence.MatchingAcquisitionFallbackApplicability {
+		return false, true, nil
 	}
 	if snapshot.Phase == "admitted" {
 		return acquisition.startArtistBrowse(ctx, snapshot, runID, attempt, riverJobID, claim)
@@ -182,6 +196,121 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 		return false, true, fmt.Errorf("matching acquisition phase is unsupported")
 	}
 	return acquisition.advanceCatalogPage(ctx, snapshot, runID, attempt, riverJobID, claim)
+}
+
+// advanceFallbackSearch derives only release lookup requests from the immutable
+// receipt for stage zero. Ranking and applicability remain later engine stages.
+func (acquisition *MatchingAcquisitionService) advanceFallbackSearch(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
+	if len(snapshot.Intent.InitialProviderInputs) != 1 {
+		return false, true, fmt.Errorf("saved fallback search intent is invalid")
+	}
+	initial := snapshot.Intent.InitialProviderInputs[0]
+	reader, ok := acquisition.repository.(matchingFallbackSearchReceiptReader)
+	if !ok {
+		return false, true, fmt.Errorf("fallback search receipt reader is unavailable")
+	}
+	receipt, err := reader.GetMatchingFallbackSearchReceipt(ctx, runID, initial.OperationID)
+	if err != nil {
+		return false, true, err
+	}
+	if receipt == nil || receipt.StageIndex != 0 || receipt.RunID != runID || receipt.RequestID != initial.OperationID || receipt.CacheKey != initial.CacheKey {
+		return false, true, fmt.Errorf("immutable fallback search receipt is unavailable or mismatched")
+	}
+	ids, manifest, err := fallbackSearchManifest(initial.Kind, receipt.Payload)
+	if err != nil {
+		return false, true, fmt.Errorf("accepted fallback search response is invalid: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
+	}
+	children := make([]persistence.MatchingProviderRequest, 0, len(ids))
+	for _, id := range ids {
+		child, err := acquisition.providers.PrepareOperation(ctx, "release_lookup", id, 0, 0, false)
+		if err != nil {
+			return false, true, err
+		}
+		if child.ProviderCacheKey == nil {
+			return false, true, fmt.Errorf("prepared release lookup has no cache scope")
+		}
+		children = append(children, persistence.MatchingProviderRequest{Operation: child, Args: ProviderFetchOperationArgs{OperationID: child.ID}})
+	}
+	advancer, ok := acquisition.repository.(matchingFallbackSearchAdvancer)
+	if !ok {
+		return false, true, fmt.Errorf("fallback search delivery persistence is unavailable")
+	}
+	changed, err := advancer.AdvanceFallbackSearchForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision,
+		persistence.MatchingFallbackSearchProof{StageIndex: 0, RequestID: receipt.RequestID, PayloadSHA256: receipt.PayloadSHA256}, children, manifest)
+	return changed, true, err
+}
+
+// fallbackSearchReleaseIDs validates the MusicBrainz search envelope and returns
+// every distinct release identity, not merely the number of recording hits.
+func fallbackSearchManifest(kind string, payload json.RawMessage) ([]string, json.RawMessage, error) {
+	if len(payload) == 0 {
+		return nil, nil, fmt.Errorf("payload is missing")
+	}
+	var envelope struct {
+		Count      *int `json:"count"`
+		Offset     *int `json:"offset"`
+		Recordings *[]struct {
+			ID       string `json:"id"`
+			Releases *[]struct {
+				ID string `json:"id"`
+			} `json:"releases"`
+		} `json:"recordings"`
+		Releases *[]struct {
+			ID string `json:"id"`
+		} `json:"releases"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Count == nil || envelope.Offset == nil || *envelope.Count < 0 || *envelope.Offset != 0 {
+		return nil, nil, fmt.Errorf("search envelope is malformed")
+	}
+	ids := make(map[string]struct{})
+	add := func(value string) error {
+		id, err := canonicalMBID(value)
+		if err != nil {
+			return fmt.Errorf("search result contains an invalid MBID")
+		}
+		ids[id] = struct{}{}
+		return nil
+	}
+	switch kind {
+	case "provider_release_search":
+		if envelope.Releases == nil || len(*envelope.Releases) > 10 || *envelope.Count < len(*envelope.Releases) {
+			return nil, nil, fmt.Errorf("release search result list is invalid")
+		}
+		for _, hit := range *envelope.Releases {
+			if err := add(hit.ID); err != nil {
+				return nil, nil, err
+			}
+		}
+	case "provider_recording_search":
+		if envelope.Recordings == nil || len(*envelope.Recordings) > 10 || *envelope.Count < len(*envelope.Recordings) {
+			return nil, nil, fmt.Errorf("recording search result list is invalid")
+		}
+		for _, hit := range *envelope.Recordings {
+			if _, err := canonicalMBID(hit.ID); err != nil {
+				return nil, nil, fmt.Errorf("recording result identity is invalid")
+			}
+			if hit.Releases == nil {
+				return nil, nil, fmt.Errorf("recording release list is missing")
+			}
+			for _, release := range *hit.Releases {
+				if err := add(release.ID); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported search operation")
+	}
+	result := make([]string, 0, len(ids))
+	for id := range ids {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	manifest, err := json.Marshal(map[string]any{"kind": kind, "accepted_hits": json.RawMessage(payload), "release_ids": result})
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, manifest, nil
 }
 
 func (acquisition *MatchingAcquisitionService) sealReleaseHydration(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {

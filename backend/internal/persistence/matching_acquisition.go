@@ -22,9 +22,65 @@ const matchingAutomaticAcquisitionIntentVersion = 2
 const matchingAutomaticFallbackAcquisitionIntentVersion = 3
 
 const (
-	MatchingAcquisitionArtistCatalogPage = "artist_catalog_page"
-	MatchingAcquisitionReleaseHydration  = "release_hydration"
+	MatchingAcquisitionArtistCatalogPage     = "artist_catalog_page"
+	MatchingAcquisitionReleaseHydration      = "release_hydration"
+	MatchingAcquisitionFallbackHydration     = "fallback_release_hydration"
+	MatchingAcquisitionFallbackSearch        = "fallback_search"
+	MatchingAcquisitionFallbackApplicability = "fallback_applicability"
 )
+
+type MatchingFallbackSearchProof struct {
+	StageIndex    int
+	RequestID     uuid.UUID
+	PayloadSHA256 string
+}
+
+// AdvanceFallbackSearchForDelivery atomically consumes the accepted stage-zero
+// fallback search delivery and admits only its derived release lookups.
+func (repository *SetupManagerRepository) AdvanceFallbackSearchForDelivery(
+	ctx context.Context, client RiverInserter, runID uuid.UUID, attempt int, riverJobID int64,
+	claim MatchingDeliveryClaim, expectedRevision int64, proof MatchingFallbackSearchProof,
+	children []MatchingProviderRequest, manifest json.RawMessage,
+) (bool, error) {
+	if proof.StageIndex != 0 || proof.RequestID == uuid.Nil || len(proof.PayloadSHA256) != sha256.Size*2 {
+		return false, fmt.Errorf("advance fallback search: invalid accepted-search proof")
+	}
+	snapshot, exists, err := repository.GetMatchingAcquisition(ctx, runID)
+	if err != nil || !exists {
+		return false, err
+	}
+	if snapshot.Intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || snapshot.Phase != MatchingAcquisitionFallbackSearch || snapshot.Revision != expectedRevision ||
+		len(snapshot.Intent.InitialProviderInputs) != 1 || snapshot.Intent.InitialProviderInputs[0].OperationID != proof.RequestID {
+		return false, fmt.Errorf("advance fallback search: initial fallback phase or request is invalid")
+	}
+	ids := make([]string, 0, len(children))
+	lookups := make([]map[string]any, 0, len(children))
+	for _, child := range children {
+		if child.Operation == nil || child.Operation.ProviderCacheKey == nil {
+			return false, fmt.Errorf("advance fallback search: prepared lookup is incomplete")
+		}
+		var input struct {
+			MBID string `json:"mbid"`
+		}
+		if json.Unmarshal(child.Operation.InputSnapshot, &input) != nil {
+			return false, fmt.Errorf("advance fallback search: lookup intent is invalid")
+		}
+		ids = append(ids, input.MBID)
+		lookups = append(lookups, map[string]any{"release_id": input.MBID, "request_id": child.Operation.ID, "cache_key": *child.Operation.ProviderCacheKey})
+	}
+	if len(manifest) == 0 || !json.Valid(manifest) {
+		return false, fmt.Errorf("advance fallback search: accepted search manifest is invalid")
+	}
+	input, _ := json.Marshal(map[string]any{"release_ids": ids, "search_manifest": manifest})
+	output, _ := json.Marshal(map[string]any{"lookups": lookups})
+	provenance, _ := json.Marshal([]matchingAcquisitionResponseProvenance{{RequestID: proof.RequestID, CacheKey: snapshot.Intent.InitialProviderInputs[0].CacheKey, PayloadSHA: proof.PayloadSHA256}})
+	nextPhase := MatchingAcquisitionFallbackHydration
+	if len(ids) == 0 {
+		nextPhase = MatchingAcquisitionFallbackApplicability
+	}
+	phase := MatchingAcquisitionPhase{Revision: expectedRevision + 1, Phase: nextPhase, Input: input, Output: output, ResponseProvenance: provenance}
+	return repository.advanceMatchingAcquisitionForDelivery(ctx, client, runID, attempt, riverJobID, claim, expectedRevision, phase, children, &proof)
+}
 
 // StartMatchingReleaseHydration atomically records an explicit catalog shortlist
 // and admits its release-lookup children. It is deliberately separate from the
@@ -796,6 +852,21 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 	phase MatchingAcquisitionPhase,
 	children []MatchingProviderRequest,
 ) (bool, error) {
+	return repository.advanceMatchingAcquisitionForDelivery(ctx, client, operationID, attempt, riverJobID, claim, expectedRevision, phase, children, nil)
+}
+
+func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
+	ctx context.Context,
+	client RiverInserter,
+	operationID uuid.UUID,
+	attempt int,
+	riverJobID int64,
+	claim MatchingDeliveryClaim,
+	expectedRevision int64,
+	phase MatchingAcquisitionPhase,
+	children []MatchingProviderRequest,
+	fallbackProof *MatchingFallbackSearchProof,
+) (bool, error) {
 	if client == nil || operationID == uuid.Nil || attempt < 1 || riverJobID < 1 || claim.ExecutionEpoch < 1 || claim.RiverAttempt < 1 ||
 		expectedRevision < 0 || phase.Revision != expectedRevision+1 || phase.Phase == "" {
 		return false, fmt.Errorf("advance matching acquisition: invalid transition fence")
@@ -940,7 +1011,36 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 		if previous.Phase != acquisition.Phase {
 			return fmt.Errorf("advance matching acquisition: saved phase cursor is inconsistent")
 		}
-		if acquisition.Phase == "admitted" {
+		if fallbackProof != nil {
+			if acquisition.Version != matchingAutomaticFallbackAcquisitionIntentVersion || acquisition.Phase != MatchingAcquisitionFallbackSearch ||
+				fallbackProof.StageIndex != 0 || provenance[0].RequestID != fallbackProof.RequestID || provenance[0].PayloadSHA != fallbackProof.PayloadSHA256 {
+				return fmt.Errorf("advance matching acquisition: fallback proof does not match the initial phase")
+			}
+			receipt, err := getMatchingFallbackSearchReceipt(ctx, tx, operationID, fallbackProof.RequestID)
+			if err != nil || receipt == nil || receipt.StageIndex != 0 || receipt.PayloadSHA256 != fallbackProof.PayloadSHA256 || receipt.CacheKey != provenance[0].CacheKey {
+				return fmt.Errorf("advance matching acquisition: immutable fallback search receipt does not match proof")
+			}
+			if err := validateFallbackHydrationChildren(children, sourceFence, intent, phase); err != nil {
+				return err
+			}
+			derived, deriveErr := fallbackReceiptReleaseIDs(intent.InitialProviderInputs[0].Kind, receipt.Payload)
+			var requested struct {
+				ReleaseIDs []string        `json:"release_ids"`
+				Manifest   json.RawMessage `json:"search_manifest"`
+			}
+			if deriveErr != nil || json.Unmarshal(phase.Input, &requested) != nil || !equalStringSlices(derived, requested.ReleaseIDs) {
+				return fmt.Errorf("advance matching acquisition: lookup set differs from accepted fallback response")
+			}
+			var manifest struct {
+				Kind         string          `json:"kind"`
+				AcceptedHits json.RawMessage `json:"accepted_hits"`
+				ReleaseIDs   []string        `json:"release_ids"`
+			}
+			if json.Unmarshal(requested.Manifest, &manifest) != nil || manifest.Kind != intent.InitialProviderInputs[0].Kind ||
+				!equalStringSlices(manifest.ReleaseIDs, derived) || !matchingJSONEqual(manifest.AcceptedHits, receipt.Payload) {
+				return fmt.Errorf("advance matching acquisition: fallback manifest differs from accepted receipt")
+			}
+		} else if acquisition.Phase == "admitted" {
 			var input struct {
 				Offset int `json:"offset"`
 			}
@@ -982,11 +1082,24 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 			}
 		}
 		for _, response := range provenance {
-			kind, payload, err := validateMatchingAcquisitionResponse(ctx, tx, operationID, response)
+			kind, payload, err := "", json.RawMessage(nil), error(nil)
+			if fallbackProof != nil {
+				receipt, receiptErr := getMatchingFallbackSearchReceipt(ctx, tx, operationID, response.RequestID)
+				if receiptErr != nil || receipt == nil || receipt.PayloadSHA256 != response.PayloadSHA {
+					return fmt.Errorf("advance matching acquisition: fallback proof receipt is invalid")
+				}
+				kind, payload = intent.InitialProviderInputs[0].Kind, receipt.Payload
+			} else {
+				kind, payload, err = validateMatchingAcquisitionResponse(ctx, tx, operationID, response)
+			}
 			if err != nil {
 				return err
 			}
-			if acquisition.Phase == "admitted" {
+			if fallbackProof != nil {
+				if kind != "provider_release_search" && kind != "provider_recording_search" {
+					return fmt.Errorf("advance matching acquisition: initial fallback request kind is invalid")
+				}
+			} else if acquisition.Phase == "admitted" {
 				if kind != "provider_artist_search" || !responseIsTopArtist(payload, phase.Output) {
 					return fmt.Errorf("advance matching acquisition: first browse target is not the top artist from accepted search")
 				}
@@ -1000,7 +1113,13 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 		if err := json.Unmarshal(phase.Output, &phaseOutput); err != nil {
 			return fmt.Errorf("advance matching acquisition: decode page completion state: %w", err)
 		}
-		if phaseOutput.Complete {
+		if fallbackProof != nil {
+			// The initial fallback handoff is intentionally a lookup-only stage;
+			// later applicability, scoring, and sealing are separate transitions.
+			if (len(children) == 0 && phase.Phase != MatchingAcquisitionFallbackApplicability) || (len(children) > 0 && phase.Phase != MatchingAcquisitionFallbackHydration) {
+				return fmt.Errorf("advance matching acquisition: fallback handoff phase does not match its release set")
+			}
+		} else if phaseOutput.Complete {
 			if phase.Phase != "catalog_ready" || len(children) != 0 || acquisition.Phase != MatchingAcquisitionArtistCatalogPage {
 				return fmt.Errorf("advance matching acquisition: completed catalog page must enter catalog_ready without children")
 			}
@@ -1042,7 +1161,8 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 			return fmt.Errorf("advance matching acquisition: parent delivery is no longer registered")
 		}
 		runState, operationStage := "waiting_provider", "waiting_provider"
-		if phase.Phase == "catalog_ready" {
+		switch phase.Phase {
+		case "catalog_ready":
 			inserted, err := client.InsertTx(ctx, tx.Tx, MatchingEvaluationWakeArgs{OperationID: operationID}, nil)
 			if err != nil {
 				return fmt.Errorf("advance matching acquisition: enqueue catalog evaluation wake: %w", err)
@@ -1055,6 +1175,18 @@ func (repository *SetupManagerRepository) AdvanceMatchingAcquisitionForDelivery(
 				return fmt.Errorf("advance matching acquisition: register catalog evaluation wake: %w", err)
 			}
 			runState, operationStage = "queued", "ranking_pending"
+		case MatchingAcquisitionFallbackApplicability:
+			inserted, err := client.InsertTx(ctx, tx.Tx, MatchingEvaluationWakeArgs{OperationID: operationID}, nil)
+			if err != nil {
+				return fmt.Errorf("advance matching acquisition: enqueue fallback applicability wake: %w", err)
+			}
+			if inserted == nil || inserted.Job == nil || inserted.Job.ID < 1 {
+				return fmt.Errorf("advance matching acquisition: fallback applicability wake has no River job")
+			}
+			if _, err := tx.NewRaw(`INSERT INTO matching_delivery(run_id, river_job_id, operation_attempt) VALUES (?, ?, ?)`, operationID, inserted.Job.ID, attempt).Exec(ctx); err != nil {
+				return fmt.Errorf("advance matching acquisition: register fallback applicability wake: %w", err)
+			}
+			runState, operationStage = "queued", "applicability_pending"
 		}
 		if _, err := tx.NewRaw(`UPDATE matching_run SET state=?, active_river_job_id=NULL,
 			active_river_attempt=NULL, active_execution_epoch=NULL, updated_at=?
@@ -1102,6 +1234,12 @@ func validateMatchingAcquisitionResponse(ctx context.Context, tx bun.Tx, runID u
 }
 
 func validMatchingAcquisitionTransition(current, next string, children []MatchingProviderRequest) bool {
+	if current == MatchingAcquisitionFallbackSearch && next == MatchingAcquisitionFallbackHydration && len(children) > 0 {
+		return true
+	}
+	if current == MatchingAcquisitionFallbackSearch && next == MatchingAcquisitionFallbackApplicability && len(children) == 0 {
+		return true
+	}
 	if current == MatchingAcquisitionArtistCatalogPage && next == "catalog_ready" && len(children) == 0 {
 		return true
 	}
@@ -1113,6 +1251,129 @@ func validMatchingAcquisitionTransition(current, next string, children []Matchin
 	}
 	for _, child := range children {
 		if child.Operation == nil || child.Operation.Kind != "provider_artist_release_browse" {
+			return false
+		}
+	}
+	return true
+}
+
+func validateFallbackHydrationChildren(children []MatchingProviderRequest, source matchingAcquisitionSourceFence, intent MatchingAcquisitionIntent, phase MatchingAcquisitionPhase) error {
+	var plan policy.TypedFallbackQueryPlan
+	if len(intent.FallbackQueryPlan) == 0 || json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) == 0 {
+		return fmt.Errorf("advance matching acquisition: immutable fallback plan is invalid")
+	}
+	var input struct {
+		ReleaseIDs []string `json:"release_ids"`
+	}
+	var output struct {
+		Lookups []struct {
+			ReleaseID string    `json:"release_id"`
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		} `json:"lookups"`
+	}
+	if json.Unmarshal(phase.Input, &input) != nil || json.Unmarshal(phase.Output, &output) != nil || len(input.ReleaseIDs) != len(children) || len(output.Lookups) != len(children) {
+		return fmt.Errorf("advance matching acquisition: fallback release lookup manifest is invalid")
+	}
+	seen := make(map[string]bool, len(children))
+	for i, id := range input.ReleaseIDs {
+		parsed, err := uuid.Parse(id)
+		child := children[i].Operation
+		if err != nil || parsed.String() != id || (i > 0 && input.ReleaseIDs[i-1] >= id) || seen[id] || child == nil || child.ID == uuid.Nil ||
+			child.Kind != "provider_release_lookup" || child.ProviderSourceID == nil || *child.ProviderSourceID != source.SourceID ||
+			child.ProviderConfigurationIdentity == nil || *child.ProviderConfigurationIdentity != source.Identity || child.ProviderID == nil || *child.ProviderID != source.ProviderID ||
+			child.ProviderEndpoint != source.Endpoint || child.ProviderCacheKey == nil || *child.ProviderCacheKey != "release-lookup:"+id || child.ProviderExplicitRefresh {
+			return fmt.Errorf("advance matching acquisition: fallback lookup child fence is invalid")
+		}
+		var lookup struct {
+			SchemaVersion int    `json:"schema_version"`
+			MBID          string `json:"mbid"`
+		}
+		if json.Unmarshal(child.InputSnapshot, &lookup) != nil || lookup.SchemaVersion != 1 || lookup.MBID != id || children[i].Args == nil || children[i].Args.Kind() != "provider_fetch_v1" {
+			return fmt.Errorf("advance matching acquisition: fallback lookup child intent is invalid")
+		}
+		var args struct {
+			OperationID uuid.UUID `json:"operation_id"`
+		}
+		encoded, err := json.Marshal(children[i].Args)
+		if err != nil || json.Unmarshal(encoded, &args) != nil || args.OperationID != child.ID || output.Lookups[i].ReleaseID != id || output.Lookups[i].RequestID != child.ID || output.Lookups[i].CacheKey != *child.ProviderCacheKey {
+			return fmt.Errorf("advance matching acquisition: fallback lookup descriptor differs from child")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+func fallbackReceiptReleaseIDs(kind string, payload json.RawMessage) ([]string, error) {
+	var envelope struct {
+		Count      *int `json:"count"`
+		Offset     *int `json:"offset"`
+		Recordings *[]struct {
+			ID       string `json:"id"`
+			Releases *[]struct {
+				ID string `json:"id"`
+			} `json:"releases"`
+		} `json:"recordings"`
+		Releases *[]struct {
+			ID string `json:"id"`
+		} `json:"releases"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil || envelope.Count == nil || envelope.Offset == nil || *envelope.Count < 0 || *envelope.Offset != 0 {
+		return nil, fmt.Errorf("search response envelope is invalid")
+	}
+	set := make(map[string]struct{})
+	add := func(value string) error {
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return fmt.Errorf("search response MBID is invalid")
+		}
+		set[id.String()] = struct{}{}
+		return nil
+	}
+	switch kind {
+	case "provider_release_search":
+		if envelope.Releases == nil || len(*envelope.Releases) > 10 || *envelope.Count < len(*envelope.Releases) {
+			return nil, fmt.Errorf("release result list is invalid")
+		}
+		for _, hit := range *envelope.Releases {
+			if err := add(hit.ID); err != nil {
+				return nil, err
+			}
+		}
+	case "provider_recording_search":
+		if envelope.Recordings == nil || len(*envelope.Recordings) > 10 || *envelope.Count < len(*envelope.Recordings) {
+			return nil, fmt.Errorf("recording result list is invalid")
+		}
+		for _, hit := range *envelope.Recordings {
+			if _, err := uuid.Parse(hit.ID); err != nil {
+				return nil, fmt.Errorf("recording identity is invalid")
+			}
+			if hit.Releases == nil {
+				return nil, fmt.Errorf("recording releases are missing")
+			}
+			for _, release := range *hit.Releases {
+				if err := add(release.ID); err != nil {
+					return nil, err
+				}
+			}
+		}
+	default:
+		return nil, fmt.Errorf("search operation kind is invalid")
+	}
+	result := make([]string, 0, len(set))
+	for id := range set {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
 			return false
 		}
 	}

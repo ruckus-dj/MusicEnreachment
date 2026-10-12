@@ -1123,6 +1123,19 @@ normalization для score в точности. Если по имеющимся
   directly invoked worker proof, not live scheduler/process-crash coverage.
   Fallback stage execution/applicability/seal3 remain outstanding.
 
+### Initial fallback search handoff — 2026-10-12
+
+- Initial service/persistence handoff verifies the immutable search receipt,
+  normalizes and deduplicates all derived release IDs, retains full hit evidence
+  and atomically admits lookup children. Empty accepted results register a queued
+  applicability wake rather than wait for nonexistent providers.
+- Delivery fences support exact artist plan4/intent2 and fallback plan5/intent3
+  pairs. PostgreSQL empty-path proof covers wake-insertion rollback, retry after
+  cache A→B, original-A authority, fresh wake claim and stale-delivery behavior.
+- Independent review approved bounded initial handoff; primary full `task verify`
+  passed. Positive >10-expansion/child-rollback PostgreSQL proof remains required;
+  applicability, seal3 and production fallback activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

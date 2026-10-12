@@ -159,13 +159,25 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 		Intent                 string          `json:"intent"`
 		Mode                   string          `json:"mode"`
 		TargetCaptureDigest    string          `json:"target_capture_digest"`
+		MetadataCaptureDigest  string          `json:"metadata_capture_digest"`
 		PolicyVersion          string          `json:"policy_version"`
 		ArtistQueryPlanVersion int             `json:"artist_query_plan_version"`
 		QueryDescriptor        json.RawMessage `json:"query_descriptor"`
+		FallbackQueryPlan      json.RawMessage `json:"fallback_query_plan"`
 	}
-	if json.Unmarshal(run.Plan, &plan) != nil || plan.SchemaVersion != 4 ||
-		plan.Intent != "automatic_artist_acquisition" || plan.Mode != "automatic" ||
-		plan.TargetCaptureDigest == "" || plan.PolicyVersion == "" || plan.ArtistQueryPlanVersion < 1 || len(plan.QueryDescriptor) == 0 {
+	if json.Unmarshal(run.Plan, &plan) != nil || plan.Mode != "automatic" || plan.TargetCaptureDigest == "" || plan.PolicyVersion == "" {
+		return fmt.Errorf("validate matching target fence: version-2 plan is invalid")
+	}
+	switch {
+	case plan.SchemaVersion == 4 && run.IntentVersion == matchingAutomaticAcquisitionIntentVersion:
+		if plan.Intent != "automatic_artist_acquisition" || plan.ArtistQueryPlanVersion < 1 || len(plan.QueryDescriptor) == 0 {
+			return fmt.Errorf("validate matching target fence: version-2 plan is invalid")
+		}
+	case plan.SchemaVersion == 5 && run.IntentVersion == matchingAutomaticFallbackAcquisitionIntentVersion:
+		if plan.Intent != "automatic_fallback_acquisition" || plan.MetadataCaptureDigest == "" || len(plan.FallbackQueryPlan) == 0 {
+			return fmt.Errorf("validate matching target fence: version-3 fallback plan is invalid")
+		}
+	default:
 		return fmt.Errorf("validate matching target fence: version-2 plan is invalid")
 	}
 	canonicalPlan, err := canonicalMatchingJSON(run.Plan)
@@ -177,8 +189,8 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 		return fmt.Errorf("validate matching target fence: immutable plan digest changed")
 	}
 	var intent MatchingAcquisitionIntent
-	if json.Unmarshal(run.Intent, &intent) != nil || run.IntentVersion != matchingAutomaticAcquisitionIntentVersion ||
-		intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion || intent.FenceVersion != 2 {
+	if json.Unmarshal(run.Intent, &intent) != nil || intent.FenceVersion != 2 || intent.SchemaVersion != run.IntentVersion ||
+		(run.IntentVersion != matchingAutomaticAcquisitionIntentVersion && run.IntentVersion != matchingAutomaticFallbackAcquisitionIntentVersion) {
 		return fmt.Errorf("validate matching target fence: automatic acquisition intent is invalid")
 	}
 	if err := validateCanonicalMatchingAcquisitionIntent(intent, run.IntentDigest, run.PlanDigest, run.Plan); err != nil {
