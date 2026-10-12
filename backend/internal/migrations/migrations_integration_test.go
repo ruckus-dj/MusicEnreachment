@@ -16,6 +16,74 @@ import (
 
 const inventoryMigration = "20261003000000"
 
+func TestStartupMatchingReconciliationOriginAndRollbackWithPostgreSQL(t *testing.T) {
+	t.Parallel()
+	database := testpostgres.Open(t)
+	testpostgres.Reset(t, database)
+	ctx := context.Background()
+	collection := mustMigrations(t)
+	name := "20261125000000"
+	migration := migrationNamed(t, collection, name)
+	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, name))
+	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
+
+	ordinaryID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO incoming_matching_reconcile_event
+		(id,source_operation_id,source_attempt,reason,source_input_snapshot)
+		VALUES (?, ?, 1, 'analysis_success', '{}'::jsonb)`, ordinaryID, uuid.New()); err != nil {
+		t.Fatalf("insert ordinary source event: %v", err)
+	}
+	startupID := uuid.New()
+	if _, err := database.ExecContext(ctx, `INSERT INTO incoming_matching_reconcile_event
+		(id,reason,source_input_snapshot) VALUES (?, 'startup', '{}'::jsonb)`, startupID); err != nil {
+		t.Fatalf("insert source-less startup event: %v", err)
+	}
+	for _, invalid := range []struct {
+		name string
+		args []any
+		stmt string
+	}{
+		{name: "partial source identity", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,reason,source_input_snapshot) VALUES (?,?,'analysis_success','{}'::jsonb)`, args: []any{uuid.New(), uuid.New()}},
+		{name: "startup with fabricated source", stmt: `INSERT INTO incoming_matching_reconcile_event (id,source_operation_id,source_attempt,reason,source_input_snapshot) VALUES (?,?,1,'startup','{}'::jsonb)`, args: []any{uuid.New(), uuid.New()}},
+		{name: "startup nonempty snapshot", stmt: `INSERT INTO incoming_matching_reconcile_event (id,reason,source_input_snapshot) VALUES (?,'startup','{"fake":true}'::jsonb)`, args: []any{uuid.New()}},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			if _, err := database.ExecContext(ctx, invalid.stmt, invalid.args...); err == nil {
+				t.Fatalf("accepted invalid event origin: %s", invalid.name)
+			}
+		})
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE incoming_matching_reconcile_event SET state='dispatched',registered_job_id=1,dispatched_at=now() WHERE id=?`, startupID); err != nil {
+		t.Fatalf("dispatch startup fixture event: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE incoming_matching_reconcile_event SET state='done',completed_at=now() WHERE id=?`, startupID); err != nil {
+		t.Fatalf("complete startup fixture event: %v", err)
+	}
+	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
+	if _, err := migrator.Rollback(ctx); err == nil {
+		t.Fatal("rollback with completed startup event succeeded")
+	}
+	if !columnExists(t, database, "incoming_matching_reconcile_event", "source_operation_id") {
+		t.Fatal("refused rollback changed outbox schema")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM incoming_matching_reconcile_event WHERE id=?`, startupID); err != nil {
+		t.Fatalf("remove startup fixture event before clean rollback: %v", err)
+	}
+	if _, err := migrator.Rollback(ctx); err != nil {
+		t.Fatalf("roll back startup schema after removing startup row: %v", err)
+	}
+	var preserved struct {
+		SourceOperationID uuid.UUID `bun:"source_operation_id"`
+		SourceAttempt     int       `bun:"source_attempt"`
+	}
+	if err := database.NewRaw(`SELECT source_operation_id,source_attempt FROM incoming_matching_reconcile_event WHERE id=?`, ordinaryID).Scan(ctx, &preserved); err != nil {
+		t.Fatalf("read ordinary source event after rollback: %v", err)
+	}
+	if preserved.SourceOperationID == uuid.Nil || preserved.SourceAttempt != 1 {
+		t.Fatalf("ordinary source event changed during rollback: %+v", preserved)
+	}
+}
+
 func TestStagedSourceAnalysisSchemaConstraintsWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.Open(t)

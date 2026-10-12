@@ -262,13 +262,15 @@ func Run(ctx context.Context, config Config) error {
 	}
 	defer riverListenerPool.Close()
 	riverSlot.RiverInserter = riverClient
-
 	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
 		setupManagerRepository.RiverJobLiveness, registry); err != nil {
 		return fmt.Errorf("reconcile interrupted operations: %w", err)
 	}
 	if err := sourceAnalysis.DispatchPending(ctx); err != nil {
 		return fmt.Errorf("dispatch pending source analysis: %w", err)
+	}
+	if _, err := sourceInventory.EnsureStartupIncomingMatchingReconciliation(ctx); err != nil {
+		return fmt.Errorf("ensure startup incoming matching reconciliation: %w", err)
 	}
 	if err := matchingReconcileDispatcher.DispatchPendingMatchingReconciliations(ctx); err != nil {
 		return fmt.Errorf("dispatch pending incoming matching reconciliations: %w", err)

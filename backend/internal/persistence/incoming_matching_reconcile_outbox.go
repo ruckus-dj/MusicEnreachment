@@ -32,8 +32,8 @@ func (IncomingMatchingReconcileJobArgs) Kind() string { return IncomingMatchingR
 type IncomingMatchingReconcileEvent struct {
 	bun.BaseModel          `bun:"table:incoming_matching_reconcile_event"`
 	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
-	SourceOperationID      uuid.UUID       `bun:"source_operation_id,type:uuid"`
-	OriginalAttempt        int             `bun:"source_attempt"`
+	SourceOperationID      *uuid.UUID      `bun:"source_operation_id,type:uuid,nullzero"`
+	OriginalAttempt        *int            `bun:"source_attempt,nullzero"`
 	Reason                 string          `bun:"reason"`
 	SourceInputSnapshot    json.RawMessage `bun:"source_input_snapshot,type:jsonb"`
 	State                  string          `bun:"state"`
@@ -44,6 +44,28 @@ type IncomingMatchingReconcileEvent struct {
 	CreatedAt              time.Time       `bun:"created_at"`
 	DispatchedAt           *time.Time      `bun:"dispatched_at,nullzero"`
 	CompletedAt            *time.Time      `bun:"completed_at,nullzero"`
+}
+
+// EnsureStartupIncomingMatchingReconciliation admits one open startup sweep.
+// A completed event is immutable, so a later boot receives a fresh event ID.
+func (repository *SourceInventoryRepository) EnsureStartupIncomingMatchingReconciliation(ctx context.Context) (*IncomingMatchingReconcileEvent, error) {
+	var event IncomingMatchingReconcileEvent
+	if err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewRaw(`INSERT INTO incoming_matching_reconcile_event
+			(id,source_operation_id,source_attempt,reason,source_input_snapshot)
+			VALUES (?,NULL,NULL,'startup','{}'::jsonb)
+			ON CONFLICT (reason) WHERE reason='startup' AND state IN ('pending','dispatched') DO NOTHING`, uuid.New()).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("ensure startup matching reconciliation: insert event: %w", err)
+		}
+		if err := tx.NewSelect().Model(&event).Where("reason='startup'").Where("state IN ('pending','dispatched')").Scan(ctx); err != nil {
+			return fmt.Errorf("ensure startup matching reconciliation: read open event: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 // GetIncomingMatchingReconciliationEvent returns the immutable event payload.
@@ -181,7 +203,7 @@ func insertIncomingMatchingReconcileEvent(ctx context.Context, tx bun.IDB, opera
 	}
 	if _, err := tx.NewRaw(`INSERT INTO incoming_matching_reconcile_event
 		(id,source_operation_id,source_attempt,reason,source_input_snapshot)
-		VALUES (?,?,?,?,?) ON CONFLICT (source_operation_id,source_attempt,reason) DO NOTHING`,
+		VALUES (?,?,?,?,?) ON CONFLICT (source_operation_id,source_attempt,reason) WHERE reason IN ('analysis_success','scan_success') DO NOTHING`,
 		uuid.New(), operation.ID, operation.Attempt, reason, snapshot).Exec(ctx); err != nil {
 		return fmt.Errorf("insert matching reconciliation event: %w", err)
 	}

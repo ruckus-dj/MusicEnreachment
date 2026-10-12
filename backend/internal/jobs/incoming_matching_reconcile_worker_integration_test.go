@@ -35,8 +35,9 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	// A successful real analysis writes the outbox event and the selected metadata
-	// used below; the reconciliation consumer receives no hand-built projection.
+	// A successful real analysis writes the saved metadata used below. Delete only
+	// its undispatched outbox row to model a pre-outbox ready database fixture;
+	// production startup never performs this cleanup or synthesizes source IDs.
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
 	stopRiverClient(t, fixture.client)
@@ -63,12 +64,49 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 		}
 	}
 
-	var eventID uuid.UUID
-	if err := fixture.database.NewRaw(`SELECT id FROM incoming_matching_reconcile_event WHERE source_operation_id=? AND reason='analysis_success'`, analysis.ID).Scan(ctx, &eventID); err != nil {
+	var sourceEventID uuid.UUID
+	if err := fixture.database.NewRaw(`SELECT id FROM incoming_matching_reconcile_event WHERE source_operation_id=? AND reason='analysis_success'`, analysis.ID).Scan(ctx, &sourceEventID); err != nil {
 		t.Fatalf("read successful-analysis outbox event: %v", err)
 	}
-	if eventID == uuid.Nil {
+	if sourceEventID == uuid.Nil {
 		t.Fatal("successful analysis did not produce an outbox event")
+	}
+	ordinaryEvent, err := fixture.inventory.GetIncomingMatchingReconciliationEvent(ctx, sourceEventID)
+	if err != nil || ordinaryEvent.SourceOperationID == nil || *ordinaryEvent.SourceOperationID != analysis.ID || ordinaryEvent.OriginalAttempt == nil || *ordinaryEvent.OriginalAttempt != analysis.Attempt {
+		t.Fatalf("ordinary source event origin did not round-trip: event=%+v err=%v", ordinaryEvent, err)
+	}
+	if _, err := fixture.database.ExecContext(ctx, `DELETE FROM incoming_matching_reconcile_event WHERE id=? AND state='pending'`, sourceEventID); err != nil {
+		t.Fatalf("remove undispatched event from pre-outbox fixture: %v", err)
+	}
+	type startupEnsureResult struct {
+		event *persistence.IncomingMatchingReconcileEvent
+		err   error
+	}
+	startEnsures := make(chan struct{})
+	results := make(chan startupEnsureResult, 2)
+	for range 2 {
+		go func() {
+			<-startEnsures
+			event, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
+			results <- startupEnsureResult{event: event, err: err}
+		}()
+	}
+	close(startEnsures)
+	firstEnsure, secondEnsure := <-results, <-results
+	if firstEnsure.err != nil || firstEnsure.event == nil || secondEnsure.err != nil || secondEnsure.event == nil {
+		t.Fatalf("ensure startup reconciliation concurrently: first=%+v second=%+v", firstEnsure, secondEnsure)
+	}
+	startupEvent := firstEnsure.event
+	if startupEvent.ID != secondEnsure.event.ID {
+		t.Fatalf("concurrent startup ensures created separate events: %s and %s", startupEvent.ID, secondEnsure.event.ID)
+	}
+	if startupEvent.SourceOperationID != nil || startupEvent.OriginalAttempt != nil || startupEvent.Reason != "startup" || string(startupEvent.SourceInputSnapshot) != `{}` {
+		t.Fatalf("startup event origin = %+v, want null source identity and empty snapshot", startupEvent)
+	}
+	eventID := startupEvent.ID
+	startupAgain, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
+	if err != nil || startupAgain == nil || startupAgain.ID != eventID {
+		t.Fatalf("repeated startup ensure did not coalesce open event: event=%+v err=%v", startupAgain, err)
 	}
 
 	registry := fixture.registry
@@ -109,11 +147,8 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 		listenerPool.Close()
 	})
 	inserter.inserter = enqueueClient
-	if err := client.Start(clientLifetime); err != nil {
-		t.Fatalf("start live River matching consumer: %v", err)
-	}
 	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, enqueueClient); err != nil {
-		t.Fatalf("dispatch successful-analysis reconciliation event: %v", err)
+		t.Fatalf("dispatch startup reconciliation event: %v", err)
 	}
 	var event persistence.IncomingMatchingReconcileEvent
 	if err := fixture.database.NewSelect().Model(&event).Where("id = ?", eventID).Scan(ctx); err != nil {
@@ -121,6 +156,20 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	}
 	if event.State != "dispatched" || event.RegisteredJobID == nil || *event.RegisteredJobID < 1 {
 		t.Fatalf("event was not registered to a River job: %+v", event)
+	}
+	epoch, claimed, err := fixture.inventory.ClaimIncomingMatchingReconciliationDelivery(ctx, eventID, *event.RegisteredJobID, 1)
+	if err != nil || !claimed {
+		t.Fatalf("claim dispatched startup event before consumer starts: claimed=%v err=%v", claimed, err)
+	}
+	claimedEvent, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
+	if err != nil || claimedEvent == nil || claimedEvent.ID != eventID || claimedEvent.RegisteredJobID == nil || *claimedEvent.RegisteredJobID != *event.RegisteredJobID || claimedEvent.HighestDeliveryAttempt != 1 || claimedEvent.DeliveryEpoch != epoch || !claimedEvent.DeliveryClaimed {
+		t.Fatalf("ensure replaced or changed claimed dispatched event: event=%+v err=%v", claimedEvent, err)
+	}
+	if _, err := fixture.inventory.ReleaseIncomingMatchingReconciliationClaim(ctx, eventID, *event.RegisteredJobID, 1, epoch); err != nil {
+		t.Fatalf("release pre-consumer startup claim: %v", err)
+	}
+	if err := client.Start(clientLifetime); err != nil {
+		t.Fatalf("start live River matching consumer: %v", err)
 	}
 	awaitIncomingMatchingReconcileEventDone(t, ctx, fixture.inventory, eventID)
 
@@ -161,6 +210,14 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	if err := fixture.database.NewRaw(`SELECT COALESCE(sum(high_water),0) FROM incoming_matching_generation`).Scan(ctx, &beforeGenerations); err != nil {
 		t.Fatal(err)
 	}
+	secondStartup, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
+	if err != nil || secondStartup == nil || secondStartup.ID == eventID {
+		t.Fatalf("completed startup event was not replaced by a fresh boot event: event=%+v err=%v", secondStartup, err)
+	}
+	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, enqueueClient); err != nil {
+		t.Fatalf("dispatch second startup reconciliation: %v", err)
+	}
+	awaitIncomingMatchingReconcileEventDone(t, ctx, fixture.inventory, secondStartup.ID)
 	if err := fixture.inventory.DispatchPendingMatchingReconciliations(ctx, enqueueClient); err != nil {
 		t.Fatalf("replay pending reconciliation dispatch: %v", err)
 	}
@@ -177,7 +234,7 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	if err := fixture.database.NewRaw(`SELECT count(*) FROM operation WHERE kind='matching_evaluation_v1'`).Scan(ctx, &afterParents); err != nil {
 		t.Fatal(err)
 	}
-	if afterJobs != beforeJobs || afterGenerations != beforeGenerations || afterReceipts != projectionCounts.Receipts || afterParents != projectionCounts.Parents {
+	if afterJobs != beforeJobs+1 || afterGenerations != beforeGenerations || afterReceipts != projectionCounts.Receipts || afterParents != projectionCounts.Parents {
 		t.Fatalf("replay duplicated work: jobs %d->%d generations %d->%d receipts=%d parents=%d", beforeJobs, afterJobs, beforeGenerations, afterGenerations, afterReceipts, afterParents)
 	}
 }

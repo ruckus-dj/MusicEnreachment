@@ -1053,6 +1053,18 @@ normalization для score в точности. Если по имеющимся
   passed. Startup-ready groups without existing events remain unreconciled;
   this is outstanding technical work, not a new product decision.
 
+### Genuine startup reconciliation event — 2026-10-12
+
+- Startup ensures a genuine source-less event after recovery and before dispatch.
+  Open startup events coalesce without resetting delivery authority; completed
+  events remain immutable and subsequent startup creates a fresh identity.
+  Migration changes schema only, with no historical-operation synthesis/backfill.
+- PostgreSQL tests cover origins, concurrent ensures, claimed identity retention,
+  rollback preservation and live ready-group reconciliation without a source event.
+  Independent review and repeated primary full `task verify` passed.
+- Dispatched events with cancelled/discarded River jobs still lack recovery;
+  this remains a separate liveness gap, not full startup acceptance.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
