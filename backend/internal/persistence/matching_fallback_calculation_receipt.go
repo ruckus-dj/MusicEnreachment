@@ -34,6 +34,64 @@ type MatchingFallbackCalculationReceipt struct {
 	Edges               json.RawMessage `json:"edges"`
 }
 
+// GetMatchingFallbackCalculationReceipt returns immutable saved evidence. The
+// stored version tuple selects the canonical digest format; a historical receipt
+// is validated using its original format and is never recalculated here.
+func (repository *SetupManagerRepository) GetMatchingFallbackCalculationReceipt(
+	ctx context.Context, runID uuid.UUID, acquisitionRevision int64,
+) (*MatchingFallbackCalculationReceipt, error) {
+	if runID == uuid.Nil || acquisitionRevision < 1 {
+		return nil, fmt.Errorf("read fallback calculation receipt: identity is required")
+	}
+	var receipt MatchingFallbackCalculationReceipt
+	var contextJSON, edgesJSON string
+	var schemaVersion, calculatorVersion, digestVersion int
+	err := repository.db.NewRaw(`SELECT receipt.run_id,receipt.acquisition_revision,receipt.stage_index,
+		encode(receipt.input_digest,'hex'),receipt.context::text,receipt.edge_calculations::text,
+		receipt.schema_version,receipt.calculator_version,receipt.digest_version
+		FROM matching_fallback_calculation_receipt receipt
+		WHERE receipt.run_id=? AND receipt.acquisition_revision=?`, runID, acquisitionRevision).
+		Scan(ctx, &receipt.RunID, &receipt.AcquisitionRevision, &receipt.StageIndex, &receipt.InputDigest,
+			&contextJSON, &edgesJSON, &schemaVersion, &calculatorVersion, &digestVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read fallback calculation receipt: %w", err)
+	}
+	receipt.Context = json.RawMessage(contextJSON)
+	receipt.Edges = json.RawMessage(edgesJSON)
+	if receipt.RunID != runID || receipt.AcquisitionRevision != acquisitionRevision || receipt.StageIndex < 0 ||
+		!json.Valid(receipt.Context) || !json.Valid(receipt.Edges) {
+		return nil, fmt.Errorf("read fallback calculation receipt: saved identity or evidence is invalid")
+	}
+	decodedDigest, decodeErr := hex.DecodeString(receipt.InputDigest)
+	if decodeErr != nil || len(decodedDigest) != sha256.Size || hex.EncodeToString(decodedDigest) != receipt.InputDigest {
+		return nil, fmt.Errorf("read fallback calculation receipt: saved digest is invalid")
+	}
+	var snapshot MatchingFallbackCalculationContext
+	if err := json.Unmarshal(receipt.Context, &snapshot); err != nil || snapshot.RunID != runID ||
+		snapshot.AcquisitionRevision != acquisitionRevision || snapshot.StageIndex != receipt.StageIndex {
+		return nil, fmt.Errorf("read fallback calculation receipt: saved context identity is invalid")
+	}
+	var calculatedDigest string
+	switch {
+	case schemaVersion == matchingFallbackCalculationSchemaVersion && calculatorVersion == matchingFallbackCalculationCalculatorVersion && digestVersion == matchingFallbackCalculationDigestVersion:
+		calculatedDigest, err = MatchingFallbackCalculationInputDigest(snapshot)
+	case schemaVersion == matchingFallbackCalculationLegacySchemaVersion && calculatorVersion == matchingFallbackCalculationLegacyCalculatorVersion && digestVersion == matchingFallbackCalculationLegacyDigestVersion && receipt.StageIndex == 0:
+		calculatedDigest, err = MatchingFallbackCalculationInputDigestV2(snapshot)
+	default:
+		return nil, fmt.Errorf("read fallback calculation receipt: stored version tuple is unsupported")
+	}
+	if err != nil || calculatedDigest != receipt.InputDigest {
+		return nil, fmt.Errorf("read fallback calculation receipt: saved context digest is invalid")
+	}
+	if err := ValidateMatchingFallbackCalculationEdges(snapshot, receipt.Edges); err != nil {
+		return nil, fmt.Errorf("read fallback calculation receipt: %w", err)
+	}
+	return &receipt, nil
+}
+
 // RecordMatchingFallbackCalculationForDelivery persists a calculation only
 // while the exact running River delivery owns the current applicability phase.
 // It deliberately does not consume or otherwise advance that delivery.

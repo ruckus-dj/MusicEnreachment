@@ -1251,6 +1251,21 @@ normalization для score в точности. Если по имеющимся
   Acquisition advancement retains stage-zero restrictions; finite routing,
   sealing and runtime fallback activation remain outstanding.
 
+### Saved-calculation persistence advancement — 2026-10-12
+
+- Fenced applicability advancement derives disposition from saved complete
+  calculations, atomically registers the exact next-stage child on zero evidence,
+  or parks qualifying evidence as pending_seal without pretending final publication.
+  Provider job kind and ID-only arguments are bound to the admitted child.
+- PostgreSQL coverage verifies zero-route registration, wrong job arguments,
+  genuine calculated qualification, pending_seal/waiting_policy, consumption,
+  cleared active job, no added work and stale replay. It does not explicitly
+  assert every claim field, unchanged generation/authority or qualified-child
+  rejection; those stronger assertions remain additional coverage.
+- Independent review and repeated primary full `task verify` passed. Approval
+  is persistence-only: service orchestration, full later-stage flow, final sealing
+  and production fallback activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

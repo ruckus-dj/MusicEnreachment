@@ -33,6 +33,10 @@ type failAfterMatchingWakeInsert struct {
 	persistence.RiverInserter
 }
 
+type fallbackWrongKindJobArgs struct{}
+
+func (fallbackWrongKindJobArgs) Kind() string { return "not_provider_fetch_v1" }
+
 func (inserter failAfterMatchingWakeInsert) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	result, err := inserter.RiverInserter.InsertTx(ctx, tx, args, options)
 	if err != nil {
@@ -45,11 +49,25 @@ func (inserter failAfterMatchingWakeInsert) InsertTx(ctx context.Context, tx *sq
 }
 
 func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testing.T) {
+	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, false)
+}
+
+func TestAutomaticFallbackQualifiedApplicabilityWaitsForPolicyPostgreSQL(t *testing.T) {
+	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, true)
+}
+
+func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testing.T, qualified bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
 	defer cancel()
-	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{"ALBUM":["Captured Album"],"TITLE":["Receipt Track"]}'::jsonb`).Exec(ctx); err != nil {
+	metadataTags := `{"ALBUM":["Captured Album"],"TITLE":["Receipt Track"]}`
+	if qualified {
+		// The first hydrated release uses this exact title; the real calculator
+		// also sees the matching track title, duration, and position.
+		metadataTags = `{"ALBUM":["Album 90000000-0000-4000-8000-000000000001"],"TITLE":["Receipt Track"]}`
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags=?::jsonb`, metadataTags).Exec(ctx); err != nil {
 		t.Fatalf("set fallback metadata: %v", err)
 	}
 	grouping := persistence.NewIncomingGroupingRepository(fixture.db)
@@ -457,7 +475,7 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		t.Fatalf("both immutable lookup receipts should exist: count=%d err=%v", receiptCount, err)
 	}
 	calculation, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision)
-	if err != nil || !exists || len(calculation.AllCandidates) != 4 || calculation.QualifyingEdges != 0 {
+	if err != nil || !exists || len(calculation.AllCandidates) != 4 || (!qualified && calculation.QualifyingEdges != 0) || (qualified && calculation.QualifyingEdges == 0) {
 		t.Fatalf("prepare persisted fallback applicability: exists=%v candidates=%d result=%+v err=%v", exists, len(calculation.AllCandidates), calculation, err)
 	}
 	// Exercise the production service conversion and current fenced PostgreSQL
@@ -558,6 +576,15 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	if err != nil || !exists || len(receiptResult.AllCandidates) != 4 {
 		t.Fatalf("record complete applicability receipt: exists=%v candidates=%d err=%v", exists, len(receiptResult.AllCandidates), err)
 	}
+	if qualified {
+		qualifying := false
+		for _, candidate := range receiptResult.AllCandidates {
+			qualifying = qualifying || candidate.Score.Confidence >= 0.70
+		}
+		if !qualifying || len(receiptResult.AllCandidates) != 4 {
+			t.Fatalf("expected a genuine qualified edge among four calculated edges: %+v", receiptResult.AllCandidates)
+		}
+	}
 	var receiptCountAfterWrite int
 	var receiptContext, receiptEdges []byte
 	if err := fixture.db.NewRaw(`SELECT count(*),context,edge_calculations FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=? GROUP BY context,edge_calculations`, parentID, complete.Revision).Scan(ctx, &receiptCountAfterWrite, &receiptContext, &receiptEdges); err != nil || receiptCountAfterWrite != 1 {
@@ -642,6 +669,92 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	if beforeWriteRevision != afterWriteRevision || beforeWritePhase != afterWritePhase || beforeWriteOperationState != afterWriteOperationState || beforeWriteJobs != afterWriteJobs || beforeWriteDependencies != afterWriteDependencies || afterWriteConsumed {
 		t.Fatalf("receipt writes changed operation/acquisition/delivery: revision=%d/%d phase=%q/%q operation=%q/%q jobs=%d/%d dependencies=%d/%d consumed=%v", beforeWriteRevision, afterWriteRevision, beforeWritePhase, afterWritePhase, beforeWriteOperationState, afterWriteOperationState, beforeWriteJobs, afterWriteJobs, beforeWriteDependencies, afterWriteDependencies, afterWriteConsumed)
 	}
+	if qualified {
+		var operationsBefore, jobsBefore, dependenciesBefore, registrationsBefore, phasesBefore, deliveriesBefore int
+		if err := fixture.db.NewRaw(`SELECT
+			(SELECT count(*) FROM operation),
+			(SELECT count(*) FROM river_job),
+			(SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?),
+			(SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?),
+			(SELECT count(*) FROM matching_acquisition_phase WHERE run_id=?),
+			(SELECT count(*) FROM matching_delivery WHERE run_id=?)`,
+			parentID, parentID, parentID, parentID).
+			Scan(ctx, &operationsBefore, &jobsBefore, &dependenciesBefore, &registrationsBefore, &phasesBefore, &deliveriesBefore); err != nil {
+			t.Fatalf("read state before qualified advancement: %v", err)
+		}
+		advanced, err := freshRepository.AdvanceFallbackApplicabilityForDelivery(ctx, client, parentID, 1, newWakeID, freshClaim, complete.Revision, nil)
+		if err != nil || !advanced {
+			t.Fatalf("qualified calculation did not advance to policy wait: advanced=%v err=%v", advanced, err)
+		}
+		qualifiedSnapshot, exists, err := freshRepository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || qualifiedSnapshot.Phase != "pending_seal" || qualifiedSnapshot.Revision != complete.Revision+1 {
+			t.Fatalf("qualified calculation did not enter pending_seal: snapshot=%+v exists=%v err=%v", qualifiedSnapshot, exists, err)
+		}
+		var disposition struct {
+			Disposition string `json:"disposition"`
+			Reason      string `json:"reason"`
+		}
+		if err := json.Unmarshal(qualifiedSnapshot.Output, &disposition); err != nil || disposition.Disposition != "waiting_policy" || disposition.Reason != "qualified_candidate" {
+			t.Fatalf("qualified disposition=%+v output=%s err=%v", disposition, qualifiedSnapshot.Output, err)
+		}
+		var finalRunState, finalOperationStage string
+		var finalActiveJob *int64
+		var consumed bool
+		if err := fixture.db.NewRaw(`SELECT run.state,run.active_river_job_id,operation.stage,
+			(SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?)
+			FROM matching_run run JOIN operation ON operation.id=run.id WHERE run.id=?`, parentID, newWakeID, parentID).
+			Scan(ctx, &finalRunState, &finalActiveJob, &finalOperationStage, &consumed); err != nil {
+			t.Fatalf("read qualified delivery disposition: %v", err)
+		}
+		if finalRunState != "waiting_policy" || finalActiveJob != nil || finalOperationStage != "pending_seal" || !consumed {
+			t.Fatalf("qualified disposition did not park and consume delivery: run=%q active=%v stage=%q consumed=%v", finalRunState, finalActiveJob, finalOperationStage, consumed)
+		}
+		var operationsAfter, jobsAfter, dependenciesAfter, registrationsAfter, phasesAfter, deliveriesAfter int
+		if err := fixture.db.NewRaw(`SELECT
+			(SELECT count(*) FROM operation),
+			(SELECT count(*) FROM river_job),
+			(SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?),
+			(SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?),
+			(SELECT count(*) FROM matching_acquisition_phase WHERE run_id=?),
+			(SELECT count(*) FROM matching_delivery WHERE run_id=?)`,
+			parentID, parentID, parentID, parentID).
+			Scan(ctx, &operationsAfter, &jobsAfter, &dependenciesAfter, &registrationsAfter, &phasesAfter, &deliveriesAfter); err != nil {
+			t.Fatalf("read state after qualified advancement: %v", err)
+		}
+		if operationsAfter != operationsBefore || jobsAfter != jobsBefore || dependenciesAfter != dependenciesBefore || registrationsAfter != registrationsBefore ||
+			phasesAfter != phasesBefore+1 || deliveriesAfter != deliveriesBefore {
+			t.Fatalf("qualified disposition admitted unexpected work: operations=%d/%d jobs=%d/%d dependencies=%d/%d registrations=%d/%d phases=%d/%d deliveries=%d/%d",
+				operationsBefore, operationsAfter, jobsBefore, jobsAfter, dependenciesBefore, dependenciesAfter, registrationsBefore, registrationsAfter,
+				phasesBefore, phasesAfter, deliveriesBefore, deliveriesAfter)
+		}
+		var priorJobs, priorDeliveries, priorDependencies int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &priorJobs); err != nil {
+			t.Fatalf("count jobs before stale qualified replay: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &priorDeliveries); err != nil {
+			t.Fatalf("count deliveries before stale qualified replay: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &priorDependencies); err != nil {
+			t.Fatalf("count dependencies before stale qualified replay: %v", err)
+		}
+		if replayed, err := freshRepository.AdvanceFallbackApplicabilityForDelivery(ctx, client, parentID, 1, newWakeID, freshClaim, complete.Revision, nil); err != nil || replayed {
+			t.Fatalf("stale qualified delivery replay was not a no-op: changed=%v err=%v", replayed, err)
+		}
+		var finalJobs, finalDeliveries, finalDependencies int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &finalJobs); err != nil {
+			t.Fatalf("count jobs after stale qualified replay: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &finalDeliveries); err != nil {
+			t.Fatalf("count deliveries after stale qualified replay: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &finalDependencies); err != nil {
+			t.Fatalf("count dependencies after stale qualified replay: %v", err)
+		}
+		if priorJobs != finalJobs || priorDeliveries != finalDeliveries || priorDependencies != finalDependencies {
+			t.Fatalf("stale qualified replay created duplicate work: jobs=%d/%d deliveries=%d/%d dependencies=%d/%d", priorJobs, finalJobs, priorDeliveries, finalDeliveries, priorDependencies, finalDependencies)
+		}
+		return
+	}
 	var tamperedInput struct {
 		SchemaVersion int    `json:"schema_version"`
 		Query         string `json:"query"`
@@ -693,5 +806,112 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	}
 	if _, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision-1); err != nil || exists {
 		t.Fatalf("stale applicability revision was not rejected: exists=%v err=%v", exists, err)
+	}
+	if len(plan.Stages) < 2 {
+		t.Fatal("fallback fixture must include a next query stage")
+	}
+	nextStage := plan.Stages[1]
+	nextKind, _, ok := policy.ProviderKindForFallbackStage(nextStage.Kind)
+	if !ok {
+		t.Fatalf("next fallback stage %q has no provider kind", nextStage.Kind)
+	}
+	prepared, err := fetch.PrepareOperation(ctx, strings.TrimPrefix(nextKind, "provider_"), nextStage.Query, 0, 10, false)
+	if err != nil {
+		t.Fatalf("prepare immutable next-stage search: %v", err)
+	}
+	nextSearch := persistence.MatchingProviderRequest{Operation: prepared, Args: service.ProviderFetchOperationArgs{OperationID: prepared.ID}}
+	for _, invalid := range []struct {
+		name string
+		args river.JobArgs
+	}{
+		{name: "wrong_operation_id", args: service.ProviderFetchOperationArgs{OperationID: uuid.New()}},
+		{name: "wrong_kind", args: fallbackWrongKindJobArgs{}},
+	} {
+		t.Run("reject_prepared_search_"+invalid.name, func(t *testing.T) {
+			var before struct {
+				Operations, Dependencies, Registrations, Jobs, Phases int
+				Revision                                              int64
+				Consumed                                              bool
+			}
+			if err := fixture.db.NewRaw(`SELECT
+				(SELECT count(*) FROM operation),
+				(SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?),
+				(SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?),
+				(SELECT count(*) FROM river_job),
+				(SELECT count(*) FROM matching_acquisition_phase WHERE run_id=?),
+				(SELECT revision FROM matching_acquisition WHERE run_id=?),
+				(SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?)`,
+				parentID, parentID, parentID, parentID, parentID, newWakeID).
+				Scan(ctx, &before.Operations, &before.Dependencies, &before.Registrations, &before.Jobs, &before.Phases, &before.Revision, &before.Consumed); err != nil {
+				t.Fatalf("read state before rejected advance: %v", err)
+			}
+			bad := nextSearch
+			bad.Args = invalid.args
+			if changed, err := freshRepository.AdvanceFallbackApplicabilityForDelivery(ctx, client, parentID, 1, newWakeID, freshClaim, complete.Revision, &bad); err == nil || changed {
+				t.Fatalf("invalid prepared search arguments were accepted: changed=%v err=%v", changed, err)
+			}
+			var after struct {
+				Operations, Dependencies, Registrations, Jobs, Phases int
+				Revision                                              int64
+				Consumed                                              bool
+			}
+			if err := fixture.db.NewRaw(`SELECT
+				(SELECT count(*) FROM operation),
+				(SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?),
+				(SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?),
+				(SELECT count(*) FROM river_job),
+				(SELECT count(*) FROM matching_acquisition_phase WHERE run_id=?),
+				(SELECT revision FROM matching_acquisition WHERE run_id=?),
+				(SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?)`,
+				parentID, parentID, parentID, parentID, parentID, newWakeID).
+				Scan(ctx, &after.Operations, &after.Dependencies, &after.Registrations, &after.Jobs, &after.Phases, &after.Revision, &after.Consumed); err != nil {
+				t.Fatalf("read state after rejected advance: %v", err)
+			}
+			if before != after {
+				t.Fatalf("rejected advance changed durable state: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+	advanced, err := freshRepository.AdvanceFallbackApplicabilityForDelivery(ctx, client, parentID, 1, newWakeID, freshClaim, complete.Revision, &nextSearch)
+	if err != nil || !advanced {
+		t.Fatalf("advance saved zero-confidence calculation to next stage: advanced=%v err=%v", advanced, err)
+	}
+	stageOne, exists, err := freshRepository.GetMatchingAcquisition(ctx, parentID)
+	if err != nil || !exists || stageOne.Phase != persistence.MatchingAcquisitionFallbackSearch || stageOne.Revision != complete.Revision+1 {
+		t.Fatalf("next-stage phase was not committed: snapshot=%+v exists=%v err=%v", stageOne, exists, err)
+	}
+	registeredNext, err := freshRepository.GetOperation(ctx, prepared.ID)
+	if err != nil || registeredNext.RiverJobID == nil {
+		t.Fatalf("next-stage provider operation was not enqueued: operation=%+v err=%v", registeredNext, err)
+	}
+	var nextDependency, nextRegistration, oldConsumed bool
+	if err := fixture.db.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_provider_dependency WHERE parent_run_id=? AND request_id=? AND cache_key=?),
+		EXISTS(SELECT 1 FROM matching_fallback_request_registration WHERE run_id=? AND stage_index=1 AND role='search' AND request_id=?),
+		(SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?)`, parentID, prepared.ID, *prepared.ProviderCacheKey,
+		parentID, prepared.ID, parentID, newWakeID).Scan(ctx, &nextDependency, &nextRegistration, &oldConsumed); err != nil {
+		t.Fatalf("verify stage-one dependency, registration, and parent consumption: %v", err)
+	}
+	if !nextDependency || !nextRegistration || !oldConsumed {
+		t.Fatalf("next-stage transaction incomplete: dependency=%v registration=%v oldWakeConsumed=%v", nextDependency, nextRegistration, oldConsumed)
+	}
+	var beforeReplayJobs, beforeReplayDeliveries int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &beforeReplayJobs); err != nil {
+		t.Fatalf("count jobs before stale replay: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &beforeReplayDeliveries); err != nil {
+		t.Fatalf("count deliveries before stale replay: %v", err)
+	}
+	if replayed, err := freshRepository.AdvanceFallbackApplicabilityForDelivery(ctx, client, parentID, 1, newWakeID, freshClaim, complete.Revision, &nextSearch); err != nil || replayed {
+		t.Fatalf("stale applicability delivery replay was not a no-op: changed=%v err=%v", replayed, err)
+	}
+	var afterReplayJobs, afterReplayDeliveries int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &afterReplayJobs); err != nil {
+		t.Fatalf("count jobs after stale replay: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &afterReplayDeliveries); err != nil {
+		t.Fatalf("count deliveries after stale replay: %v", err)
+	}
+	if beforeReplayJobs != afterReplayJobs || beforeReplayDeliveries != afterReplayDeliveries {
+		t.Fatalf("stale replay created duplicate work: jobs=%d/%d deliveries=%d/%d", beforeReplayJobs, afterReplayJobs, beforeReplayDeliveries, afterReplayDeliveries)
 	}
 }
