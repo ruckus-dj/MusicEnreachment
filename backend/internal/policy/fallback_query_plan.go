@@ -28,6 +28,19 @@ type TypedFallbackQueryStage struct {
 	Limit  int    `json:"limit"`
 }
 
+// ProviderKindForFallbackStage maps a typed fallback stage to its provider
+// operation kind and cache-key prefix. The bool is false for unknown stages.
+func ProviderKindForFallbackStage(stageKind string) (providerKind, cachePrefix string, ok bool) {
+	switch stageKind {
+	case "album":
+		return "provider_release_search", "release-search", true
+	case "album_track", "track":
+		return "provider_recording_search", "recording-search", true
+	default:
+		return "", "", false
+	}
+}
+
 // PlanFallbackQueries derives the approved finite fallback plan from selected
 // metadata captures. The bool reports whether any file has usable artist
 // metadata under the album-artist-first source semantics.

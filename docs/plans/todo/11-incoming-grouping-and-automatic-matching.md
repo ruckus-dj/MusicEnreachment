@@ -1103,6 +1103,16 @@ normalization для score в точности. Если по имеющимся
   required before stage activation. Stage transitions/applicability/seal3 and
   production fallback execution remain unimplemented.
 
+### Recording cache-hit worker proof and stage mapping — 2026-10-12
+
+- Shared boundary mapping enforces album+track/track → recording search and
+  album → release search. Wrong operation kinds and unknown stages are rejected.
+- Real provider-worker PostgreSQL test captures the recording cache-hit receipt,
+  settles the dependency and creates the parent wake with zero HTTP calls.
+  Receipt generation is checked against the observed response, not reservation.
+- Independent review and repeated primary full `task verify` passed. Interrupted
+  retry after A→B and fallback stage execution remain unproved/unimplemented.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

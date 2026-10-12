@@ -87,18 +87,22 @@ func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgr
 		t.Fatal("album-only fixture unexpectedly has artist metadata")
 	}
 	plan := policy.TypedFallbackQueryPlan{SchemaVersion: planned.SchemaVersion, Stages: planned.Stages}
-	query := plan.Stages[0].Query
+	stage := plan.Stages[0]
+	providerKind, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+	if !ok {
+		t.Fatalf("fallback stage %q has no provider mapping", stage.Kind)
+	}
 	makeAdmission := func() persistence.AutomaticFallbackMatchingAdmission {
 		parentID, providerOperationID := uuid.New(), uuid.New()
-		key, identity := "release-search:0:10:"+query, source.Identity
+		key, identity := cachePrefix+":0:10:"+stage.Query, source.Identity
 		providerID, sourceID := source.ProviderID, source.ID
 		input, _ := json.Marshal(struct {
 			SchemaVersion int    `json:"schema_version"`
 			Query         string `json:"query"`
 			Offset        int    `json:"offset"`
 			Limit         int    `json:"limit"`
-		}{1, query, 0, 10})
-		provider := &persistence.Operation{ID: providerOperationID, Kind: "provider_release_search", State: "queued", Stage: "queued", InputSnapshot: input, ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &key, Attempt: 1}
+		}{1, stage.Query, 0, 10})
+		provider := &persistence.Operation{ID: providerOperationID, Kind: providerKind, State: "queued", Stage: "queued", InputSnapshot: input, ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &key, Attempt: 1}
 		admissionPlan := plan
 		admissionPlan.Stages = append([]policy.TypedFallbackQueryStage(nil), plan.Stages...)
 		return persistence.AutomaticFallbackMatchingAdmission{Parent: &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{}`), Attempt: 1}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID}, Provider: persistence.MatchingProviderRequest{Operation: provider, Args: service.ProviderFetchOperationArgs{OperationID: providerOperationID}}, Source: persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: source.Identity}, GroupID: target.GroupID, ExpectedGroupRevision: target.Revision, PolicyVersion: service.MatchingPolicyVersion, Plan: admissionPlan, EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: epoch}

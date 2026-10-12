@@ -52,7 +52,11 @@ func TestAutomaticFallbackRecordingReceiptSurvivesCacheRefreshPostgreSQL(t *test
 	}
 	stage := planned.Stages[0]
 	parentID, providerOperationID := uuid.New(), uuid.New()
-	key, identity := "recording-search:0:10:"+stage.Query, source.Identity
+	providerKind, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+	if !ok {
+		t.Fatalf("fallback stage %q has no provider mapping", stage.Kind)
+	}
+	key, identity := cachePrefix+":0:10:"+stage.Query, source.Identity
 	providerID, sourceID := source.ProviderID, source.ID
 	input, err := json.Marshal(struct {
 		SchemaVersion int    `json:"schema_version"`
@@ -63,7 +67,7 @@ func TestAutomaticFallbackRecordingReceiptSurvivesCacheRefreshPostgreSQL(t *test
 	if err != nil {
 		t.Fatalf("encode provider request: %v", err)
 	}
-	provider := &persistence.Operation{ID: providerOperationID, Kind: "provider_recording_search", State: "queued", Stage: "queued", InputSnapshot: input,
+	provider := &persistence.Operation{ID: providerOperationID, Kind: providerKind, State: "queued", Stage: "queued", InputSnapshot: input,
 		ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity,
 		ProviderEndpoint: source.Endpoint, ProviderCacheKey: &key, Attempt: 1}
 	plan := policy.TypedFallbackQueryPlan{SchemaVersion: planned.SchemaVersion, Stages: planned.Stages}

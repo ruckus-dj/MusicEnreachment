@@ -347,10 +347,8 @@ func validateAutomaticFallbackProviderSourceFence(ctx context.Context, tx bun.Tx
 }
 
 func validateFallbackProviderInput(stage policy.TypedFallbackQueryStage, operation *Operation) error {
-	kind, cachePrefix := "provider_release_search", "release-search"
-	if stage.Kind == "track" {
-		kind, cachePrefix = "provider_recording_search", "recording-search"
-	} else if stage.Kind != "album" && stage.Kind != "album_track" {
+	kind, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+	if !ok {
 		return fmt.Errorf("automatic fallback matching provider stage kind is invalid")
 	}
 	var input struct {
