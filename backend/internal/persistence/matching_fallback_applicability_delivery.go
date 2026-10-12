@@ -290,6 +290,178 @@ func (repository *SetupManagerRepository) AdvanceFallbackApplicabilityForDeliver
 	return changed, err
 }
 
+// CompleteEmptyFallbackPlanForDelivery settles the source-bound empty-plan
+// admission under its original parent delivery. It deliberately creates no
+// calculation evidence or provider work.
+func (repository *SetupManagerRepository) CompleteEmptyFallbackPlanForDelivery(
+	ctx context.Context, client RiverInserter, runID uuid.UUID, attempt int, riverJobID int64,
+	claim MatchingDeliveryClaim, expectedRevision int64,
+) (bool, error) {
+	if client == nil || runID == uuid.Nil || attempt < 1 || riverJobID < 1 || claim.ExecutionEpoch < 1 ||
+		claim.RiverAttempt < 1 || expectedRevision != 0 {
+		return false, fmt.Errorf("complete empty fallback plan: invalid delivery identity")
+	}
+	changed := false
+	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock output gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock source mutations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock provider configuration: %w", err)
+		}
+		var authority struct {
+			SourceID uuid.UUID `bun:"provider_source_id"`
+			Identity string    `bun:"provider_configuration_identity"`
+			Fence    int       `bun:"fence_version"`
+		}
+		if err := tx.NewRaw(`SELECT provider_source_id,provider_configuration_identity,fence_version FROM matching_run WHERE id=?`, runID).Scan(ctx, &authority); err != nil {
+			return fmt.Errorf("complete empty fallback plan: read run authority: %w", err)
+		}
+		var configIdentity, sourceIdentity string
+		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &configIdentity); err != nil {
+			return fmt.Errorf("complete empty fallback plan: read configuration: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, authority.SourceID).Scan(ctx, &sourceIdentity); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock source: %w", err)
+		}
+		if sourceIdentity != authority.Identity || configIdentity != authority.Identity {
+			return nil
+		}
+		if err := validateMatchingRunFence(ctx, tx, runID, authority.Fence); err != nil {
+			return err
+		}
+		var lockedGroups []uuid.UUID
+		if err := tx.NewRaw(`SELECT generation.group_id FROM incoming_matching_generation generation
+			JOIN matching_run_target target ON target.group_id=generation.group_id AND target.run_id=?
+			JOIN incoming_group current_group ON current_group.id=target.group_id
+			ORDER BY generation.group_id FOR UPDATE OF generation,current_group`, runID).Scan(ctx, &lockedGroups); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock target groups: %w", err)
+		}
+		var stale bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM matching_run_target target
+			LEFT JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+			LEFT JOIN incoming_group current_group ON current_group.id=target.group_id
+			WHERE target.run_id=? AND (generation.current_run_id IS DISTINCT FROM target.run_id OR
+			generation.high_water IS DISTINCT FROM target.target_generation OR current_group.revision IS DISTINCT FROM target.captured_group_revision))`, runID).Scan(ctx, &stale); err != nil {
+			return fmt.Errorf("complete empty fallback plan: validate target generations: %w", err)
+		}
+		if stale {
+			return nil
+		}
+		op, err := repository.GetOperationForUpdate(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		if op.Kind != "matching_evaluation_v1" || op.Attempt != attempt || op.State != "running" || op.RiverJobID == nil || *op.RiverJobID != riverJobID {
+			return nil
+		}
+		var current struct {
+			Revision      int64  `bun:"revision"`
+			Phase         string `bun:"current_phase"`
+			State         string `bun:"state"`
+			Epoch         int64  `bun:"execution_epoch"`
+			ActiveEpoch   *int64 `bun:"active_execution_epoch"`
+			ActiveJob     *int64 `bun:"active_river_job_id"`
+			ActiveAttempt *int   `bun:"active_river_attempt"`
+			CurrentJob    *int64 `bun:"current_river_job_id"`
+		}
+		if err := tx.NewRaw(`SELECT acquisition.revision,acquisition.current_phase,run.state,run.execution_epoch,
+			run.active_execution_epoch,run.active_river_job_id,run.active_river_attempt,run.current_river_job_id
+			FROM matching_run run JOIN matching_acquisition acquisition ON acquisition.run_id=run.id WHERE run.id=? FOR UPDATE OF run`, runID).
+			Scan(ctx, &current.Revision, &current.Phase, &current.State, &current.Epoch, &current.ActiveEpoch, &current.ActiveJob, &current.ActiveAttempt, &current.CurrentJob); err != nil {
+			return fmt.Errorf("complete empty fallback plan: lock delivery owner: %w", err)
+		}
+		if current.Revision != expectedRevision || current.Phase != "waiting_policy" || current.State != "running" ||
+			current.Epoch != claim.ExecutionEpoch || current.ActiveEpoch == nil || *current.ActiveEpoch != claim.ExecutionEpoch ||
+			current.ActiveJob == nil || *current.ActiveJob != riverJobID || current.ActiveAttempt == nil || *current.ActiveAttempt != claim.RiverAttempt ||
+			current.CurrentJob == nil || *current.CurrentJob != riverJobID {
+			return nil
+		}
+		var registered bool
+		if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM matching_delivery delivery JOIN river_job ON river_job.id=delivery.river_job_id
+			WHERE delivery.run_id=? AND delivery.operation_attempt=? AND delivery.river_job_id=? AND delivery.consumed_at IS NULL
+			AND river_job.state='running' AND river_job.attempt=?)`, runID, attempt, riverJobID, claim.RiverAttempt).Scan(ctx, &registered); err != nil {
+			return fmt.Errorf("complete empty fallback plan: verify delivery: %w", err)
+		}
+		if !registered {
+			return nil
+		}
+		var intentBytes []byte
+		var phaseInput, phaseOutput string
+		if err := tx.NewRaw(`SELECT intent FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &intentBytes); err != nil {
+			return fmt.Errorf("complete empty fallback plan: read acquisition intent: %w", err)
+		}
+		var intent MatchingAcquisitionIntent
+		var plan policy.TypedFallbackQueryPlan
+		if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || len(intent.InitialProviderInputs) != 0 ||
+			json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) != 0 {
+			return fmt.Errorf("complete empty fallback plan: saved plan is not exactly empty")
+		}
+		if _, err := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan); err != nil {
+			return fmt.Errorf("complete empty fallback plan: saved plan is invalid: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT input,output FROM matching_acquisition_phase WHERE run_id=? AND revision=? AND phase='waiting_policy'`, runID, expectedRevision).Scan(ctx, &phaseInput, &phaseOutput); err != nil {
+			return fmt.Errorf("complete empty fallback plan: read initial disposition: %w", err)
+		}
+		var initialInput map[string]json.RawMessage
+		var disposition struct {
+			State  string `json:"state"`
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal([]byte(phaseInput), &initialInput) != nil || len(initialInput) != 0 ||
+			json.Unmarshal([]byte(phaseOutput), &disposition) != nil || disposition.State != "waiting_policy" || disposition.Reason != "fallback_plan_empty" {
+			return fmt.Errorf("complete empty fallback plan: initial disposition is invalid")
+		}
+		var providerEvidence int
+		if err := tx.NewRaw(`SELECT (SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?) +
+			(SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?) +
+			(SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=?)`, runID, runID, runID).Scan(ctx, &providerEvidence); err != nil {
+			return fmt.Errorf("complete empty fallback plan: verify no provider or calculation evidence: %w", err)
+		}
+		if providerEvidence != 0 {
+			return fmt.Errorf("complete empty fallback plan: unexpected provider or calculation evidence")
+		}
+		input, _ := json.Marshal(map[string]any{"calculation_revision": expectedRevision, "stage_index": 0})
+		output, _ := json.Marshal(map[string]any{"disposition": "waiting_policy", "reason": "fallback_plan_empty", "calculation_receipts": []fallbackApplicabilityHistoryReceipt{}})
+		phase := MatchingAcquisitionPhase{Revision: expectedRevision + 1, Phase: "fallback_review_wait", Input: input, Output: output, ResponseProvenance: json.RawMessage("[]")}
+		cursorResult, err := tx.NewRaw(`UPDATE matching_acquisition SET current_phase=?,revision=? WHERE run_id=? AND revision=? AND current_phase='waiting_policy'`, phase.Phase, phase.Revision, runID, expectedRevision).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("complete empty fallback plan: update cursor: %w", err)
+		}
+		if affected, err := cursorResult.RowsAffected(); err != nil || affected != 1 {
+			return fmt.Errorf("complete empty fallback plan: acquisition cursor changed before commit")
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id,revision,phase,input,output,response_provenance) VALUES (?,?,?,?::jsonb,?::jsonb,'[]'::jsonb)`, runID, phase.Revision, phase.Phase, string(phase.Input), string(phase.Output)).Exec(ctx); err != nil {
+			return fmt.Errorf("complete empty fallback plan: append phase: %w", err)
+		}
+		now := time.Now().UTC()
+		consume, err := tx.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND river_job_id=? AND operation_attempt=? AND consumed_at IS NULL`, now, runID, riverJobID, attempt).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("complete empty fallback plan: consume delivery: %w", err)
+		}
+		if affected, err := consume.RowsAffected(); err != nil || affected != 1 {
+			return fmt.Errorf("complete empty fallback plan: active delivery was not consumed")
+		}
+		park, err := tx.NewRaw(`UPDATE matching_run SET state='waiting_policy',active_river_job_id=NULL,active_river_attempt=NULL,active_execution_epoch=NULL,updated_at=? WHERE id=? AND execution_epoch=? AND active_river_job_id=? AND active_execution_epoch=?`, now, runID, claim.ExecutionEpoch, riverJobID, claim.ExecutionEpoch).Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("complete empty fallback plan: update run: %w", err)
+		}
+		if affected, err := park.RowsAffected(); err != nil || affected != 1 {
+			return fmt.Errorf("complete empty fallback plan: active run claim changed before commit")
+		}
+		op.Stage, op.UpdatedAt = "review_pending", now
+		if _, err := tx.NewUpdate().Model(op).Column("stage", "updated_at").WherePK().Exec(ctx); err != nil {
+			return fmt.Errorf("complete empty fallback plan: update operation: %w", err)
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
 func validateFallbackSearchRiverArgs(args river.JobArgs, operationID uuid.UUID) error {
 	if args == nil || args.Kind() != "provider_fetch_v1" || operationID == uuid.Nil {
 		return fmt.Errorf("provider fetch arguments and operation identity are required")

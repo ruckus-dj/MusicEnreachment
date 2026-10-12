@@ -24,20 +24,32 @@ import (
 )
 
 func TestAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false)
 }
 
 func TestAutomaticFallbackHistoricalStageLookupsDoNotBlockStageOnePostgreSQL(t *testing.T) {
-	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, true)
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, true, false, false)
 }
 
-func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup bool) {
+func TestAutomaticFallbackEmptyPlanParksForReviewPostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, true, false)
+}
+
+func TestAutomaticFallbackFiniteThreeStageExhaustionParksForReviewPostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true)
+}
+
+func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
 	defer cancel()
 
-	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{"ALBUM":["Captured Album"],"TITLE":["Receipt Track"]}'::jsonb`).Exec(ctx); err != nil {
+	metadata := `{"ALBUM":["Captured Album"],"TITLE":["Receipt Track"]}`
+	if emptyPlan {
+		metadata = `{}`
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags=?::jsonb`, metadata).Exec(ctx); err != nil {
 		t.Fatalf("set fallback metadata: %v", err)
 	}
 	grouping := persistence.NewIncomingGroupingRepository(fixture.db)
@@ -59,7 +71,7 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		}
 	}
 	planned, artistBearing := policy.PlanFallbackQueries(tagSets)
-	if artistBearing || len(planned.Stages) != 3 || planned.Stages[0].Kind != "album_track" || planned.Stages[1].Kind != "album" {
+	if artistBearing || (emptyPlan && len(planned.Stages) != 0) || (!emptyPlan && (len(planned.Stages) != 3 || planned.Stages[0].Kind != "album_track" || planned.Stages[1].Kind != "album")) {
 		t.Fatalf("unexpected approved fallback plan: %+v artistBearing=%v", planned, artistBearing)
 	}
 	plan := policy.TypedFallbackQueryPlan{SchemaVersion: planned.SchemaVersion, Stages: planned.Stages}
@@ -112,44 +124,56 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	t.Cleanup(listenerPool.Close)
 	inserter.client = client
 
-	stageZero := plan.Stages[0]
-	providerKind, prefix, ok := policy.ProviderKindForFallbackStage(stageZero.Kind)
-	if !ok {
-		t.Fatalf("no provider mapping for stage zero %q", stageZero.Kind)
-	}
-	stageZeroKey := fmt.Sprintf("%s:%d:%d:%s", prefix, stageZero.Offset, stageZero.Limit, stageZero.Query)
-	stageZeroTicket, err := cache.BeginRefresh(ctx, source.ID, stageZeroKey, config.Identity)
-	if err != nil {
-		t.Fatalf("reserve stage-zero cache response: %v", err)
-	}
+	var stageZero *policy.TypedFallbackQueryStage
+	var stageZeroKey string
+	var stageZeroID uuid.UUID
+	var stageZeroOperation *persistence.Operation
 	stageZeroPayload := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`)
 	const stageZeroReleaseID = "90000000-0000-4000-8000-0000000000f4"
 	const stageZeroTrackID = "90000000-0000-4000-8000-0000000000f5"
 	const stageZeroRecordingID = "90000000-0000-4000-8000-0000000000f6"
-	if historicalStageLookup {
-		stageZeroPayload = json.RawMessage(fmt.Sprintf(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"recordings":[{"id":"11111111-1111-4111-8111-111111111111","title":"Receipt Track","releases":[{"id":%q,"title":"Wrong Album"}]}]}`, stageZeroReleaseID))
+	if !emptyPlan {
+		stage := plan.Stages[0]
+		stageZero = &stage
+		providerKind, prefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+		if !ok {
+			t.Fatalf("no provider mapping for stage zero %q", stage.Kind)
+		}
+		stageZeroKey = fmt.Sprintf("%s:%d:%d:%s", prefix, stage.Offset, stage.Limit, stage.Query)
+		stageZeroTicket, err := cache.BeginRefresh(ctx, source.ID, stageZeroKey, config.Identity)
+		if err != nil {
+			t.Fatalf("reserve stage-zero cache response: %v", err)
+		}
+		if historicalStageLookup {
+			stageZeroPayload = json.RawMessage(fmt.Sprintf(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"recordings":[{"id":"11111111-1111-4111-8111-111111111111","title":"Receipt Track","releases":[{"id":%q,"title":"Wrong Album"}]}]}`, stageZeroReleaseID))
+		}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: stageZeroTicket, FetchedAt: time.Now().UTC(), Payload: stageZeroPayload}); err != nil {
+			t.Fatalf("accept empty stage-zero response: %v", err)
+		}
+		stageZeroInput, err := json.Marshal(struct {
+			SchemaVersion int    `json:"schema_version"`
+			Query         string `json:"query"`
+			Offset        int    `json:"offset"`
+			Limit         int    `json:"limit"`
+		}{1, stageZero.Query, stageZero.Offset, stageZero.Limit})
+		if err != nil {
+			t.Fatalf("encode stage-zero input: %v", err)
+		}
+		stageZeroID = uuid.New()
+		providerID, sourceID, identity := source.ProviderID, source.ID, config.Identity
+		stageZeroOperation = &persistence.Operation{ID: stageZeroID, Kind: providerKind, State: "queued", Stage: "queued", InputSnapshot: stageZeroInput,
+			ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity,
+			ProviderEndpoint: source.Endpoint, ProviderCacheKey: &stageZeroKey, Attempt: 1}
 	}
-	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: stageZeroTicket, FetchedAt: time.Now().UTC(), Payload: stageZeroPayload}); err != nil {
-		t.Fatalf("accept empty stage-zero response: %v", err)
+	parentID := uuid.New()
+	var provider persistence.MatchingProviderRequest
+	if stageZeroOperation != nil {
+		provider = persistence.MatchingProviderRequest{Operation: stageZeroOperation, Args: service.ProviderFetchOperationArgs{OperationID: stageZeroID}}
 	}
-	stageZeroInput, err := json.Marshal(struct {
-		SchemaVersion int    `json:"schema_version"`
-		Query         string `json:"query"`
-		Offset        int    `json:"offset"`
-		Limit         int    `json:"limit"`
-	}{1, stageZero.Query, stageZero.Offset, stageZero.Limit})
-	if err != nil {
-		t.Fatalf("encode stage-zero input: %v", err)
-	}
-	stageZeroID, parentID := uuid.New(), uuid.New()
-	providerID, sourceID, identity := source.ProviderID, source.ID, config.Identity
-	stageZeroOperation := &persistence.Operation{ID: stageZeroID, Kind: providerKind, State: "queued", Stage: "queued", InputSnapshot: stageZeroInput,
-		ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity,
-		ProviderEndpoint: source.Endpoint, ProviderCacheKey: &stageZeroKey, Attempt: 1}
 	admitted, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(ctx, client, persistence.AutomaticFallbackMatchingAdmission{
 		Parent:     &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{}`), Attempt: 1},
 		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
-		Provider:   persistence.MatchingProviderRequest{Operation: stageZeroOperation, Args: service.ProviderFetchOperationArgs{OperationID: stageZeroID}},
+		Provider:   provider,
 		Source:     persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: config.Identity},
 		GroupID:    groups[0].ID, ExpectedGroupRevision: groups[0].Revision, PolicyVersion: service.MatchingPolicyVersion,
 		Plan: plan, EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: eventEpoch,
@@ -158,6 +182,57 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		t.Fatalf("admit automatic fallback run: %v", err)
 	}
 	parentID = admitted.OriginalRunID
+	if emptyPlan {
+		var wakeID int64
+		if err := fixture.db.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? AND consumed_at IS NULL`, parentID).Scan(ctx, &wakeID); err != nil {
+			t.Fatalf("read registered empty-plan parent wake: %v", err)
+		}
+		if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, wakeID).Exec(ctx); err != nil {
+			t.Fatalf("mark empty-plan parent wake running: %v", err)
+		}
+		claim, outcome, err := fixture.repository.ClaimMatchingDelivery(ctx, parentID, 1, wakeID, 1)
+		if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+			t.Fatalf("claim empty-plan parent wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
+		}
+		changed, handled, err := acquisition.Advance(ctx, parentID, 1, wakeID, claim)
+		if err != nil || !handled || !changed {
+			t.Fatalf("complete empty fallback plan: changed=%v handled=%v err=%v", changed, handled, err)
+		}
+		parked, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || parked.Phase != "fallback_review_wait" {
+			t.Fatalf("empty fallback plan did not park for review: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		}
+		var evidence struct {
+			Reason   string            `json:"reason"`
+			Receipts []json.RawMessage `json:"calculation_receipts"`
+		}
+		if err := json.Unmarshal(parked.Output, &evidence); err != nil || evidence.Reason != "fallback_plan_empty" || len(evidence.Receipts) != 0 {
+			t.Fatalf("empty fallback review evidence is invalid: output=%s evidence=%+v err=%v", parked.Output, evidence, err)
+		}
+		var dependencyCount, registrationCount, calculationCount, phaseWakeCount int
+		for query, destination := range map[string]*int{
+			`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`:    &dependencyCount,
+			`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`: &registrationCount,
+			`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=?`:  &calculationCount,
+			`SELECT count(*) FROM matching_delivery WHERE run_id=?`:                      &phaseWakeCount,
+		} {
+			if err := fixture.db.NewRaw(query, parentID).Scan(ctx, destination); err != nil {
+				t.Fatalf("read empty-plan evidence counts: %v", err)
+			}
+		}
+		if len(parked.Intent.InitialProviderInputs) != 0 || len(parked.Intent.CapturedMembers) == 0 || dependencyCount != 0 || registrationCount != 0 || calculationCount != 0 || phaseWakeCount != 1 {
+			t.Fatalf("empty plan fabricated work or lost captured intent/original wake: inputs=%d members=%d dependencies=%d registrations=%d calculations=%d deliveries=%d", len(parked.Intent.InitialProviderInputs), len(parked.Intent.CapturedMembers), dependencyCount, registrationCount, calculationCount, phaseWakeCount)
+		}
+		var runState, opStage string
+		var hasActiveDelivery bool
+		if err := fixture.db.NewRaw(`SELECT run.state,operation.stage,
+			run.active_execution_epoch IS NOT NULL OR run.active_river_job_id IS NOT NULL OR run.active_river_attempt IS NOT NULL
+			FROM matching_run run JOIN operation ON operation.id=run.operation_id WHERE run.id=?`, parentID).
+			Scan(ctx, &runState, &opStage, &hasActiveDelivery); err != nil || runState != "waiting_policy" || opStage != "review_pending" || hasActiveDelivery {
+			t.Fatalf("empty plan did not park without manual mode or clear its active delivery: run=%s stage=%s active=%v err=%v", runState, opStage, hasActiveDelivery, err)
+		}
+		return
+	}
 	stageZeroOperation, err = fixture.repository.GetOperation(ctx, stageZeroID)
 	if err != nil || stageZeroOperation.RiverJobID == nil {
 		t.Fatalf("read registered stage-zero provider operation: operation=%+v err=%v", stageZeroOperation, err)
@@ -286,6 +361,9 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		t.Fatalf("decode stage-one operation input: %v", err)
 	}
 	stageOnePayload := json.RawMessage(fmt.Sprintf(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"releases":[{"id":%q,"title":"Captured Album"}]}`, releaseID))
+	if exhaustPlan {
+		stageOnePayload = json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"releases":[]}`)
+	}
 	stageOneKey := *stageOneOperation.ProviderCacheKey
 	stageOneTicket, err := cache.BeginRefresh(ctx, source.ID, stageOneKey, config.Identity)
 	if err != nil {
@@ -306,6 +384,84 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	}
 	wakeID, claim = claimWake()
 	advance(wakeID, claim)
+	if exhaustPlan {
+		stageOneApplicability, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || stageOneApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
+			t.Fatalf("empty stage-one search did not reach applicability: snapshot=%+v exists=%v err=%v", stageOneApplicability, exists, err)
+		}
+		wakeID, claim = claimWake()
+		advance(wakeID, claim)
+		stageTwoSearch, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || stageTwoSearch.Phase != "fallback_search" {
+			t.Fatalf("stage-one calculation did not admit final finite stage: snapshot=%+v exists=%v err=%v", stageTwoSearch, exists, err)
+		}
+		var stageTwoOutput struct {
+			RequestID uuid.UUID `json:"request_id"`
+		}
+		if err := json.Unmarshal(stageTwoSearch.Output, &stageTwoOutput); err != nil || stageTwoOutput.RequestID == uuid.Nil {
+			t.Fatalf("decode final-stage operation descriptor: output=%s err=%v", stageTwoSearch.Output, err)
+		}
+		stageTwoOperation, err := fixture.repository.GetOperation(ctx, stageTwoOutput.RequestID)
+		if err != nil || stageTwoOperation.RiverJobID == nil || stageTwoOperation.Kind != "provider_recording_search" {
+			t.Fatalf("read actual final-stage operation: operation=%+v err=%v", stageTwoOperation, err)
+		}
+		stageTwoTicket, err := cache.BeginRefresh(ctx, source.ID, *stageTwoOperation.ProviderCacheKey, config.Identity)
+		if err != nil {
+			t.Fatalf("reserve final-stage accepted empty response: %v", err)
+		}
+		stageTwoPayload := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`)
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: stageTwoTicket, FetchedAt: time.Now().UTC(), Payload: stageTwoPayload}); err != nil {
+			t.Fatalf("accept final-stage empty response: %v", err)
+		}
+		if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *stageTwoOperation.RiverJobID).Exec(ctx); err != nil {
+			t.Fatalf("mark final-stage provider job running: %v", err)
+		}
+		if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *stageTwoOperation.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: stageTwoOutput.RequestID}}); err != nil {
+			t.Fatalf("run real final-stage provider worker: %v", err)
+		}
+		stageTwoReceipt, err := fixture.repository.GetMatchingFallbackSearchReceipt(ctx, parentID, stageTwoOutput.RequestID)
+		if err != nil || stageTwoReceipt == nil || stageTwoReceipt.StageIndex != 2 || !jsonEqual(stageTwoReceipt.Payload, stageTwoPayload) {
+			t.Fatalf("read real final-stage receipt: receipt=%+v err=%v", stageTwoReceipt, err)
+		}
+		wakeID, claim = claimWake()
+		advance(wakeID, claim)
+		stageTwoApplicability, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
+			t.Fatalf("empty final-stage search did not reach applicability: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
+		}
+		wakeID, claim = claimWake()
+		advance(wakeID, claim)
+		parked, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
+		if err != nil || !exists || parked.Phase != "fallback_review_wait" {
+			t.Fatalf("three-stage exhausted plan did not park for review: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		}
+		var evidence struct {
+			Reason   string `json:"reason"`
+			Receipts []struct {
+				StageIndex int    `json:"stage_index"`
+				Digest     string `json:"input_digest"`
+			} `json:"calculation_receipts"`
+		}
+		if err := json.Unmarshal(parked.Output, &evidence); err != nil || evidence.Reason != "review_required" || len(evidence.Receipts) != 3 {
+			t.Fatalf("exhaustion receipt manifest is incomplete: output=%s evidence=%+v err=%v", parked.Output, evidence, err)
+		}
+		for index, receipt := range evidence.Receipts {
+			if receipt.StageIndex != index || receipt.Digest == "" {
+				t.Fatalf("calculation receipt order or binding is invalid: %+v", evidence.Receipts)
+			}
+		}
+		var requestCount, calculationCount int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=? AND role='search'`, parentID).Scan(ctx, &requestCount); err != nil {
+			t.Fatalf("count exact executed search stages: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=?`, parentID).Scan(ctx, &calculationCount); err != nil {
+			t.Fatalf("count exact stage calculations: %v", err)
+		}
+		if requestCount != 3 || calculationCount != 3 {
+			t.Fatalf("finite plan did not stop at its three saved stages: searches=%d calculations=%d", requestCount, calculationCount)
+		}
+		return
+	}
 
 	hydration, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
 	if err != nil || !exists || hydration.Phase != persistence.MatchingAcquisitionFallbackHydration {

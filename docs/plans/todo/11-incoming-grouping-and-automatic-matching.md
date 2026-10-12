@@ -1279,6 +1279,18 @@ normalization для score в точности. Если по имеющимся
   bounded orchestration, not empty-plan handling, final sealing, runtime activation
   or comprehensive concurrency acceptance. Plan11 remains open.
 
+### Empty-plan and exhausted fallback review waits — 2026-10-12
+
+- Empty finite plans consume their fenced original delivery into capture-bound
+  fallback_review_wait without fabricated provider evidence, registrations,
+  calculation receipts or work. Automatic matching authority is not changed.
+- Three-stage exhaustion retains ordered saved calculation references and parks
+  review_pending without a fourth search. PostgreSQL tests drive actual workers
+  against accepted cached responses; they are not live provider/River proofs.
+- Independent review and primary full `task verify` passed. These are durable
+  acquisition handoffs, not final published review decisions; sealing and runtime
+  fallback activation remain outstanding, and plan11 remains open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

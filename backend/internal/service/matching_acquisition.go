@@ -91,6 +91,10 @@ type matchingFallbackHydrationCompleter interface {
 	CompleteFallbackHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64) (bool, error)
 }
 
+type matchingEmptyFallbackPlanCompleter interface {
+	CompleteEmptyFallbackPlanForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64) (bool, error)
+}
+
 type matchingDeliveryReleaseHydrationStarter interface {
 	StartMatchingReleaseHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error)
 }
@@ -207,6 +211,21 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 	}
 	if snapshot.FailedProviderDependency {
 		return false, true, ErrMatchingAcquisitionProviderFailed
+	}
+	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == "waiting_policy" {
+		var output struct {
+			State  string `json:"state"`
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(snapshot.Output, &output) != nil || output.State != "waiting_policy" || output.Reason != "fallback_plan_empty" || len(snapshot.Intent.FallbackQueryPlan) == 0 || len(snapshot.Intent.InitialProviderInputs) != 0 {
+			return false, true, fmt.Errorf("saved empty fallback plan disposition is invalid")
+		}
+		completer, ok := acquisition.repository.(matchingEmptyFallbackPlanCompleter)
+		if !ok {
+			return false, true, fmt.Errorf("empty fallback plan persistence is unavailable")
+		}
+		changed, err := completer.CompleteEmptyFallbackPlanForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision)
+		return changed, true, err
 	}
 	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == "fallback_search" {
 		return acquisition.advanceFallbackSearch(ctx, snapshot, runID, attempt, riverJobID, claim)
