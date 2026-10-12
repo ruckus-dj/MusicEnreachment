@@ -1345,6 +1345,30 @@ normalization для score в точности. Если по имеющимся
   approved by this increment. Recurrent catalog continuation timeouts remain under
   separate diagnosis despite this passing gate; plan11 remains open.
 
+### Shared final kernel and frozen preparation — 2026-10-12
+
+- Legacy rendering now adapts a shared pure release/assignment decision kernel.
+  Frozen fallback preparation invokes that kernel from persisted seal evidence,
+  retaining all captured files, metadata, locations and selected-stage layouts.
+  No-query produces whole-group review; caller cancellation reaches the solver.
+  All edge profiles/confidences and layout identities are validated. Derived
+  assignment-candidate ordering is deterministic without choosing a tie winner.
+- Search payload digests are explicitly versioned: historical PostgreSQL byte
+  hashes remain unchanged, new writes use canonical JSON. Persistence-validated
+  transient V1 provenance works with both calculation tuples 2/1/2 and 3/3/3.
+  Migration rollback refuses V2 receipts. Genuine pre-migration writer receipts
+  are covered through read, idempotent recapture, rejected changes and DOWN/UP.
+- Real PostgreSQL seal preparation before/after source-configuration rotation
+  preserves authority, decision and frozen inventory. Provider-graph A/B mutation
+  is not yet proved by this test and remains publication/apply acceptance work.
+- Independent source/compatibility reviews and primary full `task verify` passed.
+  One primary attempt failed during Docker reaper creation; its full retry passed.
+  Acquisition fixtures stop their analysis-only consumer before manually driven
+  matching/provider deliveries, avoiding confirmed unknown-kind interference.
+- This increment does not publish, enqueue apply, resume parked fallback waits
+  or activate artistless runtime admission. Next: durable continuation, separate
+  immutable provider authority and apply materialization from sealed metadata.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

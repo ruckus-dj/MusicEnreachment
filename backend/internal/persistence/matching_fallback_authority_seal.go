@@ -165,10 +165,15 @@ func (repository *SetupManagerRepository) GetMatchingFallbackAuthoritySeal(
 	if repository == nil || runID == uuid.Nil || waitRevision < 1 {
 		return result, false, fmt.Errorf("read fallback authority seal: run and wait revision are required")
 	}
+	tx, err := repository.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return result, false, fmt.Errorf("read fallback authority seal: begin snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	var schema int
 	var payload json.RawMessage
 	var digest []byte
-	err := repository.db.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
+	err = tx.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
 		WHERE run_id=? AND wait_revision=?`, runID, waitRevision).Scan(ctx, &schema, &payload, &digest)
 	if err == sql.ErrNoRows {
 		return result, false, nil
@@ -198,7 +203,7 @@ func (repository *SetupManagerRepository) GetMatchingFallbackAuthoritySeal(
 	}
 	// Reconstruct the expected authority from the original immutable wait and
 	// receipts. Historical mode intentionally avoids the mutable current cursor.
-	expected, found, err := buildMatchingFallbackSealAuthority(ctx, repository.db, runID, waitRevision, true)
+	expected, found, err := buildMatchingFallbackSealAuthority(ctx, tx, runID, waitRevision, true)
 	if err != nil {
 		return MatchingFallbackSealAuthority{}, false, err
 	}
@@ -209,5 +214,6 @@ func (repository *SetupManagerRepository) GetMatchingFallbackAuthoritySeal(
 	if err != nil || !bytes.Equal(canonical, expectedBytes) {
 		return MatchingFallbackSealAuthority{}, false, fmt.Errorf("read fallback authority seal: payload differs from original wait authority")
 	}
+	result.legacySearchEvidence = expected.legacySearchEvidence
 	return result, true, nil
 }

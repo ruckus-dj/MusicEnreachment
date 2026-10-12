@@ -118,6 +118,11 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 	// matching does; no hand-written source rows or provider graph fixtures.
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
+	// The analysis fixture's River client also consumes the default and matching
+	// queues. Stop it so it cannot claim the provider and matching deliveries this
+	// test drives manually below; the helper is graceful and idempotent, so the
+	// fixture's own cleanup stop and later listener-pool close remain safe.
+	stopRiverClient(t, fixture.client)
 	grouping := persistence.NewIncomingGroupingRepository(database)
 	groups := service.NewIncomingGroups(grouping)
 	if err := groups.Refresh(ctx); err != nil {
@@ -299,10 +304,10 @@ func TestMatchingAcquisitionV2SealedWorkerPublishesPostgreSQL(t *testing.T) {
 		t.Fatalf("after first browse page acquisition phase=%q exists=%t err=%v", acquisitionSnapshot.Phase, exists, err)
 	}
 	var secondBrowseID uuid.UUID
-	// The provider's terminal state can become visible before the competing
-	// River worker has consumed the parent wake and committed its continuation.
-	// Wait for the durable child rather than assuming those transactions finish
-	// synchronously with the provider delivery.
+	// No competing matching worker remains: the fixture consumer is stopped and
+	// the manual delivery above commits the continuation synchronously. The
+	// bounded wait is retained only as persistence synchronization safety, not
+	// because another worker races this delivery to commit the continuation.
 	deadline := time.NewTicker(10 * time.Millisecond)
 	defer deadline.Stop()
 	for {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"sort"
@@ -427,6 +428,243 @@ type MatchingGroupEvaluationResult struct {
 	Result   persistence.IncomingMatchEvaluation
 }
 
+// MatchingGroupEvaluationInput is the complete immutable input to the shared
+// matching decision kernel. Files and release layouts are supplied explicitly;
+// the kernel has no access to repositories, provider clients, settings, or disk.
+type MatchingGroupEvaluationInput struct {
+	Members                 []persistence.IncomingMatchMemberFence
+	Inputs                  []MatchingInput
+	Files                   []IncomingFile
+	ReleaseLayouts          []persistence.MatchingRelease
+	ConflictingFingerprints map[uuid.UUID]bool
+}
+
+// MatchingGroupEvaluationDecisionResult contains only calculated decision data,
+// not persistence DTOs or publication evidence.
+type MatchingGroupEvaluationDecisionResult struct {
+	ReleaseSelection       ReleaseSelectionResult
+	SelectedReleaseID      string
+	Decision               MatchingGroupDecision
+	Reason                 string
+	Outcome                MatchingEvaluationDecisionOutcome
+	AllMembersReleaseReady bool
+	Assignment             MatchingAssignmentResult
+	AssignmentCandidates   []MatchingAssignmentCandidate
+	PositionsByFileRelease map[matchingGroupEdgeKey][]persistence.IncomingMatchPosition
+}
+
+type matchingGroupEdgeKey struct {
+	file    uuid.UUID
+	release string
+}
+
+// EvaluateMatchingGroupFromInputs calculates release selection and assignment
+// exclusively from frozen, typed inputs. Coordinates remain zero-based here;
+// persistence serialization performs the existing one-based conversion once.
+func EvaluateMatchingGroupFromInputs(ctx context.Context, input MatchingGroupEvaluationInput) (MatchingGroupEvaluationDecisionResult, error) {
+	type edge struct{ input MatchingInput }
+	if len(input.Members) == 0 {
+		return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation group has no members")
+	}
+	members := make(map[uuid.UUID]bool, len(input.Members))
+	for _, member := range input.Members {
+		if member.FileMemberID == uuid.Nil || members[member.FileMemberID] {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation group member identity is invalid or duplicated")
+		}
+		members[member.FileMemberID] = true
+	}
+	files := make(map[uuid.UUID]IncomingFile, len(input.Files))
+	for _, file := range input.Files {
+		if file.VariantID == uuid.Nil || files[file.VariantID].VariantID != uuid.Nil {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation file identity is invalid or duplicated")
+		}
+		if !members[file.VariantID] {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation files contain a foreign group member")
+		}
+		files[file.VariantID] = file
+	}
+	for memberID := range members {
+		if _, exists := files[memberID]; !exists {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation member is absent from frozen files")
+		}
+	}
+	releases := make(map[string]map[[2]int]uuid.UUID, len(input.ReleaseLayouts))
+	trackIDs := make(map[uuid.UUID]string)
+	for _, release := range input.ReleaseLayouts {
+		if release.ProviderKey == "" || releases[release.ProviderKey] != nil {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation release layout identity is invalid or duplicated")
+		}
+		positions := make(map[[2]int]uuid.UUID, len(release.Tracks))
+		for _, track := range release.Tracks {
+			coordinate := [2]int{track.Medium, track.Position}
+			if track.ID == uuid.Nil || track.Medium < 0 || track.Position < 0 || positions[coordinate] != uuid.Nil {
+				return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation release layout position is invalid or duplicated")
+			}
+			if previous, duplicate := trackIDs[track.ID]; duplicate {
+				return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation track identity is duplicated in releases %q and %q", previous, release.ProviderKey)
+			}
+			trackIDs[track.ID] = release.ProviderKey
+			positions[coordinate] = track.ID
+		}
+		releases[release.ProviderKey] = positions
+	}
+	byFileRelease := make(map[matchingGroupEdgeKey][]edge)
+	releaseBest := make(map[matchingGroupEdgeKey]float64)
+	seenEdges := make(map[string]bool)
+	for _, candidate := range input.Inputs {
+		if !members[candidate.FileID] {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge references a foreign file member")
+		}
+		positions, exists := releases[candidate.ReleaseID]
+		if !exists {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge references unknown release %q", candidate.ReleaseID)
+		}
+		if positions[[2]int{candidate.Medium, candidate.Track}] == uuid.Nil {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge references unknown release position")
+		}
+		if candidate.Medium < 0 || candidate.Track < 0 {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge has a negative release position")
+		}
+		if candidate.ReleaseScore.Profile != ReleaseMatchingProfile || candidate.AssignmentScore.Profile != RecordingReleaseMatchingProfile {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge has an invalid scoring profile")
+		}
+		if !validMatchingConfidence(candidate.ReleaseScore.Confidence) || !validMatchingConfidence(candidate.AssignmentScore.Confidence) {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge has an invalid confidence")
+		}
+		if candidate.ReleaseScore.PolicyVersion != "" && candidate.ReleaseScore.PolicyVersion != MatchingPolicyVersion ||
+			candidate.AssignmentScore.PolicyVersion != "" && candidate.AssignmentScore.PolicyVersion != MatchingPolicyVersion {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation edge has an invalid scoring policy version")
+		}
+		edgeIdentity := fmt.Sprintf("%s/%s/%d/%d", candidate.FileID, candidate.ReleaseID, candidate.Medium, candidate.Track)
+		if seenEdges[edgeIdentity] {
+			return MatchingGroupEvaluationDecisionResult{}, fmt.Errorf("matching evaluation contains a duplicate file-release-position edge")
+		}
+		seenEdges[edgeIdentity] = true
+		key := matchingGroupEdgeKey{candidate.FileID, candidate.ReleaseID}
+		byFileRelease[key] = append(byFileRelease[key], edge{candidate})
+		if score, exists := releaseBest[key]; !exists || candidate.ReleaseScore.Confidence > score {
+			releaseBest[key] = candidate.ReleaseScore.Confidence
+		}
+	}
+	releaseFiles := make([]ReleaseSelectionFile, 0, len(input.Members))
+	for _, member := range input.Members {
+		file := ReleaseSelectionFile{ID: member.FileMemberID.String()}
+		for key, score := range releaseBest {
+			if key.file == member.FileMemberID {
+				file.Candidates = append(file.Candidates, ReleaseSelectionCandidate{ReleaseID: key.release, Score: MatchingScore{Profile: ReleaseMatchingProfile, Confidence: score}})
+			}
+		}
+		releaseFiles = append(releaseFiles, file)
+	}
+	selection, err := SelectReleaseGroup(releaseFiles)
+	if err != nil {
+		return MatchingGroupEvaluationDecisionResult{}, err
+	}
+	result := MatchingGroupEvaluationDecisionResult{
+		ReleaseSelection: selection, SelectedReleaseID: selection.SelectedReleaseID,
+		Decision: MatchingDecisionReview, Reason: "release selection is ambiguous or below threshold",
+		Outcome:                MatchingDecisionOutcomeInfeasible,
+		AllMembersReleaseReady: selection.Reason == ReleaseSelectionSelected,
+		PositionsByFileRelease: make(map[matchingGroupEdgeKey][]persistence.IncomingMatchPosition),
+		AssignmentCandidates:   make([]MatchingAssignmentCandidate, 0),
+	}
+	switch selection.Reason {
+	case ReleaseSelectionReview:
+		result.Outcome = MatchingDecisionOutcomeTie
+	case ReleaseSelectionSelected:
+		result.Outcome = MatchingDecisionOutcomeUnique
+		result.Decision, result.Reason = MatchingDecisionSelected, "unique release selection and assignment"
+	}
+	for _, member := range input.Members {
+		if input.ConflictingFingerprints[member.FileMemberID] {
+			result.AllMembersReleaseReady = false
+			result.Decision, result.Reason = MatchingDecisionReview, "shared source locations have conflicting selected fingerprint identities; group requires review"
+			result.Outcome = MatchingDecisionOutcomeReview
+		}
+	}
+	for key, edges := range byFileRelease {
+		for _, item := range edges {
+			result.PositionsByFileRelease[key] = append(result.PositionsByFileRelease[key], persistence.IncomingMatchPosition{
+				TrackID: matchingGroupTrackID(input.ReleaseLayouts, item.input.ReleaseID, item.input.Medium, item.input.Track),
+				Medium:  item.input.Medium, Position: item.input.Track,
+			})
+			if !result.AllMembersReleaseReady || key.release != result.SelectedReleaseID || item.input.AssignmentScore.Confidence < minimumReleaseCandidateConfidence {
+				continue
+			}
+			file := files[key.file]
+			locations := make([]MatchingAssignmentLocation, 0, len(file.Locations))
+			for _, location := range file.Locations {
+				locations = append(locations, MatchingAssignmentLocation{RootID: location.RootID.String(), RelativeParent: path.Dir(location.RelativePath)})
+			}
+			candidateID := fmt.Sprintf("%s/%d/%d", key.release, item.input.Medium, item.input.Track)
+			result.AssignmentCandidates = append(result.AssignmentCandidates, MatchingAssignmentCandidate{
+				FileVariantID: key.file.String(), CandidateID: candidateID, PositionID: candidateID,
+				RecordingMBID: item.input.RecordingID, Score: item.input.AssignmentScore, Locations: locations,
+			})
+		}
+	}
+	// byFileRelease is a map, so its iteration order is nondeterministic.
+	// Canonicalize the locally constructed candidate slice before eligibility
+	// checks and the solver consume it; the solver's exact optimum and the
+	// frozen scoring/layout inputs are unaffected by this ordering.
+	sort.Slice(result.AssignmentCandidates, func(i, j int) bool {
+		if result.AssignmentCandidates[i].FileVariantID != result.AssignmentCandidates[j].FileVariantID {
+			return result.AssignmentCandidates[i].FileVariantID < result.AssignmentCandidates[j].FileVariantID
+		}
+		return result.AssignmentCandidates[i].CandidateID < result.AssignmentCandidates[j].CandidateID
+	})
+	if result.AllMembersReleaseReady {
+		eligible := make(map[uuid.UUID]bool)
+		for _, candidate := range result.AssignmentCandidates {
+			eligible[uuid.MustParse(candidate.FileVariantID)] = true
+		}
+		for _, member := range input.Members {
+			if !eligible[member.FileMemberID] {
+				result.AllMembersReleaseReady = false
+				break
+			}
+		}
+		if !result.AllMembersReleaseReady {
+			result.Decision, result.Reason = MatchingDecisionReview, "selected release has a member without an eligible assignment edge"
+			result.Outcome = MatchingDecisionOutcomeInfeasible
+		}
+	}
+	if result.AllMembersReleaseReady {
+		result.Assignment, err = SelectMatchingAssignments(ctx, result.AssignmentCandidates)
+		if err != nil {
+			return MatchingGroupEvaluationDecisionResult{}, err
+		}
+		if !result.Assignment.Feasible {
+			result.Decision, result.Reason = MatchingDecisionReview, "selected release assignments are infeasible"
+			result.Outcome = MatchingDecisionOutcomeInfeasible
+		} else if !result.Assignment.Unique {
+			result.Decision, result.Reason = MatchingDecisionReview, "selected release assignment is not uniquely optimal"
+			result.Outcome = MatchingDecisionOutcomeTie
+		}
+	}
+	if result.Decision == MatchingDecisionReview && result.Outcome == MatchingDecisionOutcomeUnique {
+		result.Outcome = MatchingDecisionOutcomeReview
+	}
+	return result, nil
+}
+
+func validMatchingConfidence(confidence float64) bool {
+	return !math.IsNaN(confidence) && !math.IsInf(confidence, 0) && confidence >= 0 && confidence <= 1
+}
+
+func matchingGroupTrackID(releases []persistence.MatchingRelease, releaseKey string, medium, position int) uuid.UUID {
+	for _, release := range releases {
+		if release.ProviderKey == releaseKey {
+			for _, track := range release.Tracks {
+				if track.Medium == medium && track.Position == position {
+					return track.ID
+				}
+			}
+		}
+	}
+	return uuid.Nil
+}
+
 // EvaluateMatchingSnapshot is pure: it consumes saved captures and a cached
 // provider projection only. It never performs I/O, persists confidence as
 // confirmation, or schedules follow-up work.
@@ -644,108 +882,42 @@ func makeMatchingGroupResult(
 	releaseKeys []string,
 	cacheRevisions map[string]*string,
 ) (persistence.IncomingMatchEvaluation, MatchingGroupDecision, string, error) {
-	type edgeKey struct {
-		file    uuid.UUID
-		release string
-	}
-	type edge struct{ input MatchingInput }
-	byFileRelease := make(map[edgeKey][]edge)
-	releaseBest := make(map[edgeKey]float64)
-	for _, input := range inputs {
-		key := edgeKey{input.FileID, input.ReleaseID}
-		byFileRelease[key] = append(byFileRelease[key], edge{input})
-		if score, ok := releaseBest[key]; !ok || input.ReleaseScore.Confidence > score {
-			releaseBest[key] = input.ReleaseScore.Confidence
-		}
-	}
-	releaseFiles := make([]ReleaseSelectionFile, 0, len(members))
+	conflicts := make(map[uuid.UUID]bool)
+	groupFiles := make([]IncomingFile, 0, len(members))
 	for _, member := range members {
-		file := ReleaseSelectionFile{ID: member.FileMemberID.String()}
-		for key, score := range releaseBest {
-			if key.file == member.FileMemberID {
-				file.Candidates = append(file.Candidates, ReleaseSelectionCandidate{ReleaseID: key.release, Score: MatchingScore{Profile: ReleaseMatchingProfile, Confidence: score}})
-			}
+		conflicts[member.FileMemberID] = snapshot.acoustIDDiagnostics[member.FileMemberID] != ""
+		file := findIncomingFile(snapshot.Grouping.Files, member.FileMemberID)
+		if file.VariantID == uuid.Nil {
+			// Preserve the legacy renderer's empty tags/locations when an older
+			// caller supplied an incomplete grouping snapshot.
+			file.VariantID = member.FileMemberID
 		}
-		releaseFiles = append(releaseFiles, file)
+		groupFiles = append(groupFiles, file)
 	}
-	releaseSelection, err := SelectReleaseGroup(releaseFiles)
+	core, err := EvaluateMatchingGroupFromInputs(ctx, MatchingGroupEvaluationInput{
+		Members: members, Inputs: inputs, Files: groupFiles,
+		ReleaseLayouts: snapshot.Provider.Releases, ConflictingFingerprints: conflicts,
+	})
 	if err != nil {
 		return persistence.IncomingMatchEvaluation{}, "", "", err
 	}
-	selectedRelease := releaseSelection.SelectedReleaseID
-	allMemberReleaseEligible := releaseSelection.Reason == ReleaseSelectionSelected
-	decision, reason := MatchingDecisionReview, "release selection is ambiguous or below threshold"
-	decisionOutcome := MatchingDecisionOutcomeInfeasible
-	switch releaseSelection.Reason {
-	case ReleaseSelectionReview:
-		decisionOutcome = MatchingDecisionOutcomeTie
-	case ReleaseSelectionSelected:
-		decisionOutcome = MatchingDecisionOutcomeUnique
+	type edgeKey = matchingGroupEdgeKey
+	byFileRelease := make(map[edgeKey][]struct{ input MatchingInput })
+	for _, input := range inputs {
+		key := edgeKey{input.FileID, input.ReleaseID}
+		byFileRelease[key] = append(byFileRelease[key], struct{ input MatchingInput }{input})
 	}
-	conflictingFingerprint := false
-	for _, member := range members {
-		if snapshot.acoustIDDiagnostics[member.FileMemberID] != "" {
-			conflictingFingerprint = true
+	releaseBest := make(map[edgeKey]float64)
+	for _, candidate := range inputs {
+		key := edgeKey{candidate.FileID, candidate.ReleaseID}
+		if score, exists := releaseBest[key]; !exists || candidate.ReleaseScore.Confidence > score {
+			releaseBest[key] = candidate.ReleaseScore.Confidence
 		}
 	}
-	if allMemberReleaseEligible {
-		decision, reason = MatchingDecisionSelected, "unique release selection and assignment"
-	}
-	if conflictingFingerprint {
-		allMemberReleaseEligible = false
-		decision, reason = MatchingDecisionReview, "shared source locations have conflicting selected fingerprint identities; group requires review"
-		decisionOutcome = MatchingDecisionOutcomeReview
-	}
-	positionsByEdge := make(map[edgeKey][]persistence.IncomingMatchPosition)
-	assignmentCandidates := make([]MatchingAssignmentCandidate, 0)
-	for key, edges := range byFileRelease {
-		for _, item := range edges {
-			positionsByEdge[key] = append(positionsByEdge[key], persistence.IncomingMatchPosition{TrackID: matchingTrackID(snapshot.Provider, item.input.ReleaseID, item.input.Medium, item.input.Track), Medium: item.input.Medium, Position: item.input.Track})
-			if !allMemberReleaseEligible || key.release != selectedRelease || item.input.AssignmentScore.Confidence < minimumReleaseCandidateConfidence {
-				continue
-			}
-			candidateID := fmt.Sprintf("%s/%d/%d", key.release, item.input.Medium, item.input.Track)
-			file := findIncomingFile(snapshot.Grouping.Files, key.file)
-			locations := make([]MatchingAssignmentLocation, 0, len(file.Locations))
-			for _, location := range file.Locations {
-				locations = append(locations, MatchingAssignmentLocation{RootID: location.RootID.String(), RelativeParent: path.Dir(location.RelativePath)})
-			}
-			assignmentCandidates = append(assignmentCandidates, MatchingAssignmentCandidate{FileVariantID: key.file.String(), CandidateID: candidateID, PositionID: candidateID, RecordingMBID: item.input.RecordingID, Score: item.input.AssignmentScore, Locations: locations})
-		}
-	}
-	if allMemberReleaseEligible {
-		eligible := make(map[uuid.UUID]bool)
-		for _, candidate := range assignmentCandidates {
-			eligible[uuid.MustParse(candidate.FileVariantID)] = true
-		}
-		for _, member := range members {
-			if !eligible[member.FileMemberID] {
-				allMemberReleaseEligible = false
-				break
-			}
-		}
-		if !allMemberReleaseEligible {
-			decision, reason = MatchingDecisionReview, "selected release has a member without an eligible assignment edge"
-			decisionOutcome = MatchingDecisionOutcomeInfeasible
-		}
-	}
-	var assignment MatchingAssignmentResult
-	if allMemberReleaseEligible {
-		assignment, err = SelectMatchingAssignments(ctx, assignmentCandidates)
-		if err != nil {
-			return persistence.IncomingMatchEvaluation{}, "", "", err
-		}
-		if !assignment.Feasible {
-			decision, reason = MatchingDecisionReview, "selected release assignments are infeasible"
-			decisionOutcome = MatchingDecisionOutcomeInfeasible
-		} else if !assignment.Unique {
-			decision, reason = MatchingDecisionReview, "selected release assignment is not uniquely optimal"
-			decisionOutcome = MatchingDecisionOutcomeTie
-		}
-	}
-	if decision == MatchingDecisionReview && decisionOutcome == MatchingDecisionOutcomeUnique {
-		decisionOutcome = MatchingDecisionOutcomeReview
-	}
+	releaseSelection, selectedRelease := core.ReleaseSelection, core.SelectedReleaseID
+	decision, reason, decisionOutcome := core.Decision, core.Reason, core.Outcome
+	assignment := core.Assignment
+	assignmentCandidates, positionsByEdge := core.AssignmentCandidates, core.PositionsByFileRelease
 	var selectedReleaseIdentity *MatchingDecisionSelectedRelease
 	if selectedRelease != "" {
 		for _, release := range snapshot.Provider.Releases {

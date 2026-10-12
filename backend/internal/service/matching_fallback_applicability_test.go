@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,145 @@ import (
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
+
+type immutableFallbackSealReader struct {
+	seal persistence.MatchingFallbackSealAuthority
+}
+
+func (reader immutableFallbackSealReader) GetMatchingFallbackAuthoritySeal(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackSealAuthority, bool, error) {
+	return reader.seal, true, nil
+}
+
+func TestValidateReceiptDigestsCanonicalJSONB(t *testing.T) {
+	acceptedPayload := json.RawMessage(`{"unknown":{"z":1,"a":1.0},"items":[{"id":"a"},{"id":"b"}]}`)
+	acceptedProjection := json.RawMessage(`{"unknown_field":true,"tracks":[1,2]}`)
+	payloadCanonical, err := canonicalFallbackJSON(acceptedPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectionCanonical, err := canonicalFallbackJSON(acceptedProjection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadHash := sha256.Sum256(payloadCanonical)
+	projectionHash := sha256.Sum256(projectionCanonical)
+	payloadDigest := hex.EncodeToString(payloadHash[:])
+	projectionDigest := hex.EncodeToString(projectionHash[:])
+
+	// PostgreSQL jsonb may reorder object keys and normalize whitespace. Those
+	// storage-level changes must not invalidate the digest of accepted content.
+	persistedPayload := json.RawMessage(` { "items" : [ {"id":"a"}, {"id":"b"} ], "unknown" : { "a":1.0, "z":1 } } `)
+	persistedProjection := json.RawMessage(` {"tracks" : [1, 2], "unknown_field" : true} `)
+	if err := validateReceiptDigests(2, persistedPayload, payloadDigest, persistedProjection, projectionDigest); err != nil {
+		t.Fatalf("canonical JSONB receipt was rejected: %v", err)
+	}
+
+	// Canonicalization is only for representation differences: it must continue
+	// to reject semantic edits rather than accepting a digest of the edited data.
+	tamperedPayload := json.RawMessage(`{"items":[{"id":"a"},{"id":"changed"}],"unknown":{"a":1.0,"z":1}}`)
+	if err := validateReceiptDigests(2, tamperedPayload, payloadDigest, persistedProjection, projectionDigest); err == nil {
+		t.Fatal("semantically changed payload matched the accepted digest")
+	}
+	tamperedProjection := json.RawMessage(`{"tracks":[1,3],"unknown_field":true}`)
+	if err := validateReceiptDigests(2, persistedPayload, payloadDigest, tamperedProjection, projectionDigest); err == nil {
+		t.Fatal("semantically changed projection matched the accepted digest")
+	}
+}
+
+func TestValidateReceiptDigestsPreservesHistoricalSearchReceiptBytes(t *testing.T) {
+	// This is the committed writer's output shape: jsonb::text followed by
+	// json.Marshal(json.RawMessage(...)). PostgreSQL's key order is deliberately
+	// not lexical, so canonical JSON hashing would reject this receipt.
+	legacyPayload := json.RawMessage(`{"a":2,"long":1,"items":[{"b":2,"z":1}]}`)
+	legacyBytes, err := json.Marshal(json.RawMessage(legacyPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyHash := sha256.Sum256(legacyBytes)
+	legacyDigest := hex.EncodeToString(legacyHash[:])
+	if legacyDigest != "9ad1e499066c78025df917f4825731692f87788a831c9868a4a0f6bcec3a7675" {
+		t.Fatalf("historical writer fixture changed: digest=%s", legacyDigest)
+	}
+	if err := validateReceiptDigests(1, legacyPayload, legacyDigest, nil, ""); err != nil {
+		t.Fatalf("historical version-1 receipt rejected: %v", err)
+	}
+	if err := validateReceiptDigests(2, legacyPayload, legacyDigest, nil, ""); err == nil {
+		t.Fatal("version-1 receipt incorrectly validated under version 2")
+	}
+	if err := validateReceiptDigests(0, legacyPayload, legacyDigest, nil, ""); err != nil {
+		t.Fatalf("missing legacy context version rejected: %v", err)
+	}
+}
+
+func TestPrepareFrozenFallbackEvaluationUsesSealedCalculationContext(t *testing.T) {
+	input := validFallbackApplicabilityInput(t, 12, false)
+	lookups := make([]persistence.MatchingFallbackCalculationLookupAuthority, len(input.Authority.Lookups))
+	for index, lookup := range input.Authority.Lookups {
+		lookups[index] = persistence.MatchingFallbackCalculationLookupAuthority{
+			RequestID: lookup.RequestID, ReleaseID: lookup.ReleaseID, Kind: lookup.Kind,
+			ProviderSourceID: lookup.ProviderSourceID, ProviderID: lookup.ProviderID,
+			Endpoint: lookup.Endpoint, Configuration: lookup.Configuration, CacheKey: lookup.CacheKey,
+			Input: append(json.RawMessage(nil), lookup.Input...),
+		}
+	}
+	snapshot := persistence.MatchingFallbackCalculationContext{
+		RunID: input.RunID, AcquisitionRevision: input.AcquisitionRevision, StageIndex: 0,
+		Intent: input.Intent, Target: input.Target,
+		PhaseInput: input.PhaseInput, PhaseOutput: input.PhaseOutput, PhaseProvenance: input.PhaseProvenance,
+		SearchReceipt: input.SearchReceipt, LookupReceipts: input.LookupReceipts,
+		RunSourceID: input.Authority.RunSourceID, RunProviderID: input.Authority.RunProviderID,
+		RunEndpoint: input.Authority.RunEndpoint, RunConfiguration: input.Authority.RunConfiguration,
+		SearchKind: input.Authority.SearchKind, SearchCacheKey: input.Authority.SearchCacheKey,
+		SearchInput: input.Authority.SearchInput, Lookups: lookups,
+	}
+	contextDigest, err := persistence.MatchingFallbackCalculationInputDigest(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextBytes, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal := persistence.MatchingFallbackSealAuthority{
+		SchemaVersion: 3, RunID: input.RunID, WaitRevision: 2,
+		SelectedCalculation: &persistence.MatchingFallbackSealCalculationReference{
+			AcquisitionRevision: input.AcquisitionRevision, StageIndex: 0,
+			SchemaVersion: 3, CalculatorVersion: 3, DigestVersion: 3, InputDigest: contextDigest,
+		},
+		FullEvaluationContext: contextBytes,
+	}
+	sealBytes, err := json.Marshal(seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalSeal, err := canonicalFallbackJSON(sealBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealDigest := sha256.Sum256(canonicalSeal)
+	seal.Digest = hex.EncodeToString(sealDigest[:])
+	prepared, exists, err := PrepareFrozenFallbackEvaluation(context.Background(), immutableFallbackSealReader{seal: seal}, input.RunID, seal.WaitRevision)
+	if err != nil || !exists {
+		t.Fatalf("PrepareFrozenFallbackEvaluation() = exists %t, err %v", exists, err)
+	}
+	if prepared.Authority.RunID != input.RunID || prepared.Authority.WaitRevision != seal.WaitRevision || prepared.Authority.Digest != seal.Digest {
+		t.Fatalf("prepared authority = %#v, want exact seal identity", prepared.Authority)
+	}
+	want, err := CalculateFallbackApplicability(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prepared.Result, want) {
+		t.Fatalf("prepared result differs from sealed context calculation")
+	}
+	if len(prepared.ReviewInventory) != len(want.AllCandidates) || !reflect.DeepEqual(prepared.ReviewInventory, want.AllCandidates) {
+		t.Fatalf("review inventory omitted frozen candidates: got=%d want=%d", len(prepared.ReviewInventory), len(want.AllCandidates))
+	}
+	if prepared.KernelResult.Decision != MatchingDecisionReview || prepared.KernelResult.Outcome != MatchingDecisionOutcomeTie ||
+		len(prepared.KernelResult.AssignmentCandidates) != 0 || len(prepared.KernelResult.PositionsByFileRelease) != len(want.AllCandidates) {
+		t.Fatalf("prepared shared-kernel tie result lost decision or review inventory: %+v", prepared.KernelResult)
+	}
+}
 
 func TestFallbackScoreQualifiesAtExactExistingThreshold(t *testing.T) {
 	for _, test := range []struct {
@@ -149,7 +289,12 @@ func TestCalculateFallbackApplicabilityDoesNotLeakRecordingScoreToUnreferencedHy
 		ID string `json:"id"`
 	}{{ID: "release-01"}}})
 	input.SearchReceipt.Payload, _ = json.Marshal(payload)
-	searchHash := sha256.Sum256(input.SearchReceipt.Payload)
+	input.SearchReceipt.PayloadDigestVersion = 2
+	canonicalSearchPayload, err := canonicalFallbackJSON(input.SearchReceipt.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchHash := sha256.Sum256(canonicalSearchPayload)
 	input.SearchReceipt.PayloadSHA256 = hex.EncodeToString(searchHash[:])
 	input.Intent.InitialProviderInputs[0].Kind = "provider_recording_search"
 	input.Intent.InitialProviderInputs[0].CacheKey = `recording-search:0:10:recording:"Song"`
@@ -212,9 +357,10 @@ func TestCalculateFallbackApplicabilityDoesNotRequireGroupCoverageOrReleaseProfi
 	secondInputHash := sha256.Sum256(secondInput)
 	secondDigest := hex.EncodeToString(secondInputHash[:])
 	frozen.Members = append(frozen.Members, struct {
-		VariantID      uuid.UUID                             `json:"variant_id"`
-		Ready          bool                                  `json:"ready"`
-		Captures       []persistence.IncomingGroupingCapture `json:"captures"`
+		VariantID      uuid.UUID                                    `json:"variant_id"`
+		Ready          bool                                         `json:"ready"`
+		Locations      []persistence.IncomingGroupingMemberLocation `json:"locations"`
+		Captures       []persistence.IncomingGroupingCapture        `json:"captures"`
 		AnalysisInputs []struct {
 			AnalysisRecordID string          `json:"analysis_record_id"`
 			WorkID           uuid.UUID       `json:"work_id"`
@@ -276,7 +422,12 @@ func TestCalculateFallbackApplicabilityDoesNotRequireGroupCoverageOrReleaseProfi
 	}
 	accepted.Releases[0].Score = json.RawMessage(`95`)
 	input.SearchReceipt.Payload, _ = json.Marshal(accepted)
-	searchHash := sha256.Sum256(input.SearchReceipt.Payload)
+	input.SearchReceipt.PayloadDigestVersion = 2
+	canonicalSearchPayload, err := canonicalFallbackJSON(input.SearchReceipt.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchHash := sha256.Sum256(canonicalSearchPayload)
 	input.SearchReceipt.PayloadSHA256 = hex.EncodeToString(searchHash[:])
 	provenance[0].PayloadSHA = input.SearchReceipt.PayloadSHA256
 	input.PhaseProvenance, _ = json.Marshal(provenance)
@@ -293,7 +444,11 @@ func TestCalculateFallbackApplicabilityDoesNotRequireGroupCoverageOrReleaseProfi
 	}
 	projection.Releases[0].Name = "Different Album"
 	input.LookupReceipts[0].AcceptedProjection, _ = json.Marshal(projection)
-	projectionHash := sha256.Sum256(input.LookupReceipts[0].AcceptedProjection)
+	canonicalProjection, err := canonicalFallbackJSON(input.LookupReceipts[0].AcceptedProjection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectionHash := sha256.Sum256(canonicalProjection)
 	input.LookupReceipts[0].ProjectionSHA256 = hex.EncodeToString(projectionHash[:])
 	result, err := CalculateFallbackApplicability(input)
 	if err != nil {
@@ -377,9 +532,10 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 	metadataDigest := hex.EncodeToString(metadataDigestBytes[:])
 	target := fallbackCapture{SchemaVersion: 2, GroupID: groupID, GroupRevision: "revision-1"}
 	target.Members = append(target.Members, struct {
-		VariantID      uuid.UUID                             `json:"variant_id"`
-		Ready          bool                                  `json:"ready"`
-		Captures       []persistence.IncomingGroupingCapture `json:"captures"`
+		VariantID      uuid.UUID                                    `json:"variant_id"`
+		Ready          bool                                         `json:"ready"`
+		Locations      []persistence.IncomingGroupingMemberLocation `json:"locations"`
+		Captures       []persistence.IncomingGroupingCapture        `json:"captures"`
 		AnalysisInputs []struct {
 			AnalysisRecordID string          `json:"analysis_record_id"`
 			WorkID           uuid.UUID       `json:"work_id"`
@@ -388,7 +544,9 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 			InputDigest      *string         `json:"input_digest"`
 			ResultReference  *uuid.UUID      `json:"result_reference"`
 		} `json:"analysis_inputs"`
-	}{VariantID: memberID, Ready: true, Captures: []persistence.IncomingGroupingCapture{{
+	}{VariantID: memberID, Ready: true, Locations: []persistence.IncomingGroupingMemberLocation{{
+		VariantID: memberID, RootID: uuid.New(), RelativePath: "Album/song.flac",
+	}}, Captures: []persistence.IncomingGroupingCapture{{
 		WorkID: workID, VariantID: memberID, CaptureAnalysisID: &analysisID, MetadataWinner: &metadataResult,
 		Tags: tags, ProbeResult: json.RawMessage(`{}`), Ready: true,
 	}}, AnalysisInputs: []struct {
@@ -434,7 +592,15 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 			t.Fatal(err)
 		}
 		payload := json.RawMessage(`{"release":"` + releaseID + `"}`)
-		payloadHash, projectionHash := sha256.Sum256(payload), sha256.Sum256(projection)
+		canonicalPayload, err := canonicalFallbackJSON(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonicalProjection, err := canonicalFallbackJSON(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloadHash, projectionHash := sha256.Sum256(canonicalPayload), sha256.Sum256(canonicalProjection)
 		lookupID := uuid.New()
 		cacheKey := "release-lookup:" + releaseID
 		requestInput := json.RawMessage(fmt.Sprintf(`{"schema_version":1,"mbid":%q}`, releaseID))
@@ -452,7 +618,11 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 	if err != nil {
 		t.Fatal(err)
 	}
-	searchHash := sha256.Sum256(searchPayload)
+	canonicalSearchPayload, err := canonicalFallbackJSON(searchPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchHash := sha256.Sum256(canonicalSearchPayload)
 	searchManifest, _ := json.Marshal(fallbackSearchManifestDTO{Kind: "provider_release_search", AcceptedHits: searchPayload, ReleaseIDs: func() []string {
 		ids := make([]string, releaseCount)
 		for i := range ids {
@@ -486,7 +656,7 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 			InitialProviderInputs: []persistence.MatchingAcquisitionProviderRequest{{OperationID: requestID, Kind: "provider_release_search", CacheKey: queryKey, Input: initialInput}}},
 		Target:     persistence.MatchingRunFenceSnapshot{Version: 2, GroupID: groupID, GroupRevision: "revision-1", Capture: targetBytes, CaptureDigest: targetDigest},
 		PhaseInput: phaseInput, PhaseOutput: phaseOutput, PhaseProvenance: provenance,
-		SearchReceipt:  persistence.MatchingFallbackSearchReceipt{RunID: runID, RequestID: requestID, StageIndex: 0, ProviderSourceID: sourceID, ConfigurationIdentity: "config-1", CacheKey: queryKey, RequestInput: initialInput, Payload: searchPayload, PayloadSHA256: hex.EncodeToString(searchHash[:]), CacheGeneration: 1, FetchOrder: 1},
+		SearchReceipt:  persistence.MatchingFallbackSearchReceipt{RunID: runID, RequestID: requestID, StageIndex: 0, ProviderSourceID: sourceID, ConfigurationIdentity: "config-1", CacheKey: queryKey, RequestInput: initialInput, Payload: searchPayload, PayloadSHA256: hex.EncodeToString(searchHash[:]), PayloadDigestVersion: 2, CacheGeneration: 1, FetchOrder: 1},
 		LookupReceipts: projectionReceipts,
 		Authority:      MatchingFallbackAuthority{RunSourceID: sourceID, RunProviderID: providerID, RunEndpoint: "https://musicbrainz.example", RunConfiguration: "config-1", SearchKind: "provider_release_search", SearchCacheKey: queryKey, SearchInput: initialInput, Lookups: lookupAuthorities},
 	}

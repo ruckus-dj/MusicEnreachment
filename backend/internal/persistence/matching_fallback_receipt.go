@@ -26,6 +26,7 @@ type MatchingFallbackSearchReceipt struct {
 	RequestInput          json.RawMessage `json:"request_input"`
 	Payload               json.RawMessage `json:"payload"`
 	PayloadSHA256         string          `json:"payload_sha256"`
+	PayloadDigestVersion  int             `json:"payload_digest_version,omitempty"`
 	CacheRevision         *string         `json:"cache_revision,omitempty"`
 	CacheGeneration       int64           `json:"cache_generation"`
 	FetchOrder            int64           `json:"fetch_order"`
@@ -47,6 +48,7 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 	}
 	receipt := new(MatchingFallbackSearchReceipt)
 	var digest []byte
+	var payloadDigestVersion int
 	var payloadText string
 	var intentBytes []byte
 	var runSourceID uuid.UUID
@@ -54,7 +56,7 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 	var registration fallbackRequestRegistration
 	err := database.NewRaw(`SELECT receipt.run_id,receipt.request_id,receipt.stage_index,
 		receipt.provider_source_id,receipt.configuration_identity,receipt.cache_key,
-		receipt.request_input,receipt.payload::text,receipt.payload_sha256,receipt.cache_revision,
+		receipt.request_input,receipt.payload::text,receipt.payload_sha256,receipt.payload_digest_version,receipt.cache_revision,
 		receipt.cache_generation,receipt.fetch_order,receipt.execution_epoch,
 		receipt.provider_attempt,receipt.river_job_id,receipt.accepted_at::text,acquisition.intent,
 		run.provider_source_id,run.provider_configuration_identity
@@ -65,7 +67,7 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 		WHERE receipt.run_id=? AND receipt.request_id=?`, runID, requestID).Scan(ctx,
 		&receipt.RunID, &receipt.RequestID, &receipt.StageIndex, &receipt.ProviderSourceID,
 		&receipt.ConfigurationIdentity, &receipt.CacheKey, &receipt.RequestInput, &payloadText,
-		&digest, &receipt.CacheRevision, &receipt.CacheGeneration, &receipt.FetchOrder,
+		&digest, &payloadDigestVersion, &receipt.CacheRevision, &receipt.CacheGeneration, &receipt.FetchOrder,
 		&receipt.ExecutionEpoch, &receipt.ProviderAttempt, &receipt.RiverJobID, &receipt.AcceptedAt, &intentBytes,
 		&runSourceID, &runConfigurationIdentity)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -78,7 +80,18 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 		receipt.ExecutionEpoch < 1 || receipt.ProviderAttempt < 1 || receipt.RiverJobID < 1 {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved receipt is invalid")
 	}
-	receipt.Payload, err = json.Marshal(json.RawMessage(payloadText))
+	if payloadDigestVersion != 1 && payloadDigestVersion != 2 {
+		return nil, fmt.Errorf("read matching fallback search receipt: payload digest version is invalid")
+	}
+	if payloadDigestVersion == 2 {
+		receipt.PayloadDigestVersion = payloadDigestVersion
+		receipt.Payload, err = canonicalMatchingJSON(json.RawMessage(payloadText))
+	} else {
+		// Version 1 hashed compact JSON produced from PostgreSQL's jsonb::text.
+		// Keep this representation (and omit the version in its DTO) for legacy
+		// calculation contexts whose serialized bytes are already sealed.
+		receipt.Payload, err = json.Marshal(json.RawMessage(payloadText))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved payload is invalid")
 	}
@@ -218,11 +231,15 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256(apiPayload)
+	canonicalReceiptPayload, err := canonicalMatchingJSON(apiPayload)
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(canonicalReceiptPayload)
 	receipt := MatchingFallbackSearchReceipt{
 		RunID: runID, RequestID: fence.OperationID, StageIndex: stageIndex, ProviderSourceID: ticket.ProviderSourceID,
 		ConfigurationIdentity: ticket.ConfigurationIdentity, CacheKey: cacheKey, RequestInput: canonicalInput,
-		Payload: apiPayload, PayloadSHA256: hex.EncodeToString(digest[:]), CacheRevision: nullablePointer(revision),
+		Payload: canonicalReceiptPayload, PayloadSHA256: hex.EncodeToString(digest[:]), PayloadDigestVersion: 2, CacheRevision: nullablePointer(revision),
 		CacheGeneration: ticket.Generation, FetchOrder: ticket.FetchOrder, ExecutionEpoch: fence.ExecutionEpoch,
 		ProviderAttempt: fence.Attempt, RiverJobID: fence.RiverJobID,
 	}
@@ -233,22 +250,36 @@ func insertOrVerifyFallbackReceipt(ctx context.Context, tx bun.Tx, receipt Match
 	var prior MatchingFallbackSearchReceipt
 	var priorDigest []byte
 	var priorPayloadText string
+	var priorDigestVersion int
 	err := tx.NewRaw(`SELECT run_id,request_id,stage_index,provider_source_id,configuration_identity,cache_key,
-		request_input,payload::text,payload_sha256,cache_revision,cache_generation,fetch_order,execution_epoch,
+		request_input,payload::text,payload_sha256,payload_digest_version,cache_revision,cache_generation,fetch_order,execution_epoch,
 		provider_attempt,river_job_id FROM matching_fallback_search_receipt WHERE request_id=? FOR UPDATE`, receipt.RequestID).
 		Scan(ctx, &prior.RunID, &prior.RequestID, &prior.StageIndex, &prior.ProviderSourceID,
-			&prior.ConfigurationIdentity, &prior.CacheKey, &prior.RequestInput, &priorPayloadText, &priorDigest,
+			&prior.ConfigurationIdentity, &prior.CacheKey, &prior.RequestInput, &priorPayloadText, &priorDigest, &priorDigestVersion,
 			&prior.CacheRevision, &prior.CacheGeneration, &prior.FetchOrder, &prior.ExecutionEpoch,
 			&prior.ProviderAttempt, &prior.RiverJobID)
 	if err == nil {
-		prior.Payload, err = json.Marshal(json.RawMessage(priorPayloadText))
+		prior.Payload, err = canonicalMatchingJSON(json.RawMessage(priorPayloadText))
 		if err != nil {
 			return err
 		}
+		var priorDigestInput []byte
+		switch priorDigestVersion {
+		case 1:
+			priorDigestInput, err = json.Marshal(json.RawMessage(priorPayloadText))
+		case 2:
+			priorDigestInput = prior.Payload
+		default:
+			return errors.New("saved automatic fallback search receipt has invalid digest version")
+		}
+		if err != nil {
+			return err
+		}
+		priorHash := sha256.Sum256(priorDigestInput)
 		if prior.RunID != receipt.RunID || prior.StageIndex != receipt.StageIndex || prior.ProviderSourceID != receipt.ProviderSourceID ||
 			prior.ConfigurationIdentity != receipt.ConfigurationIdentity || prior.CacheKey != receipt.CacheKey ||
-			!matchingJSONEqual(prior.RequestInput, receipt.RequestInput) || !equalDigest(prior.Payload, receipt.Payload) ||
-			!equalDigest(priorDigest, digest) || nullableString(prior.CacheRevision) != nullableString(receipt.CacheRevision) ||
+			!matchingJSONEqual(prior.RequestInput, receipt.RequestInput) || !matchingJSONEqual(prior.Payload, receipt.Payload) ||
+			!equalDigest(priorDigest, priorHash[:]) || nullableString(prior.CacheRevision) != nullableString(receipt.CacheRevision) ||
 			prior.CacheGeneration != receipt.CacheGeneration || prior.FetchOrder != receipt.FetchOrder ||
 			prior.ExecutionEpoch != receipt.ExecutionEpoch || prior.ProviderAttempt != receipt.ProviderAttempt || prior.RiverJobID != receipt.RiverJobID {
 			return errors.New("conflicting automatic fallback search receipt recapture")
@@ -260,10 +291,10 @@ func insertOrVerifyFallbackReceipt(ctx context.Context, tx bun.Tx, receipt Match
 	}
 	_, err = tx.NewRaw(`INSERT INTO matching_fallback_search_receipt
 		(run_id,request_id,stage_index,provider_source_id,configuration_identity,cache_key,request_input,payload,
-		payload_sha256,cache_revision,cache_generation,fetch_order,execution_epoch,provider_attempt,river_job_id)
-		VALUES (?,?,?,?,?,?,?::jsonb,?::jsonb,?,NULLIF(?,''),?,?,?,?,?)`, receipt.RunID, receipt.RequestID,
+		payload_sha256,payload_digest_version,cache_revision,cache_generation,fetch_order,execution_epoch,provider_attempt,river_job_id)
+		VALUES (?,?,?,?,?,?,?::jsonb,?::jsonb,?,?,NULLIF(?,''),?,?,?,?,?)`, receipt.RunID, receipt.RequestID,
 		receipt.StageIndex, receipt.ProviderSourceID, receipt.ConfigurationIdentity, receipt.CacheKey,
-		string(receipt.RequestInput), string(receipt.Payload), digest, nullableString(receipt.CacheRevision),
+		string(receipt.RequestInput), string(receipt.Payload), digest, 2, nullableString(receipt.CacheRevision),
 		receipt.CacheGeneration, receipt.FetchOrder, receipt.ExecutionEpoch, receipt.ProviderAttempt, receipt.RiverJobID).Exec(ctx)
 	return err
 }

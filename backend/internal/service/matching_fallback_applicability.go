@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 
@@ -18,17 +19,18 @@ import (
 // post-hydration fallback calculator. It intentionally carries no repositories,
 // provider clients, settings, or filesystem-derived readers.
 type MatchingFallbackApplicabilityInput struct {
-	RunID               uuid.UUID
-	AcquisitionRevision int64
-	StageIndex          int
-	Intent              persistence.MatchingAcquisitionIntent
-	Target              persistence.MatchingRunFenceSnapshot
-	PhaseInput          json.RawMessage
-	PhaseOutput         json.RawMessage
-	PhaseProvenance     json.RawMessage
-	SearchReceipt       persistence.MatchingFallbackSearchReceipt
-	LookupReceipts      []persistence.MatchingFallbackLookupReceipt
-	Authority           MatchingFallbackAuthority
+	RunID                uuid.UUID
+	AcquisitionRevision  int64
+	StageIndex           int
+	Intent               persistence.MatchingAcquisitionIntent
+	Target               persistence.MatchingRunFenceSnapshot
+	PhaseInput           json.RawMessage
+	PhaseOutput          json.RawMessage
+	PhaseProvenance      json.RawMessage
+	SearchReceipt        persistence.MatchingFallbackSearchReceipt
+	LookupReceipts       []persistence.MatchingFallbackLookupReceipt
+	Authority            MatchingFallbackAuthority
+	legacySearchEvidence *persistence.MatchingFallbackVerifiedLegacySearchEvidence
 }
 
 // MatchingFallbackAuthority is the immutable provider/run and registered-request
@@ -75,6 +77,7 @@ type MatchingFallbackCandidate struct {
 type MatchingFallbackApplicabilityResult struct {
 	SchemaVersion    int
 	InputDigest      string
+	ReleaseLayouts   []persistence.MatchingRelease
 	AllCandidates    []MatchingFallbackCandidate
 	Candidates       []MatchingFallbackCandidate
 	EligibleProfiles []string
@@ -87,9 +90,10 @@ type fallbackCapture struct {
 	GroupRevision     string    `json:"group_revision"`
 	AuthorityRevision int64     `json:"authority_revision"`
 	Members           []struct {
-		VariantID      uuid.UUID                             `json:"variant_id"`
-		Ready          bool                                  `json:"ready"`
-		Captures       []persistence.IncomingGroupingCapture `json:"captures"`
+		VariantID      uuid.UUID                                    `json:"variant_id"`
+		Ready          bool                                         `json:"ready"`
+		Locations      []persistence.IncomingGroupingMemberLocation `json:"locations"`
+		Captures       []persistence.IncomingGroupingCapture        `json:"captures"`
 		AnalysisInputs []struct {
 			AnalysisRecordID string          `json:"analysis_record_id"`
 			WorkID           uuid.UUID       `json:"work_id"`
@@ -158,9 +162,10 @@ func (capture *fallbackCapture) UnmarshalJSON(raw []byte) error {
 			}{input.AnalysisRecordID, input.WorkID, input.Step, input.InputSnapshot, input.InputDigest, input.ResultReference})
 		}
 		capture.Members = append(capture.Members, struct {
-			VariantID      uuid.UUID                             `json:"variant_id"`
-			Ready          bool                                  `json:"ready"`
-			Captures       []persistence.IncomingGroupingCapture `json:"captures"`
+			VariantID      uuid.UUID                                    `json:"variant_id"`
+			Ready          bool                                         `json:"ready"`
+			Locations      []persistence.IncomingGroupingMemberLocation `json:"locations"`
+			Captures       []persistence.IncomingGroupingCapture        `json:"captures"`
 			AnalysisInputs []struct {
 				AnalysisRecordID string          `json:"analysis_record_id"`
 				WorkID           uuid.UUID       `json:"work_id"`
@@ -169,7 +174,7 @@ func (capture *fallbackCapture) UnmarshalJSON(raw []byte) error {
 				InputDigest      *string         `json:"input_digest"`
 				ResultReference  *uuid.UUID      `json:"result_reference"`
 			} `json:"analysis_inputs"`
-		}{saved.VariantID, saved.Ready, saved.Captures, inputs})
+		}{saved.VariantID, saved.Ready, saved.Locations, saved.Captures, inputs})
 	}
 	return nil
 }
@@ -284,7 +289,7 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 		if _, duplicate := receiptByRequest[receipt.RequestID]; duplicate {
 			return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: duplicate lookup receipt")
 		}
-		if err := validateReceiptDigests(receipt.Payload, receipt.PayloadSHA256, receipt.AcceptedProjection, receipt.ProjectionSHA256); err != nil {
+		if err := validateReceiptDigests(2, receipt.Payload, receipt.PayloadSHA256, receipt.AcceptedProjection, receipt.ProjectionSHA256); err != nil {
 			return MatchingFallbackApplicabilityResult{}, err
 		}
 		receiptByRequest[receipt.RequestID] = receipt
@@ -358,6 +363,10 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 		if err := decodeFallbackStrict(receipt.AcceptedProjection, &snapshot); err != nil {
 			return MatchingFallbackApplicabilityResult{}, err
 		}
+		if len(snapshot.Releases) != 1 || snapshot.Releases[0].ProviderKey != releaseID {
+			return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: accepted release layout is invalid")
+		}
+		result.ReleaseLayouts = append(result.ReleaseLayouts, snapshot.Releases[0])
 		if snapshot.SearchScores == nil {
 			snapshot.SearchScores = make(map[string]map[string]persistence.MatchingSearchScore)
 		}
@@ -477,7 +486,11 @@ func validateFallbackApplicabilityAuthority(input MatchingFallbackApplicabilityI
 		len(input.Authority.Lookups) != len(input.LookupReceipts) {
 		return fmt.Errorf("fallback applicability: provider request authority is incomplete or mismatched")
 	}
-	if err := validateReceiptDigests(input.SearchReceipt.Payload, input.SearchReceipt.PayloadSHA256, nil, ""); err != nil {
+	if input.legacySearchEvidence != nil {
+		if err := persistence.ValidateMatchingFallbackLegacySearchPayload(*input.legacySearchEvidence, input.SearchReceipt); err != nil {
+			return fmt.Errorf("fallback applicability: historical search receipt provenance is invalid: %w", err)
+		}
+	} else if err := validateReceiptDigests(input.SearchReceipt.PayloadDigestVersion, input.SearchReceipt.Payload, input.SearchReceipt.PayloadSHA256, nil, ""); err != nil {
 		return err
 	}
 	if len(input.PhaseProvenance) == 0 || !json.Valid(input.PhaseProvenance) {
@@ -486,11 +499,27 @@ func validateFallbackApplicabilityAuthority(input MatchingFallbackApplicabilityI
 	return nil
 }
 
-func validateReceiptDigests(payload json.RawMessage, payloadDigest string, projection json.RawMessage, projectionDigest string) error {
+func validateReceiptDigests(payloadDigestVersion int, payload json.RawMessage, payloadDigest string, projection json.RawMessage, projectionDigest string) error {
 	if len(payload) == 0 || !json.Valid(payload) || !isFallbackSHA256(payloadDigest) {
 		return fmt.Errorf("fallback applicability: receipt payload is invalid")
 	}
-	hash := sha256.Sum256(payload)
+	var payloadDigestInput []byte
+	switch payloadDigestVersion {
+	case 0, 1:
+		// Legacy payloads are checked against their exact compact bytes. If a
+		// historical JSONB context round-trip changed those bytes, only the
+		// persistence-validated sealed evidence path may authorize semantic hashing.
+		payloadDigestInput = payload
+	case 2:
+		canonicalPayload, err := canonicalFallbackJSON(payload)
+		if err != nil {
+			return fmt.Errorf("fallback applicability: receipt payload is invalid")
+		}
+		payloadDigestInput = canonicalPayload
+	default:
+		return fmt.Errorf("fallback applicability: receipt payload digest version is unsupported")
+	}
+	hash := sha256.Sum256(payloadDigestInput)
 	if hex.EncodeToString(hash[:]) != payloadDigest {
 		return fmt.Errorf("fallback applicability: receipt payload digest changed")
 	}
@@ -498,7 +527,11 @@ func validateReceiptDigests(payload json.RawMessage, payloadDigest string, proje
 		if !json.Valid(projection) || !isFallbackSHA256(projectionDigest) {
 			return fmt.Errorf("fallback applicability: receipt projection is invalid")
 		}
-		projectionHash := sha256.Sum256(projection)
+		canonicalProjection, err := canonicalFallbackJSON(projection)
+		if err != nil {
+			return fmt.Errorf("fallback applicability: receipt projection is invalid")
+		}
+		projectionHash := sha256.Sum256(canonicalProjection)
 		if hex.EncodeToString(projectionHash[:]) != projectionDigest {
 			return fmt.Errorf("fallback applicability: receipt projection digest changed")
 		}
@@ -821,6 +854,10 @@ func canonicalFallbackJSON(raw json.RawMessage) (json.RawMessage, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
 		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("JSON has trailing data")
 	}
 	return json.Marshal(value)
 }
