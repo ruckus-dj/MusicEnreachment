@@ -167,6 +167,32 @@ type matchingClaimRun struct {
 	ActiveRiverAttempt *int   `bun:"active_river_attempt"`
 }
 
+// IsMatchingDeliveryCurrent checks whether an acquisition call still belongs to
+// the active, unconsumed River delivery. It is intentionally read-only; the
+// eventual write remains protected by its transactional delivery fence.
+func (repository *SetupManagerRepository) IsMatchingDeliveryCurrent(ctx context.Context, operationID uuid.UUID, attempt int, riverJobID int64, claim MatchingDeliveryClaim) (bool, error) {
+	var current bool
+	err := repository.db.NewRaw(`SELECT EXISTS (
+		SELECT 1
+		FROM matching_run run
+		JOIN operation ON operation.id=run.id
+		JOIN matching_delivery delivery ON delivery.run_id=run.id
+		JOIN river_job ON river_job.id=delivery.river_job_id
+		WHERE run.id=? AND run.state='running'
+			AND run.execution_epoch=? AND run.active_execution_epoch=?
+			AND run.current_river_job_id=? AND run.active_river_job_id=? AND run.active_river_attempt=?
+			AND operation.kind='matching_evaluation_v1' AND operation.state='running'
+			AND operation.attempt=? AND operation.river_job_id=?
+			AND delivery.operation_attempt=? AND delivery.river_job_id=? AND delivery.consumed_at IS NULL
+			AND river_job.state='running' AND river_job.attempt=?
+	)`, operationID, claim.ExecutionEpoch, claim.ExecutionEpoch, riverJobID, riverJobID, claim.RiverAttempt,
+		attempt, riverJobID, attempt, riverJobID, claim.RiverAttempt).Scan(ctx, &current)
+	if err != nil {
+		return false, fmt.Errorf("check matching delivery: %w", err)
+	}
+	return current, nil
+}
+
 // ConsumePendingMatchingDelivery turns a claimed delivery into a durable wait
 // when dependencies remain. Provider settlement always inserts its wake in the
 // same transaction, so a wake racing this check remains independently claimable.

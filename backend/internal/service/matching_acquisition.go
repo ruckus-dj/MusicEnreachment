@@ -29,6 +29,10 @@ type matchingAcquisitionRepository interface {
 	ParkMatchingAcquisitionForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase) (bool, error)
 }
 
+type matchingAcquisitionDeliveryCurrentChecker interface {
+	IsMatchingDeliveryCurrent(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim) (bool, error)
+}
+
 type matchingReleaseHydrationStarter interface {
 	StartMatchingReleaseHydration(context.Context, persistence.RiverInserter, uuid.UUID, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error)
 }
@@ -173,6 +177,15 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 	snapshot, exists, err := acquisition.repository.GetMatchingAcquisition(ctx, runID)
 	if err != nil || !exists {
 		return false, exists, err
+	}
+	if checker, ok := acquisition.repository.(matchingAcquisitionDeliveryCurrentChecker); ok {
+		current, err := checker.IsMatchingDeliveryCurrent(ctx, runID, attempt, riverJobID, claim)
+		if err != nil {
+			return false, true, err
+		}
+		if !current {
+			return false, true, nil
+		}
 	}
 	if snapshot.FailedProviderDependency {
 		return false, true, ErrMatchingAcquisitionProviderFailed

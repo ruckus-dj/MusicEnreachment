@@ -21,6 +21,11 @@ type retrievalAcquisitionRepository struct {
 	claim    persistence.MatchingDeliveryClaim
 	attempt  int
 	jobID    int64
+	current  *bool
+}
+
+func (repository *retrievalAcquisitionRepository) IsMatchingDeliveryCurrent(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim) (bool, error) {
+	return repository.current == nil || *repository.current, nil
 }
 
 func (repository *retrievalAcquisitionRepository) GetMatchingAcquisitionMetadataCapture(_ context.Context, _ uuid.UUID, _ string) ([]persistence.MatchingAcquisitionCapturedMember, string, bool, error) {
@@ -79,6 +84,35 @@ func (provider *retrievalAcquisitionProvider) PrepareOperation(_ context.Context
 	operation := persistence.Operation{ID: uuid.New(), Kind: "provider_" + kind, State: "queued", ProviderCacheKey: &key}
 	provider.prepared = append(provider.prepared, operation)
 	return &provider.prepared[len(provider.prepared)-1], nil
+}
+
+func TestMatchingAcquisitionUnsupportedPhaseIgnoresStaleDeliveryOnly(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		current   bool
+		wantError bool
+	}{
+		{name: "stale delivery", current: false},
+		{name: "active delivery", current: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			intent := persistence.MatchingAcquisitionIntent{SchemaVersion: 1}
+			repository := &retrievalAcquisitionRepository{
+				matchingAcquisitionRepositoryFixture: &matchingAcquisitionRepositoryFixture{
+					snapshot: persistence.MatchingAcquisitionSnapshot{Intent: intent, Revision: 1, Phase: "unsupported_phase"},
+				},
+				current: &test.current,
+			}
+			service := NewMatchingAcquisitionService(repository, &retrievalAcquisitionProvider{}, matchingAcquisitionRiverFixture{})
+			changed, acquired, err := service.Advance(context.Background(), uuid.New(), 1, 1, persistence.MatchingDeliveryClaim{ExecutionEpoch: 1, RiverAttempt: 1})
+			if changed || !acquired || (err != nil) != test.wantError {
+				t.Fatalf("Advance() = %t, %t, %v; want false, true, error=%t", changed, acquired, err, test.wantError)
+			}
+			if test.wantError && err.Error() != "matching acquisition phase is unsupported" {
+				t.Fatalf("Advance() error = %v, want unsupported phase error", err)
+			}
+		})
+	}
 }
 
 func TestMatchingAcquisitionArtistFitParksWithoutBrowsing(t *testing.T) {

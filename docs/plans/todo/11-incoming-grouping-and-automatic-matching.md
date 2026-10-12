@@ -1136,6 +1136,17 @@ normalization для score в точности. Если по имеющимся
   passed. Positive >10-expansion/child-rollback PostgreSQL proof remains required;
   applicability, seal3 and production fallback activation remain outstanding.
 
+### Expanded fallback hydration atomicity proof — 2026-10-12
+
+- PostgreSQL handoff hydrates all 12 derived releases with normalized duplicate
+  MBIDs using immutable A despite cache B. Failure after the second real child
+  insertion rolls back phase/claims/jobs/dependencies; original-claim retry works.
+- Early read-only delivery check suppresses consumed/stale dispatch before phase
+  handling; current unsupported phases still error and write fences remain
+  authoritative. Unit and PostgreSQL replay coverage passed.
+- Independent review and repeated primary full `task verify` passed. Later
+  hydration/applicability continuation and final fallback publication remain open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

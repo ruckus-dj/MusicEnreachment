@@ -24,9 +24,11 @@ import (
 )
 
 type fallbackHandoffRiverInserter struct {
-	client    persistence.RiverInserter
-	failWake  bool
-	wakeCalls int
+	client                  persistence.RiverInserter
+	failWake                bool
+	wakeCalls               int
+	failProviderFetchAt     int
+	providerFetchInsertions int
 }
 
 func (inserter *fallbackHandoffRiverInserter) InsertTx(ctx context.Context, tx *sql.Tx, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -43,11 +45,28 @@ func (inserter *fallbackHandoffRiverInserter) InsertTx(ctx context.Context, tx *
 			return result, errors.New("injected matching wake insertion failure")
 		}
 	}
+	if _, ok := args.(service.ProviderFetchOperationArgs); ok {
+		inserter.providerFetchInsertions++
+		if inserter.failProviderFetchAt > 0 && inserter.providerFetchInsertions == inserter.failProviderFetchAt {
+			return result, errors.New("injected provider-fetch insertion failure")
+		}
+	}
 	return result, nil
 }
 
 func TestAutomaticFallbackEmptyRecordingReceiptHandoffPostgreSQL(t *testing.T) {
 	t.Parallel()
+	runAutomaticFallbackRecordingReceiptHandoff(t, json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`), false)
+}
+
+func TestAutomaticFallbackRecordingReceiptHandoffHydratesEveryReleasePostgreSQL(t *testing.T) {
+	t.Parallel()
+	accepted := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":2,"offset":0,"recordings":[{"id":"10000000-0000-4000-8000-000000000001","releases":[{"id":"20000000-0000-4000-8000-000000000001"},{"id":"20000000-0000-4000-8000-000000000002"},{"id":"20000000-0000-4000-8000-000000000003"},{"id":"20000000-0000-4000-8000-000000000004"},{"id":"20000000-0000-4000-8000-000000000005"},{"id":"20000000-0000-4000-8000-000000000006"},{"id":"20000000-0000-4000-8000-000000000007"}]},{"id":"10000000-0000-4000-8000-000000000002","releases":[{"id":"20000000-0000-4000-8000-000000000001"},{"id":"20000000-0000-4000-8000-000000000008"},{"id":"20000000-0000-4000-8000-000000000009"},{"id":"20000000-0000-4000-8000-00000000000A"},{"id":"20000000-0000-4000-8000-00000000000b"},{"id":"20000000-0000-4000-8000-00000000000C"}]}]}`)
+	runAutomaticFallbackRecordingReceiptHandoff(t, accepted, true)
+}
+
+func runAutomaticFallbackRecordingReceiptHandoff(t *testing.T, accepted json.RawMessage, positive bool) {
+	t.Helper()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
 	defer cancel()
@@ -115,9 +134,8 @@ func TestAutomaticFallbackEmptyRecordingReceiptHandoffPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reserve recording-search response: %v", err)
 	}
-	accepted := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`)
 	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: accepted}); err != nil {
-		t.Fatalf("prepopulate accepted empty recording-search response: %v", err)
+		t.Fatalf("prepopulate accepted recording-search response: %v", err)
 	}
 
 	riverInserter := &fallbackHandoffRiverInserter{}
@@ -200,20 +218,27 @@ func TestAutomaticFallbackEmptyRecordingReceiptHandoffPostgreSQL(t *testing.T) {
 	acquisition := service.NewMatchingAcquisitionService(fixture.repository,
 		service.NewProviderFetchService(registry, factory, cache), riverInserter)
 	wakeCallsBefore := riverInserter.wakeCalls
-	var beforeConsumed, beforeUnconsumed, beforeRunJobs, beforeDependencies int
+	var beforeConsumed, beforeUnconsumed, beforeRunJobs, beforeDependencies, beforeOperations int
 	if err := fixture.db.NewRaw(`SELECT count(*) FILTER (WHERE consumed_at IS NOT NULL), count(*) FILTER (WHERE consumed_at IS NULL) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &beforeConsumed, &beforeUnconsumed); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &beforeDependencies); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE args->>'operation_id'=?`, parentID.String()).Scan(ctx, &beforeRunJobs); err != nil {
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job job JOIN operation op ON op.id=(job.args->>'operation_id')::uuid WHERE op.id=? OR op.id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &beforeRunJobs); err != nil {
 		t.Fatal(err)
 	}
-	riverInserter.failWake = true
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &beforeOperations); err != nil {
+		t.Fatal(err)
+	}
+	riverInserter.failWake = !positive
+	if positive {
+		riverInserter.providerFetchInsertions = 0
+		riverInserter.failProviderFetchAt = 2
+	}
 	changed, handled, err := acquisition.Advance(ctx, parentID, 1, wakeID, claim)
-	if err == nil || changed || !handled || riverInserter.wakeCalls != wakeCallsBefore+1 {
-		t.Fatalf("injected continuation wake failure: changed=%v handled=%v wakeCalls=%d err=%v", changed, handled, riverInserter.wakeCalls, err)
+	if err == nil || changed || !handled || (!positive && riverInserter.wakeCalls != wakeCallsBefore+1) || (positive && riverInserter.providerFetchInsertions != 2) {
+		t.Fatalf("injected continuation insertion failure: changed=%v handled=%v wakeCalls=%d providerFetchInsertions=%d err=%v", changed, handled, riverInserter.wakeCalls, riverInserter.providerFetchInsertions, err)
 	}
 	snapshot, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
 	if err != nil || !exists || snapshot.Phase != persistence.MatchingAcquisitionFallbackSearch || snapshot.Revision != 0 {
@@ -226,29 +251,40 @@ func TestAutomaticFallbackEmptyRecordingReceiptHandoffPostgreSQL(t *testing.T) {
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &dependencies); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE args->>'operation_id'=?`, parentID.String()).Scan(ctx, &runJobs); err != nil {
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job job JOIN operation op ON op.id=(job.args->>'operation_id')::uuid WHERE op.id=? OR op.id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &runJobs); err != nil {
 		t.Fatal(err)
 	}
-	if consumed != beforeConsumed || unconsumed != beforeUnconsumed || dependencies != beforeDependencies || runJobs != beforeRunJobs {
-		t.Fatalf("failed handoff did not roll back source state: before=%d/%d/%d/%d after=%d/%d/%d/%d", beforeConsumed, beforeUnconsumed, beforeDependencies, beforeRunJobs, consumed, unconsumed, dependencies, runJobs)
+	var operationsCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, parentID, parentID).Scan(ctx, &operationsCount); err != nil {
+		t.Fatal(err)
+	}
+	if consumed != beforeConsumed || unconsumed != beforeUnconsumed || dependencies != beforeDependencies || runJobs != beforeRunJobs || operationsCount != beforeOperations {
+		t.Fatalf("failed handoff did not roll back source state: before=%d/%d/%d/%d/%d after=%d/%d/%d/%d/%d", beforeConsumed, beforeUnconsumed, beforeDependencies, beforeRunJobs, beforeOperations, consumed, unconsumed, dependencies, runJobs, operationsCount)
 	}
 
-	// Change the live cache to a nonempty response after the original accepted
-	// receipt. Retrying must still derive from the immutable empty receipt.
+	// Change the live cache after receipt capture. Retrying must still derive
+	// exclusively from the immutable accepted response.
 	changedTicket, err := cache.BeginRefresh(ctx, source.ID, key, config.Identity)
 	if err != nil {
 		t.Fatalf("reserve replacement recording-search response: %v", err)
 	}
 	replacement := json.RawMessage(`{"created":"2026-10-12T00:01:00Z","count":1,"offset":0,"recordings":[{"id":"00000000-0000-4000-8000-000000000001","releases":[{"id":"00000000-0000-4000-8000-000000000002"}]}]}`)
+	if positive {
+		replacement = json.RawMessage(`{"created":"2026-10-12T00:01:00Z","count":0,"offset":0,"recordings":[]}`)
+	}
 	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: changedTicket, FetchedAt: time.Now().UTC(), Payload: replacement}); err != nil {
 		t.Fatalf("replace live recording-search response: %v", err)
 	}
 	riverInserter.failWake = false
 	changed, handled, err = acquisition.Advance(ctx, parentID, 1, wakeID, claim)
 	if err != nil || !handled || !changed {
-		t.Fatalf("retry empty fallback search from accepted receipt: changed=%v handled=%v err=%v", changed, handled, err)
+		t.Fatalf("retry fallback search from accepted receipt: changed=%v handled=%v err=%v", changed, handled, err)
 	}
 	snapshot, exists, err = fixture.repository.GetMatchingAcquisition(ctx, parentID)
+	if positive {
+		assertPositiveFallbackHydration(t, ctx, fixture, snapshot, exists, err, parentID, source, config.Identity, accepted, acquisition, wakeID, claim)
+		return
+	}
 	if err != nil || !exists || snapshot.Phase != persistence.MatchingAcquisitionFallbackApplicability || snapshot.Revision != 1 {
 		t.Fatalf("retry did not use original empty receipt: snapshot=%+v exists=%v err=%v", snapshot, exists, err)
 	}
@@ -295,4 +331,131 @@ func equalFallbackJSON(left, right any) bool {
 	leftBytes, leftErr := json.Marshal(left)
 	rightBytes, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && string(leftBytes) == string(rightBytes)
+}
+
+func assertPositiveFallbackHydration(
+	t *testing.T,
+	ctx context.Context,
+	fixture automaticTargetFenceFixture,
+	snapshot persistence.MatchingAcquisitionSnapshot,
+	exists bool,
+	err error,
+	runID uuid.UUID,
+	source persistence.ProviderSource,
+	identity string,
+	accepted json.RawMessage,
+	acquisition *service.MatchingAcquisitionService,
+	wakeID int64,
+	claim persistence.MatchingDeliveryClaim,
+) {
+	t.Helper()
+	if err != nil || !exists || snapshot.Phase != persistence.MatchingAcquisitionFallbackHydration || snapshot.Revision != 1 {
+		t.Fatalf("successful receipt handoff snapshot=%+v exists=%v err=%v", snapshot, exists, err)
+	}
+	var input struct {
+		ReleaseIDs     []string        `json:"release_ids"`
+		SearchManifest json.RawMessage `json:"search_manifest"`
+	}
+	if err := json.Unmarshal(snapshot.Input, &input); err != nil {
+		t.Fatalf("decode fallback acquisition input %s: %v", snapshot.Input, err)
+	}
+	wantIDs := []string{
+		"20000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000002",
+		"20000000-0000-4000-8000-000000000003", "20000000-0000-4000-8000-000000000004",
+		"20000000-0000-4000-8000-000000000005", "20000000-0000-4000-8000-000000000006",
+		"20000000-0000-4000-8000-000000000007", "20000000-0000-4000-8000-000000000008",
+		"20000000-0000-4000-8000-000000000009", "20000000-0000-4000-8000-00000000000a",
+		"20000000-0000-4000-8000-00000000000b", "20000000-0000-4000-8000-00000000000c",
+	}
+	if !equalFallbackJSON(input.ReleaseIDs, wantIDs) {
+		t.Fatalf("fallback release ids=%v want=%v", input.ReleaseIDs, wantIDs)
+	}
+	var manifest struct {
+		Kind         string          `json:"kind"`
+		AcceptedHits json.RawMessage `json:"accepted_hits"`
+		ReleaseIDs   []string        `json:"release_ids"`
+	}
+	var acceptedValue, manifestHits any
+	acceptedErr := json.Unmarshal(accepted, &acceptedValue)
+	manifestErr := json.Unmarshal(input.SearchManifest, &manifest)
+	hitsErr := json.Unmarshal(manifest.AcceptedHits, &manifestHits)
+	if manifestErr != nil || acceptedErr != nil || hitsErr != nil || manifest.Kind != "provider_recording_search" || !equalFallbackJSON(manifestHits, acceptedValue) || !equalFallbackJSON(manifest.ReleaseIDs, wantIDs) {
+		t.Fatalf("fallback search manifest=%s err=%v/%v/%v", input.SearchManifest, manifestErr, acceptedErr, hitsErr)
+	}
+	var output struct {
+		Lookups []struct {
+			ReleaseID string    `json:"release_id"`
+			RequestID uuid.UUID `json:"request_id"`
+			CacheKey  string    `json:"cache_key"`
+		} `json:"lookups"`
+	}
+	if err := json.Unmarshal(snapshot.Output, &output); err != nil || len(output.Lookups) != len(wantIDs) {
+		t.Fatalf("fallback lookup output=%s count=%d err=%v", snapshot.Output, len(output.Lookups), err)
+	}
+	var dependencies int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, runID).Scan(ctx, &dependencies); err != nil || dependencies != 13 {
+		t.Fatalf("hydration dependencies=%d want initial plus 12 children; err=%v", dependencies, err)
+	}
+	for index, lookup := range output.Lookups {
+		if lookup.ReleaseID != wantIDs[index] || lookup.RequestID == uuid.Nil || lookup.CacheKey != "release-lookup:"+wantIDs[index] {
+			t.Fatalf("lookup[%d]=%+v", index, lookup)
+		}
+		var operation struct {
+			Kind       string          `bun:"kind"`
+			State      string          `bun:"state"`
+			Input      json.RawMessage `bun:"input_snapshot"`
+			SourceID   uuid.UUID       `bun:"provider_source_id"`
+			ProviderID uuid.UUID       `bun:"provider_id"`
+			Identity   string          `bun:"provider_configuration_identity"`
+			CacheKey   string          `bun:"provider_cache_key"`
+			RiverJobID sql.NullInt64   `bun:"river_job_id"`
+		}
+		if err := fixture.db.NewRaw(`SELECT operation.kind,operation.state,operation.input_snapshot,operation.provider_source_id,source.provider_id,operation.provider_configuration_identity,operation.provider_cache_key,operation.river_job_id FROM operation JOIN provider_source source ON source.id=operation.provider_source_id WHERE operation.id=?`, lookup.RequestID).Scan(ctx, &operation); err != nil {
+			t.Fatalf("read prepared lookup %s: %v", lookup.RequestID, err)
+		}
+		var intent struct {
+			MBID string `json:"mbid"`
+		}
+		if err := json.Unmarshal(operation.Input, &intent); err != nil || operation.Kind != "provider_release_lookup" || operation.State != "queued" || intent.MBID != wantIDs[index] || operation.SourceID != source.ID || operation.ProviderID != source.ProviderID || operation.Identity != identity || operation.CacheKey != lookup.CacheKey || !operation.RiverJobID.Valid {
+			t.Fatalf("prepared lookup operation[%d]=%+v intent=%+v err=%v", index, operation, intent, err)
+		}
+		var jobArgs string
+		var job struct {
+			OperationID uuid.UUID `json:"operation_id"`
+		}
+		if err := fixture.db.NewRaw(`SELECT args::text FROM river_job WHERE id=?`, operation.RiverJobID.Int64).Scan(ctx, &jobArgs); err != nil {
+			t.Fatalf("read lookup job args: %v", err)
+		}
+		if err := json.Unmarshal([]byte(jobArgs), &job); err != nil || job.OperationID != lookup.RequestID {
+			t.Fatalf("lookup job args=%s decoded=%+v err=%v", jobArgs, job, err)
+		}
+	}
+	var consumed, unconsumed int
+	if err := fixture.db.NewRaw(`SELECT count(*) FILTER (WHERE consumed_at IS NOT NULL),count(*) FILTER (WHERE consumed_at IS NULL) FROM matching_delivery WHERE run_id=?`, runID).Scan(ctx, &consumed, &unconsumed); err != nil || consumed != 1 {
+		t.Fatalf("delivery ledger after lookup admission consumed=%d unconsumed=%d err=%v", consumed, unconsumed, err)
+	}
+	var operationsBefore, jobsBefore int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, runID, runID).Scan(ctx, &operationsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job job JOIN operation op ON op.id=(job.args->>'operation_id')::uuid WHERE op.id=? OR op.id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, runID, runID).Scan(ctx, &jobsBefore); err != nil {
+		t.Fatal(err)
+	}
+	changed, handled, staleErr := acquisition.Advance(ctx, runID, 1, wakeID, claim)
+	if staleErr != nil || changed || !handled {
+		t.Fatalf("duplicate consumed delivery advance: changed=%v handled=%v err=%v", changed, handled, staleErr)
+	}
+	var operationsAfter, jobsAfter, deliveriesAfter, unconsumedAfter int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, runID, runID).Scan(ctx, &operationsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job job JOIN operation op ON op.id=(job.args->>'operation_id')::uuid WHERE op.id=? OR op.id IN (SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=?)`, runID, runID).Scan(ctx, &jobsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*),count(*) FILTER (WHERE consumed_at IS NULL) FROM matching_delivery WHERE run_id=?`, runID).Scan(ctx, &deliveriesAfter, &unconsumedAfter); err != nil {
+		t.Fatal(err)
+	}
+	if operationsAfter != operationsBefore || jobsAfter != jobsBefore || deliveriesAfter != consumed+unconsumed || unconsumedAfter != unconsumed {
+		t.Fatalf("duplicate delivery changed durable work: operations %d/%d jobs %d/%d deliveries %d/%d unconsumed=%d", operationsBefore, operationsAfter, jobsBefore, jobsAfter, consumed+unconsumed, deliveriesAfter, unconsumedAfter)
+	}
 }
