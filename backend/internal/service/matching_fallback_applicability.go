@@ -74,6 +74,7 @@ type MatchingFallbackCandidate struct {
 type MatchingFallbackApplicabilityResult struct {
 	SchemaVersion    int
 	InputDigest      string
+	AllCandidates    []MatchingFallbackCandidate
 	Candidates       []MatchingFallbackCandidate
 	EligibleProfiles []string
 	QualifyingEdges  int
@@ -320,7 +321,7 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 		return MatchingFallbackApplicabilityResult{}, err
 	}
 
-	result := MatchingFallbackApplicabilityResult{SchemaVersion: 1, Candidates: make([]MatchingFallbackCandidate, 0), EligibleProfiles: make([]string, 0)}
+	result := MatchingFallbackApplicabilityResult{SchemaVersion: 2, AllCandidates: make([]MatchingFallbackCandidate, 0), Candidates: make([]MatchingFallbackCandidate, 0), EligibleProfiles: make([]string, 0)}
 	for _, releaseID := range searchIDs {
 		searchScores, err := acceptedFallbackSearchScores(input.SearchReceipt.CacheKey, manifest.Kind, manifest.AcceptedHits, []string{releaseID})
 		if err != nil {
@@ -369,24 +370,42 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 			return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: build matching inputs: %w", err)
 		}
 		for _, matchingInput := range inputs {
-			score, err := ScoreAssignmentCandidate(matchingInput.AssignmentInput)
+			score := matchingInput.AssignmentScore
+			trackID, err := trackUUIDFor(snapshot.Releases, matchingInput.ReleaseID, matchingInput.Medium, matchingInput.Track)
 			if err != nil {
-				return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: score candidate: %w", err)
-			}
-			if !fallbackScoreQualifies(score.Confidence) {
-				continue
+				return MatchingFallbackApplicabilityResult{}, err
 			}
 			member := capturedByMember[matchingInput.FileID]
-			result.Candidates = append(result.Candidates, MatchingFallbackCandidate{
+			candidate := MatchingFallbackCandidate{
 				MemberID: matchingInput.FileID, ReleaseID: matchingInput.ReleaseID, RecordingID: matchingInput.RecordingID,
-				ProviderTrackUUID: trackUUIDFor(snapshot.Releases, matchingInput.ReleaseID, matchingInput.Medium, matchingInput.Track),
+				ProviderTrackUUID: trackID,
 				Medium:            matchingInput.Medium, Position: matchingInput.Track, MatchingInput: matchingInput, Score: score,
 				ScoreFactors: append([]MatchingFactor(nil), score.Factors...), FrozenWorkID: member.WorkID,
 				MetadataInputSHA: metadataInputs[matchingInput.FileID], LookupPayloadSHA: receipt.PayloadSHA256,
 				LookupProjectionSHA: receipt.ProjectionSHA256,
-			})
+			}
+			result.AllCandidates = append(result.AllCandidates, candidate)
+			if fallbackScoreQualifies(score.Confidence) {
+				result.Candidates = append(result.Candidates, candidate)
+			}
 		}
 	}
+	sort.Slice(result.AllCandidates, func(i, j int) bool {
+		a, b := result.AllCandidates[i], result.AllCandidates[j]
+		if a.MemberID != b.MemberID {
+			return a.MemberID.String() < b.MemberID.String()
+		}
+		if a.ReleaseID != b.ReleaseID {
+			return a.ReleaseID < b.ReleaseID
+		}
+		if a.Medium != b.Medium {
+			return a.Medium < b.Medium
+		}
+		if a.Position != b.Position {
+			return a.Position < b.Position
+		}
+		return a.RecordingID < b.RecordingID
+	})
 	sort.Slice(result.Candidates, func(i, j int) bool {
 		a, b := result.Candidates[i], result.Candidates[j]
 		if a.MemberID != b.MemberID {
@@ -720,17 +739,34 @@ func fallbackApplicabilityInputDigest(input MatchingFallbackApplicabilityInput) 
 	return hex.EncodeToString(hash[:]), nil
 }
 
-func trackUUIDFor(releases []persistence.MatchingRelease, releaseID string, medium, position int) uuid.UUID {
+func trackUUIDFor(releases []persistence.MatchingRelease, releaseID string, medium, position int) (uuid.UUID, error) {
+	var selected uuid.UUID
+	releaseCount := 0
 	for _, release := range releases {
 		if release.ProviderKey == releaseID {
+			releaseCount++
+			trackIDs := make(map[uuid.UUID]struct{}, len(release.Tracks))
 			for _, track := range release.Tracks {
+				if track.ID == uuid.Nil || track.RecordingProviderKey == "" {
+					return uuid.Nil, fmt.Errorf("fallback applicability: hydrated track identity is incomplete")
+				}
+				if _, duplicate := trackIDs[track.ID]; duplicate {
+					return uuid.Nil, fmt.Errorf("fallback applicability: hydrated track identity is ambiguous")
+				}
+				trackIDs[track.ID] = struct{}{}
 				if track.Medium == medium && track.Position == position {
-					return track.ID
+					if selected != uuid.Nil {
+						return uuid.Nil, fmt.Errorf("fallback applicability: hydrated track position is ambiguous")
+					}
+					selected = track.ID
 				}
 			}
 		}
 	}
-	return uuid.Nil
+	if releaseCount != 1 || selected == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("fallback applicability: hydrated track position is missing or ambiguous")
+	}
+	return selected, nil
 }
 func decodeFallbackStrict(raw json.RawMessage, output any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))

@@ -80,7 +80,7 @@ func TestCalculateFallbackApplicabilityScoresWholeFrozenUnionDeterministically(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(first, second) || first.QualifyingEdges != 12 || len(first.Candidates) != 12 || len(first.EligibleProfiles) != 1 {
+	if !reflect.DeepEqual(first, second) || first.SchemaVersion != 2 || first.QualifyingEdges != 12 || len(first.Candidates) != 12 || len(first.AllCandidates) != 12 || len(first.EligibleProfiles) != 1 {
 		t.Fatalf("unexpected repeatable applicability: first=%#v second=%#v", first, second)
 	}
 	for _, candidate := range first.Candidates {
@@ -298,6 +298,9 @@ func TestCalculateFallbackApplicabilityDoesNotRequireGroupCoverageOrReleaseProfi
 	result, err := CalculateFallbackApplicability(input)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(result.AllCandidates) != 2 || len(result.Candidates) != 1 {
+		t.Fatalf("all edges including the below-threshold edge must be retained: all=%#v qualifying=%#v", result.AllCandidates, result.Candidates)
 	}
 	for _, candidate := range result.Candidates {
 		if candidate.MemberID == first.VariantID {

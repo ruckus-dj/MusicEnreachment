@@ -1199,6 +1199,19 @@ normalization для score в точности. Если по имеющимся
   upstream. DB applicability advancement, next-stage routing, seal3 and runtime
   fallback activation remain outstanding.
 
+### Complete calculation inventory and immutable context loading — 2026-10-12
+
+- Calculator schema2 retains every scored edge, including nonqualifying edges.
+  Repeatable-read/read-only context loader validates persisted plan/target,
+  registered successful search/lookup operations and accepted receipts, adapting
+  the originating manifest without mutable cache/projection reads.
+- PostgreSQL persisted evidence → preparation → calculation proves complete
+  inventory and rejects stale revisions and tampered search operation input/kind.
+  Independent review and repeated primary full `task verify` passed.
+- This is read/calculation only: no receipt writer, delivery consumption or
+  acquisition advancement. Versioned calculation persistence and next-stage
+  routing remain outstanding before sealing and runtime activation.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

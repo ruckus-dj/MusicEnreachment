@@ -454,4 +454,60 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_lookup_receipt WHERE run_id=?`, parentID).Scan(ctx, &receiptCount); err != nil || receiptCount != 2 {
 		t.Fatalf("both immutable lookup receipts should exist: count=%d err=%v", receiptCount, err)
 	}
+	calculation, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision)
+	if err != nil || !exists || len(calculation.AllCandidates) != 4 || calculation.QualifyingEdges != 0 {
+		t.Fatalf("prepare persisted fallback applicability: exists=%v candidates=%d result=%+v err=%v", exists, len(calculation.AllCandidates), calculation, err)
+	}
+	var tamperedInput struct {
+		SchemaVersion int    `json:"schema_version"`
+		Query         string `json:"query"`
+		Offset        int    `json:"offset"`
+		Limit         int    `json:"limit"`
+	}
+	if err := json.Unmarshal(child.InputSnapshot, &tamperedInput); err != nil {
+		t.Fatalf("decode original search operation input: %v", err)
+	}
+	tamperedInput.Query += " tampered"
+	tamperedSearchInput, err := json.Marshal(tamperedInput)
+	if err != nil {
+		t.Fatalf("encode tampered search operation input: %v", err)
+	}
+	wrongSearchKind := "provider_release_search"
+	if child.Kind == wrongSearchKind {
+		wrongSearchKind = "provider_recording_search"
+	}
+	for _, mutation := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{name: "input", query: `UPDATE operation SET input_snapshot=?::jsonb WHERE id=?`, args: []any{string(tamperedSearchInput), childID}},
+		{name: "kind", query: `UPDATE operation SET kind=? WHERE id=?`, args: []any{wrongSearchKind, childID}},
+	} {
+		t.Run("tampered_search_operation_"+mutation.name, func(t *testing.T) {
+			if _, err := fixture.db.NewRaw(mutation.query, mutation.args...).Exec(ctx); err != nil {
+				t.Fatalf("tamper search operation: %v", err)
+			}
+			result, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision)
+			if err == nil || exists || len(result.AllCandidates) != 0 {
+				t.Fatalf("tampered search operation was accepted: exists=%v candidates=%d err=%v", exists, len(result.AllCandidates), err)
+			}
+			var restoreQuery string
+			var restoreArgs []any
+			switch mutation.name {
+			case "input":
+				restoreQuery = `UPDATE operation SET input_snapshot=?::jsonb WHERE id=?`
+				restoreArgs = []any{string(child.InputSnapshot), childID}
+			case "kind":
+				restoreQuery = `UPDATE operation SET kind=? WHERE id=?`
+				restoreArgs = []any{child.Kind, childID}
+			}
+			if _, err := fixture.db.NewRaw(restoreQuery, restoreArgs...).Exec(ctx); err != nil {
+				t.Fatalf("restore search operation: %v", err)
+			}
+		})
+	}
+	if _, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision-1); err != nil || exists {
+		t.Fatalf("stale applicability revision was not rejected: exists=%v err=%v", exists, err)
+	}
 }
