@@ -137,6 +137,23 @@ func (service *ProviderFetchService) PrepareOperation(ctx context.Context, kind,
 	return operation, nil
 }
 
+// ResolveCurrentMusicBrainzSource captures the saved source identity without
+// preparing a provider request or performing network I/O.
+func (service *ProviderFetchService) ResolveCurrentMusicBrainzSource(ctx context.Context) (persistence.AutomaticFallbackProviderSource, error) {
+	config, err := service.registry.GetMusicBrainzConfig(ctx)
+	if err != nil {
+		return persistence.AutomaticFallbackProviderSource{}, fmt.Errorf("read MusicBrainz provider configuration: %w", err)
+	}
+	if config.Identity == "" {
+		return persistence.AutomaticFallbackProviderSource{}, ErrMusicBrainzConfigurationMissing
+	}
+	source, err := service.cache.ResolveMusicBrainzSource(ctx, musicBrainzEndpoint(config), config.Identity)
+	if err != nil {
+		return persistence.AutomaticFallbackProviderSource{}, err
+	}
+	return persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: source.ConfigurationIdentity}, nil
+}
+
 // StartProviderOperation records a bounded lookup or search request atomically
 // with its River delivery. A missing successful cache entry is fetched on the
 // worker; setting explicitRefresh requests an intentional refresh.

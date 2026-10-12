@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 	"github.com/uptrace/bun"
 )
 
 const matchingAcquisitionIntentVersion = 1
 const matchingAutomaticAcquisitionIntentVersion = 2
+const matchingAutomaticFallbackAcquisitionIntentVersion = 3
 
 const (
 	MatchingAcquisitionArtistCatalogPage = "artist_catalog_page"
@@ -342,6 +344,7 @@ type MatchingAcquisitionIntent struct {
 	TargetCaptureDigest    string                               `json:"target_capture_digest,omitempty"`
 	QueryDescriptor        json.RawMessage                      `json:"query_descriptor,omitempty"`
 	ArtistQueryPlanVersion int                                  `json:"artist_query_plan_version,omitempty"`
+	FallbackQueryPlan      json.RawMessage                      `json:"fallback_query_plan,omitempty"`
 	Targets                []MatchingTarget                     `json:"targets"`
 	InitialProviderInputs  []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
 }
@@ -587,7 +590,11 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 	canonicalIntent.InitialProviderInputs = append([]MatchingAcquisitionProviderRequest(nil), intent.InitialProviderInputs...)
 	for index := range canonicalIntent.InitialProviderInputs {
 		request := &canonicalIntent.InitialProviderInputs[index]
-		if request.Kind != "provider_artist_search" {
+		if intent.SchemaVersion == matchingAutomaticFallbackAcquisitionIntentVersion {
+			if (request.Kind != "provider_release_search" && request.Kind != "provider_recording_search") || request.CacheKey == "" {
+				return fmt.Errorf("saved initial provider input is invalid")
+			}
+		} else if request.Kind != "provider_artist_search" {
 			return fmt.Errorf("saved initial provider input is invalid")
 		}
 		canonicalInput, err := canonicalMatchingJSON(request.Input)
@@ -656,14 +663,43 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 		if intentQueryErr != nil || planQueryErr != nil || !equalDigest(intentQuery, planQuery) {
 			return fmt.Errorf("saved intent query differs from immutable matching plan")
 		}
+	case 5:
+		var plan struct {
+			Intent              string          `json:"intent"`
+			Mode                string          `json:"mode"`
+			TargetCaptureDigest string          `json:"target_capture_digest"`
+			MetadataDigest      string          `json:"metadata_capture_digest"`
+			PolicyVersion       string          `json:"policy_version"`
+			FallbackQueryPlan   json.RawMessage `json:"fallback_query_plan"`
+		}
+		if json.Unmarshal(planBytes, &plan) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || intent.FenceVersion != 2 ||
+			plan.Intent != "automatic_fallback_acquisition" || plan.Mode != "automatic" ||
+			intent.TargetCaptureDigest == "" || intent.TargetCaptureDigest != plan.TargetCaptureDigest ||
+			intent.CaptureDigest != plan.MetadataDigest || intent.PolicyVersion != plan.PolicyVersion || len(intent.FallbackQueryPlan) == 0 || len(plan.FallbackQueryPlan) == 0 {
+			return fmt.Errorf("saved intent scope differs from immutable matching plan")
+		}
+		intentPlan, intentPlanErr := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan)
+		planPlan, planPlanErr := policy.CanonicalFallbackQueryPlan(plan.FallbackQueryPlan)
+		if intentPlanErr != nil || planPlanErr != nil || !equalDigest(intentPlan, planPlan) {
+			return fmt.Errorf("saved intent fallback plan differs from immutable plan")
+		}
+		var typedPlan policy.TypedFallbackQueryPlan
+		if json.Unmarshal(intentPlan, &typedPlan) != nil || (len(typedPlan.Stages) == 0 && len(intent.InitialProviderInputs) != 0) || (len(typedPlan.Stages) > 0 && len(intent.InitialProviderInputs) != 1) {
+			return fmt.Errorf("saved fallback initial provider scope is invalid")
+		}
+		if len(typedPlan.Stages) > 0 && validateFallbackProviderInput(typedPlan.Stages[0], &Operation{Kind: intent.InitialProviderInputs[0].Kind, InputSnapshot: intent.InitialProviderInputs[0].Input, ProviderCacheKey: fallbackStringPointer(intent.InitialProviderInputs[0].CacheKey)}) != nil {
+			return fmt.Errorf("saved fallback initial provider scope is invalid")
+		}
 	default:
 		return fmt.Errorf("immutable matching plan version is unsupported")
 	}
 	return nil
 }
 
+func fallbackStringPointer(value string) *string { return &value }
+
 func supportedMatchingAcquisitionIntentVersion(version int) bool {
-	return version == matchingAcquisitionIntentVersion || version == matchingAutomaticAcquisitionIntentVersion
+	return version == matchingAcquisitionIntentVersion || version == matchingAutomaticAcquisitionIntentVersion || version == matchingAutomaticFallbackAcquisitionIntentVersion
 }
 
 func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) ([]byte, error) {
@@ -673,6 +709,13 @@ func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) (
 			return nil, err
 		}
 		intent.QueryDescriptor = canonicalQuery
+	}
+	if len(intent.FallbackQueryPlan) != 0 {
+		canonicalPlan, err := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan)
+		if err != nil {
+			return nil, err
+		}
+		intent.FallbackQueryPlan = canonicalPlan
 	}
 	intent.CapturedMembers = append([]MatchingAcquisitionCapturedMember(nil), intent.CapturedMembers...)
 	for index := range intent.CapturedMembers {

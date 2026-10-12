@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
@@ -44,6 +45,182 @@ func TestMatchingTargetFenceReadersAndDeliveryIgnoreUnrelatedGroupingEpochPostgr
 	afterCapture, afterDigest, exists, err := fixture.repository.GetMatchingAcquisitionMetadataCapture(fixture.ctx, fixture.runID, "admitted")
 	if err != nil || !exists || afterDigest != beforeDigest || !equalJSONForTest(t, afterCapture, beforeCapture) {
 		t.Fatalf("metadata reader changed original capture: exists=%v digest=%q err=%v", exists, afterDigest, err)
+	}
+}
+
+func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgreSQL(t *testing.T) {
+	t.Parallel()
+	fixture := newAutomaticMatchingTargetFenceFixture(t)
+	var target struct {
+		GroupID  uuid.UUID `bun:"group_id"`
+		Revision string    `bun:"captured_group_revision"`
+	}
+	if err := fixture.db.NewRaw(`SELECT group_id,captured_group_revision FROM matching_run_target WHERE run_id=?`, fixture.runID).Scan(fixture.ctx, &target); err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	var event persistence.IncomingMatchingReconcileEvent
+	if err := fixture.db.NewSelect().Model(&event).Where("state = ? AND delivery_claimed", "dispatched").Order("created_at DESC").Limit(1).Scan(fixture.ctx); err != nil {
+		t.Fatalf("read claimed reconciliation event: %v", err)
+	}
+	var source struct {
+		ID         uuid.UUID `bun:"provider_source_id"`
+		ProviderID uuid.UUID `bun:"provider_id"`
+		Endpoint   string    `bun:"endpoint"`
+		Identity   string    `bun:"configuration_identity"`
+	}
+	if err := fixture.db.NewRaw(`SELECT id AS provider_source_id,provider_id,endpoint,configuration_identity FROM provider_source WHERE id=(SELECT provider_source_id FROM matching_run WHERE id=?)`, fixture.runID).Scan(fixture.ctx, &source); err != nil {
+		t.Fatalf("read provider source: %v", err)
+	}
+	var epoch int64
+	if err := fixture.db.NewRaw(`SELECT delivery_epoch FROM incoming_matching_reconcile_event WHERE id=?`, event.ID).Scan(fixture.ctx, &epoch); err != nil {
+		t.Fatalf("read event epoch: %v", err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{"ALBUM":["Captured Album"],"TITLE":["Captured Track"]}'::jsonb`).Exec(fixture.ctx); err != nil {
+		t.Fatalf("set album-and-title captured metadata: %v", err)
+	}
+	tags := []map[string][]string{{"ALBUM": {"Captured Album"}, "TITLE": {"Captured Track"}}, {"ALBUM": {"Captured Album"}, "TITLE": {"Captured Track"}}}
+	planned, artistBearing := policy.PlanFallbackQueries(tags)
+	if artistBearing {
+		t.Fatal("album-only fixture unexpectedly has artist metadata")
+	}
+	plan := policy.TypedFallbackQueryPlan{SchemaVersion: planned.SchemaVersion, Stages: planned.Stages}
+	query := plan.Stages[0].Query
+	makeAdmission := func() persistence.AutomaticFallbackMatchingAdmission {
+		parentID, providerOperationID := uuid.New(), uuid.New()
+		key, identity := "release-search:0:10:"+query, source.Identity
+		providerID, sourceID := source.ProviderID, source.ID
+		input, _ := json.Marshal(struct {
+			SchemaVersion int    `json:"schema_version"`
+			Query         string `json:"query"`
+			Offset        int    `json:"offset"`
+			Limit         int    `json:"limit"`
+		}{1, query, 0, 10})
+		provider := &persistence.Operation{ID: providerOperationID, Kind: "provider_release_search", State: "queued", Stage: "queued", InputSnapshot: input, ProviderSourceID: &sourceID, ProviderID: &providerID, ProviderConfigurationIdentity: &identity, ProviderEndpoint: source.Endpoint, ProviderCacheKey: &key, Attempt: 1}
+		admissionPlan := plan
+		admissionPlan.Stages = append([]policy.TypedFallbackQueryStage(nil), plan.Stages...)
+		return persistence.AutomaticFallbackMatchingAdmission{Parent: &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_provider", InputSnapshot: json.RawMessage(`{}`), Attempt: 1}, ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID}, Provider: persistence.MatchingProviderRequest{Operation: provider, Args: service.ProviderFetchOperationArgs{OperationID: providerOperationID}}, Source: persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: source.Identity}, GroupID: target.GroupID, ExpectedGroupRevision: target.Revision, PolicyVersion: service.MatchingPolicyVersion, Plan: admissionPlan, EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: epoch}
+	}
+	client := openScanEnqueueRiver(t, fixture.db)
+	for name, mutate := range map[string]func(*policy.TypedFallbackQueryPlan){
+		"forged query": func(plan *policy.TypedFallbackQueryPlan) { plan.Stages[0].Query = `release:"forged"` },
+		"wrong subset": func(plan *policy.TypedFallbackQueryPlan) { plan.Stages = plan.Stages[:2] },
+	} {
+		invalid := makeAdmission()
+		mutate(&invalid.Plan)
+		if _, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, invalid); err == nil {
+			t.Errorf("accepted fallback plan with %s", name)
+		}
+	}
+	falseEmpty := makeAdmission()
+	falseEmpty.Plan.Stages = []policy.TypedFallbackQueryStage{}
+	falseEmpty.Provider = persistence.MatchingProviderRequest{}
+	falseEmpty.Parent.Stage = "waiting_policy"
+	if _, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, falseEmpty); err == nil {
+		t.Error("accepted empty fallback plan despite captured album/title values")
+	}
+	for _, artistTag := range []string{"ARTIST", "ALBUMARTIST"} {
+		if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags=jsonb_build_object(?,jsonb_build_array('Captured Artist'))`, artistTag).Exec(fixture.ctx); err != nil {
+			t.Fatalf("set %s-only captured metadata: %v", artistTag, err)
+		}
+		parentID := uuid.New()
+		artistAdmission := persistence.AutomaticFallbackMatchingAdmission{
+			Parent:     &persistence.Operation{ID: parentID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_policy", Attempt: 1},
+			ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: parentID},
+			Source:     persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: source.Identity},
+			GroupID:    target.GroupID, ExpectedGroupRevision: target.Revision, PolicyVersion: service.MatchingPolicyVersion,
+			Plan:    policy.TypedFallbackQueryPlan{SchemaVersion: 1, Stages: []policy.TypedFallbackQueryStage{}},
+			EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: epoch,
+		}
+		if _, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, artistAdmission); err == nil {
+			t.Errorf("accepted artist-bearing fallback source with %s", artistTag)
+		}
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{"ALBUM":["Captured Album"],"TITLE":["Captured Track"]}'::jsonb`).Exec(fixture.ctx); err != nil {
+		t.Fatalf("restore album-and-title captured metadata: %v", err)
+	}
+	first, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, makeAdmission())
+	if err != nil || first.AlreadyAdmitted || first.Operation == nil {
+		t.Fatalf("admit fallback plan: result=%+v err=%v", first, err)
+	}
+	acquisition, exists, err := fixture.repository.GetMatchingAcquisition(fixture.ctx, first.OriginalRunID)
+	if err != nil || !exists || acquisition.Intent.SchemaVersion != 3 || acquisition.Intent.ArtistQueryPlanVersion != 0 || len(acquisition.Intent.FallbackQueryPlan) == 0 {
+		t.Fatalf("read fallback acquisition intent: exists=%v intent=%+v err=%v", exists, acquisition.Intent, err)
+	}
+	if _, _, exists, err := fixture.repository.GetMatchingAcquisitionMetadataCapture(fixture.ctx, first.OriginalRunID, "admitted"); err != nil || !exists {
+		t.Fatalf("read immutable fallback metadata capture: exists=%v err=%v", exists, err)
+	}
+	fence, exists, err := fixture.repository.GetMatchingRunFence(fixture.ctx, first.OriginalRunID)
+	if err != nil || !exists || fence.Version != 2 || fence.GroupID != target.GroupID {
+		t.Fatalf("read fallback target fence: exists=%v fence=%+v err=%v", exists, fence, err)
+	}
+	var before struct {
+		HighWater int64 `bun:"high_water"`
+		Jobs      int   `bun:"jobs"`
+	}
+	if err := fixture.db.NewRaw(`SELECT generation.high_water,(SELECT count(*) FROM operation WHERE kind='matching_evaluation_v1') AS jobs FROM incoming_matching_generation generation WHERE group_id=?`, target.GroupID).Scan(fixture.ctx, &before); err != nil {
+		t.Fatalf("read before duplicate: %v", err)
+	}
+	duplicate, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, makeAdmission())
+	if err != nil || !duplicate.AlreadyAdmitted || duplicate.OriginalRunID != first.OriginalRunID {
+		t.Fatalf("duplicate fallback receipt: result=%+v err=%v", duplicate, err)
+	}
+	var after struct {
+		HighWater int64 `bun:"high_water"`
+		Jobs      int   `bun:"jobs"`
+	}
+	if err := fixture.db.NewRaw(`SELECT generation.high_water,(SELECT count(*) FROM operation WHERE kind='matching_evaluation_v1') AS jobs FROM incoming_matching_generation generation WHERE group_id=?`, target.GroupID).Scan(fixture.ctx, &after); err != nil {
+		t.Fatalf("read after duplicate: %v", err)
+	}
+	if before.HighWater != after.HighWater || before.Jobs != after.Jobs {
+		t.Fatalf("duplicate fallback admission created durable work: before=%+v after=%+v", before, after)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{}'::jsonb`).Exec(fixture.ctx); err != nil {
+		t.Fatalf("set truly empty captured metadata: %v", err)
+	}
+	wrongSourceID := uuid.New()
+	wrongSource := persistence.AutomaticFallbackMatchingAdmission{
+		Parent:     &persistence.Operation{ID: wrongSourceID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_policy", Attempt: 1},
+		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: wrongSourceID},
+		Source:     persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: uuid.New(), Endpoint: source.Endpoint, ConfigurationIdentity: source.Identity},
+		GroupID:    target.GroupID, ExpectedGroupRevision: target.Revision, PolicyVersion: service.MatchingPolicyVersion,
+		Plan:    policy.TypedFallbackQueryPlan{SchemaVersion: 1, Stages: []policy.TypedFallbackQueryStage{}},
+		EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: epoch,
+	}
+	if _, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, wrongSource); err == nil {
+		t.Error("accepted an empty-plan source descriptor with a mismatched provider ID")
+	}
+	manualID := uuid.New()
+	manual, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, persistence.AutomaticFallbackMatchingAdmission{
+		Parent:     &persistence.Operation{ID: manualID, Kind: "matching_evaluation_v1", State: "queued", Stage: "waiting_policy", InputSnapshot: json.RawMessage(`{}`), Attempt: 1},
+		ParentArgs: persistence.MatchingEvaluationWakeArgs{OperationID: manualID}, GroupID: target.GroupID,
+		ExpectedGroupRevision: target.Revision, PolicyVersion: service.MatchingPolicyVersion,
+		Source:  persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: source.Identity},
+		Plan:    policy.TypedFallbackQueryPlan{SchemaVersion: 1, Stages: []policy.TypedFallbackQueryStage{}},
+		EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: epoch,
+	})
+	if err != nil || manual.Operation == nil || manual.OriginalRunID != manualID {
+		t.Fatalf("admit empty manual-wait plan: result=%+v err=%v", manual, err)
+	}
+	var emptyRunSource struct {
+		SourceID      uuid.UUID `bun:"provider_source_id"`
+		Configuration string    `bun:"provider_configuration_identity"`
+	}
+	if err := fixture.db.NewRaw(`SELECT provider_source_id,provider_configuration_identity FROM matching_run WHERE id=?`, manualID).Scan(fixture.ctx, &emptyRunSource); err != nil || emptyRunSource.SourceID != source.ID || emptyRunSource.Configuration != source.Identity {
+		t.Fatalf("empty-plan run lost its saved provider source: source=%+v err=%v", emptyRunSource, err)
+	}
+	manualAcquisition, exists, err := fixture.repository.GetMatchingAcquisition(fixture.ctx, manualID)
+	if err != nil || !exists || manualAcquisition.Phase != "waiting_policy" || len(manualAcquisition.Intent.InitialProviderInputs) != 0 || len(manualAcquisition.Intent.FallbackQueryPlan) == 0 {
+		t.Fatalf("read empty-plan manual wait: exists=%v acquisition=%+v err=%v", exists, manualAcquisition, err)
+	}
+	var childCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, manualID).Scan(fixture.ctx, &childCount); err != nil || childCount != 0 {
+		t.Fatalf("empty plan registered provider child: count=%d err=%v", childCount, err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE matching_acquisition SET intent=jsonb_set(intent,'{fallback_query_plan,stages,0,query}',to_jsonb('forged'::text)) WHERE run_id=?`, first.OriginalRunID).Exec(fixture.ctx); err != nil {
+		t.Fatalf("forge saved fallback plan for reader test: %v", err)
+	}
+	if _, exists, err := fixture.repository.GetMatchingAcquisition(fixture.ctx, first.OriginalRunID); err == nil || exists {
+		t.Fatalf("forged fallback plan was accepted: exists=%v err=%v", exists, err)
 	}
 }
 

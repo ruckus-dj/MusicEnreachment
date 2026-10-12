@@ -8,11 +8,32 @@ import (
 	"github.com/anyascii/go"
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 )
 
 type IncomingMatchingReconcilePlan struct {
 	PlannedGroups    []IncomingMatchingReconcileTarget `json:"planned_groups"`
 	DeferredGroupIDs []uuid.UUID                       `json:"deferred_group_ids"`
+}
+
+const TypedFallbackQueryPlanVersion = 1
+
+type TypedFallbackQueryPlan struct {
+	SchemaVersion int                       `json:"schema_version"`
+	Stages        []TypedFallbackQueryStage `json:"stages"`
+}
+
+type TypedFallbackQueryStage struct {
+	Kind   string `json:"kind"`
+	Query  string `json:"query"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
+type IncomingMatchingFallbackTarget struct {
+	GroupID       uuid.UUID              `json:"group_id"`
+	GroupRevision string                 `json:"group_revision"`
+	Plan          TypedFallbackQueryPlan `json:"plan"`
 }
 
 type IncomingMatchingReconcileTarget struct {
@@ -54,6 +75,69 @@ func PlanIncomingMatchingReconcile(snapshot persistence.IncomingMatchingReconcil
 		plan.PlannedGroups = append(plan.PlannedGroups, IncomingMatchingReconcileTarget{GroupID: group.Group.ID, GroupRevision: group.Group.Revision, Query: query})
 	}
 	return plan, nil
+}
+
+// PlanIncomingMatchingFallbacks builds deterministic finite typed search plans
+// for ready automatic groups without artist metadata. Each metadata dimension is
+// planned independently: album and title together yield album_track, album then
+// track; album alone yields album; title alone yields track; a group with
+// neither still yields a typed empty plan so no eligible group is silently
+// dropped. Artist-bearing groups are excluded using the exact reconcile
+// artist semantics (album artist when present per file, otherwise artist), so a
+// present-but-empty album artist is not treated as artist-bearing. This is a
+// planner contract only; reconciliation deliberately does not admit or execute
+// these plans until the fallback stage engine is available.
+func PlanIncomingMatchingFallbacks(snapshot persistence.IncomingMatchingReconcileSnapshot) ([]IncomingMatchingFallbackTarget, error) {
+	groups := append([]persistence.IncomingMatchingReconcileGroup(nil), snapshot.Groups...)
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Group.ID.String() < groups[j].Group.ID.String() })
+	plans := make([]IncomingMatchingFallbackTarget, 0)
+	for _, group := range groups {
+		if group.Authority.Mode != "automatic" || group.Group.ID == uuid.Nil || group.Group.Revision == "" || len(group.Group.UnreadyMembers) > 0 {
+			continue
+		}
+		view, err := incomingFilesFromCaptures(flattenReconcileCaptures(group))
+		if err != nil {
+			return nil, fmt.Errorf("select incoming fallback metadata captures: %w", err)
+		}
+		files := make(map[uuid.UUID]IncomingFile, len(view.Files))
+		for _, file := range view.Files {
+			files[file.VariantID] = file
+		}
+		members := append([]uuid.UUID(nil), group.Group.Members...)
+		sort.Slice(members, func(i, j int) bool { return members[i].String() < members[j].String() })
+		tagSets := make([]map[string][]string, 0, len(members))
+		for _, member := range members {
+			file, ok := files[member]
+			if !ok {
+				continue
+			}
+			tagSets = append(tagSets, file.Tags)
+		}
+		fallbackPlan, artistBearing := policy.PlanFallbackQueries(tagSets)
+		if artistBearing {
+			continue
+		}
+		plans = append(plans, IncomingMatchingFallbackTarget{GroupID: group.Group.ID, GroupRevision: group.Group.Revision, Plan: TypedFallbackQueryPlan{SchemaVersion: fallbackPlan.SchemaVersion, Stages: convertFallbackStages(fallbackPlan.Stages)}})
+	}
+	return plans, nil
+}
+
+func flattenReconcileCaptures(group persistence.IncomingMatchingReconcileGroup) []persistence.IncomingGroupingCapture {
+	members := append([]uuid.UUID(nil), group.Group.Members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].String() < members[j].String() })
+	captures := make([]persistence.IncomingGroupingCapture, 0)
+	for _, member := range members {
+		captures = append(captures, group.MemberCaptures[member]...)
+	}
+	return captures
+}
+
+func convertFallbackStages(stages []policy.TypedFallbackQueryStage) []TypedFallbackQueryStage {
+	converted := make([]TypedFallbackQueryStage, len(stages))
+	for index, stage := range stages {
+		converted[index] = TypedFallbackQueryStage{Kind: stage.Kind, Query: stage.Query, Offset: stage.Offset, Limit: stage.Limit}
+	}
+	return converted
 }
 
 func reconcileGroupArtists(group persistence.IncomingMatchingReconcileGroup) ([]string, error) {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 	"github.com/uptrace/bun"
 )
 
@@ -55,18 +56,42 @@ func (repository *SetupManagerRepository) GetMatchingRunFence(ctx context.Contex
 	if plan.SchemaVersion == 2 || plan.SchemaVersion == 3 {
 		return result, false, nil
 	}
-	if row.IntentVersion == matchingAutomaticAcquisitionIntentVersion {
+	switch row.IntentVersion {
+	case matchingAutomaticAcquisitionIntentVersion:
 		if json.Unmarshal(row.Intent, &intent) != nil || intent.SchemaVersion != matchingAutomaticAcquisitionIntentVersion || intent.FenceVersion != 2 {
 			return result, false, fmt.Errorf("read matching run fence: version-2 acquisition intent is invalid")
 		}
 		if plan.SchemaVersion != 4 {
 			return result, false, fmt.Errorf("read matching run fence: version-2 immutable plan is invalid")
 		}
-	} else {
+	case matchingAutomaticFallbackAcquisitionIntentVersion:
+		if json.Unmarshal(row.Intent, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || intent.FenceVersion != 2 || plan.SchemaVersion != 5 {
+			return result, false, fmt.Errorf("read matching run fence: version-3 fallback acquisition intent is invalid")
+		}
+	default:
 		return result, false, fmt.Errorf("read matching run fence: immutable plan version is unsupported")
 	}
 	if plan.Mode != "automatic" {
 		return result, false, fmt.Errorf("read matching run fence: version-2 acquisition intent is invalid or missing")
+	}
+	if plan.SchemaVersion == 5 {
+		var immutable struct {
+			Intent              string          `json:"intent"`
+			PolicyVersion       string          `json:"policy_version"`
+			TargetCaptureDigest string          `json:"target_capture_digest"`
+			FallbackQueryPlan   json.RawMessage `json:"fallback_query_plan"`
+		}
+		immutableJSON, immutableErr := canonicalMatchingJSON(row.Plan)
+		intentPlan, intentErr := policy.CanonicalFallbackQueryPlan(intent.FallbackQueryPlan)
+		if immutableErr != nil || json.Unmarshal(immutableJSON, &immutable) != nil || intentErr != nil ||
+			immutable.Intent != "automatic_fallback_acquisition" || immutable.PolicyVersion != intent.PolicyVersion ||
+			immutable.TargetCaptureDigest != intent.TargetCaptureDigest || len(immutable.FallbackQueryPlan) == 0 {
+			return result, false, fmt.Errorf("read matching run fence: fallback plan binding is invalid")
+		}
+		planBytes, planErr := policy.CanonicalFallbackQueryPlan(immutable.FallbackQueryPlan)
+		if planErr != nil || !equalDigest(intentPlan, planBytes) {
+			return result, false, fmt.Errorf("read matching run fence: fallback plan binding changed")
+		}
 	}
 	planDigest := sha256.Sum256(canonicalPlan)
 	if !equalDigest(row.PlanDigest, planDigest[:]) {

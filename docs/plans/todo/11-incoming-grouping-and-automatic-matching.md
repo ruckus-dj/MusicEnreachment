@@ -1077,6 +1077,19 @@ normalization для score в точности. Если по имеющимся
 - This closes the previously recorded terminal-event liveness gap. No-artist
   fallback, return-to-automatic/API/UI and full-plan acceptance remain open.
 
+### Frozen fallback plan and admission contract — 2026-10-12
+
+- Shared policy derives executable album+track → album → track subsets from
+  captured full tags, rejects artist-bearing fallback and retains typed empty
+  plans. Admission recomputes canonical queries from DB captures before semantic
+  receipt lookup; caller query/stage/empty-plan substitutions are rejected.
+- Intent3/plan5/fence2 admission/readers preserve source/event/target authority;
+  empty plans persist a validated source descriptor without a provider child.
+  PostgreSQL tests cover versioned readback/replay, forged plans and source binding.
+- Independent review and primary repeated full `task verify` passed. This is a
+  contract-only increment: fallback stage execution/seal3 and runtime activation
+  remain unimplemented; artistless reconciliation still defers meanwhile.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

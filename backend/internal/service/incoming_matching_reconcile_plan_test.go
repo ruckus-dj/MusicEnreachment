@@ -159,6 +159,134 @@ func TestPlanIncomingMatchingReconcileRejectsConflictingSelectedMetadata(t *test
 	}
 }
 
+func TestPlanIncomingMatchingFallbackUsesFiniteTypedStagesAndWholeTagValues(t *testing.T) {
+	groupID, memberID := uuid.New(), uuid.New()
+	capture := selectedReconcileCapture(`{"ALBUM":["Björk / Live; Vol. 2"],"TITLE":["Песня / версия; live"]}`)
+	capture.VariantID = memberID
+	snapshot := persistence.IncomingMatchingReconcileSnapshot{Groups: []persistence.IncomingMatchingReconcileGroup{{
+		Group:          persistence.IncomingGroupingGroup{ID: groupID, Revision: "rev", Members: []uuid.UUID{memberID}},
+		Authority:      persistence.IncomingGroupMatchingAuthority{GroupID: groupID, Mode: "automatic"},
+		MemberCaptures: map[uuid.UUID][]persistence.IncomingGroupingCapture{memberID: {capture}},
+	}}}
+	plans, err := PlanIncomingMatchingFallbacks(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one plan", plans)
+	}
+	got := plans[0].Plan
+	if got.SchemaVersion != TypedFallbackQueryPlanVersion || len(got.Stages) != 3 {
+		t.Fatalf("plan = %+v, want current version and three ordered stages", got)
+	}
+	if got.Stages[0].Kind != "album_track" || got.Stages[1].Kind != "album" || got.Stages[2].Kind != "track" {
+		t.Fatalf("stage order = %+v", got.Stages)
+	}
+	for _, stage := range got.Stages {
+		if stage.Offset != 0 || stage.Limit != 10 || !strings.Contains(stage.Query, "/") || !strings.Contains(stage.Query, ";") {
+			t.Fatalf("stage = %+v, expected bounded query preserving '/' and ';'", stage)
+		}
+	}
+	if !strings.Contains(got.Stages[0].Query, `) AND (`) || !strings.Contains(got.Stages[0].Query, `release:`) || !strings.Contains(got.Stages[0].Query, `recording:`) {
+		t.Fatalf("combined query = %q, want grouped release and recording AND", got.Stages[0].Query)
+	}
+}
+
+func TestPlanIncomingMatchingFallbackPlansAlbumOnlyAsAlbumStage(t *testing.T) {
+	groupID, memberID := uuid.New(), uuid.New()
+	plans, err := PlanIncomingMatchingFallbacks(fallbackSnapshot(groupID, memberID, `{"ALBUM":["Only album"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one plan", plans)
+	}
+	stages := plans[0].Plan.Stages
+	if plans[0].Plan.SchemaVersion != TypedFallbackQueryPlanVersion || len(stages) != 1 {
+		t.Fatalf("plan = %+v, want current version and a single album stage", plans[0].Plan)
+	}
+	if stages[0].Kind != "album" || stages[0].Offset != 0 || stages[0].Limit != 10 || !strings.Contains(stages[0].Query, `release:"Only album"`) {
+		t.Fatalf("stage = %+v, want bounded album query", stages[0])
+	}
+}
+
+func TestPlanIncomingMatchingFallbackPlansTitleOnlyAsTrackStage(t *testing.T) {
+	groupID, memberID := uuid.New(), uuid.New()
+	plans, err := PlanIncomingMatchingFallbacks(fallbackSnapshot(groupID, memberID, `{"TITLE":["Only title"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one plan", plans)
+	}
+	stages := plans[0].Plan.Stages
+	if plans[0].Plan.SchemaVersion != TypedFallbackQueryPlanVersion || len(stages) != 1 {
+		t.Fatalf("plan = %+v, want current version and a single track stage", plans[0].Plan)
+	}
+	if stages[0].Kind != "track" || stages[0].Offset != 0 || stages[0].Limit != 10 || !strings.Contains(stages[0].Query, `recording:"Only title"`) {
+		t.Fatalf("stage = %+v, want bounded track query", stages[0])
+	}
+}
+
+func TestPlanIncomingMatchingFallbackRetainsTypedEmptyPlanWhenTagsAbsent(t *testing.T) {
+	groupID, memberID := uuid.New(), uuid.New()
+	plans, err := PlanIncomingMatchingFallbacks(fallbackSnapshot(groupID, memberID, `{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0].GroupID != groupID {
+		t.Fatalf("plans = %+v, want one retained target for %s", plans, groupID)
+	}
+	if plans[0].Plan.SchemaVersion != TypedFallbackQueryPlanVersion || plans[0].Plan.Stages == nil || len(plans[0].Plan.Stages) != 0 {
+		t.Fatalf("plan = %+v, want current version and a typed empty stage list", plans[0].Plan)
+	}
+}
+
+func TestPlanIncomingMatchingFallbackExcludesArtistBearingGroups(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		tags string
+	}{
+		{name: "album artist", tags: `{"ALBUMARTIST":["Artist"],"ALBUM":["Album"],"TITLE":["Title"]}`},
+		{name: "artist fallback", tags: `{"ARTIST":["Artist"],"ALBUM":["Album"],"TITLE":["Title"]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			groupID, memberID := uuid.New(), uuid.New()
+			plans, err := PlanIncomingMatchingFallbacks(fallbackSnapshot(groupID, memberID, test.tags))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plans) != 0 {
+				t.Fatalf("plans = %+v, want artist-bearing group excluded from fallbacks", plans)
+			}
+		})
+	}
+}
+
+func TestPlanIncomingMatchingFallbackTreatsEmptyAlbumArtistAsNonArtist(t *testing.T) {
+	groupID, memberID := uuid.New(), uuid.New()
+	plans, err := PlanIncomingMatchingFallbacks(fallbackSnapshot(groupID, memberID, `{"ALBUMARTIST":[" "],"ARTIST":["Must not fallback"],"ALBUM":["Album"],"TITLE":["Title"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %+v, want one plan for present-but-empty album artist", plans)
+	}
+	if len(plans[0].Plan.Stages) != 3 {
+		t.Fatalf("stages = %+v, want album_track, album, track", plans[0].Plan.Stages)
+	}
+}
+
+func fallbackSnapshot(groupID, memberID uuid.UUID, tags string) persistence.IncomingMatchingReconcileSnapshot {
+	capture := selectedReconcileCapture(tags)
+	capture.VariantID = memberID
+	return persistence.IncomingMatchingReconcileSnapshot{Groups: []persistence.IncomingMatchingReconcileGroup{{
+		Group:          persistence.IncomingGroupingGroup{ID: groupID, Revision: "rev", Members: []uuid.UUID{memberID}},
+		Authority:      persistence.IncomingGroupMatchingAuthority{GroupID: groupID, Mode: "automatic"},
+		MemberCaptures: map[uuid.UUID][]persistence.IncomingGroupingCapture{memberID: {capture}},
+	}}}
+}
+
 func selectedReconcileCapture(tags string) persistence.IncomingGroupingCapture {
 	analysisID := uuid.New()
 	return persistence.IncomingGroupingCapture{
