@@ -67,17 +67,22 @@ func (repository *SetupManagerRepository) BuildMatchingFallbackSealAuthority(
 		return result, false, fmt.Errorf("build fallback seal authority: begin snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	return buildMatchingFallbackSealAuthority(ctx, tx, runID, expectedWaitRevision)
+	return buildMatchingFallbackSealAuthority(ctx, tx, runID, expectedWaitRevision, false)
 }
 
 func buildMatchingFallbackSealAuthority(
-	ctx context.Context, database bun.IDB, runID uuid.UUID, expectedWaitRevision int64,
+	ctx context.Context, database bun.IDB, runID uuid.UUID, expectedWaitRevision int64, historical bool,
 ) (MatchingFallbackSealAuthority, bool, error) {
 	var result MatchingFallbackSealAuthority
 	var phase string
 	var revision int64
-	err := database.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).
-		Scan(ctx, &phase, &revision)
+	var err error
+	if historical {
+		revision = expectedWaitRevision
+		err = database.NewRaw(`SELECT phase FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, runID, revision).Scan(ctx, &phase)
+	} else {
+		err = database.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).Scan(ctx, &phase, &revision)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, false, nil
 	}

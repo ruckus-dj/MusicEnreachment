@@ -1330,6 +1330,21 @@ normalization для score в точности. Если по имеющимся
 - This is an authority builder/historical reader only: persisted seal3 writing,
   frozen final evaluation/publication and runtime activation remain outstanding.
 
+### Persisted receipt-only fallback authority seal — 2026-10-12
+
+- Immutable schema3 writer derives saved wait authority transactionally and
+  rechecks current source/target/generation/authority before replay. Historical
+  reader validates original provenance without mutable evidence substitution.
+  Writing does not consume delivery, advance phases or enqueue work.
+- PostgreSQL tests cover qualified/no-query/exhausted persistence, exact replay,
+  source rotation/stale first writes, unchanged work state, mutation rejection
+  and populated rollback protection. Independent bounded review and primary full
+  `task verify` passed.
+- Historical reads after cursor advancement and recomputed-digest forged-row
+  rejection remain hardening coverage. Evaluation/publication/activation are not
+  approved by this increment. Recurrent catalog continuation timeouts remain under
+  separate diagnosis despite this passing gate; plan11 remains open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

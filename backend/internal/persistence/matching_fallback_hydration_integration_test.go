@@ -709,6 +709,28 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 			sealAuthority.SelectedCalculation.AcquisitionRevision != complete.Revision || len(sealAuthority.FullEvaluationContext) == 0 || sealAuthority.Digest == "" {
 			t.Fatalf("qualified seal authority was not derived from the saved calculation: authority=%+v exists=%v err=%v", sealAuthority, authorityExists, err)
 		}
+		persistedAuthority, sealed, err := freshRepository.SealMatchingFallbackAuthority(ctx, parentID, qualifiedSnapshot.Revision)
+		if err != nil || !sealed || persistedAuthority.Digest != sealAuthority.Digest {
+			t.Fatalf("persist qualified fallback authority: authority=%+v sealed=%v err=%v", persistedAuthority, sealed, err)
+		}
+		replayedAuthority, sealed, err := freshRepository.SealMatchingFallbackAuthority(ctx, parentID, qualifiedSnapshot.Revision)
+		if err != nil || !sealed || replayedAuthority.Digest != persistedAuthority.Digest {
+			t.Fatalf("replay qualified fallback authority: authority=%+v sealed=%v err=%v", replayedAuthority, sealed, err)
+		}
+		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET configuration_identity='rotated-after-seal' WHERE id=?`, source.ID).Exec(ctx); err != nil {
+			t.Fatalf("rotate provider source after authority seal: %v", err)
+		}
+		if _, sealed, err := freshRepository.SealMatchingFallbackAuthority(ctx, parentID, qualifiedSnapshot.Revision); err == nil || sealed {
+			t.Fatalf("stale source configuration passed writer replay fence: sealed=%v err=%v", sealed, err)
+		}
+		readAuthority, sealed, err := freshRepository.GetMatchingFallbackAuthoritySeal(ctx, parentID, qualifiedSnapshot.Revision)
+		if err != nil || !sealed || readAuthority.Digest != persistedAuthority.Digest || readAuthority.SourceConfiguration != config.Identity {
+			t.Fatalf("read frozen fallback authority after source rotation: authority=%+v sealed=%v err=%v", readAuthority, sealed, err)
+		}
+		var sealRows int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=?`, parentID, qualifiedSnapshot.Revision).Scan(ctx, &sealRows); err != nil || sealRows != 1 {
+			t.Fatalf("fallback authority replay inserted duplicate seals: rows=%d err=%v", sealRows, err)
+		}
 		var disposition struct {
 			Disposition string `json:"disposition"`
 			Reason      string `json:"reason"`

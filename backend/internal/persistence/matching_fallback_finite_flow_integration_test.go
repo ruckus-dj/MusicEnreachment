@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/musicbrainz"
@@ -21,10 +23,52 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 )
 
 func TestAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T) {
 	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false)
+}
+
+type fallbackSealWriteState struct {
+	Phase         string
+	Revision      int64
+	Deliveries    int
+	RiverJobs     int
+	Dependencies  int
+	Registrations int
+}
+
+func snapshotFallbackSealWriteState(t *testing.T, ctx context.Context, database *bun.DB, runID uuid.UUID) fallbackSealWriteState {
+	t.Helper()
+	var state fallbackSealWriteState
+	if err := database.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).
+		Scan(ctx, &state.Phase, &state.Revision); err != nil {
+		t.Fatalf("read fallback seal acquisition cursor: %v", err)
+	}
+	queries := []struct {
+		query string
+		count *int
+	}{
+		{`SELECT count(*) FROM matching_delivery WHERE run_id=?`, &state.Deliveries},
+		{`SELECT count(*) FROM river_job WHERE args->>'operation_id' IN (
+			SELECT operation.id::text FROM operation WHERE operation.id=?
+			UNION SELECT registration.request_id::text FROM matching_fallback_request_registration registration WHERE registration.run_id=?)`, &state.RiverJobs},
+		{`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, &state.Dependencies},
+		{`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=?`, &state.Registrations},
+	}
+	for index, item := range queries {
+		var err error
+		if index == 1 {
+			err = database.NewRaw(item.query, runID, runID).Scan(ctx, item.count)
+		} else {
+			err = database.NewRaw(item.query, runID).Scan(ctx, item.count)
+		}
+		if err != nil {
+			t.Fatalf("read fallback seal work counts: %v", err)
+		}
+	}
+	return state
 }
 
 func TestAutomaticFallbackHistoricalStageLookupsDoNotBlockStageOnePostgreSQL(t *testing.T) {
@@ -235,6 +279,19 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 			authority.SelectedCalculation != nil || len(authority.FullEvaluationContext) != 0 || authority.Digest == "" {
 			t.Fatalf("no-query authority omitted captured intent or fabricated calculation evidence: authority=%+v plan=%+v err=%v", authority, authorityPlan, err)
 		}
+		beforeSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID)
+		sealed, sealedFound, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, parked.Revision)
+		if err != nil || !sealedFound || sealed.Digest != authority.Digest {
+			t.Fatalf("persist no-query fallback authority: authority=%+v found=%v err=%v", sealed, sealedFound, err)
+		}
+		if afterSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID); afterSeal != beforeSeal {
+			t.Fatalf("no-query authority seal changed acquisition or work state: before=%+v after=%+v", beforeSeal, afterSeal)
+		}
+		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, parked.Revision)
+		if err != nil || !readFound || readSeal.Digest != sealed.Digest || readSeal.Disposition != "no_query" {
+			t.Fatalf("read persisted no-query authority: authority=%+v found=%v err=%v", readSeal, readFound, err)
+		}
+		assertFallbackAuthoritySealImmutable(t, ctx, fixture.db, parentID, parked.Revision, sealed.Digest)
 		originalAuthority := authority
 		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET endpoint=?,configuration_identity=? WHERE id=?`, "https://changed.invalid/ws/2", "changed-configuration", authority.SourceID).Exec(ctx); err != nil {
 			t.Fatalf("change mutable provider source registry row: %v", err)
@@ -509,6 +566,19 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if requestCount != 3 || calculationCount != 3 {
 			t.Fatalf("finite plan did not stop at its three saved stages: searches=%d calculations=%d", requestCount, calculationCount)
 		}
+		beforeSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID)
+		sealed, sealedFound, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, parked.Revision)
+		if err != nil || !sealedFound || sealed.Digest != authority.Digest {
+			t.Fatalf("persist exhausted fallback authority: authority=%+v found=%v err=%v", sealed, sealedFound, err)
+		}
+		if afterSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID); afterSeal != beforeSeal {
+			t.Fatalf("exhausted authority seal changed acquisition or work state: before=%+v after=%+v", beforeSeal, afterSeal)
+		}
+		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, parked.Revision)
+		if err != nil || !readFound || readSeal.Digest != sealed.Digest || readSeal.Disposition != "review_exhausted" ||
+			readSeal.SelectedCalculation == nil || readSeal.SelectedCalculation.StageIndex != 2 || len(readSeal.FullEvaluationContext) == 0 {
+			t.Fatalf("read persisted exhausted authority: authority=%+v found=%v err=%v", readSeal, readFound, err)
+		}
 		return
 	}
 
@@ -602,6 +672,27 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	if err != nil || !exists || final.Phase != "pending_seal" {
 		t.Fatalf("real fallback calculation did not seal qualified applicability: snapshot=%+v exists=%v err=%v", final, exists, err)
 	}
+	if !historicalStageLookup {
+		// A source resolved after admission must not replace the frozen run source
+		// authority when the first persistence write is attempted.
+		if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/changed/ws/2"); err != nil {
+			t.Fatalf("change current provider configuration after admission: %v", err)
+		}
+		changedConfig, err := registry.GetMusicBrainzConfig(ctx)
+		if err != nil {
+			t.Fatalf("read changed provider configuration: %v", err)
+		}
+		if _, err := cache.ResolveMusicBrainzSource(ctx, changedConfig.BaseURL, changedConfig.Identity); err != nil {
+			t.Fatalf("resolve replacement provider source: %v", err)
+		}
+		if _, found, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, final.Revision); err == nil || found {
+			t.Fatalf("first seal accepted changed provider source: found=%v err=%v", found, err)
+		}
+		var sealCount int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=?`, parentID).Scan(ctx, &sealCount); err != nil || sealCount != 0 {
+			t.Fatalf("stale-source rejection persisted a seal: count=%d err=%v", sealCount, err)
+		}
+	}
 	var receipt struct {
 		SchemaVersion     int             `json:"schema_version"`
 		CalculatorVersion int             `json:"calculator_version"`
@@ -653,5 +744,29 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	}
 	if inputCount != 1 || dependencyCount != expectedDependencies || registrationCount != expectedRegistrations || searchJobCount != 0 || lookupJobCount != expectedLookupJobs {
 		t.Fatalf("finite flow wrote unexpected request/dependency work: initialInputs=%d dependencies=%d registrations=%d stage2Jobs=%d lookupJobs=%d", inputCount, dependencyCount, registrationCount, searchJobCount, lookupJobCount)
+	}
+}
+
+func assertFallbackAuthoritySealImmutable(t *testing.T, ctx context.Context, database *bun.DB, runID uuid.UUID, revision int64, digest string) {
+	t.Helper()
+	for _, mutation := range []struct {
+		name  string
+		query string
+	}{
+		{name: "update", query: `UPDATE matching_fallback_authority_seal SET authority='{}'::jsonb WHERE run_id=? AND wait_revision=?`},
+		{name: "delete", query: `DELETE FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=?`},
+	} {
+		if _, err := database.NewRaw(mutation.query, runID, revision).Exec(ctx); err == nil {
+			t.Fatalf("fallback authority seal %s was accepted", mutation.name)
+		} else {
+			var postgresErr *pgconn.PgError
+			if !errors.As(err, &postgresErr) || postgresErr.SQLState() != "P0001" {
+				t.Fatalf("fallback authority seal %s failed with unexpected error: %v", mutation.name, err)
+			}
+		}
+		var retainedDigest []byte
+		if err := database.NewRaw(`SELECT authority_digest FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=?`, runID, revision).Scan(ctx, &retainedDigest); err != nil || fmt.Sprintf("%x", retainedDigest) != digest {
+			t.Fatalf("fallback authority seal changed after rejected %s: digest=%x err=%v", mutation.name, retainedDigest, err)
+		}
 	}
 }
