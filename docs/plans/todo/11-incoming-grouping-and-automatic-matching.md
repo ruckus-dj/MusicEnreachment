@@ -1171,6 +1171,19 @@ normalization для score в точности. Если по имеющимся
   directly invoked worker proofs, not actual process-crash/live redelivery tests.
   Hydration completion, applicability and final fallback sealing remain open.
 
+### Receipt-backed fallback hydration completion — 2026-10-12
+
+- Intermediate lookup wakes are consumed without premature applicability. Full
+  successful hydration validates every immutable receipt, appends applicability
+  evidence and atomically registers its queued continuation.
+- PostgreSQL proof covers consumed deliveries, post-insertion rollback, same-claim
+  retry, exactly one fresh claimable wake and accepted-A references after mutable
+  cache B changes title/duration. Independent review closed the coverage blocker;
+  repeated primary full `task verify` passed.
+- Missing-receipt/stale-target negative matrix remains additional coverage.
+  Applicability scoring, finite next-stage routing, seal3 and production fallback
+  activation remain outstanding; this is not full-plan acceptance.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

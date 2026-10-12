@@ -73,6 +73,10 @@ type matchingFallbackSearchAdvancer interface {
 	AdvanceFallbackSearchForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackSearchProof, []persistence.MatchingProviderRequest, json.RawMessage) (bool, error)
 }
 
+type matchingFallbackHydrationCompleter interface {
+	CompleteFallbackHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64) (bool, error)
+}
+
 type matchingDeliveryReleaseHydrationStarter interface {
 	StartMatchingReleaseHydrationForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingAcquisitionPhase, []persistence.MatchingProviderRequest) (bool, error)
 }
@@ -192,6 +196,14 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 	}
 	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == "fallback_search" {
 		return acquisition.advanceFallbackSearch(ctx, snapshot, runID, attempt, riverJobID, claim)
+	}
+	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == persistence.MatchingAcquisitionFallbackHydration {
+		completer, ok := acquisition.repository.(matchingFallbackHydrationCompleter)
+		if !ok {
+			return false, true, fmt.Errorf("fallback hydration persistence is unavailable")
+		}
+		changed, err := completer.CompleteFallbackHydrationForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision)
+		return changed, true, err
 	}
 	if snapshot.Phase == "catalog_ready" {
 		return acquisition.rankAcceptedCatalog(ctx, snapshot, runID, attempt, riverJobID, claim)
