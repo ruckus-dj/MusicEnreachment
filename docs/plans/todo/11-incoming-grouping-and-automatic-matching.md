@@ -41,6 +41,7 @@
 | Выбор издания для группы | Рассматривать лишь releases, прошедшие порог для **каждого файла группы**; выбрать максимальную сумму score по всем файлам только при единственном максимуме. Любая ничья требует ручного решения. Дополнительного winner-gap нет. | Решение владельца для этого плана. |
 | «Полный релиз» — финальное уточнение | Для auto-apply matching достаточно, чтобы **все файлы входящей группы** уверенно получили назначения. Не требуется покрыть все позиции provider release: неполный provider tracklist coverage допустим. Если вся группа назначена, авто-решение применяется ко всей группе. Частичное auto-apply группы запрещено. | Самое позднее обязательное уточнение владельца; оно supersedes предложение «все позиции релиза покрыты» из ранней версии формулировки/макета. |
 | Граница публикации | Matching может сохранять локальные сущности и подтверждённые matching/source links; он не публикует файлы и не объявляет публикацию выполненной. | Решения владельца; `docs/design/decisions.md`, `docs/design/data-model.md`. |
+| Review при исчерпании artistless fallback | Если все три artistless stage (album + track → album → track) исполнены и ни один candidate не достиг совокупного confidence ≥0.70, review использует полный release + track inventory только последнего исполненного stage, а не объединение предыдущих stage. Если последний исполненный stage пуст — полный captured file group без provider layout. Ниже порога ничего не назначается автоматически. | Решение владельца от 2026-10-12. |
 
 > **Датированное дополнение 2026-10-09:** решения владельца по ранее открытым
 > gates ниже зафиксированы в
@@ -1290,6 +1291,44 @@ normalization для score в точности. Если по имеющимся
 - Independent review and primary full `task verify` passed. These are durable
   acquisition handoffs, not final published review decisions; sealing and runtime
   fallback activation remain outstanding, and plan11 remains open.
+
+### Owner decision — fallback exhaustion review scope, 2026-10-12
+
+- **Одобренное решение владельца (2026-10-12):** если все три artistless
+  fallback stage (**album + track → album → track**) исполнены и ни один
+  candidate не достиг совокупного confidence ≥0.70, review использует **полный
+  release + track inventory только последнего исполненного stage**, а не
+  объединение (union) предыдущих stage. Если последний исполненный stage пуст,
+  review показывает **полный captured file group без provider layout**. Ниже
+  порога ничего не назначается автоматически; частичное автоматическое
+  применение запрещено. Синхронизировано в `docs/design/decisions.md`
+  («Matching и целостность provider-связей»).
+- **Уже одобренное поведение (этим решением не меняется):** частично пригодное
+  сопоставление (совпавшая часть при неполном покрытии группы) по решению
+  владельца 2026-10-11 показывает всю раскладку, включая совпавшие и несовпавшие
+  файлы, и не применяет совпавшую часть автоматически. Новое решение 2026-10-12
+  покрывает отдельный случай полного исчерпания (нет ни одного candidate ≥0.70) и
+  не отменяет automatic apply полностью пригодного решения.
+- **Отделение от технического предложения:** сохранение ordered saved calculation
+  references предыдущих stage остаётся технической деталью персистентности и
+  **не** означает union-отображение; финальное sealing (**seal3**) и runtime
+  activation остаются техническим предложением/незавершённой работой, а не
+  частью одобренного продуктового решения. Реализация — за следующим этапом.
+
+### Read-only frozen fallback seal authority — 2026-10-12
+
+- Schema3 authority derivation reads a consistent immutable wait/calculation
+  snapshot. Qualified scope retains the complete stopped stage; exhausted scope
+  requires the exact final stage and complete zero-qualified proof history.
+  No-query scope retains the full captured group without invented provider data.
+- Fresh admissions freeze source descriptors in plan/intent. No-query authority
+  remains unchanged after registry mutation; missing historical descriptors fail
+  closed rather than fabricate admission-time evidence. Original receipt versions
+  and raw selected context are preserved.
+- PostgreSQL qualified/no-query/nonempty-exhausted and canonicalization tests,
+  independent review and repeated primary full `task verify` passed.
+- This is an authority builder/historical reader only: persisted seal3 writing,
+  frozen final evaluation/publication and runtime activation remain outstanding.
 
 ## Cross-stage safety and acceptance invariants
 

@@ -412,8 +412,19 @@ type MatchingAcquisitionIntent struct {
 	QueryDescriptor        json.RawMessage                      `json:"query_descriptor,omitempty"`
 	ArtistQueryPlanVersion int                                  `json:"artist_query_plan_version,omitempty"`
 	FallbackQueryPlan      json.RawMessage                      `json:"fallback_query_plan,omitempty"`
+	FallbackProviderSource *MatchingFallbackProviderSource      `json:"fallback_provider_source,omitempty"`
 	Targets                []MatchingTarget                     `json:"targets"`
 	InitialProviderInputs  []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
+}
+
+// MatchingFallbackProviderSource is the provider identity captured when an
+// automatic fallback run is admitted. The provider_source registry is mutable
+// and must not be used to reconstruct this authority later.
+type MatchingFallbackProviderSource struct {
+	ID                    uuid.UUID `json:"id"`
+	ProviderID            uuid.UUID `json:"provider_id"`
+	Endpoint              string    `json:"endpoint"`
+	ConfigurationIdentity string    `json:"configuration_identity"`
 }
 
 // MatchingAcquisitionCapturedMember is the exact persisted metadata snapshot
@@ -732,12 +743,13 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 		}
 	case 5:
 		var plan struct {
-			Intent              string          `json:"intent"`
-			Mode                string          `json:"mode"`
-			TargetCaptureDigest string          `json:"target_capture_digest"`
-			MetadataDigest      string          `json:"metadata_capture_digest"`
-			PolicyVersion       string          `json:"policy_version"`
-			FallbackQueryPlan   json.RawMessage `json:"fallback_query_plan"`
+			Intent                 string                          `json:"intent"`
+			Mode                   string                          `json:"mode"`
+			TargetCaptureDigest    string                          `json:"target_capture_digest"`
+			MetadataDigest         string                          `json:"metadata_capture_digest"`
+			PolicyVersion          string                          `json:"policy_version"`
+			FallbackQueryPlan      json.RawMessage                 `json:"fallback_query_plan"`
+			FallbackProviderSource *MatchingFallbackProviderSource `json:"fallback_provider_source,omitempty"`
 		}
 		if json.Unmarshal(planBytes, &plan) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || intent.FenceVersion != 2 ||
 			plan.Intent != "automatic_fallback_acquisition" || plan.Mode != "automatic" ||
@@ -749,6 +761,9 @@ func validateCanonicalMatchingAcquisitionIntent(intent MatchingAcquisitionIntent
 		planPlan, planPlanErr := policy.CanonicalFallbackQueryPlan(plan.FallbackQueryPlan)
 		if intentPlanErr != nil || planPlanErr != nil || !equalDigest(intentPlan, planPlan) {
 			return fmt.Errorf("saved intent fallback plan differs from immutable plan")
+		}
+		if !matchingFallbackProviderSourcesEqual(intent.FallbackProviderSource, plan.FallbackProviderSource) {
+			return fmt.Errorf("saved intent fallback provider source differs from immutable plan")
 		}
 		var typedPlan policy.TypedFallbackQueryPlan
 		if json.Unmarshal(intentPlan, &typedPlan) != nil || (len(typedPlan.Stages) == 0 && len(intent.InitialProviderInputs) != 0) || (len(typedPlan.Stages) > 0 && len(intent.InitialProviderInputs) != 1) {
@@ -801,6 +816,13 @@ func canonicalMatchingAcquisitionIntentBytes(intent MatchingAcquisitionIntent) (
 		intent.InitialProviderInputs[index].Input = canonicalInput
 	}
 	return json.Marshal(intent)
+}
+
+func matchingFallbackProviderSourcesEqual(left, right *MatchingFallbackProviderSource) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func canonicalMatchingJSON(value json.RawMessage) (json.RawMessage, error) {

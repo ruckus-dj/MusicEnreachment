@@ -221,14 +221,18 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			provider.ID = uuid.New()
 		}
 		planDocument, err := json.Marshal(struct {
-			SchemaVersion int             `json:"schema_version"`
-			Intent        string          `json:"intent"`
-			Mode          string          `json:"mode"`
-			Target        string          `json:"target_capture_digest"`
-			Metadata      string          `json:"metadata_capture_digest"`
-			Policy        string          `json:"policy_version"`
-			Fallback      json.RawMessage `json:"fallback_query_plan"`
-		}{5, "automatic_fallback_acquisition", "automatic", targetDigest, metadataDigest, admission.PolicyVersion, planBytes})
+			SchemaVersion  int                            `json:"schema_version"`
+			Intent         string                         `json:"intent"`
+			Mode           string                         `json:"mode"`
+			Target         string                         `json:"target_capture_digest"`
+			Metadata       string                         `json:"metadata_capture_digest"`
+			Policy         string                         `json:"policy_version"`
+			Fallback       json.RawMessage                `json:"fallback_query_plan"`
+			ProviderSource MatchingFallbackProviderSource `json:"fallback_provider_source"`
+		}{5, "automatic_fallback_acquisition", "automatic", targetDigest, metadataDigest, admission.PolicyVersion, planBytes, MatchingFallbackProviderSource{
+			ID: admission.Source.ID, ProviderID: admission.Source.ProviderID, Endpoint: admission.Source.Endpoint,
+			ConfigurationIdentity: admission.Source.ConfigurationIdentity,
+		}})
 		if err != nil {
 			return err
 		}
@@ -290,7 +294,9 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			}
 			providerInputs = append(providerInputs, MatchingAcquisitionProviderRequest{OperationID: provider.ID, Kind: provider.Kind, CacheKey: *provider.ProviderCacheKey, Input: append(json.RawMessage(nil), provider.InputSnapshot...)})
 		}
-		intent := MatchingAcquisitionIntent{SchemaVersion: 3, FenceVersion: 2, GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planHash[:]), CaptureDigest: metadataDigest, CapturedMembers: metadata, PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest, FallbackQueryPlan: planBytes, Targets: []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, InitialProviderInputs: providerInputs}
+		intent := MatchingAcquisitionIntent{SchemaVersion: 3, FenceVersion: 2, GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planHash[:]), CaptureDigest: metadataDigest, CapturedMembers: metadata, PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: targetDigest, FallbackQueryPlan: planBytes,
+			FallbackProviderSource: &MatchingFallbackProviderSource{ID: admission.Source.ID, ProviderID: admission.Source.ProviderID, Endpoint: admission.Source.Endpoint, ConfigurationIdentity: admission.Source.ConfigurationIdentity},
+			Targets:                []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}}, InitialProviderInputs: providerInputs}
 		intentBytes, err := canonicalMatchingAcquisitionIntentBytes(intent)
 		if err != nil {
 			return err

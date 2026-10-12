@@ -223,6 +223,28 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if len(parked.Intent.InitialProviderInputs) != 0 || len(parked.Intent.CapturedMembers) == 0 || dependencyCount != 0 || registrationCount != 0 || calculationCount != 0 || phaseWakeCount != 1 {
 			t.Fatalf("empty plan fabricated work or lost captured intent/original wake: inputs=%d members=%d dependencies=%d registrations=%d calculations=%d deliveries=%d", len(parked.Intent.InitialProviderInputs), len(parked.Intent.CapturedMembers), dependencyCount, registrationCount, calculationCount, phaseWakeCount)
 		}
+		authority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		if err != nil || !found {
+			t.Fatalf("build no-query fallback seal authority: authority=%+v found=%v err=%v", authority, found, err)
+		}
+		var authorityPlan policy.TypedFallbackQueryPlan
+		if err := json.Unmarshal(authority.Plan, &authorityPlan); err != nil || authority.SchemaVersion != 3 || authority.Disposition != "no_query" ||
+			authority.RunID != parentID || authority.WaitRevision != parked.Revision || len(authorityPlan.Stages) != 0 ||
+			authority.SourceID == uuid.Nil || authority.ProviderID == uuid.Nil || authority.Endpoint == "" || authority.SourceConfiguration == "" ||
+			len(authority.CapturedMetadata) != len(parked.Intent.CapturedMembers) || len(authority.ProofHistory) != 0 ||
+			authority.SelectedCalculation != nil || len(authority.FullEvaluationContext) != 0 || authority.Digest == "" {
+			t.Fatalf("no-query authority omitted captured intent or fabricated calculation evidence: authority=%+v plan=%+v err=%v", authority, authorityPlan, err)
+		}
+		originalAuthority := authority
+		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET endpoint=?,configuration_identity=? WHERE id=?`, "https://changed.invalid/ws/2", "changed-configuration", authority.SourceID).Exec(ctx); err != nil {
+			t.Fatalf("change mutable provider source registry row: %v", err)
+		}
+		refreshedAuthority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		if err != nil || !found || refreshedAuthority.Digest != originalAuthority.Digest ||
+			refreshedAuthority.SourceID != originalAuthority.SourceID || refreshedAuthority.ProviderID != originalAuthority.ProviderID ||
+			refreshedAuthority.Endpoint != originalAuthority.Endpoint || refreshedAuthority.SourceConfiguration != originalAuthority.SourceConfiguration {
+			t.Fatalf("no-query authority changed with mutable provider source registry: before=%+v after=%+v found=%v err=%v", originalAuthority, refreshedAuthority, found, err)
+		}
 		var runState, opStage string
 		var hasActiveDelivery bool
 		if err := fixture.db.NewRaw(`SELECT run.state,operation.stage,
@@ -407,11 +429,11 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		}
 		stageTwoTicket, err := cache.BeginRefresh(ctx, source.ID, *stageTwoOperation.ProviderCacheKey, config.Identity)
 		if err != nil {
-			t.Fatalf("reserve final-stage accepted empty response: %v", err)
+			t.Fatalf("reserve final-stage accepted response: %v", err)
 		}
-		stageTwoPayload := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":0,"offset":0,"recordings":[]}`)
+		stageTwoPayload := json.RawMessage(`{"created":"2026-10-12T00:00:00Z","count":1,"offset":0,"recordings":[{"id":"90000000-0000-4000-8000-0000000000f7","title":"Unrelated Recording","releases":[]}]}`)
 		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: stageTwoTicket, FetchedAt: time.Now().UTC(), Payload: stageTwoPayload}); err != nil {
-			t.Fatalf("accept final-stage empty response: %v", err)
+			t.Fatalf("accept final-stage nonempty below-threshold response: %v", err)
 		}
 		if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *stageTwoOperation.RiverJobID).Exec(ctx); err != nil {
 			t.Fatalf("mark final-stage provider job running: %v", err)
@@ -427,7 +449,7 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		advance(wakeID, claim)
 		stageTwoApplicability, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
 		if err != nil || !exists || stageTwoApplicability.Phase != persistence.MatchingAcquisitionFallbackApplicability {
-			t.Fatalf("empty final-stage search did not reach applicability: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
+			t.Fatalf("final-stage search did not reach applicability: snapshot=%+v exists=%v err=%v", stageTwoApplicability, exists, err)
 		}
 		wakeID, claim = claimWake()
 		advance(wakeID, claim)
@@ -449,6 +471,33 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 			if receipt.StageIndex != index || receipt.Digest == "" {
 				t.Fatalf("calculation receipt order or binding is invalid: %+v", evidence.Receipts)
 			}
+		}
+		authority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		if err != nil || !found {
+			t.Fatalf("build exhausted fallback seal authority: authority=%+v found=%v err=%v", authority, found, err)
+		}
+		var authorityPlan policy.TypedFallbackQueryPlan
+		if err := json.Unmarshal(authority.Plan, &authorityPlan); err != nil || authority.SchemaVersion != 3 || authority.Disposition != "review_exhausted" ||
+			authority.RunID != parentID || authority.WaitRevision != parked.Revision || len(authorityPlan.Stages) != 3 ||
+			authority.SelectedCalculation == nil || authority.SelectedCalculation.StageIndex != 2 || len(authority.ProofHistory) != 3 ||
+			len(authority.FullEvaluationContext) == 0 || authority.Digest == "" {
+			t.Fatalf("exhausted authority is not bound to the last saved stage: authority=%+v plan=%+v err=%v", authority, authorityPlan, err)
+		}
+		for index, reference := range authority.ProofHistory {
+			if reference.StageIndex != index || reference.SchemaVersion != 3 || reference.CalculatorVersion != 3 || reference.DigestVersion != 3 || reference.InputDigest == "" {
+				t.Fatalf("exhausted authority history has an unsupported or misordered receipt: %+v", authority.ProofHistory)
+			}
+		}
+		if selected := authority.SelectedCalculation; selected.AcquisitionRevision != authority.ProofHistory[2].AcquisitionRevision ||
+			selected.InputDigest != authority.ProofHistory[2].InputDigest {
+			t.Fatalf("exhausted authority selected an earlier calculation: selected=%+v history=%+v", selected, authority.ProofHistory)
+		}
+		var fullContext persistence.MatchingFallbackCalculationContext
+		if err := json.Unmarshal(authority.FullEvaluationContext, &fullContext); err != nil ||
+			fullContext.StageIndex != 2 || fullContext.SearchReceipt.RequestID != stageTwoOutput.RequestID || fullContext.SearchReceipt.RequestID == stageZeroID ||
+			len(fullContext.LookupReceipts) != 0 || !jsonEqual(fullContext.SearchReceipt.Payload, stageTwoPayload) ||
+			len(fullContext.Intent.CapturedMembers) != len(parked.Intent.CapturedMembers) {
+			t.Fatalf("exhausted authority dropped the actual final-stage inventory/evidence: context=%+v err=%v", fullContext, err)
 		}
 		var requestCount, calculationCount int
 		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration WHERE run_id=? AND role='search'`, parentID).Scan(ctx, &requestCount); err != nil {

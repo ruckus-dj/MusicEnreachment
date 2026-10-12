@@ -191,6 +191,65 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 	return loadMatchingFallbackCalculationContext(ctx, tx, runID, expectedRevision)
 }
 
+// LoadMatchingFallbackSealedCalculationContext returns the immutable calculation
+// context that caused a run to enter a durable policy wait. Unlike the live
+// loader, this deliberately reads the context embedded in the validated receipt:
+// the acquisition cursor has already advanced past the stage that produced it.
+// It never consults provider caches or current source configuration.
+func (repository *SetupManagerRepository) LoadMatchingFallbackSealedCalculationContext(
+	ctx context.Context, runID uuid.UUID,
+) (MatchingFallbackCalculationContext, bool, error) {
+	tx, err := repository.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: begin snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return loadMatchingFallbackSealedCalculationContext(ctx, tx, runID)
+}
+
+func loadMatchingFallbackSealedCalculationContext(
+	ctx context.Context, database bun.IDB, runID uuid.UUID,
+) (MatchingFallbackCalculationContext, bool, error) {
+	var phase string
+	var currentRevision int64
+	err := database.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).
+		Scan(ctx, &phase, &currentRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MatchingFallbackCalculationContext{}, false, nil
+	}
+	if err != nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: read acquisition: %w", err)
+	}
+	if runID == uuid.Nil || currentRevision < 2 || phase != "pending_seal" && phase != "fallback_review_wait" {
+		return MatchingFallbackCalculationContext{}, false, nil
+	}
+	var phaseInput string
+	if err := database.NewRaw(`SELECT input FROM matching_acquisition_phase WHERE run_id=? AND revision=? AND phase=?`, runID, currentRevision, phase).
+		Scan(ctx, &phaseInput); err != nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: read wait phase: %w", err)
+	}
+	var waitInput struct {
+		CalculationRevision int64 `json:"calculation_revision"`
+		StageIndex          int   `json:"stage_index"`
+	}
+	if json.Unmarshal([]byte(phaseInput), &waitInput) != nil || waitInput.CalculationRevision < 1 || waitInput.CalculationRevision >= currentRevision {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: wait phase reference is invalid")
+	}
+	receipt, err := getMatchingFallbackCalculationReceipt(ctx, database, runID, waitInput.CalculationRevision)
+	if err != nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: validate saved receipt: %w", err)
+	}
+	if receipt == nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: referenced receipt is missing")
+	}
+	var snapshot MatchingFallbackCalculationContext
+	if err := json.Unmarshal(receipt.Context, &snapshot); err != nil || snapshot.RunID != runID ||
+		snapshot.AcquisitionRevision != waitInput.CalculationRevision || snapshot.StageIndex != receipt.StageIndex || snapshot.StageIndex != waitInput.StageIndex {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load sealed fallback calculation context: saved context identity is invalid")
+	}
+	return snapshot, true, nil
+}
+
 // loadMatchingFallbackCalculationContext reconstructs authority through the
 // caller's database handle, allowing writers to validate against their own tx.
 func loadMatchingFallbackCalculationContext(

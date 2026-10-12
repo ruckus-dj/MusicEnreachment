@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -689,6 +690,24 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		qualifiedSnapshot, exists, err := freshRepository.GetMatchingAcquisition(ctx, parentID)
 		if err != nil || !exists || qualifiedSnapshot.Phase != "pending_seal" || qualifiedSnapshot.Revision != complete.Revision+1 {
 			t.Fatalf("qualified calculation did not enter pending_seal: snapshot=%+v exists=%v err=%v", qualifiedSnapshot, exists, err)
+		}
+		sealedContext, found, err := freshRepository.LoadMatchingFallbackSealedCalculationContext(ctx, parentID)
+		if err != nil || !found {
+			t.Fatalf("sealed calculation context was not readable after cursor advance: found=%v err=%v", found, err)
+		}
+		calculationReceipt, err := freshRepository.GetMatchingFallbackCalculationReceipt(ctx, parentID, complete.Revision)
+		var acceptedContext persistence.MatchingFallbackCalculationContext
+		unmarshalErr := error(nil)
+		if calculationReceipt != nil {
+			unmarshalErr = json.Unmarshal(calculationReceipt.Context, &acceptedContext)
+		}
+		if err != nil || unmarshalErr != nil || calculationReceipt == nil || !reflect.DeepEqual(sealedContext, acceptedContext) {
+			t.Fatalf("sealed calculation context differs from accepted calculation: receipt=%+v unmarshal_err=%v err=%v", calculationReceipt, unmarshalErr, err)
+		}
+		sealAuthority, authorityExists, err := freshRepository.BuildMatchingFallbackSealAuthority(ctx, parentID, qualifiedSnapshot.Revision)
+		if err != nil || !authorityExists || sealAuthority.Disposition != "qualified" || sealAuthority.SelectedCalculation == nil ||
+			sealAuthority.SelectedCalculation.AcquisitionRevision != complete.Revision || len(sealAuthority.FullEvaluationContext) == 0 || sealAuthority.Digest == "" {
+			t.Fatalf("qualified seal authority was not derived from the saved calculation: authority=%+v exists=%v err=%v", sealAuthority, authorityExists, err)
 		}
 		var disposition struct {
 			Disposition string `json:"disposition"`

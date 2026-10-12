@@ -29,6 +29,9 @@ type MatchingFallbackCalculationReceipt struct {
 	RunID               uuid.UUID       `json:"run_id"`
 	AcquisitionRevision int64           `json:"acquisition_revision"`
 	StageIndex          int             `json:"stage_index"`
+	SchemaVersion       int             `json:"schema_version"`
+	CalculatorVersion   int             `json:"calculator_version"`
+	DigestVersion       int             `json:"digest_version"`
 	InputDigest         string          `json:"input_digest"`
 	Context             json.RawMessage `json:"context"`
 	Edges               json.RawMessage `json:"edges"`
@@ -40,13 +43,19 @@ type MatchingFallbackCalculationReceipt struct {
 func (repository *SetupManagerRepository) GetMatchingFallbackCalculationReceipt(
 	ctx context.Context, runID uuid.UUID, acquisitionRevision int64,
 ) (*MatchingFallbackCalculationReceipt, error) {
+	return getMatchingFallbackCalculationReceipt(ctx, repository.db, runID, acquisitionRevision)
+}
+
+func getMatchingFallbackCalculationReceipt(
+	ctx context.Context, database bun.IDB, runID uuid.UUID, acquisitionRevision int64,
+) (*MatchingFallbackCalculationReceipt, error) {
 	if runID == uuid.Nil || acquisitionRevision < 1 {
 		return nil, fmt.Errorf("read fallback calculation receipt: identity is required")
 	}
 	var receipt MatchingFallbackCalculationReceipt
 	var contextJSON, edgesJSON string
 	var schemaVersion, calculatorVersion, digestVersion int
-	err := repository.db.NewRaw(`SELECT receipt.run_id,receipt.acquisition_revision,receipt.stage_index,
+	err := database.NewRaw(`SELECT receipt.run_id,receipt.acquisition_revision,receipt.stage_index,
 		encode(receipt.input_digest,'hex'),receipt.context::text,receipt.edge_calculations::text,
 		receipt.schema_version,receipt.calculator_version,receipt.digest_version
 		FROM matching_fallback_calculation_receipt receipt
@@ -61,6 +70,9 @@ func (repository *SetupManagerRepository) GetMatchingFallbackCalculationReceipt(
 	}
 	receipt.Context = json.RawMessage(contextJSON)
 	receipt.Edges = json.RawMessage(edgesJSON)
+	receipt.SchemaVersion = schemaVersion
+	receipt.CalculatorVersion = calculatorVersion
+	receipt.DigestVersion = digestVersion
 	if receipt.RunID != runID || receipt.AcquisitionRevision != acquisitionRevision || receipt.StageIndex < 0 ||
 		!json.Valid(receipt.Context) || !json.Valid(receipt.Edges) {
 		return nil, fmt.Errorf("read fallback calculation receipt: saved identity or evidence is invalid")
