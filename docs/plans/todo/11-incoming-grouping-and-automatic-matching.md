@@ -1065,6 +1065,18 @@ normalization для score в точности. Если по имеющимся
 - Dispatched events with cancelled/discarded River jobs still lack recovery;
   this remains a separate liveness gap, not full startup acceptance.
 
+### Terminal reconciliation delivery recovery — 2026-10-12
+
+- Relay revalidates the exact registered River row and atomically replaces only
+  terminal/missing deliveries. Event identity/payload and semantic receipts stay;
+  epoch increases, old claim authority is rejected before admission deduplication.
+  Live jobs and completed business events remain untouched.
+- PostgreSQL tests cover terminal/missing states, stale fences, rollback after
+  actual insertion, concurrent dispatch and open startup identity preservation.
+  Independent review approved bounded recovery; primary full `task verify` passed.
+- This closes the previously recorded terminal-event liveness gap. No-artist
+  fallback, return-to-automatic/API/UI and full-plan acceptance remain open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

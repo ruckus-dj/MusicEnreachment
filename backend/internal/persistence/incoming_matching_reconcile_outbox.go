@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,7 +48,8 @@ type IncomingMatchingReconcileEvent struct {
 }
 
 // EnsureStartupIncomingMatchingReconciliation admits one open startup sweep.
-// A completed event is immutable, so a later boot receives a fresh event ID.
+// Recovery retains the identity of an open event; a completed event is immutable,
+// so a later boot receives a fresh event ID.
 func (repository *SourceInventoryRepository) EnsureStartupIncomingMatchingReconciliation(ctx context.Context) (*IncomingMatchingReconcileEvent, error) {
 	var event IncomingMatchingReconcileEvent
 	if err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
@@ -81,18 +83,43 @@ func (repository *SourceInventoryRepository) GetIncomingMatchingReconciliationEv
 }
 
 // DispatchPendingMatchingReconciliations registers each event and records its
-// exact River job identity in the same transaction. River owns retry/recovery
-// after dispatch; this outbox intentionally has no lease expiry or re-enqueue.
-func (repository *SourceInventoryRepository) DispatchPendingMatchingReconciliations(ctx context.Context, client RiverInserter) error {
+// exact River job identity in the same transaction. A terminal or missing River
+// delivery is replaced while preserving the event and fencing prior claims.
+func (repository *SourceInventoryRepository) DispatchPendingMatchingReconciliations(ctx context.Context, client RiverInserter, loggers ...*slog.Logger) error {
 	if client == nil {
 		return fmt.Errorf("dispatch matching reconciliations: River client is required")
 	}
+	logger := slog.Default()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
 	return repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		rows := make([]IncomingMatchingReconcileEvent, 0)
-		if err := tx.NewRaw(`SELECT id FROM incoming_matching_reconcile_event WHERE state='pending' ORDER BY created_at,id FOR UPDATE SKIP LOCKED`).Scan(ctx, &rows); err != nil {
-			return fmt.Errorf("dispatch matching reconciliations: lock pending events: %w", err)
+		if err := tx.NewRaw(`SELECT e.* FROM incoming_matching_reconcile_event AS e
+			LEFT JOIN river_job AS r ON r.id=e.registered_job_id
+			WHERE e.state='pending' OR (e.state='dispatched' AND (r.id IS NULL OR r.state IN ('cancelled','discarded','completed')))
+			ORDER BY e.created_at,e.id FOR UPDATE OF e SKIP LOCKED`).Scan(ctx, &rows); err != nil {
+			return fmt.Errorf("dispatch matching reconciliations: lock eligible events: %w", err)
 		}
 		for _, event := range rows {
+			replacement := event.State == "dispatched"
+			if replacement {
+				// The candidate query is only a scheduling hint. Lock and re-read the
+				// exact registered delivery before replacing it, since River may have
+				// advanced it since the candidate snapshot was read.
+				var riverState string
+				err := tx.NewRaw(`SELECT state FROM river_job WHERE id=? FOR UPDATE`, *event.RegisteredJobID).Scan(ctx, &riverState)
+				if err != nil && err != sql.ErrNoRows {
+					return fmt.Errorf("dispatch matching reconciliation event %s: read registered River job: %w", event.ID, err)
+				}
+				if err == nil && riverState != "cancelled" && riverState != "discarded" && riverState != "completed" {
+					continue
+				}
+				if err == nil && riverState == "completed" {
+					logger.WarnContext(ctx, "completed River delivery remains dispatched in matching reconciliation outbox",
+						slog.String("event_id", event.ID.String()), slog.Int64("river_job_id", *event.RegisteredJobID))
+				}
+			}
 			result, err := client.InsertTx(ctx, tx.Tx, IncomingMatchingReconcileJobArgs{EventID: event.ID}, &river.InsertOpts{Queue: "matching", MaxAttempts: 20})
 			if err != nil {
 				return fmt.Errorf("dispatch matching reconciliation event %s: %w", event.ID, err)
@@ -100,7 +127,11 @@ func (repository *SourceInventoryRepository) DispatchPendingMatchingReconciliati
 			if result == nil || result.Job == nil || result.Job.ID < 1 {
 				return fmt.Errorf("dispatch matching reconciliation event %s: River returned no registered job identity", event.ID)
 			}
-			if _, err := tx.NewRaw(`UPDATE incoming_matching_reconcile_event SET state='dispatched',registered_job_id=?,dispatched_at=now() WHERE id=? AND state='pending'`, result.Job.ID, event.ID).Exec(ctx); err != nil {
+			query := `UPDATE incoming_matching_reconcile_event SET state='dispatched',registered_job_id=?,dispatched_at=now(),highest_delivery_attempt=0,delivery_claimed=false WHERE id=? AND state='pending'`
+			if replacement {
+				query = `UPDATE incoming_matching_reconcile_event SET state='dispatched',registered_job_id=?,dispatched_at=now(),delivery_epoch=delivery_epoch+1,highest_delivery_attempt=0,delivery_claimed=false WHERE id=? AND state='dispatched'`
+			}
+			if _, err := tx.NewRaw(query, result.Job.ID, event.ID).Exec(ctx); err != nil {
 				return fmt.Errorf("dispatch matching reconciliation event %s: record job: %w", event.ID, err)
 			}
 		}

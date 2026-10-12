@@ -57,10 +57,11 @@ type analysisConsumerHandle struct {
 type incomingMatchingReconcileDispatcher struct {
 	repository *persistence.SourceInventoryRepository
 	river      persistence.RiverInserter
+	logger     *slog.Logger
 }
 
 func (dispatcher incomingMatchingReconcileDispatcher) DispatchPendingMatchingReconciliations(ctx context.Context) error {
-	return dispatcher.repository.DispatchPendingMatchingReconciliations(ctx, dispatcher.river)
+	return dispatcher.repository.DispatchPendingMatchingReconciliations(ctx, dispatcher.river, dispatcher.logger)
 }
 
 func (consumer *analysisConsumerHandle) Stop(ctx context.Context) error {
@@ -184,7 +185,7 @@ func Run(ctx context.Context, config Config) error {
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
-	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, river: riverSlot}
+	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, river: riverSlot, logger: logger}
 	incomingMatchingReconciliation := service.NewIncomingMatchingReconciliation(
 		incomingGroups,
 		persistence.NewIncomingGroupingRepository(db),

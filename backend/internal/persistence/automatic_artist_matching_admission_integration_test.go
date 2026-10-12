@@ -108,11 +108,22 @@ func TestAutomaticArtistMatchingAdmissionIsIdempotentAndFencesStaleEventPostgreS
 	if err != nil || !claimed || newEpoch <= epoch {
 		t.Fatalf("claim reconciliation redelivery attempt 2: epoch=%d claimed=%v err=%v", newEpoch, claimed, err)
 	}
+	oldJobID := *event.RegisteredJobID
+	if _, err := db.NewRaw(`UPDATE river_job SET state='cancelled',finalized_at=now() WHERE id=?`, oldJobID).Exec(ctx); err != nil {
+		t.Fatalf("cancel old River delivery: %v", err)
+	}
+	if err := inventory.DispatchPendingMatchingReconciliations(ctx, client); err != nil {
+		t.Fatalf("replace cancelled reconciliation delivery: %v", err)
+	}
+	replaced, err := inventory.GetIncomingMatchingReconciliationEvent(ctx, event.ID)
+	if err != nil || replaced.RegisteredJobID == nil || *replaced.RegisteredJobID == oldJobID || replaced.DeliveryEpoch <= newEpoch || replaced.HighestDeliveryAttempt != 0 {
+		t.Fatalf("event did not retain identity and fence replacement: event=%+v err=%v", replaced, err)
+	}
 	staleRequest := admission()
 	staleRequest.Parent.ID = uuid.New()
 	staleRequest.Provider.Operation.ID = uuid.New()
 	if _, err := setup.AdmitAutomaticArtistMatchingRun(ctx, client, staleRequest); err == nil {
-		t.Fatal("stale attempt-1 event fence admitted automatic artist matching work")
+		t.Fatal("replaced attempt-1 event fence admitted work before checking the existing receipt")
 	}
 	assertAutomaticArtistAdmissionCounts(t, ctx, db, fixture.group.ID, baseline)
 }
