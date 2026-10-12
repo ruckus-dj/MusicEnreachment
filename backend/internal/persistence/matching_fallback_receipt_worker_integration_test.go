@@ -24,6 +24,14 @@ import (
 )
 
 func TestAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T) {
+	testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t, false)
+}
+
+func TestAutomaticFallbackReceiptReplaysAfterInterruptedRetryPostgreSQL(t *testing.T) {
+	testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t, true)
+}
+
+func testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T, interruptedRetry bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
@@ -164,15 +172,85 @@ func TestAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T) 
 	if err != nil || child.RiverJobID == nil {
 		t.Fatalf("read registered fallback child: operation=%+v err=%v", child, err)
 	}
+	expectedReceiptGeneration := observedCacheResponse.Generation
+	if interruptedRetry {
+		// Record an accepted provider response against the real admitted operation
+		// delivery, but stop before settling its dependency. This is the crash window
+		// protected by the durable receipt.
+		epochA, claimed, err := fixture.repository.ClaimProviderOperationDelivery(ctx, childID, child.Attempt, *child.RiverJobID)
+		if err != nil || !claimed {
+			t.Fatalf("claim original provider delivery: epoch=%d claimed=%v err=%v", epochA, claimed, err)
+		}
+		if err := operations.RunningForProviderDelivery(ctx, child, epochA, "fetching_provider"); err != nil {
+			t.Fatalf("mark original provider delivery running: %v", err)
+		}
+		ticketA, err := cache.BeginRefresh(ctx, source.ID, key, config.Identity)
+		if err != nil {
+			t.Fatalf("reserve accepted response A: %v", err)
+		}
+		fenceA := persistence.ProviderDeliveryFence{OperationID: childID, Attempt: child.Attempt, RiverJobID: *child.RiverJobID, ExecutionEpoch: epochA}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticketA, FetchedAt: time.Now().UTC(), Payload: accepted, Delivery: &fenceA}); err != nil {
+			t.Fatalf("accept response A with original delivery fence: %v", err)
+		}
+		receiptA, err := fixture.repository.GetMatchingFallbackSearchReceipt(ctx, parentID, childID)
+		var acceptedValue, receiptValue any
+		if err := json.Unmarshal(accepted, &acceptedValue); err != nil {
+			t.Fatalf("decode accepted response A: %v", err)
+		}
+		if receiptA != nil {
+			if err := json.Unmarshal(receiptA.Payload, &receiptValue); err != nil {
+				t.Fatalf("decode receipt response A: %v", err)
+			}
+		}
+		if err != nil || receiptA == nil || !reflect.DeepEqual(receiptValue, acceptedValue) || receiptA.ExecutionEpoch != epochA || receiptA.ProviderAttempt != child.Attempt || receiptA.RiverJobID != *child.RiverJobID {
+			t.Fatalf("read accepted response A receipt: receipt=%+v err=%v", receiptA, err)
+		}
+		expectedReceiptGeneration = receiptA.CacheGeneration
+
+		// Replace the mutable cache value without an operation fence. The receipt
+		// must remain the source of truth when River redelivers this operation.
+		responseB := json.RawMessage(`{"created":"2026-10-12T00:01:00Z","count":1,"offset":0,"recordings":[{"id":"33333333-3333-4333-8333-333333333333","title":"Replacement Track"}]}`)
+		ticketB, err := cache.BeginRefresh(ctx, source.ID, key, config.Identity)
+		if err != nil {
+			t.Fatalf("reserve replacement response B: %v", err)
+		}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticketB, FetchedAt: time.Now().UTC(), Payload: responseB}); err != nil {
+			t.Fatalf("replace mutable cache with response B: %v", err)
+		}
+		current, err := cache.GetCurrentCachedResponse(ctx, source.ID, key, config.Identity)
+		var currentValue, responseBValue any
+		if current != nil {
+			if err := json.Unmarshal(current.Payload, &currentValue); err != nil {
+				t.Fatalf("decode current cache response B: %v", err)
+			}
+		}
+		if err := json.Unmarshal(responseB, &responseBValue); err != nil {
+			t.Fatalf("decode expected cache response B: %v", err)
+		}
+		if err != nil || current == nil || !reflect.DeepEqual(currentValue, responseBValue) {
+			t.Fatalf("confirm response B replaced cache A: response=%+v err=%v", current, err)
+		}
+
+		// ClaimProviderOperationDelivery's existing five-minute lease is its crash
+		// recovery mechanism. Moving the timestamp past that lease simulates elapsed
+		// process downtime; the next real worker claim advances the execution epoch.
+		if _, err := fixture.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at=now()-interval '6 minutes' WHERE id=?`, childID).Exec(ctx); err != nil {
+			t.Fatalf("expire original provider delivery lease: %v", err)
+		}
+	}
 	if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *child.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: childID}}); err != nil {
 		t.Fatalf("run cache-hit provider worker: %v", err)
 	}
 	completed, err := fixture.repository.GetOperation(ctx, childID)
-	if err != nil || completed.State != "succeeded" || completed.Stage != "provider_cache_reused" {
+	wantStage := "provider_cache_reused"
+	if interruptedRetry {
+		wantStage = "provider_fallback_result_reused"
+	}
+	if err != nil || completed.State != "succeeded" || completed.Stage != wantStage {
 		t.Fatalf("fallback worker completion=%+v err=%v", completed, err)
 	}
 	receipt, err := fixture.repository.GetMatchingFallbackSearchReceipt(ctx, parentID, childID)
-	if err != nil || receipt == nil || receipt.CacheGeneration != observedCacheResponse.Generation {
+	if err != nil || receipt == nil || receipt.CacheGeneration != expectedReceiptGeneration {
 		t.Fatalf("fallback receipt=%+v err=%v", receipt, err)
 	}
 	var acceptedValue, receiptValue any
@@ -192,6 +270,15 @@ func TestAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T) 
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("cache-hit worker made %d HTTP requests", requests.Load())
+	}
+	if interruptedRetry {
+		if completed.ProviderExecutionEpoch != 2 {
+			t.Fatalf("replayed delivery execution epoch=%d, want 2", completed.ProviderExecutionEpoch)
+		}
+		var receiptUnchanged bool
+		if err := fixture.db.NewRaw(`SELECT payload=?::jsonb FROM matching_fallback_search_receipt WHERE run_id=? AND request_id=?`, string(accepted), admitted.OriginalRunID, childID).Scan(ctx, &receiptUnchanged); err != nil || !receiptUnchanged {
+			t.Fatalf("response A receipt changed during replay: unchanged=%v err=%v", receiptUnchanged, err)
+		}
 	}
 	if !json.Valid(receipt.Payload) {
 		t.Fatalf("receipt did not preserve accepted response: %s", receipt.Payload)

@@ -1113,6 +1113,16 @@ normalization для score в точности. Если по имеющимся
 - Independent review and repeated primary full `task verify` passed. Interrupted
   retry after A→B and fallback stage execution remain unproved/unimplemented.
 
+### Interrupted fallback receipt replay proof — 2026-10-12
+
+- Real provider delivery accepts A before settlement; after cache becomes B,
+  simulated elapsed crash downtime lets the existing lease reclaim advance epoch.
+  The actual worker completes from immutable A with zero HTTP, preserves its
+  receipt, settles the dependency and creates a parent wake.
+- Independent review and repeated primary full `task verify` passed. This is a
+  directly invoked worker proof, not live scheduler/process-crash coverage.
+  Fallback stage execution/applicability/seal3 remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment
