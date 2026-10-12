@@ -1160,6 +1160,17 @@ normalization для score в точности. Если по имеющимся
   demonstrated by this test. Hydration completion, applicability, seal3 and
   production fallback activation remain outstanding.
 
+### Lookup cache-adoption and interrupted replay proof — 2026-10-12
+
+- Real lookup worker captures cache-adopted authority without HTTP. Interrupted
+  acceptance A followed by cache/graph B and elapsed lease reclaim advances the
+  execution epoch and completes from original raw/projection A without HTTP.
+  Both paths settle the dependency and register exactly one new parent wake,
+  excluding previously consumed search deliveries from the assertion.
+- Independent review and repeated primary full `task verify` passed. These are
+  directly invoked worker proofs, not actual process-crash/live redelivery tests.
+  Hydration completion, applicability and final fallback sealing remain open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

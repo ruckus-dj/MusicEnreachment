@@ -30,6 +30,18 @@ import (
 )
 
 func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(t *testing.T) {
+	testAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(t, false, false)
+}
+
+func TestAutomaticFallbackLookupReceiptReplaysAfterInterruptedRetryPostgreSQL(t *testing.T) {
+	testAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(t, true, false)
+}
+
+func TestAutomaticFallbackLookupCacheHitCapturesReceiptPostgreSQL(t *testing.T) {
+	testAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(t, false, true)
+}
+
+func testAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(t *testing.T, interruptedRetry, cacheHit bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
@@ -87,7 +99,7 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Album %s","artist-credit":[{"name":"Artist %s","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Track Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}]}}]}]}`, id, id, id, id, trackID, recordingID, id)
+		_, _ = fmt.Fprintf(w, `{"id":%q,"title":"Album %s","artist-credit":[{"name":"Artist %s","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Track Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}]}}]}]}`, id, id, id, id, trackID, recordingID, id)
 	}))
 	defer server.Close()
 	registry := settings.New(persistence.NewSettingsRepository(fixture.db), nil)
@@ -239,10 +251,74 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_lookup_receipt WHERE run_id=? AND request_id=?`, parentID, second.RequestID).Scan(ctx, &existingReceiptRows); err != nil || existingReceiptRows != 0 {
 		t.Fatalf("unexpected preexisting lookup receipt count=%d err=%v", existingReceiptRows, err)
 	}
-	if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *lookupOperation.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: second.RequestID}}); err != nil {
-		t.Fatalf("fetch second release lookup: %v", err)
+	if interruptedRetry || cacheHit {
+		payloadA := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Album %s","artist-credit":[{"name":"Artist %s","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Track Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}]}}]}]}`, releaseB, releaseB, releaseB, releaseB, trackID, recordingID, releaseB))
+		graphA, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: payloadA}})
+		if err != nil {
+			t.Fatalf("normalize accepted lookup A: %v", err)
+		}
+		if cacheHit {
+			ticketA, err := cache.BeginRefresh(ctx, source.ID, second.CacheKey, config.Identity)
+			if err != nil {
+				t.Fatalf("reserve cache-hit lookup A: %v", err)
+			}
+			if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticketA, FetchedAt: time.Now().UTC(), Payload: payloadA, Graph: graphA}); err != nil {
+				t.Fatalf("prepopulate cache-hit lookup A: %v", err)
+			}
+		} else {
+			// Persist response A through the normal fenced acceptance path, then stop
+			// before the provider operation settles its dependency. This is the crash
+			// window: replay must use the receipt even after the mutable cache changes.
+			epochA, claimed, err := fixture.repository.ClaimProviderOperationDelivery(ctx, second.RequestID, lookupOperation.Attempt, *lookupOperation.RiverJobID)
+			if err != nil || !claimed || epochA != 1 {
+				t.Fatalf("claim original lookup delivery: epoch=%d claimed=%v err=%v", epochA, claimed, err)
+			}
+			operations := service.NewOperationsWithRiver(fixture.repository, inserter)
+			if err := operations.RunningForProviderDelivery(ctx, lookupOperation, epochA, "fetching_provider"); err != nil {
+				t.Fatalf("mark original lookup delivery running: %v", err)
+			}
+			ticketA, err := cache.BeginRefresh(ctx, source.ID, second.CacheKey, config.Identity)
+			if err != nil {
+				t.Fatalf("reserve accepted lookup A: %v", err)
+			}
+			fenceA := persistence.ProviderDeliveryFence{OperationID: second.RequestID, Attempt: lookupOperation.Attempt, RiverJobID: *lookupOperation.RiverJobID, ExecutionEpoch: epochA}
+			if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticketA, FetchedAt: time.Now().UTC(), Payload: payloadA, Graph: graphA, Delivery: &fenceA}); err != nil {
+				t.Fatalf("accept lookup A with original delivery fence: %v", err)
+			}
+			interruptedOperation, err := fixture.repository.GetOperation(ctx, second.RequestID)
+			if err != nil || interruptedOperation.State != "running" || interruptedOperation.ProviderExecutionEpoch != epochA {
+				t.Fatalf("accepted A must leave original operation unsettled: operation=%+v err=%v", interruptedOperation, err)
+			}
+			var dependencyOutcome string
+			if err := fixture.db.NewRaw(`SELECT COALESCE(terminal_outcome,'') FROM matching_provider_dependency WHERE request_id=?`, second.RequestID).Scan(ctx, &dependencyOutcome); err != nil || dependencyOutcome != "" {
+				t.Fatalf("accepted A unexpectedly settled lookup dependency: outcome=%q err=%v", dependencyOutcome, err)
+			}
+		}
 	}
-	if lookups.Load() != 1 {
+	var baselineWakeID int64
+	if err := fixture.db.NewRaw(`SELECT coalesce(max(river_job_id),0) FROM matching_delivery WHERE run_id=?`, parentID).Scan(ctx, &baselineWakeID); err != nil {
+		t.Fatalf("read lookup wake baseline: %v", err)
+	}
+	assertNewLookupWake := func() {
+		t.Helper()
+		var count int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_delivery delivery
+			JOIN river_job job ON job.id=delivery.river_job_id
+			WHERE delivery.run_id=? AND delivery.river_job_id>? AND delivery.consumed_at IS NULL
+			AND job.kind='matching_evaluation_v1' AND job.args->>'operation_id'=?`, parentID, baselineWakeID, parentID.String()).Scan(ctx, &count); err != nil || count != 1 {
+			t.Fatalf("lookup completion did not register exactly one new parent wake: count=%d err=%v", count, err)
+		}
+	}
+	if !interruptedRetry {
+		if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *lookupOperation.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: second.RequestID}}); err != nil {
+			t.Fatalf("fetch second release lookup: %v", err)
+		}
+	}
+	wantHTTPRequests := int32(1)
+	if interruptedRetry || cacheHit {
+		wantHTTPRequests = 0
+	}
+	if lookups.Load() != wantHTTPRequests {
 		completed, _ := fixture.repository.GetOperation(ctx, second.RequestID)
 		cached, cacheErr := cache.GetCurrentCachedResponse(ctx, source.ID, second.CacheKey, config.Identity)
 		var safeError string
@@ -264,12 +340,23 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 		acquisition, _, _ = fixture.repository.GetMatchingAcquisition(ctx, parentID)
 		t.Fatalf("second lookup receipt=%+v err=%v operationState=%q stage=%q operationErr=%v safeError=%q acquisitionPhase=%q", receipt, err, completed.State, completed.Stage, operationErr, safeError, acquisition.Phase)
 	}
+	if cacheHit {
+		completed, err := fixture.repository.GetOperation(ctx, second.RequestID)
+		if err != nil || completed.State != "succeeded" {
+			t.Fatalf("cache-hit lookup completion=%+v err=%v", completed, err)
+		}
+		var dependencyState string
+		if err := fixture.db.NewRaw(`SELECT terminal_outcome FROM matching_provider_dependency WHERE request_id=?`, second.RequestID).Scan(ctx, &dependencyState); err != nil || dependencyState != "succeeded" {
+			t.Fatalf("cache-hit lookup dependency state=%q err=%v", dependencyState, err)
+		}
+		assertNewLookupWake()
+	}
 	var rawA any
 	if err := json.Unmarshal(receipt.Payload, &rawA); err != nil {
 		t.Fatalf("decode receipt raw response: %v", err)
 	}
 	wantRaw := map[string]any{}
-	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":%q,"title":"Album %s","artist-credit":[{"name":"Artist %s","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Track Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}]}}]}]}`, releaseB, releaseB, releaseB, releaseB, trackID, recordingID, releaseB)), &wantRaw); err != nil {
+	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":%q,"title":"Album %s","artist-credit":[{"name":"Artist %s","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Track Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist %s"}}]}}]}]}`, releaseB, releaseB, releaseB, releaseB, trackID, recordingID, releaseB)), &wantRaw); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(rawA, wantRaw) {
@@ -282,7 +369,7 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 	}
 	var acceptedProjection persistence.ProviderMatchingSnapshot
 	if err := json.Unmarshal(receipt.AcceptedProjection, &acceptedProjection); err != nil || len(acceptedProjection.Releases) != 1 ||
-		len(acceptedProjection.Releases[0].Tracks) == 0 || len(acceptedProjection.Releases[0].Credits) == 0 {
+		len(acceptedProjection.Releases[0].Tracks) != 1 || acceptedProjection.Releases[0].Tracks[0].ReleaseLengthMS == nil || *acceptedProjection.Releases[0].Tracks[0].ReleaseLengthMS != 180000 || len(acceptedProjection.Releases[0].Credits) == 0 {
 		t.Fatalf("receipt did not preserve complete release projection A: %+v err=%v", acceptedProjection.Releases, err)
 	}
 	projectionDigest := sha256.Sum256(receipt.AcceptedProjection)
@@ -290,7 +377,9 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 		t.Fatalf("receipt projection digest=%s expected=%s", receipt.ProjectionSHA256, hex.EncodeToString(projectionDigest[:]))
 	}
 
-	responseB := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Replacement %s","artist-credit":[],"media":[{"tracks":[]}]}`, releaseB, releaseB))
+	// Cache B is accepted without a delivery fence. Interrupted delivery also
+	// expires only the five-minute claim timestamp below to model process downtime.
+	responseB := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Replacement %s","artist-credit":[],"media":[{"tracks":[{"id":%q,"number":"1","length":95000,"recording":{"id":%q,"title":"Replacement Track"}}]}]}`, releaseB, releaseB, trackID, recordingID))
 	graph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: responseB}})
 	if err != nil {
 		t.Fatalf("normalize cache B: %v", err)
@@ -302,6 +391,23 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: ticketB, FetchedAt: time.Now().UTC(), Payload: responseB, Graph: graph}); err != nil {
 		t.Fatalf("apply cache B: %v", err)
 	}
+	if interruptedRetry {
+		if _, err := fixture.db.NewRaw(`UPDATE operation SET provider_delivery_claimed_at=now()-interval '6 minutes' WHERE id=?`, second.RequestID).Exec(ctx); err != nil {
+			t.Fatalf("expire original lookup delivery lease: %v", err)
+		}
+		if err := providerWorker.Work(ctx, &river.Job[service.ProviderFetchOperationArgs]{JobRow: &rivertype.JobRow{ID: *lookupOperation.RiverJobID, Attempt: 1}, Args: service.ProviderFetchOperationArgs{OperationID: second.RequestID}}); err != nil {
+			t.Fatalf("replay accepted lookup through provider worker: %v", err)
+		}
+		completed, err := fixture.repository.GetOperation(ctx, second.RequestID)
+		if err != nil || completed.State != "succeeded" || completed.Stage != "provider_fallback_lookup_reused" || completed.ProviderExecutionEpoch != 2 {
+			t.Fatalf("replayed lookup completion=%+v err=%v", completed, err)
+		}
+		var dependencyState string
+		if err := fixture.db.NewRaw(`SELECT terminal_outcome FROM matching_provider_dependency WHERE request_id=?`, second.RequestID).Scan(ctx, &dependencyState); err != nil || dependencyState != "succeeded" {
+			t.Fatalf("replayed lookup dependency state=%q err=%v", dependencyState, err)
+		}
+		assertNewLookupWake()
+	}
 	current, err := cache.GetCurrentCachedResponse(ctx, source.ID, second.CacheKey, config.Identity)
 	if err != nil || current == nil || string(current.Payload) == string(receipt.Payload) {
 		t.Fatalf("cache B was not accepted: response=%+v err=%v", current, err)
@@ -310,14 +416,26 @@ func TestAutomaticFallbackLookupWorkerReceiptSurvivesCacheReplacementPostgreSQL(
 	if err != nil {
 		t.Fatalf("read projection after B: %v", err)
 	}
-	if lookups.Load() != 1 {
-		t.Fatalf("cache-only snapshot reads made %d HTTP requests, want one total lookup", lookups.Load())
+	if lookups.Load() != wantHTTPRequests {
+		t.Fatalf("cache-only snapshot reads made %d HTTP requests, want %d total lookups", lookups.Load(), wantHTTPRequests)
 	}
 	if len(projectionAfter.Releases) != 1 || projectionAfter.Releases[0].Name != "Replacement "+releaseB {
 		t.Fatalf("cache B did not change current source matching projection: %+v", projectionAfter.Releases)
 	}
+	if len(projectionAfter.Releases[0].Tracks) != 1 || projectionAfter.Releases[0].Tracks[0].ReleaseLengthMS == nil || *projectionAfter.Releases[0].Tracks[0].ReleaseLengthMS != 95000 {
+		t.Fatalf("cache B did not replace accepted release duration: %+v", projectionAfter.Releases[0].Tracks)
+	}
 	receiptAfter, err := fixture.repository.GetMatchingFallbackLookupReceipt(ctx, parentID, second.RequestID)
 	if err != nil || receiptAfter == nil || string(receiptAfter.Payload) != string(receipt.Payload) || receiptAfter.ProjectionSHA256 != receipt.ProjectionSHA256 || string(receiptAfter.AcceptedProjection) != string(receipt.AcceptedProjection) {
 		t.Fatalf("cache B changed immutable receipt A: receipt=%+v err=%v", receiptAfter, err)
+	}
+	if interruptedRetry {
+		var replayedProjection persistence.ProviderMatchingSnapshot
+		if err := json.Unmarshal(receiptAfter.AcceptedProjection, &replayedProjection); err != nil || len(replayedProjection.Releases) != 1 || replayedProjection.Releases[0].Name != "Album "+releaseB || len(replayedProjection.Releases[0].Tracks) != 1 || replayedProjection.Releases[0].Tracks[0].ReleaseLengthMS == nil || *replayedProjection.Releases[0].Tracks[0].ReleaseLengthMS != 180000 {
+			t.Fatalf("receipt projection A was not preserved across B/replay: releases=%+v err=%v", replayedProjection.Releases, err)
+		}
+		if lookups.Load() != 0 {
+			t.Fatalf("receipt replay made %d HTTP requests, want zero", lookups.Load())
+		}
 	}
 }
