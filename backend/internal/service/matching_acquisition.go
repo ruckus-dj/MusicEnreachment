@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 )
 
 const matchingCatalogPageSize = 100
@@ -71,6 +72,19 @@ type matchingFallbackSearchReceiptReader interface {
 
 type matchingFallbackSearchAdvancer interface {
 	AdvanceFallbackSearchForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackSearchProof, []persistence.MatchingProviderRequest, json.RawMessage) (bool, error)
+}
+
+type matchingFallbackCalculationReceiptReader interface {
+	GetMatchingFallbackCalculationReceipt(context.Context, uuid.UUID, int64) (*persistence.MatchingFallbackCalculationReceipt, error)
+}
+
+type matchingFallbackCalculationPreparer interface {
+	LoadMatchingFallbackCalculationContext(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackCalculationContext, bool, error)
+	RecordMatchingFallbackCalculationForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, persistence.MatchingFallbackCalculationReceipt) (bool, error)
+}
+
+type matchingFallbackApplicabilityAdvancer interface {
+	AdvanceFallbackApplicabilityForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, *persistence.MatchingProviderRequest) (bool, error)
 }
 
 type matchingFallbackHydrationCompleter interface {
@@ -212,7 +226,7 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 		return acquisition.sealReleaseHydration(ctx, snapshot, runID, attempt, riverJobID, claim)
 	}
 	if snapshot.Phase == persistence.MatchingAcquisitionFallbackApplicability {
-		return false, true, nil
+		return acquisition.advanceFallbackApplicability(ctx, snapshot, runID, attempt, riverJobID, claim)
 	}
 	if snapshot.Phase == "admitted" {
 		return acquisition.startArtistBrowse(ctx, snapshot, runID, attempt, riverJobID, claim)
@@ -226,22 +240,53 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 // advanceFallbackSearch derives only release lookup requests from the immutable
 // receipt for stage zero. Ranking and applicability remain later engine stages.
 func (acquisition *MatchingAcquisitionService) advanceFallbackSearch(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
-	if len(snapshot.Intent.InitialProviderInputs) != 1 {
-		return false, true, fmt.Errorf("saved fallback search intent is invalid")
+	var phaseInput, phaseOutput struct {
+		StageIndex int       `json:"stage_index"`
+		RequestID  uuid.UUID `json:"request_id"`
 	}
-	initial := snapshot.Intent.InitialProviderInputs[0]
+	if len(snapshot.Input) > 0 && json.Unmarshal(snapshot.Input, &phaseInput) != nil ||
+		json.Unmarshal(snapshot.Output, &phaseOutput) != nil {
+		return false, true, fmt.Errorf("saved fallback search stage is invalid")
+	}
+	stageIndex := phaseInput.StageIndex
+	if stageIndex == 0 {
+		stageIndex = phaseOutput.StageIndex
+	}
+	if stageIndex < 0 {
+		return false, true, fmt.Errorf("saved fallback search stage is invalid")
+	}
+	var searchID uuid.UUID
+	if stageIndex == 0 {
+		if len(snapshot.Intent.InitialProviderInputs) != 1 {
+			return false, true, fmt.Errorf("saved fallback search intent is invalid")
+		}
+		searchID = snapshot.Intent.InitialProviderInputs[0].OperationID
+	} else {
+		if phaseOutput.RequestID == uuid.Nil {
+			return false, true, fmt.Errorf("saved fallback stage request is invalid")
+		}
+		searchID = phaseOutput.RequestID
+	}
 	reader, ok := acquisition.repository.(matchingFallbackSearchReceiptReader)
 	if !ok {
 		return false, true, fmt.Errorf("fallback search receipt reader is unavailable")
 	}
-	receipt, err := reader.GetMatchingFallbackSearchReceipt(ctx, runID, initial.OperationID)
+	receipt, err := reader.GetMatchingFallbackSearchReceipt(ctx, runID, searchID)
 	if err != nil {
 		return false, true, err
 	}
-	if receipt == nil || receipt.StageIndex != 0 || receipt.RunID != runID || receipt.RequestID != initial.OperationID || receipt.CacheKey != initial.CacheKey {
+	if receipt == nil || receipt.StageIndex != stageIndex || receipt.RunID != runID || receipt.RequestID != searchID {
 		return false, true, fmt.Errorf("immutable fallback search receipt is unavailable or mismatched")
 	}
-	ids, manifest, err := fallbackSearchManifest(initial.Kind, receipt.Payload)
+	var plan policy.TypedFallbackQueryPlan
+	if json.Unmarshal(snapshot.Intent.FallbackQueryPlan, &plan) != nil || stageIndex >= len(plan.Stages) {
+		return false, true, fmt.Errorf("saved fallback query plan stage is invalid")
+	}
+	kind, _, valid := policy.ProviderKindForFallbackStage(plan.Stages[stageIndex].Kind)
+	if !valid {
+		return false, true, fmt.Errorf("saved fallback query plan kind is invalid")
+	}
+	ids, manifest, err := fallbackSearchManifest(kind, receipt.Payload)
 	if err != nil {
 		return false, true, fmt.Errorf("accepted fallback search response is invalid: %w: %v", ErrInvalidMatchingAcquisitionResponse, err)
 	}
@@ -261,8 +306,94 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackSearch(ctx context
 		return false, true, fmt.Errorf("fallback search delivery persistence is unavailable")
 	}
 	changed, err := advancer.AdvanceFallbackSearchForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision,
-		persistence.MatchingFallbackSearchProof{StageIndex: 0, RequestID: receipt.RequestID, PayloadSHA256: receipt.PayloadSHA256}, children, manifest)
+		persistence.MatchingFallbackSearchProof{StageIndex: stageIndex, RequestID: receipt.RequestID, PayloadSHA256: receipt.PayloadSHA256}, children, manifest)
 	return changed, true, err
+}
+
+func (acquisition *MatchingAcquisitionService) advanceFallbackApplicability(ctx context.Context, snapshot persistence.MatchingAcquisitionSnapshot, runID uuid.UUID, attempt int, riverJobID int64, claim persistence.MatchingDeliveryClaim) (bool, bool, error) {
+	receiptReader, ok := acquisition.repository.(matchingFallbackCalculationReceiptReader)
+	if !ok {
+		return false, true, fmt.Errorf("fallback calculation receipt reader is unavailable")
+	}
+	receipt, err := receiptReader.GetMatchingFallbackCalculationReceipt(ctx, runID, snapshot.Revision)
+	if err != nil {
+		return false, true, err
+	}
+	if receipt == nil {
+		preparer, ok := acquisition.repository.(matchingFallbackCalculationPreparer)
+		if !ok {
+			return false, true, fmt.Errorf("fallback calculation persistence is unavailable")
+		}
+		_, recorded, err := PrepareFallbackApplicabilityReceipt(ctx, preparer, preparer, runID, attempt, riverJobID, claim, snapshot.Revision)
+		if err != nil || !recorded {
+			return false, true, err
+		}
+		receipt, err = receiptReader.GetMatchingFallbackCalculationReceipt(ctx, runID, snapshot.Revision)
+		if err != nil {
+			return false, true, err
+		}
+	}
+	if receipt == nil || receipt.RunID != runID || receipt.AcquisitionRevision != snapshot.Revision {
+		return false, true, fmt.Errorf("saved fallback calculation receipt is unavailable or mismatched")
+	}
+	var edges []struct {
+		Confidence float64 `json:"confidence"`
+	}
+	if err := json.Unmarshal(receipt.Edges, &edges); err != nil {
+		return false, true, fmt.Errorf("saved fallback calculation edges are invalid: %w", err)
+	}
+	qualified := false
+	for _, edge := range edges {
+		if edge.Confidence >= 0.70 {
+			qualified = true
+			break
+		}
+	}
+	var prepared *persistence.MatchingProviderRequest
+	if !qualified {
+		var plan struct {
+			Stages []struct {
+				Kind, Query   string
+				Offset, Limit int
+			} `json:"stages"`
+		}
+		if err := json.Unmarshal(snapshot.Intent.FallbackQueryPlan, &plan); err != nil || receipt.StageIndex < 0 || receipt.StageIndex >= len(plan.Stages) {
+			return false, true, fmt.Errorf("saved fallback plan stage is invalid")
+		}
+		if receipt.StageIndex+1 < len(plan.Stages) {
+			stage := plan.Stages[receipt.StageIndex+1]
+			kind, _, valid := fallbackProviderKind(stage.Kind)
+			if !valid || stage.Offset != 0 || stage.Limit != 10 {
+				return false, true, fmt.Errorf("saved next fallback stage is invalid")
+			}
+			operation, err := acquisition.providers.PrepareOperation(ctx, kind, stage.Query, 0, 10, false)
+			if err != nil {
+				return false, true, err
+			}
+			if operation.ProviderCacheKey == nil {
+				return false, true, fmt.Errorf("prepared fallback search has no cache scope")
+			}
+			request := persistence.MatchingProviderRequest{Operation: operation, Args: ProviderFetchOperationArgs{OperationID: operation.ID}}
+			prepared = &request
+		}
+	}
+	advancer, ok := acquisition.repository.(matchingFallbackApplicabilityAdvancer)
+	if !ok {
+		return false, true, fmt.Errorf("fallback applicability delivery persistence is unavailable")
+	}
+	changed, err := advancer.AdvanceFallbackApplicabilityForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, prepared)
+	return changed, true, err
+}
+
+func fallbackProviderKind(stage string) (string, string, bool) {
+	switch stage {
+	case "album", "album_track":
+		return "release_search", stage, true
+	case "track":
+		return "recording_search", stage, true
+	default:
+		return "", "", false
+	}
 }
 
 // fallbackSearchReleaseIDs validates the MusicBrainz search envelope and returns

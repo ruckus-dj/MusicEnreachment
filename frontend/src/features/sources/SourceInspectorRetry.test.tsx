@@ -433,6 +433,8 @@ describe("source inspector step controls", () => {
     );
 
     await screen.findByText("Состояние: В очереди");
+    await waitFor(() => expect(InspectorStream.instances).toHaveLength(1));
+    const subscription = stream();
     expect(
       screen.getByRole("listitem", { name: "Акустический отпечаток" }),
     ).toHaveTextContent("Состояние: Завершено");
@@ -441,7 +443,7 @@ describe("source inspector step controls", () => {
     phase = "running";
     const runningDetail = responseFor(detailPath);
     await act(async () => {
-      stream().dispatchEvent(
+      subscription.dispatchEvent(
         new MessageEvent("operation-changed", {
           data: JSON.stringify(
             operation({
@@ -460,7 +462,7 @@ describe("source inspector step controls", () => {
     phase = "succeeded";
     const succeededDetail = responseFor(detailPath);
     await act(async () => {
-      stream().dispatchEvent(
+      subscription.dispatchEvent(
         new MessageEvent("operation-changed", {
           data: JSON.stringify(
             operation({

@@ -1003,9 +1003,60 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 		if !supportedMatchingAcquisitionIntentVersion(acquisition.Version) || acquisition.Revision != expectedRevision {
 			return nil
 		}
-		fallbackCompletion := acquisition.Phase == MatchingAcquisitionFallbackHydration && phase.Phase == MatchingAcquisitionFallbackApplicability && fallbackProof == nil
+		var intent MatchingAcquisitionIntent
+		if err := json.Unmarshal(acquisition.Intent, &intent); err != nil || intent.SchemaVersion != acquisition.Version {
+			return fmt.Errorf("advance matching acquisition: saved acquisition intent is invalid")
+		}
+		var previous MatchingAcquisitionPhase
+		if err := tx.NewRaw(`SELECT revision, phase, input, output, response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, operationID, acquisition.Revision).Scan(ctx, &previous); err != nil {
+			return fmt.Errorf("advance matching acquisition: read previous phase: %w", err)
+		}
+		if previous.Phase != acquisition.Phase {
+			return fmt.Errorf("advance matching acquisition: saved phase cursor is inconsistent")
+		}
+		fallbackCompletion := acquisition.Phase == MatchingAcquisitionFallbackHydration && phase.Phase == MatchingAcquisitionFallbackApplicability &&
+			fallbackProof == nil && intent.SchemaVersion == matchingAutomaticFallbackAcquisitionIntentVersion
 		var pending int
-		if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND terminal_outcome IS NULL`, operationID).Scan(ctx, &pending); err != nil {
+		if fallbackCompletion {
+			var hydrationInput struct {
+				StageIndex int `json:"stage_index"`
+			}
+			var hydrationOutput struct {
+				Lookups []struct {
+					RequestID uuid.UUID `json:"request_id"`
+				} `json:"lookups"`
+			}
+			if json.Unmarshal(previous.Input, &hydrationInput) != nil || json.Unmarshal(previous.Output, &hydrationOutput) != nil || hydrationInput.StageIndex < 0 || len(hydrationOutput.Lookups) == 0 {
+				return fmt.Errorf("complete fallback hydration: registered lookup manifest is invalid")
+			}
+			requestIDs := make([]uuid.UUID, 0, len(hydrationOutput.Lookups))
+			seenRequestIDs := make(map[uuid.UUID]struct{}, len(hydrationOutput.Lookups))
+			for _, lookup := range hydrationOutput.Lookups {
+				if lookup.RequestID == uuid.Nil {
+					return fmt.Errorf("complete fallback hydration: registered lookup manifest is invalid")
+				}
+				if _, exists := seenRequestIDs[lookup.RequestID]; exists {
+					return fmt.Errorf("complete fallback hydration: registered lookup manifest is invalid")
+				}
+				seenRequestIDs[lookup.RequestID] = struct{}{}
+				requestIDs = append(requestIDs, lookup.RequestID)
+			}
+			var registeredChildren int
+			if err := tx.NewRaw(`SELECT count(*) FROM matching_fallback_request_registration
+				WHERE run_id=? AND stage_index=? AND role='lookup' AND request_id IN (?)`, operationID, hydrationInput.StageIndex, bun.List(requestIDs)).Scan(ctx, &registeredChildren); err != nil {
+				return fmt.Errorf("complete fallback hydration: verify registered lookup membership: %w", err)
+			}
+			if registeredChildren != len(requestIDs) {
+				return fmt.Errorf("complete fallback hydration: lookup manifest is not registered for current stage")
+			}
+			if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency dependency
+				JOIN matching_fallback_request_registration registration ON registration.run_id=dependency.parent_run_id
+					AND registration.request_id=dependency.request_id AND registration.stage_index=? AND registration.role='lookup'
+				WHERE dependency.parent_run_id=? AND dependency.request_id IN (?) AND dependency.terminal_outcome IS NULL`,
+				hydrationInput.StageIndex, operationID, bun.List(requestIDs)).Scan(ctx, &pending); err != nil {
+				return fmt.Errorf("complete fallback hydration: check registered provider children: %w", err)
+			}
+		} else if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=? AND terminal_outcome IS NULL`, operationID).Scan(ctx, &pending); err != nil {
 			return fmt.Errorf("advance matching acquisition: check previous provider children: %w", err)
 		}
 		if pending != 0 {
@@ -1036,30 +1087,44 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 			!validMatchingAcquisitionTransition(acquisition.Phase, phase.Phase, children) {
 			return nil
 		}
-		var intent MatchingAcquisitionIntent
-		if err := json.Unmarshal(acquisition.Intent, &intent); err != nil || intent.SchemaVersion != acquisition.Version || len(intent.InitialProviderInputs) != 1 {
+		if len(intent.InitialProviderInputs) != 1 {
 			return fmt.Errorf("advance matching acquisition: saved acquisition intent is invalid")
 		}
-		var previous MatchingAcquisitionPhase
-		if err := tx.NewRaw(`SELECT revision, phase, input, output, response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, operationID, acquisition.Revision).Scan(ctx, &previous); err != nil {
-			return fmt.Errorf("advance matching acquisition: read previous phase: %w", err)
-		}
-		if previous.Phase != acquisition.Phase {
-			return fmt.Errorf("advance matching acquisition: saved phase cursor is inconsistent")
-		}
 		if fallbackProof != nil {
+			var currentInput, currentOutput struct {
+				StageIndex int       `json:"stage_index"`
+				RequestID  uuid.UUID `json:"request_id"`
+			}
+			if len(previous.Input) > 0 && json.Unmarshal(previous.Input, &currentInput) != nil || json.Unmarshal(previous.Output, &currentOutput) != nil {
+				return fmt.Errorf("advance matching acquisition: current fallback search identity is invalid")
+			}
+			stageIndex := currentInput.StageIndex
+			if stageIndex == 0 {
+				stageIndex = currentOutput.StageIndex
+			}
+			requestID := currentOutput.RequestID
+			if stageIndex == 0 {
+				requestID = intent.InitialProviderInputs[0].OperationID
+			}
 			if acquisition.Version != matchingAutomaticFallbackAcquisitionIntentVersion || acquisition.Phase != MatchingAcquisitionFallbackSearch ||
-				fallbackProof.StageIndex != 0 || provenance[0].RequestID != fallbackProof.RequestID || provenance[0].PayloadSHA != fallbackProof.PayloadSHA256 {
-				return fmt.Errorf("advance matching acquisition: fallback proof does not match the initial phase")
+				fallbackProof.StageIndex != stageIndex || requestID == uuid.Nil || provenance[0].RequestID != requestID ||
+				fallbackProof.RequestID != requestID || provenance[0].PayloadSHA != fallbackProof.PayloadSHA256 {
+				return fmt.Errorf("advance matching acquisition: fallback proof does not match current search stage")
 			}
 			receipt, err := getMatchingFallbackSearchReceipt(ctx, tx, operationID, fallbackProof.RequestID)
-			if err != nil || receipt == nil || receipt.StageIndex != 0 || receipt.PayloadSHA256 != fallbackProof.PayloadSHA256 || receipt.CacheKey != provenance[0].CacheKey {
+			var registration fallbackRequestRegistration
+			if err == nil && receipt != nil {
+				registration, err = loadFallbackRequestRegistration(ctx, tx, operationID, stageIndex, "search", requestID)
+			}
+			if err != nil || receipt == nil || receipt.StageIndex != stageIndex || receipt.PayloadSHA256 != fallbackProof.PayloadSHA256 ||
+				receipt.CacheKey != provenance[0].CacheKey || registration.RequestID != requestID ||
+				!queryStageIdentity(intent, stageIndex, registration.Kind, receipt.CacheKey, receipt.RequestInput) {
 				return fmt.Errorf("advance matching acquisition: immutable fallback search receipt does not match proof")
 			}
 			if err := validateFallbackHydrationChildren(children, sourceFence, intent, phase); err != nil {
 				return err
 			}
-			derived, deriveErr := fallbackReceiptReleaseIDs(intent.InitialProviderInputs[0].Kind, receipt.Payload)
+			derived, deriveErr := fallbackReceiptReleaseIDs(registration.Kind, receipt.Payload)
 			var requested struct {
 				ReleaseIDs []string        `json:"release_ids"`
 				Manifest   json.RawMessage `json:"search_manifest"`
@@ -1072,7 +1137,7 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 				AcceptedHits json.RawMessage `json:"accepted_hits"`
 				ReleaseIDs   []string        `json:"release_ids"`
 			}
-			if json.Unmarshal(requested.Manifest, &manifest) != nil || manifest.Kind != intent.InitialProviderInputs[0].Kind ||
+			if json.Unmarshal(requested.Manifest, &manifest) != nil || manifest.Kind != registration.Kind ||
 				!equalStringSlices(manifest.ReleaseIDs, derived) || !matchingJSONEqual(manifest.AcceptedHits, receipt.Payload) {
 				return fmt.Errorf("advance matching acquisition: fallback manifest differs from accepted receipt")
 			}
@@ -1081,6 +1146,7 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 				return fmt.Errorf("complete fallback hydration: unsupported acquisition intent")
 			}
 			var input struct {
+				StageIndex     int             `json:"stage_index"`
 				ReleaseIDs     []string        `json:"release_ids"`
 				SearchManifest json.RawMessage `json:"search_manifest"`
 			}
@@ -1103,7 +1169,7 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 				} `json:"lookup_receipts"`
 			}
 			if json.Unmarshal(previous.Input, &input) != nil || json.Unmarshal(previous.Output, &oldOutput) != nil || json.Unmarshal(phase.Output, &finalOutput) != nil ||
-				len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) != len(oldOutput.Lookups) || len(oldOutput.Lookups) != len(finalOutput.LookupReceipts) ||
+				input.StageIndex < 0 || len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) != len(oldOutput.Lookups) || len(oldOutput.Lookups) != len(finalOutput.LookupReceipts) ||
 				!matchingJSONEqual(phase.Input, previous.Input) || len(finalOutput.SearchManifest) == 0 || !matchingJSONEqual(finalOutput.SearchManifest, input.SearchManifest) {
 				return fmt.Errorf("complete fallback hydration: persisted receipt manifest is invalid")
 			}
@@ -1112,11 +1178,15 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 				return fmt.Errorf("complete fallback hydration: accepted search evidence changed")
 			}
 			searchReceipt, err := getMatchingFallbackSearchReceipt(ctx, tx, operationID, searchProvenance[0].RequestID)
-			if err != nil || searchReceipt == nil || searchReceipt.StageIndex != 0 || searchReceipt.PayloadSHA256 != searchProvenance[0].PayloadSHA {
+			if err != nil || searchReceipt == nil || searchReceipt.StageIndex != input.StageIndex || searchReceipt.PayloadSHA256 != searchProvenance[0].PayloadSHA {
 				return fmt.Errorf("complete fallback hydration: immutable search receipt is unavailable")
 			}
 			var dependencyCount int
-			if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency dependency JOIN operation ON operation.id=dependency.request_id WHERE dependency.parent_run_id=? AND operation.kind='provider_release_lookup'`, operationID).Scan(ctx, &dependencyCount); err != nil {
+			if err := tx.NewRaw(`SELECT count(*) FROM matching_provider_dependency dependency
+				JOIN matching_fallback_request_registration registration ON registration.run_id=dependency.parent_run_id
+					AND registration.request_id=dependency.request_id AND registration.stage_index=? AND registration.role='lookup'
+				JOIN operation ON operation.id=dependency.request_id
+				WHERE dependency.parent_run_id=? AND operation.kind='provider_release_lookup'`, input.StageIndex, operationID).Scan(ctx, &dependencyCount); err != nil {
 				return err
 			}
 			if dependencyCount != len(oldOutput.Lookups) {
@@ -1133,7 +1203,7 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 					return fmt.Errorf("complete fallback hydration: lookup dependency is not successful")
 				}
 				receipt, err := getMatchingFallbackLookupReceipt(ctx, tx, operationID, lookup.RequestID)
-				if err != nil || receipt == nil || receipt.StageIndex != 0 || receipt.CacheKey != lookup.CacheKey || receipt.PayloadSHA256 != accepted.PayloadSHA || receipt.ProjectionSHA256 != accepted.ProjectionSHA {
+				if err != nil || receipt == nil || receipt.StageIndex != input.StageIndex || receipt.CacheKey != lookup.CacheKey || receipt.PayloadSHA256 != accepted.PayloadSHA || receipt.ProjectionSHA256 != accepted.ProjectionSHA {
 					return fmt.Errorf("complete fallback hydration: lookup receipt evidence is unavailable or changed")
 				}
 			}
@@ -1243,7 +1313,7 @@ func (repository *SetupManagerRepository) advanceMatchingAcquisitionForDelivery(
 				return fmt.Errorf("advance matching acquisition: register provider child: %w", err)
 			}
 			if fallbackProof != nil {
-				if err := registerFallbackRequest(ctx, tx, operationID, 0, "lookup", sourceFence.SourceID, sourceFence.Identity, child.Operation); err != nil {
+				if err := registerFallbackRequest(ctx, tx, operationID, fallbackProof.StageIndex, "lookup", sourceFence.SourceID, sourceFence.Identity, child.Operation); err != nil {
 					return fmt.Errorf("advance matching acquisition: register fallback lookup: %w", err)
 				}
 			}

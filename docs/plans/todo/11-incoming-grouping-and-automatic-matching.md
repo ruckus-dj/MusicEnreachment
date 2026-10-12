@@ -1266,6 +1266,19 @@ normalization для score в точности. Если по имеющимся
   is persistence-only: service orchestration, full later-stage flow, final sealing
   and production fallback activation remain outstanding.
 
+### Finite fallback service orchestration — 2026-10-12
+
+- Service reuses saved calculation receipts or calculates/records complete
+  evidence, then atomically advances the exact finite query stage. Search and
+  hydration writes bind actual request/stage registrations; dependency membership
+  and counts exclude historical stages without discarding their evidence.
+- PostgreSQL flows cover empty and genuinely nonempty/unqualified stage0 followed
+  by accepted stage1 search/lookup/calculation and qualified pending_seal, using
+  actual kernel scores. Historical lookups remain retained and do not block stage1.
+- Independent review and repeated primary full `task verify` passed. Approval is
+  bounded orchestration, not empty-plan handling, final sealing, runtime activation
+  or comprehensive concurrency acceptance. Plan11 remains open.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

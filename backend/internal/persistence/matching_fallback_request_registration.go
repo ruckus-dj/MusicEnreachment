@@ -141,17 +141,10 @@ func fallbackStageMatchesRequest(intent MatchingAcquisitionIntent, role, kind st
 		if stageIndex < 0 || stageIndex >= len(plan.Stages) {
 			return false
 		}
-		providerKind, _, ok := policy.ProviderKindForFallbackStage(plan.Stages[stageIndex].Kind)
-		var request struct {
-			SchemaVersion int    `json:"schema_version"`
-			Query         string `json:"query"`
-			Offset        int    `json:"offset"`
-			Limit         int    `json:"limit"`
-		}
 		stage := plan.Stages[stageIndex]
-		return ok && providerKind == kind && json.Unmarshal(input, &request) == nil &&
-			request.SchemaVersion == 1 && request.Query == stage.Query && request.Offset == stage.Offset && request.Limit == stage.Limit &&
-			(stageIndex != 0 || len(intent.InitialProviderInputs) == 1 && matchingJSONEqual(intent.InitialProviderInputs[0].Input, input))
+		_, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+		return ok && queryStageIdentity(intent, stageIndex, kind,
+			fmt.Sprintf("%s:%d:%d:%s", cachePrefix, stage.Offset, stage.Limit, stage.Query), input)
 	}
 	if role == "lookup" {
 		var request struct {
@@ -163,4 +156,33 @@ func fallbackStageMatchesRequest(intent MatchingAcquisitionIntent, role, kind st
 			json.Unmarshal(intent.FallbackQueryPlan, &parsed) == nil && len(parsed.Stages) > 0
 	}
 	return false
+}
+
+// queryStageIdentity validates a provider request against one exact
+// immutable stage. Only stage zero is represented in InitialProviderInputs;
+// later stages are authorized by their durable registration instead.
+func queryStageIdentity(intent MatchingAcquisitionIntent, stageIndex int, kind, cacheKey string, input json.RawMessage) bool {
+	var plan policy.TypedFallbackQueryPlan
+	if intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil ||
+		stageIndex < 0 || stageIndex >= len(plan.Stages) {
+		return false
+	}
+	stage := plan.Stages[stageIndex]
+	providerKind, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
+	var request struct {
+		SchemaVersion int    `json:"schema_version"`
+		Query         string `json:"query"`
+		Offset        int    `json:"offset"`
+		Limit         int    `json:"limit"`
+	}
+	if !ok || providerKind != kind || json.Unmarshal(input, &request) != nil || request.SchemaVersion != 1 ||
+		request.Query != stage.Query || request.Offset != stage.Offset || request.Limit != stage.Limit ||
+		cacheKey != fmt.Sprintf("%s:%d:%d:%s", cachePrefix, stage.Offset, stage.Limit, stage.Query) {
+		return false
+	}
+	if stageIndex == 0 {
+		return len(intent.InitialProviderInputs) == 1 && intent.InitialProviderInputs[0].Kind == kind &&
+			matchingJSONEqual(intent.InitialProviderInputs[0].Input, input) && intent.InitialProviderInputs[0].CacheKey == cacheKey
+	}
+	return true
 }
