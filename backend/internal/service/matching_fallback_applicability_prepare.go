@@ -37,7 +37,7 @@ func PrepareFallbackApplicability(
 	return result, true, err
 }
 
-// PrepareFallbackApplicabilityReceipt calculates and records stage-zero evidence
+// PrepareFallbackApplicabilityReceipt calculates and records stage-scoped evidence
 // from the same validated persisted context. It intentionally leaves delivery
 // consumption and acquisition advancement to their existing owners.
 func PrepareFallbackApplicabilityReceipt(
@@ -93,7 +93,7 @@ func PrepareFallbackApplicabilityReceipt(
 	}
 	recorded, err := writer.RecordMatchingFallbackCalculationForDelivery(ctx, runID, attempt, riverJobID, claim, expectedRevision,
 		persistence.MatchingFallbackCalculationReceipt{RunID: runID, AcquisitionRevision: expectedRevision,
-			InputDigest: digest, Context: contextJSON, Edges: edgesJSON})
+			StageIndex: snapshot.StageIndex, InputDigest: digest, Context: contextJSON, Edges: edgesJSON})
 	return result, recorded, err
 }
 
@@ -124,7 +124,7 @@ func fallbackApplicabilityInputFromContext(snapshot persistence.MatchingFallback
 		}
 	}
 	return MatchingFallbackApplicabilityInput{
-		RunID: snapshot.RunID, AcquisitionRevision: snapshot.AcquisitionRevision,
+		RunID: snapshot.RunID, AcquisitionRevision: snapshot.AcquisitionRevision, StageIndex: snapshot.StageIndex,
 		Intent: snapshot.Intent, Target: snapshot.Target,
 		PhaseInput: append([]byte(nil), snapshot.PhaseInput...), PhaseOutput: append([]byte(nil), snapshot.PhaseOutput...),
 		PhaseProvenance: append([]byte(nil), snapshot.PhaseProvenance...), SearchReceipt: snapshot.SearchReceipt,

@@ -74,7 +74,7 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 	if err != nil {
 		return nil, fmt.Errorf("read matching fallback search receipt: %w", err)
 	}
-	if len(digest) != sha256.Size || receipt.StageIndex != 0 || receipt.CacheGeneration < 1 || receipt.FetchOrder < 1 ||
+	if len(digest) != sha256.Size || receipt.StageIndex < 0 || receipt.CacheGeneration < 1 || receipt.FetchOrder < 1 ||
 		receipt.ExecutionEpoch < 1 || receipt.ProviderAttempt < 1 || receipt.RiverJobID < 1 {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved receipt is invalid")
 	}
@@ -89,20 +89,14 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 	var intent MatchingAcquisitionIntent
 	var plan policy.TypedFallbackQueryPlan
 	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion ||
-		len(intent.InitialProviderInputs) != 1 || intent.InitialProviderInputs[0].OperationID != requestID ||
-		intent.InitialProviderInputs[0].CacheKey != receipt.CacheKey || intent.InitialProviderInputs[0].Input == nil ||
-		json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) == 0 ||
-		validateFallbackProviderInput(plan.Stages[0], &Operation{Kind: intent.InitialProviderInputs[0].Kind,
-			InputSnapshot: intent.InitialProviderInputs[0].Input, ProviderCacheKey: fallbackStringPointer(receipt.CacheKey)}) != nil ||
-		!matchingJSONEqual(intent.InitialProviderInputs[0].Input, receipt.RequestInput) ||
-		runSourceID != receipt.ProviderSourceID || runConfigurationIdentity != receipt.ConfigurationIdentity ||
-		intent.InitialProviderInputs[0].Kind != "provider_release_search" && intent.InitialProviderInputs[0].Kind != "provider_recording_search" {
+		json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || receipt.StageIndex >= len(plan.Stages) ||
+		runSourceID != receipt.ProviderSourceID || runConfigurationIdentity != receipt.ConfigurationIdentity {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved request scope is invalid")
 	}
 	registration, err = loadFallbackRequestRegistration(ctx, database, runID, receipt.StageIndex, "search", requestID)
 	if err != nil || registration.ProviderSourceID != receipt.ProviderSourceID || registration.ConfigurationIdentity != receipt.ConfigurationIdentity ||
-		validateFallbackRequestRegistration(registration, "search", intent, runID, requestID, receipt.ProviderSourceID, receipt.ConfigurationIdentity, intent.InitialProviderInputs[0].Kind, receipt.CacheKey, receipt.RequestInput) != nil ||
-		!fallbackStageMatchesRequest(intent, "search", intent.InitialProviderInputs[0].Kind, receipt.RequestInput) {
+		validateFallbackRequestRegistration(registration, "search", intent, runID, requestID, receipt.ProviderSourceID, receipt.ConfigurationIdentity, registration.Kind, receipt.CacheKey, receipt.RequestInput) != nil ||
+		!fallbackStageMatchesRequest(intent, "search", registration.Kind, receipt.RequestInput, receipt.StageIndex) {
 		return nil, fmt.Errorf("read matching fallback search receipt: immutable request registration is unavailable or invalid")
 	}
 	receipt.PayloadSHA256 = hex.EncodeToString(digest)
@@ -167,17 +161,19 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	var configurationIdentity, cacheKey string
 	var inputBytes []byte
 	var operationKind string
+	var stageIndex int
 	var registered bool
 	err := tx.NewRaw(`SELECT run.id,acquisition.intent,run.provider_source_id,run.provider_configuration_identity,
 		dependency.cache_key,operation.input_snapshot,operation.kind,
-		EXISTS(SELECT 1 FROM matching_fallback_request_registration registration WHERE registration.run_id=run.id AND registration.stage_index=0 AND registration.role='search' AND registration.request_id=operation.id)
+		COALESCE((SELECT registration.stage_index FROM matching_fallback_request_registration registration WHERE registration.run_id=run.id AND registration.role='search' AND registration.request_id=operation.id),-1),
+		EXISTS(SELECT 1 FROM matching_fallback_request_registration registration WHERE registration.run_id=run.id AND registration.role='search' AND registration.request_id=operation.id)
 		FROM matching_run run
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
 		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=run.id AND dependency.request_id=?
 		JOIN operation ON operation.id=dependency.request_id
 		WHERE run.id=dependency.parent_run_id AND operation.id=?
 		FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
-		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes, &operationKind, &registered)
+		Scan(ctx, &runID, &intentBytes, &sourceID, &configurationIdentity, &cacheKey, &inputBytes, &operationKind, &stageIndex, &registered)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // This operation is not the registered initial automatic fallback dependency.
 	}
@@ -192,29 +188,27 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	}
 	var intent MatchingAcquisitionIntent
 	if json.Unmarshal(intentBytes, &intent) != nil || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion ||
-		len(intent.InitialProviderInputs) != 1 || intent.InitialProviderInputs[0].OperationID != fence.OperationID ||
-		intent.InitialProviderInputs[0].CacheKey != cacheKey || sourceID != ticket.ProviderSourceID ||
-		configurationIdentity != ticket.ConfigurationIdentity || intent.InitialProviderInputs[0].Kind != "provider_release_search" && intent.InitialProviderInputs[0].Kind != "provider_recording_search" {
-		return errors.New("accepted fallback response differs from its registered initial request")
+		sourceID != ticket.ProviderSourceID || configurationIdentity != ticket.ConfigurationIdentity {
+		return errors.New("accepted fallback response differs from its registered request")
 	}
 	var plan policy.TypedFallbackQueryPlan
-	if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) == 0 {
-		return errors.New("accepted fallback response has no initial plan stage")
+	if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || stageIndex < 0 || stageIndex >= len(plan.Stages) {
+		return errors.New("accepted fallback response has no registered plan stage")
 	}
-	if err := validateFallbackProviderInput(plan.Stages[0], &Operation{
-		Kind: intent.InitialProviderInputs[0].Kind, InputSnapshot: intent.InitialProviderInputs[0].Input,
+	if err := validateFallbackProviderInput(plan.Stages[stageIndex], &Operation{
+		Kind: operationKind, InputSnapshot: inputBytes,
 		ProviderCacheKey: fallbackStringPointer(cacheKey),
 	}); err != nil {
 		return fmt.Errorf("accepted fallback response request scope is invalid: %w", err)
 	}
-	registration, err := loadFallbackRequestRegistration(ctx, tx, runID, 0, "search", fence.OperationID)
+	registration, err := loadFallbackRequestRegistration(ctx, tx, runID, stageIndex, "search", fence.OperationID)
 	if err != nil || registration.ProviderSourceID != sourceID || registration.ConfigurationIdentity != configurationIdentity ||
 		validateFallbackRequestRegistration(registration, "search", intent, runID, fence.OperationID, sourceID, configurationIdentity, operationKind, cacheKey, inputBytes) != nil {
 		return errors.New("accepted fallback response immutable request registration is invalid")
 	}
 	canonicalInput, err := canonicalMatchingJSON(inputBytes)
-	if err != nil || !matchingJSONEqual(canonicalInput, intent.InitialProviderInputs[0].Input) {
-		return errors.New("accepted fallback response input differs from its immutable request")
+	if err != nil {
+		return errors.New("accepted fallback response input is invalid")
 	}
 	var canonicalPayload string
 	if err := tx.NewRaw(`SELECT ?::jsonb::text`, string(payload)).Scan(ctx, &canonicalPayload); err != nil {
@@ -226,7 +220,7 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackSearchReceipt
 	}
 	digest := sha256.Sum256(apiPayload)
 	receipt := MatchingFallbackSearchReceipt{
-		RunID: runID, RequestID: fence.OperationID, StageIndex: 0, ProviderSourceID: ticket.ProviderSourceID,
+		RunID: runID, RequestID: fence.OperationID, StageIndex: stageIndex, ProviderSourceID: ticket.ProviderSourceID,
 		ConfigurationIdentity: ticket.ConfigurationIdentity, CacheKey: cacheKey, RequestInput: canonicalInput,
 		Payload: apiPayload, PayloadSHA256: hex.EncodeToString(digest[:]), CacheRevision: nullablePointer(revision),
 		CacheGeneration: ticket.Generation, FetchOrder: ticket.FetchOrder, ExecutionEpoch: fence.ExecutionEpoch,

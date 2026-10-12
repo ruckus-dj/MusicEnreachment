@@ -89,7 +89,7 @@ func getMatchingFallbackLookupReceipt(ctx context.Context, database bun.IDB, run
 		return nil, fmt.Errorf("read matching fallback lookup receipt: digest is invalid")
 	}
 	sh := sha256.Sum256(r.AcceptedProjection)
-	if !equalDigest(projectionDigest, sh[:]) || r.RequestID != requestID || r.RunID != runID || r.StageIndex != 0 {
+	if !equalDigest(projectionDigest, sh[:]) || r.RequestID != requestID || r.RunID != runID || r.StageIndex < 0 {
 		return nil, fmt.Errorf("read matching fallback lookup receipt: projection digest or scope is invalid")
 	}
 	var intent MatchingAcquisitionIntent
@@ -122,7 +122,12 @@ func getMatchingFallbackLookupReceipt(ctx context.Context, database bun.IDB, run
 		Output []byte `bun:"output"`
 	}
 	if err := database.NewRaw(`SELECT input,output FROM matching_acquisition_phase
-		WHERE run_id=? AND phase='fallback_release_hydration' ORDER BY revision DESC LIMIT 1`, runID).Scan(ctx, &manifest); err != nil {
+		WHERE run_id=? AND phase='fallback_release_hydration'
+		AND input->>'stage_index'=? AND output->>'stage_index'=?
+		AND EXISTS (SELECT 1 FROM jsonb_array_elements(output->'lookups') lookup
+			WHERE lookup->>'request_id'=? AND lookup->>'release_id'=? AND lookup->>'cache_key'=? )
+		ORDER BY revision DESC LIMIT 1`, runID, fmt.Sprint(r.StageIndex), fmt.Sprint(r.StageIndex), requestID.String(),
+		strings.TrimPrefix(r.CacheKey, "release-lookup:"), r.CacheKey).Scan(ctx, &manifest); err != nil {
 		return nil, fmt.Errorf("read matching fallback lookup receipt: registered manifest is unavailable: %w", err)
 	}
 	var input struct {
@@ -249,17 +254,19 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 	var inputBytes []byte
 	var operationSource uuid.UUID
 	var operationIdentity, operationCacheKey, operationKind string
+	var stageIndex int
 	var registered bool
 	err := tx.NewRaw(`SELECT run.id,run.provider_source_id,run.provider_configuration_identity,
 		dependency.cache_key,operation.input_snapshot,operation.provider_source_id,operation.provider_configuration_identity,
-		operation.provider_cache_key,operation.kind,EXISTS(SELECT 1 FROM matching_fallback_request_registration registration
-		WHERE registration.run_id=run.id AND registration.stage_index=0 AND registration.role='lookup' AND registration.request_id=operation.id) FROM matching_run run
+		operation.provider_cache_key,operation.kind,COALESCE((SELECT registration.stage_index FROM matching_fallback_request_registration registration
+		WHERE registration.run_id=run.id AND registration.role='lookup' AND registration.request_id=operation.id),-1),EXISTS(SELECT 1 FROM matching_fallback_request_registration registration
+		WHERE registration.run_id=run.id AND registration.role='lookup' AND registration.request_id=operation.id) FROM matching_run run
 		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
 		JOIN matching_provider_dependency dependency ON dependency.parent_run_id=run.id AND dependency.request_id=?
 	JOIN operation ON operation.id=dependency.request_id
 	WHERE run.id=dependency.parent_run_id AND acquisition.current_phase='fallback_release_hydration'
 	AND operation.id=? FOR SHARE OF run,acquisition,dependency`, fence.OperationID, fence.OperationID).
-		Scan(ctx, &runID, &sourceID, &identity, &cacheKey, &inputBytes, &operationSource, &operationIdentity, &operationCacheKey, &operationKind, &registered)
+		Scan(ctx, &runID, &sourceID, &identity, &cacheKey, &inputBytes, &operationSource, &operationIdentity, &operationCacheKey, &operationKind, &stageIndex, &registered)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -293,7 +300,7 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 	if err := validateFallbackLookupRunAuthority(ctx, tx, runID, intent); err != nil {
 		return fmt.Errorf("accepted fallback lookup run authority is invalid: %w", err)
 	}
-	registration, registrationErr := loadFallbackRequestRegistration(ctx, tx, runID, 0, "lookup", fence.OperationID)
+	registration, registrationErr := loadFallbackRequestRegistration(ctx, tx, runID, stageIndex, "lookup", fence.OperationID)
 	if registrationErr != nil || registration.ProviderSourceID != sourceID || registration.ConfigurationIdentity != identity ||
 		validateFallbackRequestRegistration(registration, "lookup", intent, runID, fence.OperationID, sourceID, identity, operationKind, cacheKey, inputBytes) != nil {
 		return errors.New("accepted fallback lookup registration is invalid")
@@ -304,7 +311,7 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 	}
 	if err := tx.NewRaw(`SELECT phase.input,phase.output FROM matching_acquisition_phase phase
 		JOIN matching_acquisition acquisition ON acquisition.run_id=phase.run_id AND acquisition.revision=phase.revision
-		WHERE phase.run_id=? AND phase.phase='fallback_release_hydration'`, runID).Scan(ctx, &manifest); err != nil {
+		WHERE phase.run_id=? AND phase.phase='fallback_release_hydration' AND phase.revision=(SELECT revision FROM matching_acquisition WHERE run_id=?)`, runID, runID).Scan(ctx, &manifest); err != nil {
 		return fmt.Errorf("read fallback lookup manifest: %w", err)
 	}
 	var in struct {
@@ -344,7 +351,7 @@ func (repository *ProviderCacheRepository) captureAutomaticFallbackLookupReceipt
 		return err
 	}
 	pd, sd := sha256.Sum256(canonicalPayload), sha256.Sum256(canonicalProjection)
-	r := MatchingFallbackLookupReceipt{RunID: runID, RequestID: fence.OperationID, StageIndex: 0,
+	r := MatchingFallbackLookupReceipt{RunID: runID, RequestID: fence.OperationID, StageIndex: stageIndex,
 		ProviderSourceID: sourceID, ConfigurationIdentity: identity, CacheKey: cacheKey,
 		RequestInput: canonicalInput, Payload: canonicalPayload, PayloadSHA256: hex.EncodeToString(pd[:]),
 		AcceptedProjection: canonicalProjection, ProjectionSHA256: hex.EncodeToString(sd[:]),

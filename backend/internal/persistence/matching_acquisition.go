@@ -42,16 +42,19 @@ func (repository *SetupManagerRepository) AdvanceFallbackSearchForDelivery(
 	claim MatchingDeliveryClaim, expectedRevision int64, proof MatchingFallbackSearchProof,
 	children []MatchingProviderRequest, manifest json.RawMessage,
 ) (bool, error) {
-	if proof.StageIndex != 0 || proof.RequestID == uuid.Nil || len(proof.PayloadSHA256) != sha256.Size*2 {
+	if proof.StageIndex < 0 || proof.RequestID == uuid.Nil || len(proof.PayloadSHA256) != sha256.Size*2 {
 		return false, fmt.Errorf("advance fallback search: invalid accepted-search proof")
 	}
 	snapshot, exists, err := repository.GetMatchingAcquisition(ctx, runID)
 	if err != nil || !exists {
 		return false, err
 	}
-	if snapshot.Intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || snapshot.Phase != MatchingAcquisitionFallbackSearch || snapshot.Revision != expectedRevision ||
-		len(snapshot.Intent.InitialProviderInputs) != 1 || snapshot.Intent.InitialProviderInputs[0].OperationID != proof.RequestID {
-		return false, fmt.Errorf("advance fallback search: initial fallback phase or request is invalid")
+	if snapshot.Intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion || snapshot.Phase != MatchingAcquisitionFallbackSearch || snapshot.Revision != expectedRevision {
+		return false, fmt.Errorf("advance fallback search: fallback phase or request is invalid")
+	}
+	var fallbackPlan policy.TypedFallbackQueryPlan
+	if json.Unmarshal(snapshot.Intent.FallbackQueryPlan, &fallbackPlan) != nil || proof.StageIndex >= len(fallbackPlan.Stages) {
+		return false, fmt.Errorf("advance fallback search: registered stage is invalid")
 	}
 	ids := make([]string, 0, len(children))
 	lookups := make([]map[string]any, 0, len(children))
@@ -71,9 +74,17 @@ func (repository *SetupManagerRepository) AdvanceFallbackSearchForDelivery(
 	if len(manifest) == 0 || !json.Valid(manifest) {
 		return false, fmt.Errorf("advance fallback search: accepted search manifest is invalid")
 	}
-	input, _ := json.Marshal(map[string]any{"release_ids": ids, "search_manifest": manifest})
-	output, _ := json.Marshal(map[string]any{"lookups": lookups})
-	provenance, _ := json.Marshal([]matchingAcquisitionResponseProvenance{{RequestID: proof.RequestID, CacheKey: snapshot.Intent.InitialProviderInputs[0].CacheKey, PayloadSHA: proof.PayloadSHA256}})
+	registration, err := loadFallbackRequestRegistration(ctx, repository.db, runID, proof.StageIndex, "search", proof.RequestID)
+	if err != nil {
+		return false, fmt.Errorf("advance fallback search: registered stage request is unavailable")
+	}
+	originHydrationRevision := expectedRevision + 1
+	if len(ids) == 0 {
+		originHydrationRevision = 0
+	}
+	input, _ := json.Marshal(map[string]any{"stage_index": proof.StageIndex, "search_request_id": proof.RequestID, "origin_hydration_revision": originHydrationRevision, "release_ids": ids, "search_manifest": manifest})
+	output, _ := json.Marshal(map[string]any{"stage_index": proof.StageIndex, "search_request_id": proof.RequestID, "origin_hydration_revision": originHydrationRevision, "lookups": lookups})
+	provenance, _ := json.Marshal([]matchingAcquisitionResponseProvenance{{RequestID: proof.RequestID, CacheKey: registration.CacheKey, PayloadSHA: proof.PayloadSHA256}})
 	nextPhase := MatchingAcquisitionFallbackHydration
 	if len(ids) == 0 {
 		nextPhase = MatchingAcquisitionFallbackApplicability

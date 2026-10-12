@@ -27,7 +27,7 @@ type fallbackRequestRegistration struct {
 // registerFallbackRequest records admission authority alongside the dependency,
 // never by inferring identity from a cache row or an existing receipt.
 func registerFallbackRequest(ctx context.Context, tx bun.Tx, runID uuid.UUID, stageIndex int, role string, sourceID uuid.UUID, configurationIdentity string, operation *Operation) error {
-	if runID == uuid.Nil || stageIndex != 0 || sourceID == uuid.Nil || configurationIdentity == "" || operation == nil || operation.ID == uuid.Nil ||
+	if runID == uuid.Nil || stageIndex < 0 || sourceID == uuid.Nil || configurationIdentity == "" || operation == nil || operation.ID == uuid.Nil ||
 		operation.ProviderCacheKey == nil || operation.ProviderSourceID == nil || *operation.ProviderSourceID != sourceID ||
 		operation.ProviderConfigurationIdentity == nil || *operation.ProviderConfigurationIdentity != configurationIdentity {
 		return fmt.Errorf("register fallback request: request scope is incomplete or unsupported")
@@ -63,7 +63,7 @@ func registerFallbackRequest(ctx context.Context, tx bun.Tx, runID uuid.UUID, st
 		if operation.Kind == "provider_recording_search" {
 			prefix = "recording-search"
 		}
-		if *operation.ProviderCacheKey != fmt.Sprintf("%s:0:10:%s", prefix, input.Query) {
+		if input.Offset != 0 || input.Limit != 10 || *operation.ProviderCacheKey != fmt.Sprintf("%s:%d:%d:%s", prefix, input.Offset, input.Limit, input.Query) {
 			return fmt.Errorf("register fallback request: search cache key differs from input")
 		}
 	} else {
@@ -80,15 +80,15 @@ func registerFallbackRequest(ctx context.Context, tx bun.Tx, runID uuid.UUID, st
 }
 
 func validateFallbackRequestRegistration(registration fallbackRequestRegistration, expectedRole string, intent MatchingAcquisitionIntent, runID, requestID, sourceID uuid.UUID, configurationIdentity, operationKind, cacheKey string, operationInput json.RawMessage) error {
-	if registration.Role != expectedRole || registration.StageIndex != 0 || registration.RunID != runID || registration.RequestID != requestID ||
+	if registration.Role != expectedRole || registration.StageIndex < 0 || registration.RunID != runID || registration.RequestID != requestID ||
 		registration.ProviderSourceID != sourceID || registration.ConfigurationIdentity != configurationIdentity ||
 		registration.Kind != operationKind || registration.CacheKey != cacheKey || len(registration.InputSHA256) != sha256.Size {
 		return fmt.Errorf("registered fallback request scope is invalid")
 	}
 	canonical, err := canonicalMatchingJSON(registration.CanonicalInput)
 	registeredIntent := intentRequestInput(intent, expectedRole, requestID)
-	if err != nil || !matchingJSONEqual(canonical, operationInput) || expectedRole == "search" && !matchingJSONEqual(canonical, registeredIntent) ||
-		!fallbackStageMatchesRequest(intent, expectedRole, operationKind, canonical) {
+	if err != nil || !matchingJSONEqual(canonical, operationInput) || expectedRole == "search" && registeredIntent != nil && !matchingJSONEqual(canonical, registeredIntent) ||
+		!fallbackStageMatchesRequest(intent, expectedRole, operationKind, canonical, registration.StageIndex) {
 		return fmt.Errorf("registered fallback request input differs from immutable request")
 	}
 	if expectedRole == "search" {
@@ -96,8 +96,11 @@ func validateFallbackRequestRegistration(registration fallbackRequestRegistratio
 		if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) == 0 {
 			return fmt.Errorf("registered fallback request descriptor is invalid")
 		}
-		_, cachePrefix, ok := policy.ProviderKindForFallbackStage(plan.Stages[0].Kind)
-		stage := plan.Stages[0]
+		if registration.StageIndex >= len(plan.Stages) {
+			return fmt.Errorf("registered fallback request descriptor is invalid")
+		}
+		_, cachePrefix, ok := policy.ProviderKindForFallbackStage(plan.Stages[registration.StageIndex].Kind)
+		stage := plan.Stages[registration.StageIndex]
 		if !ok || cacheKey != fmt.Sprintf("%s:%d:%d:%s", cachePrefix, stage.Offset, stage.Limit, stage.Query) {
 			return fmt.Errorf("registered fallback request cache key differs from descriptor")
 		}
@@ -125,23 +128,30 @@ func loadFallbackRequestRegistration(ctx context.Context, database bun.IDB, runI
 	return registration, err
 }
 
-func fallbackStageMatchesRequest(intent MatchingAcquisitionIntent, role, kind string, input json.RawMessage) bool {
+func fallbackStageMatchesRequest(intent MatchingAcquisitionIntent, role, kind string, input json.RawMessage, stageIndexes ...int) bool {
 	var plan policy.TypedFallbackQueryPlan
 	if json.Unmarshal(intent.FallbackQueryPlan, &plan) != nil || len(plan.Stages) == 0 || intent.SchemaVersion != matchingAutomaticFallbackAcquisitionIntentVersion {
 		return false
 	}
 	if role == "search" {
-		providerKind, _, ok := policy.ProviderKindForFallbackStage(plan.Stages[0].Kind)
+		stageIndex := 0
+		if len(stageIndexes) > 0 {
+			stageIndex = stageIndexes[0]
+		}
+		if stageIndex < 0 || stageIndex >= len(plan.Stages) {
+			return false
+		}
+		providerKind, _, ok := policy.ProviderKindForFallbackStage(plan.Stages[stageIndex].Kind)
 		var request struct {
 			SchemaVersion int    `json:"schema_version"`
 			Query         string `json:"query"`
 			Offset        int    `json:"offset"`
 			Limit         int    `json:"limit"`
 		}
-		stage := plan.Stages[0]
+		stage := plan.Stages[stageIndex]
 		return ok && providerKind == kind && json.Unmarshal(input, &request) == nil &&
 			request.SchemaVersion == 1 && request.Query == stage.Query && request.Offset == stage.Offset && request.Limit == stage.Limit &&
-			len(intent.InitialProviderInputs) == 1 && matchingJSONEqual(intent.InitialProviderInputs[0].Input, input)
+			(stageIndex != 0 || len(intent.InitialProviderInputs) == 1 && matchingJSONEqual(intent.InitialProviderInputs[0].Input, input))
 	}
 	if role == "lookup" {
 		var request struct {

@@ -1237,6 +1237,20 @@ normalization для score в точности. Если по имеющимся
   covers the stage-zero foundation only; later-stage execution, applicability
   advancement, sealing and runtime activation remain outstanding.
 
+### Stage-scoped fallback evidence and receipt versions — 2026-10-12
+
+- Evidence readers/captures and calculations bind the registered query stage,
+  request and originating hydration revision rather than a latest manifest.
+  Migration30 preserves historical 2/1/2 and current 3/3/3 receipt authority
+  without rewriting stored evidence or original digest serialization.
+- PostgreSQL proof exercises real stage1 search receipt acceptance from a
+  fixture-registered handoff; original stage0 receipt remains unchanged. Migration
+  up/down preserves historical rows and rejects rollback of new-stage evidence.
+  Independent review and repeated primary full `task verify` passed.
+- Nonzero lookup acceptance plus calculation write/replay still needs proof.
+  Acquisition advancement retains stage-zero restrictions; finite routing,
+  sealing and runtime fallback activation remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

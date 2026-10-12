@@ -17,6 +17,7 @@ import (
 // for one lookup child, independent of the mutable provider cache.
 type MatchingFallbackCalculationLookupAuthority struct {
 	RequestID        uuid.UUID       `json:"request_id"`
+	StageIndex       int             `json:"stage_index"`
 	ReleaseID        string          `json:"release_id"`
 	Kind             string          `json:"kind"`
 	ProviderSourceID uuid.UUID       `json:"provider_source_id"`
@@ -32,6 +33,7 @@ type MatchingFallbackCalculationLookupAuthority struct {
 type MatchingFallbackCalculationContext struct {
 	RunID               uuid.UUID
 	AcquisitionRevision int64
+	StageIndex          int
 	Intent              MatchingAcquisitionIntent
 	Target              MatchingRunFenceSnapshot
 	PhaseInput          json.RawMessage
@@ -50,7 +52,7 @@ type MatchingFallbackCalculationContext struct {
 }
 
 // MatchingFallbackCalculationInputDigest hashes the complete persistence-owned
-// authority snapshot using receipt digest version 2. JSON object key ordering is
+// authority snapshot using receipt digest version 3. JSON object key ordering is
 // canonicalized; all registered inputs and accepted receipt payloads remain bound.
 func MatchingFallbackCalculationInputDigest(snapshot MatchingFallbackCalculationContext) (string, error) {
 	canonical, err := canonicalMatchingFallbackCalculationContextBytes(snapshot)
@@ -62,6 +64,92 @@ func MatchingFallbackCalculationInputDigest(snapshot MatchingFallbackCalculation
 }
 
 func canonicalMatchingFallbackCalculationContextBytes(snapshot MatchingFallbackCalculationContext) ([]byte, error) {
+	return canonicalMatchingFallbackCalculationContextBytesVersion(snapshot, matchingFallbackCalculationDigestVersion)
+}
+
+// MatchingFallbackCalculationInputDigestV2 preserves the original receipt
+// authority format. StageIndex was not part of its context and must not be
+// added when checking a historical schema-2/calculator-1 receipt.
+func MatchingFallbackCalculationInputDigestV2(snapshot MatchingFallbackCalculationContext) (string, error) {
+	canonical, err := canonicalMatchingFallbackCalculationContextBytesV2(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("digest legacy fallback calculation context: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func canonicalMatchingFallbackCalculationContextBytesV2(snapshot MatchingFallbackCalculationContext) ([]byte, error) {
+	snapshot.Lookups = append([]MatchingFallbackCalculationLookupAuthority(nil), snapshot.Lookups...)
+	snapshot.LookupReceipts = append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...)
+	sort.Slice(snapshot.Lookups, func(i, j int) bool {
+		if snapshot.Lookups[i].ReleaseID != snapshot.Lookups[j].ReleaseID {
+			return snapshot.Lookups[i].ReleaseID < snapshot.Lookups[j].ReleaseID
+		}
+		return snapshot.Lookups[i].RequestID.String() < snapshot.Lookups[j].RequestID.String()
+	})
+	sort.Slice(snapshot.LookupReceipts, func(i, j int) bool {
+		if snapshot.LookupReceipts[i].RequestID != snapshot.LookupReceipts[j].RequestID {
+			return snapshot.LookupReceipts[i].RequestID.String() < snapshot.LookupReceipts[j].RequestID.String()
+		}
+		return snapshot.LookupReceipts[i].CacheKey < snapshot.LookupReceipts[j].CacheKey
+	})
+	// Keep field order and names aligned with the original v2 DTO, which did
+	// not include StageIndex.
+	type legacyLookupAuthority struct {
+		RequestID        uuid.UUID       `json:"request_id"`
+		ReleaseID        string          `json:"release_id"`
+		Kind             string          `json:"kind"`
+		ProviderSourceID uuid.UUID       `json:"provider_source_id"`
+		ProviderID       uuid.UUID       `json:"provider_id"`
+		Endpoint         string          `json:"endpoint"`
+		Configuration    string          `json:"configuration_identity"`
+		CacheKey         string          `json:"cache_key"`
+		Input            json.RawMessage `json:"input"`
+	}
+	type legacyContext struct {
+		RunID               uuid.UUID
+		AcquisitionRevision int64
+		Intent              MatchingAcquisitionIntent
+		Target              MatchingRunFenceSnapshot
+		PhaseInput          json.RawMessage
+		PhaseOutput         json.RawMessage
+		PhaseProvenance     json.RawMessage
+		SearchReceipt       MatchingFallbackSearchReceipt
+		LookupReceipts      []MatchingFallbackLookupReceipt
+		RunSourceID         uuid.UUID
+		RunProviderID       uuid.UUID
+		RunEndpoint         string
+		RunConfiguration    string
+		SearchKind          string
+		SearchCacheKey      string
+		SearchInput         json.RawMessage
+		Lookups             []legacyLookupAuthority
+	}
+	legacyLookups := make([]legacyLookupAuthority, len(snapshot.Lookups))
+	for index, lookup := range snapshot.Lookups {
+		legacyLookups[index] = legacyLookupAuthority{RequestID: lookup.RequestID, ReleaseID: lookup.ReleaseID, Kind: lookup.Kind,
+			ProviderSourceID: lookup.ProviderSourceID, ProviderID: lookup.ProviderID, Endpoint: lookup.Endpoint,
+			Configuration: lookup.Configuration, CacheKey: lookup.CacheKey, Input: lookup.Input}
+	}
+	encoded, err := json.Marshal(struct {
+		Version int           `json:"version"`
+		Context legacyContext `json:"context"`
+	}{Version: matchingFallbackCalculationLegacyDigestVersion, Context: legacyContext{
+		RunID: snapshot.RunID, AcquisitionRevision: snapshot.AcquisitionRevision, Intent: snapshot.Intent,
+		Target: snapshot.Target, PhaseInput: snapshot.PhaseInput, PhaseOutput: snapshot.PhaseOutput,
+		PhaseProvenance: snapshot.PhaseProvenance, SearchReceipt: snapshot.SearchReceipt,
+		LookupReceipts: snapshot.LookupReceipts, RunSourceID: snapshot.RunSourceID, RunProviderID: snapshot.RunProviderID,
+		RunEndpoint: snapshot.RunEndpoint, RunConfiguration: snapshot.RunConfiguration, SearchKind: snapshot.SearchKind,
+		SearchCacheKey: snapshot.SearchCacheKey, SearchInput: snapshot.SearchInput, Lookups: legacyLookups,
+	}})
+	if err != nil {
+		return nil, err
+	}
+	return canonicalMatchingJSON(encoded)
+}
+
+func canonicalMatchingFallbackCalculationContextBytesVersion(snapshot MatchingFallbackCalculationContext, version int) ([]byte, error) {
 	snapshot.Lookups = append([]MatchingFallbackCalculationLookupAuthority(nil), snapshot.Lookups...)
 	snapshot.LookupReceipts = append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...)
 	sort.Slice(snapshot.Lookups, func(i, j int) bool {
@@ -79,7 +167,7 @@ func canonicalMatchingFallbackCalculationContextBytes(snapshot MatchingFallbackC
 	encoded, err := json.Marshal(struct {
 		Version int                                `json:"version"`
 		Context MatchingFallbackCalculationContext `json:"context"`
-	}{Version: matchingFallbackCalculationDigestVersion, Context: snapshot})
+	}{Version: version, Context: snapshot})
 	if err != nil {
 		return nil, err
 	}
@@ -195,8 +283,9 @@ func loadMatchingFallbackCalculationContext(
 		run.SourceConfig != run.Configuration || searchReceipt.ProviderSourceID != run.SourceID || searchReceipt.ConfigurationIdentity != run.Configuration {
 		return result, false, fmt.Errorf("load fallback calculation context: search receipt differs from frozen source authority")
 	}
-	if len(intent.InitialProviderInputs) != 1 || intent.InitialProviderInputs[0].OperationID != searchReceipt.RequestID {
-		return result, false, fmt.Errorf("load fallback calculation context: initial search intent is invalid")
+	searchRegistration, registrationErr := loadFallbackRequestRegistration(ctx, database, runID, searchReceipt.StageIndex, "search", searchReceipt.RequestID)
+	if registrationErr != nil {
+		return result, false, fmt.Errorf("load fallback calculation context: registered search intent is invalid")
 	}
 	var searchOperation struct {
 		ID            uuid.UUID       `bun:"id"`
@@ -223,20 +312,23 @@ func loadMatchingFallbackCalculationContext(
 	if err != nil {
 		return result, false, fmt.Errorf("load fallback calculation context: read registered search operation: %w", err)
 	}
-	initialSearch := intent.InitialProviderInputs[0]
 	if searchOperation.ID != searchReceipt.RequestID || searchOperation.State != "succeeded" || searchOperation.Outcome != "succeeded" ||
-		searchOperation.Explicit || searchOperation.Kind != initialSearch.Kind ||
+		searchOperation.Explicit || searchOperation.Kind != searchRegistration.Kind ||
 		searchOperation.Kind != "provider_release_search" && searchOperation.Kind != "provider_recording_search" ||
 		searchOperation.SourceID != run.SourceID || searchOperation.ProviderID != run.ProviderID || searchOperation.Endpoint != run.Endpoint ||
-		searchOperation.Configuration != run.Configuration || searchOperation.CacheKey != initialSearch.CacheKey ||
-		!matchingJSONEqual(searchOperation.Input, initialSearch.Input) || !matchingJSONEqual(searchOperation.Input, searchReceipt.RequestInput) ||
+		searchOperation.Configuration != run.Configuration || searchOperation.CacheKey != searchRegistration.CacheKey ||
+		validateFallbackRequestRegistration(searchRegistration, "search", intent, runID, searchReceipt.RequestID, run.SourceID, run.Configuration,
+			searchOperation.Kind, searchOperation.CacheKey, searchOperation.Input) != nil || !matchingJSONEqual(searchOperation.Input, searchReceipt.RequestInput) ||
 		searchOperation.CacheKey != searchReceipt.CacheKey {
 		return result, false, fmt.Errorf("load fallback calculation context: registered search operation differs from accepted authority")
 	}
 
 	var phaseOut struct {
-		SearchReceipt matchingAcquisitionResponseProvenance `json:"search_receipt"`
-		Lookups       []struct {
+		StageIndex              int                                   `json:"stage_index"`
+		SearchRequestID         uuid.UUID                             `json:"search_request_id"`
+		OriginHydrationRevision int64                                 `json:"origin_hydration_revision"`
+		SearchReceipt           matchingAcquisitionResponseProvenance `json:"search_receipt"`
+		Lookups                 []struct {
 			ReleaseID string    `json:"release_id"`
 			RequestID uuid.UUID `json:"request_id"`
 			CacheKey  string    `json:"cache_key"`
@@ -252,18 +344,29 @@ func loadMatchingFallbackCalculationContext(
 	if json.Unmarshal(phase.Output, &phaseOut) != nil {
 		return result, false, fmt.Errorf("load fallback calculation context: applicability manifest is invalid")
 	}
+	var phaseIn struct {
+		StageIndex              int       `json:"stage_index"`
+		SearchRequestID         uuid.UUID `json:"search_request_id"`
+		OriginHydrationRevision int64     `json:"origin_hydration_revision"`
+	}
+	if json.Unmarshal(phase.Input, &phaseIn) != nil || phaseIn.StageIndex != searchReceipt.StageIndex ||
+		phaseIn.SearchRequestID != searchReceipt.RequestID || phaseIn.OriginHydrationRevision < 0 ||
+		phaseOut.StageIndex != phaseIn.StageIndex || phaseOut.SearchRequestID != phaseIn.SearchRequestID ||
+		phaseOut.OriginHydrationRevision != phaseIn.OriginHydrationRevision {
+		return result, false, fmt.Errorf("load fallback calculation context: applicability stage identity is invalid")
+	}
 	// Applicability output records accepted receipts; the registered lookup set
 	// comes from its original hydration input/output phase, never latest cache state.
 	var hydration MatchingAcquisitionPhase
-	err = database.NewRaw(`SELECT revision,phase,input,output FROM matching_acquisition_phase WHERE run_id=? AND phase=? ORDER BY revision DESC LIMIT 1`, runID, MatchingAcquisitionFallbackHydration).Scan(ctx,
+	err = database.NewRaw(`SELECT revision,phase,input,output FROM matching_acquisition_phase WHERE run_id=? AND revision=? AND phase=?`, runID, phaseIn.OriginHydrationRevision, MatchingAcquisitionFallbackHydration).Scan(ctx,
 		&hydration.Revision, &hydration.Phase, &hydration.Input, &hydration.Output)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Stage zero can go straight to applicability when it names no releases.
 		// Preserve that original descriptor rather than manufacturing hydration.
-		if len(phaseOut.Lookups) != 0 || len(phaseOut.LookupReceipts) != 0 {
+		if phaseIn.OriginHydrationRevision != 0 || len(phaseOut.Lookups) != 0 || len(phaseOut.LookupReceipts) != 0 {
 			return result, false, fmt.Errorf("load fallback calculation context: registered hydration manifest is missing")
 		}
-		hydration = MatchingAcquisitionPhase{Revision: revision, Phase: currentPhase, Input: phase.Input, Output: phase.Output}
+		hydration = MatchingAcquisitionPhase{Revision: phaseIn.OriginHydrationRevision, Phase: currentPhase, Input: phase.Input, Output: phase.Output}
 	} else if err != nil {
 		return result, false, fmt.Errorf("load fallback calculation context: read registered hydration manifest: %w", err)
 	}
@@ -282,7 +385,7 @@ func loadMatchingFallbackCalculationContext(
 		len(hydrationInput.ReleaseIDs) != len(hydrationOutput.Lookups) {
 		return result, false, fmt.Errorf("load fallback calculation context: registered hydration manifest is invalid")
 	}
-	if hydration.Phase == MatchingAcquisitionFallbackHydration && hydration.Revision+1 != revision {
+	if hydration.Phase == MatchingAcquisitionFallbackHydration && hydration.Revision >= revision {
 		return result, false, fmt.Errorf("load fallback calculation context: applicability phase is detached from its registered hydration")
 	}
 	lookups := make([]MatchingFallbackCalculationLookupAuthority, 0, len(hydrationOutput.Lookups))
@@ -320,7 +423,7 @@ func loadMatchingFallbackCalculationContext(
 			phaseOut.LookupReceipts[index].PayloadSHA != receipt.PayloadSHA256 || phaseOut.LookupReceipts[index].ProjectionSHA != receipt.ProjectionSHA256 {
 			return result, false, fmt.Errorf("load fallback calculation context: applicability receipt reference differs from registered lookup")
 		}
-		lookups = append(lookups, MatchingFallbackCalculationLookupAuthority{RequestID: descriptor.RequestID, ReleaseID: descriptor.ReleaseID, Kind: child.Kind,
+		lookups = append(lookups, MatchingFallbackCalculationLookupAuthority{RequestID: descriptor.RequestID, StageIndex: receipt.StageIndex, ReleaseID: descriptor.ReleaseID, Kind: child.Kind,
 			ProviderSourceID: child.SourceID, ProviderID: child.ProviderID, Endpoint: child.Endpoint, Configuration: child.Configuration, CacheKey: child.CacheKey, Input: child.Input})
 		receipts = append(receipts, *receipt)
 	}
@@ -328,7 +431,7 @@ func loadMatchingFallbackCalculationContext(
 		len(phaseOut.LookupReceipts) == 0 && len(lookups) != 0 || phaseOut.SearchReceipt != (matchingAcquisitionResponseProvenance{}) && phaseOut.SearchReceipt != searchRef[0] {
 		return result, false, fmt.Errorf("load fallback calculation context: applicability receipt set is incomplete")
 	}
-	result = MatchingFallbackCalculationContext{RunID: runID, AcquisitionRevision: revision, Intent: intent, Target: targetFence,
+	result = MatchingFallbackCalculationContext{RunID: runID, AcquisitionRevision: revision, StageIndex: phaseIn.StageIndex, Intent: intent, Target: targetFence,
 		PhaseInput: append(json.RawMessage(nil), hydration.Input...), PhaseOutput: append(json.RawMessage(nil), hydration.Output...),
 		PhaseProvenance: append(json.RawMessage(nil), phase.ResponseProvenance...), SearchReceipt: *searchReceipt, LookupReceipts: receipts,
 		RunSourceID: run.SourceID, RunProviderID: run.ProviderID, RunEndpoint: run.Endpoint, RunConfiguration: run.Configuration,

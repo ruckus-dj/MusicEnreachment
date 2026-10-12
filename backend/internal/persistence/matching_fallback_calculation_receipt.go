@@ -14,9 +14,12 @@ import (
 )
 
 const (
-	matchingFallbackCalculationSchemaVersion     = 2
-	matchingFallbackCalculationCalculatorVersion = 1
-	matchingFallbackCalculationDigestVersion     = 2
+	matchingFallbackCalculationSchemaVersion           = 3
+	matchingFallbackCalculationCalculatorVersion       = 3
+	matchingFallbackCalculationDigestVersion           = 3
+	matchingFallbackCalculationLegacySchemaVersion     = 2
+	matchingFallbackCalculationLegacyCalculatorVersion = 1
+	matchingFallbackCalculationLegacyDigestVersion     = 2
 )
 
 // MatchingFallbackCalculationReceipt is the immutable calculation handoff. The
@@ -25,6 +28,7 @@ const (
 type MatchingFallbackCalculationReceipt struct {
 	RunID               uuid.UUID       `json:"run_id"`
 	AcquisitionRevision int64           `json:"acquisition_revision"`
+	StageIndex          int             `json:"stage_index"`
 	InputDigest         string          `json:"input_digest"`
 	Context             json.RawMessage `json:"context"`
 	Edges               json.RawMessage `json:"edges"`
@@ -53,7 +57,8 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 		return false, fmt.Errorf("record fallback calculation receipt: context must be an object and edges an array")
 	}
 	var snapshot MatchingFallbackCalculationContext
-	if json.Unmarshal(receipt.Context, &snapshot) != nil || snapshot.RunID != runID || snapshot.AcquisitionRevision != expectedRevision {
+	if json.Unmarshal(receipt.Context, &snapshot) != nil || snapshot.RunID != runID || snapshot.AcquisitionRevision != expectedRevision ||
+		snapshot.StageIndex != receipt.StageIndex || receipt.StageIndex < 0 {
 		return false, fmt.Errorf("record fallback calculation receipt: context identity is invalid")
 	}
 	contextDigest, err := MatchingFallbackCalculationInputDigest(snapshot)
@@ -186,19 +191,40 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 		}
 		if priorReceipt {
 			var oldDigest, oldContext, oldEdges string
-			if err := tx.NewRaw(`SELECT encode(input_digest,'hex'),context::text,edge_calculations::text FROM matching_fallback_calculation_receipt
-				WHERE run_id=? AND acquisition_revision=? FOR UPDATE`, runID, expectedRevision).Scan(ctx, &oldDigest, &oldContext, &oldEdges); err != nil {
+			var oldStage, oldSchema, oldCalculator, oldDigestVersion int
+			if err := tx.NewRaw(`SELECT encode(input_digest,'hex'),context::text,edge_calculations::text,stage_index,schema_version,calculator_version,digest_version
+				FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=? FOR UPDATE`, runID, expectedRevision).
+				Scan(ctx, &oldDigest, &oldContext, &oldEdges, &oldStage, &oldSchema, &oldCalculator, &oldDigestVersion); err != nil {
 				return fmt.Errorf("record fallback calculation receipt: read prior receipt: %w", err)
 			}
 			var oldSnapshot MatchingFallbackCalculationContext
 			var oldContextCanonical []byte
 			var contextErr error
 			if json.Unmarshal([]byte(oldContext), &oldSnapshot) == nil {
-				oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytes(oldSnapshot)
+				switch {
+				case oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion:
+					oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytesV2(oldSnapshot)
+				case oldSchema == matchingFallbackCalculationSchemaVersion && oldCalculator == matchingFallbackCalculationCalculatorVersion && oldDigestVersion == matchingFallbackCalculationDigestVersion:
+					oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytes(oldSnapshot)
+				default:
+					contextErr = errors.New("stored calculation version pair is unsupported")
+				}
 			} else {
 				contextErr = errors.New("stored context is invalid")
 			}
-			if oldDigest != receipt.InputDigest || contextErr != nil || !equalDigest(oldContextCanonical, receiptCanonical) || !matchingJSONEqual([]byte(oldEdges), receipt.Edges) {
+			receiptContextCanonical := receiptCanonical
+			if oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion {
+				receiptContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytesV2(snapshot)
+			}
+			digestMatches := oldDigest == receipt.InputDigest
+			if oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion {
+				digestMatches = false
+				if legacyDigest, digestErr := MatchingFallbackCalculationInputDigestV2(snapshot); digestErr == nil {
+					digestMatches = oldDigest == legacyDigest && receipt.StageIndex == 0
+				}
+			}
+			if oldStage != receipt.StageIndex || !digestMatches || contextErr != nil ||
+				!equalDigest(oldContextCanonical, receiptContextCanonical) || !matchingJSONEqual([]byte(oldEdges), receipt.Edges) {
 				return errors.New("conflicting fallback calculation receipt replay")
 			}
 			recorded = true
@@ -206,7 +232,7 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 		}
 		_, err = tx.NewRaw(`INSERT INTO matching_fallback_calculation_receipt
 			(run_id,acquisition_revision,stage_index,schema_version,calculator_version,digest_version,input_digest,context,edge_calculations)
-			VALUES (?,?,0,?,?,?, ?,?::jsonb,?::jsonb)`, runID, expectedRevision,
+			VALUES (?,?, ?,?,?,?, ?,?::jsonb,?::jsonb)`, runID, expectedRevision, snapshot.StageIndex,
 			matchingFallbackCalculationSchemaVersion, matchingFallbackCalculationCalculatorVersion,
 			matchingFallbackCalculationDigestVersion, digest, string(receipt.Context), string(receipt.Edges)).Exec(ctx)
 		if err != nil {

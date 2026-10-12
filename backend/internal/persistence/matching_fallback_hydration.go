@@ -23,8 +23,11 @@ func (repository *SetupManagerRepository) CompleteFallbackHydrationForDelivery(
 		return false, fmt.Errorf("complete fallback hydration: registered phase changed")
 	}
 	var input struct {
-		ReleaseIDs     []string        `json:"release_ids"`
-		SearchManifest json.RawMessage `json:"search_manifest"`
+		StageIndex              int             `json:"stage_index"`
+		SearchRequestID         uuid.UUID       `json:"search_request_id"`
+		OriginHydrationRevision int64           `json:"origin_hydration_revision"`
+		ReleaseIDs              []string        `json:"release_ids"`
+		SearchManifest          json.RawMessage `json:"search_manifest"`
 	}
 	var output struct {
 		Lookups []struct {
@@ -37,12 +40,18 @@ func (repository *SetupManagerRepository) CompleteFallbackHydrationForDelivery(
 	if err := repository.db.NewRaw(`SELECT response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, runID, expectedRevision).Scan(ctx, &searchProvenanceBytes); err != nil {
 		return false, fmt.Errorf("complete fallback hydration: read search receipt reference: %w", err)
 	}
-	if json.Unmarshal(snapshot.Input, &input) != nil || json.Unmarshal(snapshot.Output, &output) != nil || len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) != len(output.Lookups) {
+	if json.Unmarshal(snapshot.Input, &input) != nil || json.Unmarshal(snapshot.Output, &output) != nil || input.StageIndex < 0 ||
+		input.OriginHydrationRevision != expectedRevision || input.SearchRequestID == uuid.Nil ||
+		len(input.ReleaseIDs) == 0 || len(input.ReleaseIDs) != len(output.Lookups) {
 		return false, fmt.Errorf("complete fallback hydration: registered lookup manifest is invalid")
 	}
 	var searchProvenance []matchingAcquisitionResponseProvenance
-	if json.Unmarshal(searchProvenanceBytes, &searchProvenance) != nil || len(searchProvenance) != 1 {
+	if json.Unmarshal(searchProvenanceBytes, &searchProvenance) != nil || len(searchProvenance) != 1 || searchProvenance[0].RequestID != input.SearchRequestID {
 		return false, fmt.Errorf("complete fallback hydration: search receipt reference is invalid")
+	}
+	registration, err := loadFallbackRequestRegistration(ctx, repository.db, runID, input.StageIndex, "search", input.SearchRequestID)
+	if err != nil || registration.RequestID != input.SearchRequestID {
+		return false, fmt.Errorf("complete fallback hydration: registered search request is unavailable")
 	}
 	receipts := make([]map[string]any, 0, len(output.Lookups))
 	for index, lookup := range output.Lookups {
@@ -60,13 +69,14 @@ func (repository *SetupManagerRepository) CompleteFallbackHydrationForDelivery(
 			// absence of an unfinished child's receipt as evidence.
 			continue
 		}
-		if receipt.StageIndex != 0 || receipt.CacheKey != lookup.CacheKey {
+		if receipt.StageIndex != input.StageIndex || receipt.CacheKey != lookup.CacheKey {
 			return false, fmt.Errorf("complete fallback hydration: immutable lookup receipt is mismatched")
 		}
 		receipts = append(receipts, map[string]any{"release_id": lookup.ReleaseID, "request_id": lookup.RequestID,
 			"cache_key": lookup.CacheKey, "payload_sha256": receipt.PayloadSHA256, "projection_sha256": receipt.ProjectionSHA256})
 	}
-	phaseOutput, _ := json.Marshal(map[string]any{"search_receipt": searchProvenance[0], "search_manifest": input.SearchManifest, "lookup_receipts": receipts})
+	phaseOutput, _ := json.Marshal(map[string]any{"stage_index": input.StageIndex, "search_request_id": input.SearchRequestID,
+		"origin_hydration_revision": input.OriginHydrationRevision, "search_receipt": searchProvenance[0], "search_manifest": input.SearchManifest, "lookup_receipts": receipts})
 	phase := MatchingAcquisitionPhase{Revision: expectedRevision + 1, Phase: MatchingAcquisitionFallbackApplicability,
 		Input: snapshot.Input, Output: phaseOutput, ResponseProvenance: searchProvenanceBytes}
 	return repository.advanceMatchingAcquisitionForDelivery(ctx, client, runID, attempt, riverJobID, claim, expectedRevision, phase, nil, nil)

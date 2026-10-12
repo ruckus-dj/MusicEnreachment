@@ -9,6 +9,7 @@ import (
 	"math"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 )
 
 // ValidateMatchingFallbackCalculationEdges independently verifies the compact
@@ -129,7 +130,7 @@ func ValidateMatchingFallbackCalculationEdges(snapshot MatchingFallbackCalculati
 		seenLookupIDs := make(map[uuid.UUID]bool, len(snapshot.LookupReceipts))
 		seenReleaseIDs := make(map[string]bool, len(snapshot.LookupReceipts))
 		for _, lookup := range snapshot.LookupReceipts {
-			if lookup.StageIndex != 0 || lookup.RunID != snapshot.RunID {
+			if lookup.StageIndex != snapshot.StageIndex || lookup.RunID != snapshot.RunID {
 				return fmt.Errorf("accepted lookup scope is invalid")
 			}
 			releaseID := lookupReleaseID(snapshot, lookup.RequestID)
@@ -197,6 +198,12 @@ func ValidateMatchingFallbackCalculationEdges(snapshot MatchingFallbackCalculati
 }
 
 func validateFallbackLookupUniverse(snapshot MatchingFallbackCalculationContext) error {
+	var plan policy.TypedFallbackQueryPlan
+	if snapshot.StageIndex < 0 || json.Unmarshal(snapshot.Intent.FallbackQueryPlan, &plan) != nil ||
+		snapshot.StageIndex >= len(plan.Stages) || snapshot.SearchReceipt.StageIndex != snapshot.StageIndex ||
+		!fallbackStageMatchesRequest(snapshot.Intent, "search", snapshot.SearchKind, snapshot.SearchInput, snapshot.StageIndex) {
+		return fmt.Errorf("accepted search scope does not match registered fallback stage")
+	}
 	var hits struct {
 		Releases []struct {
 			ID string `json:"id"`
@@ -245,7 +252,8 @@ func validateFallbackLookupUniverse(snapshot MatchingFallbackCalculationContext)
 	}
 	for _, receipt := range snapshot.LookupReceipts {
 		authority, ok := authorities[receipt.RequestID]
-		if !ok || authority.ReleaseID != lookupReleaseID(snapshot, receipt.RequestID) || receipt.StageIndex != 0 || receipt.RunID != snapshot.RunID {
+		if !ok || authority.StageIndex != snapshot.StageIndex || authority.ReleaseID != lookupReleaseID(snapshot, receipt.RequestID) ||
+			receipt.StageIndex != snapshot.StageIndex || receipt.RunID != snapshot.RunID {
 			return fmt.Errorf("accepted lookup receipts do not match registered authorities")
 		}
 		delete(authorities, receipt.RequestID)

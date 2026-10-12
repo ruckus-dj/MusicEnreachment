@@ -460,14 +460,14 @@ func validFallbackApplicabilityInput(t *testing.T, releaseCount int, sharedRecor
 		}
 		return ids
 	}()})
-	phaseInput, _ := json.Marshal(fallbackHydrationInput{ReleaseIDs: func() []string {
+	phaseInput, _ := json.Marshal(fallbackHydrationInput{StageIndex: 0, SearchRequestID: requestID, OriginHydrationRevision: 3, ReleaseIDs: func() []string {
 		ids := make([]string, releaseCount)
 		for i := range ids {
 			ids[i] = fmt.Sprintf("release-%02d", i)
 		}
 		return ids
 	}(), SearchManifest: searchManifest})
-	phaseOutput, _ := json.Marshal(fallbackHydrationOutput{Lookups: lookups})
+	phaseOutput, _ := json.Marshal(fallbackHydrationOutput{StageIndex: 0, SearchRequestID: requestID, OriginHydrationRevision: 3, Lookups: lookups})
 	provenance, _ := json.Marshal([]fallbackResponseProvenance{{RequestID: requestID, CacheKey: queryKey, PayloadSHA: hex.EncodeToString(searchHash[:])}})
 	initialInput := json.RawMessage(`{"schema_version":1,"query":"release:\"Album\"","offset":0,"limit":10}`)
 	lookupAuthorities := make([]MatchingFallbackLookupAuthority, 0, len(lookups))

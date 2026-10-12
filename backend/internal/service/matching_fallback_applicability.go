@@ -20,6 +20,7 @@ import (
 type MatchingFallbackApplicabilityInput struct {
 	RunID               uuid.UUID
 	AcquisitionRevision int64
+	StageIndex          int
 	Intent              persistence.MatchingAcquisitionIntent
 	Target              persistence.MatchingRunFenceSnapshot
 	PhaseInput          json.RawMessage
@@ -174,12 +175,18 @@ func (capture *fallbackCapture) UnmarshalJSON(raw []byte) error {
 }
 
 type fallbackHydrationInput struct {
-	ReleaseIDs     []string        `json:"release_ids"`
-	SearchManifest json.RawMessage `json:"search_manifest"`
+	StageIndex              int             `json:"stage_index"`
+	SearchRequestID         uuid.UUID       `json:"search_request_id"`
+	OriginHydrationRevision int64           `json:"origin_hydration_revision"`
+	ReleaseIDs              []string        `json:"release_ids"`
+	SearchManifest          json.RawMessage `json:"search_manifest"`
 }
 
 type fallbackHydrationOutput struct {
-	Lookups []struct {
+	StageIndex              int       `json:"stage_index"`
+	SearchRequestID         uuid.UUID `json:"search_request_id"`
+	OriginHydrationRevision int64     `json:"origin_hydration_revision"`
+	Lookups                 []struct {
 		ReleaseID string    `json:"release_id"`
 		RequestID uuid.UUID `json:"request_id"`
 		CacheKey  string    `json:"cache_key"`
@@ -210,10 +217,26 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: invalid saved plan: %w", err)
 	}
 	var typedPlan policy.TypedFallbackQueryPlan
-	if err := json.Unmarshal(plan, &typedPlan); err != nil || len(typedPlan.Stages) == 0 {
-		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: saved plan has no stage zero")
+	if err := json.Unmarshal(plan, &typedPlan); err != nil || input.StageIndex < 0 || input.StageIndex >= len(typedPlan.Stages) {
+		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: saved plan has no registered stage")
 	}
-	stage := typedPlan.Stages[0]
+	stage := typedPlan.Stages[input.StageIndex]
+	initialStage := typedPlan.Stages[0]
+	initialKind, initialPrefix, initialOK := policy.ProviderKindForFallbackStage(initialStage.Kind)
+	var immutableInitialInput struct {
+		SchemaVersion int    `json:"schema_version"`
+		Query         string `json:"query"`
+		Offset        int    `json:"offset"`
+		Limit         int    `json:"limit"`
+	}
+	if !initialOK || len(input.Intent.InitialProviderInputs) != 1 ||
+		input.Intent.InitialProviderInputs[0].Kind != initialKind ||
+		decodeFallbackStrict(input.Intent.InitialProviderInputs[0].Input, &immutableInitialInput) != nil ||
+		immutableInitialInput.SchemaVersion != 1 || immutableInitialInput.Query != initialStage.Query ||
+		immutableInitialInput.Offset != initialStage.Offset || immutableInitialInput.Limit != initialStage.Limit ||
+		input.Intent.InitialProviderInputs[0].CacheKey != fmt.Sprintf("%s:%d:%d:%s", initialPrefix, initialStage.Offset, initialStage.Limit, initialStage.Query) {
+		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: immutable initial search intent is invalid")
+	}
 	providerKind, cachePrefix, ok := policy.ProviderKindForFallbackStage(stage.Kind)
 	var initialQuery struct {
 		SchemaVersion int    `json:"schema_version"`
@@ -221,15 +244,18 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 		Offset        int    `json:"offset"`
 		Limit         int    `json:"limit"`
 	}
-	if !ok || decodeFallbackStrict(input.Intent.InitialProviderInputs[0].Input, &initialQuery) != nil ||
+	if !ok || decodeFallbackStrict(input.Authority.SearchInput, &initialQuery) != nil ||
 		initialQuery.SchemaVersion != 1 || initialQuery.Query != stage.Query || initialQuery.Offset != stage.Offset || initialQuery.Limit != stage.Limit ||
-		input.Intent.InitialProviderInputs[0].Kind != providerKind ||
-		input.Intent.InitialProviderInputs[0].CacheKey != fmt.Sprintf("%s:%d:%d:%s", cachePrefix, stage.Offset, stage.Limit, stage.Query) {
-		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: stage zero does not match the accepted search request")
+		input.Authority.SearchKind != providerKind ||
+		input.Authority.SearchCacheKey != fmt.Sprintf("%s:%d:%d:%s", cachePrefix, stage.Offset, stage.Limit, stage.Query) {
+		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: stage does not match the accepted search request")
 	}
 	var phaseIn fallbackHydrationInput
 	var phaseOut fallbackHydrationOutput
-	if decodeFallbackStrict(input.PhaseInput, &phaseIn) != nil || decodeFallbackStrict(input.PhaseOutput, &phaseOut) != nil {
+	if decodeFallbackStrict(input.PhaseInput, &phaseIn) != nil || decodeFallbackStrict(input.PhaseOutput, &phaseOut) != nil ||
+		phaseIn.StageIndex != input.StageIndex || phaseOut.StageIndex != input.StageIndex ||
+		phaseIn.SearchRequestID != input.SearchReceipt.RequestID || phaseOut.SearchRequestID != input.SearchReceipt.RequestID ||
+		phaseIn.OriginHydrationRevision < 0 || phaseIn.OriginHydrationRevision != phaseOut.OriginHydrationRevision {
 		return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: hydration phase is malformed")
 	}
 	var manifest fallbackSearchManifestDTO
@@ -252,7 +278,7 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 	}
 	receiptByRequest := make(map[uuid.UUID]persistence.MatchingFallbackLookupReceipt, len(input.LookupReceipts))
 	for _, receipt := range input.LookupReceipts {
-		if receipt.RequestID == uuid.Nil || receipt.RunID != input.RunID || receipt.StageIndex != 0 {
+		if receipt.RequestID == uuid.Nil || receipt.RunID != input.RunID || receipt.StageIndex != input.StageIndex {
 			return MatchingFallbackApplicabilityResult{}, fmt.Errorf("fallback applicability: lookup receipt scope is invalid")
 		}
 		if _, duplicate := receiptByRequest[receipt.RequestID]; duplicate {
@@ -434,24 +460,20 @@ func CalculateFallbackApplicability(input MatchingFallbackApplicabilityInput) (M
 }
 
 func validateFallbackApplicabilityAuthority(input MatchingFallbackApplicabilityInput) error {
-	if input.RunID == uuid.Nil || input.AcquisitionRevision < 1 || input.Intent.SchemaVersion != 3 || input.Intent.FenceVersion != 2 ||
+	if input.RunID == uuid.Nil || input.AcquisitionRevision < 1 || input.StageIndex < 0 || input.Intent.SchemaVersion != 3 || input.Intent.FenceVersion != 2 ||
 		input.Target.Version != 2 || input.Target.GroupID == uuid.Nil || input.Target.GroupRevision == "" || len(input.Target.Capture) == 0 ||
 		input.Intent.TargetCaptureDigest == "" || input.Target.CaptureDigest != input.Intent.TargetCaptureDigest || len(input.Intent.Targets) != 1 ||
 		input.Intent.Targets[0] != (persistence.MatchingTarget{GroupID: input.Target.GroupID, Revision: input.Target.GroupRevision}) {
 		return fmt.Errorf("fallback applicability: run, intent, or frozen target authority is invalid")
 	}
-	if input.SearchReceipt.RunID != input.RunID || input.SearchReceipt.StageIndex != 0 || input.SearchReceipt.RequestID == uuid.Nil ||
+	if input.SearchReceipt.RunID != input.RunID || input.SearchReceipt.StageIndex != input.StageIndex || input.SearchReceipt.RequestID == uuid.Nil ||
 		input.SearchReceipt.ProviderSourceID == uuid.Nil || input.SearchReceipt.ConfigurationIdentity == "" ||
-		len(input.Intent.InitialProviderInputs) != 1 || input.Intent.InitialProviderInputs[0].OperationID != input.SearchReceipt.RequestID ||
-		input.Intent.InitialProviderInputs[0].CacheKey != input.SearchReceipt.CacheKey || input.Intent.InitialProviderInputs[0].Kind != "provider_release_search" && input.Intent.InitialProviderInputs[0].Kind != "provider_recording_search" {
+		input.Authority.SearchCacheKey != input.SearchReceipt.CacheKey {
 		return fmt.Errorf("fallback applicability: accepted search receipt is outside intent scope")
 	}
-	initial := input.Intent.InitialProviderInputs[0]
 	if input.Authority.RunSourceID == uuid.Nil || input.Authority.RunProviderID == uuid.Nil || input.Authority.RunEndpoint == "" ||
 		input.Authority.RunSourceID != input.SearchReceipt.ProviderSourceID || input.Authority.RunConfiguration != input.SearchReceipt.ConfigurationIdentity ||
-		len(input.SearchReceipt.RequestInput) == 0 || !fallbackJSONEqual(input.SearchReceipt.RequestInput, initial.Input) ||
-		input.Authority.SearchKind != initial.Kind || input.Authority.SearchCacheKey != initial.CacheKey ||
-		!fallbackJSONEqual(input.Authority.SearchInput, initial.Input) ||
+		len(input.SearchReceipt.RequestInput) == 0 || !fallbackJSONEqual(input.SearchReceipt.RequestInput, input.Authority.SearchInput) ||
 		len(input.Authority.Lookups) != len(input.LookupReceipts) {
 		return fmt.Errorf("fallback applicability: provider request authority is incomplete or mismatched")
 	}

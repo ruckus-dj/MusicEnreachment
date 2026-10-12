@@ -31,7 +31,7 @@ func TestAutomaticFallbackReceiptReplaysAfterInterruptedRetryPostgreSQL(t *testi
 	testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t, true)
 }
 
-func testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T, interruptedRetry bool) {
+func testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T, interruptedRetry bool, afterReceipt ...func(*testing.T, fallbackStageReceiptFixture)) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
@@ -282,5 +282,12 @@ func testAutomaticFallbackCacheHitWorkerCapturesReceiptPostgreSQL(t *testing.T, 
 	}
 	if !json.Valid(receipt.Payload) {
 		t.Fatalf("receipt did not preserve accepted response: %s", receipt.Payload)
+	}
+	for _, verify := range afterReceipt {
+		verify(t, fallbackStageReceiptFixture{
+			ctx: ctx, fixture: fixture, cache: cache, config: config, source: source, plan: plan,
+			client: client, worker: providerWorker,
+			parentID: parentID, stageZeroRequestID: childID, stageZeroReceipt: receipt,
+		})
 	}
 }
