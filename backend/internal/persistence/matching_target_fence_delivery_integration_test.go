@@ -4,9 +4,12 @@ package persistence_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
@@ -138,7 +141,8 @@ func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgr
 	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags='{"ALBUM":["Captured Album"],"TITLE":["Captured Track"]}'::jsonb`).Exec(fixture.ctx); err != nil {
 		t.Fatalf("restore album-and-title captured metadata: %v", err)
 	}
-	first, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, makeAdmission())
+	acceptedAdmission := makeAdmission()
+	first, err := fixture.repository.AdmitAutomaticFallbackMatchingRun(fixture.ctx, client, acceptedAdmission)
 	if err != nil || first.AlreadyAdmitted || first.Operation == nil {
 		t.Fatalf("admit fallback plan: result=%+v err=%v", first, err)
 	}
@@ -146,8 +150,75 @@ func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgr
 	if err != nil || !exists || acquisition.Intent.SchemaVersion != 3 || acquisition.Intent.ArtistQueryPlanVersion != 0 || len(acquisition.Intent.FallbackQueryPlan) == 0 {
 		t.Fatalf("read fallback acquisition intent: exists=%v intent=%+v err=%v", exists, acquisition.Intent, err)
 	}
-	if _, _, exists, err := fixture.repository.GetMatchingAcquisitionMetadataCapture(fixture.ctx, first.OriginalRunID, "admitted"); err != nil || !exists {
+	if acquisition.Phase != "fallback_search" || string(acquisition.Output) == "" {
+		t.Fatalf("fallback initial stage descriptor was not captured: phase=%q output=%s", acquisition.Phase, acquisition.Output)
+	}
+	var initialOutput struct {
+		State      string                         `json:"state"`
+		StageIndex int                            `json:"stage_index"`
+		Descriptor policy.TypedFallbackQueryStage `json:"descriptor"`
+	}
+	if err := json.Unmarshal(acquisition.Output, &initialOutput); err != nil || initialOutput.State != "fallback_search" || initialOutput.StageIndex != 0 || initialOutput.Descriptor != plan.Stages[0] {
+		t.Fatalf("fallback initial stage descriptor differs from plan: output=%+v err=%v", initialOutput, err)
+	}
+	if _, _, exists, err := fixture.repository.GetMatchingAcquisitionMetadataCapture(fixture.ctx, first.OriginalRunID, "fallback_search"); err != nil || !exists {
 		t.Fatalf("read immutable fallback metadata capture: exists=%v err=%v", exists, err)
+	}
+	// Capture through the real cache-reuse acceptance hook, then prove the
+	// receipt remains the accepted authority after the mutable cache is replaced.
+	cache := persistence.NewProviderCacheRepository(fixture.db)
+	acceptedPayload := json.RawMessage(`{"count":1,"results":[{"id":"accepted","score":0}],"unknown":{"preserved":[3,1]}}`)
+	ticket, err := cache.BeginRefresh(fixture.ctx, source.ID, *acceptedAdmission.Provider.Operation.ProviderCacheKey, source.Identity)
+	if err != nil {
+		t.Fatalf("reserve accepted cache payload: %v", err)
+	}
+	if err := cache.ApplySuccessfulResponse(fixture.ctx, persistence.ProviderSuccessfulResponse{Ticket: ticket, FetchedAt: time.Now().UTC(), Payload: acceptedPayload}); err != nil {
+		t.Fatalf("apply accepted cache payload: %v", err)
+	}
+	child, err := fixture.repository.GetOperation(fixture.ctx, acceptedAdmission.Provider.Operation.ID)
+	if err != nil || child.RiverJobID == nil {
+		t.Fatalf("read initial provider operation: operation=%+v err=%v", child, err)
+	}
+	epoch, claimed, err := fixture.repository.ClaimProviderOperationDelivery(fixture.ctx, child.ID, child.Attempt, *child.RiverJobID)
+	if err != nil || !claimed {
+		t.Fatalf("claim initial provider delivery: claimed=%v err=%v", claimed, err)
+	}
+	operations := service.NewOperationsWithRiver(fixture.repository, client)
+	if err := operations.RunningForProviderDelivery(fixture.ctx, child, epoch, "searching"); err != nil {
+		t.Fatalf("mark initial provider delivery running: %v", err)
+	}
+	deliveryFence := persistence.ProviderDeliveryFence{OperationID: child.ID, Attempt: child.Attempt, RiverJobID: *child.RiverJobID, ExecutionEpoch: epoch}
+	cached, err := cache.GetCachedResponse(fixture.ctx, source.ID, *acceptedAdmission.Provider.Operation.ProviderCacheKey)
+	if err != nil || cached == nil {
+		t.Fatalf("read accepted response for cache reuse: response=%+v err=%v", cached, err)
+	}
+	if err := cache.CaptureManualPickerSearchReuse(fixture.ctx, deliveryFence, cached); err != nil {
+		t.Fatalf("capture fallback cache reuse: %v", err)
+	}
+	if err := cache.CaptureManualPickerSearchReuse(fixture.ctx, deliveryFence, cached); err != nil {
+		t.Fatalf("idempotently recapture fallback cache reuse: %v", err)
+	}
+	if err := operations.SucceedForProviderDelivery(fixture.ctx, child, epoch, "succeeded"); err != nil {
+		t.Fatalf("settle provider delivery after receipt capture: %v", err)
+	}
+	searchReceipt, err := fixture.repository.GetMatchingFallbackSearchReceipt(fixture.ctx, first.OriginalRunID, child.ID)
+	if err != nil || searchReceipt == nil || string(searchReceipt.Payload) != string(acceptedPayload) {
+		t.Fatalf("read immutable accepted fallback receipt: receipt=%+v err=%v", searchReceipt, err)
+	}
+	acceptedDigest := sha256.Sum256(searchReceipt.Payload)
+	if searchReceipt.PayloadSHA256 != fmt.Sprintf("%x", acceptedDigest[:]) || searchReceipt.StageIndex != 0 || searchReceipt.CacheGeneration != ticket.Generation {
+		t.Fatalf("fallback receipt digest or provenance is invalid: %+v", searchReceipt)
+	}
+	replacement, err := cache.BeginRefresh(fixture.ctx, source.ID, *acceptedAdmission.Provider.Operation.ProviderCacheKey, source.Identity)
+	if err != nil {
+		t.Fatalf("reserve replacement cache payload: %v", err)
+	}
+	if err := cache.ApplySuccessfulResponse(fixture.ctx, persistence.ProviderSuccessfulResponse{Ticket: replacement, FetchedAt: time.Now().UTC(), Payload: json.RawMessage(`{"count":0,"results":[],"different":true}`)}); err != nil {
+		t.Fatalf("replace mutable provider cache: %v", err)
+	}
+	searchReceipt, err = fixture.repository.GetMatchingFallbackSearchReceipt(fixture.ctx, first.OriginalRunID, child.ID)
+	if err != nil || searchReceipt == nil || string(searchReceipt.Payload) != string(acceptedPayload) {
+		t.Fatalf("cache replacement changed accepted fallback authority: receipt=%+v err=%v", searchReceipt, err)
 	}
 	fence, exists, err := fixture.repository.GetMatchingRunFence(fixture.ctx, first.OriginalRunID)
 	if err != nil || !exists || fence.Version != 2 || fence.GroupID != target.GroupID {
@@ -209,7 +280,19 @@ func TestAutomaticFallbackMatchingAdmissionPersistsVersionedPlanAndReceiptPostgr
 		t.Fatalf("empty-plan run lost its saved provider source: source=%+v err=%v", emptyRunSource, err)
 	}
 	manualAcquisition, exists, err := fixture.repository.GetMatchingAcquisition(fixture.ctx, manualID)
-	if err != nil || !exists || manualAcquisition.Phase != "waiting_policy" || len(manualAcquisition.Intent.InitialProviderInputs) != 0 || len(manualAcquisition.Intent.FallbackQueryPlan) == 0 {
+	var manualWaitOutput struct {
+		State      string          `json:"state"`
+		StageIndex *int            `json:"stage_index"`
+		Descriptor json.RawMessage `json:"descriptor"`
+		Reason     string          `json:"reason"`
+	}
+	if err != nil || !exists {
+		t.Fatalf("read empty-plan acquisition: exists=%v err=%v", exists, err)
+	}
+	if err := json.Unmarshal(manualAcquisition.Output, &manualWaitOutput); err != nil {
+		t.Fatalf("decode empty-plan manual wait: %v", err)
+	}
+	if manualAcquisition.Phase != "waiting_policy" || len(manualAcquisition.Intent.InitialProviderInputs) != 0 || len(manualAcquisition.Intent.FallbackQueryPlan) == 0 || manualWaitOutput.State != "waiting_policy" || manualWaitOutput.StageIndex != nil || string(manualWaitOutput.Descriptor) != "null" || manualWaitOutput.Reason != "fallback_plan_empty" {
 		t.Fatalf("read empty-plan manual wait: exists=%v acquisition=%+v err=%v", exists, manualAcquisition, err)
 	}
 	var childCount int

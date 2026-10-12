@@ -293,15 +293,32 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 			return err
 		}
 		intentHash := sha256.Sum256(intentBytes)
-		phase := "admitted"
+		phase := "fallback_search"
+		var phaseOutput []byte
 		if len(plan.Stages) == 0 {
 			phase = "waiting_policy"
+			phaseOutput, err = json.Marshal(struct {
+				State      string `json:"state"`
+				StageIndex *int   `json:"stage_index"`
+				Descriptor any    `json:"descriptor"`
+				Reason     string `json:"reason"`
+			}{State: phase, Reason: "fallback_plan_empty"})
+		} else {
+			stage := plan.Stages[0]
+			stageIndex := 0
+			phaseOutput, err = json.Marshal(struct {
+				State      string                         `json:"state"`
+				StageIndex int                            `json:"stage_index"`
+				Descriptor policy.TypedFallbackQueryStage `json:"descriptor"`
+			}{State: phase, StageIndex: stageIndex, Descriptor: stage})
+		}
+		if err != nil {
+			return err
 		}
 		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition(run_id,intent_version,intent,intent_digest,current_phase) VALUES (?,3,?::jsonb,?,?)`, admission.Parent.ID, string(intentBytes), intentHash[:], phase).Exec(ctx); err != nil {
 			return err
 		}
-		output := `{"state":"` + phase + `"}`
-		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id,revision,phase,input,output,response_provenance) VALUES (?,0,?,'{}'::jsonb,?::jsonb,'[]'::jsonb)`, admission.Parent.ID, phase, output).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_acquisition_phase(run_id,revision,phase,input,output,response_provenance) VALUES (?,0,?,'{}'::jsonb,?::jsonb,'[]'::jsonb)`, admission.Parent.ID, phase, string(phaseOutput)).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`INSERT INTO incoming_matching_automatic_admission(fingerprint,original_run_id,original_operation_id) VALUES (?,?,?)`, fingerprint[:], admission.Parent.ID, admission.Parent.ID).Exec(ctx); err != nil {

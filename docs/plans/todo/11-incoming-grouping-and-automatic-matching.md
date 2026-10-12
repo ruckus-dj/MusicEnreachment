@@ -1090,6 +1090,19 @@ normalization для score в точности. Если по имеющимся
   contract-only increment: fallback stage execution/seal3 and runtime activation
   remain unimplemented; artistless reconciliation still defers meanwhile.
 
+### Immutable fallback accepted-search receipts — 2026-10-12
+
+- Fresh acceptance and cache reuse capture run-owned canonical payload/input
+  receipts before successful dependency settlement; recording cache hits are
+  included. Retry checks accepted receipt before mutable cache. Populated
+  receipt rollback is guarded; initial fallback phase records its typed stage.
+- PostgreSQL fresh/repository-reuse tests preserve A after cache refresh B,
+  unknown fields, array order and missing versus zero scores. Independent review
+  approved bounded authority; primary full `task verify` passed.
+- Recording first-cache-hit and interrupted worker retry/zero-HTTP proof remain
+  required before stage activation. Stage transitions/applicability/seal3 and
+  production fallback execution remain unimplemented.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

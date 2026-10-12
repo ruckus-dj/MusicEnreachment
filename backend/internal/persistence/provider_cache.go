@@ -634,6 +634,9 @@ func (repository *ProviderCacheRepository) ApplySuccessfulResponse(ctx context.C
 			if err := repository.captureManualPickerSearchResult(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
 				return fmt.Errorf("apply successful provider response: capture manual picker result: %w", err)
 			}
+			if err := repository.captureAutomaticFallbackSearchReceipt(ctx, tx, *response.Delivery, ticket, response.Payload, response.Revision); err != nil {
+				return fmt.Errorf("apply successful provider response: capture automatic fallback search receipt: %w", err)
+			}
 			var selectedMBID uuid.UUID
 			manualErr := tx.NewRaw(`SELECT admission.selected_release_mbid FROM manual_matching_admission admission
 				JOIN operation ON operation.id=admission.lookup_operation_id
@@ -723,14 +726,17 @@ func (repository *ProviderCacheRepository) CaptureManualPickerSearchReuse(ctx co
 		if err := tx.NewRaw(`SELECT kind,state,attempt,river_job_id,provider_source_id,provider_configuration_identity,provider_cache_key,provider_execution_epoch FROM operation WHERE id=? FOR UPDATE`, fence.OperationID).Scan(ctx, &kind, &state, &attempt, &jobID, &sourceID, &operationIdentity, &operationCacheKey, &epoch); err != nil {
 			return err
 		}
-		if kind != "provider_artist_search" && kind != "provider_release_search" && kind != "provider_artist_release_browse" {
+		if kind != "provider_artist_search" && kind != "provider_release_search" && kind != "provider_recording_search" && kind != "provider_artist_release_browse" {
 			return fmt.Errorf("capture manual picker cache reuse: operation is not a picker search")
 		}
 		if state != "running" || attempt != fence.Attempt || !jobID.Valid || jobID.Int64 != fence.RiverJobID || epoch != fence.ExecutionEpoch || sourceID != expected.ProviderSourceID || operationIdentity != identity || operationCacheKey != expected.CacheKey {
 			return fmt.Errorf("capture manual picker cache reuse: delivery is stale")
 		}
 		ticket := ProviderRefreshTicket{ProviderSourceID: current.ProviderSourceID, ProviderID: current.ProviderID, CacheKey: current.CacheKey, Generation: current.Generation, ConfigurationIdentity: identity, FetchOrder: current.FetchOrder}
-		return repository.captureManualPickerSearchResult(ctx, tx, fence, ticket, current.Payload, nullableString(current.Revision))
+		if err := repository.captureManualPickerSearchResult(ctx, tx, fence, ticket, current.Payload, nullableString(current.Revision)); err != nil {
+			return err
+		}
+		return repository.captureAutomaticFallbackSearchReceipt(ctx, tx, fence, ticket, current.Payload, nullableString(current.Revision))
 	})
 }
 

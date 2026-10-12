@@ -211,6 +211,17 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 	if err := operations.RunningForProviderDelivery(ctx, operation, epoch, "fetching_provider"); err != nil {
 		return err
 	}
+	if operation.Kind == "provider_release_search" || operation.Kind == "provider_recording_search" {
+		receipt, err := service.cache.ReplayAutomaticFallbackSearchReceipt(ctx, persistence.ProviderDeliveryFence{
+			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
+		})
+		if err != nil {
+			return service.failProviderOperation(ctx, operations, operation, epoch, err)
+		}
+		if receipt != nil {
+			return operations.SucceedForProviderDelivery(ctx, operation, epoch, "provider_fallback_result_reused")
+		}
+	}
 	if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_artist_release_browse" {
 		captured, err := service.cache.HasCapturedManualPickerSearchResult(ctx, persistence.ProviderDeliveryFence{
 			OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
@@ -227,7 +238,7 @@ func (service *ProviderFetchService) ExecuteDurableOperation(ctx context.Context
 		return service.failProviderOperation(ctx, operations, operation, epoch, err)
 	}
 	if response != nil && len(response.Payload) != 0 && !operation.ProviderExplicitRefresh {
-		if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_artist_release_browse" {
+		if operation.Kind == "provider_artist_search" || operation.Kind == "provider_release_search" || operation.Kind == "provider_recording_search" || operation.Kind == "provider_artist_release_browse" {
 			if err := service.cache.CaptureManualPickerSearchReuse(ctx, persistence.ProviderDeliveryFence{
 				OperationID: operation.ID, Attempt: operation.Attempt, RiverJobID: jobID, ExecutionEpoch: epoch,
 			}, response); err != nil {
