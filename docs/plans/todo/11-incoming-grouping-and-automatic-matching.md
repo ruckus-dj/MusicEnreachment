@@ -1212,6 +1212,19 @@ normalization для score в точности. Если по имеющимся
   acquisition advancement. Versioned calculation persistence and next-stage
   routing remain outstanding before sealing and runtime activation.
 
+### Persisted complete applicability calculation receipts — 2026-10-12
+
+- Immutable calculation writer reconstructs persisted authority in its fenced
+  transaction and verifies canonical V2 context binding plus the complete edge
+  identity universe. Scores remain a trusted server-kernel calculation; invalid
+  confidence, omitted/extra edges and forged self-consistent evidence are rejected.
+- PostgreSQL proof covers valid writes, identical/conflicting replay, stale claims
+  and unchanged active delivery/phase. Receipt writes do not advance acquisition,
+  consume delivery or enqueue work. Populated rollback is guarded.
+- Independent review and repeated primary full `task verify` passed. V2 catalog
+  test now waits for its durable continuation child rather than race parent wake.
+  Finite next-stage routing, final sealing and runtime fallback remain outstanding.
+
 ## Cross-stage safety and acceptance invariants
 
 ### Provider adapters — проверенный bounded increment

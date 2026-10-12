@@ -4,7 +4,9 @@ package persistence_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -457,6 +459,188 @@ func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 	calculation, exists, err := service.PrepareFallbackApplicability(ctx, freshRepository, parentID, complete.Revision)
 	if err != nil || !exists || len(calculation.AllCandidates) != 4 || calculation.QualifyingEdges != 0 {
 		t.Fatalf("prepare persisted fallback applicability: exists=%v candidates=%d result=%+v err=%v", exists, len(calculation.AllCandidates), calculation, err)
+	}
+	// Exercise the production service conversion and current fenced PostgreSQL
+	// writer using the still-running delivery claimed above.
+	calculationContext, contextExists, err := freshRepository.LoadMatchingFallbackCalculationContext(ctx, parentID, complete.Revision)
+	if err != nil || !contextExists {
+		t.Fatalf("load writer context: exists=%v err=%v", contextExists, err)
+	}
+	contextJSON, err := json.Marshal(calculationContext)
+	if err != nil {
+		t.Fatalf("serialize writer context: %v", err)
+	}
+	contextDigest, err := persistence.MatchingFallbackCalculationInputDigest(calculationContext)
+	if err != nil {
+		t.Fatalf("digest writer context: %v", err)
+	}
+	// A caller can make a forged context internally self-consistent by changing
+	// even an ignored manifest field and recomputing the V2 digest. The writer
+	// must bind the supplied bytes to authority reconstructed inside its tx.
+	forgedContext := calculationContext
+	forgedContext.LookupReceipts = append([]persistence.MatchingFallbackLookupReceipt(nil), calculationContext.LookupReceipts...)
+	forgedLookup := &forgedContext.LookupReceipts[0]
+	var forgedProjection persistence.ProviderMatchingSnapshot
+	if err := json.Unmarshal(forgedLookup.AcceptedProjection, &forgedProjection); err != nil || len(forgedProjection.Releases) == 0 || len(forgedProjection.Releases[0].Tracks) == 0 {
+		t.Fatalf("decode accepted projection for forged context: err=%v", err)
+	}
+	forgedProjection.Releases[0].Tracks[0].RecordingTitle += " forged"
+	forgedLookup.AcceptedProjection, err = json.Marshal(forgedProjection)
+	if err != nil {
+		t.Fatalf("encode forged accepted projection: %v", err)
+	}
+	projectionDigest := sha256.Sum256(forgedLookup.AcceptedProjection)
+	forgedLookup.ProjectionSHA256 = hex.EncodeToString(projectionDigest[:])
+	forgedContextJSON, err := json.Marshal(forgedContext)
+	if err != nil {
+		t.Fatalf("serialize forged context: %v", err)
+	}
+	forgedDigest, err := persistence.MatchingFallbackCalculationInputDigest(forgedContext)
+	if err != nil {
+		t.Fatalf("digest forged context: %v", err)
+	}
+	type calculationEdge struct {
+		MemberID            uuid.UUID `json:"member_id"`
+		WorkID              uuid.UUID `json:"work_id"`
+		MetadataSHA         string    `json:"metadata_sha256"`
+		ReleaseID           string    `json:"release_id"`
+		RecordingID         string    `json:"recording_id"`
+		ProviderTrackID     uuid.UUID `json:"provider_track_id"`
+		Medium              int       `json:"medium"`
+		Position            int       `json:"position"`
+		Profile             string    `json:"profile"`
+		Confidence          float64   `json:"confidence"`
+		LookupRequestID     uuid.UUID `json:"lookup_request_id"`
+		LookupPayloadSHA    string    `json:"lookup_payload_sha256"`
+		LookupProjectionSHA string    `json:"lookup_projection_sha256"`
+	}
+	forgedEdges := make([]calculationEdge, 0, len(calculation.AllCandidates))
+	for _, candidate := range calculation.AllCandidates {
+		var requestID uuid.UUID
+		for _, lookup := range calculationContext.Lookups {
+			if lookup.ReleaseID == candidate.ReleaseID {
+				requestID = lookup.RequestID
+				break
+			}
+		}
+		projectionSHA := candidate.LookupProjectionSHA
+		if requestID == forgedLookup.RequestID {
+			projectionSHA = forgedLookup.ProjectionSHA256
+		}
+		forgedEdges = append(forgedEdges, calculationEdge{MemberID: candidate.MemberID, WorkID: candidate.FrozenWorkID,
+			MetadataSHA: candidate.MetadataInputSHA, ReleaseID: candidate.ReleaseID, RecordingID: candidate.RecordingID,
+			ProviderTrackID: candidate.ProviderTrackUUID, Medium: candidate.Medium, Position: candidate.Position,
+			Profile: string(candidate.Score.Profile), Confidence: candidate.Score.Confidence, LookupRequestID: requestID,
+			LookupPayloadSHA: candidate.LookupPayloadSHA, LookupProjectionSHA: projectionSHA})
+	}
+	forgedEdgesJSON, err := json.Marshal(forgedEdges)
+	if err != nil {
+		t.Fatalf("serialize forged context edges: %v", err)
+	}
+	if recorded, err := freshRepository.RecordMatchingFallbackCalculationForDelivery(ctx, parentID, 1, newWakeID, freshClaim, complete.Revision,
+		persistence.MatchingFallbackCalculationReceipt{RunID: parentID, AcquisitionRevision: complete.Revision,
+			InputDigest: forgedDigest, Context: forgedContextJSON, Edges: forgedEdgesJSON}); err == nil || recorded {
+		t.Fatalf("internally consistent forged context was accepted: recorded=%v err=%v", recorded, err)
+	}
+	var forgedReceiptCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, parentID, complete.Revision).Scan(ctx, &forgedReceiptCount); err != nil || forgedReceiptCount != 0 {
+		t.Fatalf("forged context wrote a receipt: count=%d err=%v", forgedReceiptCount, err)
+	}
+	if recorded, err := freshRepository.RecordMatchingFallbackCalculationForDelivery(ctx, parentID, 1, newWakeID, freshClaim, complete.Revision,
+		persistence.MatchingFallbackCalculationReceipt{RunID: parentID, AcquisitionRevision: complete.Revision, InputDigest: contextDigest, Context: contextJSON, Edges: json.RawMessage(`[]`)}); err == nil || recorded {
+		t.Fatalf("omitted edge universe was accepted: recorded=%v err=%v", recorded, err)
+	}
+	var prewriteReceiptCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, parentID, complete.Revision).Scan(ctx, &prewriteReceiptCount); err != nil || prewriteReceiptCount != 0 {
+		t.Fatalf("invalid omission wrote a receipt: count=%d err=%v", prewriteReceiptCount, err)
+	}
+	receiptResult, exists, err := service.PrepareFallbackApplicabilityReceipt(ctx, freshRepository, freshRepository, parentID, 1, newWakeID, freshClaim, complete.Revision)
+	if err != nil || !exists || len(receiptResult.AllCandidates) != 4 {
+		t.Fatalf("record complete applicability receipt: exists=%v candidates=%d err=%v", exists, len(receiptResult.AllCandidates), err)
+	}
+	var receiptCountAfterWrite int
+	var receiptContext, receiptEdges []byte
+	if err := fixture.db.NewRaw(`SELECT count(*),context,edge_calculations FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=? GROUP BY context,edge_calculations`, parentID, complete.Revision).Scan(ctx, &receiptCountAfterWrite, &receiptContext, &receiptEdges); err != nil || receiptCountAfterWrite != 1 {
+		t.Fatalf("read written calculation receipt: count=%d err=%v", receiptCountAfterWrite, err)
+	}
+	var writtenEdges []json.RawMessage
+	if err := json.Unmarshal(receiptEdges, &writtenEdges); err != nil || len(writtenEdges) != 4 {
+		t.Fatalf("receipt did not store all four edges: edges=%s err=%v", receiptEdges, err)
+	}
+	var beforeWriteRevision int64
+	var beforeWritePhase string
+	var beforeWriteConsumed bool
+	var beforeWriteOperationState string
+	var beforeWriteJobs, beforeWriteDependencies int
+	if err := fixture.db.NewRaw(`SELECT revision,current_phase FROM matching_acquisition WHERE run_id=?`, parentID).Scan(ctx, &beforeWriteRevision, &beforeWritePhase); err != nil {
+		t.Fatalf("read acquisition after receipt write: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, parentID).Scan(ctx, &beforeWriteOperationState); err != nil {
+		t.Fatalf("read operation after receipt write: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &beforeWriteJobs); err != nil {
+		t.Fatalf("count matching jobs after receipt write: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &beforeWriteDependencies); err != nil {
+		t.Fatalf("count matching dependencies after receipt write: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?`, parentID, newWakeID).Scan(ctx, &beforeWriteConsumed); err != nil || beforeWriteConsumed {
+		t.Fatalf("receipt writer consumed active delivery: consumed=%v err=%v", beforeWriteConsumed, err)
+	}
+	if _, exists, err := service.PrepareFallbackApplicabilityReceipt(ctx, freshRepository, freshRepository, parentID, 1, newWakeID, freshClaim, complete.Revision); err != nil || !exists {
+		t.Fatalf("exact calculation receipt replay failed: exists=%v err=%v", exists, err)
+	}
+	var replayCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, parentID, complete.Revision).Scan(ctx, &replayCount); err != nil || replayCount != 1 {
+		t.Fatalf("exact replay inserted another receipt: count=%d err=%v", replayCount, err)
+	}
+	var changedEdges []map[string]any
+	if err := json.Unmarshal(receiptEdges, &changedEdges); err != nil {
+		t.Fatalf("decode receipt edges for conflict: %v", err)
+	}
+	changedEdges[0]["confidence"] = 0.01
+	conflictingEdges, _ := json.Marshal(changedEdges)
+	var storedContext persistence.MatchingFallbackCalculationContext
+	if err := json.Unmarshal(receiptContext, &storedContext); err != nil {
+		t.Fatalf("decode stored calculation context: %v", err)
+	}
+	digest, err := persistence.MatchingFallbackCalculationInputDigest(storedContext)
+	if err != nil {
+		t.Fatalf("digest stored calculation context: %v", err)
+	}
+	_, err = freshRepository.RecordMatchingFallbackCalculationForDelivery(ctx, parentID, 1, newWakeID, freshClaim, complete.Revision,
+		persistence.MatchingFallbackCalculationReceipt{RunID: parentID, AcquisitionRevision: complete.Revision, InputDigest: digest, Context: receiptContext, Edges: conflictingEdges})
+	if err == nil {
+		t.Fatal("conflicting valid-confidence receipt replay was accepted")
+	}
+	staleClaim := freshClaim
+	staleClaim.ExecutionEpoch++
+	if recorded, err := freshRepository.RecordMatchingFallbackCalculationForDelivery(ctx, parentID, 1, newWakeID, staleClaim, complete.Revision,
+		persistence.MatchingFallbackCalculationReceipt{RunID: parentID, AcquisitionRevision: complete.Revision, InputDigest: digest, Context: receiptContext, Edges: receiptEdges}); err != nil || recorded {
+		t.Fatalf("stale delivery was not rejected before receipt deduplication: recorded=%v err=%v", recorded, err)
+	}
+	var afterWriteRevision int64
+	var afterWritePhase string
+	var afterWriteConsumed bool
+	var afterWriteOperationState string
+	var afterWriteJobs, afterWriteDependencies int
+	if err := fixture.db.NewRaw(`SELECT revision,current_phase FROM matching_acquisition WHERE run_id=?`, parentID).Scan(ctx, &afterWriteRevision, &afterWritePhase); err != nil {
+		t.Fatalf("read acquisition after replay checks: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?`, parentID, newWakeID).Scan(ctx, &afterWriteConsumed); err != nil {
+		t.Fatalf("read delivery after replay checks: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT state FROM operation WHERE id=?`, parentID).Scan(ctx, &afterWriteOperationState); err != nil {
+		t.Fatalf("read operation after replay checks: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_evaluation_v1'`).Scan(ctx, &afterWriteJobs); err != nil {
+		t.Fatalf("count matching jobs after replay checks: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`, parentID).Scan(ctx, &afterWriteDependencies); err != nil {
+		t.Fatalf("count matching dependencies after replay checks: %v", err)
+	}
+	if beforeWriteRevision != afterWriteRevision || beforeWritePhase != afterWritePhase || beforeWriteOperationState != afterWriteOperationState || beforeWriteJobs != afterWriteJobs || beforeWriteDependencies != afterWriteDependencies || afterWriteConsumed {
+		t.Fatalf("receipt writes changed operation/acquisition/delivery: revision=%d/%d phase=%q/%q operation=%q/%q jobs=%d/%d dependencies=%d/%d consumed=%v", beforeWriteRevision, afterWriteRevision, beforeWritePhase, afterWritePhase, beforeWriteOperationState, afterWriteOperationState, beforeWriteJobs, afterWriteJobs, beforeWriteDependencies, afterWriteDependencies, afterWriteConsumed)
 	}
 	var tamperedInput struct {
 		SchemaVersion int    `json:"schema_version"`

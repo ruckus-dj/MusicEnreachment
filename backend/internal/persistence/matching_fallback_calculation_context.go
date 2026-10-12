@@ -2,12 +2,15 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 // MatchingFallbackCalculationLookupAuthority is the registered immutable scope
@@ -46,20 +49,69 @@ type MatchingFallbackCalculationContext struct {
 	Lookups             []MatchingFallbackCalculationLookupAuthority
 }
 
+// MatchingFallbackCalculationInputDigest hashes the complete persistence-owned
+// authority snapshot using receipt digest version 2. JSON object key ordering is
+// canonicalized; all registered inputs and accepted receipt payloads remain bound.
+func MatchingFallbackCalculationInputDigest(snapshot MatchingFallbackCalculationContext) (string, error) {
+	canonical, err := canonicalMatchingFallbackCalculationContextBytes(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("digest fallback calculation context: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func canonicalMatchingFallbackCalculationContextBytes(snapshot MatchingFallbackCalculationContext) ([]byte, error) {
+	snapshot.Lookups = append([]MatchingFallbackCalculationLookupAuthority(nil), snapshot.Lookups...)
+	snapshot.LookupReceipts = append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...)
+	sort.Slice(snapshot.Lookups, func(i, j int) bool {
+		if snapshot.Lookups[i].ReleaseID != snapshot.Lookups[j].ReleaseID {
+			return snapshot.Lookups[i].ReleaseID < snapshot.Lookups[j].ReleaseID
+		}
+		return snapshot.Lookups[i].RequestID.String() < snapshot.Lookups[j].RequestID.String()
+	})
+	sort.Slice(snapshot.LookupReceipts, func(i, j int) bool {
+		if snapshot.LookupReceipts[i].RequestID != snapshot.LookupReceipts[j].RequestID {
+			return snapshot.LookupReceipts[i].RequestID.String() < snapshot.LookupReceipts[j].RequestID.String()
+		}
+		return snapshot.LookupReceipts[i].CacheKey < snapshot.LookupReceipts[j].CacheKey
+	})
+	encoded, err := json.Marshal(struct {
+		Version int                                `json:"version"`
+		Context MatchingFallbackCalculationContext `json:"context"`
+	}{Version: matchingFallbackCalculationDigestVersion, Context: snapshot})
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := canonicalMatchingJSON(encoded)
+	if err != nil {
+		return nil, err
+	}
+	return canonical, nil
+}
+
 // LoadMatchingFallbackCalculationContext loads one coherent snapshot of the
 // frozen run, its current applicability phase, registered children, and receipts.
 func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext(
 	ctx context.Context, runID uuid.UUID, expectedRevision int64,
 ) (MatchingFallbackCalculationContext, bool, error) {
+	tx, err := repository.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return MatchingFallbackCalculationContext{}, false, fmt.Errorf("load fallback calculation context: begin snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return loadMatchingFallbackCalculationContext(ctx, tx, runID, expectedRevision)
+}
+
+// loadMatchingFallbackCalculationContext reconstructs authority through the
+// caller's database handle, allowing writers to validate against their own tx.
+func loadMatchingFallbackCalculationContext(
+	ctx context.Context, database bun.IDB, runID uuid.UUID, expectedRevision int64,
+) (MatchingFallbackCalculationContext, bool, error) {
 	var result MatchingFallbackCalculationContext
 	if runID == uuid.Nil || expectedRevision < 1 {
 		return result, false, fmt.Errorf("load fallback calculation context: run and revision are required")
 	}
-	tx, err := repository.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
-	if err != nil {
-		return result, false, fmt.Errorf("load fallback calculation context: begin snapshot: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
 	var run struct {
 		OperationID   uuid.UUID `bun:"operation_id"`
@@ -77,7 +129,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 	var intentVersion int
 	var currentPhase string
 	var revision int64
-	err = tx.NewRaw(`SELECT run.operation_id,operation.kind,run.immutable_plan,run.plan_digest,run.fence_version,
+	err := database.NewRaw(`SELECT run.operation_id,operation.kind,run.immutable_plan,run.plan_digest,run.fence_version,
 		run.provider_source_id,run.provider_configuration_identity,source.provider_id,source.endpoint,source.configuration_identity,
 		acquisition.intent,acquisition.intent_digest,acquisition.intent_version,acquisition.current_phase,acquisition.revision
 		FROM matching_run run JOIN operation ON operation.id=run.operation_id
@@ -104,7 +156,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 		return result, false, fmt.Errorf("load fallback calculation context: saved intent or plan is invalid")
 	}
 	var phase MatchingAcquisitionPhase
-	if err := tx.NewRaw(`SELECT revision,phase,input,output,response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, runID, revision).Scan(ctx,
+	if err := database.NewRaw(`SELECT revision,phase,input,output,response_provenance FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, runID, revision).Scan(ctx,
 		&phase.Revision, &phase.Phase, &phase.Input, &phase.Output, &phase.ResponseProvenance); err != nil {
 		return result, false, fmt.Errorf("load fallback calculation context: read applicability phase: %w", err)
 	}
@@ -117,7 +169,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 		Capture  json.RawMessage `bun:"target_capture"`
 		Digest   []byte          `bun:"target_capture_digest"`
 	}
-	if err := tx.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest FROM matching_run_target WHERE run_id=?`, runID).Scan(ctx,
+	if err := database.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest FROM matching_run_target WHERE run_id=?`, runID).Scan(ctx,
 		&target.GroupID, &target.Revision, &target.Capture, &target.Digest); err != nil {
 		return result, false, fmt.Errorf("load fallback calculation context: read frozen target: %w", err)
 	}
@@ -132,7 +184,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 	if json.Unmarshal(phase.ResponseProvenance, &searchRef) != nil || len(searchRef) != 1 || searchRef[0].RequestID == uuid.Nil {
 		return result, false, fmt.Errorf("load fallback calculation context: search receipt reference is invalid")
 	}
-	searchReceipt, err := getMatchingFallbackSearchReceipt(ctx, tx, runID, searchRef[0].RequestID)
+	searchReceipt, err := getMatchingFallbackSearchReceipt(ctx, database, runID, searchRef[0].RequestID)
 	if err != nil || searchReceipt == nil {
 		if err == nil {
 			err = fmt.Errorf("accepted search receipt is missing")
@@ -159,7 +211,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 		Explicit      bool            `bun:"provider_explicit_refresh"`
 		Outcome       string          `bun:"terminal_outcome"`
 	}
-	err = tx.NewRaw(`SELECT operation.id,operation.kind,operation.state,operation.input_snapshot,
+	err = database.NewRaw(`SELECT operation.id,operation.kind,operation.state,operation.input_snapshot,
 		operation.provider_source_id,source.provider_id,source.endpoint,operation.provider_configuration_identity,
 		operation.provider_cache_key,operation.provider_explicit_refresh,dependency.terminal_outcome
 		FROM operation JOIN provider_source source ON source.id=operation.provider_source_id
@@ -203,7 +255,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 	// Applicability output records accepted receipts; the registered lookup set
 	// comes from its original hydration input/output phase, never latest cache state.
 	var hydration MatchingAcquisitionPhase
-	err = tx.NewRaw(`SELECT revision,phase,input,output FROM matching_acquisition_phase WHERE run_id=? AND phase=? ORDER BY revision DESC LIMIT 1`, runID, MatchingAcquisitionFallbackHydration).Scan(ctx,
+	err = database.NewRaw(`SELECT revision,phase,input,output FROM matching_acquisition_phase WHERE run_id=? AND phase=? ORDER BY revision DESC LIMIT 1`, runID, MatchingAcquisitionFallbackHydration).Scan(ctx,
 		&hydration.Revision, &hydration.Phase, &hydration.Input, &hydration.Output)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Stage zero can go straight to applicability when it names no releases.
@@ -248,7 +300,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 			CacheKey      string          `bun:"provider_cache_key"`
 			Input         json.RawMessage `bun:"input_snapshot"`
 		}
-		if err := tx.NewRaw(`SELECT operation.kind,operation.provider_source_id,source.provider_id,source.endpoint,operation.provider_configuration_identity,operation.provider_cache_key,operation.input_snapshot
+		if err := database.NewRaw(`SELECT operation.kind,operation.provider_source_id,source.provider_id,source.endpoint,operation.provider_configuration_identity,operation.provider_cache_key,operation.input_snapshot
 			FROM operation JOIN provider_source source ON source.id=operation.provider_source_id WHERE operation.id=?`, descriptor.RequestID).Scan(ctx,
 			&child.Kind, &child.SourceID, &child.ProviderID, &child.Endpoint, &child.Configuration, &child.CacheKey, &child.Input); err != nil {
 			return result, false, fmt.Errorf("load fallback calculation context: read registered lookup operation: %w", err)
@@ -256,7 +308,7 @@ func (repository *SetupManagerRepository) LoadMatchingFallbackCalculationContext
 		if child.SourceID != run.SourceID || child.ProviderID != run.ProviderID || child.Endpoint != run.Endpoint || child.Configuration != run.Configuration || child.CacheKey != descriptor.CacheKey {
 			return result, false, fmt.Errorf("load fallback calculation context: lookup operation authority differs from run")
 		}
-		receipt, readErr := getMatchingFallbackLookupReceipt(ctx, tx, runID, descriptor.RequestID)
+		receipt, readErr := getMatchingFallbackLookupReceipt(ctx, database, runID, descriptor.RequestID)
 		if readErr != nil || receipt == nil {
 			if readErr == nil {
 				readErr = fmt.Errorf("accepted lookup receipt is missing")
