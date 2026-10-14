@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -40,6 +41,15 @@ func (worker *MatchingApplyWorker) Work(ctx context.Context, job *river.Job[pers
 	}
 	if operation.Kind != persistence.MatchingApplyOperationKind || operation.RiverJobID == nil || *operation.RiverJobID != int64(job.ID) || (operation.State != "queued" && operation.State != "running") {
 		return nil
+	}
+	var discriminator struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(operation.InputSnapshot, &discriminator); err != nil {
+		return fmt.Errorf("matching apply worker received an invalid snapshot: %w", err)
+	}
+	if discriminator.SchemaVersion != 1 && discriminator.SchemaVersion != 2 {
+		return fmt.Errorf("matching apply worker received an unsupported snapshot schema")
 	}
 	epoch, claimed, err := worker.repository.ClaimProviderOperationDelivery(ctx, operation.ID, operation.Attempt, int64(job.ID))
 	if err != nil {

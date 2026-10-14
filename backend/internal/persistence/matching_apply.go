@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -149,17 +150,56 @@ func rejectManualOnlyMatchingEvaluation(evidence json.RawMessage) error {
 // ApplyMatchingOperation applies one immutable automatic group intent and
 // settles the child operation with its receipt in the same transaction.
 func (repository *SetupManagerRepository) ApplyMatchingOperation(ctx context.Context, operationID uuid.UUID, riverJobID int64, executionEpoch int64) (bool, error) {
+	var snapshotBytes []byte
+	if err := repository.db.NewRaw(`SELECT input_snapshot FROM operation WHERE id=?`, operationID).Scan(ctx, &snapshotBytes); err != nil {
+		return false, fmt.Errorf("apply matching operation: read immutable snapshot: %w", err)
+	}
+	snapshot := json.RawMessage(snapshotBytes)
+	var version struct {
+		SchemaVersion int `json:"schema_version"`
+		Source        struct {
+			ConfigurationIdentity string `json:"configuration_identity"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(snapshot, &version); err != nil {
+		return false, fmt.Errorf("apply matching operation: immutable snapshot is invalid")
+	}
 	changed := false
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("apply matching operation: lock output admission gate: %w", err)
 		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("apply matching operation: lock source mutations: %w", err)
+		}
+		currentProviderConfiguration := true
+		if version.SchemaVersion == 2 {
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+				return fmt.Errorf("apply matching operation: lock MusicBrainz configuration: %w", err)
+			}
+			var currentIdentity string
+			if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentIdentity); err != nil {
+				return fmt.Errorf("apply matching operation: read current MusicBrainz configuration: %w", err)
+			}
+			currentProviderConfiguration = currentIdentity == version.Source.ConfigurationIdentity
+		}
 		operation, err := repository.GetOperationForUpdate(ctx, tx, operationID)
 		if err != nil {
 			return err
 		}
+		var lockedVersion struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		if err := json.Unmarshal(operation.InputSnapshot, &lockedVersion); err != nil || lockedVersion.SchemaVersion != version.SchemaVersion {
+			return fmt.Errorf("apply matching operation: immutable snapshot schema changed")
+		}
 		if operation.Kind != MatchingApplyOperationKind || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID || operation.ProviderExecutionEpoch != executionEpoch || operation.ProviderDeliveryClaimedAt == nil || operation.ProviderDeliveryClaimedAt.Before(time.Now().UTC().Add(-5*time.Minute)) || (operation.State != "queued" && operation.State != "running") {
 			return nil
+		}
+		if version.SchemaVersion == 2 {
+			var err error
+			changed, err = repository.applyFrozenMatchingOperationTx(ctx, tx, operation, operationID, riverJobID, executionEpoch, currentProviderConfiguration)
+			return err
 		}
 		var intent matchingApplyIntent
 		if err := json.Unmarshal(operation.InputSnapshot, &intent); err != nil || intent.SchemaVersion != 1 || intent.ParentRunID == uuid.Nil || intent.GroupID == uuid.Nil || intent.EvaluationRevision == "" || intent.ExecutionEpoch < 1 {
@@ -905,6 +945,470 @@ func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.U
 	}
 	if _, err := tx.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version) VALUES (?,?,?,false,true,?,?)`, uuid.New(), trackID, variantID, authority.method, authority.policyVersion).Exec(ctx); err != nil {
 		return fmt.Errorf("apply matching evaluation: attach source variant: %w", err)
+	}
+	return nil
+}
+
+// applyFrozenMatchingOperationTx applies schema-2 requests exclusively from the
+// persisted unique decision and the operation's frozen provider projection.
+func (repository *SetupManagerRepository) applyFrozenMatchingOperationTx(
+	ctx context.Context, tx bun.Tx, operation *Operation, operationID uuid.UUID, riverJobID, executionEpoch int64, currentProviderConfiguration bool,
+) (bool, error) {
+	var liveDelivery bool
+	if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM river_job WHERE id=? AND state='running' AND attempt=?)`, riverJobID, operation.Attempt).Scan(ctx, &liveDelivery); err != nil {
+		return false, fmt.Errorf("apply matching operation: validate River delivery: %w", err)
+	}
+	if !liveDelivery || operation.ProviderExecutionEpoch != executionEpoch || operation.RiverJobID == nil || *operation.RiverJobID != riverJobID {
+		return false, nil
+	}
+	snapshot, err := DecodeMatchingApplyInputSnapshotV2(operation.InputSnapshot)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: immutable schema-2 snapshot is invalid: %w", err)
+	}
+	inputDigest, err := MatchingApplyInputSnapshotV2Digest(snapshot)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: digest schema-2 snapshot: %w", err)
+	}
+	var request struct {
+		GroupID            uuid.UUID `bun:"group_id"`
+		ParentRunID        uuid.UUID `bun:"parent_run_id"`
+		EvaluationRevision string    `bun:"evaluation_revision"`
+		SchemaVersion      int       `bun:"schema_version"`
+		InputSHA           []byte    `bun:"input_sha256"`
+		AuthorityVersion   int       `bun:"frozen_authority_version"`
+		ParentEpoch        int64     `bun:"parent_execution_epoch"`
+		WaitRevision       int64     `bun:"seal_wait_revision"`
+		SealDigest         []byte    `bun:"seal_digest"`
+		TargetDigest       []byte    `bun:"target_capture_sha256"`
+	}
+	if err := tx.NewRaw(`SELECT group_id,parent_run_id,evaluation_revision,schema_version,input_sha256,
+		frozen_authority_version,parent_execution_epoch,seal_wait_revision,seal_digest,target_capture_sha256
+		FROM matching_apply_request WHERE apply_operation_id=? FOR UPDATE`, operationID).Scan(ctx, &request); err != nil {
+		return false, fmt.Errorf("apply matching operation: read frozen apply request: %w", err)
+	}
+	if request.SchemaVersion != 2 || request.GroupID != snapshot.Authority.GroupID || request.ParentRunID != snapshot.Authority.ParentRunID ||
+		request.EvaluationRevision != snapshot.Authority.EvaluationRevision || request.AuthorityVersion != snapshot.Authority.AuthorityVersion ||
+		request.WaitRevision != snapshot.Authority.WaitRevision || !equalDigest(request.InputSHA, mustDecodeHexDigest(inputDigest)) ||
+		!equalDigest(request.SealDigest, mustDecodeHexDigest(snapshot.Authority.SealDigest)) ||
+		!equalDigest(request.TargetDigest, mustDecodeHexDigest(snapshot.Authority.TargetCaptureDigest)) {
+		return false, fmt.Errorf("apply matching operation: schema-2 request binding is corrupted")
+	}
+	var prior struct {
+		Outcome  string `bun:"outcome"`
+		InputSHA []byte `bun:"input_sha256"`
+	}
+	err = tx.NewRaw(`SELECT outcome,input_sha256 FROM matching_apply_receipt WHERE apply_operation_id=?`, operationID).Scan(ctx, &prior)
+	if err == nil {
+		if prior.Outcome == "" || !equalDigest(prior.InputSHA, request.InputSHA) {
+			return false, fmt.Errorf("apply matching operation: schema-2 receipt binding is corrupted")
+		}
+		settleMatchingApplyOperation(operation, prior.Outcome)
+		if err := saveMatchingApplyOperation(ctx, tx, operation); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("apply matching operation: read schema-2 receipt: %w", err)
+	}
+	if !currentProviderConfiguration {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching provider configuration changed; review this group manually.")
+	}
+	seal, found, err := buildMatchingFallbackSealAuthority(ctx, tx, request.ParentRunID, request.WaitRevision, true)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: validate historical seal: %w", err)
+	}
+	if !found {
+		return false, fmt.Errorf("apply matching operation: historical seal is missing")
+	}
+	calculation, err := matchingApplyHistoricalCalculationContext(ctx, tx, seal, request.ParentRunID, request.WaitRevision)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: validate historical calculation: %w", err)
+	}
+	var header struct {
+		Evidence     json.RawMessage `bun:"evaluation_evidence"`
+		Revision     string          `bun:"evaluation_revision"`
+		FenceVersion int             `bun:"fence_version"`
+		TargetRunID  *uuid.UUID      `bun:"target_run_id"`
+	}
+	if err := tx.NewRaw(`SELECT evaluation_evidence,evaluation_revision,fence_version,target_run_id FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, request.GroupID).Scan(ctx, &header); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
+		}
+		return false, fmt.Errorf("apply matching operation: read persisted evaluation: %w", err)
+	}
+	decision, err := decodePersistedMatchingDecision(header.Evidence)
+	if err != nil {
+		return false, fmt.Errorf("apply matching operation: persisted decision is invalid: %w", err)
+	}
+	if header.Revision != request.EvaluationRevision || (header.FenceVersion != 2 || header.TargetRunID == nil || *header.TargetRunID != request.ParentRunID) {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
+	}
+	if err := ValidateMatchingApplyInputSnapshotV2(snapshot, seal, calculation, request.EvaluationRevision, decision); err != nil {
+		return false, fmt.Errorf("apply matching operation: schema-2 snapshot authority is corrupted: %w", err)
+	}
+	var parentEpoch int64
+	var parentState string
+	if err := tx.NewRaw(`SELECT execution_epoch,state FROM matching_run WHERE id=?`, request.ParentRunID).Scan(ctx, &parentEpoch, &parentState); err != nil {
+		return false, fmt.Errorf("apply matching operation: read original matching run: %w", err)
+	}
+	if parentEpoch != request.ParentEpoch || parentState != "succeeded" {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The original matching run is no longer current; review this group manually.")
+	}
+	var current bool
+	if err := tx.NewRaw(`SELECT EXISTS (SELECT 1 FROM matching_run_target target
+		JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+		WHERE target.run_id=? AND target.group_id=? AND generation.current_run_id=target.run_id
+		AND generation.high_water=target.target_generation
+		AND COALESCE((SELECT authority.mode FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),'automatic')='automatic'
+		AND COALESCE((SELECT authority.revision FROM incoming_group_matching_authority authority WHERE authority.group_id=target.group_id),0)=target.authority_revision)`, request.ParentRunID, request.GroupID).Scan(ctx, &current); err != nil {
+		return false, fmt.Errorf("apply matching operation: validate frozen target: %w", err)
+	}
+	if !current {
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The original matching run is no longer current; review this group manually.")
+	}
+	if err := validateMatchingRunFenceCurrentTarget(ctx, tx, request.ParentRunID); err != nil {
+		if errors.Is(err, ErrIncomingMatchConflict) {
+			return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The original matching run is no longer current; review this group manually.")
+		}
+		return false, fmt.Errorf("apply matching operation: revalidate frozen target capture: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT matching_apply_materialization`); err != nil {
+		return false, fmt.Errorf("apply matching operation: create schema-2 savepoint: %w", err)
+	}
+	materializeErr := materializeFrozenMatchingApply(ctx, tx, snapshot, decision)
+	if errors.Is(materializeErr, ErrIncomingMatchConflict) || errors.Is(materializeErr, ErrMatchingManualProtection) {
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT matching_apply_materialization`); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
+			return false, err
+		}
+		return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "review_required", "The matching decision is stale or conflicts with a manual mapping; review this group manually.")
+	}
+	if materializeErr != nil {
+		return false, materializeErr
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT matching_apply_materialization`); err != nil {
+		return false, err
+	}
+	return repository.finishFrozenApplyReview(ctx, tx, operation, operationID, request.GroupID, request.InputSHA, "applied", "")
+}
+
+// matchingApplyHistoricalCalculationContext binds the evaluation context to the
+// original wait's verified seal, then revalidates the immutable database receipt
+// named by that seal. The live acquisition cursor may already have advanced.
+func matchingApplyHistoricalCalculationContext(
+	ctx context.Context, database bun.IDB, seal MatchingFallbackSealAuthority, runID uuid.UUID, waitRevision int64,
+) (MatchingFallbackCalculationContext, error) {
+	if seal.RunID != runID || seal.WaitRevision != waitRevision || seal.SelectedCalculation == nil || len(seal.FullEvaluationContext) == 0 {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("historical calculation authority is missing")
+	}
+	ref := seal.SelectedCalculation
+	if ref.AcquisitionRevision < 1 || ref.AcquisitionRevision >= waitRevision || ref.StageIndex < 0 {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("historical calculation reference is invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(seal.FullEvaluationContext))
+	decoder.DisallowUnknownFields()
+	var calculation MatchingFallbackCalculationContext
+	if err := decoder.Decode(&calculation); err != nil {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("decode original sealed calculation context: %w", err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("original sealed calculation context has trailing data")
+	}
+	if calculation.RunID != runID || calculation.AcquisitionRevision != ref.AcquisitionRevision || calculation.StageIndex != ref.StageIndex {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("original sealed calculation context identity is invalid")
+	}
+	receipt, err := getMatchingFallbackCalculationReceipt(ctx, database, runID, ref.AcquisitionRevision)
+	if err != nil {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("validate immutable calculation receipt: %w", err)
+	}
+	if receipt == nil {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("referenced immutable calculation receipt is missing")
+	}
+	if receipt.AcquisitionRevision != ref.AcquisitionRevision || receipt.StageIndex != ref.StageIndex ||
+		receipt.SchemaVersion != ref.SchemaVersion || receipt.CalculatorVersion != ref.CalculatorVersion ||
+		receipt.DigestVersion != ref.DigestVersion || receipt.InputDigest != ref.InputDigest ||
+		!matchingJSONEqual(receipt.Context, seal.FullEvaluationContext) {
+		return MatchingFallbackCalculationContext{}, fmt.Errorf("immutable calculation receipt differs from original seal")
+	}
+	return calculation, nil
+}
+
+func mustDecodeHexDigest(value string) []byte { decoded, _ := hex.DecodeString(value); return decoded }
+
+func settleMatchingApplyOperation(operation *Operation, outcome string) {
+	now := time.Now().UTC()
+	operation.State, operation.Stage, operation.UpdatedAt, operation.FinishedAt = "succeeded", outcome, now, &now
+	if outcome == "review_required" {
+		reason := "The matching decision is stale or conflicts with a manual mapping; review this group manually."
+		operation.SafeError = &reason
+	} else {
+		operation.SafeError = nil
+	}
+}
+
+func saveMatchingApplyOperation(ctx context.Context, tx bun.Tx, operation *Operation) error {
+	if _, err := tx.NewUpdate().Model(operation).Column("state", "stage", "safe_error", "finished_at", "updated_at").WherePK().Exec(ctx); err != nil {
+		return fmt.Errorf("apply matching operation: complete operation: %w", err)
+	}
+	return nil
+}
+
+func (repository *SetupManagerRepository) finishFrozenApplyReview(ctx context.Context, tx bun.Tx, operation *Operation, operationID, groupID uuid.UUID, inputSHA []byte, outcome, safeError string) (bool, error) {
+	if _, err := tx.NewRaw(`INSERT INTO matching_apply_receipt(apply_operation_id,group_id,outcome,input_sha256) VALUES (?,?,?,?)`, operationID, groupID, outcome, inputSHA).Exec(ctx); err != nil {
+		// The request's target group is independently sealed in the request binding.
+		return false, fmt.Errorf("apply matching operation: persist schema-2 receipt: %w", err)
+	}
+	settleMatchingApplyOperation(operation, outcome)
+	if safeError != "" {
+		operation.SafeError = &safeError
+	}
+	if err := saveMatchingApplyOperation(ctx, tx, operation); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot MatchingApplyInputSnapshotV2, decision persistedMatchingDecision) error {
+	frozen := snapshot.Selected.Projection
+	if frozen.SchemaVersion != 2 || frozen.Release.ID != snapshot.Selected.ProviderReleaseID || frozen.Release.ProviderKey != snapshot.Selected.ProviderKey ||
+		decision.SelectedRelease == nil || decision.SelectedRelease.ProviderReleaseID != frozen.Release.ID ||
+		!strings.EqualFold(decision.SelectedRelease.ProviderReleaseKey, frozen.Release.ProviderKey) || len(snapshot.Assignments) != len(decision.Assignments) {
+		return fmt.Errorf("apply matching operation: frozen projection and persisted decision disagree")
+	}
+	var endpoint, configuration string
+	if err := tx.NewRaw(`SELECT endpoint,configuration_identity FROM provider_source WHERE id=? AND provider_id=? FOR UPDATE`, snapshot.Source.ID, snapshot.Source.ProviderID).Scan(ctx, &endpoint, &configuration); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
+		return fmt.Errorf("apply matching operation: validate frozen provider source configuration: %w", err)
+	}
+	if endpoint != snapshot.Source.Endpoint || configuration != snapshot.Source.ConfigurationIdentity {
+		return ErrIncomingMatchConflict
+	}
+	var releaseKey string
+	if err := tx.NewRaw(`SELECT provider_key FROM provider_release WHERE provider_id=? AND id=?`, snapshot.Source.ProviderID, frozen.Release.ID).Scan(ctx, &releaseKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncomingMatchConflict
+		}
+		return fmt.Errorf("apply matching operation: resolve frozen provider release: %w", err)
+	}
+	if !strings.EqualFold(releaseKey, frozen.Release.ProviderKey) {
+		return ErrIncomingMatchConflict
+	}
+	policy := snapshot.Authority.PolicyVersion
+	tracks := make(map[uuid.UUID]FrozenRecordingTrack, len(frozen.Tracks))
+	for _, track := range frozen.Tracks {
+		if track.ProviderTrackID == uuid.Nil || track.ProviderReleaseID != frozen.Release.ID || tracks[track.ProviderTrackID].ProviderTrackID != uuid.Nil {
+			return fmt.Errorf("apply matching operation: frozen track identity is invalid")
+		}
+		tracks[track.ProviderTrackID] = track
+	}
+	assignments := make(map[uuid.UUID]MatchingApplySnapshotAssignment, len(snapshot.Assignments))
+	for _, assignment := range snapshot.Assignments {
+		if assignment.FileMemberID == uuid.Nil || assignment.WorkID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || assignments[assignment.FileMemberID].FileMemberID != uuid.Nil {
+			return fmt.Errorf("apply matching operation: frozen assignment identity is invalid")
+		}
+		assignments[assignment.FileMemberID] = assignment
+	}
+	localReleaseID, releaseCreated, err := ensureAutomaticLocalRelease(ctx, tx, snapshot.Source.ProviderID, frozen.Release.ID, frozen.Release.Title, policy)
+	if err != nil {
+		return err
+	}
+	if releaseCreated {
+		if err := writeFrozenMetadata(ctx, tx, "local_release", localReleaseID, "title", releaseKey, snapshot.Source, snapshot.Authority.EvaluationRevision, frozen.Release.FieldSources["title"]); err != nil {
+			return err
+		}
+		if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localReleaseID, "release_artist", frozen.Release.Credits, policy, snapshot.Authority.EvaluationRevision); err != nil {
+			return err
+		}
+	}
+	for _, assignment := range decision.Assignments {
+		frozenAssignment, ok := assignments[assignment.FileMemberID]
+		track, trackOK := tracks[assignment.ProviderTrackID]
+		if !ok || !trackOK || frozenAssignment.ProviderTrackID != assignment.ProviderTrackID || frozenAssignment.Medium+1 != assignment.Medium || frozenAssignment.Position+1 != assignment.Position || track.Medium+1 != assignment.Medium || track.Position+1 != assignment.Position {
+			return ErrIncomingMatchConflict
+		}
+		var providerTrackID, providerRecordingID uuid.UUID
+		var providerRecordingKey string
+		var medium, position int
+		if err := tx.NewRaw(`SELECT track.id,track.recording_id,recording.provider_key,track.medium,track.position
+			FROM provider_release_track track JOIN provider_recording recording
+			ON recording.provider_id=track.provider_id AND recording.id=track.recording_id
+			WHERE track.provider_id=? AND track.id=? AND track.release_id=?`,
+			snapshot.Source.ProviderID, track.ProviderTrackID, frozen.Release.ID).Scan(ctx, &providerTrackID, &providerRecordingID, &providerRecordingKey, &medium, &position); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("apply matching operation: resolve frozen provider track: %w", err)
+		}
+		if providerTrackID != track.ProviderTrackID || !strings.EqualFold(providerRecordingKey, track.RecordingProviderKey) {
+			return ErrIncomingMatchConflict
+		}
+		medium, position = track.Medium, track.Position
+		localRecordingID, recordingCreated, err := ensureAutomaticLocalRecording(ctx, tx, snapshot.Source.ProviderID, providerRecordingID, track.RecordingTitle, policy)
+		if err != nil {
+			return err
+		}
+		if recordingCreated {
+			source := FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
+			if track.RecordingTitleSource != nil {
+				source = *track.RecordingTitleSource
+			}
+			if err := writeFrozenMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, snapshot.Source, snapshot.Authority.EvaluationRevision, source); err != nil {
+				return err
+			}
+			if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localRecordingID, "recording_artist", track.RecordingCredits, policy, snapshot.Authority.EvaluationRevision); err != nil {
+				return err
+			}
+		}
+		localTrackID, mappedRecordingID, _, trackCreated, err := ensureAutomaticLocalTrack(ctx, tx, snapshot.Source.ProviderID, providerTrackID, providerRecordingID, localReleaseID, medium, position, track.Title, policy)
+		if err != nil {
+			return err
+		}
+		if mappedRecordingID != localRecordingID {
+			return ErrIncomingMatchConflict
+		}
+		if trackCreated {
+			field, key, source := "title", track.RecordingProviderKey, FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
+			if track.TitleSource != nil {
+				field, key, source = track.TitleSource.Field, track.TitleSource.ProviderKey, *track.TitleSource
+			}
+			if err := writeFrozenMetadata(ctx, tx, "local_track", localTrackID, field, key, snapshot.Source, snapshot.Authority.EvaluationRevision, source); err != nil {
+				return err
+			}
+			if err := materializeFrozenArtistCredits(ctx, tx, snapshot.Source, localTrackID, "track_artist", track.Credits, policy, snapshot.Authority.EvaluationRevision); err != nil {
+				return err
+			}
+		}
+		var variants []uuid.UUID
+		if err := tx.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, frozenAssignment.WorkID).Scan(ctx, &variants); err != nil {
+			return fmt.Errorf("apply matching operation: read captured source work: %w", err)
+		}
+		if len(variants) == 0 {
+			return ErrIncomingMatchConflict
+		}
+		for _, variantID := range variants {
+			if err := attachAutomaticTrackSource(ctx, tx, localTrackID, variantID, policy); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureAutomaticLocalRecording keeps the provider recording's title separate
+// from any release-track title override. The caller holds the stable provider
+// recording row lock before entering this helper.
+func ensureAutomaticLocalRecording(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, title, policy string) (uuid.UUID, bool, error) {
+	var localID uuid.UUID
+	var method string
+	err := tx.NewRaw(`SELECT local_recording_id,method FROM provider_local_recording
+		WHERE provider_id=? AND provider_recording_id=? FOR UPDATE`, providerID, providerRecordingID).Scan(ctx, &localID, &method)
+	if err == nil {
+		if method != "automatic" {
+			return uuid.Nil, false, ErrMatchingManualProtection
+		}
+		return localID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, false, fmt.Errorf("apply matching operation: read local recording mapping: %w", err)
+	}
+	localID = uuid.New()
+	if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching operation: create local recording: %w", err)
+	}
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,?,?)`, providerID, providerRecordingID, localID, "automatic", policy).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching operation: map provider recording: %w", err)
+	}
+	return localID, true, nil
+}
+
+func writeFrozenMetadata(ctx context.Context, tx bun.Tx, table string, id uuid.UUID, field, entityKey string, source MatchingApplySnapshotSourceV2, revision string, fieldSource FrozenFieldSource) error {
+	evidence, err := json.Marshal(map[string]ProviderFieldEvidence{field: {Authority: fieldSource.Authority, FetchOrder: fieldSource.FetchOrder}})
+	if err != nil {
+		return err
+	}
+	return writeAutomaticMetadata(ctx, tx, table, id, field, entityKey, source.ID, source.ProviderID, revision, evidence)
+}
+
+func materializeFrozenArtistCredits(ctx context.Context, tx bun.Tx, source MatchingApplySnapshotSourceV2, parentID uuid.UUID, relation string, credits []FrozenArtistCredit, policy, revision string) error {
+	parentColumn := map[string]string{"release_artist": "release_id", "recording_artist": "recording_id", "track_artist": "track_id"}[relation]
+	if parentColumn == "" {
+		return fmt.Errorf("apply matching operation: invalid frozen artist relation")
+	}
+	providerArtistIDs := make(map[string]uuid.UUID, len(credits))
+	for _, credit := range credits {
+		key := strings.ToLower(strings.TrimSpace(credit.ArtistProviderKey))
+		if key == "" {
+			return ErrIncomingMatchConflict
+		}
+		if _, exists := providerArtistIDs[key]; exists {
+			continue
+		}
+		var providerArtistID uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM provider_artist WHERE provider_id=? AND provider_key=?`, source.ProviderID, key).Scan(ctx, &providerArtistID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("apply matching operation: resolve frozen artist identity: %w", err)
+		}
+		providerArtistIDs[key] = providerArtistID
+	}
+	orderedIDs := make([]uuid.UUID, 0, len(providerArtistIDs))
+	for _, id := range providerArtistIDs {
+		orderedIDs = append(orderedIDs, id)
+	}
+	sort.Slice(orderedIDs, func(i, j int) bool { return orderedIDs[i].String() < orderedIDs[j].String() })
+	for _, id := range orderedIDs {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "frozen-apply-artist:"+source.ProviderID.String()+":"+id.String()); err != nil {
+			return fmt.Errorf("apply matching operation: lock frozen artist identity: %w", err)
+		}
+	}
+	for _, credit := range credits {
+		providerArtistID := providerArtistIDs[strings.ToLower(credit.ArtistProviderKey)]
+		var artistID uuid.UUID
+		var method string
+		err := tx.NewRaw(`SELECT local_artist_id,method FROM provider_local_artist WHERE provider_id=? AND provider_artist_id=? FOR UPDATE`, source.ProviderID, providerArtistID).Scan(ctx, &artistID, &method)
+		if errors.Is(err, sql.ErrNoRows) {
+			name := credit.ArtistName
+			if strings.TrimSpace(name) == "" {
+				name = credit.Name
+			}
+			if strings.TrimSpace(name) == "" {
+				return ErrIncomingMatchConflict
+			}
+			artistID = uuid.New()
+			sourceKind, sourceKey, field := "artist", credit.ArtistProviderKey, "artist-credit"
+			ev := ProviderFieldEvidence{}
+			if credit.Source != nil {
+				sourceKind, sourceKey, field = credit.Source.EntityKind, credit.Source.ProviderKey, credit.Source.Field
+				ev = ProviderFieldEvidence{Authority: credit.Source.Authority, FetchOrder: credit.Source.FetchOrder}
+			}
+			if credit.ArtistNameSource != nil {
+				sourceKind, sourceKey, field = credit.ArtistNameSource.EntityKind, credit.ArtistNameSource.ProviderKey, credit.ArtistNameSource.Field
+				ev = ProviderFieldEvidence{Authority: credit.ArtistNameSource.Authority, FetchOrder: credit.ArtistNameSource.FetchOrder}
+			}
+			provenance, marshalErr := json.Marshal(map[string]any{"automatic_matching": map[string]any{"source_id": source.ID, "provider_id": source.ProviderID, "provider_artist_id": providerArtistID, "projection_revision": revision, "policy_version": policy, "source_entity_id": sourceKey, "field_evidence": map[string]ProviderFieldEvidence{field: ev}, "name_source": field, "provider_fields_reference": map[string]any{"entity_kind": sourceKind, "provider_key": sourceKey, "fields": []string{field}}}})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err := tx.NewRaw(`INSERT INTO local_artist(id,name,metadata) VALUES (?,?,?::jsonb)`, artistID, name, string(provenance)).Exec(ctx); err != nil {
+				return err
+			}
+			if _, err := tx.NewRaw(`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method,policy_version) VALUES (?,?,?,'automatic',?)`, source.ProviderID, providerArtistID, artistID, policy).Exec(ctx); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return fmt.Errorf("apply matching operation: read frozen artist mapping: %w", err)
+		} else if method != "automatic" && method != "manual" {
+			return ErrMatchingManualProtection
+		}
+		if _, err := tx.NewRaw(`INSERT INTO `+relation+`(`+parentColumn+`,position,artist_id,name,name_join_phrase) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`, parentID, credit.Position, artistID, credit.Name, credit.JoinPhrase).Exec(ctx); err != nil {
+			return fmt.Errorf("apply matching operation: add frozen artist credit: %w", err)
+		}
 	}
 	return nil
 }

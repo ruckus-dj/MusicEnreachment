@@ -83,8 +83,19 @@ func TestSerializeFrozenFallbackEvaluationSortsEdgesAndUsesOneBasedCoordinates(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(publication.Evaluation.Assignments) != 1 || publication.Evaluation.Assignments[0].Medium != 1 || publication.Evaluation.Assignments[0].Position != 1 {
+	if publication.Evaluation.Outcome != string(MatchingDecisionOutcomeUnique) || publication.Evaluation.Decision != "apply" ||
+		len(publication.Evaluation.Assignments) != 1 || publication.Evaluation.Assignments[0].Medium != 1 || publication.Evaluation.Assignments[0].Position != 1 {
 		t.Fatalf("coordinates were not converted exactly once: %+v", publication.Evaluation.Assignments)
+	}
+	selectedButInfeasible := prepared
+	selectedButInfeasible.KernelResult.Assignment.Unique = false
+	reviewPublication, err := SerializeFrozenFallbackEvaluation(selectedButInfeasible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reviewPublication.Evaluation.Outcome != string(MatchingDecisionOutcomeReview) || reviewPublication.Evaluation.Decision != string(MatchingDecisionReview) ||
+		reviewPublication.Evaluation.SelectedRelease != "" || len(reviewPublication.Evaluation.Assignments) != 0 {
+		t.Fatalf("selected release without a feasible complete assignment escaped review: %+v", reviewPublication.Evaluation)
 	}
 	if len(publication.Inventory.Releases) != 1 || len(publication.Inventory.Releases[0].Tracks) != 1 ||
 		publication.Inventory.Releases[0].Tracks[0].Medium != 1 || publication.Inventory.Releases[0].Tracks[0].Position != 1 {

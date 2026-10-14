@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"sort"
 	"strings"
 
@@ -222,9 +223,13 @@ func ValidateMatchingApplyInputSnapshotV2(snapshot MatchingApplyInputSnapshotV2,
 		captured := capturedMemberByID(seal.CapturedMetadata, assignment.FileMemberID)
 		if !exists || expected.track != assignment.ProviderTrackID || expected.medium != assignment.Medium || expected.position != assignment.Position ||
 			assignment.FileMemberID == uuid.Nil || assignment.WorkID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || assignment.RecordingKey == "" ||
-			captured == nil || captured.WorkID != assignment.WorkID || assignment.SourceSHA256 != memberSourceHash(seal.Target.Capture, assignment.FileMemberID) ||
+			captured == nil || captured.WorkID != assignment.WorkID ||
 			assignment.Medium < 0 || assignment.Position < 0 || seenMembers[assignment.FileMemberID] {
 			return fmt.Errorf("validate matching apply snapshot: assignment is invalid or duplicated")
+		}
+		sourceSHA256, err := memberSourceHash(seal.Target.Capture, assignment.FileMemberID)
+		if err != nil || assignment.SourceSHA256 != sourceSHA256 || (assignment.SourceSHA256 != "" && !validSnapshotDigest(assignment.SourceSHA256)) {
+			return fmt.Errorf("validate matching apply snapshot: assignment source SHA-256 differs from original capture")
 		}
 		seenMembers[assignment.FileMemberID] = true
 	}
@@ -330,10 +335,6 @@ func snapshotAssignments(seal MatchingFallbackSealAuthority, release MatchingRel
 		if !ok || seen[item.FileMemberID] || item.ProviderTrackID == uuid.Nil || item.Medium < 1 || item.Position < 1 {
 			return nil, fmt.Errorf("build matching apply snapshot: foreign or invalid decision assignment")
 		}
-		sourceSHA := memberSourceHash(seal.Target.Capture, item.FileMemberID)
-		if !validSnapshotDigest(sourceSHA) {
-			return nil, fmt.Errorf("build matching apply snapshot: original member source SHA-256 is unavailable")
-		}
 		seen[item.FileMemberID] = true
 		track := MatchingReleaseTrack{}
 		if release.ID != uuid.Nil {
@@ -348,16 +349,97 @@ func snapshotAssignments(seal MatchingFallbackSealAuthority, release MatchingRel
 			}
 		}
 		assignments = append(assignments, MatchingApplySnapshotAssignment{FileMemberID: item.FileMemberID, WorkID: member.WorkID,
-			SourceSHA256: sourceSHA, ProviderTrackID: item.ProviderTrackID,
-			RecordingKey: track.RecordingProviderKey, Medium: item.Medium - 1, Position: item.Position - 1})
+			ProviderTrackID: item.ProviderTrackID,
+			RecordingKey:    track.RecordingProviderKey, Medium: item.Medium - 1, Position: item.Position - 1})
 	}
 	if len(seen) != len(captured) {
 		return nil, fmt.Errorf("build matching apply snapshot: decision omits original group member")
+	}
+	if err := validateFolderScopedAssignmentInjectivity(seal.Target.Capture, decision, release.ID); err != nil {
+		return nil, err
+	}
+	for index := range assignments {
+		sourceSHA, err := memberSourceHash(seal.Target.Capture, assignments[index].FileMemberID)
+		if err != nil {
+			return nil, fmt.Errorf("build matching apply snapshot: original member source SHA-256 is invalid: %w", err)
+		}
+		assignments[index].SourceSHA256 = sourceSHA
 	}
 	sort.Slice(assignments, func(i, j int) bool {
 		return assignments[i].FileMemberID.String() < assignments[j].FileMemberID.String()
 	})
 	return assignments, nil
+}
+
+// validateFolderScopedAssignmentInjectivity preserves the provider-position
+// uniqueness invariant within each original root/folder, while allowing a
+// position to be reused in another folder or source root.
+func validateFolderScopedAssignmentInjectivity(capture json.RawMessage, decision persistedMatchingDecision, selectedReleaseID uuid.UUID) error {
+	var target struct {
+		Members []struct {
+			VariantID uuid.UUID         `json:"variant_id"`
+			Locations []json.RawMessage `json:"locations"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(capture, &target); err != nil {
+		return fmt.Errorf("build matching apply snapshot: original member locations are invalid")
+	}
+	locationsByVariant := make(map[uuid.UUID][]struct {
+		root   uuid.UUID
+		folder string
+	}, len(target.Members))
+	for _, member := range target.Members {
+		if member.VariantID == uuid.Nil || len(member.Locations) == 0 {
+			return fmt.Errorf("build matching apply snapshot: original member location identity is invalid")
+		}
+		seen := make(map[struct {
+			root   uuid.UUID
+			folder string
+		}]bool, len(member.Locations))
+		for _, rawLocation := range member.Locations {
+			var fields map[string]json.RawMessage
+			var rootID uuid.UUID
+			var relativePath string
+			if json.Unmarshal(rawLocation, &fields) != nil || json.Unmarshal(matchingSnapshotRawField(fields, "rootid"), &rootID) != nil ||
+				json.Unmarshal(matchingSnapshotRawField(fields, "relativepath"), &relativePath) != nil || rootID == uuid.Nil || relativePath == "" {
+				return fmt.Errorf("build matching apply snapshot: original member location identity is invalid")
+			}
+			folder := strings.TrimPrefix(path.Clean("/"+path.Dir(relativePath)), "/")
+			key := struct {
+				root   uuid.UUID
+				folder string
+			}{rootID, folder}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			locationsByVariant[member.VariantID] = append(locationsByVariant[member.VariantID], struct {
+				root   uuid.UUID
+				folder string
+			}{rootID, folder})
+		}
+	}
+	type folderPosition struct {
+		root     uuid.UUID
+		folder   string
+		release  uuid.UUID
+		medium   int
+		position int
+	}
+	owners := make(map[folderPosition]uuid.UUID)
+	for _, assignment := range decision.Assignments {
+		if len(locationsByVariant[assignment.FileMemberID]) == 0 {
+			return fmt.Errorf("build matching apply snapshot: original member locations are missing")
+		}
+		for _, location := range locationsByVariant[assignment.FileMemberID] {
+			key := folderPosition{root: location.root, folder: location.folder, release: selectedReleaseID, medium: assignment.Medium - 1, position: assignment.Position - 1}
+			if owner, exists := owners[key]; exists && owner != assignment.FileMemberID {
+				return fmt.Errorf("build matching apply snapshot: distinct variants share a provider position in the same source folder")
+			}
+			owners[key] = assignment.FileMemberID
+		}
+	}
+	return nil
 }
 
 func frozenAssignments(in []MatchingApplySnapshotAssignment, selected MatchingRelease) []FrozenTrackAssignment {
@@ -432,7 +514,7 @@ func matchingApplySnapshotCaptureCovers(capture json.RawMessage, members []Match
 	}
 	return len(ids) == 0
 }
-func memberSourceHash(capture json.RawMessage, memberID uuid.UUID) string {
+func memberSourceHash(capture json.RawMessage, memberID uuid.UUID) (string, error) {
 	var target struct {
 		Members []struct {
 			VariantID    uuid.UUID         `json:"variant_id"`
@@ -454,21 +536,28 @@ func memberSourceHash(capture json.RawMessage, memberID uuid.UUID) string {
 					continue
 				}
 				digestRaw := matchingSnapshotRawField(sourceCapture, "sourcesha256")
-				var digestBytes []byte
-				if json.Unmarshal(digestRaw, &digestBytes) == nil && len(digestBytes) == sha256.Size {
-					return hex.EncodeToString(digestBytes)
-				}
-				var digestString string
-				if json.Unmarshal(digestRaw, &digestString) == nil && validSnapshotDigest(digestString) {
-					return strings.ToLower(digestString)
+				if len(digestRaw) > 0 && string(digestRaw) != "null" {
+					var digestBytes []byte
+					if json.Unmarshal(digestRaw, &digestBytes) == nil && len(digestBytes) == sha256.Size {
+						return hex.EncodeToString(digestBytes), nil
+					}
+					var digestString string
+					if json.Unmarshal(digestRaw, &digestString) != nil || !validSnapshotDigest(digestString) {
+						return "", fmt.Errorf("captured digest is not a SHA-256 hex value")
+					}
+					return strings.ToLower(digestString), nil
 				}
 			}
-			if validSnapshotDigest(member.SourceSHA256) {
-				return strings.ToLower(member.SourceSHA256)
+			if member.SourceSHA256 != "" {
+				if !validSnapshotDigest(member.SourceSHA256) {
+					return "", fmt.Errorf("captured member digest is not a SHA-256 hex value")
+				}
+				return strings.ToLower(member.SourceSHA256), nil
 			}
+			return "", nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func matchingSnapshotRawField(fields map[string]json.RawMessage, normalizedName string) json.RawMessage {

@@ -301,6 +301,10 @@ func SerializeFrozenFallbackEvaluation(prepared PreparedFrozenFallbackEvaluation
 			decision.SelectedRelease = ""
 			decision.Assignments = []persistence.FrozenMatchingAssignment{}
 		} else {
+			// The kernel's "selected" value describes its unique release choice.
+			// Frozen publication uses "apply" for the equivalent, fully-qualified
+			// assignment contract consumed by the persistence publisher.
+			decision.Decision = "apply"
 			sort.Slice(decision.Assignments, func(i, j int) bool {
 				return decision.Assignments[i].FileMemberID.String() < decision.Assignments[j].FileMemberID.String()
 			})

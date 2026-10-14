@@ -2,6 +2,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -1636,6 +1638,12 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("requeue matching apply: lock output admission gate: %w", err)
 		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("requeue matching apply: lock source mutations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("requeue matching apply: lock MusicBrainz configuration: %w", err)
+		}
 		current, err := repository.GetOperationForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
@@ -1643,9 +1651,31 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 		if current.Kind != MatchingApplyOperationKind || (current.State != "failed" && (!recoverActive || (current.State != "queued" && current.State != "running"))) {
 			return fmt.Errorf("requeue matching apply: operation is not retryable")
 		}
-		var intent matchingApplyIntent
-		if err := json.Unmarshal(current.InputSnapshot, &intent); err != nil || intent.SchemaVersion != 1 || intent.GroupID == uuid.Nil || intent.ParentRunID == uuid.Nil || intent.EvaluationRevision == "" {
+		var discriminator struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		if err := json.Unmarshal(current.InputSnapshot, &discriminator); err != nil {
 			return fmt.Errorf("requeue matching apply: immutable snapshot is invalid")
+		}
+		var intent matchingApplyIntent
+		var snapshotV2 MatchingApplyInputSnapshotV2
+		switch discriminator.SchemaVersion {
+		case 1:
+			decoder := json.NewDecoder(bytes.NewReader(current.InputSnapshot))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&intent); err != nil || decoder.Decode(new(any)) != io.EOF ||
+				intent.SchemaVersion != 1 || intent.GroupID == uuid.Nil || intent.ParentRunID == uuid.Nil || intent.EvaluationRevision == "" {
+				return fmt.Errorf("requeue matching apply: immutable schema-1 snapshot is invalid")
+			}
+		case 2:
+			snapshotV2, err = DecodeMatchingApplyInputSnapshotV2(current.InputSnapshot)
+			if err != nil || snapshotV2.Authority.GroupID == uuid.Nil || snapshotV2.Authority.ParentRunID == uuid.Nil || snapshotV2.Authority.EvaluationRevision == "" {
+				return fmt.Errorf("requeue matching apply: immutable schema-2 snapshot is invalid")
+			}
+			intent = matchingApplyIntent{SchemaVersion: 2, GroupID: snapshotV2.Authority.GroupID,
+				ParentRunID: snapshotV2.Authority.ParentRunID, EvaluationRevision: snapshotV2.Authority.EvaluationRevision}
+		default:
+			return fmt.Errorf("requeue matching apply: immutable snapshot schema is unsupported")
 		}
 		var receipt bool
 		if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_apply_receipt WHERE apply_operation_id=? AND group_id=?)`, id, intent.GroupID).Scan(ctx, &receipt); err != nil {
@@ -1660,6 +1690,32 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 		}
 		if !requested {
 			return fmt.Errorf("requeue matching apply: request does not match immutable snapshot")
+		}
+		if discriminator.SchemaVersion == 2 {
+			inputDigest, err := MatchingApplyInputSnapshotV2Digest(snapshotV2)
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: digest immutable schema-2 snapshot: %w", err)
+			}
+			var request struct {
+				Version       int    `bun:"schema_version"`
+				InputSHA      []byte `bun:"input_sha256"`
+				Authority     int    `bun:"frozen_authority_version"`
+				ParentEpoch   int64  `bun:"parent_execution_epoch"`
+				WaitRevision  int64  `bun:"seal_wait_revision"`
+				SealDigest    []byte `bun:"seal_digest"`
+				TargetCapture []byte `bun:"target_capture_sha256"`
+			}
+			if err := tx.NewRaw(`SELECT schema_version,input_sha256,frozen_authority_version,parent_execution_epoch,
+				seal_wait_revision,seal_digest,target_capture_sha256 FROM matching_apply_request WHERE apply_operation_id=?`, id).Scan(ctx, &request); err != nil {
+				return fmt.Errorf("requeue matching apply: read schema-2 request binding: %w", err)
+			}
+			if request.Version != 2 || request.Authority != snapshotV2.Authority.AuthorityVersion ||
+				request.ParentEpoch != snapshotV2.Authority.ExecutionEpoch || request.WaitRevision != snapshotV2.Authority.WaitRevision ||
+				!equalDigest(request.InputSHA, mustDecodeHexDigest(inputDigest)) ||
+				!equalDigest(request.SealDigest, mustDecodeHexDigest(snapshotV2.Authority.SealDigest)) ||
+				!equalDigest(request.TargetCapture, mustDecodeHexDigest(snapshotV2.Authority.TargetCaptureDigest)) {
+				return fmt.Errorf("requeue matching apply: schema-2 request binding differs from immutable snapshot")
+			}
 		}
 		inserted, err := client.InsertTx(ctx, tx.Tx, args, options)
 		if err != nil {

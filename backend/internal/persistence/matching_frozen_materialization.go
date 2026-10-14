@@ -27,16 +27,20 @@ type FrozenSelectedRelease struct {
 }
 
 type FrozenRecordingTrack struct {
-	ProviderTrackID      uuid.UUID            `json:"provider_track_id"`
-	ProviderReleaseID    uuid.UUID            `json:"provider_release_id"`
-	RecordingProviderKey string               `json:"recording_provider_key"`
-	Medium               int                  `json:"medium"`
-	Position             int                  `json:"position"`
-	DisplayedNumber      string               `json:"displayed_number"`
-	Title                string               `json:"title"`
-	TitleSource          *FrozenFieldSource   `json:"title_source,omitempty"`
-	Credits              []FrozenArtistCredit `json:"credits"`
-	CreditSource         *FrozenFieldSource   `json:"credit_source,omitempty"`
+	ProviderTrackID       uuid.UUID            `json:"provider_track_id"`
+	ProviderReleaseID     uuid.UUID            `json:"provider_release_id"`
+	RecordingProviderKey  string               `json:"recording_provider_key"`
+	Medium                int                  `json:"medium"`
+	Position              int                  `json:"position"`
+	DisplayedNumber       string               `json:"displayed_number"`
+	RecordingTitle        string               `json:"recording_title"`
+	RecordingTitleSource  *FrozenFieldSource   `json:"recording_title_source,omitempty"`
+	RecordingCredits      []FrozenArtistCredit `json:"recording_credits,omitempty"`
+	RecordingCreditSource *FrozenFieldSource   `json:"recording_credit_source,omitempty"`
+	Title                 string               `json:"title"`
+	TitleSource           *FrozenFieldSource   `json:"title_source,omitempty"`
+	Credits               []FrozenArtistCredit `json:"credits"`
+	CreditSource          *FrozenFieldSource   `json:"credit_source,omitempty"`
 }
 
 type FrozenArtistCredit struct {
@@ -172,18 +176,23 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 			return FrozenMaterialization{}, fmt.Errorf("%w: decode recording fields: %v", errInvalidFrozenMaterialization, err)
 		}
 		recordingEntity, _ := findProjectionEntity(snapshot.ProjectionEntities, "recording", assignment.RecordingKey)
-		title := track.RecordingTitle
-		var titleSource *FrozenFieldSource
+		recordingTitle := track.RecordingTitle
+		var recordingTitleSource *FrozenFieldSource
 		if recordingEntity != nil {
 			if recordingEntity.Name != "" {
-				title = recordingEntity.Name
+				recordingTitle = recordingEntity.Name
 			} else if value := jsonString(trackFields["title"]); value != "" {
-				title = value
+				recordingTitle = value
 			}
 			if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["title"]; ok && (recordingEntity.Name != "" || jsonString(trackFields["title"]) != "") {
 				source := frozenFieldSource("recording", recordingEntity.ProviderKey, "title", evidence)
-				titleSource = &source
+				recordingTitleSource = &source
 			}
+		}
+		title := recordingTitle
+		var titleSource *FrozenFieldSource
+		if recordingEntity != nil {
+			titleSource = recordingTitleSource
 		}
 		if normalizedTitle, exists := acceptedNormalizedTrackTitle(releaseFields["normalized_tracks"], track.Medium, track.Position, assignment.RecordingKey); exists && normalizedTitle != "" {
 			title = normalizedTitle
@@ -192,6 +201,24 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 				source := frozenFieldSource("release", selected.ProviderKey, "normalized_tracks", evidence)
 				titleSource = &source
 			}
+		}
+		recordingCredits, _, err := decodeFrozenCredits(trackFields["artist-credit"])
+		if err != nil {
+			return FrozenMaterialization{}, fmt.Errorf("%w: decode recording credits: %v", errInvalidFrozenMaterialization, err)
+		}
+		var recordingCreditSource *FrozenFieldSource
+		if recordingEntity != nil {
+			if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["artist-credit"]; ok {
+				source := frozenFieldSource("recording", recordingEntity.ProviderKey, "artist-credit", evidence)
+				recordingCreditSource = &source
+			}
+		}
+		for index := range recordingCredits {
+			if recordingCreditSource != nil {
+				source := *recordingCreditSource
+				recordingCredits[index].Source = &source
+			}
+			applyFrozenArtistName(snapshot.ProjectionEntities, &recordingCredits[index])
 		}
 		credits, trackCreditOverride, err := acceptedNormalizedTrackCredits(releaseFields["normalized_tracks"], track.Medium, track.Position, assignment.RecordingKey, selected)
 		if err != nil {
@@ -204,16 +231,8 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 				creditSource = &source
 			}
 		} else {
-			credits, _, err = decodeFrozenCredits(trackFields["artist-credit"])
-			if err != nil {
-				return FrozenMaterialization{}, fmt.Errorf("%w: decode recording credits: %v", errInvalidFrozenMaterialization, err)
-			}
-			if recordingEntity != nil {
-				if evidence, ok := decodeEvidence(recordingEntity.FieldEvidence)["artist-credit"]; ok {
-					source := frozenFieldSource("recording", recordingEntity.ProviderKey, "artist-credit", evidence)
-					creditSource = &source
-				}
-			}
+			credits = recordingCredits
+			creditSource = recordingCreditSource
 		}
 		for index := range credits {
 			if creditSource != nil {
@@ -222,7 +241,7 @@ func acceptedProjectionToMaterialization(snapshot ProviderMatchingSnapshot, sele
 			}
 			applyFrozenArtistName(snapshot.ProjectionEntities, &credits[index])
 		}
-		result.Tracks = append(result.Tracks, FrozenRecordingTrack{ProviderTrackID: assignment.ProviderTrackID, ProviderReleaseID: selected.ID, RecordingProviderKey: track.RecordingProviderKey, Medium: assignment.Medium, Position: assignment.Position, DisplayedNumber: track.DisplayedNumber, Title: title, TitleSource: titleSource, Credits: credits, CreditSource: creditSource})
+		result.Tracks = append(result.Tracks, FrozenRecordingTrack{ProviderTrackID: assignment.ProviderTrackID, ProviderReleaseID: selected.ID, RecordingProviderKey: track.RecordingProviderKey, Medium: assignment.Medium, Position: assignment.Position, DisplayedNumber: track.DisplayedNumber, RecordingTitle: recordingTitle, RecordingTitleSource: recordingTitleSource, RecordingCredits: recordingCredits, RecordingCreditSource: recordingCreditSource, Title: title, TitleSource: titleSource, Credits: credits, CreditSource: creditSource})
 	}
 	return result, nil
 }

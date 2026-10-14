@@ -160,6 +160,119 @@ func TestMatchingApplyInputSnapshotV2RejectsInvalidDecisionAssignments(t *testin
 	}
 }
 
+func TestSnapshotAssignmentsEnforcesFolderScopedInjectivity(t *testing.T) {
+	seal, _, decision, release, _ := matchingApplySnapshotFixture()
+	originalCapture := append(json.RawMessage(nil), seal.Target.Capture...)
+	if _, err := snapshotAssignments(seal, release, decision); err != nil {
+		t.Fatalf("same provider position in distinct folders should be allowed: %v", err)
+	}
+
+	var target struct {
+		Members []struct {
+			VariantID uuid.UUID `json:"variant_id"`
+			SourceSHA string    `json:"source_sha256"`
+			Locations []struct {
+				RootID       uuid.UUID `json:"root_id"`
+				RelativePath string    `json:"relative_path"`
+			} `json:"locations"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(seal.Target.Capture, &target); err != nil {
+		t.Fatal(err)
+	}
+	rootA, rootB := target.Members[0].Locations[0].RootID, target.Members[1].Locations[0].RootID
+	tests := []struct {
+		name      string
+		mutate    func()
+		wantError bool
+	}{
+		{name: "different folders allow reuse", mutate: func() {
+			target.Members[1].Locations[0].RootID = rootA
+			target.Members[1].Locations[0].RelativePath = "folder-b/track.flac"
+		}},
+		{name: "same variant across locations counts once", mutate: func() {
+			location := target.Members[0].Locations[0]
+			location.RelativePath = "one/another-track.flac"
+			target.Members[0].Locations = append(target.Members[0].Locations, location)
+		}},
+		{name: "different roots allow reuse", mutate: func() {
+			target.Members[1].Locations[0].RootID = rootB
+			target.Members[1].Locations[0].RelativePath = target.Members[0].Locations[0].RelativePath
+		}},
+		{name: "same root and folder reject different variants", wantError: true, mutate: func() {
+			target.Members[1].Locations[0].RootID = rootA
+			target.Members[1].Locations[0].RelativePath = target.Members[0].Locations[0].RelativePath
+		}},
+		{name: "missing location is rejected", wantError: true, mutate: func() {
+			target.Members[1].Locations = nil
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			original, _ := json.Marshal(target)
+			defer func() { _ = json.Unmarshal(original, &target) }()
+			tc.mutate()
+			seal.Target.Capture = testJSON(target)
+			_, err := snapshotAssignments(seal, release, decision)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("snapshotAssignments error = %v, wantError %v", err, tc.wantError)
+			}
+		})
+	}
+
+	// The accepted projection may contain provider tracks that are not assigned.
+	seal.Target.Capture = originalCapture
+	extraTrack := release.Tracks[0]
+	extraTrack.ID = uuid.New()
+	extraTrack.Position = 1
+	release.Tracks = append(release.Tracks, extraTrack)
+	if _, err := snapshotAssignments(seal, release, decision); err != nil {
+		t.Fatalf("unused provider track should not require assignment: %v", err)
+	}
+	if _, err := snapshotAssignments(seal, release, persistedMatchingDecision{GroupID: decision.GroupID, PolicyVersion: decision.PolicyVersion,
+		SelectedRelease: decision.SelectedRelease, Assignments: decision.Assignments[:1]}); err == nil {
+		t.Fatal("missing group member assignment was accepted")
+	}
+}
+
+func TestMatchingApplySnapshotAllowsMissingSourceSHAAndBindsPresentSHA(t *testing.T) {
+	seal, context, decision, _, _ := matchingApplySnapshotFixture()
+	var capture struct {
+		Members []struct {
+			VariantID    uuid.UUID         `json:"variant_id"`
+			SourceSHA256 string            `json:"source_sha256"`
+			Locations    json.RawMessage   `json:"locations"`
+			Captures     []json.RawMessage `json:"captures"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(seal.Target.Capture, &capture); err != nil {
+		t.Fatal(err)
+	}
+	for index := range capture.Members {
+		capture.Members[index].SourceSHA256 = ""
+	}
+	seal.Target.Capture = testJSON(capture)
+	snapshot, _, err := BuildMatchingApplyInputSnapshotV2(seal, context, "eval-rev", decision)
+	if err != nil {
+		t.Fatalf("build digestless source snapshot: %v", err)
+	}
+	for _, assignment := range snapshot.Assignments {
+		if assignment.SourceSHA256 != "" || assignment.WorkID == uuid.Nil || assignment.FileMemberID == uuid.Nil {
+			t.Fatalf("digestless assignment lost required identity or gained a digest: %+v", assignment)
+		}
+	}
+
+	presentSeal, presentContext, presentDecision, _, _ := matchingApplySnapshotFixture()
+	present, _, err := BuildMatchingApplyInputSnapshotV2(presentSeal, presentContext, "eval-rev", presentDecision)
+	if err != nil {
+		t.Fatalf("build source snapshot with captured digests: %v", err)
+	}
+	present.Assignments[0].SourceSHA256 = strings.Repeat("0", 64)
+	if err := ValidateMatchingApplyInputSnapshotV2(present, presentSeal, presentContext, "eval-rev", presentDecision); err == nil {
+		t.Fatal("assignment with a digest different from the original capture was accepted")
+	}
+}
+
 func matchingApplySnapshotFixture() (MatchingFallbackSealAuthority, MatchingFallbackCalculationContext, persistedMatchingDecision, MatchingRelease, MatchingRelease) {
 	runID, groupID, sourceID, providerID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	memberA, memberB, workA, workB, trackA, trackB := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
@@ -167,7 +280,7 @@ func matchingApplySnapshotFixture() (MatchingFallbackSealAuthority, MatchingFall
 	releaseB := MatchingRelease{ID: uuid.New(), ProviderKey: "release-b", Name: "B", Fields: json.RawMessage(`{"title":"B"}`), FieldEvidence: map[string]ProviderFieldEvidence{}, Tracks: []MatchingReleaseTrack{{ID: trackB, Medium: 0, Position: 0, RecordingProviderKey: "recording-b", RecordingTitle: "Track B"}}}
 	seal := MatchingFallbackSealAuthority{SchemaVersion: matchingFallbackSealAuthoritySchemaVersion, Disposition: "qualified", RunID: runID, WaitRevision: 5,
 		Intent:           MatchingAcquisitionIntent{SchemaVersion: matchingAutomaticFallbackAcquisitionIntentVersion, PolicyVersion: matchingpolicy.CurrentVersion},
-		Target:           MatchingRunFenceSnapshot{Version: 2, GroupID: groupID, GroupRevision: "group-rev", CaptureDigest: strings.Repeat("a", 64), Capture: json.RawMessage(`{"schema_version":2,"group_id":"` + groupID.String() + `","members":[{"variant_id":"` + memberA.String() + `","source_sha256":"` + strings.Repeat("12", 32) + `"},{"variant_id":"` + memberB.String() + `","source_sha256":"` + strings.Repeat("12", 32) + `"}]}`)},
+		Target:           MatchingRunFenceSnapshot{Version: 2, GroupID: groupID, GroupRevision: "group-rev", CaptureDigest: strings.Repeat("a", 64), Capture: json.RawMessage(`{"schema_version":2,"group_id":"` + groupID.String() + `","members":[{"variant_id":"` + memberA.String() + `","source_sha256":"` + strings.Repeat("12", 32) + `","locations":[{"root_id":"` + uuid.NewString() + `","relative_path":"one/track.flac"}]},{"variant_id":"` + memberB.String() + `","source_sha256":"` + strings.Repeat("12", 32) + `","locations":[{"root_id":"` + uuid.NewString() + `","relative_path":"two/track.flac"}]}]}`)},
 		CapturedMetadata: []MatchingAcquisitionCapturedMember{{MemberID: memberA, WorkID: workA, Tags: json.RawMessage(`{}`)}, {MemberID: memberB, WorkID: workB, Tags: json.RawMessage(`{}`)}},
 		SourceID:         sourceID, ProviderID: providerID, Endpoint: "https://provider.invalid", SourceConfiguration: "source-config", RunProviderConfiguration: "source-config", Digest: strings.Repeat("b", 64)}
 	lookupA, lookupB := uuid.New(), uuid.New()
