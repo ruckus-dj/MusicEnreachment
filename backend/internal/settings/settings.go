@@ -92,7 +92,7 @@ type PlatformState struct {
 type MusicBrainzConfig struct {
 	Mode       string // "public" or "self-hosted"
 	BaseURL    string // empty for public, HTTP(S) URL for self-hosted
-	Identity   string // changes on every configuration update
+	Identity   string // changes when the effective provider target changes
 	VerifiedAt *time.Time
 }
 
@@ -598,7 +598,7 @@ func parseSnapshotSetting[T any](values map[string]string, definition settingDef
 }
 
 // SetMusicBrainzConfig validates and stores MusicBrainz configuration.
-// Changing the configuration invalidates the previous verification.
+// Changing the effective provider target invalidates the previous verification.
 func (r *Registry) SetMusicBrainzConfig(ctx context.Context, mode, baseURL string) error {
 	mode, err := serializeSetting(musicBrainzModeSetting, mode)
 	if err != nil {
@@ -652,7 +652,7 @@ func (r *Registry) SetMusicBrainzVerified(ctx context.Context, config MusicBrain
 	if err != nil {
 		return err
 	}
-	if current.Mode != config.Mode || current.BaseURL != config.BaseURL || current.Identity != config.Identity {
+	if current.Identity != config.Identity || (config.Identity == "" && (current.Mode != config.Mode || current.BaseURL != config.BaseURL)) {
 		return fmt.Errorf("configuration changed since check was initiated")
 	}
 	return r.store.Set(ctx, MusicBrainzVerifiedAtKey, verifiedAt)

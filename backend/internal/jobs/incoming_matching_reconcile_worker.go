@@ -22,6 +22,14 @@ type incomingMatchingReconcileConsumer interface {
 	Reconcile(context.Context, service.IncomingMatchingReconcileDelivery) error
 }
 
+type currentIncomingMatchingReconcileConsumer interface {
+	ReconcileCurrent(context.Context, service.IncomingMatchingReconcileDelivery) error
+}
+
+type incomingMatchingReconcileReasonReader interface {
+	IsCurrentMatchingReconciliationEvent(context.Context, uuid.UUID) (bool, error)
+}
+
 type IncomingMatchingReconcileWorker struct {
 	river.WorkerDefaults[persistence.IncomingMatchingReconcileJobArgs]
 	repository incomingMatchingReconcileWorkerRepository
@@ -50,7 +58,25 @@ func (worker *IncomingMatchingReconcileWorker) Work(ctx context.Context, job *ri
 		return fmt.Errorf("incoming matching reconciliation claim outcome is invalid")
 	}
 	delivery := service.IncomingMatchingReconcileDelivery{EventID: job.Args.EventID, RiverJobID: job.ID, RiverAttempt: job.Attempt, Epoch: epoch}
-	if err := worker.consumer.Reconcile(ctx, delivery); err != nil {
+	var reconcileErr error
+	currentDelivery := false
+	if reader, ok := worker.repository.(incomingMatchingReconcileReasonReader); ok {
+		current, err := reader.IsCurrentMatchingReconciliationEvent(ctx, delivery.EventID)
+		if err != nil {
+			return errors.Join(fmt.Errorf("read incoming matching reconciliation reason: %w", err), worker.release(ctx, delivery))
+		}
+		currentDelivery = current
+	}
+	// Current production consumers always reconcile the live projection; immutable
+	// source-event snapshots may predate a newer current-generation obligation.
+	if consumer, ok := worker.consumer.(currentIncomingMatchingReconcileConsumer); ok {
+		reconcileErr = consumer.ReconcileCurrent(ctx, delivery)
+	} else if currentDelivery {
+		return errors.Join(fmt.Errorf("current incoming matching reconciliation consumer is unavailable"), worker.release(ctx, delivery))
+	} else {
+		reconcileErr = worker.consumer.Reconcile(ctx, delivery)
+	}
+	if err := reconcileErr; err != nil {
 		if errors.Is(err, service.ErrIncomingMatchingReconciliationDeferred) {
 			released, releaseErr := worker.repository.ReleaseIncomingMatchingReconciliationClaim(context.WithoutCancel(ctx), delivery.EventID, delivery.RiverJobID, delivery.RiverAttempt, delivery.Epoch)
 			if releaseErr != nil {

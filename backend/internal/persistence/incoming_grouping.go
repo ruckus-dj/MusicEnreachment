@@ -108,6 +108,10 @@ func InvalidateIncomingGrouping(ctx context.Context, tx bun.IDB) error {
 		SET revision=revision+1, needs_refresh=true, updated_at=now() WHERE singleton=true`).Exec(ctx); err != nil {
 		return fmt.Errorf("invalidate incoming grouping: %w", err)
 	}
+	// Fence current work for groups that are about to become stale.
+	if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx); err != nil {
+		return fmt.Errorf("invalidate incoming grouping: %w", err)
+	}
 	return nil
 }
 
@@ -288,6 +292,49 @@ func (repository *IncomingGroupingRepository) runGroupingCompute(ctx context.Con
 		if err != nil {
 			return err
 		}
+		currentByID := make(map[uuid.UUID]IncomingGroupingGroup, len(current))
+		for _, group := range current {
+			currentByID[group.ID] = group
+		}
+		nextByID := make(map[uuid.UUID]IncomingGroupingGroup, len(next))
+		for _, group := range next {
+			nextByID[group.ID] = group
+		}
+		changedAutomatic := make([]uuid.UUID, 0)
+		changedOldAutomatic := make([]uuid.UUID, 0)
+		for _, group := range next {
+			if group.Manual || len(group.Members) == 0 {
+				continue
+			}
+			previous, exists := currentByID[group.ID]
+			if !exists || previous.Manual || previous.Revision != group.Revision || incomingGroupReadinessChanged(previous, group) {
+				changedAutomatic = append(changedAutomatic, group.ID)
+			}
+		}
+		if expectedEpoch != nil {
+			for _, group := range current {
+				if group.Manual {
+					continue
+				}
+				replacement, exists := nextByID[group.ID]
+				if !exists || replacement.Revision != group.Revision || replacement.Manual || incomingGroupReadinessChanged(group, replacement) {
+					changedOldAutomatic = append(changedOldAutomatic, group.ID)
+				}
+			}
+		}
+		if len(changedOldAutomatic) != 0 {
+			oldIDs := make([]uuid.UUID, 0, len(changedOldAutomatic))
+			if err := tx.NewRaw(`SELECT groups.id FROM incoming_group groups
+			LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=groups.id
+			WHERE groups.id IN (?) AND groups.manual=false
+			AND COALESCE(authority.mode, 'automatic')='automatic'
+			ORDER BY groups.id`, bun.List(changedOldAutomatic)).Scan(ctx, &oldIDs); err != nil {
+				return fmt.Errorf("select changed old automatic incoming groups: %w", err)
+			}
+			if err := RequestIncomingMatchingReconciliationWith(ctx, tx, oldIDs); err != nil {
+				return fmt.Errorf("fence changed old automatic incoming groups: %w", err)
+			}
+		}
 		if _, err := tx.NewRaw(`DELETE FROM incoming_group WHERE id IS NOT NULL`).Exec(ctx); err != nil {
 			return fmt.Errorf("replace incoming groups: %w", err)
 		}
@@ -299,11 +346,55 @@ func (repository *IncomingGroupingRepository) runGroupingCompute(ctx context.Con
 				return err
 			}
 		}
+		if err := requestChangedAutomaticIncomingGroupsWith(ctx, tx, changedAutomatic); err != nil {
+			return fmt.Errorf("request changed automatic incoming groups: %w", err)
+		}
 		if _, err := tx.NewRaw(`UPDATE incoming_grouping_state SET revision=revision+1, needs_refresh=false, updated_at=now() WHERE singleton=true AND revision=?`, state.Revision).Exec(ctx); err != nil {
 			return fmt.Errorf("advance incoming grouping state: %w", err)
 		}
 		return nil
 	})
+}
+
+func incomingGroupReadinessChanged(previous, next IncomingGroupingGroup) bool {
+	if len(previous.Members) != len(next.Members) || len(previous.UnreadyMembers) != len(next.UnreadyMembers) {
+		return true
+	}
+	ready := make(map[uuid.UUID]bool, len(previous.Members))
+	for _, member := range previous.Members {
+		ready[member] = true
+	}
+	for _, member := range next.Members {
+		if !ready[member] {
+			return true
+		}
+	}
+	unready := make(map[uuid.UUID]bool, len(previous.UnreadyMembers))
+	for _, member := range previous.UnreadyMembers {
+		unready[member] = true
+	}
+	for _, member := range next.UnreadyMembers {
+		if !unready[member] {
+			return true
+		}
+	}
+	return false
+}
+
+func requestChangedAutomaticIncomingGroupsWith(ctx context.Context, tx bun.IDB, groupIDs []uuid.UUID) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(groupIDs))
+	if err := tx.NewRaw(`SELECT groups.id FROM incoming_group groups
+		LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=groups.id
+		WHERE groups.id IN (?) AND groups.manual=false
+		AND COALESCE(authority.mode, 'automatic')='automatic'
+		AND EXISTS (SELECT 1 FROM incoming_group_member member WHERE member.group_id=groups.id AND member.ready=true)
+		ORDER BY groups.id`, bun.List(groupIDs)).Scan(ctx, &ids); err != nil {
+		return fmt.Errorf("select changed automatic incoming groups: %w", err)
+	}
+	return RequestIncomingMatchingReconciliationWith(ctx, tx, ids)
 }
 
 func lockCurrentIncomingSourceRows(ctx context.Context, tx bun.Tx) error {

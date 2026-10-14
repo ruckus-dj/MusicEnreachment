@@ -30,6 +30,7 @@ type AutomaticFallbackMatchingAdmission struct {
 	EventRiverJobID       int64
 	EventRiverAttempt     int
 	EventDeliveryEpoch    int64
+	RequestGeneration     int64
 }
 
 // AutomaticFallbackProviderSource binds a fallback run to the saved provider
@@ -45,7 +46,7 @@ type AutomaticFallbackProviderSource struct {
 // initial child in one transaction. An empty plan creates a waiting_policy
 // parent with no provider child; later stage-engine work owns its settlement.
 func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx context.Context, client RiverInserter, admission AutomaticFallbackMatchingAdmission) (AutomaticArtistMatchingAdmissionResult, error) {
-	if client == nil || admission.Parent == nil || admission.Parent.Kind != "matching_evaluation_v1" || admission.GroupID == uuid.Nil || admission.ExpectedGroupRevision == "" || admission.EventID == uuid.Nil || admission.EventRiverJobID < 1 || admission.EventRiverAttempt < 1 || admission.EventDeliveryEpoch < 1 || !matchingpolicy.Supported(admission.PolicyVersion) {
+	if client == nil || admission.Parent == nil || admission.Parent.Kind != "matching_evaluation_v1" || admission.GroupID == uuid.Nil || admission.ExpectedGroupRevision == "" || admission.EventID == uuid.Nil || admission.EventRiverJobID < 1 || admission.EventRiverAttempt < 1 || admission.EventDeliveryEpoch < 1 || admission.RequestGeneration < 0 || !matchingpolicy.Supported(admission.PolicyVersion) {
 		return AutomaticArtistMatchingAdmissionResult{}, fmt.Errorf("automatic fallback matching admission is incomplete")
 	}
 	planBytes, err := json.Marshal(admission.Plan)
@@ -120,6 +121,12 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 		if grouping.NeedsRefresh {
 			return ErrIncomingMatchConflict
 		}
+		if admission.RequestGeneration > 0 {
+			var requested int64
+			if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &requested); err != nil || requested != admission.RequestGeneration {
+				return ErrIncomingMatchConflict
+			}
+		}
 		var group struct {
 			Revision string `bun:"revision"`
 		}
@@ -183,16 +190,17 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 		}
 		targetDigest := hex.EncodeToString(targetHash[:])
 		semantic, err := json.Marshal(struct {
-			Version       int             `json:"version"`
-			Target        string          `json:"target_capture_digest"`
-			Metadata      string          `json:"metadata_capture_digest"`
-			Plan          json.RawMessage `json:"fallback_query_plan"`
-			Policy        string          `json:"policy_version"`
-			Source        uuid.UUID       `json:"provider_source_id"`
-			Provider      uuid.UUID       `json:"provider_id"`
-			Endpoint      string          `json:"provider_endpoint"`
-			Configuration string          `json:"provider_configuration_identity"`
-		}{3, targetDigest, metadataDigest, planBytes, admission.PolicyVersion, admission.Source.ID, admission.Source.ProviderID, admission.Source.Endpoint, admission.Source.ConfigurationIdentity})
+			Version           int             `json:"version"`
+			Target            string          `json:"target_capture_digest"`
+			Metadata          string          `json:"metadata_capture_digest"`
+			Plan              json.RawMessage `json:"fallback_query_plan"`
+			Policy            string          `json:"policy_version"`
+			Source            uuid.UUID       `json:"provider_source_id"`
+			Provider          uuid.UUID       `json:"provider_id"`
+			Endpoint          string          `json:"provider_endpoint"`
+			Configuration     string          `json:"provider_configuration_identity"`
+			RequestGeneration int64           `json:"request_generation,omitempty"`
+		}{3, targetDigest, metadataDigest, planBytes, admission.PolicyVersion, admission.Source.ID, admission.Source.ProviderID, admission.Source.Endpoint, admission.Source.ConfigurationIdentity, admission.RequestGeneration})
 		if err != nil {
 			return err
 		}
@@ -278,7 +286,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticFallbackMatchingRun(ctx 
 		if err := tx.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1,current_run_id=?,updated_at=now() WHERE group_id=? RETURNING high_water`, admission.Parent.ID, admission.GroupID).Scan(ctx, &generation); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision,target_capture,target_capture_digest) VALUES (?,?,?,?,?,?::jsonb,?)`, admission.Parent.ID, admission.GroupID, group.Revision, generation, authorityRevision, string(captureBytes), targetHash[:]).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision,target_capture,target_capture_digest,reconciliation_generation) VALUES (?,?,?,?,?,?::jsonb,?,NULLIF(?,0))`, admission.Parent.ID, admission.GroupID, group.Revision, generation, authorityRevision, string(captureBytes), targetHash[:], admission.RequestGeneration).Exec(ctx); err != nil {
 			return err
 		}
 		providerInputs := []MatchingAcquisitionProviderRequest{}

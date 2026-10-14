@@ -458,11 +458,11 @@ func TestMatchingCoordinatorAdmissionRollsBackWhenRiverInsertFailsPostgres(t *te
 		t.Fatal("admission succeeded after provider River insert failure")
 	}
 	for query, args := range map[string][]any{
-		`SELECT count(*) FROM operation WHERE id IN (?,?)`:                           {parentID, childID},
-		`SELECT count(*) FROM matching_run WHERE plan_admission_key='river-failure'`: nil,
-		`SELECT count(*) FROM matching_delivery WHERE run_id=?`:                      {parentID},
-		`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`:    {parentID},
-		`SELECT count(*) FROM incoming_matching_generation WHERE group_id=?`:         {group.ID},
+		`SELECT count(*) FROM operation WHERE id IN (?,?)`:                                      {parentID, childID},
+		`SELECT count(*) FROM matching_run WHERE plan_admission_key='river-failure'`:            nil,
+		`SELECT count(*) FROM matching_delivery WHERE run_id=?`:                                 {parentID},
+		`SELECT count(*) FROM matching_provider_dependency WHERE parent_run_id=?`:               {parentID},
+		`SELECT COALESCE(max(high_water),0) FROM incoming_matching_generation WHERE group_id=?`: {group.ID},
 	} {
 		var count int
 		if err := db.NewRaw(query, args...).Scan(ctx, &count); err != nil {

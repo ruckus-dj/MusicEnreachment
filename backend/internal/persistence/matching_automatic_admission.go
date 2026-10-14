@@ -32,6 +32,9 @@ type AutomaticArtistMatchingAdmission struct {
 	EventRiverJobID        int64
 	EventRiverAttempt      int
 	EventDeliveryEpoch     int64
+	// RequestGeneration binds current-state admissions to the coalesced request
+	// they durably satisfy. Zero retains the legacy event-driven admission path.
+	RequestGeneration int64
 }
 
 // AutomaticArtistMatchingAdmissionResult keeps the permanent receipt identity
@@ -79,6 +82,7 @@ type automaticArtistAnalysisInput struct {
 func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx context.Context, client RiverInserter, admission AutomaticArtistMatchingAdmission) (AutomaticArtistMatchingAdmissionResult, error) {
 	if client == nil || admission.Parent == nil || admission.GroupID == uuid.Nil || admission.ExpectedGroupRevision == "" ||
 		admission.EventID == uuid.Nil || admission.EventRiverJobID < 1 || admission.EventRiverAttempt < 1 || admission.EventDeliveryEpoch < 1 ||
+		admission.RequestGeneration < 0 ||
 		admission.Provider.Operation == nil || admission.Provider.Operation.Kind != "provider_artist_search" ||
 		admission.Provider.Operation.ProviderCacheKey == nil || admission.ArtistQueryPlanVersion < 1 ||
 		!matchingpolicy.Supported(admission.PolicyVersion) || len(admission.QueryDescriptor) == 0 {
@@ -125,6 +129,12 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if grouping.NeedsRefresh {
 			return ErrIncomingMatchConflict
 		}
+		if admission.RequestGeneration > 0 {
+			var requested int64
+			if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &requested); err != nil || requested != admission.RequestGeneration {
+				return ErrIncomingMatchConflict
+			}
+		}
 		var group struct {
 			Revision string `bun:"revision"`
 		}
@@ -167,19 +177,20 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 			return err
 		}
 		semantic := struct {
-			Version       int             `json:"version"`
-			Capture       json.RawMessage `json:"target_capture"`
-			CaptureDigest string          `json:"target_capture_digest"`
-			Policy        string          `json:"policy_version"`
-			QueryVersion  int             `json:"artist_query_plan_version"`
-			Query         json.RawMessage `json:"query_descriptor"`
-			SourceID      uuid.UUID       `json:"provider_source_id"`
-			ProviderID    uuid.UUID       `json:"provider_id"`
-			Endpoint      string          `json:"provider_endpoint"`
-			Configuration string          `json:"provider_configuration_identity"`
+			Version           int             `json:"version"`
+			Capture           json.RawMessage `json:"target_capture"`
+			CaptureDigest     string          `json:"target_capture_digest"`
+			Policy            string          `json:"policy_version"`
+			QueryVersion      int             `json:"artist_query_plan_version"`
+			Query             json.RawMessage `json:"query_descriptor"`
+			SourceID          uuid.UUID       `json:"provider_source_id"`
+			ProviderID        uuid.UUID       `json:"provider_id"`
+			Endpoint          string          `json:"provider_endpoint"`
+			Configuration     string          `json:"provider_configuration_identity"`
+			RequestGeneration int64           `json:"request_generation,omitempty"`
 		}{2, captureBytes, hex.EncodeToString(captureDigest[:]), admission.PolicyVersion, admission.ArtistQueryPlanVersion, descriptor,
 			*admission.Provider.Operation.ProviderSourceID, *admission.Provider.Operation.ProviderID, admission.Provider.Operation.ProviderEndpoint,
-			*admission.Provider.Operation.ProviderConfigurationIdentity}
+			*admission.Provider.Operation.ProviderConfigurationIdentity, admission.RequestGeneration}
 		semanticBytes, err := json.Marshal(semantic)
 		if err != nil {
 			return err
@@ -262,7 +273,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err := tx.NewRaw(`UPDATE incoming_matching_generation SET high_water=high_water+1,current_run_id=?,updated_at=now() WHERE group_id=? RETURNING high_water`, admission.Parent.ID, admission.GroupID).Scan(ctx, &generation); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision,target_capture,target_capture_digest) VALUES (?,?,?,?,?,?::jsonb,?)`, admission.Parent.ID, admission.GroupID, group.Revision, generation, authorityRevision, string(captureBytes), captureDigest[:]).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_target(run_id,group_id,captured_group_revision,target_generation,authority_revision,target_capture,target_capture_digest,reconciliation_generation) VALUES (?,?,?,?,?,?::jsonb,?,NULLIF(?,0))`, admission.Parent.ID, admission.GroupID, group.Revision, generation, authorityRevision, string(captureBytes), captureDigest[:], admission.RequestGeneration).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`INSERT INTO matching_provider_dependency(parent_run_id,request_id,cache_key) VALUES (?,?,?)`, admission.Parent.ID, provider.ID, *provider.ProviderCacheKey).Exec(ctx); err != nil {

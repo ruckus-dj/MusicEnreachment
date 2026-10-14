@@ -197,12 +197,13 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 		return fmt.Errorf("validate matching target fence: %w", err)
 	}
 	var targets []struct {
-		GroupID       uuid.UUID       `bun:"group_id"`
-		Revision      string          `bun:"captured_group_revision"`
-		Capture       json.RawMessage `bun:"target_capture"`
-		CaptureDigest []byte          `bun:"target_capture_digest"`
+		GroupID           uuid.UUID       `bun:"group_id"`
+		Revision          string          `bun:"captured_group_revision"`
+		Capture           json.RawMessage `bun:"target_capture"`
+		CaptureDigest     []byte          `bun:"target_capture_digest"`
+		RequestGeneration *int64          `bun:"reconciliation_generation"`
 	}
-	if err := tx.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest
+	if err := tx.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest,reconciliation_generation
 		FROM matching_run_target WHERE run_id=? ORDER BY group_id FOR UPDATE`, runID).Scan(ctx, &targets); err != nil {
 		return fmt.Errorf("validate matching target fence: read immutable targets: %w", err)
 	}
@@ -210,6 +211,12 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 		return fmt.Errorf("validate matching target fence: version-2 target capture is missing")
 	}
 	target := targets[0]
+	if target.RequestGeneration != nil {
+		var requested int64
+		if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=? FOR SHARE`, target.GroupID).Scan(ctx, &requested); err != nil || requested != *target.RequestGeneration {
+			return ErrIncomingMatchConflict
+		}
+	}
 	storedCanonical, storedHash, err := automaticArtistTargetCaptureDigest(target.Capture)
 	if err != nil || !equalDigest(storedHash[:], target.CaptureDigest) || hex.EncodeToString(storedHash[:]) != plan.TargetCaptureDigest {
 		return fmt.Errorf("validate matching target fence: immutable target digest differs")

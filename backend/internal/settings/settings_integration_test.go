@@ -103,7 +103,7 @@ func TestMusicBrainzVerificationRejectsStaleIdentityWithSameValues(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.SetMusicBrainzConfig(ctx, checked.Mode, checked.BaseURL); err != nil {
+	if err := registry.SetMusicBrainzConfig(ctx, checked.Mode, "https://different.example.com"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -143,7 +143,7 @@ func TestManualReleaseMatchingAdmissionRollsBackFailedEnqueuePostgres(t *testing
 		`SELECT count(*) FROM manual_matching_admission WHERE request_id=?`:                                                    {requestID},
 		`SELECT count(*) FROM operation WHERE id=? OR id IN (SELECT run_id FROM manual_matching_admission WHERE request_id=?)`: {childID, requestID},
 		`SELECT count(*) FROM matching_run WHERE plan_admission_key=?`:                                                         {"manual:" + requestID.String()},
-		`SELECT count(*) FROM incoming_matching_generation WHERE group_id=?`:                                                   {fixture.group.ID},
+		`SELECT COALESCE(max(high_water),0) FROM incoming_matching_generation WHERE group_id=?`:                                {fixture.group.ID},
 	} {
 		var count int
 		if err := db.NewRaw(query, args...).Scan(ctx, &count); err != nil {
