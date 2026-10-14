@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,21 +31,25 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 	var claim MatchingDeliveryClaim
 	outcome := MatchingDeliveryNotClaimed
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
-		// Provider configuration is the outer fence for every provider-source
-		// read/lock. Admission and cache publication use this same order.
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
-			return fmt.Errorf("claim matching delivery: lock provider configuration: %w", err)
-		}
 		var runPlan struct {
-			SourceID     uuid.UUID `bun:"provider_source_id"`
-			Identity     string    `bun:"provider_configuration_identity"`
-			FenceVersion int       `bun:"fence_version"`
+			SourceID     uuid.UUID  `bun:"provider_source_id"`
+			Identity     string     `bun:"provider_configuration_identity"`
+			FenceVersion int        `bun:"fence_version"`
+			QuiescedAt   *time.Time `bun:"quiesced_at"`
 		}
-		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
+		if err := tx.NewRaw(`SELECT provider_source_id, provider_configuration_identity, fence_version, quiesced_at FROM matching_run WHERE id=?`, operationID).Scan(ctx, &runPlan); err != nil {
 			return fmt.Errorf("claim matching delivery: read run: %w", err)
+		}
+		if runPlan.QuiescedAt != nil {
+			return nil
 		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("claim matching delivery: lock source mutation gate: %w", err)
+		}
+		// Provider configuration follows the source mutation gate everywhere
+		// that a matching delivery captures provider-source identity.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("claim matching delivery: lock provider configuration: %w", err)
 		}
 		var sourceIdentity string
 		if err := tx.NewRaw(`SELECT configuration_identity FROM provider_source WHERE id=? FOR SHARE`, runPlan.SourceID).Scan(ctx, &sourceIdentity); err != nil {
@@ -105,7 +110,10 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 			Attempt int    `bun:"attempt"`
 		}
 		if err := tx.NewRaw(`SELECT state, attempt FROM river_job WHERE id=? FOR UPDATE`, riverJobID).Scan(ctx, &river); err != nil {
-			return nil
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("claim matching delivery: lock River job: %w", err)
 		}
 		if river.State != "running" || riverAttempt < 1 || river.Attempt != riverAttempt {
 			return nil
@@ -125,11 +133,22 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 			return nil
 		}
 		var run matchingClaimRun
-		if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt
-			FROM matching_run WHERE id=? FOR UPDATE`, operationID).Scan(ctx, &run); err != nil {
+		if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt,current_river_job_id,quiesced_at
+					FROM matching_run WHERE id=? FOR UPDATE`, operationID).Scan(ctx, &run); err != nil {
 			return fmt.Errorf("claim matching delivery: lock run: %w", err)
 		}
+		if run.QuiescedAt != nil {
+			return nil
+		}
 		if run.State != "queued" && run.State != "running" && run.State != "waiting_provider" {
+			return nil
+		}
+		var acquisitionPhase string
+		if err := tx.NewRaw(`SELECT current_phase FROM matching_acquisition WHERE run_id=?`, operationID).Scan(ctx, &acquisitionPhase); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("claim matching delivery: read acquisition phase: %w", err)
+		}
+		if acquisitionPhase == MatchingAcquisitionFallbackEvaluationSealed &&
+			(run.CurrentRiverJobID == nil || *run.CurrentRiverJobID != riverJobID) {
 			return nil
 		}
 		if run.ActiveRiverJobID != nil && run.ActiveRiverAttempt != nil {
@@ -161,10 +180,12 @@ func (repository *SetupManagerRepository) ClaimMatchingDelivery(ctx context.Cont
 }
 
 type matchingClaimRun struct {
-	State              string `bun:"state"`
-	ExecutionEpoch     int64  `bun:"execution_epoch"`
-	ActiveRiverJobID   *int64 `bun:"active_river_job_id"`
-	ActiveRiverAttempt *int   `bun:"active_river_attempt"`
+	State              string     `bun:"state"`
+	ExecutionEpoch     int64      `bun:"execution_epoch"`
+	ActiveRiverJobID   *int64     `bun:"active_river_job_id"`
+	ActiveRiverAttempt *int       `bun:"active_river_attempt"`
+	CurrentRiverJobID  *int64     `bun:"current_river_job_id"`
+	QuiescedAt         *time.Time `bun:"quiesced_at"`
 }
 
 // IsMatchingDeliveryCurrent checks whether an acquisition call still belongs to

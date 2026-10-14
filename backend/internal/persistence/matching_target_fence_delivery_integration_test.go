@@ -357,9 +357,16 @@ type automaticTargetFenceFixture struct {
 }
 
 func newAutomaticMatchingTargetFenceFixture(t *testing.T) automaticTargetFenceFixture {
+	return newAutomaticMatchingTargetFenceFixtureWithDatabase(t, nil)
+}
+
+func newAutomaticMatchingTargetFenceFixtureWithDatabase(t *testing.T, database *bun.DB) automaticTargetFenceFixture {
 	t.Helper()
 	ctx := context.Background()
-	db := testpostgres.OpenMigrated(t)
+	db := database
+	if db == nil {
+		db = testpostgres.OpenMigrated(t)
+	}
 	incoming := newIncomingMatchFixture(t, ctx, db)
 	setup := persistence.NewSetupManagerRepository(db)
 	inventory := persistence.NewSourceInventoryRepository(db)

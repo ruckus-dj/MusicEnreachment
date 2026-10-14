@@ -116,6 +116,9 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		if err := validateAutomaticArtistEventFence(ctx, tx, admission); err != nil {
 			return err
 		}
+		if _, err := tx.NewRaw(`SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+admission.GroupID.String()).Exec(ctx); err != nil {
+			return fmt.Errorf("automatic artist matching admission: lock evaluation revision: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?),hashtext(?))`, "automatic-artist-admission", admission.GroupID.String()); err != nil {
 			return err
 		}
@@ -167,6 +170,14 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 		metadataDigest, err := matchingMetadataCaptureDigest(metadataCapture)
 		if err != nil {
 			return err
+		}
+		var expectedEvaluationRevision *string
+		var evaluationRevision string
+		evaluationErr := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, admission.GroupID).Scan(ctx, &evaluationRevision)
+		if evaluationErr == nil {
+			expectedEvaluationRevision = &evaluationRevision
+		} else if !errors.Is(evaluationErr, sql.ErrNoRows) {
+			return fmt.Errorf("read evaluation revision at automatic artist admission: %w", evaluationErr)
 		}
 		captureBytes, err := json.Marshal(capture)
 		if err != nil {
@@ -284,6 +295,7 @@ func (repository *SetupManagerRepository) AdmitAutomaticArtistMatchingRun(ctx co
 			GroupingEpoch: grouping.Revision, PlanDigest: hex.EncodeToString(planDigest[:]),
 			CaptureDigest: metadataDigest, CapturedMembers: metadataCapture,
 			PolicyVersion: admission.PolicyVersion, TargetCaptureDigest: hex.EncodeToString(captureDigest[:]),
+			EvaluationRevisionCaptured: true, ExpectedEvaluationRevision: expectedEvaluationRevision,
 			QueryDescriptor: descriptor, ArtistQueryPlanVersion: admission.ArtistQueryPlanVersion,
 			Targets: []MatchingTarget{{GroupID: admission.GroupID, Revision: group.Revision}},
 			InitialProviderInputs: []MatchingAcquisitionProviderRequest{{

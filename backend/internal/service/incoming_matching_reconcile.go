@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
+	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 )
 
 var ErrIncomingMatchingReconciliationDeferred = errors.New("incoming matching reconciliation deferred")
@@ -25,6 +27,14 @@ type incomingMatchingReconcileRefresher interface {
 
 type incomingMatchingProviderPreparer interface {
 	PrepareOperation(context.Context, string, string, int, int, bool) (*persistence.Operation, error)
+}
+
+type incomingMatchingFallbackAdmission interface {
+	AdmitAutomaticFallbackMatchingRun(context.Context, persistence.RiverInserter, persistence.AutomaticFallbackMatchingAdmission) (persistence.AutomaticArtistMatchingAdmissionResult, error)
+}
+
+type incomingMatchingFallbackSourceResolver interface {
+	ResolveCurrentMusicBrainzSource(context.Context) (persistence.AutomaticFallbackProviderSource, error)
 }
 
 // IncomingMatchingReconcileDelivery is the exact event delivery fence owned by
@@ -94,8 +104,78 @@ func (service *IncomingMatchingReconciliation) Reconcile(ctx context.Context, de
 			return fmt.Errorf("admit automatic artist matching for group %s: %w", target.GroupID, err)
 		}
 	}
-	if len(plan.DeferredGroupIDs) > 0 {
+	fallbacks, err := PlanIncomingMatchingFallbacks(snapshot)
+	if err != nil {
+		return fmt.Errorf("plan incoming matching fallback reconciliation: %w", err)
+	}
+	fallbackReady := make(map[uuid.UUID]struct{}, len(fallbacks))
+	for _, target := range fallbacks {
+		if err := service.admitFallback(ctx, target, delivery, 0); err != nil {
+			return fmt.Errorf("admit automatic fallback matching for group %s: %w", target.GroupID, err)
+		}
+		fallbackReady[target.GroupID] = struct{}{}
+	}
+	deferred := false
+	for _, groupID := range plan.DeferredGroupIDs {
+		if _, ok := fallbackReady[groupID]; !ok {
+			deferred = true
+			break
+		}
+	}
+	if deferred {
 		return ErrIncomingMatchingReconciliationDeferred
+	}
+	return nil
+}
+
+func (service *IncomingMatchingReconciliation) admitFallback(ctx context.Context, target IncomingMatchingFallbackTarget, delivery IncomingMatchingReconcileDelivery, generation int64) error {
+	admissions, ok := service.admissions.(incomingMatchingFallbackAdmission)
+	if !ok {
+		return ErrIncomingMatchingReconciliationDeferred
+	}
+	resolver, ok := service.providers.(incomingMatchingFallbackSourceResolver)
+	if !ok {
+		return ErrIncomingMatchingReconciliationDeferred
+	}
+	source, err := resolver.ResolveCurrentMusicBrainzSource(ctx)
+	if errors.Is(err, ErrMusicBrainzConfigurationMissing) {
+		return ErrIncomingMatchingReconciliationDeferred
+	}
+	if err != nil {
+		return fmt.Errorf("resolve fallback provider source: %w", err)
+	}
+	plan := policy.TypedFallbackQueryPlan{SchemaVersion: target.Plan.SchemaVersion, Stages: make([]policy.TypedFallbackQueryStage, len(target.Plan.Stages))}
+	for i, stage := range target.Plan.Stages {
+		plan.Stages[i] = policy.TypedFallbackQueryStage{Kind: stage.Kind, Query: stage.Query, Offset: stage.Offset, Limit: stage.Limit}
+	}
+	var provider persistence.MatchingProviderRequest
+	stage := "waiting_policy"
+	if len(plan.Stages) > 0 {
+		first := plan.Stages[0]
+		providerKind, _, supported := policy.ProviderKindForFallbackStage(first.Kind)
+		if !supported {
+			return fmt.Errorf("unsupported fallback query stage %q", first.Kind)
+		}
+		kind := strings.TrimPrefix(providerKind, "provider_")
+		operation, err := service.providers.PrepareOperation(ctx, kind, first.Query, first.Offset, first.Limit, false)
+		if errors.Is(err, ErrMusicBrainzConfigurationMissing) {
+			return ErrIncomingMatchingReconciliationDeferred
+		}
+		if err != nil {
+			return fmt.Errorf("prepare fallback provider request: %w", err)
+		}
+		provider = persistence.MatchingProviderRequest{Operation: operation, Args: ProviderFetchOperationArgs{OperationID: operation.ID}}
+		stage = "waiting_provider"
+	}
+	parent := &persistence.Operation{ID: uuid.New(), Kind: "matching_evaluation_v1", State: "queued", Stage: stage}
+	_, err = admissions.AdmitAutomaticFallbackMatchingRun(ctx, service.river, persistence.AutomaticFallbackMatchingAdmission{
+		Parent: parent, ParentArgs: MatchingEvaluationOperationArgs{OperationID: parent.ID}, Provider: provider, Source: source,
+		GroupID: target.GroupID, ExpectedGroupRevision: target.GroupRevision, PolicyVersion: MatchingPolicyVersion, Plan: plan,
+		EventID: delivery.EventID, EventRiverJobID: delivery.RiverJobID, EventRiverAttempt: delivery.RiverAttempt,
+		EventDeliveryEpoch: delivery.Epoch, RequestGeneration: generation,
+	})
+	if err != nil {
+		return fmt.Errorf("persist automatic fallback admission: %w", err)
 	}
 	return nil
 }

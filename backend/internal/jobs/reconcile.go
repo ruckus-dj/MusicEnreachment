@@ -27,6 +27,10 @@ type interruptedOperationRepository interface {
 	FailInstallationDelivery(context.Context, uuid.UUID, int, int64, uuid.UUID, string, string) (bool, error)
 }
 
+type matchingRuntimeScannerOwnership interface {
+	IsMatchingRuntimeScannerOwnedOperation(context.Context, uuid.UUID) (bool, error)
+}
+
 type orphanedInstallationRecovery interface {
 	FailOrphanedInstallationRecovery(context.Context, uuid.UUID, int, uuid.UUID, string, string) (bool, error)
 }
@@ -114,6 +118,17 @@ func ReconcileInterruptedOperations(ctx context.Context, repository interruptedO
 			}
 			if live {
 				return nil
+			}
+			if operation.Kind == "matching_evaluation_v1" {
+				if scanner, ok := repository.(matchingRuntimeScannerOwnership); ok {
+					owned, err := scanner.IsMatchingRuntimeScannerOwnedOperation(ctx, operation.ID)
+					if err != nil {
+						return fmt.Errorf("check matching runtime recovery ownership for %s: %w", operation.ID, err)
+					}
+					if owned {
+						return nil
+					}
+				}
 			}
 			if (operation.Kind == "install" || operation.Kind == "move_tools_root") && operation.RiverJobID != nil {
 				recoveryOperation := *operation

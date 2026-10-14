@@ -57,6 +57,14 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 	for _, target := range plan.PlannedGroups {
 		planned[target.GroupID] = target
 	}
+	fallbackTargets, err := PlanIncomingMatchingFallbacks(current)
+	if err != nil {
+		return fmt.Errorf("plan current incoming matching fallbacks: %w", err)
+	}
+	fallbacks := make(map[uuid.UUID]IncomingMatchingFallbackTarget, len(fallbackTargets))
+	for _, target := range fallbackTargets {
+		fallbacks[target.GroupID] = target
+	}
 	deferredGroups := make(map[uuid.UUID]struct{}, len(plan.DeferredGroupIDs))
 	for _, groupID := range plan.DeferredGroupIDs {
 		deferredGroups[groupID] = struct{}{}
@@ -86,8 +94,20 @@ func (service *IncomingMatchingReconciliation) ReconcileCurrent(ctx context.Cont
 		}
 		target, ok := planned[groupID]
 		if !ok {
-			// Artistless groups remain deferred until the separately approved
-			// fallback activation stage is delivered.
+			fallback, hasFallback := fallbacks[groupID]
+			if !hasFallback {
+				continue
+			}
+			if err := service.admitFallback(ctx, fallback, delivery, request.RequestedGeneration); err != nil {
+				if errors.Is(err, ErrIncomingMatchingReconciliationDeferred) {
+					return err
+				}
+				return fmt.Errorf("admit current automatic fallback matching for group %s: %w", groupID, err)
+			}
+			if err := service.currentRequests.AcknowledgeCurrentRequest(ctx, groupID, request.RequestedGeneration); err != nil {
+				return fmt.Errorf("acknowledge current automatic fallback matching for group %s: %w", groupID, err)
+			}
+			delete(deferredGroups, groupID)
 			continue
 		}
 		providerOperation, err := service.providers.PrepareOperation(ctx, "artist_search", target.Query, 0, 1, false)

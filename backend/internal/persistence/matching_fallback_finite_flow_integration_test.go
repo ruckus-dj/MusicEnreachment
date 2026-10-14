@@ -3,13 +3,16 @@
 package persistence_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,13 +38,20 @@ func TestAutomaticFallbackQualifiedContinuationSealsAndRegistersOneWakePostgreSQ
 	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, true, false)
 }
 
+func TestAutomaticFallbackUniquePublicationCreatesOneFrozenApplyRequestPostgreSQL(t *testing.T) {
+	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, false, true, false, true)
+}
+
 type fallbackSealWriteState struct {
-	Phase         string
-	Revision      int64
-	Deliveries    int
-	RiverJobs     int
-	Dependencies  int
-	Registrations int
+	Phase          string
+	Revision       int64
+	Operation      string
+	OperationStage string
+	RunState       string
+	Deliveries     int
+	RiverJobs      int
+	Dependencies   int
+	Registrations  int
 }
 
 func snapshotFallbackSealWriteState(t *testing.T, ctx context.Context, database *bun.DB, runID uuid.UUID) fallbackSealWriteState {
@@ -50,6 +60,11 @@ func snapshotFallbackSealWriteState(t *testing.T, ctx context.Context, database 
 	if err := database.NewRaw(`SELECT current_phase,revision FROM matching_acquisition WHERE run_id=?`, runID).
 		Scan(ctx, &state.Phase, &state.Revision); err != nil {
 		t.Fatalf("read fallback seal acquisition cursor: %v", err)
+	}
+	if err := database.NewRaw(`SELECT operation.state,operation.stage,run.state
+		FROM operation JOIN matching_run run ON run.id=operation.id WHERE operation.id=?`, runID).
+		Scan(ctx, &state.Operation, &state.OperationStage, &state.RunState); err != nil {
+		t.Fatalf("read fallback continuation owner state: %v", err)
 	}
 	queries := []struct {
 		query string
@@ -96,9 +111,43 @@ func TestAutomaticFallbackExhaustedFiniteFlowPublishesFrozenReviewPostgreSQL(t *
 	testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t, false, false, true, false, true)
 }
 
-func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool) {
-	t.Parallel()
-	fixture := newAutomaticMatchingTargetFenceFixture(t)
+func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, publishUnique ...bool) {
+	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview, nil, publishUnique...)
+}
+
+type uniquePublicationApplyFixture struct {
+	Context           context.Context
+	Database          *bun.DB
+	Repository        *persistence.SetupManagerRepository
+	ParentOperationID uuid.UUID
+	ChildOperation    persistence.Operation
+	Source            persistence.MatchingApplySnapshotSourceV2
+	InputSnapshot     persistence.MatchingApplyInputSnapshotV2
+}
+
+func testAutomaticFallbackFiniteFlowWithPublicationCallback(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), publishUnique ...bool) {
+	testAutomaticFallbackFiniteFlowWithRecoveryCallback(t, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview, afterPublication, nil, publishUnique...)
+}
+
+func testAutomaticFallbackFiniteFlowWithRecoveryCallback(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), beforePublication func(*testing.T, context.Context, *bun.DB, *persistence.SetupManagerRepository, *fallbackHandoffRiverInserter, uuid.UUID, int64, *jobs.MatchingEvaluationWorker), publishUnique ...bool) {
+	testAutomaticFallbackFiniteFlowWithDatabase(t, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview, afterPublication, beforePublication, nil, nil, publishUnique...)
+}
+
+func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), beforePublication func(*testing.T, context.Context, *bun.DB, *persistence.SetupManagerRepository, *fallbackHandoffRiverInserter, uuid.UUID, int64, *jobs.MatchingEvaluationWorker), database *bun.DB, beforeWorkerClaim func(*testing.T, context.Context, *bun.DB, uuid.UUID, int64, int64) bool, publishUnique ...bool) {
+	if len(publishUnique) < 3 || publishUnique[2] {
+		t.Parallel()
+	}
+	uniquePublication := len(publishUnique) > 0 && publishUnique[0]
+	rollbackEmptySettlement := len(publishUnique) > 1 && publishUnique[1]
+	fixture := newAutomaticMatchingTargetFenceFixtureWithDatabase(t, database)
+	beforeWorkerClaimExecuted := false
+	checkpoint := func(ctx context.Context, db *bun.DB, runID uuid.UUID, waitRevision, wakeID int64) bool {
+		beforeWorkerClaimExecuted = true
+		if beforeWorkerClaim == nil {
+			return true
+		}
+		return beforeWorkerClaim(t, ctx, db, runID, waitRevision, wakeID)
+	}
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
 	defer cancel()
 
@@ -108,6 +157,18 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	}
 	if _, err := fixture.db.NewRaw(`UPDATE media_metadata_result SET observed_tags=?::jsonb`, metadata).Exec(ctx); err != nil {
 		t.Fatalf("set fallback metadata: %v", err)
+	}
+	if uniquePublication {
+		// Keep the two actual source captures distinguishable so the accepted
+		// provider graph must prove a one-to-one assignment rather than a tie.
+		if _, err := fixture.db.NewRaw(`WITH ordered AS (
+			SELECT id,row_number() OVER (ORDER BY created_at,id) AS ordinal FROM media_metadata_result
+		) UPDATE media_metadata_result metadata SET observed_tags=jsonb_build_object(
+			'ALBUM',jsonb_build_array('Captured Album'),
+			'TITLE',jsonb_build_array(CASE ordered.ordinal WHEN 1 THEN 'Track Override Alpha' ELSE 'Track Override Beta' END),
+			'DURATION',jsonb_build_array('180')) FROM ordered WHERE metadata.id=ordered.id`).Exec(ctx); err != nil {
+			t.Fatalf("set distinct source metadata for unique publication: %v", err)
+		}
 	}
 	grouping := persistence.NewIncomingGroupingRepository(fixture.db)
 	if err := service.NewIncomingGroups(grouping).Refresh(ctx); err != nil {
@@ -125,6 +186,28 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	for i, encoded := range encodedTags {
 		if err := json.Unmarshal([]byte(encoded), &tagSets[i]); err != nil {
 			t.Fatalf("decode saved source metadata: %v", err)
+		}
+	}
+	if uniquePublication {
+		captures, err := grouping.CurrentCaptures(ctx)
+		if err != nil {
+			t.Fatalf("read unique publication source captures: %v", err)
+		}
+		byVariant := make(map[uuid.UUID]map[string][]string, len(captures))
+		for _, capture := range captures {
+			var tags map[string][]string
+			if err := json.Unmarshal(capture.Tags, &tags); err != nil {
+				t.Fatalf("decode unique publication capture tags: %v", err)
+			}
+			byVariant[capture.VariantID] = tags
+		}
+		tagSets = make([]map[string][]string, 0, len(groups[0].Members))
+		for _, memberID := range groups[0].Members {
+			tags, exists := byVariant[memberID]
+			if !exists {
+				t.Fatalf("unique publication member %s has no source capture", memberID)
+			}
+			tagSets = append(tagSets, tags)
 		}
 	}
 	planned, artistBearing := policy.PlanFallbackQueries(tagSets)
@@ -145,7 +228,13 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	const releaseID = "90000000-0000-4000-8000-0000000000f1"
 	const trackID = "90000000-0000-4000-8000-0000000000f2"
 	const recordingID = "90000000-0000-4000-8000-0000000000f3"
+	var uniqueLookupHTTPPayload []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if uniquePublication && r.URL.Path == "/ws/2/release/"+releaseID {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(uniqueLookupHTTPPayload)
+			return
+		}
 		http.Error(w, fmt.Sprintf("unexpected provider request: %s", r.URL), http.StatusBadGateway)
 	}))
 	defer server.Close()
@@ -174,12 +263,14 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	client, listenerPool, err := jobs.PrepareWithWorkers(ctx, testpostgres.URL(t, fixture.db), fixture.db.DB, func(workers *river.Workers) {
 		river.AddWorker(workers, providerWorker)
 		river.AddWorker(workers, matchingWorker)
+		river.AddWorker(workers, jobs.NewMatchingApplyWorker(fixture.repository, operations))
 	})
 	if err != nil {
 		t.Fatalf("prepare River client: %v", err)
 	}
 	t.Cleanup(listenerPool.Close)
 	inserter.client = client
+	fixture.repository.SetRiverInserter(client)
 
 	var stageZero *policy.TypedFallbackQueryStage
 	var stageZeroKey string
@@ -251,20 +342,57 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if err != nil || outcome != persistence.MatchingDeliveryClaimed {
 			t.Fatalf("claim empty-plan parent wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
 		}
+		if rollbackEmptySettlement {
+			before := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID)
+			if _, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION reject_test_fallback_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test handoff insert failure'; END $$`); err != nil {
+				t.Fatalf("create handoff rollback fault: %v", err)
+			}
+			if _, err := fixture.db.ExecContext(ctx, `CREATE TRIGGER reject_test_fallback_handoff BEFORE INSERT ON matching_fallback_evaluation_handoff FOR EACH ROW EXECUTE FUNCTION reject_test_fallback_handoff()`); err != nil {
+				t.Fatalf("install handoff rollback fault: %v", err)
+			}
+			if changed, handled, advanceErr := acquisition.Advance(ctx, parentID, 1, wakeID, claim); advanceErr == nil || changed || !handled || !strings.Contains(advanceErr.Error(), "test handoff insert failure") {
+				t.Fatalf("injected empty-plan handoff failure: changed=%v handled=%v err=%v", changed, handled, advanceErr)
+			}
+			if _, err := fixture.db.ExecContext(ctx, `DROP TRIGGER reject_test_fallback_handoff ON matching_fallback_evaluation_handoff`); err != nil {
+				t.Fatalf("remove handoff rollback fault: %v", err)
+			}
+			if _, err := fixture.db.ExecContext(ctx, `DROP FUNCTION reject_test_fallback_handoff()`); err != nil {
+				t.Fatalf("drop handoff rollback fault: %v", err)
+			}
+			if after := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID); after != before {
+				t.Fatalf("empty-plan settlement failure partially committed: before=%+v after=%+v", before, after)
+			}
+			var consumed bool
+			if err := fixture.db.NewRaw(`SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?`, parentID, wakeID).Scan(ctx, &consumed); err != nil || consumed {
+				t.Fatalf("failed empty-plan settlement consumed the original claim: consumed=%v err=%v", consumed, err)
+			}
+			var seals, handoffs int
+			if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=?`, parentID).Scan(ctx, &seals); err != nil {
+				t.Fatalf("read seals after failed empty-plan settlement: %v", err)
+			}
+			if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_evaluation_handoff WHERE run_id=?`, parentID).Scan(ctx, &handoffs); err != nil || seals != 0 || handoffs != 0 {
+				t.Fatalf("failed empty-plan settlement left seal or handoff rows: seals=%d handoffs=%d err=%v", seals, handoffs, err)
+			}
+		}
 		changed, handled, err := acquisition.Advance(ctx, parentID, 1, wakeID, claim)
 		if err != nil || !handled || !changed {
 			t.Fatalf("complete empty fallback plan: changed=%v handled=%v err=%v", changed, handled, err)
 		}
 		parked, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
-		if err != nil || !exists || parked.Phase != "fallback_review_wait" {
-			t.Fatalf("empty fallback plan did not park for review: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		if err != nil || !exists || parked.Phase != persistence.MatchingAcquisitionFallbackEvaluationSealed {
+			t.Fatalf("empty fallback plan did not seal its evaluation: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		}
+		waitRevision := parked.Revision - 1
+		var waitOutput []byte
+		if err := fixture.db.NewRaw(`SELECT output FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, parentID, waitRevision).Scan(ctx, &waitOutput); err != nil {
+			t.Fatalf("read historical empty-plan review evidence: %v", err)
 		}
 		var evidence struct {
 			Reason   string            `json:"reason"`
 			Receipts []json.RawMessage `json:"calculation_receipts"`
 		}
-		if err := json.Unmarshal(parked.Output, &evidence); err != nil || evidence.Reason != "fallback_plan_empty" || len(evidence.Receipts) != 0 {
-			t.Fatalf("empty fallback review evidence is invalid: output=%s evidence=%+v err=%v", parked.Output, evidence, err)
+		if err := json.Unmarshal(waitOutput, &evidence); err != nil || evidence.Reason != "fallback_plan_empty" || len(evidence.Receipts) != 0 {
+			t.Fatalf("empty fallback review evidence is invalid: output=%s evidence=%+v err=%v", waitOutput, evidence, err)
 		}
 		var dependencyCount, registrationCount, calculationCount, phaseWakeCount int
 		for query, destination := range map[string]*int{
@@ -277,56 +405,43 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 				t.Fatalf("read empty-plan evidence counts: %v", err)
 			}
 		}
-		if len(parked.Intent.InitialProviderInputs) != 0 || len(parked.Intent.CapturedMembers) == 0 || dependencyCount != 0 || registrationCount != 0 || calculationCount != 0 || phaseWakeCount != 1 {
-			t.Fatalf("empty plan fabricated work or lost captured intent/original wake: inputs=%d members=%d dependencies=%d registrations=%d calculations=%d deliveries=%d", len(parked.Intent.InitialProviderInputs), len(parked.Intent.CapturedMembers), dependencyCount, registrationCount, calculationCount, phaseWakeCount)
+		if len(parked.Intent.InitialProviderInputs) != 0 || len(parked.Intent.CapturedMembers) == 0 || dependencyCount != 0 || registrationCount != 0 || calculationCount != 0 || phaseWakeCount != 2 {
+			t.Fatalf("empty plan fabricated provider work or lost its original/continuation delivery: inputs=%d members=%d dependencies=%d registrations=%d calculations=%d deliveries=%d", len(parked.Intent.InitialProviderInputs), len(parked.Intent.CapturedMembers), dependencyCount, registrationCount, calculationCount, phaseWakeCount)
 		}
-		authority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		authority, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
 		if err != nil || !found {
-			t.Fatalf("build no-query fallback seal authority: authority=%+v found=%v err=%v", authority, found, err)
+			t.Fatalf("read no-query fallback authority seal: authority=%+v found=%v err=%v", authority, found, err)
 		}
 		var authorityPlan policy.TypedFallbackQueryPlan
 		if err := json.Unmarshal(authority.Plan, &authorityPlan); err != nil || authority.SchemaVersion != 3 || authority.Disposition != "no_query" ||
-			authority.RunID != parentID || authority.WaitRevision != parked.Revision || len(authorityPlan.Stages) != 0 ||
+			authority.RunID != parentID || authority.WaitRevision != waitRevision || len(authorityPlan.Stages) != 0 ||
 			authority.SourceID == uuid.Nil || authority.ProviderID == uuid.Nil || authority.Endpoint == "" || authority.SourceConfiguration == "" ||
 			len(authority.CapturedMetadata) != len(parked.Intent.CapturedMembers) || len(authority.ProofHistory) != 0 ||
 			authority.SelectedCalculation != nil || len(authority.FullEvaluationContext) != 0 || authority.Digest == "" {
 			t.Fatalf("no-query authority omitted captured intent or fabricated calculation evidence: authority=%+v plan=%+v err=%v", authority, authorityPlan, err)
 		}
-		beforeSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID)
-		sealed, sealedFound, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, parked.Revision)
-		if err != nil || !sealedFound || sealed.Digest != authority.Digest {
-			t.Fatalf("persist no-query fallback authority: authority=%+v found=%v err=%v", sealed, sealedFound, err)
-		}
-		if afterSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID); afterSeal != beforeSeal {
-			t.Fatalf("no-query authority seal changed acquisition or work state: before=%+v after=%+v", beforeSeal, afterSeal)
-		}
-		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, parked.Revision)
-		if err != nil || !readFound || readSeal.Digest != sealed.Digest || readSeal.Disposition != "no_query" {
+		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
+		if err != nil || !readFound || readSeal.Digest != authority.Digest || readSeal.Disposition != "no_query" {
 			t.Fatalf("read persisted no-query authority: authority=%+v found=%v err=%v", readSeal, readFound, err)
 		}
-		assertFallbackAuthoritySealImmutable(t, ctx, fixture.db, parentID, parked.Revision, sealed.Digest)
+		assertFallbackAuthoritySealImmutable(t, ctx, fixture.db, parentID, waitRevision, authority.Digest)
 		originalAuthority := authority
 		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET endpoint=?,configuration_identity=? WHERE id=?`, "https://changed.invalid/ws/2", "changed-configuration", authority.SourceID).Exec(ctx); err != nil {
 			t.Fatalf("change mutable provider source registry row: %v", err)
 		}
-		refreshedAuthority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		refreshedAuthority, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
 		if err != nil || !found || refreshedAuthority.Digest != originalAuthority.Digest ||
 			refreshedAuthority.SourceID != originalAuthority.SourceID || refreshedAuthority.ProviderID != originalAuthority.ProviderID ||
 			refreshedAuthority.Endpoint != originalAuthority.Endpoint || refreshedAuthority.SourceConfiguration != originalAuthority.SourceConfiguration {
 			t.Fatalf("no-query authority changed with mutable provider source registry: before=%+v after=%+v found=%v err=%v", originalAuthority, refreshedAuthority, found, err)
 		}
-		var runState, opStage string
-		var hasActiveDelivery bool
-		if err := fixture.db.NewRaw(`SELECT run.state,operation.stage,
-			run.active_execution_epoch IS NOT NULL OR run.active_river_job_id IS NOT NULL OR run.active_river_attempt IS NOT NULL
-			FROM matching_run run JOIN operation ON operation.id=run.operation_id WHERE run.id=?`, parentID).
-			Scan(ctx, &runState, &opStage, &hasActiveDelivery); err != nil || runState != "waiting_policy" || opStage != "review_pending" || hasActiveDelivery {
-			t.Fatalf("empty plan did not park without manual mode or clear its active delivery: run=%s stage=%s active=%v err=%v", runState, opStage, hasActiveDelivery, err)
-		}
 		if _, err := fixture.db.NewRaw(`UPDATE provider_source SET endpoint=?,configuration_identity=? WHERE id=?`, originalAuthority.Endpoint, originalAuthority.SourceConfiguration, originalAuthority.SourceID).Exec(ctx); err != nil {
 			t.Fatalf("restore frozen provider source after authority check: %v", err)
 		}
-		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, parked.Revision, publishReview)
+		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, waitRevision, publishReview, checkpoint)
+		if beforeWorkerClaim != nil && !beforeWorkerClaimExecuted {
+			t.Fatal("pre-claim checkpoint was not executed")
+		}
 		return
 	}
 	stageZeroOperation, err = fixture.repository.GetOperation(ctx, stageZeroID)
@@ -589,8 +704,13 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		wakeID, claim = claimWake()
 		advance(wakeID, claim)
 		parked, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
-		if err != nil || !exists || parked.Phase != "fallback_review_wait" {
-			t.Fatalf("three-stage exhausted plan did not park for review: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		if err != nil || !exists || parked.Phase != persistence.MatchingAcquisitionFallbackEvaluationSealed {
+			t.Fatalf("three-stage exhausted plan did not seal its evaluation: snapshot=%+v exists=%v err=%v", parked, exists, err)
+		}
+		waitRevision := parked.Revision - 1
+		var waitOutput []byte
+		if err := fixture.db.NewRaw(`SELECT output FROM matching_acquisition_phase WHERE run_id=? AND revision=?`, parentID, waitRevision).Scan(ctx, &waitOutput); err != nil {
+			t.Fatalf("read historical exhausted wait evidence: %v", err)
 		}
 		var evidence struct {
 			Reason   string `json:"reason"`
@@ -599,21 +719,21 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 				Digest     string `json:"input_digest"`
 			} `json:"calculation_receipts"`
 		}
-		if err := json.Unmarshal(parked.Output, &evidence); err != nil || evidence.Reason != "review_required" || len(evidence.Receipts) != 3 {
-			t.Fatalf("exhaustion receipt manifest is incomplete: output=%s evidence=%+v err=%v", parked.Output, evidence, err)
+		if err := json.Unmarshal(waitOutput, &evidence); err != nil || evidence.Reason != "review_required" || len(evidence.Receipts) != 3 {
+			t.Fatalf("exhaustion receipt manifest is incomplete: output=%s evidence=%+v err=%v", waitOutput, evidence, err)
 		}
 		for index, receipt := range evidence.Receipts {
 			if receipt.StageIndex != index || receipt.Digest == "" {
 				t.Fatalf("calculation receipt order or binding is invalid: %+v", evidence.Receipts)
 			}
 		}
-		authority, found, err := fixture.repository.BuildMatchingFallbackSealAuthority(ctx, parentID, parked.Revision)
+		authority, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
 		if err != nil || !found {
-			t.Fatalf("build exhausted fallback seal authority: authority=%+v found=%v err=%v", authority, found, err)
+			t.Fatalf("read exhausted fallback authority seal: authority=%+v found=%v err=%v", authority, found, err)
 		}
 		var authorityPlan policy.TypedFallbackQueryPlan
 		if err := json.Unmarshal(authority.Plan, &authorityPlan); err != nil || authority.SchemaVersion != 3 || authority.Disposition != "review_exhausted" ||
-			authority.RunID != parentID || authority.WaitRevision != parked.Revision || len(authorityPlan.Stages) != 3 ||
+			authority.RunID != parentID || authority.WaitRevision != waitRevision || len(authorityPlan.Stages) != 3 ||
 			authority.SelectedCalculation == nil || authority.SelectedCalculation.StageIndex != 2 || len(authority.ProofHistory) != 3 ||
 			len(authority.FullEvaluationContext) == 0 || authority.Digest == "" {
 			t.Fatalf("exhausted authority is not bound to the last saved stage: authority=%+v plan=%+v err=%v", authority, authorityPlan, err)
@@ -682,21 +802,14 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		if requestCount != 3 || calculationCount != 3 {
 			t.Fatalf("finite plan did not stop at its three saved stages: searches=%d calculations=%d", requestCount, calculationCount)
 		}
-		beforeSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID)
-		sealed, sealedFound, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, parked.Revision)
-		if err != nil || !sealedFound || sealed.Digest != authority.Digest {
-			t.Fatalf("persist exhausted fallback authority: authority=%+v found=%v err=%v", sealed, sealedFound, err)
-		}
-		if afterSeal := snapshotFallbackSealWriteState(t, ctx, fixture.db, parentID); afterSeal != beforeSeal {
-			t.Fatalf("exhausted authority seal changed acquisition or work state: before=%+v after=%+v", beforeSeal, afterSeal)
-		}
-		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, parked.Revision)
-		if err != nil || !readFound || readSeal.Digest != sealed.Digest || readSeal.Disposition != "review_exhausted" ||
+		readSeal, readFound, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
+		if err != nil || !readFound || readSeal.Digest != authority.Digest || readSeal.Disposition != "review_exhausted" ||
 			readSeal.SelectedCalculation == nil || readSeal.SelectedCalculation.StageIndex != 2 || len(readSeal.FullEvaluationContext) == 0 {
 			t.Fatalf("read persisted exhausted authority: authority=%+v found=%v err=%v", readSeal, readFound, err)
 		}
-		if continueSeal || publishReview {
-			assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, parked.Revision, publishReview)
+		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, waitRevision, publishReview, checkpoint)
+		if beforeWorkerClaim != nil && !beforeWorkerClaimExecuted {
+			t.Fatal("pre-claim checkpoint was not executed")
 		}
 		return
 	}
@@ -731,16 +844,22 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		t.Fatalf("read registered release lookup: operation=%+v err=%v", lookupOperation, err)
 	}
 	lookupPayload := json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Captured Album","artist-credit":[{"name":"Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist"}}],"media":[{"position":1,"tracks":[{"id":%q,"number":"1","length":180000,"recording":{"id":%q,"title":"Receipt Track","artist-credit":[{"name":"Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Artist"}}]}}]}]}`, releaseID, trackID, recordingID))
-	lookupGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: lookupPayload}})
-	if err != nil {
-		t.Fatalf("normalize accepted release lookup response: %v", err)
+	if uniquePublication {
+		lookupPayload = json.RawMessage(fmt.Sprintf(`{"id":%q,"title":"Captured Album","artist-credit":[{"name":"Release Artist","artist":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"Release Artist"}}],"media":[{"position":1,"tracks":[{"id":"90000000-0000-4000-8000-0000000000fa","number":"1","title":"Track Override Alpha","artist-credit":[{"name":"Track Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Track Artist"}}],"length":180000,"recording":{"id":"90000000-0000-4000-8000-0000000000fb","title":"Original Recording Alpha","artist-credit":[{"name":"Recording Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Recording Artist"}}]}},{"id":"90000000-0000-4000-8000-0000000000fc","number":"2","title":"Track Override Beta","artist-credit":[{"name":"Track Artist","artist":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Track Artist"}}],"length":180000,"recording":{"id":"90000000-0000-4000-8000-0000000000fd","title":"Original Recording Beta","artist-credit":[{"name":"Recording Artist","artist":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Recording Artist"}}]}}]}]}`, releaseID))
+		uniqueLookupHTTPPayload = lookupPayload
 	}
-	lookupTicket, err := cache.BeginRefresh(ctx, source.ID, lookup.CacheKey, config.Identity)
-	if err != nil {
-		t.Fatalf("reserve release lookup response: %v", err)
-	}
-	if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: lookupTicket, FetchedAt: time.Now().UTC(), Payload: lookupPayload, Graph: lookupGraph}); err != nil {
-		t.Fatalf("accept release lookup response: %v", err)
+	if !uniquePublication {
+		lookupGraph, err := service.NormalizeMusicBrainzReleaseLookup(musicbrainz.LookupResult{Entity: musicbrainz.Entity{Raw: lookupPayload}})
+		if err != nil {
+			t.Fatalf("normalize accepted release lookup response: %v", err)
+		}
+		lookupTicket, err := cache.BeginRefresh(ctx, source.ID, lookup.CacheKey, config.Identity)
+		if err != nil {
+			t.Fatalf("reserve release lookup response: %v", err)
+		}
+		if err := cache.ApplySuccessfulResponse(ctx, persistence.ProviderSuccessfulResponse{Ticket: lookupTicket, FetchedAt: time.Now().UTC(), Payload: lookupPayload, Graph: lookupGraph}); err != nil {
+			t.Fatalf("accept release lookup response: %v", err)
+		}
 	}
 	if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, *lookupOperation.RiverJobID).Exec(ctx); err != nil {
 		t.Fatalf("mark registered lookup job running: %v", err)
@@ -788,29 +907,12 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	wakeID, claim = claimWake()
 	advance(wakeID, claim)
 	final, exists, err := fixture.repository.GetMatchingAcquisition(ctx, parentID)
-	if err != nil || !exists || final.Phase != "pending_seal" {
-		t.Fatalf("real fallback calculation did not seal qualified applicability: snapshot=%+v exists=%v err=%v", final, exists, err)
+	if err != nil || !exists || final.Phase != persistence.MatchingAcquisitionFallbackEvaluationSealed {
+		t.Fatalf("real fallback calculation did not continue qualified applicability: snapshot=%+v exists=%v err=%v", final, exists, err)
 	}
-	if !historicalStageLookup && !continueSeal {
-		// A source resolved after admission must not replace the frozen run source
-		// authority when the first persistence write is attempted.
-		if err := registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/changed/ws/2"); err != nil {
-			t.Fatalf("change current provider configuration after admission: %v", err)
-		}
-		changedConfig, err := registry.GetMusicBrainzConfig(ctx)
-		if err != nil {
-			t.Fatalf("read changed provider configuration: %v", err)
-		}
-		if _, err := cache.ResolveMusicBrainzSource(ctx, changedConfig.BaseURL, changedConfig.Identity); err != nil {
-			t.Fatalf("resolve replacement provider source: %v", err)
-		}
-		if _, found, err := fixture.repository.SealMatchingFallbackAuthority(ctx, parentID, final.Revision); err == nil || found {
-			t.Fatalf("first seal accepted changed provider source: found=%v err=%v", found, err)
-		}
-		var sealCount int
-		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=?`, parentID).Scan(ctx, &sealCount); err != nil || sealCount != 0 {
-			t.Fatalf("stale-source rejection persisted a seal: count=%d err=%v", sealCount, err)
-		}
+	waitRevision := final.Revision - 1
+	if currentWaitRevision, found, err := fixture.repository.GetCurrentMatchingFallbackEvaluationWaitRevision(ctx, parentID); err != nil || !found || currentWaitRevision != waitRevision {
+		t.Fatalf("current sealed wait revision=%d found=%v, want %d: %v", currentWaitRevision, found, waitRevision, err)
 	}
 	var receipt struct {
 		SchemaVersion     int             `json:"schema_version"`
@@ -826,15 +928,182 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 		t.Fatalf("read persisted stage-one calculation receipt: %v", err)
 	}
 	var edges []struct {
-		Confidence float64 `json:"confidence"`
+		MemberID        uuid.UUID `json:"member_id"`
+		WorkID          uuid.UUID `json:"work_id"`
+		ProviderTrackID uuid.UUID `json:"provider_track_id"`
+		RecordingID     string    `json:"recording_id"`
+		LookupRequestID uuid.UUID `json:"lookup_request_id"`
+		Confidence      float64   `json:"confidence"`
 	}
 	if receipt.SchemaVersion != 3 || receipt.CalculatorVersion != 3 || receipt.DigestVersion != 3 || receipt.StageIndex != 1 || receipt.InputDigest == "" ||
 		json.Unmarshal(receipt.Edges, &edges) != nil || len(edges) == 0 {
 		t.Fatalf("persisted calculation did not prove genuine qualified stage-one edge: receipt=%+v edges=%+v", receipt, edges)
 	}
+	memberRecording := make(map[uuid.UUID]string, len(final.Intent.CapturedMembers))
+	for _, member := range final.Intent.CapturedMembers {
+		var tags map[string][]string
+		if err := json.Unmarshal(member.Tags, &tags); err != nil || len(tags["TITLE"]) != 1 {
+			t.Fatalf("decode distinct captured source title for qualified-edge verification: member=%+v tags=%v err=%v", member, tags, err)
+		}
+		if uniquePublication {
+			switch tags["TITLE"][0] {
+			case "Track Override Alpha":
+				memberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fb"
+			case "Track Override Beta":
+				memberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fd"
+			default:
+				t.Fatalf("unexpected captured source title in unique qualified-edge verification: %q", tags["TITLE"][0])
+			}
+		} else {
+			memberRecording[member.MemberID] = ""
+		}
+	}
+	tracks := make(map[string]uuid.UUID)
+	qualifiedPerMember := make(map[uuid.UUID]float64, len(memberRecording))
+	seenPairs := make(map[string]bool, len(edges))
 	for _, edge := range edges {
-		if edge.Confidence < 0.70 {
-			t.Fatalf("persisted stage-one edge did not qualify: receipt=%+v edges=%+v", receipt, edges)
+		_, memberExists := memberRecording[edge.MemberID]
+		identity := edge.MemberID.String() + "/" + edge.ProviderTrackID.String()
+		if !memberExists || edge.WorkID == uuid.Nil || edge.ProviderTrackID == uuid.Nil || edge.RecordingID == "" || edge.LookupRequestID != lookup.RequestID || seenPairs[identity] {
+			t.Fatalf("persisted Cartesian edge set is incomplete or out of scope: edge=%+v edges=%+v", edge, edges)
+		}
+		seenPairs[identity] = true
+		if previous, exists := tracks[edge.RecordingID]; exists && previous != edge.ProviderTrackID {
+			t.Fatalf("one accepted recording has multiple provider-track identities: recording=%s tracks=%v", edge.RecordingID, tracks)
+		}
+		tracks[edge.RecordingID] = edge.ProviderTrackID
+		if edge.Confidence >= qualifiedPerMember[edge.MemberID] {
+			qualifiedPerMember[edge.MemberID] = edge.Confidence
+		}
+	}
+	if len(edges) != len(memberRecording)*len(tracks) || len(qualifiedPerMember) != len(memberRecording) {
+		t.Fatalf("stage-one receipt omitted accepted member/track Cartesian edges: edges=%d members=%d tracks=%d qualified=%v", len(edges), len(memberRecording), len(tracks), qualifiedPerMember)
+	}
+	for memberID, confidence := range qualifiedPerMember {
+		if confidence < 0.70 {
+			t.Fatalf("captured file's best valid release-profile edge did not qualify: member=%s confidence=%.3f", memberID, confidence)
+		}
+	}
+	if uniquePublication {
+		seal, found, err := fixture.repository.GetMatchingFallbackAuthoritySeal(ctx, parentID, waitRevision)
+		if err != nil || !found || len(seal.FullEvaluationContext) == 0 {
+			t.Fatalf("read full sealed calculation context for unique inventory proof: found=%v err=%v", found, err)
+		}
+		var actualContext persistence.MatchingFallbackCalculationContext
+		if err := json.Unmarshal(seal.FullEvaluationContext, &actualContext); err != nil || actualContext.RunID != parentID || actualContext.StageIndex != 1 ||
+			actualContext.SearchReceipt.RequestID == uuid.Nil || len(actualContext.LookupReceipts) != 1 || actualContext.LookupReceipts[0].RequestID != lookup.RequestID {
+			t.Fatalf("decode full current sealed context for fixed two-track universe: context=%+v err=%v", actualContext, err)
+		}
+		actualProviderSnapshot, err := cache.GetMusicBrainzMatchingSnapshot(ctx, source.Endpoint, config.Identity, []string{releaseID}, []string{lookup.CacheKey})
+		if err != nil || len(actualProviderSnapshot.Releases) != 1 || actualProviderSnapshot.Releases[0].ProviderKey != releaseID || !actualProviderSnapshot.Releases[0].Complete || len(actualProviderSnapshot.Releases[0].Tracks) != 2 {
+			t.Fatalf("read actual parsed provider release-track universe: snapshot=%+v err=%v", actualProviderSnapshot, err)
+		}
+		var sealedProviderSnapshot persistence.ProviderMatchingSnapshot
+		if err := json.Unmarshal(actualContext.LookupReceipts[0].AcceptedProjection, &sealedProviderSnapshot); err != nil || len(sealedProviderSnapshot.Releases) != 1 || len(sealedProviderSnapshot.Releases[0].Tracks) != 2 ||
+			sealedProviderSnapshot.Source.ID != source.ID || sealedProviderSnapshot.Source.ConfigurationIdentity != config.Identity {
+			t.Fatalf("parse provider snapshot embedded in full sealed context: snapshot=%+v err=%v", sealedProviderSnapshot, err)
+		}
+		providerTracksByRecording := make(map[string]persistence.MatchingReleaseTrack, 2)
+		for _, track := range actualProviderSnapshot.Releases[0].Tracks {
+			providerTracksByRecording[strings.ToLower(track.RecordingProviderKey)] = track
+		}
+		sealedTracksByID := make(map[uuid.UUID]persistence.MatchingReleaseTrack, 2)
+		for _, track := range sealedProviderSnapshot.Releases[0].Tracks {
+			sealedTracksByID[track.ID] = track
+		}
+		for _, currentTrack := range actualProviderSnapshot.Releases[0].Tracks {
+			sealedTrack, exists := sealedTracksByID[currentTrack.ID]
+			if !exists || sealedTrack.Medium != currentTrack.Medium || sealedTrack.Position != currentTrack.Position ||
+				!strings.EqualFold(sealedTrack.RecordingProviderKey, currentTrack.RecordingProviderKey) {
+				t.Fatalf("actual provider release tracks differ from their complete frozen-context projection: current=%+v sealed=%+v", currentTrack, sealedTracksByID)
+			}
+		}
+		alphaTrack, alphaExists := providerTracksByRecording["90000000-0000-4000-8000-0000000000fb"]
+		betaTrack, betaExists := providerTracksByRecording["90000000-0000-4000-8000-0000000000fd"]
+		if !alphaExists || !betaExists || alphaTrack.ID == uuid.Nil || betaTrack.ID == uuid.Nil || alphaTrack.ID == betaTrack.ID ||
+			alphaTrack.Medium != 0 || alphaTrack.Position != 0 || betaTrack.Medium != 0 || betaTrack.Position != 1 ||
+			alphaTrack.RecordingTitle != "Original Recording Alpha" || betaTrack.RecordingTitle != "Original Recording Beta" ||
+			alphaTrack.RecordingLengthMS != nil || betaTrack.RecordingLengthMS != nil ||
+			alphaTrack.ReleaseLengthMS == nil || betaTrack.ReleaseLengthMS == nil {
+			t.Fatalf("parsed provider release tracks do not prove the fixed recording/track coordinate universe: tracks=%+v", actualProviderSnapshot.Releases[0].Tracks)
+		}
+		preparedUnique, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, parentID, waitRevision)
+		if err != nil || !exists || preparedUnique.Calculation == nil || len(preparedUnique.Result.AllCandidates) != 4 {
+			t.Fatalf("prepare pure frozen applicability result for full Cartesian proof: prepared=%+v exists=%v err=%v", preparedUnique, exists, err)
+		}
+		knownMemberRecording := make(map[uuid.UUID]string, 2)
+		for _, member := range final.Intent.CapturedMembers {
+			var tags map[string][]string
+			if err := json.Unmarshal(member.Tags, &tags); err != nil || len(tags["TITLE"]) != 1 {
+				t.Fatalf("decode sealed source title for complete universe assertion: member=%+v tags=%v err=%v", member, tags, err)
+			}
+			switch tags["TITLE"][0] {
+			case "Track Override Alpha":
+				knownMemberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fb"
+			case "Track Override Beta":
+				knownMemberRecording[member.MemberID] = "90000000-0000-4000-8000-0000000000fd"
+			default:
+				t.Fatalf("unexpected sealed source title in full universe proof: %q", tags["TITLE"][0])
+			}
+		}
+		if len(knownMemberRecording) != 2 {
+			t.Fatalf("fixed provider universe does not have two known sealed members: %v", knownMemberRecording)
+		}
+		seenCompletePairs := make(map[string]bool, 4)
+		crossBelowThreshold := make(map[uuid.UUID]bool, 2)
+		releaseProfileMaximum := make(map[uuid.UUID]float64, 2)
+		for _, candidate := range preparedUnique.Result.AllCandidates {
+			intendedRecording, memberExists := knownMemberRecording[candidate.MemberID]
+			track, trackExists := providerTracksByRecording[strings.ToLower(candidate.RecordingID)]
+			pair := candidate.MemberID.String() + "/" + candidate.ProviderTrackUUID.String()
+			if !memberExists || !trackExists || candidate.ProviderTrackUUID != track.ID || seenCompletePairs[pair] {
+				t.Fatalf("pure applicability candidate is outside or duplicates the accepted complete member/track universe: candidate=%+v", candidate)
+			}
+			seenCompletePairs[pair] = true
+			if candidate.Score.Profile != service.RecordingReleaseMatchingProfile {
+				t.Fatalf("applicability Cartesian candidate did not use recording-release profile: candidate=%+v", candidate)
+			}
+			if !strings.EqualFold(candidate.RecordingID, intendedRecording) && candidate.Score.Confidence < 0.70 {
+				crossBelowThreshold[candidate.MemberID] = true
+			}
+			if strings.EqualFold(candidate.RecordingID, intendedRecording) && candidate.Score.Confidence > releaseProfileMaximum[candidate.MemberID] {
+				releaseProfileMaximum[candidate.MemberID] = candidate.Score.Confidence
+			}
+		}
+		if len(seenCompletePairs) != 4 || len(crossBelowThreshold) != 2 || len(releaseProfileMaximum) != 2 {
+			t.Fatalf("pure applicability result omitted the four complete distinct pairs or retained cross/release-profile evidence: pairs=%v cross=%v maxima=%v", seenCompletePairs, crossBelowThreshold, releaseProfileMaximum)
+		}
+		releaseSelectionMaximum := make(map[uuid.UUID]float64, 2)
+		for _, releaseCandidate := range preparedUnique.KernelResult.ReleaseSelection.Candidates {
+			for _, file := range releaseCandidate.Files {
+				fileID, parseErr := uuid.Parse(file.FileID)
+				_, known := knownMemberRecording[fileID]
+				if parseErr != nil || !known || !file.Present {
+					continue
+				}
+				if file.Confidence > releaseSelectionMaximum[fileID] {
+					releaseSelectionMaximum[fileID] = file.Confidence
+				}
+			}
+		}
+		for memberID, confidence := range releaseProfileMaximum {
+			if confidence < 0.70 {
+				t.Fatalf("pure release-profile result has no qualifying intended edge: member=%s confidence=%.3f", memberID, confidence)
+			}
+			if releaseSelectionMaximum[memberID] < 0.70 {
+				t.Fatalf("pure kernel release-selection profile has no qualifying per-file score: member=%s confidence=%.3f", memberID, releaseSelectionMaximum[memberID])
+			}
+		}
+		for memberID, expectedRecording := range memberRecording {
+			var diagonalQualified bool
+			for _, edge := range edges {
+				if edge.MemberID == memberID && edge.RecordingID == expectedRecording && edge.Confidence >= 0.70 {
+					diagonalQualified = true
+				}
+			}
+			if !diagonalQualified {
+				t.Fatalf("captured file's intended accepted recording edge did not qualify: member=%s recording=%s edges=%+v", memberID, expectedRecording, edges)
+			}
 		}
 	}
 	unchangedStageZero, err := fixture.repository.GetMatchingFallbackSearchReceipt(ctx, parentID, stageZeroID)
@@ -866,12 +1135,597 @@ func testAutomaticFallbackFiniteFlowCalculatesAcceptedStageOneReceiptsPostgreSQL
 	if inputCount != 1 || dependencyCount != expectedDependencies || registrationCount != expectedRegistrations || searchJobCount != 0 || lookupJobCount != expectedLookupJobs {
 		t.Fatalf("finite flow wrote unexpected request/dependency work: initialInputs=%d dependencies=%d registrations=%d stage2Jobs=%d lookupJobs=%d", inputCount, dependencyCount, registrationCount, searchJobCount, lookupJobCount)
 	}
-	if continueSeal || publishReview {
-		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, final.Revision, false)
+	if beforePublication != nil {
+		// Keep existing callers on the historical discarded-state behavior while
+		// allowing the recovery matrix to exercise each terminal/missing wake.
+		beforePublication(t, ctx, fixture.db, fixture.repository, inserter, parentID, waitRevision, matchingWorker)
+	}
+	if !uniquePublication {
+		assertFallbackEvaluationContinuation(t, ctx, fixture, inserter, parentID, waitRevision, publishReview, checkpoint)
+		if beforeWorkerClaim != nil && !beforeWorkerClaimExecuted {
+			t.Fatal("pre-claim checkpoint was not executed")
+		}
+	}
+	if uniquePublication && beforePublication == nil {
+		// The publication branch is exercised by the continuation test helper below;
+		// don't let the legacy review-only helper silently stand in for a unique proof.
+		assertFallbackUniquePublication(t, ctx, fixture, inserter, parentID, waitRevision, afterPublication)
 	}
 }
 
-func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fixture automaticTargetFenceFixture, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, waitRevision int64, publishReview bool) {
+func assertFallbackUniquePublication(t *testing.T, ctx context.Context, fixture automaticTargetFenceFixture, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, waitRevision int64, afterPublication func(uniquePublicationApplyFixture)) {
+	t.Helper()
+	handoff, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision)
+	if err != nil || !found {
+		t.Fatalf("continue unique fallback evaluation: handoff=%+v found=%v err=%v", handoff, found, err)
+	}
+	if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, handoff.RiverJobID).Exec(ctx); err != nil {
+		t.Fatalf("make unique continuation wake claimable: %v", err)
+	}
+	claim, outcome, err := fixture.repository.ClaimMatchingDelivery(ctx, runID, 1, handoff.RiverJobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed {
+		t.Fatalf("claim unique continuation wake: claim=%+v outcome=%v err=%v", claim, outcome, err)
+	}
+	prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, fixture.repository, runID, waitRevision)
+	if err != nil || !exists || prepared.Calculation == nil {
+		t.Fatalf("prepare unique publication from sealed evidence: exists=%v calculation=%+v err=%v", exists, prepared.Calculation, err)
+	}
+	publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+	if err != nil || publication.Evaluation.Outcome != "unique" || publication.Evaluation.Decision != "apply" ||
+		len(publication.Evaluation.Assignments) != 2 || len(publication.Inventory.Members) != 2 || len(publication.Inventory.Releases) != 1 {
+		t.Fatalf("frozen kernel did not derive a unique two-member assignment: evaluation=%+v kernel=%+v members=%d releases=%d err=%v", publication.Evaluation, prepared.KernelResult, len(publication.Inventory.Members), len(publication.Inventory.Releases), err)
+	}
+	assignments := make(map[uuid.UUID]uuid.UUID, len(publication.Evaluation.Assignments))
+	tracks := make(map[uuid.UUID]bool, len(publication.Evaluation.Assignments))
+	for _, assignment := range publication.Evaluation.Assignments {
+		if assignment.FileMemberID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || tracks[assignment.ProviderTrackID] {
+			t.Fatalf("kernel assignment is incomplete or reuses a provider variant: %+v", publication.Evaluation.Assignments)
+		}
+		assignments[assignment.FileMemberID] = assignment.ProviderTrackID
+		tracks[assignment.ProviderTrackID] = true
+	}
+	if len(assignments) != 2 || len(tracks) != 2 {
+		t.Fatalf("kernel assignments do not uniquely cover both captured members: assignments=%v tracks=%v", assignments, tracks)
+	}
+
+	groupID := publication.Inventory.GroupID
+	noApplyRows := func(label string) {
+		t.Helper()
+		var requests, children, applyJobs int
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?`, runID).Scan(ctx, &requests); err != nil {
+			t.Fatalf("%s read apply requests: %v", label, err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE kind=?`, persistence.MatchingApplyOperationKind).Scan(ctx, &children); err != nil {
+			t.Fatalf("%s read apply operations: %v", label, err)
+		}
+		if err := fixture.db.NewRaw(`SELECT count(*) FROM river_job WHERE kind='matching_apply_v1' AND args->>'operation_id' IN (SELECT id::text FROM operation WHERE kind=?)`, persistence.MatchingApplyOperationKind).Scan(ctx, &applyJobs); err != nil {
+			t.Fatalf("%s read apply jobs: %v", label, err)
+		}
+		if requests != 0 || children != 0 || applyJobs != 0 {
+			t.Fatalf("%s rejection left apply work: requests=%d children=%d jobs=%d", label, requests, children, applyJobs)
+		}
+	}
+	reject := func(label string, candidate persistence.FrozenMatchingPublication, expected map[uuid.UUID]*string, contains string) {
+		t.Helper()
+		if changed, publishErr := fixture.repository.PublishFrozenMatchingEvaluationForDelivery(ctx, runID, 1, handoff.RiverJobID, claim, candidate, expected); publishErr == nil || changed {
+			t.Fatalf("%s was accepted: changed=%v err=%v", label, changed, publishErr)
+		} else if contains != "" && !strings.Contains(publishErr.Error(), contains) {
+			t.Fatalf("%s error=%q does not contain %q", label, publishErr, contains)
+		}
+		noApplyRows(label)
+	}
+	duplicateFolderPosition := publication
+	duplicateFolderPosition.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments...)
+	duplicateFolderPosition.Evaluation.Assignments[1].ProviderTrackID = duplicateFolderPosition.Evaluation.Assignments[0].ProviderTrackID
+	duplicateFolderPosition.Evaluation.Assignments[1].Medium = duplicateFolderPosition.Evaluation.Assignments[0].Medium
+	duplicateFolderPosition.Evaluation.Assignments[1].Position = duplicateFolderPosition.Evaluation.Assignments[0].Position
+	var evaluationBefore string
+	if err := fixture.db.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, groupID).Scan(ctx, &evaluationBefore); err != nil {
+		t.Fatalf("read evaluation revision before folder-position rejection: %v", err)
+	}
+	reject("same provider position in one captured folder", duplicateFolderPosition, map[uuid.UUID]*string{groupID: nil}, "same source folder")
+	var evaluationAfter string
+	var deliveryConsumed bool
+	if err := fixture.db.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, groupID).Scan(ctx, &evaluationAfter); err != nil {
+		t.Fatalf("read evaluation revision after folder-position rejection: %v", err)
+	}
+	if err := fixture.db.NewRaw(`SELECT consumed_at IS NOT NULL FROM matching_delivery WHERE run_id=? AND river_job_id=?`, runID, handoff.RiverJobID).Scan(ctx, &deliveryConsumed); err != nil {
+		t.Fatalf("read delivery after folder-position rejection: %v", err)
+	}
+	if evaluationBefore != evaluationAfter || deliveryConsumed {
+		t.Fatalf("folder-position rejection changed evaluation or consumed delivery: before=%+v after=%+v consumed=%v", evaluationBefore, evaluationAfter, deliveryConsumed)
+	}
+
+	wrongDecision := publication
+	wrongDecision.Evaluation.Decision = "review"
+	reject("wrong unique decision", wrongDecision, map[uuid.UUID]*string{groupID: nil}, "unique outcome and apply decision must agree")
+	foreignMember := publication
+	foreignMember.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments...)
+	foreignMember.Evaluation.Assignments[0].FileMemberID = uuid.New()
+	reject("foreign assignment member", foreignMember, map[uuid.UUID]*string{groupID: nil}, "assignment")
+	partial := publication
+	partial.Evaluation.Assignments = append([]persistence.FrozenMatchingAssignment(nil), publication.Evaluation.Assignments[:1]...)
+	reject("partial assignment", partial, map[uuid.UUID]*string{groupID: nil}, "decision does not cover original group")
+	wrongSeal := publication
+	wrongSeal.Authority.SealDigest = strings.Repeat("0", len(wrongSeal.Authority.SealDigest))
+	reject("wrong seal digest", wrongSeal, map[uuid.UUID]*string{groupID: nil}, "persisted seal digest")
+	staleCAS := "stale-evaluation-revision"
+	reject("stale evaluation CAS", publication, map[uuid.UUID]*string{groupID: &staleCAS}, "")
+
+	changed, err := fixture.repository.PublishFrozenMatchingEvaluationForDelivery(ctx, runID, 1, handoff.RiverJobID, claim, publication, map[uuid.UUID]*string{groupID: nil})
+	if err != nil || !changed {
+		t.Fatalf("publish unique frozen fallback evaluation: changed=%v err=%v", changed, err)
+	}
+	var request struct {
+		OperationID  uuid.UUID `bun:"apply_operation_id"`
+		Schema       int       `bun:"schema_version"`
+		ParentEpoch  int64     `bun:"parent_execution_epoch"`
+		WaitRevision int64     `bun:"seal_wait_revision"`
+		SealDigest   []byte    `bun:"seal_digest"`
+	}
+	if err := fixture.db.NewRaw(`SELECT apply_operation_id,schema_version,parent_execution_epoch,seal_wait_revision,seal_digest
+		FROM matching_apply_request WHERE parent_run_id=?`, runID).Scan(ctx, &request); err != nil || request.OperationID == uuid.Nil || request.Schema != 2 ||
+		request.ParentEpoch != claim.ExecutionEpoch || request.WaitRevision != waitRevision || fmt.Sprintf("%x", request.SealDigest) != handoff.SealDigest {
+		t.Fatalf("schema-2 frozen apply request is not bound to the parent execution and seal: request=%+v handoff=%+v err=%v", request, handoff, err)
+	}
+	var child persistence.Operation
+	if err := fixture.db.NewSelect().Model(&child).Where("id = ?", request.OperationID).Scan(ctx); err != nil || child.Kind != persistence.MatchingApplyOperationKind {
+		t.Fatalf("read one registered apply child: child=%+v err=%v", child, err)
+	}
+	var rawArgs []byte
+	var args struct {
+		OperationID uuid.UUID `json:"operation_id"`
+	}
+	if err := fixture.db.NewRaw(`SELECT args FROM river_job WHERE id=? AND kind='matching_apply_v1'`, *child.RiverJobID).Scan(ctx, &rawArgs); err != nil || json.Unmarshal(rawArgs, &args) != nil || args.OperationID != child.ID {
+		t.Fatalf("registered River child args are not ID-only: args=%+v child=%+v err=%v", args, child, err)
+	}
+	snapshot, err := persistence.DecodeMatchingApplyInputSnapshotV2(child.InputSnapshot)
+	if err != nil || snapshot.SchemaVersion != 2 || snapshot.Authority.ParentRunID != runID || len(snapshot.Assignments) != 2 {
+		t.Fatalf("decode registered schema-2 frozen snapshot: snapshot=%+v err=%v", snapshot, err)
+	}
+	for _, assignment := range snapshot.Assignments {
+		if assignment.SourceSHA256 != "" {
+			t.Fatalf("digestless source unexpectedly gained a captured digest: assignment=%+v", assignment)
+		}
+	}
+	var requestCount, childCount int
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?`, runID).Scan(ctx, &requestCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.NewRaw(`SELECT count(*) FROM operation WHERE kind=? AND id IN (SELECT apply_operation_id FROM matching_apply_request WHERE parent_run_id=?)`, persistence.MatchingApplyOperationKind, runID).Scan(ctx, &childCount); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 1 || childCount != 1 {
+		t.Fatalf("unique publish was not atomic one-request/one-child: requests=%d children=%d", requestCount, childCount)
+	}
+	var operationState, runState string
+	var consumed bool
+	if err := fixture.db.NewRaw(`SELECT operation.state,run.state,delivery.consumed_at IS NOT NULL
+		FROM operation JOIN matching_run run ON run.id=operation.id JOIN matching_delivery delivery ON delivery.run_id=run.id
+		WHERE run.id=? AND delivery.river_job_id=?`, runID, handoff.RiverJobID).Scan(ctx, &operationState, &runState, &consumed); err != nil || operationState != "succeeded" || runState != "succeeded" || !consumed {
+		t.Fatalf("unique publication did not settle its parent delivery: operation=%q run=%q consumed=%v err=%v", operationState, runState, consumed, err)
+	}
+	if afterPublication != nil {
+		afterPublication(uniquePublicationApplyFixture{
+			Context: ctx, Database: fixture.db, Repository: fixture.repository, ParentOperationID: runID,
+			ChildOperation: child, Source: snapshot.Source, InputSnapshot: snapshot,
+		})
+	}
+}
+
+func assertClaimedSealedWakeRecovery(
+	t *testing.T,
+	ctx context.Context,
+	database *bun.DB,
+	repository *persistence.SetupManagerRepository,
+	inserter *fallbackHandoffRiverInserter,
+	runID uuid.UUID,
+	waitRevision int64,
+	worker *jobs.MatchingEvaluationWorker,
+) {
+	assertClaimedSealedWakeRecoveryWithState(t, ctx, database, repository, inserter, runID, waitRevision, worker)
+}
+
+func assertClaimedSealedWakeRecoveryWithState(
+	t *testing.T,
+	ctx context.Context,
+	database *bun.DB,
+	repository *persistence.SetupManagerRepository,
+	inserter *fallbackHandoffRiverInserter,
+	runID uuid.UUID,
+	waitRevision int64,
+	worker *jobs.MatchingEvaluationWorker,
+	deadStates ...string,
+) {
+	deadState := "discarded"
+	if len(deadStates) > 0 && deadStates[0] != "" {
+		deadState = deadStates[0]
+	}
+	assertClaimedSealedWakeRecoveryWithStateAndHook(t, ctx, database, repository, inserter, runID, waitRevision, worker, deadState, nil)
+}
+
+func assertClaimedSealedWakeRecoveryWithStateAndHook(
+	t *testing.T,
+	ctx context.Context,
+	database *bun.DB,
+	repository *persistence.SetupManagerRepository,
+	inserter *fallbackHandoffRiverInserter,
+	runID uuid.UUID,
+	waitRevision int64,
+	worker *jobs.MatchingEvaluationWorker,
+	deadState string,
+	afterReplacement func(),
+) {
+	t.Helper()
+	// The fixture uses real worker instances for explicit delivery calls, but
+	// leave newly inserted replacement jobs under test control instead of letting
+	// River race the assertions with an asynchronous poll.
+	if stopper, ok := inserter.client.(interface{ Stop(context.Context) error }); ok {
+		if err := stopper.Stop(ctx); err != nil {
+			t.Fatalf("stop automatic River polling for deterministic recovery assertions: %v", err)
+		}
+	}
+	if deadState != "discarded" && deadState != "completed" && deadState != "cancelled" && deadState != "missing" {
+		t.Fatalf("unsupported dead wake state %q", deadState)
+	}
+	var handoff struct {
+		Digest []byte `bun:"seal_digest"`
+		JobID  int64  `bun:"river_job_id"`
+		Wait   int64  `bun:"wait_revision"`
+	}
+	if err := database.NewRaw(`SELECT seal_digest,river_job_id,wait_revision FROM matching_fallback_evaluation_handoff WHERE run_id=?`, runID).Scan(ctx, &handoff); err != nil {
+		t.Fatalf("read original immutable fallback handoff: %v", err)
+	}
+	var before struct {
+		Epoch int64 `bun:"execution_epoch"`
+		JobID int64 `bun:"current_river_job_id"`
+	}
+	if err := database.NewRaw(`SELECT execution_epoch,current_river_job_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &before); err != nil || before.JobID != handoff.JobID || handoff.Wait != waitRevision {
+		t.Fatalf("read original sealed execution identity: run=%+v handoff=%+v err=%v", before, handoff, err)
+	}
+	var originalArgs []byte
+	if err := database.NewRaw(`SELECT args FROM river_job WHERE id=?`, handoff.JobID).Scan(ctx, &originalArgs); err != nil {
+		t.Fatalf("read original wake args: %v", err)
+	}
+	var originalJobArgs map[string]json.RawMessage
+	var originalOperationID uuid.UUID
+	if err := json.Unmarshal(originalArgs, &originalJobArgs); err != nil || len(originalJobArgs) != 1 || originalJobArgs["operation_id"] == nil || json.Unmarshal(originalJobArgs["operation_id"], &originalOperationID) != nil || originalOperationID != runID {
+		t.Fatalf("original River wake args are not exactly operation-ID-only: args=%s operation=%s err=%v", originalArgs, originalOperationID, err)
+	}
+	originalOperation, err := repository.GetOperation(ctx, runID)
+	if err != nil {
+		t.Fatalf("read original parent operation snapshot: %v", err)
+	}
+	originalInput := append([]byte(nil), originalOperation.InputSnapshot...)
+	var originalAcquisitionIntent, originalRunPlan []byte
+	var originalSourceID uuid.UUID
+	var originalRunConfiguration string
+	if err := database.NewRaw(`SELECT acquisition.intent,run.immutable_plan,run.provider_source_id,run.provider_configuration_identity
+		FROM matching_acquisition acquisition JOIN matching_run run ON run.id=acquisition.run_id WHERE run.id=?`, runID).
+		Scan(ctx, &originalAcquisitionIntent, &originalRunPlan, &originalSourceID, &originalRunConfiguration); err != nil {
+		t.Fatalf("read original parent intent, source, and finite plan: %v", err)
+	}
+	for _, state := range []string{"available", "pending", "retryable", "running", "scheduled"} {
+		if _, err := database.NewRaw(`UPDATE river_job SET state=? WHERE id=?`, state, handoff.JobID).Exec(ctx); err != nil {
+			t.Fatalf("set original wake live state %q: %v", state, err)
+		}
+		if err := repository.RecoverMatchingRuntime(ctx, nil); err != nil {
+			t.Fatalf("sweep live original wake in state %q: %v", state, err)
+		}
+		var jobState string
+		var current struct {
+			Epoch int64 `bun:"execution_epoch"`
+			JobID int64 `bun:"current_river_job_id"`
+		}
+		if err := database.NewRaw(`SELECT state FROM river_job WHERE id=?`, handoff.JobID).Scan(ctx, &jobState); err != nil {
+			t.Fatalf("read live original wake state %q: %v", state, err)
+		}
+		if err := database.NewRaw(`SELECT execution_epoch,current_river_job_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &current); err != nil || current != before || jobState != state {
+			t.Fatalf("scanner changed live original wake state %q: run=%+v want=%+v jobState=%q err=%v", state, current, before, jobState, err)
+		}
+	}
+	if _, err := database.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, handoff.JobID).Exec(ctx); err != nil {
+		t.Fatalf("claimable original continuation wake: %v", err)
+	}
+	oldClaim, outcome, err := repository.ClaimMatchingDelivery(ctx, runID, 1, handoff.JobID, 1)
+	if err != nil || outcome != persistence.MatchingDeliveryClaimed || oldClaim.RiverAttempt != 1 {
+		t.Fatalf("claim original sealed wake before simulated worker loss: claim=%+v outcome=%v err=%v", oldClaim, outcome, err)
+	}
+	var claimedJob, claimedEpoch int64
+	if err := database.NewRaw(`SELECT active_river_job_id,active_execution_epoch FROM matching_run WHERE id=?`, runID).Scan(ctx, &claimedJob, &claimedEpoch); err != nil || claimedJob != handoff.JobID || claimedEpoch != oldClaim.ExecutionEpoch {
+		t.Fatalf("real delivery claim did not persist active execution fence: job=%d epoch=%d claim=%+v err=%v", claimedJob, claimedEpoch, oldClaim, err)
+	}
+	// Claiming advances the execution epoch; use that durable identity for the
+	// live-work sweep assertion and later recovery expectation.
+	before.Epoch = claimedEpoch
+	// A durable running claim is live work, not a stale delivery. Sweep before
+	// simulating worker loss and ensure neither the claim nor its fence changes.
+	if err := repository.RecoverMatchingRuntime(ctx, nil); err != nil {
+		t.Fatalf("sweep durably claimed running wake: %v", err)
+	}
+	var liveState string
+	var liveRun struct {
+		Epoch int64 `bun:"execution_epoch"`
+		JobID int64 `bun:"current_river_job_id"`
+	}
+	if err := database.NewRaw(`SELECT state FROM river_job WHERE id=?`, handoff.JobID).Scan(ctx, &liveState); err != nil {
+		t.Fatalf("read claimed wake state after sweep: %v", err)
+	}
+	if err := database.NewRaw(`SELECT execution_epoch,current_river_job_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &liveRun); err != nil || liveRun != before || liveState != "running" {
+		t.Fatalf("recovery swept a live claimed delivery: run=%+v want=%+v state=%q err=%v", liveRun, before, liveState, err)
+	}
+	// Model a worker that was durably claimed and then lost: River owns the
+	// terminal state, while the active claim remains as stale durable evidence.
+	if deadState == "missing" {
+		if _, err := database.NewRaw(`DELETE FROM river_job WHERE id=?`, handoff.JobID).Exec(ctx); err != nil {
+			t.Fatalf("remove lost original continuation delivery: %v", err)
+		}
+	} else if _, err := database.NewRaw(`UPDATE river_job SET state=?,finalized_at=now() WHERE id=?`, deadState, handoff.JobID).Exec(ctx); err != nil {
+		t.Fatalf("mark lost original continuation delivery %q: %v", deadState, err)
+	}
+	var sweep sync.WaitGroup
+	sweepErrors := make(chan error, 2)
+	for range 2 {
+		sweep.Add(1)
+		go func() {
+			defer sweep.Done()
+			sweepErrors <- repository.RecoverMatchingRuntime(ctx, nil)
+		}()
+	}
+	sweep.Wait()
+	close(sweepErrors)
+	for err := range sweepErrors {
+		if err != nil {
+			t.Fatalf("concurrent recovery sweep: %v", err)
+		}
+	}
+	var replaced struct {
+		Epoch int64 `bun:"execution_epoch"`
+		JobID int64 `bun:"current_river_job_id"`
+	}
+	if err := database.NewRaw(`SELECT execution_epoch,current_river_job_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &replaced); err != nil {
+		t.Fatalf("read recovered execution fence: %v", err)
+	}
+	operation, err := repository.GetOperation(ctx, runID)
+	if err != nil || (operation.State != "queued" && operation.State != "running") || operation.Stage != "queued" || operation.RiverJobID == nil || *operation.RiverJobID != replaced.JobID {
+		t.Fatalf("recovery did not install current queued operation delivery: operation=%+v err=%v", operation, err)
+	}
+	var replacementRegistrations int
+	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery delivery JOIN river_job job ON job.id=delivery.river_job_id
+		WHERE delivery.run_id=? AND delivery.operation_attempt=1 AND delivery.river_job_id=? AND delivery.consumed_at IS NULL
+		AND job.args->>'operation_id'=? AND job.state IN ('available','pending','retryable','scheduled')`, runID, replaced.JobID, runID.String()).Scan(ctx, &replacementRegistrations); err != nil || replacementRegistrations != 1 {
+		t.Fatalf("recovered replacement lacks exactly one live registered operation-ID-only delivery: count=%d err=%v", replacementRegistrations, err)
+	}
+	if replaced.Epoch != before.Epoch+1 || replaced.JobID < 1 || replaced.JobID == handoff.JobID {
+		t.Fatalf("recovery did not advance exactly one execution epoch: before=%+v after=%+v", before, replaced)
+	}
+	var activeJob, activeEpoch *int64
+	if err := database.NewRaw(`SELECT active_river_job_id,active_execution_epoch FROM matching_run WHERE id=?`, runID).Scan(ctx, &activeJob, &activeEpoch); err != nil || (activeJob != nil && (*activeJob != replaced.JobID || activeEpoch == nil || *activeEpoch != replaced.Epoch)) {
+		t.Fatalf("recovery retained an unrelated active claim: job=%v epoch=%v replacement=%+v err=%v", activeJob, activeEpoch, replaced, err)
+	}
+	if err := repository.RecoverMatchingRuntime(ctx, nil); err != nil {
+		t.Fatalf("repeat sealed continuation recovery: %v", err)
+	}
+	var afterRepeat struct {
+		Epoch int64 `bun:"execution_epoch"`
+		JobID int64 `bun:"current_river_job_id"`
+	}
+	if err := database.NewRaw(`SELECT execution_epoch,current_river_job_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &afterRepeat); err != nil || afterRepeat != replaced {
+		t.Fatalf("second sweep changed already recovered delivery: before=%+v after=%+v err=%v", replaced, afterRepeat, err)
+	}
+	var persistedHandoff struct {
+		Digest []byte `bun:"seal_digest"`
+		JobID  int64  `bun:"river_job_id"`
+		Wait   int64  `bun:"wait_revision"`
+	}
+	if err := database.NewRaw(`SELECT seal_digest,river_job_id,wait_revision FROM matching_fallback_evaluation_handoff WHERE run_id=?`, runID).Scan(ctx, &persistedHandoff); err != nil || persistedHandoff.JobID != handoff.JobID || persistedHandoff.Wait != waitRevision || !bytes.Equal(persistedHandoff.Digest, handoff.Digest) {
+		t.Fatalf("recovery rewrote immutable original handoff: before=%+v after=%+v err=%v", handoff, persistedHandoff, err)
+	}
+	var operationID uuid.UUID
+	var args []byte
+	if err := database.NewRaw(`SELECT operation.id,river_job.args FROM operation JOIN river_job ON river_job.id=operation.river_job_id WHERE operation.id=? AND river_job.id=?`, runID, replaced.JobID).Scan(ctx, &operationID, &args); err != nil {
+		t.Fatalf("read installed replacement job registration: %v", err)
+	}
+	var jobArgs map[string]json.RawMessage
+	var replacementOperationID uuid.UUID
+	if err := json.Unmarshal(args, &jobArgs); err != nil || len(jobArgs) != 1 || jobArgs["operation_id"] == nil ||
+		json.Unmarshal(jobArgs["operation_id"], &replacementOperationID) != nil || operationID != runID || replacementOperationID != runID {
+		t.Fatalf("replacement River args are not operation-ID-only: operation=%s args=%s err=%v", operationID, args, err)
+	}
+	if current, err := repository.IsMatchingDeliveryCurrent(ctx, runID, 1, handoff.JobID, oldClaim); err != nil || current {
+		t.Fatalf("old claimed delivery remains current after epoch advance: current=%v err=%v", current, err)
+	}
+	if afterReplacement != nil {
+		afterReplacement()
+	}
+	if err := worker.Work(ctx, &river.Job[service.MatchingEvaluationOperationArgs]{JobRow: &rivertype.JobRow{ID: handoff.JobID, Attempt: 1}, Args: service.MatchingEvaluationOperationArgs{OperationID: runID}}); err != nil {
+		t.Fatalf("old terminal worker delivery was not rejected as stale: %v", err)
+	}
+	prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, repository, runID, waitRevision)
+	if err != nil || !exists {
+		t.Fatalf("prepare original sealed result for stale-publication rejection: exists=%v err=%v", exists, err)
+	}
+	publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+	if err != nil {
+		t.Fatalf("serialize original frozen evaluation: %v", err)
+	}
+	if changed, publishErr := repository.PublishFrozenMatchingEvaluationForDelivery(ctx, runID, 1, handoff.JobID, oldClaim, publication, map[uuid.UUID]*string{publication.Inventory.GroupID: nil}); publishErr == nil || changed || !strings.Contains(publishErr.Error(), "operation delivery is no longer current") {
+		t.Fatalf("old claimed publication was not specifically fenced: changed=%v err=%v", changed, publishErr)
+	}
+	var evaluationHeaders, evaluationMembers, candidates, applyRequests, children, receipts int
+	readPublicationArtifactCounts := func() [15]int {
+		t.Helper()
+		counts := [15]int{}
+		queries := []struct {
+			query string
+			args  []any
+		}{
+			{`SELECT count(*) FROM incoming_match_evaluation`, nil},
+			{`SELECT count(*) FROM incoming_match_evaluation_member`, nil},
+			{`SELECT count(*) FROM incoming_match_candidate`, nil},
+			{`SELECT count(*) FROM matching_apply_request`, nil},
+			{`SELECT count(*) FROM matching_apply_receipt`, nil},
+			{`SELECT count(*) FROM operation WHERE kind=?`, []any{persistence.MatchingApplyOperationKind}},
+			{`SELECT count(*) FROM river_job WHERE kind=?`, []any{(persistence.MatchingApplyOperationArgs{}).Kind()}},
+			{`SELECT count(*) FROM track_source`, nil},
+			{`SELECT count(*) FROM provider_local_track`, nil},
+			{`SELECT count(*) FROM provider_local_release`, nil},
+			{`SELECT count(*) FROM local_release`, nil},
+			{`SELECT count(*) FROM local_recording`, nil},
+			{`SELECT count(*) FROM local_track`, nil},
+			{`SELECT count(*) FROM local_artist`, nil},
+			{`SELECT count(*) FROM incoming_match_evaluation WHERE group_id=?`, []any{publication.Inventory.GroupID}},
+		}
+		for index, check := range queries {
+			if err := database.NewRaw(check.query, check.args...).Scan(ctx, &counts[index]); err != nil {
+				t.Fatalf("read publication artifact count %d: %v", index, err)
+			}
+		}
+		return counts
+	}
+	artifactsBeforeRejectedPublish := readPublicationArtifactCounts()
+	var currentCandidatesBefore int
+	if err := database.NewRaw(`SELECT count(*) FROM incoming_match_candidate WHERE group_id=?`, publication.Inventory.GroupID).Scan(ctx, &currentCandidatesBefore); err != nil {
+		t.Fatalf("read current candidates before rejected stale publication: %v", err)
+	}
+	var currentHeaderRevisionBefore string
+	if err := database.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, publication.Inventory.GroupID).Scan(ctx, &currentHeaderRevisionBefore); err != nil {
+		t.Fatalf("read current header revision before rejected stale publication: %v", err)
+	}
+	for _, check := range []struct {
+		query       string
+		args        []any
+		destination *int
+	}{
+		{`SELECT count(*) FROM incoming_match_evaluation WHERE group_id=?`, []any{publication.Inventory.GroupID}, &evaluationHeaders},
+		{`SELECT count(*) FROM incoming_match_evaluation_member WHERE group_id=?`, []any{publication.Inventory.GroupID}, &evaluationMembers},
+		{`SELECT count(*) FROM incoming_match_candidate WHERE group_id=?`, []any{publication.Inventory.GroupID}, &candidates},
+		{`SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?`, []any{runID}, &applyRequests},
+		{`SELECT count(*) FROM operation WHERE kind=? AND id IN (SELECT apply_operation_id FROM matching_apply_request WHERE parent_run_id=?)`, []any{persistence.MatchingApplyOperationKind, runID}, &children},
+		{`SELECT count(*) FROM matching_apply_receipt WHERE apply_operation_id IN (SELECT apply_operation_id FROM matching_apply_request WHERE parent_run_id=?)`, []any{runID}, &receipts},
+	} {
+		if err := database.NewRaw(check.query, check.args...).Scan(ctx, check.destination); err != nil {
+			t.Fatalf("check stale publication side effects: %v", err)
+		}
+	}
+	if evaluationHeaders != 0 || evaluationMembers != 0 || candidates != 0 || applyRequests != 0 || children != 0 || receipts != 0 {
+		t.Fatalf("stale publication wrote evaluation or apply artifacts: headers=%d members=%d candidates=%d requests=%d children=%d receipts=%d", evaluationHeaders, evaluationMembers, candidates, applyRequests, children, receipts)
+	}
+	artifactsAfterRejectedPublish := readPublicationArtifactCounts()
+	var currentCandidatesAfter int
+	if err := database.NewRaw(`SELECT count(*) FROM incoming_match_candidate WHERE group_id=?`, publication.Inventory.GroupID).Scan(ctx, &currentCandidatesAfter); err != nil {
+		t.Fatalf("read current candidates after rejected stale publication: %v", err)
+	}
+	var currentHeaderRevisionAfter string
+	if err := database.NewRaw(`SELECT COALESCE((SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=?), '')`, publication.Inventory.GroupID).Scan(ctx, &currentHeaderRevisionAfter); err != nil {
+		t.Fatalf("read current header revision after rejected stale publication: %v", err)
+	}
+	if artifactsAfterRejectedPublish != artifactsBeforeRejectedPublish || currentCandidatesAfter != currentCandidatesBefore || currentHeaderRevisionAfter != currentHeaderRevisionBefore {
+		t.Fatalf("stale publication changed independently counted artifacts, current header revision, or candidates: before=%v after=%v revision=%q->%q candidates=%d->%d", artifactsBeforeRejectedPublish, artifactsAfterRejectedPublish, currentHeaderRevisionBefore, currentHeaderRevisionAfter, currentCandidatesBefore, currentCandidatesAfter)
+	}
+	if _, err := database.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, replaced.JobID).Exec(ctx); err != nil {
+		t.Fatalf("claim recovered replacement delivery: %v", err)
+	}
+	if err := worker.Work(ctx, &river.Job[service.MatchingEvaluationOperationArgs]{JobRow: &rivertype.JobRow{ID: replaced.JobID, Attempt: 1}, Args: service.MatchingEvaluationOperationArgs{OperationID: runID}}); err != nil {
+		t.Fatalf("execute recovered replacement through real matching worker: %v", err)
+	}
+	var operationState, runState string
+	if err := database.NewRaw(`SELECT operation.state,run.state FROM operation JOIN matching_run run ON run.id=operation.id WHERE operation.id=?`, runID).Scan(ctx, &operationState, &runState); err != nil || operationState != "succeeded" || runState != "succeeded" {
+		t.Fatalf("replacement worker did not publish the unique frozen result: operation=%q run=%q err=%v", operationState, runState, err)
+	}
+	if err := database.NewRaw(`SELECT count(*) FROM matching_apply_request WHERE parent_run_id=?`, runID).Scan(ctx, &applyRequests); err != nil || applyRequests != 1 {
+		t.Fatalf("replacement worker did not publish exactly one unique apply request: count=%d err=%v", applyRequests, err)
+	}
+	currentOperation, err := repository.GetOperation(ctx, runID)
+	if err != nil || !bytes.Equal(currentOperation.InputSnapshot, originalInput) {
+		t.Fatalf("replacement publication changed original parent request input: original=%s current=%+v err=%v", originalInput, currentOperation, err)
+	}
+	var currentAcquisitionIntent, currentRunPlan []byte
+	var currentSourceID uuid.UUID
+	var currentRunConfiguration string
+	if err := database.NewRaw(`SELECT acquisition.intent,run.immutable_plan,run.provider_source_id,run.provider_configuration_identity
+		FROM matching_acquisition acquisition JOIN matching_run run ON run.id=acquisition.run_id WHERE run.id=?`, runID).
+		Scan(ctx, &currentAcquisitionIntent, &currentRunPlan, &currentSourceID, &currentRunConfiguration); err != nil ||
+		!bytes.Equal(currentAcquisitionIntent, originalAcquisitionIntent) || !bytes.Equal(currentRunPlan, originalRunPlan) || currentSourceID != originalSourceID || currentRunConfiguration != originalRunConfiguration {
+		t.Fatalf("replacement publication changed frozen parent intent/source/plan: source=%s->%s config=%q->%q err=%v", originalSourceID, currentSourceID, originalRunConfiguration, currentRunConfiguration, err)
+	}
+	var finalHandoff struct {
+		Digest []byte `bun:"seal_digest"`
+		JobID  int64  `bun:"river_job_id"`
+		Wait   int64  `bun:"wait_revision"`
+	}
+	if err := database.NewRaw(`SELECT seal_digest,river_job_id,wait_revision FROM matching_fallback_evaluation_handoff WHERE run_id=?`, runID).Scan(ctx, &finalHandoff); err != nil ||
+		finalHandoff.JobID != handoff.JobID || finalHandoff.Wait != waitRevision || !bytes.Equal(finalHandoff.Digest, handoff.Digest) {
+		t.Fatalf("replacement publication changed original frozen run/wait/seal handoff: before=%+v after=%+v err=%v", handoff, finalHandoff, err)
+	}
+	artifactsAfterReplacementPublish := readPublicationArtifactCounts()
+	if artifactsAfterReplacementPublish[7] != artifactsBeforeRejectedPublish[7] || artifactsAfterReplacementPublish[8] != artifactsBeforeRejectedPublish[8] || artifactsAfterReplacementPublish[9] != artifactsBeforeRejectedPublish[9] ||
+		artifactsAfterReplacementPublish[10] != artifactsBeforeRejectedPublish[10] || artifactsAfterReplacementPublish[11] != artifactsBeforeRejectedPublish[11] || artifactsAfterReplacementPublish[12] != artifactsBeforeRejectedPublish[12] || artifactsAfterReplacementPublish[13] != artifactsBeforeRejectedPublish[13] {
+		t.Fatalf("evaluation parent materialized or linked local entities before registered child execution: before=%v after=%v", artifactsBeforeRejectedPublish, artifactsAfterReplacementPublish)
+	}
+	var header struct {
+		Revision string    `bun:"evaluation_revision"`
+		RunID    uuid.UUID `bun:"target_run_id"`
+		Evidence []byte    `bun:"evaluation_evidence"`
+		Fences   []byte    `bun:"provider_fences"`
+	}
+	if err := database.NewRaw(`SELECT evaluation_revision,target_run_id,evaluation_evidence,provider_fences FROM incoming_match_evaluation WHERE group_id=?`, publication.Inventory.GroupID).
+		Scan(ctx, &header.Revision, &header.RunID, &header.Evidence, &header.Fences); err != nil || header.Revision == "" || header.RunID != runID {
+		t.Fatalf("replacement publication lacks a unique current header bound to its frozen run: header=%+v err=%v", header, err)
+	}
+	var headerEvidence struct {
+		Publication struct {
+			Evaluation struct {
+				Outcome string `json:"outcome"`
+			} `json:"evaluation"`
+		} `json:"frozen_publication"`
+	}
+	var headerFences struct {
+		RunID        uuid.UUID `json:"run_id"`
+		WaitRevision int64     `json:"wait_revision"`
+		SealDigest   string    `json:"seal_digest"`
+	}
+	if err := json.Unmarshal(header.Evidence, &headerEvidence); err != nil || json.Unmarshal(header.Fences, &headerFences) != nil || headerEvidence.Publication.Evaluation.Outcome != "unique" ||
+		headerFences.RunID != runID || headerFences.WaitRevision != waitRevision || headerFences.SealDigest != fmt.Sprintf("%x", handoff.Digest) {
+		t.Fatalf("replacement header does not retain unique outcome and actual root/wait/seal authority: evidence=%s fences=%s publication=%+v fencesDecoded=%+v err=%v", header.Evidence, header.Fences, headerEvidence.Publication, headerFences, err)
+	}
+	var replacementConsumed int
+	if err := database.NewRaw(`SELECT count(*) FROM matching_delivery WHERE run_id=? AND river_job_id=? AND consumed_at IS NOT NULL`, runID, replaced.JobID).Scan(ctx, &replacementConsumed); err != nil || replacementConsumed != 1 {
+		t.Fatalf("replacement matching delivery was not consumed exactly once: count=%d err=%v", replacementConsumed, err)
+	}
+	var applyRequest struct {
+		OperationID uuid.UUID `bun:"apply_operation_id"`
+		Schema      int       `bun:"schema_version"`
+		ParentEpoch int64     `bun:"parent_execution_epoch"`
+		InputSHA    []byte    `bun:"input_sha256"`
+	}
+	if err := database.NewRaw(`SELECT apply_operation_id,schema_version,parent_execution_epoch,input_sha256 FROM matching_apply_request WHERE parent_run_id=?`, runID).
+		Scan(ctx, &applyRequest.OperationID, &applyRequest.Schema, &applyRequest.ParentEpoch, &applyRequest.InputSHA); err != nil {
+		t.Fatalf("read replacement apply request: %v", err)
+	}
+	var replacementEpoch int64
+	if err := database.NewRaw(`SELECT execution_epoch FROM matching_run WHERE id=?`, runID).Scan(ctx, &replacementEpoch); err != nil || applyRequest.Schema != 2 || applyRequest.ParentEpoch != replacementEpoch || replacementEpoch != replaced.Epoch+1 || len(applyRequest.InputSHA) != sha256.Size {
+		t.Fatalf("replacement request is not bound to actual replacement claim and canonical input digest: request=%+v replacement=%+v err=%v", applyRequest, replaced, err)
+	}
+	var child persistence.Operation
+	if err := database.NewSelect().Model(&child).Where("id = ?", applyRequest.OperationID).Scan(ctx); err != nil || child.Kind != persistence.MatchingApplyOperationKind || child.RiverJobID == nil {
+		t.Fatalf("read registered schema-2 replacement child: child=%+v err=%v", child, err)
+	}
+	childSnapshot, err := persistence.DecodeMatchingApplyInputSnapshotV2(child.InputSnapshot)
+	if err != nil || childSnapshot.SchemaVersion != 2 || childSnapshot.Authority.ParentRunID != runID || len(childSnapshot.Assignments) != 2 {
+		t.Fatalf("replacement child is not the validated canonical schema-2 request: snapshot=%+v err=%v", childSnapshot, err)
+	}
+	canonicalChildDigest, err := persistence.MatchingApplyInputSnapshotV2Digest(childSnapshot)
+	if err != nil || canonicalChildDigest != fmt.Sprintf("%x", applyRequest.InputSHA) {
+		t.Fatalf("replacement child canonical digest does not match request binding; decoded snapshot fields differ from the canonical request (not merely JSONB ordering/whitespace): computed=%s stored=%x err=%v", canonicalChildDigest, applyRequest.InputSHA, err)
+	}
+	var registeredApplyJobs int
+	if err := database.NewRaw(`SELECT count(*) FROM river_job WHERE id=? AND kind=? AND args->>'operation_id'=?`, *child.RiverJobID, (persistence.MatchingApplyOperationArgs{}).Kind(), child.ID.String()).Scan(ctx, &registeredApplyJobs); err != nil || registeredApplyJobs != 1 {
+		t.Fatalf("replacement child is not registered with exactly one operation-ID-only apply job: count=%d err=%v", registeredApplyJobs, err)
+	}
+}
+
+func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fixture automaticTargetFenceFixture, inserter *fallbackHandoffRiverInserter, runID uuid.UUID, waitRevision int64, publishReview bool, beforeWorkerClaim func(context.Context, *bun.DB, uuid.UUID, int64, int64) bool) {
 	t.Helper()
 	before := snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
 	var seals, handoffs int
@@ -886,6 +1740,9 @@ func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fix
 	}
 	readRows()
 	initialSeals, initialHandoffs := seals, handoffs
+	if initialSeals != 1 || initialHandoffs != 1 {
+		t.Fatalf("service advancement did not atomically create one seal and handoff: seals=%d handoffs=%d", initialSeals, initialHandoffs)
+	}
 	assertNoWrites := func(label string) {
 		t.Helper()
 		after := snapshotFallbackSealWriteState(t, ctx, fixture.db, runID)
@@ -902,30 +1759,13 @@ func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fix
 		t.Fatalf("stale wait revision was accepted: found=%v err=%v", found, err)
 	}
 	assertNoWrites("stale wait revision")
-	if _, err := fixture.db.ExecContext(ctx, `CREATE FUNCTION reject_test_fallback_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test handoff insert failure'; END $$`); err != nil {
-		t.Fatalf("create handoff rollback fault: %v", err)
-	}
-	if _, err := fixture.db.ExecContext(ctx, `CREATE TRIGGER reject_test_fallback_handoff BEFORE INSERT ON matching_fallback_evaluation_handoff FOR EACH ROW EXECUTE FUNCTION reject_test_fallback_handoff()`); err != nil {
-		t.Fatalf("install handoff rollback fault: %v", err)
-	}
-	if _, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision); err == nil || found || !strings.Contains(err.Error(), "test handoff insert failure") {
-		t.Fatalf("injected handoff failure succeeded: found=%v err=%v", found, err)
-	}
-	if _, err := fixture.db.ExecContext(ctx, `DROP TRIGGER reject_test_fallback_handoff ON matching_fallback_evaluation_handoff`); err != nil {
-		t.Fatalf("remove handoff rollback fault: %v", err)
-	}
-	if _, err := fixture.db.ExecContext(ctx, `DROP FUNCTION reject_test_fallback_handoff()`); err != nil {
-		t.Fatalf("drop handoff rollback fault: %v", err)
-	}
-	assertNoWrites("handoff SQL failure")
-
 	wakeCalls := inserter.wakeCalls
 	handoff, found, err := fixture.repository.ContinueMatchingFallbackSeal(ctx, inserter, runID, 1, waitRevision)
 	if err != nil || !found || handoff.RunID != runID || handoff.WaitRevision != waitRevision || handoff.OperationAttempt != 1 || handoff.RiverJobID < 1 || handoff.SealDigest == "" {
-		t.Fatalf("continue qualified fallback wait: handoff=%+v found=%v err=%v", handoff, found, err)
+		t.Fatalf("replay service-created fallback continuation: handoff=%+v found=%v err=%v", handoff, found, err)
 	}
-	if inserter.wakeCalls != wakeCalls+1 {
-		t.Fatalf("continuation wake insert calls=%d, want exactly one", inserter.wakeCalls-wakeCalls)
+	if inserter.wakeCalls != wakeCalls {
+		t.Fatalf("exact continuation replay inserted another wake: calls=%d want=%d", inserter.wakeCalls-wakeCalls, 0)
 	}
 	var currentPhase string
 	var currentRevision int64
@@ -935,6 +1775,15 @@ func assertFallbackEvaluationContinuation(t *testing.T, ctx context.Context, fix
 	var registeredJobID int64
 	if err := fixture.db.NewRaw(`SELECT river_job_id FROM matching_delivery WHERE run_id=? AND operation_attempt=1 AND river_job_id=? AND consumed_at IS NULL`, runID, handoff.RiverJobID).Scan(ctx, &registeredJobID); err != nil || registeredJobID != handoff.RiverJobID {
 		t.Fatalf("registered wake=%d handoff=%d err=%v", registeredJobID, handoff.RiverJobID, err)
+	}
+	var wakeState string
+	if err := fixture.db.NewRaw(`SELECT state FROM river_job WHERE id=?`, handoff.RiverJobID).Scan(ctx, &wakeState); err != nil || wakeState != "available" {
+		t.Fatalf("registered continuation wake is not available before worker claim: state=%q err=%v", wakeState, err)
+	}
+	if beforeWorkerClaim != nil {
+		if !beforeWorkerClaim(ctx, fixture.db, runID, waitRevision, handoff.RiverJobID) {
+			return
+		}
 	}
 	if _, err := fixture.db.NewRaw(`UPDATE river_job SET state='running',attempt=1 WHERE id=?`, handoff.RiverJobID).Exec(ctx); err != nil {
 		t.Fatalf("make registered continuation wake claimable: %v", err)
