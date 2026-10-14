@@ -30,6 +30,19 @@ for product distribution. Source and build provenance are linked in
 `backend/THIRD_PARTY_NOTICES.md`; distribution readiness remains a separate
 review item.
 
+For local technical reproducibility evidence, `build/library-evidence/taglib/`
+contains the pinned wrapper and TagLib/utfcpp source archives, a read-only copy
+of the Go module-cache wrapper inputs, license texts, hashes, and provenance.
+This ignored build output is research evidence, not a release bundle or
+compliance certification. The wrapper source documents that its embedded binary
+can be replaced with the Go linker option
+`-X 'go.senan.xyz/taglib.binaryPath=/path/to/taglib.wasm'`. The wrapper itself
+is Go code using wazero; separately, this project requires cgo for its vendored
+RapidFuzz C++ integration. That project build constraint does not mean the
+taglib wrapper itself requires cgo. Full corresponding source/rebuild coverage,
+relink materials, and any distribution-policy assessment remain open; no
+distribution-readiness conclusion is made here.
+
 ## Matroska / MKA
 
 MKA uses the ready-made `github.com/remko/go-mkvparse` v0.14.0 MIT-licensed
