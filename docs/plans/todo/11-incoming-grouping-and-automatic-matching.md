@@ -42,6 +42,7 @@
 | «Полный релиз» — финальное уточнение | Для auto-apply matching достаточно, чтобы **все файлы входящей группы** уверенно получили назначения. Не требуется покрыть все позиции provider release: неполный provider tracklist coverage допустим. Если вся группа назначена, авто-решение применяется ко всей группе. Частичное auto-apply группы запрещено. | Самое позднее обязательное уточнение владельца; оно supersedes предложение «все позиции релиза покрыты» из ранней версии формулировки/макета. |
 | Граница публикации | Matching может сохранять локальные сущности и подтверждённые matching/source links; он не публикует файлы и не объявляет публикацию выполненной. | Решения владельца; `docs/design/decisions.md`, `docs/design/data-model.md`. |
 | Review при исчерпании artistless fallback | Если все три artistless stage (album + track → album → track) исполнены и ни один candidate не достиг совокупного confidence ≥0.70, review использует полный release + track inventory только последнего исполненного stage, а не объединение предыдущих stage. Если последний исполненный stage пуст — полный captured file group без provider layout. Ниже порога ничего не назначается автоматически. | Решение владельца от 2026-10-12. |
+| Актуальное состояние evaluation | Хранится только актуальное состояние evaluation; история/архив/статусы прошлых оценок (`evaluationHistory`, включая «исторический review») не вводятся. Допустимо (не обязательно) сохранять последнюю evaluation до замены; замена перезаписывает её. Недействительный parked automatic wait не публикует устаревший review и не применяет links; auto переоценивает на свежих данных, manual — только по явному возврату в automatic. | Решение владельца от 2026-10-12. |
 
 > **Датированное дополнение 2026-10-09:** решения владельца по ранее открытым
 > gates ниже зафиксированы в
@@ -1383,8 +1384,29 @@ normalization для score в точности. Если по имеющимся
   existing parked parents before generic interrupted-operation failure. Sealed
   delivery replacement requires separate epoch-fenced recovery, not replay.
   Activation waits for frozen unique publication/apply and real-process proofs.
-- Treatment of invalidated historical parked waits is an unresolved product
-  question; no visible disposition has been selected or approved here.
+- **Одобренное решение владельца (2026-10-12) — только актуальное состояние
+  evaluation, без истории:** matching хранит только **актуальное состояние**;
+  история/архив/статусы или виды прошлых оценок (`evaluationHistory`, включая
+  «исторический review») продуктово не требуются и не вводятся. Допускается, но
+  **не обязательно**, сохранять **последнюю** evaluation до её замены новым
+  результатом; замена перезаписывает её. Новый default этим не выбирается. **Недействительный
+  (invalidated) parked automatic wait** из-за смены source configuration, captures
+  или manual authority **не публикует устаревший текущий review и не применяет
+  (apply) links**. В **automatic** mode переоценка планируется на свежих данных; в
+  **manual** — только явный возврат в automatic mode, старая apply/restore задача
+  в очередь не ставится. Внутренние durable authority receipts (доказательство
+  транзакции) не являются продуктовой историей; отдельного решения о хранении или
+  очистке внутренних ledger'ов этим не принимается (техническая проработка cleanup
+  остаётся открытой). Прежние matching tuples сохраняются как неизменяемое
+  техническое evidence тестового pipeline, а не как пользовательская история.
+  Синхронизировано в `docs/design/decisions.md` («Matching и целостность
+  provider-связей»).
+
+> **Статус выбранного increment:** matching accuracy и packaging/licensing не
+> объявляются завершёнными; план остаётся в `todo`. SHA-256 остаётся optional, а
+> успешные SHA steps в отдельных fixtures не делают его обязательным.
+> Дополнительные SIGKILL/corpus прогоны или CI acceptance gates этим изменением
+> не вводятся.
 
 ### Dormant frozen review publication and apply foundations — 2026-10-12
 
