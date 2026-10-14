@@ -55,12 +55,18 @@ type analysisConsumerHandle struct {
 }
 
 type incomingMatchingReconcileDispatcher struct {
-	repository *persistence.SourceInventoryRepository
-	river      persistence.RiverInserter
-	logger     *slog.Logger
+	repository      *persistence.SourceInventoryRepository
+	matchingRuntime *persistence.SetupManagerRepository
+	river           persistence.RiverInserter
+	logger          *slog.Logger
 }
 
 func (dispatcher incomingMatchingReconcileDispatcher) DispatchPendingMatchingReconciliations(ctx context.Context) error {
+	if dispatcher.matchingRuntime != nil {
+		if err := dispatcher.matchingRuntime.RecoverMatchingRuntime(ctx, dispatcher.river); err != nil {
+			return err
+		}
+	}
 	return dispatcher.repository.DispatchPendingMatchingReconciliations(ctx, dispatcher.river, dispatcher.logger)
 }
 
@@ -185,7 +191,7 @@ func Run(ctx context.Context, config Config) error {
 	operationService, apiOperations, riverSlot := newOperationServices(setupManagerRepository, riverSlot, sourceAnalysis)
 	operationService.SetPendingDispatcher(sourceAnalysis)
 	providerFetch := service.NewProviderFetchService(registry, providerFactory, persistence.NewProviderCacheRepository(db)).WithDurableOperations(setupManagerRepository, riverSlot)
-	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, river: riverSlot, logger: logger}
+	matchingReconcileDispatcher := incomingMatchingReconcileDispatcher{repository: sourceInventory, matchingRuntime: setupManagerRepository, river: riverSlot, logger: logger}
 	incomingMatchingReconciliation := service.NewIncomingMatchingReconciliation(
 		incomingGroups,
 		persistence.NewIncomingGroupingRepository(db),
@@ -265,6 +271,9 @@ func Run(ctx context.Context, config Config) error {
 	}
 	defer riverListenerPool.Close()
 	riverSlot.RiverInserter = riverClient
+	if err := setupManagerRepository.RecoverMatchingRuntime(ctx, riverSlot); err != nil {
+		return fmt.Errorf("recover matching runtime: %w", err)
+	}
 	if err := jobs.ReconcileInterruptedOperations(ctx, setupManagerRepository, operationService,
 		setupManagerRepository.RiverJobLiveness, registry); err != nil {
 		return fmt.Errorf("reconcile interrupted operations: %w", err)
@@ -386,8 +395,7 @@ func Run(ctx context.Context, config Config) error {
 		Installations: installations, MoveTools: moveTools, Operations: apiOperations,
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
-		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual,
-		MatchingAuthority:      matchingAuthority,
+		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,
 	}))

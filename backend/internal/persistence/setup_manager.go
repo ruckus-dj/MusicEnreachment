@@ -1266,10 +1266,23 @@ func (repository *SetupManagerRepository) transitionProviderOperationForDelivery
 }
 
 type matchingDependencyWake struct {
-	RunID uuid.UUID `bun:"parent_run_id"`
+	RunID    uuid.UUID `bun:"parent_run_id"`
+	Quiesced bool      `bun:"quiesced"`
 }
 
 func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client RiverInserter, operation *Operation) error {
+	// Coordinate with obsolete-run classification before settling dependency rows.
+	// The classifier locks matching_run before writing quiesced_at; taking the same
+	// row lock here makes its marker authoritative for whether a fresh parent wake
+	// may be admitted. Provider outcome settlement remains truthful either way.
+	parents := make([]matchingDependencyWake, 0)
+	if err := tx.NewRaw(`SELECT dependency.parent_run_id, run.quiesced_at IS NOT NULL AS quiesced
+		FROM matching_provider_dependency dependency
+		JOIN matching_run run ON run.id=dependency.parent_run_id
+		WHERE dependency.request_id=? AND dependency.terminal_outcome IS NULL
+		ORDER BY dependency.parent_run_id FOR UPDATE OF run`, operation.ID).Scan(ctx, &parents); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("lock matching parents for dependency settlement: %w", err)
+	}
 	dependencies := make([]matchingDependencyWake, 0)
 	if err := tx.NewRaw(`UPDATE matching_provider_dependency SET terminal_outcome=?, settled_at=now() WHERE request_id=? AND terminal_outcome IS NULL RETURNING parent_run_id`, operation.State, operation.ID).Scan(ctx, &dependencies); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1283,7 +1296,16 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 	if client == nil {
 		return fmt.Errorf("matching dependency settlement requires a River client")
 	}
+	quiesced := make(map[uuid.UUID]struct{}, len(parents))
+	for _, parent := range parents {
+		if parent.Quiesced {
+			quiesced[parent.RunID] = struct{}{}
+		}
+	}
 	for _, dependency := range dependencies {
+		if _, isQuiesced := quiesced[dependency.RunID]; isQuiesced {
+			continue
+		}
 		var parentID uuid.UUID
 		if err := tx.NewRaw(`SELECT operation_id FROM matching_run WHERE id=?`, dependency.RunID).Scan(ctx, &parentID); err != nil {
 			return fmt.Errorf("load matching parent for dependency wake: %w", err)
@@ -1299,7 +1321,6 @@ func settleMatchingProviderDependencies(ctx context.Context, tx bun.Tx, client R
 	}
 	return nil
 }
-
 func isProviderOperationKind(kind string) bool {
 	switch kind {
 	case "provider_release_lookup", "provider_recording_lookup", "provider_release_search", "provider_recording_search", "provider_artist_search", "provider_artist_release_browse", "provider_acoustid_lookup", MatchingApplyOperationKind:
@@ -1668,6 +1689,7 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 				return fmt.Errorf("requeue matching apply: immutable schema-1 snapshot is invalid")
 			}
 		case 2:
+			var err error
 			snapshotV2, err = DecodeMatchingApplyInputSnapshotV2(current.InputSnapshot)
 			if err != nil || snapshotV2.Authority.GroupID == uuid.Nil || snapshotV2.Authority.ParentRunID == uuid.Nil || snapshotV2.Authority.EvaluationRevision == "" {
 				return fmt.Errorf("requeue matching apply: immutable schema-2 snapshot is invalid")
@@ -1710,11 +1732,153 @@ func (repository *SetupManagerRepository) RequeueMatchingApplyOperation(ctx cont
 				return fmt.Errorf("requeue matching apply: read schema-2 request binding: %w", err)
 			}
 			if request.Version != 2 || request.Authority != snapshotV2.Authority.AuthorityVersion ||
-				request.ParentEpoch != snapshotV2.Authority.ExecutionEpoch || request.WaitRevision != snapshotV2.Authority.WaitRevision ||
+				request.WaitRevision != snapshotV2.Authority.WaitRevision ||
 				!equalDigest(request.InputSHA, mustDecodeHexDigest(inputDigest)) ||
 				!equalDigest(request.SealDigest, mustDecodeHexDigest(snapshotV2.Authority.SealDigest)) ||
 				!equalDigest(request.TargetCapture, mustDecodeHexDigest(snapshotV2.Authority.TargetCaptureDigest)) {
 				return fmt.Errorf("requeue matching apply: schema-2 request binding differs from immutable snapshot")
+			}
+			var parentPublication struct {
+				State      string `bun:"state"`
+				RunState   string `bun:"run_state"`
+				Epoch      int64  `bun:"execution_epoch"`
+				CurrentJob *int64 `bun:"current_river_job_id"`
+				JobID      *int64 `bun:"river_job_id"`
+				Attempt    int    `bun:"attempt"`
+			}
+			if err := tx.NewRaw(`SELECT operation.state,run.state AS run_state,run.execution_epoch,run.current_river_job_id,
+					operation.river_job_id,operation.attempt
+					FROM matching_run run JOIN operation ON operation.id=run.operation_id
+					WHERE run.id=? AND operation.kind='matching_evaluation_v1' FOR UPDATE OF run,operation`, intent.ParentRunID).Scan(ctx, &parentPublication); err != nil {
+				return fmt.Errorf("requeue matching apply: read parent publication authority: %w", err)
+			}
+			if parentPublication.State != "succeeded" || parentPublication.RunState != "succeeded" || parentPublication.JobID == nil ||
+				parentPublication.CurrentJob == nil || *parentPublication.CurrentJob != *parentPublication.JobID || parentPublication.Epoch < 1 ||
+				request.ParentEpoch != parentPublication.Epoch {
+				return fmt.Errorf("requeue matching apply: parent publication epoch is not authoritative")
+			}
+			var parentDelivered bool
+			if err := tx.NewRaw(`SELECT EXISTS(SELECT 1 FROM matching_delivery delivery JOIN river_job job ON job.id=delivery.river_job_id
+					WHERE delivery.run_id=? AND delivery.river_job_id=? AND delivery.operation_attempt=?
+					AND delivery.consumed_at IS NOT NULL AND job.state IN ('completed','cancelled','discarded'))`,
+				intent.ParentRunID, *parentPublication.JobID, parentPublication.Attempt).Scan(ctx, &parentDelivered); err != nil {
+				return fmt.Errorf("requeue matching apply: verify terminal parent delivery: %w", err)
+			}
+			if !parentDelivered {
+				return fmt.Errorf("requeue matching apply: terminal parent delivery receipt is missing")
+			}
+			var currentConfiguration string
+			err = tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentConfiguration)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: read current MusicBrainz configuration: %w", err)
+			}
+			if currentConfiguration != snapshotV2.Source.RunConfiguration {
+				return nil
+			}
+			var currentSource struct {
+				ProviderID            uuid.UUID `bun:"provider_id"`
+				Endpoint              string    `bun:"endpoint"`
+				ConfigurationIdentity string    `bun:"configuration_identity"`
+			}
+			err = tx.NewRaw(`SELECT provider_id,endpoint,configuration_identity FROM provider_source WHERE id=? FOR SHARE`, snapshotV2.Source.ID).Scan(ctx, &currentSource)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: read current provider source: %w", err)
+			}
+			if currentSource.ProviderID != snapshotV2.Source.ProviderID || currentSource.Endpoint != snapshotV2.Source.Endpoint ||
+				currentSource.ConfigurationIdentity != snapshotV2.Source.ConfigurationIdentity {
+				return nil
+			}
+			var currentAuthority struct {
+				Mode             string     `bun:"mode"`
+				Revision         int64      `bun:"revision"`
+				CapturedRevision *int64     `bun:"authority_revision"`
+				GroupRevision    string     `bun:"group_revision"`
+				CapturedGroup    *string    `bun:"captured_group_revision"`
+				CurrentRun       *uuid.UUID `bun:"current_run_id"`
+				Generation       *int64     `bun:"high_water"`
+				TargetGeneration *int64     `bun:"target_generation"`
+				TargetRunID      *uuid.UUID `bun:"target_run_id"`
+				TargetDigest     []byte     `bun:"target_capture_digest"`
+			}
+			err = tx.NewRaw(`SELECT COALESCE(authority.mode,'automatic') AS mode,COALESCE(authority.revision,0) AS revision,
+				target.authority_revision,group_row.revision AS group_revision,target.captured_group_revision,
+				generation.current_run_id,generation.high_water,target.target_generation,target.run_id AS target_run_id,target.target_capture_digest AS target_capture_digest
+				FROM incoming_group group_row
+				LEFT JOIN incoming_group_matching_authority authority ON authority.group_id=group_row.id
+				LEFT JOIN matching_run_target target ON target.run_id=? AND target.group_id=group_row.id
+				LEFT JOIN incoming_matching_generation generation ON generation.group_id=group_row.id
+				WHERE group_row.id=? FOR UPDATE OF group_row`, intent.ParentRunID, intent.GroupID).Scan(ctx, &currentAuthority)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // A removed or stale target is not safe to re-enqueue.
+			}
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: read current target authority: %w", err)
+			}
+			if currentAuthority.Mode != "automatic" || currentAuthority.CapturedRevision == nil || currentAuthority.Revision != *currentAuthority.CapturedRevision ||
+				currentAuthority.CapturedGroup == nil || currentAuthority.GroupRevision != *currentAuthority.CapturedGroup || currentAuthority.CurrentRun == nil ||
+				*currentAuthority.CurrentRun != intent.ParentRunID || currentAuthority.Generation == nil || currentAuthority.TargetGeneration == nil ||
+				*currentAuthority.Generation != *currentAuthority.TargetGeneration || currentAuthority.TargetRunID == nil ||
+				*currentAuthority.TargetRunID != intent.ParentRunID ||
+				!equalDigest(currentAuthority.TargetDigest, mustDecodeHexDigest(snapshotV2.Authority.TargetCaptureDigest)) {
+				return nil
+			}
+			var currentEvaluation struct {
+				Revision         string          `bun:"evaluation_revision"`
+				Evidence         json.RawMessage `bun:"evaluation_evidence"`
+				AuthorityVersion *int            `bun:"frozen_authority_version"`
+				FrozenRunID      *uuid.UUID      `bun:"frozen_run_id"`
+				WaitRevision     *int64          `bun:"frozen_wait_revision"`
+				SealDigest       []byte          `bun:"frozen_seal_digest"`
+			}
+			err = tx.NewRaw(`SELECT evaluation_revision,evaluation_evidence,frozen_authority_version,frozen_run_id,
+				frozen_wait_revision,frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, intent.GroupID).Scan(ctx, &currentEvaluation)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("requeue matching apply: current published evaluation is missing")
+			}
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: read current published evaluation: %w", err)
+			}
+			if currentEvaluation.Revision != snapshotV2.Authority.EvaluationRevision {
+				return nil // A newer publication should be reviewed, not applied from this retry.
+			}
+			if currentEvaluation.AuthorityVersion == nil || *currentEvaluation.AuthorityVersion != snapshotV2.Authority.AuthorityVersion ||
+				currentEvaluation.FrozenRunID == nil || *currentEvaluation.FrozenRunID != snapshotV2.Authority.ParentRunID ||
+				currentEvaluation.WaitRevision == nil || *currentEvaluation.WaitRevision != snapshotV2.Authority.WaitRevision ||
+				!equalDigest(currentEvaluation.SealDigest, mustDecodeHexDigest(snapshotV2.Authority.SealDigest)) {
+				return nil
+			}
+			decision, err := decodePersistedMatchingDecision(currentEvaluation.Evidence)
+			if err != nil {
+				return fmt.Errorf("requeue matching apply: current published decision is invalid: %w", err)
+			}
+			expectedDecision := persistedMatchingDecision{Version: 1, GroupID: snapshotV2.Authority.GroupID,
+				PolicyVersion: snapshotV2.Authority.PolicyVersion, Outcome: "unique",
+				SelectedRelease: &struct {
+					ProviderReleaseID  uuid.UUID `json:"provider_release_id"`
+					ProviderReleaseKey string    `json:"provider_release_key"`
+				}{ProviderReleaseID: snapshotV2.Selected.ProviderReleaseID, ProviderReleaseKey: snapshotV2.Selected.ProviderKey},
+				Assignments: make([]struct {
+					FileMemberID    uuid.UUID `json:"file_member_id"`
+					ProviderTrackID uuid.UUID `json:"provider_track_id"`
+					Medium          int       `json:"medium"`
+					Position        int       `json:"position"`
+				}, 0, len(snapshotV2.Assignments))}
+			for _, assignment := range snapshotV2.Assignments {
+				expectedDecision.Assignments = append(expectedDecision.Assignments, struct {
+					FileMemberID    uuid.UUID `json:"file_member_id"`
+					ProviderTrackID uuid.UUID `json:"provider_track_id"`
+					Medium          int       `json:"medium"`
+					Position        int       `json:"position"`
+				}{assignment.FileMemberID, assignment.ProviderTrackID, assignment.Medium + 1, assignment.Position + 1})
+			}
+			if !matchingJSONEqual(mustJSON(decision), mustJSON(expectedDecision)) {
+				return nil // Current publication no longer authorizes this frozen decision.
 			}
 		}
 		inserted, err := client.InsertTx(ctx, tx.Tx, args, options)
@@ -1796,6 +1960,9 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 	if err := repository.retireEligibleAutomaticFallbackProofs(ctx, before); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup automatic fallback proofs: %w", err))
 	}
+	if err := repository.DeleteObsoleteQuiescedMatchingRuns(ctx, before); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup obsolete quiesced matching proofs: %w", err))
+	}
 	_, err := repository.db.NewDelete().Model((*Operation)(nil)).
 		Where("state = 'succeeded'").
 		Where("finished_at < ?", before).
@@ -1810,6 +1977,120 @@ func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Cont
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup succeeded operations: %w", err))
 	}
 	return errors.Join(cleanupErrors...)
+}
+
+// retireEligibleObsoleteQuiescedMatchingRuns is deliberately separate from
+// succeeded-operation cleanup: old automatic V2/V3 runs retain their operation
+// state until their durable execution and all references have drained.
+func (repository *SetupManagerRepository) DeleteObsoleteQuiescedMatchingRuns(ctx context.Context, before time.Time) error {
+	var runIDs []uuid.UUID
+	if err := repository.db.NewRaw(`SELECT run.id FROM matching_run run
+		JOIN operation parent ON parent.id=run.operation_id
+		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
+		WHERE acquisition.intent_version IN (2,3) AND parent.kind='matching_evaluation_v1'
+		  AND parent.state IN ('queued','running','failed')
+		  AND run.quiesced_at IS NOT NULL
+		  AND run.quiesced_at < LEAST(?, transaction_timestamp() - interval '24 hours')
+		ORDER BY run.id`, before).Scan(ctx, &runIDs); err != nil {
+		return fmt.Errorf("select obsolete quiesced matching runs: %w", err)
+	}
+	var cleanupErrors []error
+	for _, runID := range runIDs {
+		if err := repository.retireObsoleteQuiescedMatchingRun(ctx, runID, before); err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func (repository *SetupManagerRepository) retireObsoleteQuiescedMatchingRun(ctx context.Context, runID uuid.UUID, before time.Time) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("lock output admission gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("lock source mutation gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+		}
+		eligible, err := obsoleteQuiescedMatchingRunRetirementEligible(ctx, tx, runID, before)
+		if err != nil {
+			return fmt.Errorf("check obsolete quiesced matching run %s: %w", runID, err)
+		}
+		if !eligible {
+			return nil
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_retirement_authorization(run_id, cleanup_cutoff, authorization_kind)
+			VALUES (?, LEAST(?, transaction_timestamp() - interval '24 hours'), 'obsolete_quiesced')`, runID, before).Exec(ctx); err != nil {
+			return fmt.Errorf("authorize obsolete quiesced matching run %s: %w", runID, err)
+		}
+		statements := []struct{ name, sql string }{
+			{"apply receipts", `DELETE FROM matching_apply_receipt receipt USING matching_apply_request request WHERE request.parent_run_id=? AND request.apply_operation_id=receipt.apply_operation_id`},
+			{"apply requests", `DELETE FROM matching_apply_request WHERE parent_run_id=?`},
+			{"fallback search receipts", `DELETE FROM matching_fallback_search_receipt WHERE run_id=?`},
+			{"fallback lookup receipts", `DELETE FROM matching_fallback_lookup_receipt WHERE run_id=?`},
+			{"fallback evaluation handoffs", `DELETE FROM matching_fallback_evaluation_handoff WHERE run_id=?`},
+			{"fallback authority seals", `DELETE FROM matching_fallback_authority_seal WHERE run_id=?`},
+			{"fallback calculation receipts", `DELETE FROM matching_fallback_calculation_receipt WHERE run_id=?`},
+			{"acquisition phases", `DELETE FROM matching_acquisition_phase WHERE run_id=?`},
+			{"fallback request registrations", `DELETE FROM matching_fallback_request_registration WHERE run_id=?`},
+			{"provider dependencies", `DELETE FROM matching_provider_dependency WHERE parent_run_id=?`},
+			{"acquisition", `DELETE FROM matching_acquisition WHERE run_id=?`},
+			{"run targets", `DELETE FROM matching_run_target WHERE run_id=?`},
+			{"retirement authorization", `DELETE FROM matching_run_retirement_authorization WHERE run_id=?`},
+		}
+		for _, statement := range statements {
+			if _, err := tx.NewRaw(statement.sql, runID).Exec(ctx); err != nil {
+				return fmt.Errorf("delete %s for obsolete matching run %s: %w", statement.name, runID, err)
+			}
+		}
+		if _, err := tx.NewRaw(`DELETE FROM operation WHERE id=(SELECT operation_id FROM matching_run WHERE id=?)`, runID).Exec(ctx); err != nil {
+			return fmt.Errorf("delete obsolete matching operation for run %s: %w", runID, err)
+		}
+		return nil
+	})
+}
+
+func obsoleteQuiescedMatchingRunRetirementEligible(ctx context.Context, tx bun.Tx, runID uuid.UUID, before time.Time) (bool, error) {
+	var eligible bool
+	err := tx.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM matching_run run
+		JOIN operation parent ON parent.id=run.operation_id
+		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id
+		WHERE run.id=? AND acquisition.intent_version IN (2,3)
+		  AND parent.kind='matching_evaluation_v1' AND parent.state IN ('queued','running','failed')
+		  AND run.quiesced_at IS NOT NULL
+		  AND run.active_river_job_id IS NULL AND run.active_river_attempt IS NULL AND run.active_execution_epoch IS NULL
+		  AND run.quiesced_at < LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		  AND EXISTS (SELECT 1 FROM matching_run_target target
+		    JOIN incoming_matching_generation generation ON generation.group_id=target.group_id
+		    WHERE target.run_id=run.id AND generation.high_water > target.target_generation
+		      AND generation.current_run_id IS DISTINCT FROM run.id)
+		  AND NOT EXISTS (SELECT 1 FROM incoming_matching_generation generation WHERE generation.current_run_id=run.id)
+		  AND NOT EXISTS (SELECT 1 FROM incoming_match_evaluation evaluation
+		    WHERE evaluation.target_run_id=run.id OR evaluation.frozen_run_id=run.id)
+		  AND NOT EXISTS (SELECT 1 FROM matching_delivery delivery WHERE delivery.run_id=run.id AND delivery.consumed_at IS NULL)
+		  AND NOT EXISTS (SELECT 1 FROM matching_delivery delivery JOIN river_job job ON job.id=delivery.river_job_id
+		    WHERE delivery.run_id=run.id AND job.state IN ('available','pending','running','retryable','scheduled'))
+		  AND NOT EXISTS (SELECT 1 FROM matching_acquisition_seal seal JOIN river_job job ON job.id=seal.river_job_id
+		    WHERE seal.run_id=run.id AND job.state IN ('available','pending','running','retryable','scheduled'))
+		  AND NOT EXISTS (SELECT 1 FROM matching_apply_request request LEFT JOIN operation child ON child.id=request.apply_operation_id
+		    LEFT JOIN river_job job ON job.id=child.river_job_id WHERE request.parent_run_id=run.id AND
+		      (child.id IS NULL OR child.state NOT IN ('succeeded','failed') OR child.finished_at IS NULL
+		       OR child.finished_at >= LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		       OR child.state IN ('queued','running') OR job.state IN ('available','pending','running','retryable','scheduled')))
+		  AND NOT EXISTS (SELECT 1 FROM matching_provider_dependency dependency LEFT JOIN operation child ON child.id=dependency.request_id
+		    LEFT JOIN river_job job ON job.id=child.river_job_id WHERE dependency.parent_run_id=run.id AND
+		      (dependency.terminal_outcome IS NULL OR child.id IS NULL OR child.state NOT IN ('succeeded','failed')
+		       OR child.finished_at IS NULL OR child.finished_at >= LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		       OR child.state IN ('queued','running') OR job.state IN ('available','pending','running','retryable','scheduled')))
+		  AND NOT EXISTS (SELECT 1 FROM river_job job WHERE job.id=parent.river_job_id
+		    AND job.state IN ('available','pending','running','retryable','scheduled'))
+		  AND NOT EXISTS (SELECT 1 FROM river_job job WHERE job.id=run.current_river_job_id
+		    AND job.state IN ('available','pending','running','retryable','scheduled'))
+	)`, runID, before, before, before).Scan(ctx, &eligible)
+	return eligible, err
 }
 
 // retireEligibleAutomaticFallbackProofs removes only expired, successfully

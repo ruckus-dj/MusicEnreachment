@@ -126,15 +126,16 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 		var run struct {
 			State                string `bun:"state"`
 			ExecutionEpoch       int64  `bun:"execution_epoch"`
+			CurrentRiverJobID    *int64 `bun:"current_river_job_id"`
 			ActiveRiverJobID     *int64 `bun:"active_river_job_id"`
 			ActiveRiverAttempt   *int   `bun:"active_river_attempt"`
 			ActiveExecutionEpoch *int64 `bun:"active_execution_epoch"`
 		}
-		if err := tx.NewRaw(`SELECT state, execution_epoch, active_river_job_id, active_river_attempt, active_execution_epoch
+		if err := tx.NewRaw(`SELECT state, execution_epoch, current_river_job_id, active_river_job_id, active_river_attempt, active_execution_epoch
 			FROM matching_run WHERE id=? FOR NO KEY UPDATE`, operationID).Scan(ctx, &run); err != nil {
 			return fmt.Errorf("park matching acquisition: lock run: %w", err)
 		}
-		if run.State != "running" || run.ExecutionEpoch != claim.ExecutionEpoch || run.ActiveRiverJobID == nil || *run.ActiveRiverJobID != riverJobID ||
+		if run.State != "running" || run.ExecutionEpoch != claim.ExecutionEpoch || run.CurrentRiverJobID == nil || *run.CurrentRiverJobID != riverJobID || run.ActiveRiverJobID == nil || *run.ActiveRiverJobID != riverJobID ||
 			run.ActiveRiverAttempt == nil || *run.ActiveRiverAttempt != claim.RiverAttempt || run.ActiveExecutionEpoch == nil || *run.ActiveExecutionEpoch != claim.ExecutionEpoch {
 			return nil
 		}
@@ -197,6 +198,7 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 		if previous.Revision != expectedRevision || previous.Phase != expectedPhase {
 			return fmt.Errorf("park matching acquisition: saved phase cursor is inconsistent")
 		}
+		var acceptedSearchPayload json.RawMessage
 		if catalogEmpty {
 			if !json.Valid(phase.Input) || !json.Valid(previous.Output) || string(phase.Input) != string(previous.Output) {
 				return fmt.Errorf("park matching acquisition: catalog wait does not match the saved manifest")
@@ -222,6 +224,7 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			if fmt.Sprintf("%x", resultHash[:]) != provenance[0].PayloadSHA {
 				return fmt.Errorf("park matching acquisition: accepted catalog payload changed")
 			}
+			acceptedSearchPayload = payload
 		} else {
 			if len(intent.InitialProviderInputs) != 1 {
 				return fmt.Errorf("park matching acquisition: saved initial search intent is invalid")
@@ -290,6 +293,30 @@ func (repository *SetupManagerRepository) ParkMatchingAcquisitionForDelivery(
 			resultHash := sha256.Sum256(payload)
 			if fmt.Sprintf("%x", resultHash[:]) != provenance[0].PayloadSHA {
 				return fmt.Errorf("park matching acquisition: accepted search payload changed")
+			}
+			acceptedSearchPayload = payload
+		}
+		legacyAutomaticArtistSearch := acquisition.Version == matchingAutomaticAcquisitionIntentVersion && !catalogEmpty && !intent.EvaluationRevisionCaptured
+		if acquisition.Version == matchingAutomaticAcquisitionIntentVersion && !catalogEmpty && !legacyAutomaticArtistSearch {
+			if err := persistAutomaticArtistSearchReview(ctx, tx, operationID, intent, phase.Input, provenance[0], acceptedSearchPayload, sourceFence); err != nil {
+				return fmt.Errorf("park matching acquisition: persist artist-search review: %w", err)
+			}
+		}
+		if legacyAutomaticArtistSearch {
+			for _, target := range targets {
+				authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, target.GroupID)
+				if err != nil {
+					return fmt.Errorf("park matching acquisition: lock current matching authority: %w", err)
+				}
+				var manual bool
+				if err := tx.NewRaw(`SELECT manual FROM incoming_group WHERE id=?`, target.GroupID).Scan(ctx, &manual); err != nil {
+					return fmt.Errorf("park matching acquisition: read current matching mode: %w", err)
+				}
+				if !manual && authority.Mode == "automatic" {
+					if err := RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{target.GroupID}); err != nil {
+						return fmt.Errorf("park matching acquisition: request current automatic evaluation: %w", err)
+					}
+				}
 			}
 		}
 

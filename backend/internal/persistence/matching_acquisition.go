@@ -401,20 +401,24 @@ func (repository *SetupManagerRepository) startMatchingReleaseHydration(
 }
 
 type MatchingAcquisitionIntent struct {
-	SchemaVersion          int                                  `json:"schema_version"`
-	FenceVersion           int                                  `json:"fence_version,omitempty"`
-	GroupingEpoch          int64                                `json:"grouping_epoch"`
-	PlanDigest             string                               `json:"evaluation_plan_digest"`
-	CaptureDigest          string                               `json:"capture_digest"`
-	CapturedMembers        []MatchingAcquisitionCapturedMember  `json:"captured_members"`
-	PolicyVersion          string                               `json:"policy_version"`
-	TargetCaptureDigest    string                               `json:"target_capture_digest,omitempty"`
-	QueryDescriptor        json.RawMessage                      `json:"query_descriptor,omitempty"`
-	ArtistQueryPlanVersion int                                  `json:"artist_query_plan_version,omitempty"`
-	FallbackQueryPlan      json.RawMessage                      `json:"fallback_query_plan,omitempty"`
-	FallbackProviderSource *MatchingFallbackProviderSource      `json:"fallback_provider_source,omitempty"`
-	Targets                []MatchingTarget                     `json:"targets"`
-	InitialProviderInputs  []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
+	SchemaVersion int `json:"schema_version"`
+	FenceVersion  int `json:"fence_version,omitempty"`
+	// EvaluationRevisionCaptured distinguishes new admission-time CAS evidence
+	// from historical sealed intents, whose hashes must remain byte-identical.
+	EvaluationRevisionCaptured bool                                 `json:"evaluation_revision_captured,omitempty"`
+	ExpectedEvaluationRevision *string                              `json:"expected_evaluation_revision,omitempty"`
+	GroupingEpoch              int64                                `json:"grouping_epoch"`
+	PlanDigest                 string                               `json:"evaluation_plan_digest"`
+	CaptureDigest              string                               `json:"capture_digest"`
+	CapturedMembers            []MatchingAcquisitionCapturedMember  `json:"captured_members"`
+	PolicyVersion              string                               `json:"policy_version"`
+	TargetCaptureDigest        string                               `json:"target_capture_digest,omitempty"`
+	QueryDescriptor            json.RawMessage                      `json:"query_descriptor,omitempty"`
+	ArtistQueryPlanVersion     int                                  `json:"artist_query_plan_version,omitempty"`
+	FallbackQueryPlan          json.RawMessage                      `json:"fallback_query_plan,omitempty"`
+	FallbackProviderSource     *MatchingFallbackProviderSource      `json:"fallback_provider_source,omitempty"`
+	Targets                    []MatchingTarget                     `json:"targets"`
+	InitialProviderInputs      []MatchingAcquisitionProviderRequest `json:"initial_provider_inputs"`
 }
 
 // MatchingFallbackProviderSource is the provider identity captured when an

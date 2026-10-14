@@ -53,17 +53,6 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	if operation.Kind != (service.MatchingEvaluationOperationArgs{}).Kind() {
 		return fmt.Errorf("operation is not a matching evaluation")
 	}
-	if reader, ok := worker.repository.(interface {
-		GetMatchingAcquisitionPhase(context.Context, uuid.UUID) (string, bool, error)
-	}); ok {
-		phase, exists, err := reader.GetMatchingAcquisitionPhase(ctx, operation.ID)
-		if err != nil {
-			return err
-		}
-		if exists && phase == persistence.MatchingAcquisitionFallbackEvaluationSealed {
-			return fmt.Errorf("fallback publication is not available")
-		}
-	}
 	if operation.State == "succeeded" || operation.State == "failed" {
 		return nil
 	}
@@ -80,13 +69,24 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 	default:
 		return fmt.Errorf("matching delivery claim outcome is invalid")
 	}
-	// Manual plans have their own immutable schema. Inspect the mode before
-	// decoding the legacy automatic plan, which intentionally rejects it.
+	// Manual plans have their own immutable schema; do not decode them as
+	// automatic acquisition intents while selecting the frozen fallback path.
 	var mode struct {
 		Mode string `json:"mode"`
 	}
 	if json.Unmarshal(operation.InputSnapshot, &mode) == nil && mode.Mode == "manual_review" {
 		return worker.workManualReleaseLookup(ctx, operation, claim, job.ID)
+	}
+	if reader, ok := worker.repository.(interface {
+		GetMatchingAcquisition(context.Context, uuid.UUID) (persistence.MatchingAcquisitionSnapshot, bool, error)
+	}); ok {
+		snapshot, exists, err := reader.GetMatchingAcquisition(ctx, operation.ID)
+		if err != nil {
+			return err
+		}
+		if exists && snapshot.Phase == persistence.MatchingAcquisitionFallbackEvaluationSealed {
+			return worker.workFrozenFallbackEvaluation(ctx, operation, claim, job.ID, snapshot)
+		}
 	}
 	var runFence persistence.MatchingRunFenceSnapshot
 	var hasRunFence bool
@@ -262,6 +262,88 @@ func (worker *MatchingEvaluationWorker) Work(ctx context.Context, job *river.Job
 		return err
 	}
 	changed, err := worker.evaluator.PublishForDelivery(ctx, worker.repository, prepared, operation.ID, operation.Attempt, job.ID, claim.ExecutionEpoch)
+	if err != nil {
+		return err
+	}
+	if changed {
+		worker.operations.Notify(operation.ID)
+	}
+	return nil
+}
+
+func (worker *MatchingEvaluationWorker) workFrozenFallbackEvaluation(
+	ctx context.Context,
+	operation *persistence.Operation,
+	claim persistence.MatchingDeliveryClaim,
+	jobID int64,
+	snapshot persistence.MatchingAcquisitionSnapshot,
+) error {
+	if worker.acquisition == nil || snapshot.Revision < 2 {
+		return fmt.Errorf("sealed fallback evaluation is unavailable")
+	}
+	current, ok := worker.repository.(interface {
+		IsMatchingDeliveryCurrent(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim) (bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("sealed fallback delivery fence is unavailable")
+	}
+	valid, err := current.IsMatchingDeliveryCurrent(ctx, operation.ID, operation.Attempt, jobID, claim)
+	if err != nil || !valid {
+		return err
+	}
+	sealReader, ok := worker.repository.(interface {
+		GetMatchingFallbackAuthoritySeal(context.Context, uuid.UUID, int64) (persistence.MatchingFallbackSealAuthority, bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("sealed fallback authority reader is unavailable")
+	}
+	waitReader, ok := worker.repository.(interface {
+		GetCurrentMatchingFallbackEvaluationWaitRevision(context.Context, uuid.UUID) (int64, bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("current fallback evaluation wait reader is unavailable")
+	}
+	waitRevision, exists, err := waitReader.GetCurrentMatchingFallbackEvaluationWaitRevision(ctx, operation.ID)
+	if err != nil {
+		return err
+	}
+	if !exists || waitRevision+1 != snapshot.Revision {
+		return fmt.Errorf("sealed fallback evaluation wait is not current")
+	}
+	prepared, exists, err := service.PrepareFrozenFallbackEvaluation(ctx, sealReader, operation.ID, waitRevision)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("sealed fallback authority is unavailable")
+	}
+	publication, err := service.SerializeFrozenFallbackEvaluation(prepared)
+	if err != nil {
+		return err
+	}
+	groupID := publication.Authority.GroupID
+	revisionReader, ok := worker.repository.(interface {
+		Get(context.Context, uuid.UUID) (*persistence.IncomingMatchEvaluationHeader, []persistence.IncomingMatchCandidate, error)
+	})
+	if !ok {
+		return fmt.Errorf("sealed fallback evaluation revision reader is unavailable")
+	}
+	header, _, err := revisionReader.Get(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	expected := map[uuid.UUID]*string{groupID: nil}
+	if header != nil {
+		revision := header.EvaluationRevision
+		expected[groupID] = &revision
+	}
+	publisher, ok := worker.repository.(interface {
+		PublishFrozenMatchingEvaluationForDelivery(context.Context, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, persistence.FrozenMatchingPublication, map[uuid.UUID]*string) (bool, error)
+	})
+	if !ok {
+		return fmt.Errorf("sealed fallback publication persistence is unavailable")
+	}
+	changed, err := publisher.PublishFrozenMatchingEvaluationForDelivery(ctx, operation.ID, operation.Attempt, jobID, claim, publication, expected)
 	if err != nil {
 		return err
 	}

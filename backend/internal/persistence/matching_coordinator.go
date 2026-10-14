@@ -384,16 +384,20 @@ func (repository *SetupManagerRepository) RetryMatchingEvaluationOperationAndEnq
 			return fmt.Errorf("only failed matching evaluations can be retried")
 		}
 		var run struct {
-			State        string    `bun:"state"`
-			SourceID     uuid.UUID `bun:"provider_source_id"`
-			Identity     string    `bun:"provider_configuration_identity"`
-			FenceVersion int       `bun:"fence_version"`
+			State        string     `bun:"state"`
+			SourceID     uuid.UUID  `bun:"provider_source_id"`
+			Identity     string     `bun:"provider_configuration_identity"`
+			FenceVersion int        `bun:"fence_version"`
+			QuiescedAt   *time.Time `bun:"quiesced_at"`
 		}
-		if err := tx.NewRaw(`SELECT state, provider_source_id, provider_configuration_identity, fence_version FROM matching_run WHERE id=? FOR UPDATE`, id).Scan(ctx, &run); err != nil {
+		if err := tx.NewRaw(`SELECT state, provider_source_id, provider_configuration_identity, fence_version, quiesced_at FROM matching_run WHERE id=? FOR UPDATE`, id).Scan(ctx, &run); err != nil {
 			return fmt.Errorf("retry matching evaluation: lock run: %w", err)
 		}
 		if run.State != "failed" {
 			return fmt.Errorf("retry matching evaluation: run is not failed")
+		}
+		if run.QuiescedAt != nil {
+			return fmt.Errorf("retry matching evaluation: matching run is quiesced")
 		}
 		var identity string
 		if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &identity); err != nil || identity != run.Identity {

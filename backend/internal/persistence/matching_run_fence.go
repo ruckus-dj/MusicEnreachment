@@ -132,6 +132,18 @@ func validateMatchingRunFenceCurrentTarget(ctx context.Context, tx bun.Tx, runID
 }
 
 func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping bool) error {
+	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, fenceVersion, requireFreshGrouping, false, true)
+}
+
+// validateMatchingRunFenceForObsolescence is used only under the canonical
+// mutation/configuration gates by the obsolete-run classifier. It tolerates a
+// strictly newer coalesced request while still validating every immutable and
+// current target, authority, provider, and capture fence.
+func validateMatchingRunFenceForObsolescence(ctx context.Context, tx bun.Tx, runID uuid.UUID) error {
+	return validateMatchingRunFenceWithRequestMode(ctx, tx, runID, 2, true, true, false)
+}
+
+func validateMatchingRunFenceWithRequestMode(ctx context.Context, tx bun.Tx, runID uuid.UUID, fenceVersion int, requireFreshGrouping, allowAdvancedRequest, requireCurrentCapture bool) error {
 	if fenceVersion != 2 {
 		return fmt.Errorf("matching run fence version is unsupported")
 	}
@@ -204,7 +216,7 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 		RequestGeneration *int64          `bun:"reconciliation_generation"`
 	}
 	if err := tx.NewRaw(`SELECT group_id,captured_group_revision,target_capture,target_capture_digest,reconciliation_generation
-		FROM matching_run_target WHERE run_id=? ORDER BY group_id FOR UPDATE`, runID).Scan(ctx, &targets); err != nil {
+			FROM matching_run_target WHERE run_id=? ORDER BY group_id FOR UPDATE`, runID).Scan(ctx, &targets); err != nil {
 		return fmt.Errorf("validate matching target fence: read immutable targets: %w", err)
 	}
 	if len(targets) != 1 || len(targets[0].Capture) == 0 || len(targets[0].CaptureDigest) != sha256.Size {
@@ -213,7 +225,7 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 	target := targets[0]
 	if target.RequestGeneration != nil {
 		var requested int64
-		if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=? FOR SHARE`, target.GroupID).Scan(ctx, &requested); err != nil || requested != *target.RequestGeneration {
+		if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=? FOR SHARE`, target.GroupID).Scan(ctx, &requested); err != nil || (requested != *target.RequestGeneration && (!allowAdvancedRequest || requested <= *target.RequestGeneration)) {
 			return ErrIncomingMatchConflict
 		}
 	}
@@ -237,6 +249,9 @@ func validateMatchingRunFenceWithFreshness(ctx context.Context, tx bun.Tx, runID
 	}
 	if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, target.GroupID).Scan(ctx, &group); err != nil {
 		return ErrIncomingMatchConflict
+	}
+	if !requireCurrentCapture {
+		return nil
 	}
 	current, err := captureAutomaticArtistTarget(ctx, tx, target.GroupID, group.Revision, authority.Revision)
 	if err != nil {

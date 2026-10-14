@@ -84,7 +84,7 @@ type matchingFallbackCalculationPreparer interface {
 }
 
 type matchingFallbackApplicabilityAdvancer interface {
-	AdvanceFallbackApplicabilityForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, *persistence.MatchingProviderRequest) (bool, error)
+	AdvanceFallbackApplicabilityAndContinueForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64, *persistence.MatchingProviderRequest) (bool, error)
 }
 
 type matchingFallbackHydrationCompleter interface {
@@ -92,7 +92,7 @@ type matchingFallbackHydrationCompleter interface {
 }
 
 type matchingEmptyFallbackPlanCompleter interface {
-	CompleteEmptyFallbackPlanForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64) (bool, error)
+	CompleteEmptyFallbackPlanAndContinueForDelivery(context.Context, persistence.RiverInserter, uuid.UUID, int, int64, persistence.MatchingDeliveryClaim, int64) (bool, error)
 }
 
 type matchingDeliveryReleaseHydrationStarter interface {
@@ -224,7 +224,7 @@ func (acquisition *MatchingAcquisitionService) Advance(ctx context.Context, runI
 		if !ok {
 			return false, true, fmt.Errorf("empty fallback plan persistence is unavailable")
 		}
-		changed, err := completer.CompleteEmptyFallbackPlanForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision)
+		changed, err := completer.CompleteEmptyFallbackPlanAndContinueForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision)
 		return changed, true, err
 	}
 	if snapshot.Intent.SchemaVersion == 3 && snapshot.Phase == "fallback_search" {
@@ -400,7 +400,7 @@ func (acquisition *MatchingAcquisitionService) advanceFallbackApplicability(ctx 
 	if !ok {
 		return false, true, fmt.Errorf("fallback applicability delivery persistence is unavailable")
 	}
-	changed, err := advancer.AdvanceFallbackApplicabilityForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, prepared)
+	changed, err := advancer.AdvanceFallbackApplicabilityAndContinueForDelivery(ctx, acquisition.river, runID, attempt, riverJobID, claim, snapshot.Revision, prepared)
 	return changed, true, err
 }
 

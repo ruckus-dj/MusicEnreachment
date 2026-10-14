@@ -19,7 +19,7 @@ func (repository *fallbackAdvancementRepository) GetMatchingFallbackCalculationR
 	return repository.receipt, nil
 }
 
-func (repository *fallbackAdvancementRepository) AdvanceFallbackApplicabilityForDelivery(_ context.Context, _ persistence.RiverInserter, _ uuid.UUID, _ int, _ int64, _ persistence.MatchingDeliveryClaim, _ int64, next *persistence.MatchingProviderRequest) (bool, error) {
+func (repository *fallbackAdvancementRepository) AdvanceFallbackApplicabilityAndContinueForDelivery(_ context.Context, _ persistence.RiverInserter, _ uuid.UUID, _ int, _ int64, _ persistence.MatchingDeliveryClaim, _ int64, next *persistence.MatchingProviderRequest) (bool, error) {
 	repository.next = next
 	return true, nil
 }

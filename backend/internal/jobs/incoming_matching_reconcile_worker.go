@@ -67,8 +67,11 @@ func (worker *IncomingMatchingReconcileWorker) Work(ctx context.Context, job *ri
 		}
 		currentDelivery = current
 	}
-	// Current production consumers always reconcile the live projection; immutable
-	// source-event snapshots may predate a newer current-generation obligation.
+	// Production consumers reconcile the live current projection for every
+	// durable wake, including source-event wakes. Source events may describe an
+	// older inventory snapshot; they must not admit a run with generation zero
+	// when a newer current-generation obligation exists. Legacy isolated
+	// consumers still receive immutable source-event deliveries through Reconcile.
 	if consumer, ok := worker.consumer.(currentIncomingMatchingReconcileConsumer); ok {
 		reconcileErr = consumer.ReconcileCurrent(ctx, delivery)
 	} else if currentDelivery {
