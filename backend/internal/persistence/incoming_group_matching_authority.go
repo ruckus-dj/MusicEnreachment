@@ -28,6 +28,14 @@ type IncomingGroupUnlinkResult struct {
 	RemovedSourceIDs  []uuid.UUID `json:"removed_source_ids"`
 }
 
+type IncomingGroupReturnAutomaticResult struct {
+	GroupID             uuid.UUID `json:"group_id"`
+	Mode                string    `json:"mode"`
+	AuthorityRevision   int64     `json:"authority_revision"`
+	GroupRevision       string    `json:"group_revision"`
+	RequestedGeneration int64     `json:"requested_generation"`
+}
+
 // lockIncomingGroupMatchingAuthority serializes authority changes with new
 // matching admissions and materialization. Missing rows mean the original
 // automatic authority at revision zero.
@@ -190,6 +198,90 @@ func (repository *IncomingMatchCandidateRepository) UnlinkIncomingGroupMatching(
 		}
 		if _, err := tx.NewRaw(`INSERT INTO incoming_group_unlink_receipt(request_id,group_id,intent_hash,response) VALUES (?,?,?,?::jsonb)`, requestID, groupID, intentHash, string(encoded)).Exec(ctx); err != nil {
 			return fmt.Errorf("unlink matching: write receipt: %w", err)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// ReturnIncomingGroupMatchingToAutomatic changes authority only. It never
+// applies or restores a matching decision; current reconciliation reloads the
+// persisted source and provider state after this transaction commits.
+func (repository *IncomingMatchCandidateRepository) ReturnIncomingGroupMatchingToAutomatic(
+	ctx context.Context, groupID uuid.UUID, expectedGroupRevision string,
+	expectedAuthorityRevision int64, requestID uuid.UUID,
+) (IncomingGroupReturnAutomaticResult, error) {
+	if repository == nil || groupID == uuid.Nil || expectedGroupRevision == "" || expectedAuthorityRevision < 0 || requestID == uuid.Nil {
+		return IncomingGroupReturnAutomaticResult{}, errors.New("return automatic matching intent is incomplete")
+	}
+	intent, err := json.Marshal(struct {
+		GroupID           uuid.UUID `json:"group_id"`
+		GroupRevision     string    `json:"group_revision"`
+		AuthorityRevision int64     `json:"authority_revision"`
+	}{groupID, expectedGroupRevision, expectedAuthorityRevision})
+	if err != nil {
+		return IncomingGroupReturnAutomaticResult{}, err
+	}
+	hash := sha256.Sum256(intent)
+	intentHash := hex.EncodeToString(hash[:])
+	var result IncomingGroupReturnAutomaticResult
+	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("return automatic matching: lock output gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("return automatic matching: lock source mutations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("return automatic matching: lock provider configuration: %w", err)
+		}
+		var saved struct {
+			IntentHash string `bun:"intent_hash"`
+			Response   []byte `bun:"response"`
+		}
+		err := tx.NewRaw(`SELECT intent_hash,response FROM incoming_group_return_automatic_receipt WHERE request_id=?`, requestID).Scan(ctx, &saved)
+		if err == nil {
+			if saved.IntentHash != intentHash {
+				return ErrIncomingMatchConflict
+			}
+			return json.Unmarshal(saved.Response, &result)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("return automatic matching: read receipt: %w", err)
+		}
+		authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		if authority.Mode != "manual" || authority.Revision != expectedAuthorityRevision {
+			return ErrIncomingMatchConflict
+		}
+		var groupRevision string
+		if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &groupRevision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrIncomingMatchConflict
+			}
+			return fmt.Errorf("return automatic matching: read group revision: %w", err)
+		}
+		if groupRevision != expectedGroupRevision {
+			return ErrIncomingMatchConflict
+		}
+		result = IncomingGroupReturnAutomaticResult{GroupID: groupID, Mode: "automatic", AuthorityRevision: authority.Revision + 1, GroupRevision: groupRevision}
+		if _, err := tx.NewRaw(`UPDATE incoming_group_matching_authority SET mode='automatic',revision=?,updated_at=now() WHERE group_id=? AND mode='manual' AND revision=?`, result.AuthorityRevision, groupID, authority.Revision).Exec(ctx); err != nil {
+			return fmt.Errorf("return automatic matching: advance authority revision: %w", err)
+		}
+		if err := RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{groupID}); err != nil {
+			return fmt.Errorf("return automatic matching: request current reconciliation: %w", err)
+		}
+		if err := tx.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(ctx, &result.RequestedGeneration); err != nil {
+			return fmt.Errorf("return automatic matching: read requested generation: %w", err)
+		}
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return fmt.Errorf("return automatic matching: encode receipt: %w", err)
+		}
+		if _, err := tx.NewRaw(`INSERT INTO incoming_group_return_automatic_receipt(request_id,group_id,intent_hash,response) VALUES (?,?,?,?::jsonb)`, requestID, groupID, intentHash, string(encoded)).Exec(ctx); err != nil {
+			return fmt.Errorf("return automatic matching: write receipt: %w", err)
 		}
 		return nil
 	})

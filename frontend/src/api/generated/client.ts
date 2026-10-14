@@ -31,6 +31,8 @@ import type {
   CreateSourceBody,
   DeleteSourceBody,
   ErrorModel,
+  IncomingGroupReturnAutomaticResult,
+  IncomingGroupUnlinkResult,
   IncomingGroupingEditBody,
   IncomingGroupsBody,
   InstallPreflightBody,
@@ -49,7 +51,9 @@ import type {
   MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
+  MatchingReturnAutomaticBody,
   MatchingReview,
+  MatchingUnlinkBody,
   MovePreflightBody,
   MovePreflightInputBody,
   OperationResponse,
@@ -1203,6 +1207,236 @@ export const usePreviewIncomingGroupManualMatching = <TError = ErrorModel,
         TContext
       > => {
       return useMutation(getPreviewIncomingGroupManualMatchingMutationOptions(options), queryClient);
+    }
+
+export type returnIncomingGroupMatchingToAutomaticResponse200 = {
+  data: IncomingGroupReturnAutomaticResult
+  status: 200
+}
+
+export type returnIncomingGroupMatchingToAutomaticResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type returnIncomingGroupMatchingToAutomaticResponseSuccess = (returnIncomingGroupMatchingToAutomaticResponse200) & {
+  headers: Headers;
+};
+export type returnIncomingGroupMatchingToAutomaticResponseError = (returnIncomingGroupMatchingToAutomaticResponseDefault) & {
+  headers: Headers;
+};
+
+export type returnIncomingGroupMatchingToAutomaticResponse = (returnIncomingGroupMatchingToAutomaticResponseSuccess | returnIncomingGroupMatchingToAutomaticResponseError)
+
+export const getReturnIncomingGroupMatchingToAutomaticUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/return-automatic`
+}
+
+/**
+ * @summary Return incoming group matching authority to automatic
+ */
+export const returnIncomingGroupMatchingToAutomatic = async (groupId: string,
+    matchingReturnAutomaticBody: NonReadonly<MatchingReturnAutomaticBody>, options?: RequestInit): Promise<returnIncomingGroupMatchingToAutomaticResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getReturnIncomingGroupMatchingToAutomaticUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingReturnAutomaticBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: returnIncomingGroupMatchingToAutomaticResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as returnIncomingGroupMatchingToAutomaticResponse
+}
+
+
+
+
+
+export const getReturnIncomingGroupMatchingToAutomaticMutationKey = () => ['returnIncomingGroupMatchingToAutomatic'] as const;
+
+export const getReturnIncomingGroupMatchingToAutomaticMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>, TError,ReturnIncomingGroupMatchingToAutomaticMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>, TError,ReturnIncomingGroupMatchingToAutomaticMutationVariables, TContext> => {
+
+const mutationKey = getReturnIncomingGroupMatchingToAutomaticMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>, ReturnIncomingGroupMatchingToAutomaticMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  returnIncomingGroupMatchingToAutomatic(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReturnIncomingGroupMatchingToAutomaticMutationResult = NonNullable<Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>>
+    export type ReturnIncomingGroupMatchingToAutomaticMutationBody = NonReadonly<MatchingReturnAutomaticBody>
+    export type ReturnIncomingGroupMatchingToAutomaticMutationError = ErrorModel
+    export type ReturnIncomingGroupMatchingToAutomaticMutationVariables = {groupId: string;data: NonReadonly<MatchingReturnAutomaticBody>}
+
+    /**
+ * @summary Return incoming group matching authority to automatic
+ */
+export const useReturnIncomingGroupMatchingToAutomatic = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>, TError,ReturnIncomingGroupMatchingToAutomaticMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof returnIncomingGroupMatchingToAutomatic>>,
+        TError,
+        ReturnIncomingGroupMatchingToAutomaticMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReturnIncomingGroupMatchingToAutomaticMutationOptions(options), queryClient);
+    }
+
+export type unlinkIncomingGroupMatchingResponse200 = {
+  data: IncomingGroupUnlinkResult
+  status: 200
+}
+
+export type unlinkIncomingGroupMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type unlinkIncomingGroupMatchingResponseSuccess = (unlinkIncomingGroupMatchingResponse200) & {
+  headers: Headers;
+};
+export type unlinkIncomingGroupMatchingResponseError = (unlinkIncomingGroupMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type unlinkIncomingGroupMatchingResponse = (unlinkIncomingGroupMatchingResponseSuccess | unlinkIncomingGroupMatchingResponseError)
+
+export const getUnlinkIncomingGroupMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/unlink`
+}
+
+/**
+ * @summary Unlink explicitly selected manual source associations
+ */
+export const unlinkIncomingGroupMatching = async (groupId: string,
+    matchingUnlinkBody: NonReadonly<MatchingUnlinkBody>, options?: RequestInit): Promise<unlinkIncomingGroupMatchingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getUnlinkIncomingGroupMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingUnlinkBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: unlinkIncomingGroupMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as unlinkIncomingGroupMatchingResponse
+}
+
+
+
+
+
+export const getUnlinkIncomingGroupMatchingMutationKey = () => ['unlinkIncomingGroupMatching'] as const;
+
+export const getUnlinkIncomingGroupMatchingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext> => {
+
+const mutationKey = getUnlinkIncomingGroupMatchingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, UnlinkIncomingGroupMatchingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  unlinkIncomingGroupMatching(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnlinkIncomingGroupMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>>
+    export type UnlinkIncomingGroupMatchingMutationBody = NonReadonly<MatchingUnlinkBody>
+    export type UnlinkIncomingGroupMatchingMutationError = ErrorModel
+    export type UnlinkIncomingGroupMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingUnlinkBody>}
+
+    /**
+ * @summary Unlink explicitly selected manual source associations
+ */
+export const useUnlinkIncomingGroupMatching = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>,
+        TError,
+        UnlinkIncomingGroupMatchingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUnlinkIncomingGroupMatchingMutationOptions(options), queryClient);
     }
 
 export type listOperationsResponse200 = {

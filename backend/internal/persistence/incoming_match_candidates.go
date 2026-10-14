@@ -152,9 +152,12 @@ type IncomingMatchEvaluationHeader struct {
 }
 
 type IncomingMatchReviewSnapshot struct {
-	Header     *IncomingMatchEvaluationHeader
-	Candidates []IncomingMatchCandidate
-	Members    []uuid.UUID
+	Header                            *IncomingMatchEvaluationHeader
+	Candidates                        []IncomingMatchCandidate
+	Members                           []uuid.UUID
+	AuthorityMode                     string
+	AuthorityRevision                 int64
+	CurrentLinkedManualMediaSourceIDs []uuid.UUID
 }
 
 type IncomingMatchCandidateRepository struct{ db *bun.DB }
@@ -934,6 +937,18 @@ func (repository *IncomingMatchCandidateRepository) Get(ctx context.Context, gro
 func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx context.Context, groupID uuid.UUID) (*IncomingMatchReviewSnapshot, error) {
 	result := &IncomingMatchReviewSnapshot{}
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
+		result.AuthorityMode = "automatic"
+		if err := tx.NewRaw(`SELECT mode,revision FROM incoming_group_matching_authority WHERE group_id=?`, groupID).Scan(ctx, &result.AuthorityMode, &result.AuthorityRevision); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get incoming match review authority: %w", err)
+		}
+		result.CurrentLinkedManualMediaSourceIDs = make([]uuid.UUID, 0)
+		if err := tx.NewRaw(`SELECT DISTINCT identity.media_variant_id
+			FROM incoming_group_member_location member
+			JOIN source_work_variant_identity identity ON identity.work_id=member.work_id
+			JOIN track_source source ON source.media_variant_id=identity.media_variant_id AND source.decision_method='manual'
+			WHERE member.group_id=? ORDER BY identity.media_variant_id`, groupID).Scan(ctx, &result.CurrentLinkedManualMediaSourceIDs); err != nil {
+			return fmt.Errorf("get incoming match review manual links: %w", err)
+		}
 		var header IncomingMatchEvaluationHeader
 		err := tx.NewRaw(`SELECT group_id, evaluation_revision, evaluation_evidence, group_revision, groups_revision, grouping_epoch,
 			policy_version, provider_id, provider_source_id, provider_configuration_identity, provider_namespace, provider_endpoint,
@@ -941,7 +956,7 @@ func (repository *IncomingMatchCandidateRepository) GetReviewSnapshot(ctx contex
 			matching_authority_mode, matching_authority_revision, fence_version, target_run_id, target_capture, target_capture_digest,
 			frozen_authority_version, frozen_run_id, frozen_wait_revision, frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &header)
 		if errors.Is(err, sql.ErrNoRows) {
-			return err
+			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("get incoming match review: %w", err)

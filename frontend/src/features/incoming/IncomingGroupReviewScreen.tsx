@@ -12,13 +12,17 @@ import {
   getIncomingGroupMatching,
   getIncomingGroups,
   previewIncomingGroupManualMatching,
+  returnIncomingGroupMatchingToAutomatic,
+  unlinkIncomingGroupMatching,
 } from "../../api/generated/client";
 import type {
   MatchingManualAssignmentBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
+  MatchingReturnAutomaticBody,
   MatchingReview,
   MatchingReviewRelease,
+  MatchingUnlinkBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
 import { ManualReleasePicker } from "./ManualReleasePicker";
@@ -40,6 +44,13 @@ type ConfirmIntent = {
   generation: number;
   intent: string;
   body: MatchingManualConfirmBody;
+};
+type AuthorityIntent = {
+  groupId: string;
+  generation: number;
+  intent: string;
+  action: "unlink" | "automatic";
+  body: MatchingUnlinkBody | MatchingReturnAutomaticBody;
 };
 
 function errorText(reason: unknown, fallback: string) {
@@ -130,12 +141,16 @@ function IncomingGroupReviewContent() {
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [authorityNotice, setAuthorityNotice] = useState("");
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [authorityIntent, setAuthorityIntent] = useState<AuthorityIntent>();
   const [receipt, setReceipt] = useState<{
     groupId: string;
     response: MatchingManualPreview;
   }>();
   const [pendingRequest, setPendingRequest] = useState<{
     id: number;
+    groupId: string;
     scope: string;
   }>();
   const generation = useRef(0);
@@ -143,6 +158,7 @@ function IncomingGroupReviewContent() {
   const evaluationRevisionRef = useRef("");
   const requestId = useRef(0);
   const seededGroup = useRef("");
+  const authorityRevisionByGroup = useRef(new Map<string, number>());
 
   function scopeIdentity() {
     const scope = scopeRef.current;
@@ -194,6 +210,28 @@ function IncomingGroupReviewContent() {
   const group = groups.find((candidate) => candidate.id === groupId);
   const releases = review?.releases ?? [];
   const savedSelectedId = proposal.selected_release?.provider_release_id ?? "";
+
+  useEffect(() => {
+    if (!groupId || review?.group_id !== groupId) return;
+    const previousRevision = authorityRevisionByGroup.current.get(groupId);
+    authorityRevisionByGroup.current.set(groupId, review.authority_revision);
+    if (
+      previousRevision === undefined ||
+      previousRevision === review.authority_revision
+    )
+      return;
+
+    generation.current += 1;
+    scopeRef.current = {
+      groupId,
+      releaseId: selectedReleaseId,
+      generation: generation.current,
+    };
+    setPendingRequest(undefined);
+    setPreview(undefined);
+    setConfirmIntent(undefined);
+    setAuthorityIntent(undefined);
+  }, [groupId, review, selectedReleaseId]);
 
   useEffect(() => {
     if (!preparedReleaseMBID || !groupId) return;
@@ -281,6 +319,126 @@ function IncomingGroupReviewContent() {
       ? confirmIntent
       : undefined;
   const busy = pendingRequest?.scope === scopeIdentity();
+  const currentAuthorityIntent =
+    authorityIntent?.groupId === groupId &&
+    authorityIntent.generation === scopeRef.current.generation &&
+    authorityIntent.intent ===
+      `${group?.revision ?? ""}:${review?.authority_revision ?? -1}:${authorityIntent.action}:${authorityIntent.action === "unlink" ? [...selectedSourceIds].sort().join(",") : ""}`
+      ? authorityIntent
+      : undefined;
+  const authorityBusy =
+    pendingRequest?.scope ===
+    `authority:${groupId}:${scopeRef.current.generation}`;
+  // Group-scoped in-flight identity: independent of intent generation, so a
+  // same-group request keeps draft controls locked even if the scope drifts.
+  const sameGroupInFlight =
+    pendingRequest !== undefined && pendingRequest.groupId === groupId;
+
+  function authorityScope() {
+    const scope = scopeRef.current;
+    return `authority:${scope.groupId}:${scope.generation}`;
+  }
+
+  async function performAuthorityAction(action: "unlink" | "automatic") {
+    if (!group || !review || sameGroupInFlight) return;
+    if (action === "unlink" && selectedSourceIds.length === 0) return;
+    const actionIntent = `${group.revision}:${review.authority_revision}:${action}:${action === "unlink" ? [...selectedSourceIds].sort().join(",") : ""}`;
+    const preserved =
+      currentAuthorityIntent?.action === action
+        ? currentAuthorityIntent
+        : {
+            groupId,
+            generation: scopeRef.current.generation,
+            intent: actionIntent,
+            action,
+            body:
+              action === "unlink"
+                ? ({
+                    expected_group_revision: group.revision,
+                    expected_authority_revision: review.authority_revision,
+                    source_ids: [...selectedSourceIds].sort(),
+                    request_id: crypto.randomUUID(),
+                  } satisfies MatchingUnlinkBody)
+                : ({
+                    expected_group_revision: group.revision,
+                    expected_authority_revision: review.authority_revision,
+                    request_id: crypto.randomUUID(),
+                  } satisfies MatchingReturnAutomaticBody),
+          };
+    const requestScope = authorityScope();
+    const activeRequest = ++requestId.current;
+    setAuthorityIntent(preserved);
+    setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
+    setError("");
+    setNotice("");
+    setAuthorityNotice("");
+    try {
+      const response =
+        action === "unlink"
+          ? await unlinkIncomingGroupMatching(
+              groupId,
+              preserved.body as MatchingUnlinkBody,
+            )
+          : await returnIncomingGroupMatchingToAutomatic(
+              groupId,
+              preserved.body as MatchingReturnAutomaticBody,
+            );
+      if (requestScope !== authorityScope()) return;
+      if (response.status !== 200) {
+        if (response.status === 409) {
+          invalidateIntent();
+          setAuthorityIntent(undefined);
+          setPreview(undefined);
+          setConfirmIntent(undefined);
+          setError(
+            "Данные группы или режима изменились. Обновите их вручную перед новой попыткой.",
+          );
+          void Promise.all([
+            groupsQuery.refetch(),
+            reviewQuery.refetch(),
+          ]).catch(() => undefined);
+          return;
+        }
+        throw responseError(response, "Режим сопоставления не изменён");
+      }
+      generation.current += 1;
+      scopeRef.current = {
+        groupId,
+        releaseId: selectedReleaseId,
+        generation: generation.current,
+      };
+      setAuthorityIntent(undefined);
+      setSelectedSourceIds([]);
+      setPreview(undefined);
+      setConfirmIntent(undefined);
+      setPendingRequest(undefined);
+      setAuthorityNotice(
+        action === "unlink"
+          ? "Связи удалены. Ручной режим сохранён."
+          : "Возврат к автоматическому сопоставлению сохранён. Ожидается новая оценка.",
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: getGetIncomingGroupsQueryKey(),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+        }),
+      ]);
+    } catch (reason) {
+      if (requestScope === authorityScope())
+        setError(
+          errorText(
+            reason,
+            "Не удалось изменить режим сопоставления. Повтор использует тот же запрос.",
+          ),
+        );
+    } finally {
+      setPendingRequest((current) =>
+        current?.id === activeRequest ? undefined : current,
+      );
+    }
+  }
 
   function changeGroup(nextGroupId: string) {
     generation.current += 1;
@@ -295,9 +453,13 @@ function IncomingGroupReviewContent() {
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
+    setSelectedSourceIds([]);
+    setAuthorityIntent(undefined);
+    setAuthorityNotice("");
   }
 
   function changeRelease(nextReleaseId: string) {
+    if (sameGroupInFlight) return;
     generation.current += 1;
     scopeRef.current = {
       groupId,
@@ -313,6 +475,7 @@ function IncomingGroupReviewContent() {
   }
 
   function assign(memberId: string, trackId: string) {
+    if (sameGroupInFlight) return;
     invalidateIntent();
     setDrafts((current) => {
       const draft = { ...(current[draftKey] ?? {}) };
@@ -328,10 +491,10 @@ function IncomingGroupReviewContent() {
   }
 
   async function createPreview() {
-    if (!intent || !groupId) return;
+    if (sameGroupInFlight || !intent || !groupId) return;
     const requestScope = scopeIdentity();
     const activeRequest = ++requestId.current;
-    setPendingRequest({ id: activeRequest, scope: requestScope });
+    setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
     setError("");
     setNotice("");
     try {
@@ -348,15 +511,14 @@ function IncomingGroupReviewContent() {
       if (requestScope === scopeIdentity())
         setError(errorText(reason, "Не удалось создать предпросмотр."));
     } finally {
-      if (requestScope === scopeIdentity())
-        setPendingRequest((current) =>
-          current?.id === activeRequest ? undefined : current,
-        );
+      setPendingRequest((current) =>
+        current?.id === activeRequest ? undefined : current,
+      );
     }
   }
 
   async function confirm() {
-    if (!intent || !groupId || !currentPreview) return;
+    if (sameGroupInFlight || !intent || !groupId || !currentPreview) return;
     const preserved = currentRetryIntent ?? {
       groupId,
       generation: scopeRef.current.generation,
@@ -370,7 +532,7 @@ function IncomingGroupReviewContent() {
     const requestScope = scopeIdentity();
     const activeRequest = ++requestId.current;
     setConfirmIntent(preserved);
-    setPendingRequest({ id: activeRequest, scope: requestScope });
+    setPendingRequest({ id: activeRequest, groupId, scope: requestScope });
     setError("");
     setNotice("");
     try {
@@ -411,10 +573,9 @@ function IncomingGroupReviewContent() {
           ),
         );
     } finally {
-      if (requestScope === scopeIdentity())
-        setPendingRequest((current) =>
-          current?.id === activeRequest ? undefined : current,
-        );
+      setPendingRequest((current) =>
+        current?.id === activeRequest ? undefined : current,
+      );
     }
   }
 
@@ -498,6 +659,7 @@ function IncomingGroupReviewContent() {
                 )}
               </p>
               <AppButton
+                isDisabled={sameGroupInFlight}
                 onPress={() => {
                   void reviewQuery.refetch();
                 }}
@@ -512,6 +674,107 @@ function IncomingGroupReviewContent() {
               запускается.
             </p>
           ) : null}
+          {review ? (
+            <section
+              className="rounded border border-stone-300 bg-white p-4"
+              aria-labelledby="authority-title"
+            >
+              <h2 id="authority-title" className="font-semibold">
+                Текущий режим управления сопоставлением
+              </h2>
+              <p className="mt-1 text-sm">
+                Режим: <strong>{review.authority_mode}</strong> · ревизия:{" "}
+                <code>{review.authority_revision}</code>
+              </p>
+              <p className="mt-1 text-sm">
+                Текущая сохранённая оценка и её доказательства показаны отдельно
+                ниже; изменение режима не переписывает эту историю.
+              </p>
+              {authorityNotice ? (
+                <p
+                  role="status"
+                  className="mt-2 rounded border border-green-700 p-3"
+                >
+                  {authorityNotice}
+                </p>
+              ) : null}
+              {review.authority_mode === "manual" ? (
+                <>
+                  <fieldset
+                    className="mt-3 space-y-2"
+                    disabled={sameGroupInFlight}
+                  >
+                    <legend className="font-medium">
+                      Выберите ручные связи источников для удаления
+                    </legend>
+                    {(review.current_linked_manual_media_source_ids ?? [])
+                      .length ? (
+                      (review.current_linked_manual_media_source_ids ?? []).map(
+                        (sourceId) => (
+                          <label
+                            key={sourceId}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedSourceIds.includes(sourceId)}
+                              onChange={(event) => {
+                                setAuthorityIntent(undefined);
+                                setSelectedSourceIds((current) =>
+                                  event.target.checked
+                                    ? [...current, sourceId]
+                                    : current.filter((id) => id !== sourceId),
+                                );
+                              }}
+                            />
+                            <code>{sourceId}</code>
+                          </label>
+                        ),
+                      )
+                    ) : (
+                      <p className="text-sm">
+                        Сохранённых ручных связей источников нет.
+                      </p>
+                    )}
+                  </fieldset>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <AppButton
+                      isDisabled={
+                        sameGroupInFlight || !selectedSourceIds.length
+                      }
+                      onPress={() => void performAuthorityAction("unlink")}
+                    >
+                      {currentAuthorityIntent?.action === "unlink"
+                        ? "Повторить удаление связей"
+                        : "Убрать выбранные связи"}
+                    </AppButton>
+                    <AppButton
+                      isDisabled={sameGroupInFlight}
+                      onPress={() => void performAuthorityAction("automatic")}
+                    >
+                      {currentAuthorityIntent?.action === "automatic"
+                        ? "Повторить возврат к автоматическому сопоставлению"
+                        : "Вернуть к автоматическому сопоставлению"}
+                    </AppButton>
+                  </div>
+                </>
+              ) : null}
+              {error.includes("изменились") ? (
+                <AppButton
+                  isDisabled={sameGroupInFlight}
+                  onPress={() => {
+                    setAuthorityIntent(undefined);
+                    void Promise.all([
+                      groupsQuery.refetch(),
+                      reviewQuery.refetch(),
+                    ]);
+                  }}
+                >
+                  Обновить данные группы и режима
+                </AppButton>
+              ) : null}
+            </section>
+          ) : null}
           {review?.evaluated && !review.proposal_available ? (
             <p className="rounded border border-amber-500 bg-amber-50 p-3">
               Сохраненные данные предложения недоступны или неполны. Ручной
@@ -524,7 +787,7 @@ function IncomingGroupReviewContent() {
               <ManualSearchPicker
                 groupId={groupId}
                 groupRevision={group.revision}
-                disabled={!review}
+                disabled={!review || busy || authorityBusy || sameGroupInFlight}
                 onSelectRelease={(releaseId) =>
                   setSearchReleaseSelections((current) => ({
                     ...current,
@@ -536,7 +799,7 @@ function IncomingGroupReviewContent() {
                 groupId={groupId}
                 groupRevision={group.revision}
                 evaluationRevision={review?.evaluation_revision || undefined}
-                disabled={!review}
+                disabled={!review || busy || authorityBusy || sameGroupInFlight}
                 searchRelease={searchReleaseSelections[groupId]}
                 onPrepared={setPreparedReleaseMBID}
               />
@@ -570,6 +833,7 @@ function IncomingGroupReviewContent() {
                 <label className="mt-3 block max-w-2xl text-sm font-medium">
                   Издание (выбор вручную)
                   <select
+                    disabled={busy || authorityBusy || sameGroupInFlight}
                     className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
                     value={selectedReleaseId}
                     onChange={(event) => changeRelease(event.target.value)}
@@ -732,7 +996,12 @@ function IncomingGroupReviewContent() {
                         <label className="min-w-64 flex-1 text-sm font-medium">
                           Назначение
                           <select
-                            disabled={!release}
+                            disabled={
+                              !release ||
+                              busy ||
+                              authorityBusy ||
+                              sameGroupInFlight
+                            }
                             className="mt-1 block w-full rounded border border-stone-400 bg-white p-2"
                             value={assignmentsByMember[memberId] ?? ""}
                             onChange={(event) =>
@@ -802,7 +1071,9 @@ function IncomingGroupReviewContent() {
               ) : null}
               <div className="flex flex-wrap gap-2">
                 <AppButton
-                  isDisabled={busy || !release || !review.evaluation_revision}
+                  isDisabled={
+                    sameGroupInFlight || !release || !review.evaluation_revision
+                  }
                   onPress={() => {
                     void createPreview();
                   }}
@@ -813,7 +1084,7 @@ function IncomingGroupReviewContent() {
                 </AppButton>
                 {currentPreview ? (
                   <AppButton
-                    isDisabled={busy}
+                    isDisabled={sameGroupInFlight}
                     onPress={() => {
                       void confirm();
                     }}
@@ -825,7 +1096,7 @@ function IncomingGroupReviewContent() {
                 ) : null}
                 {error.includes("изменились") ? (
                   <AppButton
-                    isDisabled={busy}
+                    isDisabled={sameGroupInFlight}
                     onPress={() => {
                       void reloadReview();
                     }}

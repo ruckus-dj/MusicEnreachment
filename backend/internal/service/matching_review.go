@@ -23,14 +23,17 @@ func NewMatchingReviewService(reader matchingReviewReader) *MatchingReviewServic
 }
 
 type MatchingReview struct {
-	Evaluated          bool                      `json:"evaluated"`
-	ProposalAvailable  bool                      `json:"proposal_available"`
-	EvaluationRevision string                    `json:"evaluation_revision,omitempty"`
-	GroupID            uuid.UUID                 `json:"group_id"`
-	Proposal           json.RawMessage           `json:"proposal,omitempty"`
-	Releases           []MatchingReviewRelease   `json:"releases"`
-	Candidates         []MatchingReviewCandidate `json:"candidates"`
-	Members            []uuid.UUID               `json:"members"`
+	Evaluated                         bool                      `json:"evaluated"`
+	ProposalAvailable                 bool                      `json:"proposal_available"`
+	EvaluationRevision                string                    `json:"evaluation_revision,omitempty"`
+	GroupID                           uuid.UUID                 `json:"group_id"`
+	Proposal                          json.RawMessage           `json:"proposal,omitempty"`
+	Releases                          []MatchingReviewRelease   `json:"releases"`
+	Candidates                        []MatchingReviewCandidate `json:"candidates"`
+	Members                           []uuid.UUID               `json:"members"`
+	AuthorityMode                     string                    `json:"authority_mode"`
+	AuthorityRevision                 int64                     `json:"authority_revision"`
+	CurrentLinkedManualMediaSourceIDs []uuid.UUID               `json:"current_linked_manual_media_source_ids"`
 }
 
 type MatchingReviewRelease struct {
@@ -95,10 +98,20 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 		return MatchingReview{}, err
 	}
 	if snapshot == nil {
-		return MatchingReview{GroupID: groupID, Releases: []MatchingReviewRelease{}, Candidates: []MatchingReviewCandidate{}, Members: []uuid.UUID{}}, nil
+		return MatchingReview{GroupID: groupID, AuthorityMode: "automatic", Releases: []MatchingReviewRelease{}, Candidates: []MatchingReviewCandidate{}, Members: []uuid.UUID{}, CurrentLinkedManualMediaSourceIDs: []uuid.UUID{}}, nil
+	}
+	if snapshot.Header == nil {
+		mode := snapshot.AuthorityMode
+		if mode == "" {
+			mode = "automatic"
+		}
+		return MatchingReview{GroupID: groupID, AuthorityMode: mode, AuthorityRevision: snapshot.AuthorityRevision,
+			CurrentLinkedManualMediaSourceIDs: snapshot.CurrentLinkedManualMediaSourceIDs, Releases: []MatchingReviewRelease{}, Candidates: []MatchingReviewCandidate{}, Members: []uuid.UUID{}}, nil
 	}
 	result := MatchingReview{Evaluated: true, GroupID: groupID, EvaluationRevision: snapshot.Header.EvaluationRevision,
-		Releases: []MatchingReviewRelease{}, Candidates: make([]MatchingReviewCandidate, 0, len(snapshot.Candidates)), Members: append([]uuid.UUID(nil), snapshot.Members...)}
+		AuthorityMode: snapshot.AuthorityMode, AuthorityRevision: snapshot.AuthorityRevision,
+		CurrentLinkedManualMediaSourceIDs: snapshot.CurrentLinkedManualMediaSourceIDs,
+		Releases:                          []MatchingReviewRelease{}, Candidates: make([]MatchingReviewCandidate, 0, len(snapshot.Candidates)), Members: append([]uuid.UUID(nil), snapshot.Members...)}
 	var envelope struct {
 		Proposal json.RawMessage `json:"review_proposal"`
 	}
@@ -121,10 +134,17 @@ func (s *MatchingReviewService) Get(ctx context.Context, groupID uuid.UUID) (Mat
 				}
 			}
 			for _, release := range proposal.Releases {
+				positions := append([]MatchingReviewLayoutPosition(nil), release.Positions...)
+				if snapshot.Header.FrozenAuthorityVersion != nil && *snapshot.Header.FrozenAuthorityVersion == 3 {
+					for index := range positions {
+						positions[index].Medium--
+						positions[index].Position--
+					}
+				}
 				result.Releases = append(result.Releases, MatchingReviewRelease{
 					ProviderReleaseID: release.ProviderReleaseID, ReleaseID: release.ReleaseID,
 					Title: release.Title, TracklistComplete: release.TracklistComplete,
-					Positions: append([]MatchingReviewLayoutPosition(nil), release.Positions...),
+					Positions: positions,
 				})
 			}
 		}

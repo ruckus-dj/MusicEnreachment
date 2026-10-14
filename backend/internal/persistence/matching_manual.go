@@ -12,6 +12,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -119,6 +120,15 @@ type manualSourceState struct {
 func (repository *IncomingMatchCandidateRepository) PreviewMatchingManual(ctx context.Context, groupID uuid.UUID, expectedEvaluationRevision string, providerReleaseID uuid.UUID, explicitAssignments []MatchingManualAssignment) (MatchingManualPreview, error) {
 	var result MatchingManualPreview
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("preview manual matching: lock output admission gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("preview manual matching: lock source mutations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("preview manual matching: lock provider configuration: %w", err)
+		}
 		var err error
 		result, _, err = repository.previewMatchingManualTx(ctx, tx, groupID, expectedEvaluationRevision, providerReleaseID, explicitAssignments, false)
 		return err
@@ -139,6 +149,9 @@ func (repository *IncomingMatchCandidateRepository) ConfirmMatchingManual(ctx co
 		}
 		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
 			return fmt.Errorf("confirm manual matching: lock source mutations: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext(?))`, "musicbrainz-config"); err != nil {
+			return fmt.Errorf("confirm manual matching: lock provider configuration: %w", err)
 		}
 		intent, err := json.Marshal(struct {
 			GroupID       uuid.UUID                  `json:"group_id"`
@@ -202,6 +215,9 @@ type manualMatchingTxState struct {
 	fence          IncomingMatchProviderFence
 	release        MatchingRelease
 	localReleaseID *uuid.UUID
+	frozen         *FrozenMaterialization
+	seal           *MatchingFallbackSealAuthority
+	context        *MatchingFallbackCalculationContext
 }
 
 func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx context.Context, tx bun.Tx, groupID uuid.UUID, expectedRevision string, releaseID uuid.UUID, assignments []MatchingManualAssignment, locking bool) (MatchingManualPreview, manualMatchingTxState, error) {
@@ -214,7 +230,7 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		return result, state, err
 	}
 	var err error
-	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at,matching_authority_mode,matching_authority_revision FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
+	err = tx.NewRaw(`SELECT group_id,evaluation_revision,evaluation_evidence,group_revision,groups_revision,grouping_epoch,policy_version,provider_id,provider_source_id,provider_configuration_identity,provider_namespace,provider_endpoint,cache_key,cache_revision,provider_snapshot_revision,provider_fences,evaluated_at,matching_authority_mode,matching_authority_revision,frozen_authority_version,frozen_run_id,frozen_wait_revision,frozen_seal_digest FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &state.header)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, state, ErrIncomingMatchConflict
 	}
@@ -223,6 +239,12 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 	}
 	if state.header.EvaluationRevision != expectedRevision {
 		return result, state, ErrIncomingMatchConflict
+	}
+	// Version 3 evaluations are rooted in a verified historical seal. Branch
+	// before decoding provider_fences: frozen headers intentionally have none of
+	// the legacy mutable-cache fence semantics.
+	if state.header.FrozenAuthorityVersion != nil && *state.header.FrozenAuthorityVersion == 3 {
+		return repository.previewFrozenMatchingManualTx(ctx, tx, groupID, expectedRevision, releaseID, assignments, locking, state)
 	}
 	if err := json.Unmarshal(state.header.ProviderFences, &state.fence); err != nil {
 		return result, state, fmt.Errorf("manual matching: decode provider fences: %w", err)
@@ -411,6 +433,358 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 	return result, state, nil
 }
 
+// previewFrozenMatchingManualTx consumes the persisted frozen proposal and the
+// accepted lookup projection sealed by its historical authority. It deliberately
+// does not decode legacy provider fences or consult mutable cache projections.
+func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualTx(
+	ctx context.Context, tx bun.Tx, groupID uuid.UUID, expectedRevision string, releaseID uuid.UUID,
+	assignments []MatchingManualAssignment, locking bool, state manualMatchingTxState,
+) (MatchingManualPreview, manualMatchingTxState, error) {
+	var result MatchingManualPreview
+	if state.header.FrozenRunID == nil || state.header.FrozenWaitRevision == nil || len(state.header.FrozenSealDigest) == 0 {
+		return result, state, ErrIncomingMatchConflict
+	}
+	seal, found, err := readMatchingFallbackAuthoritySeal(ctx, tx, *state.header.FrozenRunID, *state.header.FrozenWaitRevision)
+	if err != nil || !found || seal.SchemaVersion != 3 || seal.Digest != hex.EncodeToString(state.header.FrozenSealDigest) ||
+		seal.Target.GroupID != groupID || seal.Target.GroupRevision != state.header.GroupRevision || seal.SourceID != state.header.ProviderSourceID || seal.ProviderID != state.header.ProviderID {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var proposalEnvelope struct {
+		Proposal json.RawMessage `json:"review_proposal"`
+	}
+	if json.Unmarshal(state.header.EvaluationEvidence, &proposalEnvelope) != nil {
+		return result, state, errors.New("manual matching review proposal is invalid")
+	}
+	var proposal manualProposal
+	if err := strictManualDecode(proposalEnvelope.Proposal, &proposal); err != nil || proposal.Version != 1 || proposal.GroupID != groupID {
+		return result, state, errors.New("manual matching review proposal is invalid")
+	}
+	var selected *manualProposalRelease
+	for index := range proposal.Releases {
+		if proposal.Releases[index].ProviderReleaseID == releaseID {
+			selected = &proposal.Releases[index]
+			break
+		}
+	}
+	if selected == nil || len(selected.Positions) == 0 {
+		return result, state, errors.New("manual matching selected release layout is unavailable")
+	}
+	contextSnapshot, err := matchingFallbackSealContext(seal)
+	if err != nil {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var projection *ProviderMatchingSnapshot
+	for _, lookup := range contextSnapshot.LookupReceipts {
+		var candidate ProviderMatchingSnapshot
+		if json.Unmarshal(lookup.AcceptedProjection, &candidate) != nil || len(candidate.Releases) != 1 {
+			continue
+		}
+		if strings.EqualFold(candidate.Releases[0].ProviderKey, selected.ReleaseID) {
+			if projection != nil {
+				return result, state, ErrIncomingMatchConflict
+			}
+			projection = &candidate
+		}
+	}
+	if projection == nil || projection.Releases[0].ID != releaseID {
+		return result, state, ErrIncomingMatchConflict
+	}
+	positions := make(map[uuid.UUID]manualProposalPosition, len(selected.Positions))
+	coordinates := make(map[string]uuid.UUID, len(selected.Positions))
+	for _, p := range selected.Positions {
+		if p.TrackID == uuid.Nil || p.Medium < 1 || p.Position < 1 {
+			return result, state, errors.New("manual matching selected release layout is invalid")
+		}
+		coord := fmt.Sprintf("%d/%d", p.Medium, p.Position)
+		if _, exists := coordinates[coord]; exists {
+			return result, state, errors.New("manual matching selected release layout is invalid")
+		}
+		coordinates[coord], positions[p.TrackID] = p.TrackID, p
+	}
+	for _, assignment := range assignments {
+		p, ok := positions[assignment.ProviderTrackID]
+		if !ok || p.Medium != assignment.Medium || p.Position != assignment.Position {
+			return result, state, errors.New("manual matching assignment is outside selected release layout")
+		}
+	}
+	group := IncomingMatchGroupEvaluation{GroupID: groupID, GroupRevision: state.header.GroupRevision}
+	if err := tx.NewRaw(`SELECT file_member_id,work_id,source_sha256 FROM incoming_match_evaluation_member WHERE group_id=? ORDER BY file_member_id`, groupID).Scan(ctx, &group.Members); err != nil || len(group.Members) == 0 {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var source struct{ Endpoint, Configuration string }
+	if err := tx.NewRaw(`SELECT endpoint,configuration_identity FROM provider_source WHERE id=? AND provider_id=? FOR UPDATE`, seal.SourceID, seal.ProviderID).Scan(ctx, &source.Endpoint, &source.Configuration); err != nil || source.Endpoint != seal.Endpoint || source.Configuration != seal.SourceConfiguration {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var currentConfiguration string
+	if err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name='musicbrainz_config_identity'`).Scan(ctx, &currentConfiguration); err != nil || currentConfiguration != seal.RunProviderConfiguration {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var currentGroupRevision string
+	if err := tx.NewRaw(`SELECT revision FROM incoming_group WHERE id=? FOR UPDATE`, groupID).Scan(ctx, &currentGroupRevision); err != nil || currentGroupRevision != state.header.GroupRevision {
+		return result, state, ErrIncomingMatchConflict
+	}
+	locationIDs, err := currentManualMemberLocationIDs(ctx, tx, group.Members)
+	if err != nil || len(locationIDs) == 0 {
+		return result, state, ErrIncomingMatchConflict
+	}
+	captures, err := loadIncomingGroupingCapturesForLocations(ctx, tx, locationIDs)
+	if err != nil || !frozenManualCaptureIsCurrent(seal.Target.Capture, seal.CapturedMetadata, group.Members, captures) {
+		return result, state, ErrIncomingMatchConflict
+	}
+	var currentRunID uuid.UUID
+	if err := tx.NewRaw(`SELECT current_run_id FROM incoming_matching_generation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &currentRunID); err != nil || currentRunID != seal.RunID {
+		return result, state, ErrIncomingMatchConflict
+	}
+	authority, err := lockIncomingGroupMatchingAuthority(ctx, tx, groupID)
+	if err != nil || authority.GroupID != groupID || (authority.Mode != "automatic" && authority.Mode != "manual") ||
+		(seal.GroupAuthority.Mode == "automatic" && (authority.Mode == "automatic" && authority.Revision != seal.GroupAuthority.Revision || authority.Mode == "manual" && authority.Revision <= seal.GroupAuthority.Revision)) {
+		return result, state, ErrIncomingMatchConflict
+	}
+	if locking {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, "incoming-match-evaluation:"+groupID.String()); err != nil {
+			return result, state, err
+		}
+		var revision string
+		if err := tx.NewRaw(`SELECT evaluation_revision FROM incoming_match_evaluation WHERE group_id=? FOR UPDATE`, groupID).Scan(ctx, &revision); err != nil || revision != expectedRevision {
+			return result, state, ErrIncomingMatchConflict
+		}
+	}
+	state.fence = IncomingMatchProviderFence{ProviderID: seal.ProviderID, ProviderSourceID: seal.SourceID, ConfigurationIdentity: seal.SourceConfiguration}
+	state.seal, state.context = &seal, &contextSnapshot
+	materialAssignments := make([]FrozenTrackAssignment, 0, len(assignments))
+	for _, assignment := range assignments {
+		p := positions[assignment.ProviderTrackID]
+		track := projection.Releases[0].Tracks
+		var recordingKey string
+		for _, candidate := range track {
+			if candidate.ID == assignment.ProviderTrackID {
+				recordingKey = candidate.RecordingProviderKey
+				break
+			}
+		}
+		materialAssignments = append(materialAssignments, FrozenTrackAssignment{ProviderTrackID: assignment.ProviderTrackID, ProviderReleaseID: releaseID, ReleaseKey: selected.ReleaseID, RecordingKey: recordingKey, Medium: p.Medium - 1, Position: p.Position - 1})
+	}
+	frozen, err := acceptedProjectionToMaterialization(*projection, selected.ReleaseID, materialAssignments)
+	if err != nil {
+		return result, state, ErrIncomingMatchConflict
+	}
+	state.frozen = &frozen
+	var localID uuid.UUID
+	err = tx.NewRaw(`SELECT local_release_id FROM provider_local_release WHERE provider_id=? AND provider_release_id=?`, seal.ProviderID, releaseID).Scan(ctx, &localID)
+	if err == nil {
+		state.localReleaseID = &localID
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return result, state, err
+	}
+	memberSet := make(map[uuid.UUID]bool, len(group.Members))
+	for _, member := range group.Members {
+		memberSet[member.FileMemberID] = true
+	}
+	locations, slots := map[uuid.UUID][]string{}, map[uuid.UUID][]string{}
+	for _, capture := range captures {
+		if memberSet[capture.VariantID] {
+			locations[capture.VariantID] = append(locations[capture.VariantID], capture.ConfiguredPath+"/"+capture.RelativePath)
+			parent := path.Clean(path.Dir(capture.RelativePath))
+			if parent == "." {
+				parent = ""
+			}
+			slots[capture.VariantID] = append(slots[capture.VariantID], capture.RootID.String()+"\x00"+parent)
+		}
+	}
+	assignmentByMember := map[uuid.UUID]MatchingManualAssignment{}
+	for _, assignment := range assignments {
+		if !memberSet[assignment.FileMemberID] {
+			return result, state, errors.New("manual matching assignment references a non-member")
+		}
+		assignmentByMember[assignment.FileMemberID] = assignment
+	}
+	occupied := map[string]uuid.UUID{}
+	for _, assignment := range assignments {
+		for _, folder := range slots[assignment.FileMemberID] {
+			slot := fmt.Sprintf("%s\x00%d\x00%d", folder, assignment.Medium, assignment.Position)
+			if old, exists := occupied[slot]; exists && old != assignment.FileMemberID {
+				return result, state, errors.New("manual matching assignments collide in a source folder")
+			}
+			occupied[slot] = assignment.FileMemberID
+		}
+	}
+	result = MatchingManualPreview{GroupID: groupID, EvaluationRevision: expectedRevision, ProviderReleaseID: releaseID, Members: make([]MatchingManualMember, 0, len(group.Members)), OmittedMemberIDs: make([]uuid.UUID, 0)}
+	result.SelectedRelease = MatchingManualReleaseLayout{ProviderReleaseID: releaseID, ReleaseID: selected.ReleaseID, Title: frozen.Release.Title, TracklistComplete: selected.TracklistComplete, Positions: make([]MatchingManualReleaseLayoutPosition, 0, len(selected.Positions))}
+	for _, p := range selected.Positions {
+		result.SelectedRelease.Positions = append(result.SelectedRelease.Positions, MatchingManualReleaseLayoutPosition{TrackID: p.TrackID, Medium: p.Medium, Position: p.Position, DisplayedNumber: p.DisplayedNumber, RecordingID: p.RecordingID, Title: p.Title})
+	}
+	for _, member := range group.Members {
+		paths := locations[member.FileMemberID]
+		if len(paths) == 0 {
+			return result, state, ErrIncomingMatchConflict
+		}
+		sort.Strings(paths)
+		item := MatchingManualMember{FileMemberID: member.FileMemberID, Locations: paths}
+		if assignment, ok := assignmentByMember[member.FileMemberID]; ok {
+			item.Assignment = &assignment
+		} else {
+			result.OmittedMemberIDs = append(result.OmittedMemberIDs, member.FileMemberID)
+		}
+		result.Members = append(result.Members, item)
+	}
+	current, err := readManualCurrentState(ctx, tx, seal.ProviderID, releaseID, selected.Positions, group.Members)
+	if err != nil {
+		return result, state, err
+	}
+	digestInput, err := json.Marshal(struct {
+		Header          IncomingMatchEvaluationHeader
+		Members         []MatchingManualMember
+		Current         manualCurrentState
+		Authority       IncomingGroupMatchingAuthority
+		SourceID        uuid.UUID
+		Configuration   string
+		SealDigest      string
+		Materialization FrozenMaterialization
+	}{state.header, result.Members, current, authority, seal.SourceID, source.Configuration, seal.Digest, frozen})
+	if err != nil {
+		return result, state, err
+	}
+	sum := sha256.Sum256(digestInput)
+	result.PreviewDigest = hex.EncodeToString(sum[:])
+	result.LocalReleaseID = state.localReleaseIDOrNil()
+	return result, state, nil
+}
+
+// currentManualMemberLocationIDs resolves the current inventory locations for
+// all sealed member variants. Resolve locations before reading captures so
+// additional captures for a member remain visible to the frozen-snapshot check.
+func currentManualMemberLocationIDs(ctx context.Context, tx bun.IDB, members []IncomingMatchMemberFence) ([]uuid.UUID, error) {
+	variantIDs := make([]uuid.UUID, 0, len(members))
+	for _, member := range members {
+		if member.FileMemberID == uuid.Nil {
+			return nil, ErrIncomingMatchConflict
+		}
+		variantIDs = append(variantIDs, member.FileMemberID)
+	}
+	if len(variantIDs) == 0 {
+		return nil, ErrIncomingMatchConflict
+	}
+	var locationIDs []uuid.UUID
+	err := tx.NewRaw(`SELECT location.id
+		FROM source_root root
+		JOIN source_location location ON location.source_root_id=root.id
+		LEFT JOIN source_analysis_work work ON work.current_location_id=location.id AND work.location_id=location.id
+			AND work.configured_path=root.configured_path AND work.inventory_path=root.inventory_path
+			AND work.relative_path=location.relative_path AND work.size_bytes=location.size_bytes AND work.mtime=location.mtime
+	LEFT JOIN source_analysis_step sha ON sha.work_id=work.id AND sha.step='sha256' AND sha.state='succeeded'
+	WHERE COALESCE(sha.success_sha_variant_id, work.id, location.id) IN (?)
+	ORDER BY location.id`, bun.List(variantIDs)).Scan(ctx, &locationIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve current manual matching member locations: %w", err)
+	}
+	return locationIDs, nil
+}
+
+func matchingFallbackSealContext(seal MatchingFallbackSealAuthority) (MatchingFallbackCalculationContext, error) {
+	var context MatchingFallbackCalculationContext
+	if len(seal.FullEvaluationContext) == 0 {
+		return context, errors.New("sealed lookup projection is unavailable")
+	}
+	if err := strictManualDecode(seal.FullEvaluationContext, &context); err != nil {
+		return context, err
+	}
+	return context, nil
+}
+
+// frozenManualCaptureIsCurrent proves that the immutable review target still
+// describes the current persisted captures. The seal remains the source of
+// authority; this comparison only prevents replay against changed source state.
+func frozenManualCaptureIsCurrent(raw json.RawMessage, metadata []MatchingAcquisitionCapturedMember, members []IncomingMatchMemberFence, current []IncomingGroupingCapture) bool {
+	var target struct {
+		Members []struct {
+			VariantID    uuid.UUID                        `json:"variant_id"`
+			SourceSHA256 string                           `json:"source_sha256"`
+			Locations    []IncomingGroupingMemberLocation `json:"locations"`
+			Captures     []IncomingGroupingCapture        `json:"captures"`
+		} `json:"members"`
+	}
+	if json.Unmarshal(raw, &target) != nil || len(target.Members) == 0 || len(target.Members) != len(members) || len(metadata) != len(members) {
+		return false
+	}
+	memberIDs := make(map[uuid.UUID]IncomingMatchMemberFence, len(members))
+	for _, member := range members {
+		if member.FileMemberID == uuid.Nil || memberIDs[member.FileMemberID].FileMemberID != uuid.Nil {
+			return false
+		}
+		memberIDs[member.FileMemberID] = member
+	}
+	metadataByID := make(map[uuid.UUID]MatchingAcquisitionCapturedMember, len(metadata))
+	for _, item := range metadata {
+		if item.MemberID == uuid.Nil || metadataByID[item.MemberID].MemberID != uuid.Nil {
+			return false
+		}
+		metadataByID[item.MemberID] = item
+	}
+	// The persisted reader is global, so index only captures that belong to the
+	// sealed target scope. Unrelated inventory variants must not leak into the
+	// leftover check, while every capture of a target variant is retained.
+	allowedVariants := make(map[uuid.UUID]struct{}, len(target.Members))
+	for _, expected := range target.Members {
+		allowedVariants[expected.VariantID] = struct{}{}
+	}
+	currentByID := make(map[uuid.UUID][]IncomingGroupingCapture, len(members))
+	for _, capture := range current {
+		if _, allowed := allowedVariants[capture.VariantID]; !allowed {
+			continue
+		}
+		currentByID[capture.VariantID] = append(currentByID[capture.VariantID], capture)
+	}
+	for _, expected := range target.Members {
+		member, exists := memberIDs[expected.VariantID]
+		captured, hasMetadata := metadataByID[expected.VariantID]
+		actual := currentByID[expected.VariantID]
+		if !exists || !hasMetadata || len(expected.Captures) == 0 || len(actual) != len(expected.Captures) || captured.WorkID != member.WorkID {
+			return false
+		}
+		if len(captured.Tags) > 0 && !matchingJSONEqual(captured.Tags, actual[0].Tags) {
+			return false
+		}
+		capturedHash, hashErr := memberSourceHash(raw, expected.VariantID)
+		if hashErr != nil {
+			return false
+		}
+		if capturedHash != "" {
+			for _, capture := range actual {
+				if len(capture.SourceSHA256) == 0 || !strings.EqualFold(hex.EncodeToString(capture.SourceSHA256), capturedHash) {
+					return false
+				}
+			}
+		}
+		if !equalFrozenCaptureJSON(expected.Captures, actual) {
+			return false
+		}
+		actualLocations := make([]IncomingGroupingMemberLocation, 0, len(actual))
+		for _, capture := range actual {
+			actualLocations = append(actualLocations, IncomingGroupingMemberLocation{
+				VariantID: capture.VariantID, RootID: capture.RootID, WorkID: capture.WorkID, LocationID: capture.LocationID,
+				ConfiguredPath: capture.ConfiguredPath, InventoryPath: capture.InventoryPath, RelativePath: capture.RelativePath,
+				SizeBytes: capture.SizeBytes, Mtime: capture.Mtime,
+			})
+		}
+		if !equalFrozenCaptureJSON(expected.Locations, actualLocations) {
+			return false
+		}
+		delete(memberIDs, expected.VariantID)
+		delete(metadataByID, expected.VariantID)
+		delete(currentByID, expected.VariantID)
+	}
+	return len(memberIDs) == 0 && len(metadataByID) == 0 && len(currentByID) == 0
+}
+
+func equalFrozenCaptureJSON[T any](left, right []T) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftBytes, leftErr := json.Marshal(left)
+	rightBytes, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && matchingJSONEqual(leftBytes, rightBytes)
+}
+
 func (s manualMatchingTxState) localReleaseIDOrNil() uuid.UUID {
 	if s.localReleaseID == nil {
 		return uuid.Nil
@@ -486,6 +860,9 @@ func readManualCurrentState(ctx context.Context, tx bun.Tx, providerID, releaseI
 }
 
 func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment) error {
+	if state.frozen != nil {
+		return materializeFrozenManualMatching(ctx, tx, state, preview, assignments)
+	}
 	localReleaseID, created, err := ensureLocalRelease(ctx, tx, state.fence.ProviderID, preview.ProviderReleaseID, state.release.Name, materializationAuthority{method: "manual"})
 	if err != nil {
 		return err
@@ -587,4 +964,100 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 		}
 	}
 	return nil
+}
+
+func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manualMatchingTxState, preview MatchingManualPreview, assignments []MatchingManualAssignment) error {
+	if state.frozen == nil || state.seal == nil {
+		return ErrIncomingMatchConflict
+	}
+	frozen := *state.frozen
+	seal := *state.seal
+	localReleaseID, releaseCreated, err := ensureLocalRelease(ctx, tx, seal.ProviderID, frozen.Release.ID, frozen.Release.Title, materializationAuthority{method: "manual"})
+	if err != nil {
+		return err
+	}
+	if releaseCreated {
+		if source, ok := frozen.Release.FieldSources["title"]; ok {
+			if err := writeManualMetadata(ctx, tx, "local_release", localReleaseID, "title", frozen.Release.ProviderKey, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence("title", source)); err != nil {
+				return err
+			}
+		}
+		if len(frozen.Release.Credits) > 0 {
+			if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localReleaseID, "release_artist", frozen.Release.Credits, preview.EvaluationRevision); err != nil {
+				return err
+			}
+		}
+	}
+	tracks := make(map[uuid.UUID]FrozenRecordingTrack, len(frozen.Tracks))
+	for _, track := range frozen.Tracks {
+		tracks[track.ProviderTrackID] = track
+	}
+	for _, assignment := range assignments {
+		track, ok := tracks[assignment.ProviderTrackID]
+		if !ok || track.ProviderReleaseID != frozen.Release.ID || track.Medium+1 != assignment.Medium || track.Position+1 != assignment.Position {
+			return ErrIncomingMatchConflict
+		}
+		var recordingID uuid.UUID
+		var recordingKey string
+		var medium, position int
+		if err := tx.NewRaw(`SELECT track.recording_id,recording.provider_key,track.medium,track.position FROM provider_release_track track JOIN provider_recording recording ON recording.provider_id=track.provider_id AND recording.id=track.recording_id WHERE track.provider_id=? AND track.id=? AND track.release_id=?`, seal.ProviderID, track.ProviderTrackID, frozen.Release.ID).Scan(ctx, &recordingID, &recordingKey, &medium, &position); err != nil || !strings.EqualFold(recordingKey, track.RecordingProviderKey) || medium != track.Medium || position != track.Position {
+			return ErrIncomingMatchConflict
+		}
+		localRecordingID, recordingCreated, err := ensureManualLocalRecording(ctx, tx, seal.ProviderID, recordingID, track.RecordingTitle)
+		if err != nil {
+			return err
+		}
+		if recordingCreated {
+			source := track.RecordingTitleSource
+			if source == nil {
+				fallback := FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
+				source = &fallback
+			}
+			if err := writeManualMetadata(ctx, tx, "local_recording", localRecordingID, "title", track.RecordingProviderKey, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence("title", *source)); err != nil {
+				return err
+			}
+			if len(track.RecordingCredits) > 0 {
+				if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localRecordingID, "recording_artist", track.RecordingCredits, preview.EvaluationRevision); err != nil {
+					return err
+				}
+			}
+		}
+		localTrackID, _, _, trackCreated, err := ensureLocalTrack(ctx, tx, seal.ProviderID, track.ProviderTrackID, recordingID, localReleaseID, medium, position, track.Title, materializationAuthority{method: "manual"})
+		if err != nil {
+			return err
+		}
+		if trackCreated {
+			field, key, source := "title", track.RecordingProviderKey, FrozenFieldSource{EntityKind: "recording", ProviderKey: track.RecordingProviderKey, Field: "title"}
+			if track.TitleSource != nil {
+				field, key, source = track.TitleSource.Field, track.TitleSource.ProviderKey, *track.TitleSource
+			}
+			if err := writeManualMetadata(ctx, tx, "local_track", localTrackID, field, key, seal.SourceID, seal.ProviderID, preview.EvaluationRevision, jsonEvidence(field, source)); err != nil {
+				return err
+			}
+			if len(track.Credits) > 0 {
+				if err := materializeFrozenManualArtistCredits(ctx, tx, seal.ProviderID, seal.SourceID, localTrackID, "track_artist", track.Credits, preview.EvaluationRevision); err != nil {
+					return err
+				}
+			}
+		}
+		var workID uuid.UUID
+		if err := tx.NewRaw(`SELECT work_id FROM incoming_match_evaluation_member WHERE group_id=? AND file_member_id=?`, preview.GroupID, assignment.FileMemberID).Scan(ctx, &workID); err != nil {
+			return err
+		}
+		var variants []uuid.UUID
+		if err := tx.NewRaw(`SELECT DISTINCT media_variant_id FROM source_work_variant_identity WHERE work_id=? ORDER BY media_variant_id`, workID).Scan(ctx, &variants); err != nil || len(variants) == 0 {
+			return ErrIncomingMatchConflict
+		}
+		for _, variant := range variants {
+			if err := attachTrackSource(ctx, tx, localTrackID, variant, materializationAuthority{method: "manual"}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func jsonEvidence(field string, source FrozenFieldSource) json.RawMessage {
+	encoded, _ := json.Marshal(map[string]ProviderFieldEvidence{field: {Authority: source.Authority, FetchOrder: source.FetchOrder}})
+	return encoded
 }

@@ -172,6 +172,27 @@ export interface IncomingGroupResponse {
   unready_members: string[] | null;
 }
 
+export interface IncomingGroupReturnAutomaticResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  authority_revision: number;
+  group_id: string;
+  group_revision: string;
+  mode: string;
+  requested_generation: number;
+}
+
+export interface IncomingGroupUnlinkResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  authority_revision: number;
+  group_id: string;
+  group_revision: string;
+  mode: string;
+  /** @nullable */
+  removed_source_ids: string[] | null;
+}
+
 export interface IncomingGroupingActionInput {
   group_id?: string;
   /** @nullable */
@@ -399,6 +420,14 @@ export interface MatchingManualPreview {
   selected_release: MatchingReviewRelease;
 }
 
+export interface MatchingReturnAutomaticBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_authority_revision: number;
+  expected_group_revision: string;
+  request_id: string;
+}
+
 export interface MatchingReviewPosition {
   assignment_confidence?: number;
   displayed_number?: string;
@@ -420,8 +449,12 @@ export interface MatchingReviewCandidate {
 export interface MatchingReview {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  authority_mode: string;
+  authority_revision: number;
   /** @nullable */
   candidates: MatchingReviewCandidate[] | null;
+  /** @nullable */
+  current_linked_manual_media_source_ids: string[] | null;
   evaluated: boolean;
   evaluation_revision?: string;
   group_id: string;
@@ -431,6 +464,16 @@ export interface MatchingReview {
   proposal_available: boolean;
   /** @nullable */
   releases: MatchingReviewRelease[] | null;
+}
+
+export interface MatchingUnlinkBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_authority_revision: number;
+  expected_group_revision: string;
+  request_id: string;
+  /** @nullable */
+  source_ids: string[] | null;
 }
 
 export interface MovePreflightBody {

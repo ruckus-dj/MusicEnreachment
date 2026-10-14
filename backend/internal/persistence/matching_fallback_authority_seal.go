@@ -179,10 +179,18 @@ func (repository *SetupManagerRepository) GetMatchingFallbackAuthoritySeal(
 		return result, false, fmt.Errorf("read fallback authority seal: begin snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	return readMatchingFallbackAuthoritySeal(ctx, tx, runID, waitRevision)
+}
+
+// readMatchingFallbackAuthoritySeal validates the persisted seal and its original
+// wait provenance through the caller's transaction. Frozen consumers use this
+// to bind historical authority and current write checks to one database view.
+func readMatchingFallbackAuthoritySeal(ctx context.Context, database bun.IDB, runID uuid.UUID, waitRevision int64) (MatchingFallbackSealAuthority, bool, error) {
+	var result MatchingFallbackSealAuthority
 	var schema int
 	var payload json.RawMessage
 	var digest []byte
-	err = tx.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
+	err := database.NewRaw(`SELECT schema_version,authority,authority_digest FROM matching_fallback_authority_seal
 		WHERE run_id=? AND wait_revision=?`, runID, waitRevision).Scan(ctx, &schema, &payload, &digest)
 	if err == sql.ErrNoRows {
 		return result, false, nil
@@ -212,7 +220,7 @@ func (repository *SetupManagerRepository) GetMatchingFallbackAuthoritySeal(
 	}
 	// Reconstruct the expected authority from the original immutable wait and
 	// receipts. Historical mode intentionally avoids the mutable current cursor.
-	expected, found, err := buildMatchingFallbackSealAuthority(ctx, tx, runID, waitRevision, true)
+	expected, found, err := buildMatchingFallbackSealAuthority(ctx, database, runID, waitRevision, true)
 	if err != nil {
 		return MatchingFallbackSealAuthority{}, false, err
 	}
