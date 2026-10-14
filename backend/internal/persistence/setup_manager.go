@@ -1792,15 +1792,128 @@ func (repository *SetupManagerRepository) DismissOperation(ctx context.Context, 
 }
 
 func (repository *SetupManagerRepository) DeleteSucceededBefore(ctx context.Context, before time.Time) error {
+	var cleanupErrors []error
+	if err := repository.retireEligibleAutomaticFallbackProofs(ctx, before); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup automatic fallback proofs: %w", err))
+	}
 	_, err := repository.db.NewDelete().Model((*Operation)(nil)).
 		Where("state = 'succeeded'").
 		Where("finished_at < ?", before).
 		Where("NOT EXISTS (SELECT 1 FROM tools_execution_claim WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_work_execution WHERE operation_id = operation.id)").
 		Where("NOT EXISTS (SELECT 1 FROM source_analysis_artifact_cleanup_item WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM matching_run WHERE operation_id = operation.id)").
+		Where("NOT EXISTS (SELECT 1 FROM matching_apply_request WHERE apply_operation_id = operation.id OR parent_run_id IN (SELECT id FROM matching_run WHERE operation_id = operation.id))").
+		Where("NOT EXISTS (SELECT 1 FROM matching_provider_dependency WHERE request_id = operation.id)").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cleanup succeeded operations: %w", err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup succeeded operations: %w", err))
 	}
-	return nil
+	return errors.Join(cleanupErrors...)
+}
+
+// retireEligibleAutomaticFallbackProofs removes only expired, successfully
+// completed automatic fallback proof graphs. Manual admissions and live/current
+// evidence remain untouched; the database authorization trigger independently
+// validates each selected run before any immutable receipt is removed.
+func (repository *SetupManagerRepository) retireEligibleAutomaticFallbackProofs(ctx context.Context, before time.Time) error {
+	var runIDs []uuid.UUID
+	if err := repository.db.NewRaw(`SELECT run.id FROM matching_run run
+		JOIN operation parent ON parent.id=run.operation_id
+		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
+		WHERE parent.kind='matching_evaluation_v1' AND parent.state='succeeded'
+		  AND parent.finished_at < LEAST(?, transaction_timestamp() - interval '24 hours') AND run.state='succeeded'
+		ORDER BY run.id`, before).Scan(ctx, &runIDs); err != nil {
+		return fmt.Errorf("select expired fallback runs: %w", err)
+	}
+	var cleanupErrors []error
+	for _, runID := range runIDs {
+		err := repository.retireAutomaticFallbackProof(ctx, runID, before)
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+// Each run has an independent transaction: a hold or database failure on one
+// graph cannot roll back retirement of another eligible graph.
+func (repository *SetupManagerRepository) retireAutomaticFallbackProof(ctx context.Context, runID uuid.UUID, before time.Time) error {
+	return repository.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+			return fmt.Errorf("lock output admission gate: %w", err)
+		}
+		if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+			return fmt.Errorf("lock source mutation gate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock_shared(hashtext(?))", "musicbrainz-config"); err != nil {
+			return fmt.Errorf("lock MusicBrainz configuration: %w", err)
+		}
+		eligible, err := fallbackRunRetirementEligible(ctx, tx, runID, before)
+		if err != nil {
+			return fmt.Errorf("check fallback run %s retirement eligibility: %w", runID, err)
+		}
+		if !eligible {
+			return nil
+		}
+		if _, err := tx.NewRaw(`INSERT INTO matching_run_retirement_authorization(run_id, cleanup_cutoff)
+			VALUES (?, LEAST(?, transaction_timestamp() - interval '24 hours'))`, runID, before).Exec(ctx); err != nil {
+			return fmt.Errorf("authorize fallback run %s retirement: %w", runID, err)
+		}
+		statements := []struct {
+			name string
+			sql  string
+		}{
+			{"apply receipts", `DELETE FROM matching_apply_receipt receipt USING matching_apply_request request WHERE request.parent_run_id=? AND request.apply_operation_id=receipt.apply_operation_id`},
+			{"apply requests", `DELETE FROM matching_apply_request WHERE parent_run_id=?`},
+			{"fallback search receipts", `DELETE FROM matching_fallback_search_receipt WHERE run_id=?`},
+			{"fallback lookup receipts", `DELETE FROM matching_fallback_lookup_receipt WHERE run_id=?`},
+			{"fallback evaluation handoffs", `DELETE FROM matching_fallback_evaluation_handoff WHERE run_id=?`},
+			{"fallback authority seals", `DELETE FROM matching_fallback_authority_seal WHERE run_id=?`},
+			{"fallback calculation receipts", `DELETE FROM matching_fallback_calculation_receipt WHERE run_id=?`},
+			{"fallback acquisition phases", `DELETE FROM matching_acquisition_phase WHERE run_id=?`},
+			{"fallback request registrations", `DELETE FROM matching_fallback_request_registration WHERE run_id=?`},
+			{"provider dependencies", `DELETE FROM matching_provider_dependency WHERE parent_run_id=?`},
+			{"fallback acquisition", `DELETE FROM matching_acquisition WHERE run_id=?`},
+			{"matching run targets", `DELETE FROM matching_run_target WHERE run_id=?`},
+			{"retirement authorization", `DELETE FROM matching_run_retirement_authorization WHERE run_id=?`},
+		}
+		for _, statement := range statements {
+			if _, err := tx.NewRaw(statement.sql, runID).Exec(ctx); err != nil {
+				return fmt.Errorf("delete %s for fallback run %s: %w", statement.name, runID, err)
+			}
+		}
+		if _, err := tx.NewRaw(`DELETE FROM operation WHERE id=(SELECT operation_id FROM matching_run WHERE id=?)`, runID).Exec(ctx); err != nil {
+			return fmt.Errorf("delete retired fallback parent operation %s: %w", runID, err)
+		}
+		return nil
+	})
+}
+
+func fallbackRunRetirementEligible(ctx context.Context, tx bun.Tx, runID uuid.UUID, before time.Time) (bool, error) {
+	var eligible bool
+	err := tx.NewRaw(`SELECT EXISTS (
+		SELECT 1 FROM matching_run run
+		JOIN operation parent ON parent.id=run.operation_id
+		JOIN matching_acquisition acquisition ON acquisition.run_id=run.id AND acquisition.intent_version=3
+		WHERE run.id=? AND parent.kind='matching_evaluation_v1' AND parent.state='succeeded'
+		  AND parent.finished_at < LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		  AND run.state='succeeded'
+		  AND NOT EXISTS (SELECT 1 FROM incoming_matching_generation generation WHERE generation.current_run_id=run.id)
+		  AND NOT EXISTS (SELECT 1 FROM matching_run_target target JOIN incoming_match_evaluation evaluation
+		    ON evaluation.target_run_id=run.id OR evaluation.frozen_run_id=run.id WHERE target.run_id=run.id)
+		  AND NOT EXISTS (SELECT 1 FROM matching_delivery delivery WHERE delivery.run_id=run.id AND delivery.consumed_at IS NULL)
+		  AND NOT EXISTS (SELECT 1 FROM matching_apply_request request JOIN operation child ON child.id=request.apply_operation_id
+		    LEFT JOIN river_job job ON job.id=child.river_job_id WHERE request.parent_run_id=run.id AND
+			      (child.state <> 'succeeded' OR child.finished_at IS NULL OR child.finished_at >= LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		       OR job.state IN ('available','pending','running','retryable','scheduled')))
+		  AND NOT EXISTS (SELECT 1 FROM matching_provider_dependency dependency JOIN operation child ON child.id=dependency.request_id
+		    LEFT JOIN river_job job ON job.id=child.river_job_id WHERE dependency.parent_run_id=run.id AND
+		      (dependency.terminal_outcome IS NULL OR child.state NOT IN ('succeeded','failed') OR child.finished_at IS NULL
+			       OR child.finished_at >= LEAST(?::timestamptz, transaction_timestamp() - interval '24 hours')
+		       OR child.state IN ('queued','running') OR job.state IN ('available','pending','running','retryable','scheduled')))
+		  AND NOT EXISTS (SELECT 1 FROM river_job job WHERE job.id=parent.river_job_id
+		    AND job.state IN ('available','pending','running','retryable','scheduled'))
+	)`, runID, before, before, before).Scan(ctx, &eligible)
+	return eligible, err
 }
