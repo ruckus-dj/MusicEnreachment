@@ -137,6 +137,9 @@ function review(overrides: Partial<MatchingReview> = {}): MatchingReview {
     proposal_available: true,
     evaluation_revision: "evaluation-1",
     group_id: ids.group,
+    authority_mode: "automatic",
+    authority_revision: 1,
+    current_linked_manual_media_source_ids: [],
     members: [ids.memberOne, ids.memberTwo],
     releases,
     candidates: [

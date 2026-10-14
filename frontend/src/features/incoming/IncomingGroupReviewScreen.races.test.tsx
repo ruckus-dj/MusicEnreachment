@@ -35,6 +35,9 @@ function review(groupId: string, index: number): MatchingReview {
     proposal_available: true,
     evaluation_revision: `evaluation-${groupId}`,
     group_id: groupId,
+    authority_mode: "automatic",
+    authority_revision: 1,
+    current_linked_manual_media_source_ids: [],
     members: [members[index]],
     releases: [
       {
@@ -161,6 +164,58 @@ describe("incoming review request races", () => {
     });
     second.resolve(HttpResponse.json(previewBody));
     await Promise.resolve();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Предпросмотр полного назначения",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("unlocks same-group controls after a refetch changes evaluation revision", async () => {
+    let groupAReviews = 0;
+    server.use(
+      http.get("/api/incoming-groups", () => HttpResponse.json(groupsBody())),
+      http.get("/api/incoming-groups/:groupId/matching", ({ params }) => {
+        const result = review(
+          params.groupId as string,
+          groups.indexOf(params.groupId as string),
+        );
+        if (params.groupId === groups[0] && ++groupAReviews > 1) {
+          result.evaluation_revision = "evaluation-group-a-refreshed";
+        }
+        return HttpResponse.json(result);
+      }),
+    );
+    render(<IncomingGroupReviewScreen />);
+    await chooseCurrentRelease();
+
+    const pending = deferred<Response>();
+    server.use(
+      http.post(
+        "/api/incoming-groups/:groupId/matching/preview",
+        () => pending.promise,
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    expect(screen.getByLabelText("Издание (выбор вручную)")).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Входящая группа"), {
+      target: { value: groups[1] },
+    });
+    await screen.findByRole("heading", { name: "Сохраненная оценка" });
+    fireEvent.change(screen.getByLabelText("Входящая группа"), {
+      target: { value: groups[0] },
+    });
+    await screen.findByText("evaluation-group-a-refreshed");
+    expect(screen.getByLabelText("Издание (выбор вручную)")).toBeDisabled();
+
+    pending.resolve(HttpResponse.json(previewBody));
+    await screen.findByRole("button", {
+      name: "Предпросмотр всего назначения",
+    });
+    expect(screen.getByLabelText("Издание (выбор вручную)")).toBeEnabled();
     expect(
       screen.queryByRole("heading", {
         name: "Предпросмотр полного назначения",

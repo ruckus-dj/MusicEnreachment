@@ -1299,6 +1299,28 @@ func materializeFrozenMatchingApply(ctx context.Context, tx bun.Tx, snapshot Mat
 	return nil
 }
 
+func ensureManualLocalRecording(ctx context.Context, tx bun.Tx, providerID, providerRecordingID uuid.UUID, title string) (uuid.UUID, bool, error) {
+	var localID uuid.UUID
+	err := tx.NewRaw(`SELECT local_recording_id FROM provider_local_recording WHERE provider_id=? AND provider_recording_id=? FOR UPDATE`, providerID, providerRecordingID).Scan(ctx, &localID)
+	if err == nil {
+		if err := ensureManualRecordingAuthority(ctx, tx, providerID, providerRecordingID, materializationAuthority{method: "manual"}); err != nil {
+			return uuid.Nil, false, err
+		}
+		return localID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, false, err
+	}
+	localID = uuid.New()
+	if _, err := tx.NewRaw(`INSERT INTO local_recording(id,title) VALUES (?,?)`, localID, title).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: create local recording: %w", err)
+	}
+	if _, err := tx.NewRaw(`INSERT INTO provider_local_recording(provider_id,provider_recording_id,local_recording_id,method,policy_version) VALUES (?,?,?,'manual',NULL)`, providerID, providerRecordingID, localID).Exec(ctx); err != nil {
+		return uuid.Nil, false, fmt.Errorf("apply matching evaluation: map provider recording: %w", err)
+	}
+	return localID, true, nil
+}
+
 // ensureAutomaticLocalRecording keeps the provider recording's title separate
 // from any release-track title override. The caller holds the stable provider
 // recording row lock before entering this helper.
