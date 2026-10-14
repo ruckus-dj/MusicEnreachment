@@ -50,6 +50,24 @@ func (fake *reconcileWorkerConsumerFake) Reconcile(_ context.Context, delivery s
 	return fake.err
 }
 
+type reconcileWorkerCurrentConsumerFake struct {
+	reconcileWorkerConsumerFake
+	currentDeliveries []service.IncomingMatchingReconcileDelivery
+}
+
+func (fake *reconcileWorkerCurrentConsumerFake) ReconcileCurrent(_ context.Context, delivery service.IncomingMatchingReconcileDelivery) error {
+	fake.currentDeliveries = append(fake.currentDeliveries, delivery)
+	return fake.err
+}
+
+type reconcileWorkerSourceEventRepositoryFake struct {
+	*reconcileWorkerRepositoryFake
+}
+
+func (fake reconcileWorkerSourceEventRepositoryFake) IsCurrentMatchingReconciliationEvent(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 func reconcileWorkerTestJob(id uuid.UUID, jobID int64, attempt int) *river.Job[persistence.IncomingMatchingReconcileJobArgs] {
 	return &river.Job[persistence.IncomingMatchingReconcileJobArgs]{
 		JobRow: &rivertype.JobRow{ID: jobID, Attempt: attempt},
@@ -122,6 +140,23 @@ func TestIncomingMatchingReconcileWorkerDeferredErrorAndSuccessFences(t *testing
 			t.Fatalf("consumer deliveries = %#v", consumer.deliveries)
 		}
 	})
+}
+
+func TestIncomingMatchingReconcileWorkerUsesCurrentProjectionForSourceEvents(t *testing.T) {
+	ctx := context.Background()
+	eventID := uuid.New()
+	const jobID, attempt, epoch = int64(53), 2, int64(17)
+	repository := reconcileWorkerSourceEventRepositoryFake{&reconcileWorkerRepositoryFake{
+		epoch: epoch, outcome: persistence.IncomingMatchingReconciliationClaimed, completeOK: true,
+	}}
+	consumer := &reconcileWorkerCurrentConsumerFake{}
+	if err := NewIncomingMatchingReconcileWorker(repository, consumer).Work(ctx, reconcileWorkerTestJob(eventID, jobID, attempt)); err != nil {
+		t.Fatal(err)
+	}
+	want := service.IncomingMatchingReconcileDelivery{EventID: eventID, RiverJobID: jobID, RiverAttempt: attempt, Epoch: epoch}
+	if len(consumer.currentDeliveries) != 1 || consumer.currentDeliveries[0] != want || len(consumer.deliveries) != 0 {
+		t.Fatalf("source event consumers: current=%#v legacy=%#v, want current delivery %#v only", consumer.currentDeliveries, consumer.deliveries, want)
+	}
 }
 
 func equalReconcileWorkerFence(actual, expected []any) bool {
