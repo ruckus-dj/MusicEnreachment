@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
-	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
@@ -31,19 +30,20 @@ func TestFallbackSearchDigestVersionMigrationPreservesOldWriterReceiptWithPostgr
 	collection := mustMigrations(t)
 	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, fallbackSearchDigestVersionMigration))
 
-	settingsRepository := persistence.NewSettingsRepository(database)
-	settingsRegistry := settings.New(settingsRepository, nil)
-	if err := settingsRegistry.SetMusicBrainzConfig(ctx, "public", ""); err != nil {
-		t.Fatalf("set MusicBrainz config through settings registry: %v", err)
+	// This fixture exercises the historical schema, before current-request columns.
+	identity := uuid.NewString()
+	for _, setting := range []struct{ name, value string }{
+		{"musicbrainz_mode", "public"},
+		{"musicbrainz_base_url", ""},
+		{"musicbrainz_config_identity", identity},
+	} {
+		if _, err := database.NewRaw(`INSERT INTO app_setting(setting_name,setting_value) VALUES (?,?)`, setting.name, setting.value).Exec(ctx); err != nil {
+			t.Fatalf("seed historical MusicBrainz setting %q: %v", setting.name, err)
+		}
 	}
-	config, err := settingsRegistry.GetMusicBrainzConfig(ctx)
-	if err != nil {
-		t.Fatalf("read MusicBrainz setup snapshot: %v", err)
-	}
-	runID, _ := insertFallbackReceiptMigrationScope(t, ctx, database, config.Identity)
+	runID, _ := insertFallbackReceiptMigrationScope(t, ctx, database, identity)
 	requestID := uuid.New()
 	var sourceID uuid.UUID
-	identity := config.Identity
 	if err := database.NewRaw(`SELECT provider_source_id FROM matching_run WHERE id=?`, runID).Scan(ctx, &sourceID); err != nil {
 		t.Fatalf("read fallback run source: %v", err)
 	}

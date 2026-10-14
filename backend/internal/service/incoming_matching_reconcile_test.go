@@ -55,6 +55,27 @@ type reconcileAdmissionStub struct {
 	failOnCall int
 }
 
+type reconcileCurrentRequestsStub struct {
+	requests            []persistence.IncomingMatchingCurrentRequest
+	acked               []persistence.IncomingMatchingCurrentRequest
+	removedAck          []persistence.IncomingMatchingCurrentRequest
+	removedAcknowledged bool
+}
+
+func (stub *reconcileCurrentRequestsStub) ReadPendingCurrentRequests(context.Context) ([]persistence.IncomingMatchingCurrentRequest, error) {
+	return append([]persistence.IncomingMatchingCurrentRequest(nil), stub.requests...), nil
+}
+
+func (stub *reconcileCurrentRequestsStub) AcknowledgeCurrentRequest(_ context.Context, groupID uuid.UUID, generation int64) error {
+	stub.acked = append(stub.acked, persistence.IncomingMatchingCurrentRequest{GroupID: groupID, RequestedGeneration: generation})
+	return nil
+}
+
+func (stub *reconcileCurrentRequestsStub) AcknowledgeRemovedCurrentGroup(_ context.Context, groupID uuid.UUID, generation int64) (bool, error) {
+	stub.removedAck = append(stub.removedAck, persistence.IncomingMatchingCurrentRequest{GroupID: groupID, RequestedGeneration: generation})
+	return stub.removedAcknowledged, nil
+}
+
 func (stub *reconcileAdmissionStub) AdmitAutomaticArtistMatchingRun(_ context.Context, _ persistence.RiverInserter, admission persistence.AutomaticArtistMatchingAdmission) (persistence.AutomaticArtistMatchingAdmissionResult, error) {
 	if admission.EventID == uuid.Nil || admission.EventRiverJobID != 17 || admission.EventRiverAttempt != 2 || admission.EventDeliveryEpoch != 9 ||
 		admission.Parent.Kind != "matching_evaluation_v1" || admission.ParentArgs.(MatchingEvaluationOperationArgs).OperationID != admission.Parent.ID ||
@@ -119,6 +140,31 @@ func TestIncomingMatchingReconciliationReturnsInfrastructureFailureForRetry(t *t
 	service := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, &reconcileProviderStub{}, &reconcileAdmissionStub{failOnCall: 2}, reconcileRiverStub{})
 	if err := service.Reconcile(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9}); err == nil || errors.Is(err, ErrIncomingMatchingReconciliationDeferred) {
 		t.Fatalf("error=%v, want retryable admission error", err)
+	}
+}
+
+func TestIncomingMatchingCurrentReconciliationDefersArtistlessGroup(t *testing.T) {
+	groupID := uuid.New()
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{{GroupID: groupID, RequestedGeneration: 3}}}
+	provider, admission := &reconcileProviderStub{}, &reconcileAdmissionStub{}
+	reconciler := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{reconcileTestSnapshot(t, map[uuid.UUID]string{groupID: ""}, nil)}, provider, admission, reconcileRiverStub{}, requests)
+	err := reconciler.ReconcileCurrent(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9})
+	if !errors.Is(err, ErrIncomingMatchingReconciliationDeferred) || len(provider.queries) != 0 || len(admission.groups) != 0 || len(requests.acked) != 0 {
+		t.Fatalf("error=%v queries=%v admissions=%v acknowledgements=%#v", err, provider.queries, admission.groups, requests.acked)
+	}
+}
+
+func TestIncomingMatchingCurrentReconciliationAcksObservedGenerationOnly(t *testing.T) {
+	groupID := uuid.New()
+	requests := &reconcileCurrentRequestsStub{requests: []persistence.IncomingMatchingCurrentRequest{{GroupID: groupID, RequestedGeneration: 7, ReconciledGeneration: 4}}}
+	provider, admission := &reconcileProviderStub{}, &reconcileAdmissionStub{}
+	snapshot := reconcileTestSnapshot(t, map[uuid.UUID]string{groupID: "Artist"}, nil)
+	reconciler := NewIncomingMatchingReconciliation(&reconcileRefreshStub{}, reconcileSnapshotStub{snapshot}, provider, admission, reconcileRiverStub{}, requests)
+	if err := reconciler.ReconcileCurrent(context.Background(), IncomingMatchingReconcileDelivery{EventID: uuid.New(), RiverJobID: 17, RiverAttempt: 2, Epoch: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if len(admission.groups) != 1 || len(requests.acked) != 1 || requests.acked[0].GroupID != groupID || requests.acked[0].RequestedGeneration != 7 {
+		t.Fatalf("admissions=%v acknowledgements=%#v", admission.groups, requests.acked)
 	}
 }
 

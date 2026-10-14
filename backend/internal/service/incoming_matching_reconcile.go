@@ -39,15 +39,20 @@ type IncomingMatchingReconcileDelivery struct {
 // IncomingMatchingReconciliation admits idempotent artist matching runs from
 // the persisted inventory projection. Provider preparation performs no HTTP.
 type IncomingMatchingReconciliation struct {
-	groups     incomingMatchingReconcileRefresher
-	snapshots  incomingMatchingReconcileSnapshotReader
-	providers  incomingMatchingProviderPreparer
-	admissions incomingMatchingAutomaticAdmission
-	river      persistence.RiverInserter
+	groups          incomingMatchingReconcileRefresher
+	snapshots       incomingMatchingReconcileSnapshotReader
+	providers       incomingMatchingProviderPreparer
+	admissions      incomingMatchingAutomaticAdmission
+	river           persistence.RiverInserter
+	currentRequests incomingMatchingCurrentRequestRepository
 }
 
-func NewIncomingMatchingReconciliation(groups incomingMatchingReconcileRefresher, snapshots incomingMatchingReconcileSnapshotReader, providers incomingMatchingProviderPreparer, admissions incomingMatchingAutomaticAdmission, river persistence.RiverInserter) *IncomingMatchingReconciliation {
-	return &IncomingMatchingReconciliation{groups: groups, snapshots: snapshots, providers: providers, admissions: admissions, river: river}
+func NewIncomingMatchingReconciliation(groups incomingMatchingReconcileRefresher, snapshots incomingMatchingReconcileSnapshotReader, providers incomingMatchingProviderPreparer, admissions incomingMatchingAutomaticAdmission, river persistence.RiverInserter, currentRequests ...incomingMatchingCurrentRequestRepository) *IncomingMatchingReconciliation {
+	service := &IncomingMatchingReconciliation{groups: groups, snapshots: snapshots, providers: providers, admissions: admissions, river: river}
+	if len(currentRequests) > 0 {
+		service.currentRequests = currentRequests[0]
+	}
+	return service
 }
 
 func (service *IncomingMatchingReconciliation) Reconcile(ctx context.Context, delivery IncomingMatchingReconcileDelivery) error {

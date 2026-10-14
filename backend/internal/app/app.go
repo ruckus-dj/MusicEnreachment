@@ -192,6 +192,7 @@ func Run(ctx context.Context, config Config) error {
 		providerFetch,
 		setupManagerRepository,
 		riverSlot,
+		sourceInventory,
 	)
 	incomingMatchingReconcileWorker := jobs.NewIncomingMatchingReconcileWorker(sourceInventory, incomingMatchingReconciliation)
 	incomingMatchingReconcileDispatchWorker := jobs.NewIncomingMatchingReconcileDispatchWorker(matchingReconcileDispatcher)

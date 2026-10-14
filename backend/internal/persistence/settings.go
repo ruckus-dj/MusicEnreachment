@@ -157,6 +157,15 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 		}
 	}
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, musicBrainzConfigChange := values["musicbrainz_config_identity"]
+		if musicBrainzConfigChange {
+			if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
+				return fmt.Errorf("lock output admission for MusicBrainz configuration: %w", err)
+			}
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return fmt.Errorf("lock source mutations for MusicBrainz configuration: %w", err)
+			}
+		}
 		packages := activeSettingPackages(values)
 		if toolsChange {
 			packages = []string{"ffmpeg", "fpcalc"}
@@ -226,6 +235,14 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 		if err := lockMusicBrainzIfNeeded(ctx, tx, values); err != nil {
 			return err
 		}
+		musicBrainzTargetChanged := false
+		if musicBrainzConfigChange {
+			changed, err := preserveOrRotateMusicBrainzIdentity(ctx, tx, values)
+			if err != nil {
+				return fmt.Errorf("compare MusicBrainz provider target: %w", err)
+			}
+			musicBrainzTargetChanged = changed
+		}
 		names := make([]string, 0, len(values))
 		for name := range values {
 			names = append(names, name)
@@ -246,8 +263,73 @@ func (r *SettingsRepository) SetMany(ctx context.Context, values map[string]stri
 				return fmt.Errorf("synchronize MusicBrainz provider source: %w", err)
 			}
 		}
+		if musicBrainzTargetChanged {
+			if err := requestAllAutomaticIncomingMatchingReconciliationWith(ctx, tx); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
+}
+
+func preserveOrRotateMusicBrainzIdentity(ctx context.Context, tx bun.Tx, values map[string]string) (bool, error) {
+	current := make(map[string]string, 3)
+	for _, name := range []string{"musicbrainz_mode", "musicbrainz_base_url", "musicbrainz_config_identity"} {
+		var value string
+		err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name=?`, name).Scan(ctx, &value)
+		if err != nil && err != sql.ErrNoRows {
+			return false, err
+		}
+		if err == nil {
+			current[name] = value
+		}
+	}
+	before := musicBrainzProviderTarget(current["musicbrainz_mode"], current["musicbrainz_base_url"])
+	mode, ok := values["musicbrainz_mode"]
+	if !ok {
+		mode = current["musicbrainz_mode"]
+	}
+	endpoint, ok := values["musicbrainz_base_url"]
+	if !ok {
+		endpoint = current["musicbrainz_base_url"]
+	}
+	changed := before != musicBrainzProviderTarget(mode, endpoint)
+	if !changed {
+		if identity := current["musicbrainz_config_identity"]; identity != "" {
+			values["musicbrainz_config_identity"] = identity
+			if verified, err := readOptionalSetting(ctx, tx, "musicbrainz_verified_at"); err != nil {
+				return false, err
+			} else if verified != nil {
+				values["musicbrainz_verified_at"] = *verified
+			}
+		}
+		return false, nil
+	}
+	values["musicbrainz_verified_at"] = ""
+	return true, nil
+}
+
+func readOptionalSetting(ctx context.Context, tx bun.Tx, name string) (*string, error) {
+	var value string
+	err := tx.NewRaw(`SELECT setting_value FROM app_setting WHERE setting_name=?`, name).Scan(ctx, &value)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func musicBrainzProviderTarget(mode, endpoint string) string {
+	switch mode {
+	case "public":
+		return NormalizeMusicBrainzEndpoint("https://musicbrainz.org/ws/2")
+	case "self-hosted":
+		return NormalizeMusicBrainzEndpoint(endpoint)
+	default:
+		return ""
+	}
 }
 
 // GetMusicBrainzConfigValues returns the configuration keys under the same
@@ -658,11 +740,16 @@ func (r *SettingsRepository) SetMusicBrainzVerifiedIfCurrent(ctx context.Context
 			}
 			return value, nil
 		}
-		for _, expected := range []struct{ name, value, defaultValue string }{
-			{"musicbrainz_mode", mode, "public"},
-			{"musicbrainz_base_url", baseURL, ""},
+		expectedValues := []struct{ name, value, defaultValue string }{
 			{"musicbrainz_config_identity", identity, ""},
-		} {
+		}
+		if identity == "" {
+			expectedValues = append(expectedValues,
+				struct{ name, value, defaultValue string }{"musicbrainz_mode", mode, "public"},
+				struct{ name, value, defaultValue string }{"musicbrainz_base_url", baseURL, ""},
+			)
+		}
+		for _, expected := range expectedValues {
 			current, err := read(expected.name, expected.defaultValue)
 			if err != nil {
 				return err

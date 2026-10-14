@@ -239,7 +239,7 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 			var err error
 			switch change {
 			case "musicbrainz identity":
-				err = registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/ws/2")
+				err = registry.SetMusicBrainzConfig(ctx, "self-hosted", server.URL+"/different/ws/2")
 			case "runtime setting":
 				err = registry.SetPublicationFormat(ctx, "source")
 			case "active installation verification":

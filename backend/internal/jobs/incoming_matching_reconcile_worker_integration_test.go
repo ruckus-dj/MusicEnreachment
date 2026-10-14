@@ -75,38 +75,21 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	if err != nil || ordinaryEvent.SourceOperationID == nil || *ordinaryEvent.SourceOperationID != analysis.ID || ordinaryEvent.OriginalAttempt == nil || *ordinaryEvent.OriginalAttempt != analysis.Attempt {
 		t.Fatalf("ordinary source event origin did not round-trip: event=%+v err=%v", ordinaryEvent, err)
 	}
-	if _, err := fixture.database.ExecContext(ctx, `DELETE FROM incoming_matching_reconcile_event WHERE id=? AND state='pending'`, sourceEventID); err != nil {
-		t.Fatalf("remove undispatched event from pre-outbox fixture: %v", err)
+	eventID := sourceEventID
+	var currentRequests []persistence.IncomingMatchingCurrentRequest
+	if err := fixture.database.NewRaw(`SELECT group_id, requested_generation, reconciled_generation
+		FROM incoming_matching_generation WHERE requested_generation > reconciled_generation ORDER BY group_id`).Scan(ctx, &currentRequests); err != nil {
+		t.Fatalf("read pending current generations before source-event dispatch: %v", err)
 	}
-	type startupEnsureResult struct {
-		event *persistence.IncomingMatchingReconcileEvent
-		err   error
+	if len(currentRequests) == 0 {
+		t.Fatal("ready analysis fixture did not produce a pending current-generation request")
 	}
-	startEnsures := make(chan struct{})
-	results := make(chan startupEnsureResult, 2)
-	for range 2 {
-		go func() {
-			<-startEnsures
-			event, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
-			results <- startupEnsureResult{event: event, err: err}
-		}()
-	}
-	close(startEnsures)
-	firstEnsure, secondEnsure := <-results, <-results
-	if firstEnsure.err != nil || firstEnsure.event == nil || secondEnsure.err != nil || secondEnsure.event == nil {
-		t.Fatalf("ensure startup reconciliation concurrently: first=%+v second=%+v", firstEnsure, secondEnsure)
-	}
-	startupEvent := firstEnsure.event
-	if startupEvent.ID != secondEnsure.event.ID {
-		t.Fatalf("concurrent startup ensures created separate events: %s and %s", startupEvent.ID, secondEnsure.event.ID)
-	}
-	if startupEvent.SourceOperationID != nil || startupEvent.OriginalAttempt != nil || startupEvent.Reason != "startup" || string(startupEvent.SourceInputSnapshot) != `{}` {
-		t.Fatalf("startup event origin = %+v, want null source identity and empty snapshot", startupEvent)
-	}
-	eventID := startupEvent.ID
-	startupAgain, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
-	if err != nil || startupAgain == nil || startupAgain.ID != eventID {
-		t.Fatalf("repeated startup ensure did not coalesce open event: event=%+v err=%v", startupAgain, err)
+	requestedGenerations := make(map[uuid.UUID]int64, len(currentRequests))
+	for _, request := range currentRequests {
+		if request.RequestedGeneration < 1 || request.ReconciledGeneration >= request.RequestedGeneration {
+			t.Fatalf("invalid pending current-generation request before dispatch: %+v", request)
+		}
+		requestedGenerations[request.GroupID] = request.RequestedGeneration
 	}
 
 	registry := fixture.registry
@@ -114,7 +97,7 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	factory := service.NewProviderFactory(registry, nil, nil, nil, nil)
 	provider := service.NewProviderFetchService(registry, factory, cache)
 	inserter := &incomingMatchingReconcileInserterSlot{}
-	consumer := service.NewIncomingMatchingReconciliation(groups, groupingRepository, provider, fixture.setup, inserter)
+	consumer := service.NewIncomingMatchingReconciliation(groups, groupingRepository, provider, fixture.setup, inserter, fixture.inventory)
 	worker := NewIncomingMatchingReconcileWorker(fixture.inventory, consumer)
 	_, listenerPool, err := PrepareWithWorkers(ctx, fixture.databaseURL, fixture.database.DB, nil)
 	if err != nil {
@@ -161,8 +144,8 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 	if err != nil || !claimed {
 		t.Fatalf("claim dispatched startup event before consumer starts: claimed=%v err=%v", claimed, err)
 	}
-	claimedEvent, err := fixture.inventory.EnsureStartupIncomingMatchingReconciliation(ctx)
-	if err != nil || claimedEvent == nil || claimedEvent.ID != eventID || claimedEvent.RegisteredJobID == nil || *claimedEvent.RegisteredJobID != *event.RegisteredJobID || claimedEvent.HighestDeliveryAttempt != 1 || claimedEvent.DeliveryEpoch != epoch || !claimedEvent.DeliveryClaimed {
+	claimedEvent, err := fixture.inventory.GetIncomingMatchingReconciliationEvent(ctx, eventID)
+	if err != nil || claimedEvent.ID != eventID || claimedEvent.RegisteredJobID == nil || *claimedEvent.RegisteredJobID != *event.RegisteredJobID || claimedEvent.HighestDeliveryAttempt != 1 || claimedEvent.DeliveryEpoch != epoch || !claimedEvent.DeliveryClaimed {
 		t.Fatalf("ensure replaced or changed claimed dispatched event: event=%+v err=%v", claimedEvent, err)
 	}
 	if _, err := fixture.inventory.ReleaseIncomingMatchingReconciliationClaim(ctx, eventID, *event.RegisteredJobID, 1, epoch); err != nil {
@@ -201,8 +184,13 @@ func TestIncomingMatchingReconcileWorkerProcessesAnalysisEventPostgreSQL(t *test
 		t.Fatalf("reconciliation event state = %q, err=%v; want done", eventState, err)
 	}
 
-	// Re-dispatching after completion and replaying the durable event must not
-	// create another queue job, admission receipt, target generation, or run.
+	for groupID, requestedGeneration := range requestedGenerations {
+		var reconciledGeneration int64
+		if err := fixture.database.NewRaw(`SELECT reconciled_generation FROM incoming_matching_generation WHERE group_id=?`, groupID).Scan(ctx, &reconciledGeneration); err != nil || reconciledGeneration != requestedGeneration {
+			t.Fatalf("source-event generation acknowledgment for %s = %d, err=%v; want %d", groupID, reconciledGeneration, err, requestedGeneration)
+		}
+	}
+	// A subsequent startup wake must not duplicate the completed admission.
 	var beforeJobs, beforeGenerations int
 	if err := fixture.database.NewRaw(`SELECT count(*) FROM river_job WHERE kind=?`, persistence.IncomingMatchingReconcileJobKind).Scan(ctx, &beforeJobs); err != nil {
 		t.Fatal(err)
