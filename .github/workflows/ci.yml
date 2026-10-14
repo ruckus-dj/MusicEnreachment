@@ -115,7 +115,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Test backend
+      # Full PostgreSQL integration coverage runs on Ubuntu in `task verify`; this
+      # platform matrix keeps the default Go unit tests runnable without Docker.
+      - name: Test backend unit tests
         working-directory: backend
         env:
           CGO_ENABLED: "1"
