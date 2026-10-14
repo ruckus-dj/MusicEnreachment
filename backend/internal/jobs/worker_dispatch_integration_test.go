@@ -957,24 +957,47 @@ func (repository *riverBoundaryRepository) clearBarriers() {
 type dispatchRiverSession struct {
 	client       *river.Client[*sql.Tx]
 	listenerPool *pgxpool.Pool
+	started      bool
 	stopped      bool
 }
 
 func newDispatchRiverSession(t *testing.T, ctx context.Context, databaseURL string, database *bun.DB, worker river.Worker[service.OperationJobArgs]) *dispatchRiverSession {
 	t.Helper()
-	client, listenerPool := startDispatchRiver(t, databaseURL, database, worker)
+	session := newPreparedDispatchRiverSession(t, ctx, databaseURL, database, worker)
+	session.start(t, ctx)
+	return session
+}
+
+func newPreparedDispatchRiverSession(t *testing.T, ctx context.Context, databaseURL string, database *bun.DB,
+	worker river.Worker[service.OperationJobArgs]) *dispatchRiverSession {
+	t.Helper()
+	client, listenerPool, err := PrepareWithWorkers(ctx, databaseURL, database.DB, func(workers *river.Workers) {
+		river.AddWorker(workers, worker)
+	})
+	if err != nil {
+		t.Fatalf("prepare River worker client with production dispatcher: %v", err)
+	}
 	session := &dispatchRiverSession{client: client, listenerPool: listenerPool}
 	t.Cleanup(func() { session.close(t) })
 	return session
 }
 
+func (session *dispatchRiverSession) start(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if err := session.client.Start(ctx); err != nil {
+		t.Fatalf("start prepared River worker client: %v", err)
+	}
+	session.started = true
+}
+
 func (session *dispatchRiverSession) stopAndCancel(t *testing.T, ctx context.Context) {
 	t.Helper()
-	if session.stopped {
+	if session.stopped || !session.started {
 		return
 	}
 	err := session.client.StopAndCancel(ctx)
 	session.stopped = true
+	session.started = false
 	session.listenerPool.Close()
 	if err != nil {
 		t.Fatalf("cancel active River delivery: %v", err)
@@ -986,10 +1009,12 @@ func (session *dispatchRiverSession) close(t *testing.T) {
 	if session.stopped {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := session.client.StopAndCancel(ctx); err != nil {
-		t.Errorf("stop River client: %v", err)
+	if session.started {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := session.client.StopAndCancel(ctx); err != nil {
+			t.Errorf("stop River client: %v", err)
+		}
 	}
 	session.stopped = true
 	session.listenerPool.Close()
@@ -1406,10 +1431,24 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	rollbackWorker := NewInstallationWorker(repository, rollbackWorkerOperations, &dispatchCatalog{}, runtimeSettings,
 		platform, tools.NewLifecycle(&dispatchRunner{}))
 	rollbackWorker.SetMoveWorker(NewMoveWorker(repository, rollbackWorkerOperations, runtimeSettings, platform, tools.NewLifecycle(&dispatchRunner{})))
-	rollbackSession := newDispatchRiverSession(t, ctx, databaseURL, database, rollbackWorker)
+	rollbackSession := newPreparedDispatchRiverSession(t, ctx, databaseURL, database, rollbackWorker)
 	rollbackClient := rollbackSession.client
 	rollbackEvents, cancelRollbackEvents := rollbackClient.Subscribe(river.EventKindJobCompleted)
 	defer cancelRollbackEvents()
+	var claim struct {
+		Attempt    int    `bun:"attempt"`
+		RiverJobID int64  `bun:"river_job_id"`
+		Borrower   string `bun:"borrower"`
+		Borrowed   bool   `bun:"borrowed"`
+	}
+	if err := database.NewRaw(`SELECT attempt, river_job_id, borrower, borrowed FROM tools_execution_claim WHERE operation_id = ?`,
+		postSwitchMove.ID).Scan(ctx, &claim); err != nil {
+		t.Fatalf("read interrupted move tools claim before retry: %v", err)
+	}
+	if postSwitchMove.RiverJobID == nil || claim.Attempt != postSwitchMove.Attempt || claim.RiverJobID != *postSwitchMove.RiverJobID ||
+		claim.Borrower != postSwitchMove.Kind || claim.Borrowed {
+		t.Fatalf("interrupted move tools claim = %#v, operation = %#v; want preserved unborrowed claim", claim, postSwitchMove)
+	}
 	rollbackOperations := service.NewOperationsWithRiver(repository, rollbackClient)
 	rollbackRetry, err := rollbackOperations.Retry(ctx, postSwitchMove.ID)
 	if err != nil {
@@ -1418,6 +1457,17 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	if rollbackRetry.State != "queued" || rollbackRetry.Stage != "retry:switched" {
 		t.Fatalf("post-switch retry stage/state = %s/%s; want queued/retry:switched", rollbackRetry.State, rollbackRetry.Stage)
 	}
+	if rollbackRetry.RiverJobID == nil {
+		t.Fatalf("post-switch retry has no River job: %#v", rollbackRetry)
+	}
+	if err := database.NewRaw(`SELECT attempt, river_job_id, borrower, borrowed FROM tools_execution_claim WHERE operation_id = ?`,
+		postSwitchMove.ID).Scan(ctx, &claim); err != nil {
+		t.Fatalf("read handed-off move tools claim before retry delivery: %v", err)
+	}
+	if claim.Attempt != rollbackRetry.Attempt || claim.RiverJobID != *rollbackRetry.RiverJobID || claim.Borrower != rollbackRetry.Kind || claim.Borrowed {
+		t.Fatalf("post-switch retry tools claim = %#v, operation = %#v; want new unborrowed delivery fence", claim, rollbackRetry)
+	}
+	rollbackSession.start(t, ctx)
 	awaitRiverCompletion(t, ctx, rollbackEvents, *rollbackRetry.RiverJobID)
 	rolledBack, err := repository.GetOperation(ctx, postSwitchMove.ID)
 	if err != nil || rolledBack.State != "failed" || rolledBack.SafeError == nil ||

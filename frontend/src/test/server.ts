@@ -1,3 +1,4 @@
+import { cleanup } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll } from "vitest";
@@ -21,24 +22,45 @@ export const server = setupServer(...defaultHandlers);
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
+  cleanup();
   server.resetHandlers();
   server.events.removeAllListeners();
 });
 afterAll(() => server.close());
 
-// Arm before the action. Vitest's test timeout bounds every await.
-export function nextResponse() {
-  return new Promise<{ request: Request; response: Response }>((resolve) => {
-    const listener = ({
-      request,
-      response,
-    }: {
-      request: Request;
-      response: Response;
-    }) => {
-      server.events.removeListener("response:mocked", listener);
-      resolve({ request: request.clone(), response: response.clone() });
-    };
-    server.events.on("response:mocked", listener);
-  });
+// Arm before the action and fail promptly if the matching response never arrives.
+export function nextResponse(pathname?: string, method?: string) {
+  return new Promise<{ request: Request; response: Response }>(
+    (resolve, reject) => {
+      const listener = ({
+        request,
+        response,
+      }: {
+        request: Request;
+        response: Response;
+      }) => {
+        if (
+          (pathname !== undefined &&
+            new URL(request.url).pathname !== pathname) ||
+          (method !== undefined && request.method !== method)
+        )
+          return;
+        clearTimeout(timeout);
+        server.events.removeListener("response:mocked", listener);
+        resolve({
+          request: request.bodyUsed ? request : request.clone(),
+          response: response.clone(),
+        });
+      };
+      const timeout = setTimeout(() => {
+        server.events.removeListener("response:mocked", listener);
+        reject(
+          new Error(
+            `Missing mocked response${method ? ` for ${method}` : ""}${pathname ? ` ${pathname}` : ""}`,
+          ),
+        );
+      }, 3000);
+      server.events.on("response:mocked", listener);
+    },
+  );
 }
