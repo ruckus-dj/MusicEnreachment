@@ -1,9 +1,33 @@
 # План 11 — группировка входящих и автоматическое сопоставление
 
-**Дата подготовки:** 2026-10-09. **Статус:** согласованный план реализации;
-реализация этим документом не заявляется. Следующий основной этап — matching,
-не operations. Файловая публикация планируется следующим отдельным этапом и в
-этот план не входит.
+**Дата подготовки:** 2026-10-09. **Статус:** COMPLETE (2026-10-15), M01–M10.
+Файловая публикация остаётся следующим отдельным этапом и в этот план не входит.
+
+## Итоговое дополнение 2026-10-15
+
+- Реализация, regression coverage и независимое review завершены с учётом
+  последних решений владельца: additive manual sources, pure-local releases,
+  явное копирование тегов и допустимые пустые ручные значения.
+- Incoming UI включает page-local assignments, drag/select alternatives,
+  provider tag overrides, local release creation/selection, merge/split/move
+  с server preview и inspector сохранённого backend evidence. Matching не
+  удаляет сохранённые source-связи и не выбирает publication quality.
+- Полный `task verify` и pre-commit прошли; 298 frontend tests, Go/PostgreSQL/River
+  integration, migrations/rollback, generation, lint и оба build проверены.
+- Browser-приёмка production UI `f36ac8f`: desktop/mobile-width, light/dark,
+  mocked API, focus/Enter, additive/local/grouping scenarios; ограничения
+  native select automation явно указаны в отчёте.
+- Финальный implementation/test commit
+  `387adff8da9a5ea02b3faaf733b8d7d5aa1be52e` прошёл полный
+  [GitHub CI 38700046349](https://github.com/ruckus-dj/MusicEnreachment/actions/runs/38700046349):
+  verify, Compose smoke, все пять поддерживаемых native platform jobs и
+  публикация container image — success.
+- [Отчёт приёмки](../../reports/plan11-acceptance-2026-10-15.md) фиксирует ревизии,
+  проверки, найденные и исправленные дефекты, независимое review и ограничения.
+- Датированные progress notes ниже сохранены как исторические свидетельства;
+  их прежние «не завершено» не описывают итоговое состояние. Новых продуктовых
+  решений этим дополнением не вводится. План перенесён в `done/` после получения
+  полного принятого evidence; source files и publication этим не изменяются.
 
 ## Перед началом
 
