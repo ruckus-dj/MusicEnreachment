@@ -40,6 +40,10 @@ func TestMatchingWorkerClaimsProviderWakeAfterOriginalDeliveryWaitsPostgreSQL(t 
 	// source-analysis delivery.
 	analysis := fixture.startWithMetadata(t, ctx)
 	awaitRiverCompletion(t, ctx, fixture.events, *analysis.RiverJobID)
+	// Only source analysis is registered on the fixture's running client. The
+	// matching deliveries below are deliberately claimed and invoked by this
+	// test; stop the source consumer before it can fetch those unhandled kinds.
+	stopRiverClient(t, fixture.client)
 	grouping := persistence.NewIncomingGroupingRepository(database)
 	groups := service.NewIncomingGroups(grouping)
 	if err := groups.Refresh(ctx); err != nil {
