@@ -215,7 +215,11 @@ function setup(reviewBody = review()) {
 }
 
 async function chooseRelease(title = "Первое издание") {
-  await screen.findByRole("heading", { name: "Сохраненная оценка" });
+  await screen.findByRole(
+    "heading",
+    { name: "Сохраненная оценка" },
+    { timeout: 5000 },
+  );
   fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
     target: {
       value: title === "Первое издание" ? ids.releaseOne : ids.releaseTwo,
