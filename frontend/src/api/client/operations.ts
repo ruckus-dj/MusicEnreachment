@@ -8,9 +8,16 @@ export function subscribeToOperation(
 ) {
   const events = new EventSource(`${getGetOperationUrl(operationId)}/events`);
   let request: AbortController | undefined;
+  let dirty = false;
+  let subscribed = true;
 
   async function refetch() {
-    request?.abort();
+    if (!subscribed) return;
+    if (request) {
+      dirty = true;
+      return;
+    }
+
     const current = new AbortController();
     request = current;
     try {
@@ -18,7 +25,7 @@ export function subscribeToOperation(
         signal: current.signal,
         cache: "no-store",
       });
-      if (current.signal.aborted) return;
+      if (!subscribed || current.signal.aborted) return;
       if (response.status !== 200) {
         onError(
           new Error(`Operation snapshot request failed (${response.status}).`),
@@ -27,17 +34,25 @@ export function subscribeToOperation(
       }
       onSnapshot(response.data);
     } catch (reason) {
-      if (!current.signal.aborted) {
+      if (subscribed && !current.signal.aborted) {
         onError(
           reason instanceof Error
             ? reason
             : new Error("Operation snapshot request failed."),
         );
       }
+    } finally {
+      if (request === current) request = undefined;
+      if (subscribed && dirty) {
+        dirty = false;
+        void refetch();
+      }
     }
   }
 
   function disconnected() {
+    if (!subscribed) return;
+    dirty = false;
     request?.abort();
     onError(new Error("Operation event stream disconnected."));
   }
@@ -49,6 +64,8 @@ export function subscribeToOperation(
   events.addEventListener("error", disconnected);
 
   return () => {
+    subscribed = false;
+    dirty = false;
     events.removeEventListener("open", refetch);
     events.removeEventListener("operation-changed", refetch);
     events.removeEventListener("error", disconnected);

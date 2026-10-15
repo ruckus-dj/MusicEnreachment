@@ -129,7 +129,7 @@ describe("operation SSE snapshots", () => {
     expect(await snapshotAfter(watcher, new Event("open"))).toEqual(snapshot);
   });
 
-  it("aborts an outdated snapshot when a new wake-up arrives", async () => {
+  it("coalesces wake-ups received while a snapshot is in flight", async () => {
     let release = () => {};
     let count = 0;
     const started = new Promise<Request>((resolve) => {
@@ -150,11 +150,24 @@ describe("operation SSE snapshots", () => {
     watcher.source.dispatchEvent(new Event("open"));
     const oldRequest = await started;
 
-    const latest = await snapshotAfter(watcher, new Event("operation-changed"));
+    watcher.source.dispatchEvent(new Event("operation-changed"));
+    watcher.source.dispatchEvent(new Event("operation-changed"));
+    expect(count).toBe(1);
+    expect(oldRequest.signal.aborted).toBe(false);
 
-    expect(oldRequest.signal.aborted).toBe(true);
-    expect(latest.bytes_completed).toBe(90);
-    expect(watcher.onSnapshot).toHaveBeenCalledTimes(1);
+    const snapshots: OperationResponse[] = [];
+    const latest = new Promise<OperationResponse>((resolve) => {
+      watcher.onSnapshot.mockImplementation((value) => {
+        snapshots.push(value);
+        if (snapshots.length === 2) resolve(value);
+      });
+    });
+    release();
+
+    expect((await latest).bytes_completed).toBe(90);
+    expect(oldRequest.signal.aborted).toBe(false);
+    expect(count).toBe(2);
+    expect(watcher.onSnapshot).toHaveBeenCalledTimes(2);
     expect(watcher.onError).not.toHaveBeenCalled();
   });
 
