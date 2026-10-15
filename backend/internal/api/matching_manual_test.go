@@ -95,6 +95,17 @@ func TestMatchingManualRegisteredRoutesPreviewWholeGroupAndConfirmIntent(t *test
 	}
 }
 
+func TestMatchingManualAssignmentsPreserveExplicitEmptyOverrides(t *testing.T) {
+	var payload []matchingManualAssignmentBody
+	if err := json.Unmarshal([]byte(`[{"file_member_id":"`+uuid.NewString()+`","provider_track_id":"`+uuid.NewString()+`","medium":1,"position":1,"title_override":"","artist_overrides":[]}]`), &payload); err != nil {
+		t.Fatal(err)
+	}
+	assignments := matchingManualAssignments(payload)
+	if len(assignments) != 1 || assignments[0].TitleOverride == nil || *assignments[0].TitleOverride != "" || assignments[0].ArtistOverrides == nil || len(*assignments[0].ArtistOverrides) != 0 {
+		t.Fatalf("explicit empty overrides were lost: %#v", assignments)
+	}
+}
+
 func TestMatchingManualErrorsKeepValidationConflictAndInfrastructureDistinct(t *testing.T) {
 	groupID, releaseID := uuid.New(), uuid.New()
 	for _, test := range []struct {

@@ -171,6 +171,39 @@ describe("incoming review request races", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("discards an in-flight preview when a track tag override changes", async () => {
+    setup();
+    await chooseCurrentRelease();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: `Переопределить название для Track 0 (${tracks[0]})`,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Название"), {
+      target: { value: "Before" },
+    });
+    const pending = deferred<Response>();
+    server.use(
+      http.post(
+        "/api/incoming-groups/:groupId/matching/preview",
+        () => pending.promise,
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    fireEvent.change(screen.getByLabelText("Название"), {
+      target: { value: "After" },
+    });
+    pending.resolve(HttpResponse.json(previewBody));
+    await Promise.resolve();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Предпросмотр полного назначения",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("unlocks same-group controls after a refetch changes evaluation revision", async () => {
     let groupAReviews = 0;
     server.use(
@@ -313,8 +346,9 @@ describe("incoming review request races", () => {
         name: /Подтверждено · локальное издание local-confirmed/,
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Подтверждение сохранено",
+    expect(await screen.findByText(/Подтверждение сохранено/)).toHaveAttribute(
+      "role",
+      "status",
     );
   });
 

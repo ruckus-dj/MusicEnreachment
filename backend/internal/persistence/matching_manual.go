@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"sort"
 	"strings"
 
@@ -25,6 +24,8 @@ type MatchingManualAssignment struct {
 	ProviderTrackID uuid.UUID `json:"provider_track_id"`
 	Medium          int       `json:"medium"`
 	Position        int       `json:"position"`
+	TitleOverride   *string   `json:"title_override,omitempty"`
+	ArtistOverrides *[]string `json:"artist_overrides,omitempty"`
 }
 
 // MatchingManualMember describes one whole-group member and any assigned
@@ -101,10 +102,13 @@ type manualCurrentState struct {
 	Sources        []manualSourceState `json:"sources"`
 }
 type manualTrackState struct {
-	ProviderTrackID  uuid.UUID  `json:"provider_track_id"`
-	LocalTrackID     *uuid.UUID `json:"local_track_id,omitempty"`
-	Method           string     `json:"method,omitempty"`
-	LocalRecordingID *uuid.UUID `json:"local_recording_id,omitempty"`
+	ProviderTrackID  uuid.UUID       `json:"provider_track_id"`
+	LocalTrackID     *uuid.UUID      `json:"local_track_id,omitempty"`
+	Method           string          `json:"method,omitempty"`
+	LocalRecordingID *uuid.UUID      `json:"local_recording_id,omitempty"`
+	Title            *string         `json:"title,omitempty"`
+	Artists          []string        `json:"artists"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
 }
 type manualSourceState struct {
 	MemberID       uuid.UUID `json:"member_id"`
@@ -267,7 +271,9 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 	if err != nil {
 		return result, state, err
 	}
-	if (state.header.MatchingAuthorityMode != "automatic" && state.header.MatchingAuthorityMode != "manual_review") || authority.Revision != state.header.MatchingAuthorityRevision {
+	currentAuthority := authority.Revision == state.header.MatchingAuthorityRevision
+	manualContinuation := authority.Mode == "manual" && authority.Revision == state.header.MatchingAuthorityRevision+1
+	if (state.header.MatchingAuthorityMode != "automatic" && state.header.MatchingAuthorityMode != "manual_review") || (!currentAuthority && !manualContinuation) {
 		return result, state, ErrIncomingMatchConflict
 	}
 	if err := lockAndValidateMatchProvider(ctx, tx, evaluation); err != nil {
@@ -356,16 +362,9 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 		memberSet[m.FileMemberID] = true
 	}
 	locations := make(map[uuid.UUID][]string)
-	locationSlots := make(map[uuid.UUID][]string)
 	for _, c := range captures {
 		if memberSet[c.VariantID] {
 			locations[c.VariantID] = append(locations[c.VariantID], c.ConfiguredPath+"/"+c.RelativePath)
-			root := c.RootID.String()
-			parent := path.Clean(path.Dir(c.RelativePath))
-			if parent == "." {
-				parent = ""
-			}
-			locationSlots[c.VariantID] = append(locationSlots[c.VariantID], root+"\x00"+parent)
 		}
 	}
 	assignmentByMember := make(map[uuid.UUID]MatchingManualAssignment, len(assignments))
@@ -374,16 +373,6 @@ func (repository *IncomingMatchCandidateRepository) previewMatchingManualTx(ctx 
 			return result, state, errors.New("manual matching assignment references a non-member")
 		}
 		assignmentByMember[a.FileMemberID] = a
-	}
-	occupiedSlots := make(map[string]uuid.UUID)
-	for _, a := range assignments {
-		for _, folder := range locationSlots[a.FileMemberID] {
-			slot := fmt.Sprintf("%s\x00%d\x00%d", folder, a.Medium, a.Position)
-			if other, exists := occupiedSlots[slot]; exists && other != a.FileMemberID {
-				return result, state, errors.New("manual matching assignments collide in a source folder")
-			}
-			occupiedSlots[slot] = a.FileMemberID
-		}
 	}
 	result = MatchingManualPreview{GroupID: groupID, EvaluationRevision: expectedRevision, ProviderReleaseID: releaseID, Members: make([]MatchingManualMember, 0, len(group.Members)), OmittedMemberIDs: make([]uuid.UUID, 0)}
 	result.SelectedRelease = MatchingManualReleaseLayout{
@@ -580,15 +569,10 @@ func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualT
 	for _, member := range group.Members {
 		memberSet[member.FileMemberID] = true
 	}
-	locations, slots := map[uuid.UUID][]string{}, map[uuid.UUID][]string{}
+	locations := map[uuid.UUID][]string{}
 	for _, capture := range captures {
 		if memberSet[capture.VariantID] {
 			locations[capture.VariantID] = append(locations[capture.VariantID], capture.ConfiguredPath+"/"+capture.RelativePath)
-			parent := path.Clean(path.Dir(capture.RelativePath))
-			if parent == "." {
-				parent = ""
-			}
-			slots[capture.VariantID] = append(slots[capture.VariantID], capture.RootID.String()+"\x00"+parent)
 		}
 	}
 	assignmentByMember := map[uuid.UUID]MatchingManualAssignment{}
@@ -597,16 +581,6 @@ func (repository *IncomingMatchCandidateRepository) previewFrozenMatchingManualT
 			return result, state, errors.New("manual matching assignment references a non-member")
 		}
 		assignmentByMember[assignment.FileMemberID] = assignment
-	}
-	occupied := map[string]uuid.UUID{}
-	for _, assignment := range assignments {
-		for _, folder := range slots[assignment.FileMemberID] {
-			slot := fmt.Sprintf("%s\x00%d\x00%d", folder, assignment.Medium, assignment.Position)
-			if old, exists := occupied[slot]; exists && old != assignment.FileMemberID {
-				return result, state, errors.New("manual matching assignments collide in a source folder")
-			}
-			occupied[slot] = assignment.FileMemberID
-		}
 	}
 	result = MatchingManualPreview{GroupID: groupID, EvaluationRevision: expectedRevision, ProviderReleaseID: releaseID, Members: make([]MatchingManualMember, 0, len(group.Members)), OmittedMemberIDs: make([]uuid.UUID, 0)}
 	result.SelectedRelease = MatchingManualReleaseLayout{ProviderReleaseID: releaseID, ReleaseID: selected.ReleaseID, Title: frozen.Release.Title, TracklistComplete: selected.TracklistComplete, Positions: make([]MatchingManualReleaseLayoutPosition, 0, len(selected.Positions))}
@@ -794,18 +768,65 @@ func (s manualMatchingTxState) localReleaseIDOrNil() uuid.UUID {
 
 func canonicalManualAssignments(in []MatchingManualAssignment) []MatchingManualAssignment {
 	out := append([]MatchingManualAssignment(nil), in...)
+	for i := range out {
+		out[i].TitleOverride = cloneManualString(out[i].TitleOverride)
+		out[i].ArtistOverrides = cloneManualStrings(out[i].ArtistOverrides)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FileMemberID.String() < out[j].FileMemberID.String() })
 	return out
 }
 func validateManualAssignments(in []MatchingManualAssignment) error {
 	seen := map[uuid.UUID]bool{}
+	titles := map[uuid.UUID]*string{}
+	artists := map[uuid.UUID]*[]string{}
 	for _, a := range in {
 		if a.FileMemberID == uuid.Nil || a.ProviderTrackID == uuid.Nil || a.Medium < 1 || a.Position < 1 || seen[a.FileMemberID] {
 			return errors.New("manual matching assignments are invalid")
 		}
 		seen[a.FileMemberID] = true
+		if a.TitleOverride != nil {
+			if previous, ok := titles[a.ProviderTrackID]; ok && *previous != *a.TitleOverride {
+				return errors.New("manual matching assignments are invalid")
+			}
+			titles[a.ProviderTrackID] = a.TitleOverride
+		}
+		if a.ArtistOverrides != nil {
+			if previous, ok := artists[a.ProviderTrackID]; ok && !equalManualStrings(*previous, *a.ArtistOverrides) {
+				return errors.New("manual matching assignments are invalid")
+			}
+			artists[a.ProviderTrackID] = a.ArtistOverrides
+		}
 	}
 	return nil
+}
+
+func cloneManualString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneManualStrings(value *[]string) *[]string {
+	if value == nil {
+		return nil
+	}
+	cloned := make([]string, len(*value))
+	copy(cloned, *value)
+	return &cloned
+}
+
+func equalManualStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 func strictManualDecode(raw json.RawMessage, target any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -835,15 +856,27 @@ func readManualCurrentState(ctx context.Context, tx bun.Tx, providerID, releaseI
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return state, err
 	}
-	for _, p := range positions {
-		row := manualTrackState{ProviderTrackID: p.TrackID}
+	orderedPositions := append([]manualProposalPosition(nil), positions...)
+	sort.Slice(orderedPositions, func(i, j int) bool {
+		return orderedPositions[i].TrackID.String() < orderedPositions[j].TrackID.String()
+	})
+	for _, p := range orderedPositions {
+		row := manualTrackState{ProviderTrackID: p.TrackID, Artists: []string{}}
 		var localID, recordingID uuid.UUID
 		var trackMethod string
-		err := tx.NewRaw(`SELECT m.local_track_id,m.method,t.recording_id FROM provider_local_track m JOIN release_track t ON t.track_id=m.local_track_id JOIN provider_local_release r ON r.local_release_id=t.release_id WHERE m.provider_id=? AND m.provider_track_id=? AND r.provider_release_id=?`, providerID, p.TrackID, releaseID).Scan(ctx, &localID, &trackMethod, &recordingID)
+		var title string
+		err := tx.NewRaw(`SELECT m.local_track_id,m.method,t.recording_id,l.title,l.metadata FROM provider_local_track m JOIN release_track t ON t.track_id=m.local_track_id JOIN local_track l ON l.id=t.track_id JOIN provider_local_release r ON r.local_release_id=t.release_id WHERE m.provider_id=? AND m.provider_track_id=? AND r.provider_release_id=? FOR UPDATE OF l`, providerID, p.TrackID, releaseID).Scan(ctx, &localID, &trackMethod, &recordingID, &title, &row.Metadata)
 		if err == nil {
 			row.LocalTrackID = &localID
 			row.Method = trackMethod
 			row.LocalRecordingID = &recordingID
+			row.Title = &title
+			if err := tx.NewRaw(`SELECT name FROM track_artist WHERE track_id=? ORDER BY position FOR UPDATE`, localID).Scan(ctx, &row.Artists); err != nil {
+				return state, err
+			}
+			if row.Artists == nil {
+				row.Artists = []string{}
+			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return state, err
 		}
@@ -880,6 +913,8 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 			return err
 		}
 	}
+	overridesByTrack := manualOverridesByTrack(assignments)
+	appliedOverrides := make(map[uuid.UUID]bool)
 	for _, assignment := range assignments {
 		var recordingID uuid.UUID
 		var medium, position int
@@ -946,6 +981,13 @@ func materializeManualMatching(ctx context.Context, tx bun.Tx, state manualMatch
 				return err
 			}
 		}
+		if !appliedOverrides[assignment.ProviderTrackID] {
+			override := overridesByTrack[assignment.ProviderTrackID]
+			if err := applyManualTrackOverrides(ctx, tx, localTrackID, override.TitleOverride, override.ArtistOverrides); err != nil {
+				return err
+			}
+			appliedOverrides[assignment.ProviderTrackID] = true
+		}
 		var workID uuid.UUID
 		if err := tx.NewRaw(`SELECT work_id FROM incoming_match_evaluation_member WHERE group_id=? AND file_member_id=?`, preview.GroupID, assignment.FileMemberID).Scan(ctx, &workID); err != nil {
 			return err
@@ -992,6 +1034,8 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 	for _, track := range frozen.Tracks {
 		tracks[track.ProviderTrackID] = track
 	}
+	overridesByTrack := manualOverridesByTrack(assignments)
+	appliedOverrides := make(map[uuid.UUID]bool)
 	for _, assignment := range assignments {
 		track, ok := tracks[assignment.ProviderTrackID]
 		if !ok || track.ProviderReleaseID != frozen.Release.ID || track.Medium+1 != assignment.Medium || track.Position+1 != assignment.Position {
@@ -1039,6 +1083,13 @@ func materializeFrozenManualMatching(ctx context.Context, tx bun.Tx, state manua
 					return err
 				}
 			}
+		}
+		if !appliedOverrides[assignment.ProviderTrackID] {
+			override := overridesByTrack[assignment.ProviderTrackID]
+			if err := applyManualTrackOverrides(ctx, tx, localTrackID, override.TitleOverride, override.ArtistOverrides); err != nil {
+				return err
+			}
+			appliedOverrides[assignment.ProviderTrackID] = true
 		}
 		var workID uuid.UUID
 		if err := tx.NewRaw(`SELECT work_id FROM incoming_match_evaluation_member WHERE group_id=? AND file_member_id=?`, preview.GroupID, assignment.FileMemberID).Scan(ctx, &workID); err != nil {

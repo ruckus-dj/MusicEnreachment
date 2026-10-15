@@ -62,6 +62,42 @@ func TestMatchingManualServiceValidatesAndCanonicalizesExplicitAssignments(t *te
 	}
 }
 
+func TestMatchingManualServicePropagatesEmptyOverridesAndRejectsConflicts(t *testing.T) {
+	groupID, releaseID, providerTrackID := uuid.New(), uuid.New(), uuid.New()
+	memberA, memberB := uuid.New(), uuid.New()
+	emptyTitle := ""
+	emptyArtists := []string{}
+	repository := &matchingManualTestRepository{}
+	manual := NewMatchingManualService(repository)
+	_, err := manual.Preview(context.Background(), groupID, "r1", releaseID, []MatchingManualAssignment{
+		{FileMemberID: memberA, ProviderTrackID: providerTrackID, Medium: 1, Position: 1, TitleOverride: &emptyTitle},
+		{FileMemberID: memberB, ProviderTrackID: providerTrackID, Medium: 1, Position: 1, ArtistOverrides: &emptyArtists},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawTitle, sawArtists bool
+	for _, assignment := range repository.assignments {
+		if assignment.TitleOverride != nil && *assignment.TitleOverride == "" {
+			sawTitle = true
+		}
+		if assignment.ArtistOverrides != nil && len(*assignment.ArtistOverrides) == 0 {
+			sawArtists = true
+		}
+	}
+	if len(repository.assignments) != 2 || !sawTitle || !sawArtists {
+		t.Fatalf("empty overrides were not propagated: %#v", repository.assignments)
+	}
+	conflict := "different"
+	_, err = manual.Preview(context.Background(), groupID, "r1", releaseID, []MatchingManualAssignment{
+		{FileMemberID: memberA, ProviderTrackID: providerTrackID, Medium: 1, Position: 1, TitleOverride: &emptyTitle},
+		{FileMemberID: memberB, ProviderTrackID: providerTrackID, Medium: 1, Position: 1, TitleOverride: &conflict},
+	})
+	if !errors.Is(err, ErrMatchingManualInvalid) {
+		t.Fatalf("conflicting explicit values error = %v, want invalid", err)
+	}
+}
+
 func TestMatchingManualServiceDoesNotMisclassifyInfrastructureErrors(t *testing.T) {
 	repository := &matchingManualTestRepository{err: errors.New("database unavailable")}
 	service := NewMatchingManualService(repository)

@@ -9,6 +9,7 @@ import { getSetupState } from "../api/generated/client";
 import type { SetupStateBody } from "../api/generated/client.schemas";
 import { AppButton } from "../components/AppButton";
 import { IncomingGroupReviewScreen } from "../features/incoming/IncomingGroupReviewScreen";
+import "../features/incoming/incoming.css";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { SetupManager } from "../features/setup/SetupManager";
 import { SourcesScreen } from "../features/sources/SourcesScreen";
@@ -87,12 +88,14 @@ export function AppShell() {
         state.platform.diagnostic ||
         !state.platform.supported
           ? "setup-shell"
-          : route === "/sources"
-            ? "sources-screen sources-shell min-h-screen p-3"
-            : "settings-screen settings-shell min-h-screen p-3"
+          : route === "/incoming-groups"
+            ? "settings-screen settings-shell incoming-screen min-h-screen p-3"
+            : route === "/sources"
+              ? "sources-screen sources-shell min-h-screen p-3"
+              : "settings-screen settings-shell min-h-screen p-3"
       }
     >
-      <header className="flex items-center justify-between border-b border-stone-300 pb-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-300 pb-3">
         <div>
           <strong>MeloTrove</strong>
           <p className="text-sm">Медиатека</p>
@@ -100,7 +103,7 @@ export function AppShell() {
         {state?.completed &&
           !state.platform.diagnostic &&
           state.platform.supported && (
-            <nav className="flex gap-2">
+            <nav className="flex flex-wrap gap-2">
               <AppButton
                 onPress={() => {
                   window.location.hash = "/incoming-groups";

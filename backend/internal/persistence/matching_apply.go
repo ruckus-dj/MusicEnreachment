@@ -927,17 +927,17 @@ func attachTrackSource(ctx context.Context, tx bun.Tx, trackID, variantID uuid.U
 		return fmt.Errorf("apply matching evaluation: inspect track source: %w", err)
 	}
 	for _, source := range existing {
-		if source.Method == "manual" && source.TrackID != trackID {
+		if authority.method == "automatic" && source.Method == "manual" && source.TrackID != trackID {
 			return fmt.Errorf("apply matching evaluation: %w", ErrMatchingManualProtection)
 		}
 	}
 	for _, source := range existing {
 		if source.TrackID == trackID {
 			if source.Method == "automatic" && authority.method == "manual" {
-				if _, err := tx.NewRaw(`UPDATE track_source SET decision_method='manual', policy_version=NULL WHERE track_id=? AND media_variant_id=?`, trackID, variantID).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`UPDATE track_source SET decision_method='manual', policy_version=NULL WHERE track_id=? AND media_variant_id=? AND decision_method='automatic'`, trackID, variantID).Exec(ctx); err != nil {
 					return fmt.Errorf("apply matching evaluation: promote source association: %w", err)
 				}
-			} else if source.Method != authority.method {
+			} else if authority.method == "automatic" && source.Method != authority.method {
 				return fmt.Errorf("apply matching evaluation: %w", ErrMatchingManualProtection)
 			}
 			return nil

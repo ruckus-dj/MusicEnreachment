@@ -235,11 +235,15 @@ describe("incoming manual group review", () => {
     expect(
       screen.getByRole("heading", { name: /Участник 2/ }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/Без ребра/)).toHaveLength(2);
+    // The overview repeats this diagnostic alongside both detailed evidence
+    // occurrences; retain coverage of all three rendered representations.
+    expect(screen.getAllByText(/Без ребра/)).toHaveLength(3);
     const layout = screen.getByRole("region", {
       name: "Макет издания: Первое издание",
     });
-    expect(within(layout).getByText(/повтор записи/i)).toBeInTheDocument();
+    expect(
+      within(layout).getAllByText(/повтор записи/i).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("неизвестно")).toBeInTheDocument();
     const assignmentSelects = screen.getAllByLabelText("Назначение");
     expect(assignmentSelects).toHaveLength(2);
@@ -293,6 +297,184 @@ describe("incoming manual group review", () => {
         },
       ],
     });
+  });
+
+  it("sends explicit empty title and ordered artist overrides only for assigned files", async () => {
+    setup();
+    await chooseRelease();
+    const titleToggle = screen.getByRole("checkbox", {
+      name: `Переопределить название для Открытие (${ids.trackOne})`,
+    });
+    fireEvent.click(titleToggle);
+    fireEvent.change(screen.getByLabelText("Название"), {
+      target: { value: "" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: `Переопределить список исполнителей для Открытие (${ids.trackOne})`,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Добавить исполнителя для Открытие (${ids.trackOne})`,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Исполнитель 1"), {
+      target: { value: "Артист второй" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Добавить исполнителя для Открытие (${ids.trackOne})`,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Исполнитель 2"), {
+      target: { value: "Артист первый" },
+    });
+    fireEvent.change(screen.getAllByLabelText("Назначение")[0], {
+      target: { value: ids.trackOne },
+    });
+
+    let previewBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post(
+        "/api/incoming-groups/:groupId/matching/preview",
+        async ({ request }) => {
+          previewBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json(preview(1));
+        },
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Предпросмотр полного назначения",
+    });
+
+    expect(previewBody?.assignments).toEqual([
+      {
+        file_member_id: ids.memberOne,
+        provider_track_id: ids.trackOne,
+        medium: 1,
+        position: 1,
+        title_override: "",
+        artist_overrides: ["Артист второй", "Артист первый"],
+      },
+    ]);
+    expect(
+      screen.getByText(/Ручные метаданные, которые будут применены/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps tag drafts separate by provider release", async () => {
+    setup();
+    await chooseRelease();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: `Переопределить название для Открытие (${ids.trackOne})`,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Название"), {
+      target: { value: "Правка первого издания" },
+    });
+    fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
+      target: { value: ids.releaseTwo },
+    });
+    expect(screen.queryByLabelText("Название")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
+      target: { value: ids.releaseOne },
+    });
+    expect(screen.getByLabelText("Название")).toHaveValue(
+      "Правка первого издания",
+    );
+  });
+
+  it("clears confirmation retry intent when a track override changes", async () => {
+    setup();
+    await chooseRelease();
+    server.use(
+      http.post("/api/incoming-groups/:groupId/matching/preview", () =>
+        HttpResponse.json(preview(1)),
+      ),
+      http.post("/api/incoming-groups/:groupId/matching/confirm", () =>
+        HttpResponse.error(),
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предпросмотр всего назначения" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Предпросмотр полного назначения",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Явно подтвердить" }));
+    await screen.findByRole("alert");
+    expect(
+      screen.getByRole("button", { name: "Повторить подтверждение" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: `Переопределить название для Открытие (${ids.trackOne})`,
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Повторить подтверждение" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Предпросмотр полного назначения",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("allows dragging a free file onto an occupied position without a collision", async () => {
+    setup();
+    await chooseRelease();
+    const assignmentBoard = screen.getByRole("region", {
+      name: "Доска назначений",
+    });
+    const selects = screen.getAllByLabelText("Назначение");
+    fireEvent.change(selects[0], { target: { value: ids.trackOne } });
+
+    const poolFile = within(assignmentBoard).getByRole("button", {
+      name: "folder/02.flac",
+    });
+    let transferred = "";
+    const dataTransfer = {
+      effectAllowed: "",
+      setData: (_type: string, value: string) => {
+        transferred = value;
+      },
+      getData: () => transferred,
+    };
+    fireEvent.dragStart(poolFile, { dataTransfer });
+    const position = within(assignmentBoard)
+      .getByText("Носитель 1 · 1 · Открытие (recording-repeat)")
+      .closest("li");
+    expect(position).not.toBeNull();
+    fireEvent.drop(position as HTMLElement, { dataTransfer });
+
+    expect(screen.getAllByLabelText("Назначение")[0]).toHaveValue(ids.trackOne);
+    expect(screen.getAllByLabelText("Назначение")[1]).toHaveValue(ids.trackOne);
+    expect(position).toHaveTextContent("Назначено файлов: 2");
+  });
+
+  it("keeps select-based keyboard assignment available for an occupied position", async () => {
+    setup();
+    await chooseRelease();
+    const selects = screen.getAllByLabelText("Назначение");
+    fireEvent.change(selects[0], { target: { value: ids.trackOne } });
+    selects[1].focus();
+    fireEvent.keyDown(selects[1], { key: "ArrowDown" });
+    fireEvent.change(selects[1], { target: { value: ids.trackOne } });
+
+    expect(selects[0]).toHaveValue(ids.trackOne);
+    expect(selects[1]).toHaveValue(ids.trackOne);
+    expect(
+      within(
+        screen.getByRole("region", { name: "Доска назначений" }),
+      ).getByText(/Назначено файлов: 2/),
+    ).toBeInTheDocument();
   });
 
   it("invalidates preview after edits and confirms partial receipt; network retry preserves request id and payload", async () => {

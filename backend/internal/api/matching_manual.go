@@ -15,6 +15,8 @@ type matchingManualAssignmentBody struct {
 	ProviderTrackID uuid.UUID `json:"provider_track_id"`
 	Medium          int       `json:"medium"`
 	Position        int       `json:"position"`
+	TitleOverride   *string   `json:"title_override,omitempty"`
+	ArtistOverrides *[]string `json:"artist_overrides,omitempty"`
 }
 
 type matchingManualBody struct {
@@ -75,7 +77,7 @@ func registerMatchingManual(api huma.API, manual *service.MatchingManualService)
 func matchingManualAssignments(values []matchingManualAssignmentBody) []service.MatchingManualAssignment {
 	result := make([]service.MatchingManualAssignment, 0, len(values))
 	for _, value := range values {
-		result = append(result, service.MatchingManualAssignment{FileMemberID: value.FileMemberID, ProviderTrackID: value.ProviderTrackID, Medium: value.Medium, Position: value.Position})
+		result = append(result, service.MatchingManualAssignment{FileMemberID: value.FileMemberID, ProviderTrackID: value.ProviderTrackID, Medium: value.Medium, Position: value.Position, TitleOverride: value.TitleOverride, ArtistOverrides: value.ArtistOverrides})
 	}
 	return result
 }

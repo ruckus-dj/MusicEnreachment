@@ -1,0 +1,62 @@
+.incoming-screen {
+  overflow-wrap: anywhere;
+}
+
+.incoming-screen section,
+.incoming-screen fieldset,
+.incoming-screen .grid > * {
+  min-width: 0;
+}
+
+.incoming-screen .bg-white {
+  background: var(--settings-surface);
+}
+
+.incoming-screen input,
+.incoming-screen select,
+.incoming-screen textarea {
+  color: var(--settings-ink);
+  background: var(--settings-raised);
+  max-width: 100%;
+}
+
+.incoming-screen .border-stone-200,
+.incoming-screen .border-stone-300,
+.incoming-screen .border-stone-400 {
+  border-color: var(--settings-line);
+}
+
+.incoming-screen .bg-stone-50,
+.incoming-screen .bg-stone-100 {
+  background: var(--settings-raised);
+}
+
+.incoming-screen .text-stone-600,
+.incoming-screen .text-stone-700 {
+  color: var(--settings-muted);
+}
+
+.incoming-screen table {
+  text-align: left;
+}
+
+.incoming-screen th,
+.incoming-screen td {
+  vertical-align: top;
+}
+
+.incoming-screen [draggable="true"] {
+  cursor: grab;
+}
+
+.incoming-screen [draggable="true"]:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 599px) {
+  .incoming-screen input,
+  .incoming-screen select,
+  .incoming-screen textarea {
+    min-height: 40px;
+  }
+}

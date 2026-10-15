@@ -206,6 +206,7 @@ func Run(ctx context.Context, config Config) error {
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingManual := service.NewMatchingManualService(persistence.NewIncomingMatchCandidateRepository(db))
+	matchingLocal := service.NewMatchingLocalService(persistence.NewIncomingMatchCandidateRepository(db))
 	matchingAuthority := service.NewMatchingAuthorityService(persistence.NewIncomingMatchCandidateRepository(db))
 	manualReleaseSelection := service.NewManualReleaseSelectionService(setupManagerRepository, incomingGroups, providerFetch, riverSlot)
 	manualPickerSearch := service.NewManualPickerSearchService(setupManagerRepository, providerFetch, riverSlot)
@@ -396,6 +397,7 @@ func Run(ctx context.Context, config Config) error {
 		SourceRoots: sourceRoots, SourceLocations: sourceLocations, SourceScan: sourceScan,
 		SourceAnalysis: sourceAnalysis, SourceLocationDetails: sourceLocationDetails,
 		SourceArtifactCleanup: artifactCleanup, IncomingGroups: incomingGroups, MatchingReview: matchingReview, MatchingManual: matchingManual, MatchingAuthority: matchingAuthority,
+		MatchingLocal:          matchingLocal,
 		ManualReleaseSelection: manualReleaseSelection,
 		ManualPickerSearch:     manualPickerSearch,
 	}))

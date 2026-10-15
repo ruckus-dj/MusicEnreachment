@@ -182,17 +182,6 @@ export interface IncomingGroupReturnAutomaticResult {
   requested_generation: number;
 }
 
-export interface IncomingGroupUnlinkResult {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  authority_revision: number;
-  group_id: string;
-  group_revision: string;
-  mode: string;
-  /** @nullable */
-  removed_source_ids: string[] | null;
-}
-
 export interface IncomingGroupingActionInput {
   group_id?: string;
   /** @nullable */
@@ -346,18 +335,114 @@ export interface ManualReleaseSelectionOutputBody {
   operation_id: string;
 }
 
+export interface MatchingLocalArtist {
+  name: string;
+}
+
+export interface MatchingLocalTrack {
+  /** @nullable */
+  artists: MatchingLocalArtist[] | null;
+  displayed_number: string;
+  /** @nullable */
+  file_member_ids: string[] | null;
+  local_track_id?: string;
+  medium: number;
+  position: number;
+  /** @nullable */
+  source_media_ids?: string[] | null;
+  title: string;
+}
+
+export interface MatchingLocalRelease {
+  /** @nullable */
+  artists: MatchingLocalArtist[] | null;
+  id: string;
+  title: string;
+  /** @nullable */
+  tracks: MatchingLocalTrack[] | null;
+}
+
+export interface MatchingLocalCatalog {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  releases: MatchingLocalRelease[] | null;
+}
+
+export interface MatchingLocalConfirmBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_authority_revision: number;
+  expected_group_revision: string;
+  local_release_id?: string;
+  preview_digest: string;
+  /** @nullable */
+  release_artists: MatchingLocalArtist[] | null;
+  release_title: string;
+  request_id: string;
+  /** @nullable */
+  tracks: MatchingLocalTrack[] | null;
+}
+
+export interface MatchingLocalSource {
+  /** @nullable */
+  current_local_track_ids: string[] | null;
+  file_member_id: string;
+  /** @nullable */
+  locations: string[] | null;
+  /** @nullable */
+  media_ids: string[] | null;
+}
+
+export interface MatchingLocalPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  authority_revision: number;
+  group_id: string;
+  group_revision: string;
+  local_catalog?: MatchingLocalRelease;
+  local_release_id?: string;
+  /** @nullable */
+  omitted_file_member_ids: string[] | null;
+  preview_digest: string;
+  /** @nullable */
+  release_artists: MatchingLocalArtist[] | null;
+  release_title: string;
+  /** @nullable */
+  sources: MatchingLocalSource[] | null;
+  /** @nullable */
+  tracks: MatchingLocalTrack[] | null;
+}
+
+export interface MatchingLocalPreviewBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expected_authority_revision: number;
+  expected_group_revision: string;
+  local_release_id?: string;
+  /** @nullable */
+  release_artists: MatchingLocalArtist[] | null;
+  release_title: string;
+  /** @nullable */
+  tracks: MatchingLocalTrack[] | null;
+}
+
 export interface MatchingManualAssignment {
+  artist_overrides?: string[];
   file_member_id: string;
   medium: number;
   position: number;
   provider_track_id: string;
+  title_override?: string;
 }
 
 export interface MatchingManualAssignmentBody {
+  artist_overrides?: string[];
   file_member_id: string;
   medium: number;
   position: number;
   provider_track_id: string;
+  title_override?: string;
 }
 
 export interface MatchingManualBody {
@@ -464,16 +549,6 @@ export interface MatchingReview {
   proposal_available: boolean;
   /** @nullable */
   releases: MatchingReviewRelease[] | null;
-}
-
-export interface MatchingUnlinkBody {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  expected_authority_revision: number;
-  expected_group_revision: string;
-  request_id: string;
-  /** @nullable */
-  source_ids: string[] | null;
 }
 
 export interface MovePreflightBody {

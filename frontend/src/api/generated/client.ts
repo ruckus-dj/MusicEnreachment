@@ -32,7 +32,6 @@ import type {
   DeleteSourceBody,
   ErrorModel,
   IncomingGroupReturnAutomaticResult,
-  IncomingGroupUnlinkResult,
   IncomingGroupingEditBody,
   IncomingGroupsBody,
   InstallPreflightBody,
@@ -48,12 +47,15 @@ import type {
   ManualPickerSearchResultOutputBody,
   ManualReleaseSelectionBody,
   ManualReleaseSelectionOutputBody,
+  MatchingLocalCatalog,
+  MatchingLocalConfirmBody,
+  MatchingLocalPreview,
+  MatchingLocalPreviewBody,
   MatchingManualBody,
   MatchingManualConfirmBody,
   MatchingManualPreview,
   MatchingReturnAutomaticBody,
   MatchingReview,
-  MatchingUnlinkBody,
   MovePreflightBody,
   MovePreflightInputBody,
   OperationResponse,
@@ -979,6 +981,236 @@ export const useConfirmIncomingGroupManualMatching = <TError = ErrorModel,
       return useMutation(getConfirmIncomingGroupManualMatchingMutationOptions(options), queryClient);
     }
 
+export type confirmIncomingGroupLocalMatchingResponse200 = {
+  data: MatchingLocalPreview
+  status: 200
+}
+
+export type confirmIncomingGroupLocalMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmIncomingGroupLocalMatchingResponseSuccess = (confirmIncomingGroupLocalMatchingResponse200) & {
+  headers: Headers;
+};
+export type confirmIncomingGroupLocalMatchingResponseError = (confirmIncomingGroupLocalMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmIncomingGroupLocalMatchingResponse = (confirmIncomingGroupLocalMatchingResponseSuccess | confirmIncomingGroupLocalMatchingResponseError)
+
+export const getConfirmIncomingGroupLocalMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/local/confirm`
+}
+
+/**
+ * @summary Confirm an explicit local release for an incoming group
+ */
+export const confirmIncomingGroupLocalMatching = async (groupId: string,
+    matchingLocalConfirmBody: NonReadonly<MatchingLocalConfirmBody>, options?: RequestInit): Promise<confirmIncomingGroupLocalMatchingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getConfirmIncomingGroupLocalMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingLocalConfirmBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmIncomingGroupLocalMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmIncomingGroupLocalMatchingResponse
+}
+
+
+
+
+
+export const getConfirmIncomingGroupLocalMatchingMutationKey = () => ['confirmIncomingGroupLocalMatching'] as const;
+
+export const getConfirmIncomingGroupLocalMatchingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>, TError,ConfirmIncomingGroupLocalMatchingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>, TError,ConfirmIncomingGroupLocalMatchingMutationVariables, TContext> => {
+
+const mutationKey = getConfirmIncomingGroupLocalMatchingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>, ConfirmIncomingGroupLocalMatchingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  confirmIncomingGroupLocalMatching(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmIncomingGroupLocalMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>>
+    export type ConfirmIncomingGroupLocalMatchingMutationBody = NonReadonly<MatchingLocalConfirmBody>
+    export type ConfirmIncomingGroupLocalMatchingMutationError = ErrorModel
+    export type ConfirmIncomingGroupLocalMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingLocalConfirmBody>}
+
+    /**
+ * @summary Confirm an explicit local release for an incoming group
+ */
+export const useConfirmIncomingGroupLocalMatching = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>, TError,ConfirmIncomingGroupLocalMatchingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmIncomingGroupLocalMatching>>,
+        TError,
+        ConfirmIncomingGroupLocalMatchingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getConfirmIncomingGroupLocalMatchingMutationOptions(options), queryClient);
+    }
+
+export type previewIncomingGroupLocalMatchingResponse200 = {
+  data: MatchingLocalPreview
+  status: 200
+}
+
+export type previewIncomingGroupLocalMatchingResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type previewIncomingGroupLocalMatchingResponseSuccess = (previewIncomingGroupLocalMatchingResponse200) & {
+  headers: Headers;
+};
+export type previewIncomingGroupLocalMatchingResponseError = (previewIncomingGroupLocalMatchingResponseDefault) & {
+  headers: Headers;
+};
+
+export type previewIncomingGroupLocalMatchingResponse = (previewIncomingGroupLocalMatchingResponseSuccess | previewIncomingGroupLocalMatchingResponseError)
+
+export const getPreviewIncomingGroupLocalMatchingUrl = (groupId: string,) => {
+
+
+
+
+  return `/api/incoming-groups/${groupId}/matching/local/preview`
+}
+
+/**
+ * @summary Preview an explicit local release for an incoming group
+ */
+export const previewIncomingGroupLocalMatching = async (groupId: string,
+    matchingLocalPreviewBody: NonReadonly<MatchingLocalPreviewBody>, options?: RequestInit): Promise<previewIncomingGroupLocalMatchingResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getPreviewIncomingGroupLocalMatchingUrl(groupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(matchingLocalPreviewBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: previewIncomingGroupLocalMatchingResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as previewIncomingGroupLocalMatchingResponse
+}
+
+
+
+
+
+export const getPreviewIncomingGroupLocalMatchingMutationKey = () => ['previewIncomingGroupLocalMatching'] as const;
+
+export const getPreviewIncomingGroupLocalMatchingMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>, TError,PreviewIncomingGroupLocalMatchingMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>, TError,PreviewIncomingGroupLocalMatchingMutationVariables, TContext> => {
+
+const mutationKey = getPreviewIncomingGroupLocalMatchingMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>, PreviewIncomingGroupLocalMatchingMutationVariables> = (props) => {
+          const {groupId,data} = props ?? {};
+
+          return  previewIncomingGroupLocalMatching(groupId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewIncomingGroupLocalMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>>
+    export type PreviewIncomingGroupLocalMatchingMutationBody = NonReadonly<MatchingLocalPreviewBody>
+    export type PreviewIncomingGroupLocalMatchingMutationError = ErrorModel
+    export type PreviewIncomingGroupLocalMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingLocalPreviewBody>}
+
+    /**
+ * @summary Preview an explicit local release for an incoming group
+ */
+export const usePreviewIncomingGroupLocalMatching = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>, TError,PreviewIncomingGroupLocalMatchingMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewIncomingGroupLocalMatching>>,
+        TError,
+        PreviewIncomingGroupLocalMatchingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreviewIncomingGroupLocalMatchingMutationOptions(options), queryClient);
+    }
+
 export type startIncomingGroupManualReleaseSelectionResponse202 = {
   data: ManualReleaseSelectionOutputBody
   status: 202
@@ -1324,120 +1556,132 @@ export const useReturnIncomingGroupMatchingToAutomatic = <TError = ErrorModel,
       return useMutation(getReturnIncomingGroupMatchingToAutomaticMutationOptions(options), queryClient);
     }
 
-export type unlinkIncomingGroupMatchingResponse200 = {
-  data: IncomingGroupUnlinkResult
+export type listLocalReleasesResponse200 = {
+  data: MatchingLocalCatalog
   status: 200
 }
 
-export type unlinkIncomingGroupMatchingResponseDefault = {
+export type listLocalReleasesResponseDefault = {
   data: ErrorModel
   status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type unlinkIncomingGroupMatchingResponseSuccess = (unlinkIncomingGroupMatchingResponse200) & {
+export type listLocalReleasesResponseSuccess = (listLocalReleasesResponse200) & {
   headers: Headers;
 };
-export type unlinkIncomingGroupMatchingResponseError = (unlinkIncomingGroupMatchingResponseDefault) & {
+export type listLocalReleasesResponseError = (listLocalReleasesResponseDefault) & {
   headers: Headers;
 };
 
-export type unlinkIncomingGroupMatchingResponse = (unlinkIncomingGroupMatchingResponseSuccess | unlinkIncomingGroupMatchingResponseError)
+export type listLocalReleasesResponse = (listLocalReleasesResponseSuccess | listLocalReleasesResponseError)
 
-export const getUnlinkIncomingGroupMatchingUrl = (groupId: string,) => {
-
-
+export const getListLocalReleasesUrl = () => {
 
 
-  return `/api/incoming-groups/${groupId}/matching/unlink`
+
+
+  return `/api/local-releases`
 }
 
 /**
- * @summary Unlink explicitly selected manual source associations
+ * @summary List pure local releases
  */
-export const unlinkIncomingGroupMatching = async (groupId: string,
-    matchingUnlinkBody: NonReadonly<MatchingUnlinkBody>, options?: RequestInit): Promise<unlinkIncomingGroupMatchingResponse> => {
+export const listLocalReleases = async ( options?: RequestInit): Promise<listLocalReleasesResponse> => {
 
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-const res = await fetch(getUnlinkIncomingGroupMatchingUrl(groupId),
+  const res = await fetch(getListLocalReleasesUrl(),
   {
     ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(matchingUnlinkBody)
+    method: 'GET'
+
+
   }
 )
 
 
   const body = [204, 205, 304].includes(res.status) ? null : await res.text();
 
-  const data: unlinkIncomingGroupMatchingResponse['data'] = body ? JSON.parse(body) : {}
-  return { data, status: res.status, headers: res.headers } as unlinkIncomingGroupMatchingResponse
+  const data: listLocalReleasesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listLocalReleasesResponse
 }
 
 
 
 
 
-export const getUnlinkIncomingGroupMatchingMutationKey = () => ['unlinkIncomingGroupMatching'] as const;
-
-export const getUnlinkIncomingGroupMatchingMutationOptions = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext>, fetch?: RequestInit}
-): UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext> => {
-
-const mutationKey = getUnlinkIncomingGroupMatchingMutationKey();
-const {mutation: mutationOptions, fetch: fetchOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, fetch: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, UnlinkIncomingGroupMatchingMutationVariables> = (props) => {
-          const {groupId,data} = props ?? {};
-
-          return  unlinkIncomingGroupMatching(groupId,data,fetchOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UnlinkIncomingGroupMatchingMutationResult = NonNullable<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>>
-    export type UnlinkIncomingGroupMatchingMutationBody = NonReadonly<MatchingUnlinkBody>
-    export type UnlinkIncomingGroupMatchingMutationError = ErrorModel
-    export type UnlinkIncomingGroupMatchingMutationVariables = {groupId: string;data: NonReadonly<MatchingUnlinkBody>}
-
-    /**
- * @summary Unlink explicitly selected manual source associations
- */
-export const useUnlinkIncomingGroupMatching = <TError = ErrorModel,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>, TError,UnlinkIncomingGroupMatchingMutationVariables, TContext>, fetch?: RequestInit}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof unlinkIncomingGroupMatching>>,
-        TError,
-        UnlinkIncomingGroupMatchingMutationVariables,
-        TContext
-      > => {
-      return useMutation(getUnlinkIncomingGroupMatchingMutationOptions(options), queryClient);
+export const getListLocalReleasesQueryKey = () => {
+    return [
+    `/api/local-releases`
+    ] as const;
     }
+
+
+export const getListLocalReleasesQueryOptions = <TData = Awaited<ReturnType<typeof listLocalReleases>>, TError = ErrorModel>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData>>, fetch?: RequestInit}
+) => {
+
+const {query: queryOptions, fetch: fetchOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLocalReleasesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLocalReleases>>> = ({ signal }) => listLocalReleases({ signal, ...fetchOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLocalReleasesQueryResult = NonNullable<Awaited<ReturnType<typeof listLocalReleases>>>
+export type ListLocalReleasesQueryError = ErrorModel
+
+
+export function useListLocalReleases<TData = Awaited<ReturnType<typeof listLocalReleases>>, TError = ErrorModel>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalReleases>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalReleases>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalReleases<TData = Awaited<ReturnType<typeof listLocalReleases>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLocalReleases>>,
+          TError,
+          Awaited<ReturnType<typeof listLocalReleases>>
+        > , 'initialData'
+      >, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLocalReleases<TData = Awaited<ReturnType<typeof listLocalReleases>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List pure local releases
+ */
+
+export function useListLocalReleases<TData = Awaited<ReturnType<typeof listLocalReleases>>, TError = ErrorModel>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLocalReleases>>, TError, TData>>, fetch?: RequestInit}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLocalReleasesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export type listOperationsResponse200 = {
   data: OperationsBody

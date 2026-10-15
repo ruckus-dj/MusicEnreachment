@@ -30,6 +30,7 @@ type Dependencies struct {
 	IncomingGroups         *service.IncomingGroups
 	MatchingReview         *service.MatchingReviewService
 	MatchingManual         *service.MatchingManualService
+	MatchingLocal          *service.MatchingLocalService
 	MatchingAuthority      *service.MatchingAuthorityService
 	ManualReleaseSelection *service.ManualReleaseSelectionService
 	ManualPickerSearch     *service.ManualPickerSearchService

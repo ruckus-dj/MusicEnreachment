@@ -13,7 +13,6 @@ import {
   getIncomingGroups,
   previewIncomingGroupManualMatching,
   returnIncomingGroupMatchingToAutomatic,
-  unlinkIncomingGroupMatching,
 } from "../../api/generated/client";
 import type {
   MatchingManualAssignmentBody,
@@ -22,11 +21,19 @@ import type {
   MatchingReturnAutomaticBody,
   MatchingReview,
   MatchingReviewRelease,
-  MatchingUnlinkBody,
 } from "../../api/generated/client.schemas";
 import { AppButton } from "../../components/AppButton";
+import { IncomingGroupingEditor } from "./IncomingGroupingEditor";
+import { IncomingGroupsOverview } from "./IncomingGroupsOverview";
+import { LocalReleaseEditor } from "./LocalReleaseEditor";
 import { ManualReleasePicker } from "./ManualReleasePicker";
 import { ManualSearchPicker } from "./ManualSearchPicker";
+import { MatchingEvidenceInspector } from "./MatchingEvidenceInspector";
+import {
+  emptyTrackTagOverride,
+  type TrackTagOverrideDraft,
+  TrackTagOverrides,
+} from "./TrackTagOverrides";
 
 type ProposalFile = {
   file_member_id: string;
@@ -38,6 +45,10 @@ type ReviewProposal = {
   files?: ProposalFile[];
 };
 type Draft = Record<string, string>;
+type ManualAssignmentWithOverrides = MatchingManualAssignmentBody & {
+  title_override?: string;
+  artist_overrides?: string[] | null;
+};
 type PreviewState = { intent: string; response: MatchingManualPreview };
 type ConfirmIntent = {
   groupId: string;
@@ -49,8 +60,8 @@ type AuthorityIntent = {
   groupId: string;
   generation: number;
   intent: string;
-  action: "unlink" | "automatic";
-  body: MatchingUnlinkBody | MatchingReturnAutomaticBody;
+  action: "automatic";
+  body: MatchingReturnAutomaticBody;
 };
 
 function errorText(reason: unknown, fallback: string) {
@@ -137,12 +148,14 @@ function IncomingGroupReviewContent() {
     Record<string, string>
   >({});
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [tagOverrideDrafts, setTagOverrideDrafts] = useState<
+    Record<string, Record<string, TrackTagOverrideDraft>>
+  >({});
   const [preview, setPreview] = useState<PreviewState>();
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [authorityNotice, setAuthorityNotice] = useState("");
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [authorityIntent, setAuthorityIntent] = useState<AuthorityIntent>();
   const [receipt, setReceipt] = useState<{
     groupId: string;
@@ -267,6 +280,7 @@ function IncomingGroupReviewContent() {
   );
   const draftKey = `${groupId}:${selectedReleaseId}`;
   const assignmentsByMember = drafts[draftKey] ?? {};
+  const tagOverridesByTrack = tagOverrideDrafts[draftKey] ?? {};
   const files = groupsQuery.data?.files ?? [];
   const groupFiles = useMemo(() => {
     const ids = new Set(group?.members ?? []);
@@ -278,22 +292,32 @@ function IncomingGroupReviewContent() {
   );
   const intentPayload = useMemo(() => {
     if (!review?.evaluation_revision || !release) return "";
-    const assignments: MatchingManualAssignmentBody[] = memberIds.flatMap(
+    const assignments: ManualAssignmentWithOverrides[] = memberIds.flatMap(
       (memberId) => {
         const trackId = assignmentsByMember[memberId];
         const position = release.positions?.find(
           (item) => item.track_id === trackId,
         );
-        return trackId && position
-          ? [
-              {
-                file_member_id: memberId,
-                provider_track_id: position.track_id,
-                medium: position.medium + 1,
-                position: position.position + 1,
-              },
-            ]
-          : [];
+        if (!trackId || !position) return [];
+        const override = tagOverridesByTrack[position.track_id];
+        return [
+          {
+            file_member_id: memberId,
+            provider_track_id: position.track_id,
+            medium: position.medium + 1,
+            position: position.position + 1,
+            ...(override?.title.enabled
+              ? { title_override: override.title.value }
+              : {}),
+            ...(override?.artists.enabled
+              ? {
+                  artist_overrides: override.artists.values.map(
+                    (artist) => artist.name,
+                  ),
+                }
+              : {}),
+          },
+        ];
       },
     );
     return JSON.stringify({
@@ -301,7 +325,13 @@ function IncomingGroupReviewContent() {
       provider_release_id: release.provider_release_id,
       assignments,
     });
-  }, [assignmentsByMember, memberIds, release, review?.evaluation_revision]);
+  }, [
+    assignmentsByMember,
+    memberIds,
+    release,
+    review?.evaluation_revision,
+    tagOverridesByTrack,
+  ]);
   const intent = useMemo(() => {
     if (!intentPayload) return undefined;
     return JSON.parse(intentPayload) as {
@@ -323,7 +353,7 @@ function IncomingGroupReviewContent() {
     authorityIntent?.groupId === groupId &&
     authorityIntent.generation === scopeRef.current.generation &&
     authorityIntent.intent ===
-      `${group?.revision ?? ""}:${review?.authority_revision ?? -1}:${authorityIntent.action}:${authorityIntent.action === "unlink" ? [...selectedSourceIds].sort().join(",") : ""}`
+      `${group?.revision ?? ""}:${review?.authority_revision ?? -1}:${authorityIntent.action}`
       ? authorityIntent
       : undefined;
   const authorityBusy =
@@ -339,10 +369,10 @@ function IncomingGroupReviewContent() {
     return `authority:${scope.groupId}:${scope.generation}`;
   }
 
-  async function performAuthorityAction(action: "unlink" | "automatic") {
+  async function performAuthorityAction() {
     if (!group || !review || sameGroupInFlight) return;
-    if (action === "unlink" && selectedSourceIds.length === 0) return;
-    const actionIntent = `${group.revision}:${review.authority_revision}:${action}:${action === "unlink" ? [...selectedSourceIds].sort().join(",") : ""}`;
+    const action = "automatic" as const;
+    const actionIntent = `${group.revision}:${review.authority_revision}:${action}`;
     const preserved =
       currentAuthorityIntent?.action === action
         ? currentAuthorityIntent
@@ -351,19 +381,11 @@ function IncomingGroupReviewContent() {
             generation: scopeRef.current.generation,
             intent: actionIntent,
             action,
-            body:
-              action === "unlink"
-                ? ({
-                    expected_group_revision: group.revision,
-                    expected_authority_revision: review.authority_revision,
-                    source_ids: [...selectedSourceIds].sort(),
-                    request_id: crypto.randomUUID(),
-                  } satisfies MatchingUnlinkBody)
-                : ({
-                    expected_group_revision: group.revision,
-                    expected_authority_revision: review.authority_revision,
-                    request_id: crypto.randomUUID(),
-                  } satisfies MatchingReturnAutomaticBody),
+            body: {
+              expected_group_revision: group.revision,
+              expected_authority_revision: review.authority_revision,
+              request_id: crypto.randomUUID(),
+            } satisfies MatchingReturnAutomaticBody,
           };
     const requestScope = authorityScope();
     const activeRequest = ++requestId.current;
@@ -373,16 +395,10 @@ function IncomingGroupReviewContent() {
     setNotice("");
     setAuthorityNotice("");
     try {
-      const response =
-        action === "unlink"
-          ? await unlinkIncomingGroupMatching(
-              groupId,
-              preserved.body as MatchingUnlinkBody,
-            )
-          : await returnIncomingGroupMatchingToAutomatic(
-              groupId,
-              preserved.body as MatchingReturnAutomaticBody,
-            );
+      const response = await returnIncomingGroupMatchingToAutomatic(
+        groupId,
+        preserved.body,
+      );
       if (requestScope !== authorityScope()) return;
       if (response.status !== 200) {
         if (response.status === 409) {
@@ -408,14 +424,11 @@ function IncomingGroupReviewContent() {
         generation: generation.current,
       };
       setAuthorityIntent(undefined);
-      setSelectedSourceIds([]);
       setPreview(undefined);
       setConfirmIntent(undefined);
       setPendingRequest(undefined);
       setAuthorityNotice(
-        action === "unlink"
-          ? "Связи удалены. Ручной режим сохранён."
-          : "Возврат к автоматическому сопоставлению сохранён. Ожидается новая оценка.",
+        "Возврат к автоматическому сопоставлению сохранён. Ожидается новая оценка.",
       );
       await Promise.all([
         queryClient.invalidateQueries({
@@ -453,7 +466,6 @@ function IncomingGroupReviewContent() {
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
-    setSelectedSourceIds([]);
     setAuthorityIntent(undefined);
     setAuthorityNotice("");
   }
@@ -483,6 +495,23 @@ function IncomingGroupReviewContent() {
       else delete draft[memberId];
       return { ...current, [draftKey]: draft };
     });
+    setPreview(undefined);
+    setConfirmIntent(undefined);
+    setReceipt(undefined);
+    setNotice("");
+    setError("");
+  }
+
+  function updateTrackTagOverride(
+    trackId: string,
+    override: TrackTagOverrideDraft,
+  ) {
+    if (sameGroupInFlight) return;
+    invalidateIntent();
+    setTagOverrideDrafts((current) => ({
+      ...current,
+      [draftKey]: { ...(current[draftKey] ?? {}), [trackId]: override },
+    }));
     setPreview(undefined);
     setConfirmIntent(undefined);
     setReceipt(undefined);
@@ -631,6 +660,37 @@ function IncomingGroupReviewContent() {
 
       {groups.length > 0 ? (
         <>
+          {groupsQuery.data ? (
+            <details className="rounded border border-stone-300 p-3">
+              <summary className="cursor-pointer font-semibold">
+                Объединить, разделить или переместить файлы групп
+              </summary>
+              <IncomingGroupingEditor
+                snapshot={groupsQuery.data}
+                onConfirmed={async (snapshot) => {
+                  invalidateIntent();
+                  setPreview(undefined);
+                  setConfirmIntent(undefined);
+                  setAuthorityIntent(undefined);
+                  queryClient.setQueryData(
+                    getGetIncomingGroupsQueryKey(),
+                    snapshot,
+                  );
+                  await queryClient.invalidateQueries({
+                    queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+                  });
+                }}
+              />
+            </details>
+          ) : null}
+          {groupsQuery.data ? (
+            <IncomingGroupsOverview
+              snapshot={groupsQuery.data}
+              selectedGroupId={groupId}
+              review={review}
+              onSelect={changeGroup}
+            />
+          ) : null}
           <label className="block max-w-2xl text-sm font-medium">
             Входящая группа
             <select
@@ -646,6 +706,33 @@ function IncomingGroupReviewContent() {
               ))}
             </select>
           </label>
+
+          {group && groupsQuery.data ? (
+            <details className="rounded border border-stone-300 p-3">
+              <summary className="cursor-pointer font-semibold">
+                Локальный релиз без связей с провайдерами
+              </summary>
+              <LocalReleaseEditor
+                group={group}
+                files={groupsQuery.data.files ?? []}
+                authorityRevision={review?.authority_revision}
+                onConfirmed={async () => {
+                  invalidateIntent();
+                  setPreview(undefined);
+                  setConfirmIntent(undefined);
+                  setAuthorityIntent(undefined);
+                  await Promise.all([
+                    queryClient.invalidateQueries({
+                      queryKey: getGetIncomingGroupsQueryKey(),
+                    }),
+                    queryClient.invalidateQueries({
+                      queryKey: getGetIncomingGroupMatchingQueryKey(groupId),
+                    }),
+                  ]);
+                }}
+              />
+            </details>
+          ) : null}
 
           {reviewQuery.isLoading ? (
             <p role="status">Чтение сохранённой оценки…</p>
@@ -687,8 +774,8 @@ function IncomingGroupReviewContent() {
                 <code>{review.authority_revision}</code>
               </p>
               <p className="mt-1 text-sm">
-                Текущая сохранённая оценка и её доказательства показаны отдельно
-                ниже; изменение режима не переписывает эту историю.
+                Сохранённая текущая оценка и её доказательства показаны отдельно
+                ниже. Удаление источников выполняется вне этого экрана.
               </p>
               {authorityNotice ? (
                 <p
@@ -699,65 +786,25 @@ function IncomingGroupReviewContent() {
                 </p>
               ) : null}
               {review.authority_mode === "manual" ? (
-                <>
-                  <fieldset
-                    className="mt-3 space-y-2"
-                    disabled={sameGroupInFlight}
-                  >
-                    <legend className="font-medium">
-                      Выберите ручные связи источников для удаления
-                    </legend>
+                <div className="mt-3">
+                  <p className="text-sm">
+                    Сохранённые ручные связи источников:{" "}
                     {(review.current_linked_manual_media_source_ids ?? [])
-                      .length ? (
-                      (review.current_linked_manual_media_source_ids ?? []).map(
-                        (sourceId) => (
-                          <label
-                            key={sourceId}
-                            className="flex items-center gap-2 text-sm"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedSourceIds.includes(sourceId)}
-                              onChange={(event) => {
-                                setAuthorityIntent(undefined);
-                                setSelectedSourceIds((current) =>
-                                  event.target.checked
-                                    ? [...current, sourceId]
-                                    : current.filter((id) => id !== sourceId),
-                                );
-                              }}
-                            />
-                            <code>{sourceId}</code>
-                          </label>
-                        ),
-                      )
-                    ) : (
-                      <p className="text-sm">
-                        Сохранённых ручных связей источников нет.
-                      </p>
-                    )}
-                  </fieldset>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <AppButton
-                      isDisabled={
-                        sameGroupInFlight || !selectedSourceIds.length
-                      }
-                      onPress={() => void performAuthorityAction("unlink")}
-                    >
-                      {currentAuthorityIntent?.action === "unlink"
-                        ? "Повторить удаление связей"
-                        : "Убрать выбранные связи"}
-                    </AppButton>
-                    <AppButton
-                      isDisabled={sameGroupInFlight}
-                      onPress={() => void performAuthorityAction("automatic")}
-                    >
-                      {currentAuthorityIntent?.action === "automatic"
-                        ? "Повторить возврат к автоматическому сопоставлению"
-                        : "Вернуть к автоматическому сопоставлению"}
-                    </AppButton>
-                  </div>
-                </>
+                      .length
+                      ? (
+                          review.current_linked_manual_media_source_ids ?? []
+                        ).join(", ")
+                      : "нет"}
+                  </p>
+                  <AppButton
+                    isDisabled={sameGroupInFlight}
+                    onPress={() => void performAuthorityAction()}
+                  >
+                    {currentAuthorityIntent?.action === "automatic"
+                      ? "Повторить возврат к автоматическому сопоставлению"
+                      : "Вернуть к автоматическому сопоставлению"}
+                  </AppButton>
+                </div>
               ) : null}
               {error.includes("изменились") ? (
                 <AppButton
@@ -815,6 +862,75 @@ function IncomingGroupReviewContent() {
 
           {review?.evaluated && review.proposal_available ? (
             <>
+              <section
+                className="rounded border border-stone-300 bg-white p-4"
+                aria-label="Сводка входящей группы"
+              >
+                <h2 className="font-semibold">
+                  Файлы группы и текущий черновик
+                </h2>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr>
+                        <th className="border-b p-2">
+                          Уникальные файлы / пути
+                        </th>
+                        <th className="border-b p-2">
+                          Черновик: назначено / всего
+                        </th>
+                        <th className="border-b p-2">Снимок источника</th>
+                        <th className="border-b p-2">Снимок провайдера</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border-b p-2">
+                          {new Set(memberIds).size} /{" "}
+                          {
+                            new Set(
+                              groupFiles.flatMap(
+                                (file) =>
+                                  file.locations?.map(
+                                    (location) =>
+                                      `${location.root_id}:${location.relative_path}`,
+                                  ) ?? [],
+                              ),
+                            ).size
+                          }
+                        </td>
+                        <td className="border-b p-2">
+                          {
+                            Object.keys(assignmentsByMember).filter(
+                              (memberId) => memberIds.includes(memberId),
+                            ).length
+                          }{" "}
+                          / {memberIds.length}
+                        </td>
+                        <td className="border-b p-2">
+                          {
+                            groupFiles.filter(
+                              (file) =>
+                                file.capture_identity || file.locations?.length,
+                            ).length
+                          }{" "}
+                          из {groupFiles.length} файлов с сохранёнными данными
+                        </td>
+                        <td className="border-b p-2">
+                          {review.candidates?.length
+                            ? `${review.candidates.length} сохранённых кандидатов`
+                            : "кандидаты отсутствуют"}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-sm">
+                  Уникальных файлов с сохранёнными ручными связями:{" "}
+                  {review.current_linked_manual_media_source_ids?.length ?? 0}.
+                  Черновик назначений не изменяет эти связи до подтверждения.
+                </p>
+              </section>
               <section
                 className="rounded border border-stone-300 bg-white p-4"
                 aria-labelledby="evaluation-title"
@@ -954,8 +1070,119 @@ function IncomingGroupReviewContent() {
                           className="rounded border border-stone-200 p-2 text-sm"
                         >
                           {positionLabel(position)}
+                          <TrackTagOverrides
+                            title={position.title}
+                            trackId={position.track_id}
+                            override={
+                              tagOverridesByTrack[position.track_id] ??
+                              emptyTrackTagOverride()
+                            }
+                            disabled={
+                              busy || authorityBusy || sameGroupInFlight
+                            }
+                            onChange={(override) =>
+                              updateTrackTagOverride(
+                                position.track_id,
+                                override,
+                              )
+                            }
+                          />
                         </li>
                       ))}
+                  </ol>
+                </section>
+              ) : null}
+
+              {release ? (
+                <section
+                  className="rounded border border-stone-300 bg-white p-4"
+                  aria-labelledby="assignment-board-title"
+                >
+                  <h2 id="assignment-board-title" className="font-semibold">
+                    Доска назначений
+                  </h2>
+                  <p className="mt-1 text-sm text-stone-700">
+                    Перетащите файл из свободного пула на позицию. Клавиатурное
+                    назначение доступно в списке «Назначение» у каждого файла.
+                    Позиции допускают несколько файлов.
+                  </p>
+                  <h3 className="mt-3 font-medium">Свободные файлы</h3>
+                  <ul className="mt-2 flex flex-wrap gap-2">
+                    {memberIds
+                      .filter((memberId) => !assignmentsByMember[memberId])
+                      .map((memberId) => {
+                        const file = groupFiles.find(
+                          (item) => item.variant_id === memberId,
+                        );
+                        const path = file?.locations?.[0]?.relative_path;
+                        return (
+                          <li key={memberId}>
+                            <button
+                              type="button"
+                              draggable={
+                                !busy && !authorityBusy && !sameGroupInFlight
+                              }
+                              disabled={
+                                busy || authorityBusy || sameGroupInFlight
+                              }
+                              onDragStart={(event) => {
+                                event.dataTransfer.setData(
+                                  "text/plain",
+                                  memberId,
+                                );
+                                event.dataTransfer.effectAllowed = "move";
+                              }}
+                              className="rounded border border-stone-400 bg-stone-50 p-2 text-left text-sm"
+                            >
+                              {path ?? memberId}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    {memberIds.every(
+                      (memberId) => assignmentsByMember[memberId],
+                    ) ? (
+                      <li className="text-sm text-stone-600">
+                        Свободных файлов нет.
+                      </li>
+                    ) : null}
+                  </ul>
+                  <h3 className="mt-3 font-medium">Позиции издания</h3>
+                  <ol className="mt-2 grid gap-2 md:grid-cols-2">
+                    {[...(release.positions ?? [])]
+                      .sort(
+                        (a, b) =>
+                          a.medium - b.medium || a.position - b.position,
+                      )
+                      .map((position) => {
+                        const occupants = memberIds.filter(
+                          (memberId) =>
+                            assignmentsByMember[memberId] === position.track_id,
+                        );
+                        return (
+                          <li
+                            key={position.track_id}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const memberId =
+                                event.dataTransfer.getData("text/plain");
+                              if (memberIds.includes(memberId))
+                                assign(memberId, position.track_id);
+                            }}
+                            className="min-h-20 rounded border border-dashed border-stone-400 p-2 text-sm"
+                          >
+                            <p className="font-medium">
+                              {positionLabel(position)}
+                            </p>
+                            <p className="mt-1 text-stone-700">
+                              {occupants.length
+                                ? `Назначено файлов: ${occupants.length} · ${occupants.map((memberId) => groupFiles.find((file) => file.variant_id === memberId)?.locations?.[0]?.relative_path ?? memberId).join(", ")}`
+                                : "Нет назначенных файлов"}
+                            </p>
+                          </li>
+                        );
+                      })}
                   </ol>
                 </section>
               ) : null}
@@ -969,6 +1196,12 @@ function IncomingGroupReviewContent() {
                     (item) => item.variant_id === memberId,
                   );
                   const savedFacts = proposalFiles.get(memberId);
+                  const candidate = review.candidates?.find(
+                    (item) =>
+                      item.file_member_id === memberId &&
+                      (item.release_id === release?.release_id ||
+                        item.release_id === release?.provider_release_id),
+                  );
                   return (
                     <article
                       key={memberId}
@@ -1051,6 +1284,10 @@ function IncomingGroupReviewContent() {
                           </ul>
                         </div>
                       ) : null}
+                      <MatchingEvidenceInspector
+                        candidate={candidate}
+                        rawTags={savedFacts?.raw_tags ?? file?.tags}
+                      />
                     </article>
                   );
                 })}
@@ -1125,6 +1362,50 @@ function IncomingGroupReviewContent() {
                     Контрольный digest:{" "}
                     <code>{currentPreview.preview_digest}</code>
                   </p>
+                  {release?.positions?.some((position) => {
+                    const override = tagOverridesByTrack[position.track_id];
+                    return (
+                      Object.values(assignmentsByMember).includes(
+                        position.track_id,
+                      ) &&
+                      (override?.title.enabled || override?.artists.enabled)
+                    );
+                  }) ? (
+                    <div className="mt-2 text-sm">
+                      <h3 className="font-medium">
+                        Ручные метаданные, которые будут применены
+                      </h3>
+                      <ul className="list-inside list-disc">
+                        {release.positions?.map((position) => {
+                          const override =
+                            tagOverridesByTrack[position.track_id];
+                          if (
+                            !Object.values(assignmentsByMember).includes(
+                              position.track_id,
+                            ) ||
+                            (!override?.title.enabled &&
+                              !override?.artists.enabled)
+                          )
+                            return null;
+                          return (
+                            <li key={position.track_id}>
+                              {position.title}:{" "}
+                              {[
+                                override.title.enabled
+                                  ? `название «${override.title.value}»`
+                                  : undefined,
+                                override.artists.enabled
+                                  ? `исполнители ${override.artists.values.length ? override.artists.values.map((artist) => `«${artist.name}»`).join(", ") : "(пустой список)"}`
+                                  : undefined,
+                              ]
+                                .filter(Boolean)
+                                .join("; ")}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
             </>

@@ -16,7 +16,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
-func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
+func TestManualMatchingPartialAssignmentKeepsOmittedMemberPostgreSQL(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
@@ -49,7 +49,71 @@ func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
 	if _, err := db.NewRaw(`UPDATE incoming_match_evaluation SET evaluation_evidence=?::jsonb WHERE group_id=?`, string(evidence), fixture.group.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assignment := []persistence.MatchingManualAssignment{{FileMemberID: fixture.memberA, ProviderTrackID: fixture.trackID, Medium: 1, Position: 1}}
+	header, _, err := repository.Get(ctx, fixture.group.ID)
+	if err != nil || header == nil {
+		t.Fatalf("read evaluation header: %+v, %v", header, err)
+	}
+	preview, err := repository.PreviewMatchingManual(ctx, fixture.group.ID, header.EvaluationRevision, fixture.releaseID,
+		[]persistence.MatchingManualAssignment{{FileMemberID: fixture.memberA, ProviderTrackID: fixture.trackID, Medium: 1, Position: 1}})
+	if err != nil {
+		t.Fatalf("preview partial manual assignment: %v", err)
+	}
+	if len(preview.Members) != 2 || len(preview.OmittedMemberIDs) != 1 || preview.OmittedMemberIDs[0] != fixture.memberB {
+		t.Fatalf("partial assignment did not preserve the omitted member: %+v", preview)
+	}
+}
+
+func TestManualMatchingAdditivePositionReuseReceiptPostgreSQL(t *testing.T) {
+	t.Parallel()
+	db := testpostgres.OpenMigrated(t)
+	ctx := context.Background()
+	fixture := newIncomingMatchFixture(t, ctx, db)
+	repository := persistence.NewIncomingMatchCandidateRepository(db)
+	if err := repository.Replace(ctx, fixture.evaluation(nil)); err != nil {
+		t.Fatalf("publish evaluation: %v", err)
+	}
+	var releaseKey, recordingKey string
+	if err := db.NewRaw(`SELECT r.provider_key,rec.provider_key FROM provider_release r JOIN provider_release_track t ON t.provider_id=r.provider_id AND t.release_id=r.id JOIN provider_recording rec ON rec.provider_id=t.provider_id AND rec.id=t.recording_id WHERE r.id=? AND t.id=?`, fixture.releaseID, fixture.trackID).Scan(ctx, &releaseKey, &recordingKey); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := json.Marshal(map[string]any{
+		"version": 1, "group_id": fixture.group.ID,
+		"selected_release": map[string]any{"provider_release_id": fixture.releaseID, "release_id": releaseKey, "title": "Fixture Album", "tracklist_complete": true,
+			"positions": []any{map[string]any{"track_id": fixture.trackID, "medium": 0, "position": 0, "recording_id": recordingKey, "displayed_number": "1", "title": "Fixture Track"}}},
+		"releases": []any{map[string]any{
+			"provider_release_id": fixture.releaseID, "release_id": releaseKey, "title": "Fixture Album", "tracklist_complete": true,
+			"positions": []any{map[string]any{"track_id": fixture.trackID, "medium": 0, "position": 0, "recording_id": recordingKey, "displayed_number": "1", "title": "Fixture Track"}},
+		}},
+		"files": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := json.Marshal(map[string]any{"review_proposal": json.RawMessage(proposal)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`UPDATE incoming_match_evaluation SET evaluation_evidence=?::jsonb WHERE group_id=?`, string(evidence), fixture.group.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var existingSourceID uuid.UUID
+	if err := db.NewRaw(`SELECT media_variant_id FROM source_work_variant_identity WHERE work_id=?`, fixture.workA).Scan(ctx, &existingSourceID); err != nil {
+		t.Fatal(err)
+	}
+	// Keep a pre-existing selected manual source link to another local track.
+	// Confirmation must add its provider-position link without replacing this
+	// chosen source or rejecting explicit source reuse across local tracks.
+	existingTrackID := uuid.New()
+	if _, err := db.NewRaw(`INSERT INTO local_track(id,title) VALUES (?,?)`, existingTrackID, "Previously linked track").Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewRaw(`INSERT INTO track_source(id,track_id,media_variant_id,selected,compatible,decision_method,policy_version) VALUES (?,?,?,true,true,'manual',NULL)`, uuid.New(), existingTrackID, existingSourceID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assignment := []persistence.MatchingManualAssignment{
+		{FileMemberID: fixture.memberA, ProviderTrackID: fixture.trackID, Medium: 1, Position: 1},
+		{FileMemberID: fixture.memberB, ProviderTrackID: fixture.trackID, Medium: 1, Position: 1},
+	}
 	header, _, err := repository.Get(ctx, fixture.group.ID)
 	if err != nil || header == nil {
 		t.Fatalf("read evaluation header: %+v, %v", header, err)
@@ -71,7 +135,7 @@ func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview partial manual assignment: %v", err)
 	}
-	if len(preview.Members) != 2 || len(preview.OmittedMemberIDs) != 1 || preview.OmittedMemberIDs[0] != fixture.memberB {
+	if len(preview.Members) != 2 || len(preview.OmittedMemberIDs) != 0 || preview.Members[0].Assignment == nil || preview.Members[1].Assignment == nil {
 		t.Fatalf("preview scope = %+v", preview)
 	}
 	if preview.SelectedRelease.ReleaseID != releaseKey || preview.SelectedRelease.Title != "Fixture Album" || len(preview.SelectedRelease.Positions) != 1 ||
@@ -118,8 +182,12 @@ func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
 	if err := db.NewRaw(`SELECT count(*) FROM manual_matching_receipt WHERE request_id=?`, requestID).Scan(ctx, &receipts); err != nil {
 		t.Fatal(err)
 	}
-	if manualTracks != 1 || manualLinks < 1 || receipts != 1 {
-		t.Fatalf("manual track mappings=%d source links=%d receipts=%d", manualTracks, manualLinks, receipts)
+	var preservedSelectedLink int
+	if err := db.NewRaw(`SELECT count(*) FROM track_source WHERE track_id=? AND media_variant_id=? AND selected=true AND decision_method='manual' AND policy_version IS NULL`, existingTrackID, existingSourceID).Scan(ctx, &preservedSelectedLink); err != nil {
+		t.Fatal(err)
+	}
+	if manualTracks != 1 || manualLinks != 2 || receipts != 1 || preservedSelectedLink != 1 {
+		t.Fatalf("manual track mappings=%d source links=%d receipts=%d preserved selected link=%d", manualTracks, manualLinks, receipts, preservedSelectedLink)
 	}
 	var groupRevision string
 	if err := db.NewRaw(`SELECT revision FROM incoming_group WHERE id=?`, fixture.group.ID).Scan(ctx, &groupRevision); err != nil {
@@ -173,8 +241,12 @@ func TestManualMatchingPartialAssignmentReceiptPostgreSQL(t *testing.T) {
 	if _, err := db.NewRaw(`UPDATE incoming_match_evaluation SET evaluation_revision='changed-after-confirmation' WHERE group_id=?`, fixture.group.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
+	serviceAssignments := make([]service.MatchingManualAssignment, len(assignment))
+	for i, value := range assignment {
+		serviceAssignments[i] = service.MatchingManualAssignment{FileMemberID: value.FileMemberID, ProviderTrackID: value.ProviderTrackID, Medium: value.Medium, Position: value.Position, TitleOverride: value.TitleOverride, ArtistOverrides: value.ArtistOverrides}
+	}
 	replay, err := service.NewMatchingManualService(repository).Confirm(ctx, fixture.group.ID, preview.EvaluationRevision, fixture.releaseID,
-		[]service.MatchingManualAssignment{{FileMemberID: fixture.memberA, ProviderTrackID: fixture.trackID, Medium: 1, Position: 1}}, preview.PreviewDigest, requestID)
+		serviceAssignments, preview.PreviewDigest, requestID)
 	if err != nil || replay.PreviewDigest != confirmed.PreviewDigest {
 		t.Fatalf("receipt replay after evaluation change = %+v, %v", replay, err)
 	}

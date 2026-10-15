@@ -24,6 +24,8 @@ type MatchingManualAssignment struct {
 	ProviderTrackID uuid.UUID `json:"provider_track_id"`
 	Medium          int       `json:"medium"`
 	Position        int       `json:"position"`
+	TitleOverride   *string   `json:"title_override,omitempty"`
+	ArtistOverrides *[]string `json:"artist_overrides,omitempty"`
 }
 
 type MatchingManualMember struct {
@@ -88,15 +90,41 @@ func validateMatchingManualRequest(groupID uuid.UUID, revision string, releaseID
 	}
 	canonical := make([]persistence.MatchingManualAssignment, 0, len(assignments))
 	seenMembers := make(map[uuid.UUID]bool, len(assignments))
+	titles := make(map[uuid.UUID]*string)
+	artists := make(map[uuid.UUID]*[]string)
 	for _, assignment := range assignments {
 		if assignment.FileMemberID == uuid.Nil || assignment.ProviderTrackID == uuid.Nil || assignment.Medium < 1 || assignment.Position < 1 || seenMembers[assignment.FileMemberID] {
 			return nil, fmt.Errorf("%w: assignments must name unique members and valid positions", ErrMatchingManualInvalid)
 		}
 		seenMembers[assignment.FileMemberID] = true
-		canonical = append(canonical, persistence.MatchingManualAssignment{FileMemberID: assignment.FileMemberID, ProviderTrackID: assignment.ProviderTrackID, Medium: assignment.Medium, Position: assignment.Position})
+		if assignment.TitleOverride != nil {
+			if previous, ok := titles[assignment.ProviderTrackID]; ok && *previous != *assignment.TitleOverride {
+				return nil, fmt.Errorf("%w: conflicting overrides for provider track", ErrMatchingManualInvalid)
+			}
+			titles[assignment.ProviderTrackID] = assignment.TitleOverride
+		}
+		if assignment.ArtistOverrides != nil {
+			if previous, ok := artists[assignment.ProviderTrackID]; ok && !equalManualOverrideStrings(*previous, *assignment.ArtistOverrides) {
+				return nil, fmt.Errorf("%w: conflicting overrides for provider track", ErrMatchingManualInvalid)
+			}
+			artists[assignment.ProviderTrackID] = assignment.ArtistOverrides
+		}
+		canonical = append(canonical, persistence.MatchingManualAssignment{FileMemberID: assignment.FileMemberID, ProviderTrackID: assignment.ProviderTrackID, Medium: assignment.Medium, Position: assignment.Position, TitleOverride: copyManualString(assignment.TitleOverride), ArtistOverrides: copyManualStrings(assignment.ArtistOverrides)})
 	}
 	sort.Slice(canonical, func(i, j int) bool { return canonical[i].FileMemberID.String() < canonical[j].FileMemberID.String() })
 	return canonical, nil
+}
+
+func equalManualOverrideStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func matchingManualError(err error) error {
@@ -112,8 +140,7 @@ func matchingManualError(err error) error {
 		"manual matching selected release layout is unavailable",
 		"manual matching selected release layout is invalid",
 		"manual matching assignment is outside selected release layout",
-		"manual matching assignment references a non-member",
-		"manual matching assignments collide in a source folder":
+		"manual matching assignment references a non-member":
 		return fmt.Errorf("%w: %s", ErrMatchingManualInvalid, err)
 	default:
 		return err
@@ -141,10 +168,27 @@ func matchingManualResult(value persistence.MatchingManualPreview) MatchingManua
 	for _, member := range value.Members {
 		item := MatchingManualMember{FileMemberID: member.FileMemberID, Locations: append([]string{}, member.Locations...)}
 		if member.Assignment != nil {
-			assignment := MatchingManualAssignment{FileMemberID: member.Assignment.FileMemberID, ProviderTrackID: member.Assignment.ProviderTrackID, Medium: member.Assignment.Medium, Position: member.Assignment.Position}
+			assignment := MatchingManualAssignment{FileMemberID: member.Assignment.FileMemberID, ProviderTrackID: member.Assignment.ProviderTrackID, Medium: member.Assignment.Medium, Position: member.Assignment.Position, TitleOverride: copyManualString(member.Assignment.TitleOverride), ArtistOverrides: copyManualStrings(member.Assignment.ArtistOverrides)}
 			item.Assignment = &assignment
 		}
 		result.Members = append(result.Members, item)
 	}
 	return result
+}
+
+func copyManualString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func copyManualStrings(value *[]string) *[]string {
+	if value == nil {
+		return nil
+	}
+	cloned := make([]string, len(*value))
+	copy(cloned, *value)
+	return &cloned
 }

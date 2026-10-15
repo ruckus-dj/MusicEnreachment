@@ -20,7 +20,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func TestMatchingAuthorityUnlinkAndReturnAutomaticOverHTTPPostgreSQL(t *testing.T) {
+func TestMatchingAuthorityRetainsSourcesAndReturnsAutomaticOverHTTPPostgreSQL(t *testing.T) {
 	testAutomaticFallbackFiniteFlowWithPublicationCallback(t, false, false, false, false, false, func(fixture uniquePublicationApplyFixture) {
 		ctx, db, groupID := fixture.Context, fixture.Database, fixture.InputSnapshot.Authority.GroupID
 		repository := persistence.NewIncomingMatchCandidateRepository(db)
@@ -74,12 +74,12 @@ func TestMatchingAuthorityUnlinkAndReturnAutomaticOverHTTPPostgreSQL(t *testing.
 		}
 		unlinkBody := map[string]any{"expected_group_revision": reviewGroupRevision(t, ctx, db, groupID), "expected_authority_revision": review.AuthorityRevision, "source_ids": review.CurrentLinkedManualMediaSourceIDs, "request_id": uuid.New()}
 		unlinked := call(http.MethodPost, "/incoming-groups/"+groupID.String()+"/matching/unlink", unlinkBody)
-		if unlinked.Code != http.StatusOK {
-			t.Fatalf("unlink status=%d body=%s", unlinked.Code, unlinked.Body.String())
+		if unlinked.Code != http.StatusNotFound {
+			t.Fatalf("matching must not expose unlink: status=%d body=%s", unlinked.Code, unlinked.Body.String())
 		}
 		response = call(http.MethodGet, matchingPath, nil)
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &review) != nil || review.AuthorityMode != "manual" || len(review.CurrentLinkedManualMediaSourceIDs) != 0 {
-			t.Fatalf("after unlink review status=%d review=%+v body=%s", response.Code, review, response.Body.String())
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &review) != nil || review.AuthorityMode != "manual" || len(review.CurrentLinkedManualMediaSourceIDs) != 1 {
+			t.Fatalf("rejected unlink changed manual sources: status=%d review=%+v body=%s", response.Code, review, response.Body.String())
 		}
 		var afterHeader []byte
 		if err := db.NewRaw(`SELECT jsonb_build_object('evaluation_revision',evaluation_revision,'evaluation_evidence',evaluation_evidence,'fence_version',fence_version,'target_run_id',target_run_id,'target_capture',target_capture,'target_capture_digest',encode(target_capture_digest,'hex')) FROM incoming_match_evaluation WHERE group_id=?`, groupID).Scan(ctx, &afterHeader); err != nil || !bytes.Equal(beforeHeader, afterHeader) {
@@ -136,8 +136,8 @@ func TestMatchingAuthorityUnlinkAndReturnAutomaticOverHTTPPostgreSQL(t *testing.
 			}
 		}
 		var manualLinks int
-		if err := db.NewRaw(`SELECT count(*) FROM track_source source JOIN source_work_variant_identity identity ON identity.media_variant_id=source.media_variant_id JOIN incoming_group_member_location member ON member.work_id=identity.work_id WHERE member.group_id=? AND source.decision_method='manual'`, groupID).Scan(ctx, &manualLinks); err != nil || manualLinks != 0 {
-			t.Fatalf("return restored old manual link count=%d err=%v", manualLinks, err)
+		if err := db.NewRaw(`SELECT count(*) FROM track_source source JOIN source_work_variant_identity identity ON identity.media_variant_id=source.media_variant_id JOIN incoming_group_member_location member ON member.work_id=identity.work_id WHERE member.group_id=? AND source.decision_method='manual'`, groupID).Scan(ctx, &manualLinks); err != nil || manualLinks != 1 {
+			t.Fatalf("return must preserve manual source link count=%d err=%v", manualLinks, err)
 		}
 	}, true)
 }
