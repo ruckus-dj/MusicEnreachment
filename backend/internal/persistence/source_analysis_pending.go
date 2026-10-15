@@ -40,6 +40,18 @@ func (repository *SourceInventoryRepository) ListPendingSourceAnalysisRoots(ctx 
 // ListPendingSourceAnalysisWork reads current, immutable work and only its
 // pending step rows. Admission revalidates all of these facts under locks.
 func (repository *SourceInventoryRepository) ListPendingSourceAnalysisWork(ctx context.Context, rootID uuid.UUID) ([]SourceAnalysisPendingWork, error) {
+	return repository.readPendingSourceAnalysisWork(ctx, rootID, nil)
+}
+
+// ReadPendingSourceAnalysisWorkBatch rereads only the requested work identities.
+func (repository *SourceInventoryRepository) ReadPendingSourceAnalysisWorkBatch(ctx context.Context, rootID uuid.UUID, workIDs []uuid.UUID) ([]SourceAnalysisPendingWork, error) {
+	if len(workIDs) == 0 {
+		return nil, nil
+	}
+	return repository.readPendingSourceAnalysisWork(ctx, rootID, workIDs)
+}
+
+func (repository *SourceInventoryRepository) readPendingSourceAnalysisWork(ctx context.Context, rootID uuid.UUID, workIDs []uuid.UUID) ([]SourceAnalysisPendingWork, error) {
 	var rows []SourceAnalysisPendingWork
 	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}, func(ctx context.Context, tx bun.Tx) error {
 		root := new(SourceRoot)
@@ -50,30 +62,71 @@ func (repository *SourceInventoryRepository) ListPendingSourceAnalysisWork(ctx c
 			return nil
 		}
 		works := make([]SourceAnalysisWork, 0)
-		if err := tx.NewSelect().Model(&works).Where("source_root_id=?", rootID).
+		query := tx.NewSelect().Model(&works).Where("source_root_id=?", rootID).
 			Where("configured_path=? AND inventory_path=?", root.ConfiguredPath, *root.InventoryPath).
 			Where("current_location_id IS NOT NULL AND current_location_id=location_id").
-			Where("EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.work_id=source_analysis_work.id AND s.state='pending')").
-			Order("id").Scan(ctx); err != nil {
-			return fmt.Errorf("list pending source analysis work: %w", err)
+			Where("EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.work_id=source_analysis_work.id AND s.state='pending')")
+		if workIDs == nil {
+			if err := query.Order("id").Scan(ctx); err != nil {
+				return fmt.Errorf("list pending source analysis work: %w", err)
+			}
+		} else {
+			for _, chunk := range uuidChunks(workIDs) {
+				batch := make([]SourceAnalysisWork, 0, len(chunk))
+				if err := tx.NewSelect().Model(&batch).Where("source_root_id=?", rootID).
+					Where("configured_path=? AND inventory_path=?", root.ConfiguredPath, *root.InventoryPath).
+					Where("current_location_id IS NOT NULL AND current_location_id=location_id").
+					Where("EXISTS (SELECT 1 FROM source_analysis_step s WHERE s.work_id=source_analysis_work.id AND s.state='pending')").
+					Where("id IN (?)", bun.List(chunk)).Order("id").Scan(ctx); err != nil {
+					return fmt.Errorf("list pending source analysis work: %w", err)
+				}
+				works = append(works, batch...)
+			}
+		}
+		if len(works) == 0 {
+			return nil
+		}
+		locationIDs := make([]uuid.UUID, 0, len(works))
+		pendingWorkIDs := make([]uuid.UUID, 0, len(works))
+		for _, work := range works {
+			locationIDs = append(locationIDs, work.LocationID)
+			pendingWorkIDs = append(pendingWorkIDs, work.ID)
+		}
+		locations := make([]SourceLocation, 0, len(works))
+		for _, chunk := range uuidChunks(locationIDs) {
+			var batch []SourceLocation
+			if err := tx.NewSelect().Model(&batch).Where("source_root_id=?", rootID).Where("id IN (?)", bun.List(chunk)).Scan(ctx); err != nil {
+				return fmt.Errorf("read pending source analysis locations: %w", err)
+			}
+			locations = append(locations, batch...)
+		}
+		locationByID := make(map[uuid.UUID]SourceLocation, len(locations))
+		for _, location := range locations {
+			locationByID[location.ID] = location
+		}
+		steps := make([]SourceAnalysisStep, 0, len(works)*3)
+		for _, chunk := range uuidChunks(pendingWorkIDs) {
+			var batch []SourceAnalysisStep
+			if err := tx.NewSelect().Model(&batch).Where("work_id IN (?)", bun.List(chunk)).Where("state='pending'").Order("work_id", "step").Scan(ctx); err != nil {
+				return fmt.Errorf("list pending source analysis steps: %w", err)
+			}
+			steps = append(steps, batch...)
+		}
+		stepsByWork := make(map[uuid.UUID][]SourceAnalysisStep, len(works))
+		for _, step := range steps {
+			stepsByWork[step.WorkID] = append(stepsByWork[step.WorkID], step)
 		}
 		for _, work := range works {
-			location := new(SourceLocation)
-			if err := tx.NewSelect().Model(location).Where("id=? AND source_root_id=?", work.LocationID, rootID).Scan(ctx); err != nil {
-				if err == sql.ErrNoRows {
-					continue
-				}
-				return fmt.Errorf("read pending source analysis location: %w", err)
+			location, exists := locationByID[work.LocationID]
+			if !exists {
+				continue
 			}
 			if location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || !sourceAnalysisMtime(location.Mtime).Equal(sourceAnalysisMtime(work.Mtime)) {
 				continue
 			}
-			steps := make([]SourceAnalysisStep, 0, 3)
-			if err := tx.NewSelect().Model(&steps).Where("work_id=? AND state='pending'", work.ID).Order("step").Scan(ctx); err != nil {
-				return fmt.Errorf("list pending source analysis steps: %w", err)
-			}
-			if len(steps) != 0 {
-				rows = append(rows, SourceAnalysisPendingWork{Work: work, Root: *root, Location: *location, Steps: steps})
+			workSteps := stepsByWork[work.ID]
+			if len(workSteps) != 0 {
+				rows = append(rows, SourceAnalysisPendingWork{Work: work, Root: *root, Location: location, Steps: workSteps})
 			}
 		}
 		return nil
@@ -83,6 +136,17 @@ func (repository *SourceInventoryRepository) ListPendingSourceAnalysisWork(ctx c
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Work.ID.String() < rows[j].Work.ID.String() })
 	return rows, nil
+}
+
+func uuidChunks(ids []uuid.UUID) [][]uuid.UUID {
+	const chunkSize = 500
+	chunks := make([][]uuid.UUID, 0, (len(ids)+chunkSize-1)/chunkSize)
+	for len(ids) > 0 {
+		size := min(len(ids), chunkSize)
+		chunks = append(chunks, ids[:size])
+		ids = ids[size:]
+	}
+	return chunks
 }
 
 // FailPendingSourceAnalysisStep records a safe prerequisite failure without

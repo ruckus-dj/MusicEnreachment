@@ -67,7 +67,7 @@ func TestRetainedPendingStepKeepsOnlyIntentAndSeparatesNeverAdmittedWork(t *test
 	}
 }
 
-func TestPendingSourceAnalysisCohortUsesFirstCurrentWork(t *testing.T) {
+func TestPendingSourceAnalysisCurrentPopulationIncludesBothPolicies(t *testing.T) {
 	rootPath, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -85,11 +85,11 @@ func TestPendingSourceAnalysisCohortUsesFirstCurrentWork(t *testing.T) {
 	staleEnabled := pendingWork(rootID, rootPath, "stale.flac", info.Size(), mtime, true)
 	currentDisabled := pendingWork(rootID, rootPath, "current.flac", info.Size(), mtime, false)
 
-	// The stale first row has a different immutable path and policy. It must not
-	// pin the cohort before filesystem validation excludes it.
-	cohort := currentPendingSourceAnalysisCohort(t.Context(), []persistence.SourceAnalysisPendingWork{staleEnabled, currentDisabled})
-	if len(cohort) != 1 || cohort[0].Work.SHA256Enabled {
-		t.Fatalf("got cohort %#v, want only current SHA-disabled work", cohort)
+	// Filesystem filtering happens once for the population, then both policies
+	// remain available for this admission pass.
+	current := currentPendingSourceAnalysisCohorts(t.Context(), []persistence.SourceAnalysisPendingWork{staleEnabled, currentDisabled})
+	if len(current) != 1 || current[0].Work.SHA256Enabled {
+		t.Fatalf("got population %#v, want only current SHA-disabled work", current)
 	}
 }
 

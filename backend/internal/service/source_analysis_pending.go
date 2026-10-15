@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +16,7 @@ import (
 type sourceAnalysisPendingRepository interface {
 	ListPendingSourceAnalysisRoots(context.Context) ([]persistence.SourceRoot, error)
 	ListPendingSourceAnalysisWork(context.Context, uuid.UUID) ([]persistence.SourceAnalysisPendingWork, error)
+	ReadPendingSourceAnalysisWorkBatch(context.Context, uuid.UUID, []uuid.UUID) ([]persistence.SourceAnalysisPendingWork, error)
 	FailPendingSourceAnalysisStep(context.Context, uuid.UUID, uuid.UUID, persistence.SourceStepName, string) (bool, error)
 }
 
@@ -36,337 +36,223 @@ func (s *SourceAnalysisOperations) AdmitPending(ctx context.Context, rootID uuid
 	if !ok {
 		return nil, fmt.Errorf("admit pending source analysis: pending-work repository is unavailable")
 	}
-	seen := make(map[string]struct{})
 	var firstOperation *persistence.Operation
-	for {
-		works, err := repository.ListPendingSourceAnalysisWork(ctx, rootID)
-		if err != nil {
-			return nil, fmt.Errorf("admit pending source analysis: %w", err)
-		}
-		if len(works) == 0 {
-			return firstOperation, nil
-		}
-		if err := s.ready(ctx); err != nil {
-			return nil, err
-		}
-		root := works[0].Root
-		if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
-			return firstOperation, nil
-		}
-		current := currentPendingSourceAnalysisCohort(ctx, works)
-		if len(current) == 0 {
-			return firstOperation, nil
-		}
-		selectedWorkID := current[0].Work.ID
-		fingerprint := pendingSourceAnalysisFingerprint(current)
-		if _, duplicate := seen[fingerprint]; duplicate {
-			return firstOperation, nil
-		}
-		seen[fingerprint] = struct{}{}
-		shaPolicy := current[0].Work.SHA256Enabled
-		progress := false
-		ordinary, retained, malformed := separateRetainedSourceAnalysisSteps(current)
-		for _, pending := range malformed {
-			applied, err := repository.FailPendingSourceAnalysisStep(ctx, rootID, pending.Pending.Work.ID, persistence.SourceStepName(pending.Step.Step), "The retained analysis request is invalid; retry this step manually.")
-			if err != nil {
-				if errors.Is(err, persistence.ErrToolsRootMoveActive) {
-					return firstOperation, nil
-				}
-				return nil, fmt.Errorf("record invalid retained source analysis input: %w", err)
+	works, err := repository.ListPendingSourceAnalysisWork(ctx, rootID)
+	if err != nil {
+		return nil, fmt.Errorf("admit pending source analysis: %w", err)
+	}
+	if len(works) == 0 {
+		return nil, nil
+	}
+	if err := s.ready(ctx); err != nil {
+		return nil, err
+	}
+	root := works[0].Root
+	if !root.Enabled || root.Stale() || root.InventoryPath == nil || *root.InventoryPath != root.ConfiguredPath {
+		return nil, nil
+	}
+	// Snapshot source identities once; siblings created after this point are left
+	// for the next wake or periodic dispatch.
+	current := currentPendingSourceAnalysisCohorts(ctx, works)
+	if len(current) == 0 {
+		return nil, nil
+	}
+	ordinary, retained, malformed := separateRetainedSourceAnalysisSteps(current)
+	for _, pending := range malformed {
+		applied, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, pending.Pending.Work.ID, persistence.SourceStepName(pending.Step.Step), "The retained analysis request is invalid; retry this step manually.")
+		if failErr != nil {
+			if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
+				return nil, nil
 			}
-			progress = progress || applied
+			return nil, fmt.Errorf("record invalid retained source analysis input: %w", failErr)
 		}
-		for _, intent := range retained {
-			step := persistence.SourceStepName(intent.Step.Step)
-			if !*intent.Snapshot.RerunTarget {
-				selection, version := retainedCacheSelection(intent.Snapshot, step)
-				if version != "" {
-					applied, err := s.reusePendingCache(ctx, []persistence.SourceAnalysisPendingWork{intent.Pending}, step, selection)
-					if err != nil {
-						return nil, err
-					}
-					progress = progress || applied
-				}
-			}
-			latest, err := repository.ListPendingSourceAnalysisWork(ctx, rootID)
-			if err != nil {
+		_ = applied
+	}
+	// Retained cache reuse is phase-wide and precedes every availability check.
+	owners := make(map[uuid.UUID]struct{})
+	for _, intent := range retained {
+		if owner := retainedRecoveryOwner(intent); owner != uuid.Nil {
+			owners[owner] = struct{}{}
+		}
+		if *intent.Snapshot.RerunTarget {
+			continue
+		}
+		step := persistence.SourceStepName(intent.Step.Step)
+		selection, version := retainedCacheSelection(intent.Snapshot, step)
+		if version != "" {
+			if _, err := s.reusePendingCache(ctx, []persistence.SourceAnalysisPendingWork{intent.Pending}, step, selection); err != nil {
 				return nil, err
 			}
-			stillPending := false
-			for _, row := range latest {
-				if row.Work.ID != intent.Pending.Work.ID {
-					continue
-				}
-				for _, pendingStep := range row.Steps {
-					stillPending = stillPending || pendingStep.Step == intent.Step.Step
-				}
-			}
-			if !stillPending {
+		}
+	}
+	retainedIDs := uniquePendingWorkIDs(retained)
+	latest, err := repository.ReadPendingSourceAnalysisWorkBatch(ctx, rootID, retainedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("reread retained pending source analysis: %w", err)
+	}
+	_, latestRetained, _ := separateRetainedSourceAnalysisSteps(latest)
+	// Index the fresh retained tuples once by durable owner so every owner group
+	// is checked in a single linear pass instead of rescanning per owner.
+	recoveryGroups := make(map[uuid.UUID][]retainedSourceAnalysisIntent)
+	indexed := make(map[string]struct{})
+	for _, intent := range latestRetained {
+		owner := retainedRecoveryOwner(intent)
+		if owner == uuid.Nil {
+			continue
+		}
+		key := intent.Pending.Work.ID.String() + ":" + intent.Step.Step
+		if _, exists := indexed[key]; exists {
+			continue
+		}
+		indexed[key] = struct{}{}
+		recoveryGroups[owner] = append(recoveryGroups[owner], intent)
+	}
+	for owner := range owners {
+		for _, intent := range recoveryGroups[owner] {
+			if *intent.Snapshot.CacheOnlyReuse || intent.Step.Step == string(persistence.SourceStepSHA256) {
 				continue
 			}
-			if retainedRecoveryOwner(intent) == uuid.Nil && !*intent.Snapshot.CacheOnlyReuse && step != persistence.SourceStepSHA256 {
-				available, checkErr := s.retainedToolAvailable(ctx, intent.Snapshot, step)
-				if checkErr != nil {
-					return nil, checkErr
-				}
-				if !available {
-					applied, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, intent.Pending.Work.ID, step, "The retained analysis tool is unavailable; retry this step manually.")
-					if failErr != nil {
-						if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
-							return firstOperation, nil
-						}
-						return nil, fmt.Errorf("record unavailable retained analysis tool: %w", failErr)
-					}
-					progress = progress || applied
-					continue
-				}
+			available, checkErr := s.retainedToolAvailable(ctx, intent.Snapshot, persistence.SourceStepName(intent.Step.Step))
+			if checkErr != nil {
+				return nil, checkErr
 			}
-			if recoveryOwner := retainedRecoveryOwner(intent); recoveryOwner != uuid.Nil {
-				latest, err := repository.ListPendingSourceAnalysisWork(ctx, rootID)
-				if err != nil {
-					return nil, err
-				}
-				latest = currentPendingSourceAnalysisCohort(ctx, latest)
-				_, latestRetained, _ := separateRetainedSourceAnalysisSteps(latest)
-				group := retainedRecoveryGroup(latestRetained, recoveryOwner)
-				if len(group) > 1 {
-					for _, member := range group {
-						memberStep := persistence.SourceStepName(member.Step.Step)
-						// The current intent's cache lookup already ran above. For every
-						// other member, resolve a pinned-version cache hit before asking
-						// whether its runner is still installed.
-						if member.Pending.Work.ID != intent.Pending.Work.ID || member.Step.Step != intent.Step.Step {
-							if !*member.Snapshot.RerunTarget {
-								selection, version := retainedCacheSelection(member.Snapshot, memberStep)
-								if version != "" {
-									applied, cacheErr := s.reusePendingCache(ctx, []persistence.SourceAnalysisPendingWork{member.Pending}, memberStep, selection)
-									if cacheErr != nil {
-										return nil, cacheErr
-									}
-									progress = progress || applied
-								}
-							}
-						}
-						// Cache reuse and failures can change the pending group. Re-read
-						// before checking availability so completed members need no tool.
-						latest, err = repository.ListPendingSourceAnalysisWork(ctx, rootID)
-						if err != nil {
-							return nil, err
-						}
-					}
-					latest = currentPendingSourceAnalysisCohort(ctx, latest)
-					_, latestRetained, _ = separateRetainedSourceAnalysisSteps(latest)
-					group = retainedRecoveryGroup(latestRetained, recoveryOwner)
-					for _, member := range group {
-						memberStep := persistence.SourceStepName(member.Step.Step)
-						if *member.Snapshot.CacheOnlyReuse || memberStep == persistence.SourceStepSHA256 {
-							continue
-						}
-						available, checkErr := s.retainedToolAvailable(ctx, member.Snapshot, memberStep)
-						if checkErr != nil {
-							return nil, checkErr
-						}
-						if !available {
-							applied, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, member.Pending.Work.ID, memberStep, "The retained analysis tool is unavailable; retry this step manually.")
-							if failErr != nil {
-								if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
-									return firstOperation, nil
-								}
-								return nil, fmt.Errorf("record unavailable retained analysis tool: %w", failErr)
-							}
-							progress = progress || applied
-						}
-					}
-					latest, err = repository.ListPendingSourceAnalysisWork(ctx, rootID)
-					if err != nil {
-						return nil, err
-					}
-					latest = currentPendingSourceAnalysisCohort(ctx, latest)
-					_, latestRetained, _ = separateRetainedSourceAnalysisSteps(latest)
-					group = retainedRecoveryGroup(latestRetained, recoveryOwner)
-					currentPending := false
-					for _, member := range group {
-						currentPending = currentPending || (member.Pending.Work.ID == intent.Pending.Work.ID && member.Step.Step == intent.Step.Step)
-					}
-					if !currentPending {
-						continue
-					}
-					latest, err = repository.ListPendingSourceAnalysisWork(ctx, rootID)
-					if err != nil {
-						return nil, err
-					}
-					latest = currentPendingSourceAnalysisCohort(ctx, latest)
-					_, latestRetained, _ = separateRetainedSourceAnalysisSteps(latest)
-					group = retainedRecoveryGroup(latestRetained, recoveryOwner)
-				}
-				if snapshot, ok := retainedRecoveryBatchSnapshot(group); ok {
-					raw, marshalErr := json.Marshal(snapshot)
-					if marshalErr != nil {
-						return nil, fmt.Errorf("encode retained source analysis batch snapshot: %w", marshalErr)
-					}
-					operation := &persistence.Operation{
-						ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued", Stage: SourceAnalysisStageQueued,
-						SourceAnalysisMode: snapshot.Mode, ToolsReadRequired: snapshot.ToolsReadRequired,
-						InputSnapshot: raw, Attempt: 1, TargetSourceRootID: &rootID,
-					}
-					operation, err = s.admit(ctx, operation)
-					if errors.Is(err, ErrSourceAnalysisMoveActive) || errors.Is(err, ErrSourceAnalysisBusy) {
+			if !available {
+				if _, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, intent.Pending.Work.ID, persistence.SourceStepName(intent.Step.Step), "The retained analysis tool is unavailable; retry this step manually."); failErr != nil {
+					if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
 						return firstOperation, nil
 					}
-					if err != nil || operation != nil {
-						return operation, err
-					}
+					return nil, fmt.Errorf("record unavailable retained analysis tool: %w", failErr)
 				}
-			}
-			operation, err := s.enqueueFromSnapshot(ctx, intent.Snapshot, intent.Step.Step, *intent.Snapshot.RerunTarget, intent.Pending.Root.ID, intent.Pending.Location.ID)
-			if errors.Is(err, ErrSourceAnalysisMoveActive) || errors.Is(err, ErrSourceAnalysisBusy) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if operation != nil {
-				if firstOperation == nil {
-					firstOperation = operation
-				}
-				continue
 			}
 		}
-		valid := ordinary
-		if len(valid) > 0 {
-			steps := pendingSteps(valid)
-			selected := make([]persistence.SourceAnalysisToolSelection, 0, 2)
-			for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
-				if !steps[step] {
-					continue
+	}
+	for _, intent := range latestRetained {
+		if retainedRecoveryOwner(intent) != uuid.Nil || *intent.Snapshot.CacheOnlyReuse || intent.Step.Step == string(persistence.SourceStepSHA256) {
+			continue
+		}
+		available, checkErr := s.retainedToolAvailable(ctx, intent.Snapshot, persistence.SourceStepName(intent.Step.Step))
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if !available {
+			if _, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, intent.Pending.Work.ID, persistence.SourceStepName(intent.Step.Step), "The retained analysis tool is unavailable; retry this step manually."); failErr != nil {
+				if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
+					return firstOperation, nil
 				}
-				selection, selectErr := s.selectedTools(ctx, step)
-				if selectErr == nil {
-					applied, err := s.reusePendingCache(ctx, valid, step, selection[0])
-					if err != nil {
-						return nil, err
-					}
-					progress = progress || applied
+				return nil, fmt.Errorf("record unavailable retained analysis tool: %w", failErr)
+			}
+		}
+	}
+	// Refresh identities after cache/prerequisite updates and admit retained steps
+	// independently, without importing historical owner configuration.
+	latest, err = repository.ReadPendingSourceAnalysisWorkBatch(ctx, rootID, retainedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("reread retained pending source analysis: %w", err)
+	}
+	latestByID := pendingWorkMap(latest)
+	for _, intent := range retained {
+		fresh, exists := latestByID[intent.Pending.Work.ID]
+		if !exists || !hasPendingStep(fresh, intent.Step.Step) {
+			continue
+		}
+		operation, enqueueErr := s.enqueueFromSnapshot(ctx, intent.Snapshot, intent.Step.Step, *intent.Snapshot.RerunTarget, fresh.Root.ID, fresh.Location.ID)
+		if errors.Is(enqueueErr, ErrSourceAnalysisMoveActive) {
+			return firstOperation, nil
+		}
+		// Busy is work-specific: another retained step of this same work already
+		// holds admission. Skip only this tuple and keep admitting independent
+		// works and ordinary steps.
+		if errors.Is(enqueueErr, ErrSourceAnalysisBusy) {
+			continue
+		}
+		if enqueueErr != nil {
+			return firstOperation, enqueueErr
+		}
+		if operation != nil && firstOperation == nil {
+			firstOperation = operation
+		}
+	}
+	// Run ordinary prerequisites and cache checks once per SHA-policy cohort.
+	for _, cohort := range [][]persistence.SourceAnalysisPendingWork{filterPendingPolicy(ordinary, false), filterPendingPolicy(ordinary, true)} {
+		if len(cohort) == 0 {
+			continue
+		}
+		steps := pendingSteps(cohort)
+		selections := make(map[persistence.SourceStepName][]persistence.SourceAnalysisToolSelection)
+		for _, step := range []persistence.SourceStepName{persistence.SourceStepProbe, persistence.SourceStepFingerprint} {
+			if !steps[step] {
+				continue
+			}
+			selection, selectErr := s.selectedTools(ctx, step)
+			if selectErr == nil {
+				selections[step] = selection
+				if _, cacheErr := s.reusePendingCache(ctx, cohort, step, selection[0]); cacheErr != nil {
+					return nil, cacheErr
 				}
-				if selectErr != nil {
-					if !errors.Is(selectErr, ErrSourceAnalysisToolUnavailable) {
-						return nil, selectErr
-					}
-					for _, pending := range valid {
-						for _, row := range pending.Steps {
-							if persistence.SourceStepName(row.Step) != step {
-								continue
+				continue
+			}
+			if !errors.Is(selectErr, ErrSourceAnalysisToolUnavailable) {
+				return nil, selectErr
+			}
+			for _, pending := range cohort {
+				for _, row := range pending.Steps {
+					if row.Step == string(step) {
+						if _, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, pending.Work.ID, step, "The selected analysis tool is unavailable."); failErr != nil {
+							if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
+								return firstOperation, nil
 							}
-							applied, failErr := repository.FailPendingSourceAnalysisStep(ctx, rootID, pending.Work.ID, step, "The selected analysis tool is unavailable.")
-							if failErr != nil {
-								if errors.Is(failErr, persistence.ErrToolsRootMoveActive) {
-									return firstOperation, nil
-								}
-								return nil, fmt.Errorf("record pending source analysis prerequisite failure: %w", failErr)
-							}
-							progress = progress || applied
+							return nil, fmt.Errorf("record pending source analysis prerequisite failure: %w", failErr)
 						}
 					}
-					continue
-				}
-				selected = append(selected, selection...)
-			}
-			latest, err := repository.ListPendingSourceAnalysisWork(ctx, rootID)
-			if err != nil {
-				return nil, err
-			}
-			latestCurrent := currentPendingSourceAnalysisCohort(ctx, latest)
-			selectedStillCurrent := false
-			for _, pending := range latestCurrent {
-				if pending.Work.ID == selectedWorkID {
-					selectedStillCurrent = pending.Work.SHA256Enabled == shaPolicy
-					break
 				}
 			}
-			if !selectedStillCurrent {
-				if progress {
-					continue
-				}
-				return firstOperation, nil
+		}
+		for _, candidate := range cohort {
+			freshRows, readErr := repository.ReadPendingSourceAnalysisWorkBatch(ctx, rootID, []uuid.UUID{candidate.Work.ID})
+			if readErr != nil {
+				return firstOperation, fmt.Errorf("reread pending source analysis work: %w", readErr)
 			}
-			valid, _, _ = separateRetainedSourceAnalysisSteps(latestCurrent)
-			if len(valid) == 0 {
-				if progress {
-					continue
-				}
-				return firstOperation, nil
+			freshOrdinary, _, _ := separateRetainedSourceAnalysisSteps(freshRows)
+			if len(freshOrdinary) == 0 {
+				continue
 			}
-			// Preserve the originally selected work across the admission reread.
-			// New or reordered siblings must not silently join this operation.
-			var selectedWork *persistence.SourceAnalysisPendingWork
-			for index := range valid {
-				if valid[index].Work.ID == selectedWorkID {
-					selectedWork = &valid[index]
-					break
-				}
+			fresh := freshOrdinary[0]
+			// Revalidate the exact current size+mtime at the admission boundary:
+			// the initial population snapshot may predate a long cache preflight.
+			if fresh.Work.SHA256Enabled != candidate.Work.SHA256Enabled || !samePendingSourceIdentity(candidate, fresh) || !pendingSourceFileCurrent(ctx, fresh) {
+				continue
 			}
-			if selectedWork == nil {
-				if progress {
-					continue
-				}
-				return firstOperation, nil
-			}
-			valid = []persistence.SourceAnalysisPendingWork{*selectedWork}
-			workIDs := make([]uuid.UUID, 0, len(valid))
-			for _, pending := range valid {
-				workIDs = append(workIDs, pending.Work.ID)
-			}
+			// The selected operation contains only the fresh ordinary steps of this
+			// original work identity.
 			cacheOnly, rerun := false, false
-			snapshot := persistence.SourceAnalysisOperationSnapshot{
-				SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion,
-				Mode:          persistence.SourceAnalysisModeBatch, WorkIDs: workIDs,
-				RerunTarget: &rerun, SHA256Enabled: &shaPolicy, CacheOnlyReuse: &cacheOnly,
-				ToolsReadRequired: false,
+			snapshot := persistence.SourceAnalysisOperationSnapshot{SchemaVersion: persistence.SourceAnalysisOperationSnapshotVersion, Mode: persistence.SourceAnalysisModeBatch, WorkIDs: []uuid.UUID{fresh.Work.ID}, RerunTarget: &rerun, SHA256Enabled: &fresh.Work.SHA256Enabled, CacheOnlyReuse: &cacheOnly}
+			for _, row := range fresh.Steps {
+				snapshot.SelectedSteps = append(snapshot.SelectedSteps, persistence.SourceAnalysisStepSelection{WorkID: fresh.Work.ID, Step: persistence.SourceStepName(row.Step)})
 			}
-			for _, pendingStep := range selectedWork.Steps {
-				snapshot.SelectedSteps = append(snapshot.SelectedSteps, persistence.SourceAnalysisStepSelection{
-					WorkID: selectedWork.Work.ID,
-					Step:   persistence.SourceStepName(pendingStep.Step),
-				})
-			}
-			remaining := pendingSteps(valid)
-			for _, selection := range selected {
-				step := persistence.SourceStepProbe
-				if selection.Executable == "fpcalc" {
-					step = persistence.SourceStepFingerprint
-				}
-				if remaining[step] {
-					snapshot.Tools = append(snapshot.Tools, selection)
+			for step, selection := range selections {
+				if hasPendingStep(fresh, string(step)) {
+					snapshot.Tools = append(snapshot.Tools, selection...)
 				}
 			}
 			snapshot.ToolsReadRequired = len(snapshot.Tools) > 0
-			raw, err := json.Marshal(snapshot)
-			if err != nil {
-				return nil, fmt.Errorf("encode pending source analysis snapshot: %w", err)
+			raw, marshalErr := json.Marshal(snapshot)
+			if marshalErr != nil {
+				return firstOperation, fmt.Errorf("encode pending source analysis snapshot: %w", marshalErr)
 			}
-			operation := &persistence.Operation{
-				ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued", Stage: SourceAnalysisStageQueued,
-				InputSnapshot: raw, Attempt: 1, SourceAnalysisMode: snapshot.Mode,
-				TargetSourceRootID: &rootID, ToolsReadRequired: snapshot.ToolsReadRequired, SourceAnalysisTools: snapshot.Tools,
-			}
-			operation, err = s.admit(ctx, operation)
-			if errors.Is(err, ErrSourceAnalysisBusy) || errors.Is(err, ErrSourceAnalysisMoveActive) {
+			operation := &persistence.Operation{ID: uuid.New(), Kind: SourceAnalysisOperationKind, State: "queued", Stage: SourceAnalysisStageQueued, InputSnapshot: raw, Attempt: 1, SourceAnalysisMode: snapshot.Mode, TargetSourceRootID: &rootID, ToolsReadRequired: snapshot.ToolsReadRequired, SourceAnalysisTools: snapshot.Tools}
+			operation, admitErr := s.admit(ctx, operation)
+			if errors.Is(admitErr, ErrSourceAnalysisBusy) || errors.Is(admitErr, ErrSourceAnalysisMoveActive) {
 				return firstOperation, nil
 			}
-			if err != nil {
-				return firstOperation, err
+			if admitErr != nil {
+				return firstOperation, admitErr
 			}
-			if operation != nil {
-				if firstOperation == nil {
-					firstOperation = operation
-				}
-				continue
+			if operation != nil && firstOperation == nil {
+				firstOperation = operation
 			}
-		}
-		if !progress {
-			return firstOperation, nil
 		}
 	}
+	return firstOperation, nil
 }
 
 func retainedRecoveryOwner(intent retainedSourceAnalysisIntent) uuid.UUID {
@@ -403,18 +289,6 @@ func retainedRecoveryBatchSnapshot(group []retainedSourceAnalysisIntent) (persis
 	return persistence.SourceAnalysisOperationSnapshot{}, false
 }
 
-func pendingSourceAnalysisFingerprint(works []persistence.SourceAnalysisPendingWork) string {
-	var fingerprint strings.Builder
-	for _, work := range works {
-		fmt.Fprintf(&fingerprint, "%s:%t:", work.Work.ID, work.Work.SHA256Enabled)
-		for _, step := range work.Steps {
-			fmt.Fprintf(&fingerprint, "%s,", step.Step)
-		}
-		fingerprint.WriteByte(';')
-	}
-	return fingerprint.String()
-}
-
 func (s *SourceAnalysisOperations) retainedToolAvailable(ctx context.Context, snapshot persistence.SourceAnalysisOperationSnapshot, step persistence.SourceStepName) (bool, error) {
 	_, err := s.selectedTools(ctx, step)
 	if errors.Is(err, ErrSourceAnalysisToolUnavailable) {
@@ -424,22 +298,6 @@ func (s *SourceAnalysisOperations) retainedToolAvailable(ctx context.Context, sn
 		return false, err
 	}
 	return true, nil
-}
-
-// pendingSourceAnalysisCohort selects one immutable SHA policy from current
-// work. Separate cohorts are admitted on subsequent dispatch passes.
-func pendingSourceAnalysisCohort(works []persistence.SourceAnalysisPendingWork) []persistence.SourceAnalysisPendingWork {
-	if len(works) == 0 {
-		return nil
-	}
-	shaEnabled := works[0].Work.SHA256Enabled
-	cohort := make([]persistence.SourceAnalysisPendingWork, 0, len(works))
-	for _, pending := range works {
-		if pending.Work.SHA256Enabled == shaEnabled {
-			cohort = append(cohort, pending)
-		}
-	}
-	return cohort
 }
 
 func separateRetainedSourceAnalysisSteps(works []persistence.SourceAnalysisPendingWork) ([]persistence.SourceAnalysisPendingWork, []retainedSourceAnalysisIntent, []retainedSourceAnalysisIntent) {
@@ -467,14 +325,64 @@ func separateRetainedSourceAnalysisSteps(works []persistence.SourceAnalysisPendi
 	return ordinary, retained, malformed
 }
 
-func currentPendingSourceAnalysisCohort(ctx context.Context, works []persistence.SourceAnalysisPendingWork) []persistence.SourceAnalysisPendingWork {
+func currentPendingSourceAnalysisCohorts(ctx context.Context, works []persistence.SourceAnalysisPendingWork) []persistence.SourceAnalysisPendingWork {
 	current := make([]persistence.SourceAnalysisPendingWork, 0, len(works))
 	for _, pending := range works {
 		if pendingSourceFileCurrent(ctx, pending) {
 			current = append(current, pending)
 		}
 	}
-	return pendingSourceAnalysisCohort(current)
+	return current
+}
+
+func uniquePendingWorkIDs(intents []retainedSourceAnalysisIntent) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(intents))
+	ids := make([]uuid.UUID, 0, len(intents))
+	for _, intent := range intents {
+		id := intent.Pending.Work.ID
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func pendingWorkMap(works []persistence.SourceAnalysisPendingWork) map[uuid.UUID]persistence.SourceAnalysisPendingWork {
+	byID := make(map[uuid.UUID]persistence.SourceAnalysisPendingWork, len(works))
+	for _, work := range works {
+		byID[work.Work.ID] = work
+	}
+	return byID
+}
+
+func hasPendingStep(work persistence.SourceAnalysisPendingWork, step string) bool {
+	for _, row := range work.Steps {
+		if row.Step == step {
+			return true
+		}
+	}
+	return false
+}
+
+func samePendingSourceIdentity(expected, actual persistence.SourceAnalysisPendingWork) bool {
+	return expected.Work.ID == actual.Work.ID && expected.Work.LocationID == actual.Work.LocationID &&
+		expected.Work.ConfiguredPath == actual.Work.ConfiguredPath && expected.Work.InventoryPath == actual.Work.InventoryPath &&
+		expected.Work.RelativePath == actual.Work.RelativePath && expected.Work.SizeBytes == actual.Work.SizeBytes &&
+		expected.Work.Mtime.Equal(actual.Work.Mtime) && expected.Location.ID == actual.Location.ID &&
+		expected.Location.RelativePath == actual.Location.RelativePath && expected.Location.SizeBytes == actual.Location.SizeBytes &&
+		expected.Location.Mtime.Equal(actual.Location.Mtime)
+}
+
+func filterPendingPolicy(works []persistence.SourceAnalysisPendingWork, enabled bool) []persistence.SourceAnalysisPendingWork {
+	filtered := make([]persistence.SourceAnalysisPendingWork, 0, len(works))
+	for _, work := range works {
+		if work.Work.SHA256Enabled == enabled {
+			filtered = append(filtered, work)
+		}
+	}
+	return filtered
 }
 
 // DispatchPending sweeps roots independently: a stale root or transient tools

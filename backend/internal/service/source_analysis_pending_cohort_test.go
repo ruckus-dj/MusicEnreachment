@@ -8,25 +8,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 )
 
-func TestPendingSourceAnalysisFingerprintTracksPolicyAndRemainingSteps(t *testing.T) {
-	workID := uuid.New()
-	works := []persistence.SourceAnalysisPendingWork{{
-		Work:  persistence.SourceAnalysisWork{ID: workID, SHA256Enabled: true},
-		Steps: []persistence.SourceAnalysisStep{{Step: string(persistence.SourceStepFingerprint)}},
-	}}
-	initial := pendingSourceAnalysisFingerprint(works)
-
-	works[0].Work.SHA256Enabled = false
-	if fingerprint := pendingSourceAnalysisFingerprint(works); fingerprint == initial {
-		t.Fatal("fingerprint did not distinguish a changed immutable SHA policy")
-	}
-	works[0].Work.SHA256Enabled = true
-	works[0].Steps = nil
-	if fingerprint := pendingSourceAnalysisFingerprint(works); fingerprint == initial {
-		t.Fatal("fingerprint did not distinguish exhausted pending steps")
-	}
-}
-
 func TestRetainedRecoveryKeepsExactIntentAndAdmitsOneStepAtATime(t *testing.T) {
 	owner, workID, rootID := uuid.New(), uuid.New(), uuid.New()
 	shaEnabled, rerun, cacheOnly := true, false, false
