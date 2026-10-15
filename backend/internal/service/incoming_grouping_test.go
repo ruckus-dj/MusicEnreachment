@@ -133,6 +133,92 @@ func TestGroupIncomingFilesFallbackAndMultiValueNormalization(t *testing.T) {
 	}
 }
 
+// TestGroupIncomingFilesFolderFallbackKeepsEditionFields locks the fallback
+// contract: A4 sufficiency governs cross-folder grouping, it is not permission
+// to ignore same-folder conflicts. Files that fall back to their folder must
+// still agree on every captured edition field; conflicting filled values and a
+// missing value versus a filled one stay in separate groups, while genuinely
+// absent edition tags and cross-folder insufficiency keep their prior behavior.
+func TestGroupIncomingFilesFolderFallbackKeepsEditionFields(t *testing.T) {
+	const (
+		root      = "00000000-0000-4000-8000-000000000021"
+		variantA  = "00000000-0000-4000-8000-000000000001"
+		analysisA = "00000000-0000-4000-8000-000000000011"
+		variantB  = "00000000-0000-4000-8000-000000000002"
+		analysisB = "00000000-0000-4000-8000-000000000012"
+	)
+	sameFolder := func(tagsA, tagsB map[string][]string) []IncomingFile {
+		return []IncomingFile{
+			incomingTestFile(variantA, analysisA, root, "album/a.flac", tagsA),
+			incomingTestFile(variantB, analysisB, root, "album/b.flac", tagsB),
+		}
+	}
+	conflicts := []struct {
+		name         string
+		first, other map[string][]string
+	}{
+		{"album", map[string][]string{"ALBUM": {"Album A"}, "ARTIST": {"Artist"}}, map[string][]string{"ALBUM": {"Album B"}, "ARTIST": {"Artist"}}},
+		{"artist", map[string][]string{"ALBUM": {"Album"}, "ARTIST": {"Artist A"}}, map[string][]string{"ALBUM": {"Album"}, "ARTIST": {"Artist B"}}},
+		{"country", map[string][]string{"ALBUM": {"Album"}, "ARTIST": {"Artist"}, "RELEASECOUNTRY": {"US"}}, map[string][]string{"ALBUM": {"Album"}, "ARTIST": {"Artist"}, "RELEASECOUNTRY": {"GB"}}},
+		{"date", map[string][]string{"ARTIST": {"Artist"}, "DATE": {"2001"}}, map[string][]string{"ARTIST": {"Artist"}, "DATE": {"2002"}}},
+		{"catalog", map[string][]string{"ARTIST": {"Artist"}, "CATALOGNUMBER": {"cat-a"}}, map[string][]string{"ARTIST": {"Artist"}, "CATALOGNUMBER": {"cat-b"}}},
+	}
+	for _, conflict := range conflicts {
+		t.Run("conflict_"+conflict.name, func(t *testing.T) {
+			groups, err := GroupIncomingFiles(sameFolder(conflict.first, conflict.other))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(groups) != 2 {
+				t.Fatalf("same-folder %s conflict merged into one folder group: %#v", conflict.name, groups)
+			}
+		})
+	}
+	missing := []struct {
+		name string
+		tags map[string][]string
+	}{
+		{"album", map[string][]string{"ALBUM": {"Album"}}},
+		{"artist", map[string][]string{"ARTIST": {"Artist"}}},
+		{"country", map[string][]string{"RELEASECOUNTRY": {"US"}}},
+		{"date", map[string][]string{"DATE": {"2001"}}},
+		{"catalog", map[string][]string{"CATALOGNUMBER": {"cat"}}},
+	}
+	for _, field := range missing {
+		t.Run("missing_"+field.name, func(t *testing.T) {
+			groups, err := GroupIncomingFiles(sameFolder(field.tags, map[string][]string{"TITLE": {"Track"}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(groups) != 2 {
+				t.Fatalf("missing %s was treated as matching a filled value: %#v", field.name, groups)
+			}
+		})
+	}
+	t.Run("absent_edition_tags_group_by_folder", func(t *testing.T) {
+		groups, err := GroupIncomingFiles(sameFolder(nil, map[string][]string{"TITLE": {"Track"}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(groups) != 1 || len(groups[0].Members) != 2 {
+			t.Fatalf("genuinely absent edition tags should group by folder: %#v", groups)
+		}
+	})
+	t.Run("cross_folder_insufficient_stays_separate", func(t *testing.T) {
+		tags := map[string][]string{"ALBUM": {"Album"}, "ARTIST": {"Artist"}}
+		groups, err := GroupIncomingFiles([]IncomingFile{
+			incomingTestFile(variantA, analysisA, root, "one/song.flac", tags),
+			incomingTestFile(variantB, analysisB, root, "two/song.flac", tags),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(groups) != 2 {
+			t.Fatalf("insufficient same-tag keys in different folders merged: %#v", groups)
+		}
+	})
+}
+
 func TestGroupIncomingFilesRejectsInvalidRelativePaths(t *testing.T) {
 	for _, relativePath := range []string{"", "/absolute/song.flac", "../outside/song.flac", "folder/../../outside/song.flac"} {
 		t.Run(relativePath, func(t *testing.T) {

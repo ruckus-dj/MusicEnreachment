@@ -135,7 +135,7 @@ func GroupIncomingFiles(files []IncomingFile) ([]IncomingGroup, error) {
 				fields.Artist = incomingEffectiveArtist(file.Tags)
 				key = incomingGroupKey{Kind: "tags", Fields: fields}
 			default:
-				key = incomingFolderKey(file.VariantID, location)
+				key = incomingFolderKey(file.VariantID, location, fields)
 			}
 			encoded, err := json.Marshal(key)
 			if err != nil { // Structs above are JSON-safe; retain a defensive boundary.
@@ -244,15 +244,20 @@ func incomingMBIDs(values []string) (valid, invalid []string) {
 	return valid, invalid
 }
 
-func incomingFolderKey(variant uuid.UUID, location IncomingLocation) incomingGroupKey {
+// incomingFolderKey is the fallback for files whose edition keys are not
+// sufficient for cross-folder grouping (see sufficientForTagGroup). It retains
+// the normalized fields so sharing a folder only groups files whose captured
+// edition evidence also agrees: conflicting filled values and missing-versus-
+// filled values stay in separate groups instead of being silently merged.
+func incomingFolderKey(variant uuid.UUID, location IncomingLocation, fields incomingTagFields) incomingGroupKey {
 	folder := path.Dir(strings.TrimPrefix(path.Clean("/"+location.RelativePath), "/"))
 	if folder == "." {
 		folder = ""
 	}
 	if location.RootID == uuid.Nil {
-		return incomingGroupKey{Kind: "folder", Variant: variant.String()}
+		return incomingGroupKey{Kind: "folder", Variant: variant.String(), Fields: fields}
 	}
-	return incomingGroupKey{Kind: "folder", Root: location.RootID.String(), Folder: folder}
+	return incomingGroupKey{Kind: "folder", Root: location.RootID.String(), Folder: folder, Fields: fields}
 }
 
 // validateIncomingLocation rejects locations whose relative path cannot be
