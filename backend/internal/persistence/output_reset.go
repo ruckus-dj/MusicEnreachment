@@ -36,8 +36,7 @@ type OutputResetDirectory struct {
 	Identity string `json:"identity,omitempty"`
 }
 
-// OutputResetRequest contains the full transaction callbacks. RunOutputReset
-// remains as a compatibility wrapper for callers that only record paths.
+// OutputResetRequest contains the full transaction callbacks.
 type OutputResetRequest struct {
 	ExpectedOldRoot            string
 	ExpectedToolsRoot          string
@@ -58,35 +57,10 @@ type outputResetOutcomes struct {
 	RemovedCandidateOperationIDs []uuid.UUID `json:"removed_candidate_operation_ids"`
 }
 
-// RunOutputReset holds the exclusive output admission gate from journal creation
-// through preparation, the database reset, and post-commit filesystem work. The
-// preparation callback records directories as they are created so startup
-// recovery can remove only directories owned by this reset.
-func (repository *SetupManagerRepository) RunOutputReset(
-	ctx context.Context,
-	expectedOldRoot, newRoot string,
-	prepare func(context.Context, func(string) error) error,
-	finish func(context.Context, OutputResetJournal) error,
-) (uuid.UUID, error) {
-	var expectedToolsRoot string
-	if err := repository.db.NewRaw(`SELECT COALESCE(MAX(setting_value),'') FROM app_setting WHERE setting_name='tools_directory'`).Scan(ctx, &expectedToolsRoot); err != nil {
-		return uuid.Nil, fmt.Errorf("read expected tools directory: %w", err)
-	}
-	var durablePrepare func(context.Context, func(OutputResetDirectory) error) error
-	if prepare != nil {
-		durablePrepare = func(ctx context.Context, record func(OutputResetDirectory) error) error {
-			return prepare(ctx, func(path string) error { return record(OutputResetDirectory{Path: path, Phase: "intent"}) })
-		}
-	}
-	return repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot:   expectedOldRoot,
-		ExpectedToolsRoot: expectedToolsRoot,
-		NewRoot:           newRoot,
-		Prepare:           durablePrepare,
-		Finish:            finish,
-	})
-}
-
+// RunOutputResetRequest holds the exclusive output admission gate from journal
+// creation through preparation, the database reset, and post-commit filesystem
+// work. The preparation callback records directories as they are created so
+// startup recovery can remove only directories owned by this reset.
 func (repository *SetupManagerRepository) RunOutputResetRequest(ctx context.Context, request OutputResetRequest) (uuid.UUID, error) {
 	expectedOldRoot, newRoot := request.ExpectedOldRoot, request.NewRoot
 	expectedToolsRoot := request.ExpectedToolsRoot

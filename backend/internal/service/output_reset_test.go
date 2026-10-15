@@ -25,28 +25,40 @@ type outputResetRepositoryStub struct {
 	prepareErr error
 	calls      int
 	journal    persistence.OutputResetJournal
+	request    persistence.OutputResetRequest
+	manifest   []persistence.OutputResetDirectory
 }
 
-func (r *outputResetRepositoryStub) RunOutputReset(
-	ctx context.Context,
-	oldRoot, newRoot string,
-	prepare func(context.Context, func(string) error) error,
-	finish func(context.Context, persistence.OutputResetJournal) error,
-) (uuid.UUID, error) {
+func (r *outputResetRepositoryStub) RunOutputResetRequest(ctx context.Context, request persistence.OutputResetRequest) (uuid.UUID, error) {
 	r.calls++
+	r.request = request
 	if r.prepareErr != nil {
 		return uuid.Nil, r.prepareErr
 	}
 	var paths []string
-	err := prepare(ctx, func(path string) error {
-		paths = append(paths, path)
+	err := request.Prepare(ctx, func(directory persistence.OutputResetDirectory) error {
+		r.manifest = append(r.manifest, directory)
+		if directory.Phase == "intent" {
+			paths = append(paths, directory.Path)
+		}
 		return nil
 	})
 	if err != nil {
 		return uuid.Nil, err
 	}
-	r.journal = persistence.OutputResetJournal{State: "committed", OldRoot: oldRoot, NewRoot: newRoot, CreatedDirectories: paths}
-	return uuid.New(), finish(ctx, r.journal)
+	r.journal = persistence.OutputResetJournal{State: "committed", OldRoot: request.ExpectedOldRoot, NewRoot: request.NewRoot, CreatedDirectories: paths}
+	return uuid.New(), request.Finish(ctx, r.journal)
+}
+
+type outputResetSettingsStore struct {
+	settings.Store
+	values map[string]string
+	err    error
+}
+
+func (s outputResetSettingsStore) Get(_ context.Context, name string) (string, bool, error) {
+	value, found := s.values[name]
+	return value, found, s.err
 }
 
 func (r *outputResetRepositoryStub) RecoverOutputReset(ctx context.Context, callback func(context.Context, persistence.OutputResetJournal) error) error {
@@ -74,16 +86,16 @@ func TestOutputResetDefersFilesystemMutationUntilRepositoryPreparation(t *testin
 	if repository.calls != 1 {
 		t.Fatalf("repository called %d times", repository.calls)
 	}
+	if repository.request.ExpectedToolsRoot != "" {
+		t.Fatalf("request expected tools root without a registry = %q, want empty", repository.request.ExpectedToolsRoot)
+	}
 }
 
 func TestOutputResetRunsPreparedDirectoriesThroughJournalCallback(t *testing.T) {
 	parent := outputResetTestTempDir(t)
 	oldRoot := filepath.Join(parent, "old")
-	newRoot := filepath.Join(parent, "new")
+	newRoot := filepath.Join(parent, "missing", "new")
 	if err := os.Mkdir(oldRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(newRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repository := new(outputResetRepositoryStub)
@@ -91,13 +103,68 @@ func TestOutputResetRunsPreparedDirectoriesThroughJournalCallback(t *testing.T) 
 	if _, err := service.Reset(context.Background(), oldRoot, newRoot); err != nil {
 		t.Fatal(err)
 	}
-	if len(repository.journal.CreatedDirectories) != 2 {
-		t.Fatalf("journaled paths = %v", repository.journal.CreatedDirectories)
+	ancestor := filepath.Join(parent, "missing")
+	wantPaths := []string{ancestor, newRoot, filepath.Join(newRoot, "analysis"), filepath.Join(newRoot, "media")}
+	if len(repository.request.AllowedDirectories) != len(wantPaths) {
+		t.Fatalf("planned allowed directories = %v, want %v", repository.request.AllowedDirectories, wantPaths)
+	}
+	allowed := make(map[string]bool, len(repository.request.AllowedDirectories))
+	for _, path := range repository.request.AllowedDirectories {
+		allowed[path] = true
+	}
+	for _, path := range wantPaths {
+		if !allowed[path] {
+			t.Errorf("planned allowed directories %v omit %q", repository.request.AllowedDirectories, path)
+		}
+	}
+	if len(repository.journal.CreatedDirectories) != len(wantPaths) {
+		t.Fatalf("journaled paths = %v, want all planned creations %v", repository.journal.CreatedDirectories, wantPaths)
+	}
+	if len(repository.manifest) != 2*len(wantPaths) {
+		t.Fatalf("durable manifest = %#v, want intent/created pair for each path", repository.manifest)
+	}
+	for index, path := range wantPaths {
+		intent, created := repository.manifest[index*2], repository.manifest[index*2+1]
+		if intent.Path != path || intent.Phase != "intent" || created.Path != path || created.Phase != "created" || created.Identity == "" {
+			t.Errorf("manifest records for %q = %#v, %#v; want durable intent and created identity", path, intent, created)
+		}
 	}
 	for _, area := range []string{"analysis", "media"} {
 		if info, err := os.Stat(filepath.Join(newRoot, area)); err != nil || !info.IsDir() {
 			t.Fatalf("logical directory %q not prepared: %v", area, err)
 		}
+	}
+}
+
+func TestOutputResetPassesRegistryToolsRootAsCapturedExpectation(t *testing.T) {
+	parent := outputResetTestTempDir(t)
+	oldRoot := filepath.Join(parent, "old")
+	newRoot := filepath.Join(parent, "new")
+	toolsRoot := filepath.Join(parent, "tools")
+	if err := os.Mkdir(oldRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repository := new(outputResetRepositoryStub)
+	service := NewOutputReset(repository, settings.NewResetFilesystem(), nil)
+	service.registry = settings.New(outputResetSettingsStore{values: map[string]string{
+		settings.ToolsDirectoryKey: toolsRoot,
+	}}, nil)
+	if _, err := service.Reset(context.Background(), oldRoot, newRoot); err != nil {
+		t.Fatal(err)
+	}
+	if repository.request.ExpectedToolsRoot != toolsRoot {
+		t.Fatalf("request expected tools root = %q, want captured registry value %q", repository.request.ExpectedToolsRoot, toolsRoot)
+	}
+
+	lookupErr := errors.New("tools root lookup failed")
+	failingRepository := new(outputResetRepositoryStub)
+	failingService := NewOutputReset(failingRepository, settings.NewResetFilesystem(), nil)
+	failingService.registry = settings.New(outputResetSettingsStore{err: lookupErr}, nil)
+	if _, err := failingService.Reset(context.Background(), oldRoot, filepath.Join(parent, "next")); !errors.Is(err, lookupErr) {
+		t.Fatalf("reset error = %v, want tools-root lookup failure %v", err, lookupErr)
+	}
+	if failingRepository.calls != 0 {
+		t.Fatalf("repository called %d times after tools-root lookup failed", failingRepository.calls)
 	}
 }
 

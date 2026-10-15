@@ -125,9 +125,11 @@ func TestOutputResetCancelsQueuedNormalizedAnalysisAndRetainsSuccesses(t *testin
 		}
 	}
 
-	if _, err := manager.RunOutputReset(ctx, "/music/reset-analysis-old", "/music/reset-analysis-new",
-		func(context.Context, func(string) error) error { return nil },
-		func(context.Context, persistence.OutputResetJournal) error { return nil }); err != nil {
+	if _, err := manager.RunOutputResetRequest(ctx, persistence.OutputResetRequest{
+		ExpectedOldRoot: "/music/reset-analysis-old", NewRoot: "/music/reset-analysis-new",
+		Prepare: func(context.Context, func(persistence.OutputResetDirectory) error) error { return nil },
+		Finish:  func(context.Context, persistence.OutputResetJournal) error { return nil },
+	}); err != nil {
 		t.Fatalf("run output reset: %v", err)
 	}
 	for _, operation := range []*persistence.Operation{firstOperation, secondOperation} {

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 )
 
 type ResetDirectoryRecord struct {
@@ -19,10 +18,7 @@ type ResetDirectoryRecord struct {
 
 // ResetFilesystem creates output directories and verifies durable OS identities
 // before removing anything during recovery.
-type ResetFilesystem struct {
-	mu      sync.Mutex
-	created map[string]os.FileInfo
-}
+type ResetFilesystem struct{}
 
 // PlannedDirectories returns only missing directories that preparation may
 // create. It walks upward to the closest existing ancestor without adopting it.
@@ -61,17 +57,7 @@ func (f *ResetFilesystem) PlannedDirectories(root string, directories []string) 
 }
 
 func NewResetFilesystem() *ResetFilesystem {
-	return &ResetFilesystem{created: make(map[string]os.FileInfo)}
-}
-
-// Prepare is retained for callers using the original path-only journal API.
-func (f *ResetFilesystem) Prepare(ctx context.Context, root string, directories []string, record func(string) error) error {
-	return f.prepare(ctx, root, directories, func(entry ResetDirectoryRecord) error {
-		if entry.Phase == "intent" {
-			return record(entry.Path)
-		}
-		return nil
-	})
+	return &ResetFilesystem{}
 }
 
 // PrepareDurable persists each intent before mkdir and the verified identity
@@ -141,29 +127,7 @@ func (f *ResetFilesystem) createMissing(ctx context.Context, path string, record
 	if err := record(ResetDirectoryRecord{Path: path, Phase: "created", Identity: identity}); err != nil {
 		return fmt.Errorf("record created output directory identity: %w", err)
 	}
-	f.mu.Lock()
-	f.created[path] = info
-	f.mu.Unlock()
 	return nil
-}
-
-// Rollback keeps the legacy process-local contract.
-func (f *ResetFilesystem) Rollback(ctx context.Context, paths []string) error {
-	var records []ResetDirectoryRecord
-	for _, path := range paths {
-		f.mu.Lock()
-		info := f.created[path]
-		f.mu.Unlock()
-		if info != nil {
-			identity, err := durableDirectoryIdentity(path, info)
-			if err == nil {
-				records = append(records, ResetDirectoryRecord{Path: path, Phase: "created", Identity: identity})
-			}
-		} else {
-			records = append(records, ResetDirectoryRecord{Path: path, Phase: "intent"})
-		}
-	}
-	return f.RollbackManifest(ctx, records)
 }
 
 // RollbackManifest removes only directories with a durable created identity,

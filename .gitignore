@@ -16,7 +16,6 @@ __pycache__/
 .ruff_cache/
 .ty_cache/
 .venv/
-src/.venv/
 *.egg-info/
 
 # Dependencies and build output (never commit generated artifacts)
@@ -28,7 +27,6 @@ backend/internal/static/dist/*
 !backend/internal/static/dist/.gitkeep
 frontend/tsconfig.tsbuildinfo
 frontend/test-results/
-src/music_ingest/static/dist/
 
 # Local configuration and credentials
 .env

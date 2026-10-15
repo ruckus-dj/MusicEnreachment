@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -52,24 +50,6 @@ type recordingScanPathValidator struct {
 func (validator *recordingScanPathValidator) ValidateSourcePath(ctx context.Context, path string, rootID *uuid.UUID) (string, error) {
 	validator.calls++
 	return validator.delegate.ValidateSourcePath(ctx, path, rootID)
-}
-
-type failingTransportProbe struct{}
-
-func (failingTransportProbe) CheckFileTransport(context.Context) error {
-	return errors.New("transport check failed")
-}
-func (failingTransportProbe) ProbeFile(context.Context, sourcefs.RegularFile) (bool, error) {
-	return false, errors.New("file probe should not run")
-}
-
-type recordingScanProbeFactory struct {
-	created int
-}
-
-func (factory *recordingScanProbeFactory) New(string) (service.SourceProbe, error) {
-	factory.created++
-	return failingTransportProbe{}, nil
 }
 
 // TestSourceScanWorkerRiverDispatchPostgreSQL drives the scan worker through the

@@ -79,7 +79,7 @@ func (repository *SetupManagerRepository) RecoverInterruptedSourceScan(ctx conte
 
 // FinishRecoveredSourceScanWithMatchingReconcileEvent atomically settles an
 // already-applied interrupted scan and records its successful-scan event. The
-// root's applied-operation marker is the durable receipt written by ApplySourceScan.
+// root's applied-operation marker is the durable receipt written by scan apply.
 func (repository *SetupManagerRepository) FinishRecoveredSourceScanWithMatchingReconcileEvent(ctx context.Context, operationID uuid.UUID, expectedAttempt int, stage string) (bool, error) {
 	if operationID == uuid.Nil || expectedAttempt < 1 || stage == "" {
 		return false, fmt.Errorf("finish recovered source scan: valid operation identity, attempt, and stage are required")

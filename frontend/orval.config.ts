@@ -6,7 +6,6 @@ export default defineConfig({
     output: {
       client: "react-query",
       mode: "split",
-      mock: { generators: [{ type: "msw" }] },
       baseUrl: "/api",
       target: "./src/api/generated/client.ts",
     },

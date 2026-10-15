@@ -41,7 +41,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Tool integrations | backend/internal/integrations/tools/AGENTS.md | Managed ffmpeg/fpcalc downloads, GitHub adapters |
 | Migrations | backend/internal/migrations/AGENTS.md | Embedded SQL, versioned .tx.up/.down pairs |
 | Settings | backend/internal/settings | PostgreSQL-backed runtime registry and filesystem validation |
-| Frontend screens | frontend/src/features/ | Setup, settings, sources, and incoming workflows |
+| Frontend screens | frontend/src/features/ | Setup, settings, sources, incoming grouping, and matching workflows |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
 | Design prototype | docs/app-design/AGENTS.md | Static HTML/JS prototype with screenshots |
@@ -56,10 +56,10 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | persistence.SetupManagerRepository | type | backend/internal/persistence/setup_manager.go | 33+ | Central data layer: installations + operations (24 methods) |
 | settings.Registry | type | backend/internal/settings/settings.go | 8+ | PostgreSQL-backed platform and runtime settings hub |
 | integrations/tools.Catalog | type | backend/internal/integrations/tools/catalog.go | 6+ | GitHub release adapters for tool downloads |
-| integrations/tools.Lifecycle | type | backend/internal/integrations/tools/lifecycle.go | 4+ | Tool materialization (download, verify, install) |
+| integrations/tools.Lifecycle | type | backend/internal/integrations/tools/lifecycle.go | 4+ | Managed tool materialization (download and executable-version verification) |
 | SetupManager | component | frontend/src/features/setup/SetupManager.tsx | 2 | First-run setup wizard |
 | SettingsScreen | component | frontend/src/features/settings/SettingsScreen.tsx | 1 | Runtime settings and managed tools |
-| SourcesScreen | component | frontend/src/features/sources/ | — | Source inventory, analysis, and incoming workflows |
+| SourcesScreen | component | frontend/src/features/sources/ | — | Source inventory and analysis |
 | AppShell | component | frontend/src/routes/AppShell.tsx | 1 | Hash router and screen wiring |
 
 ## CONVENTIONS
@@ -73,7 +73,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 
 **Error handling**: `fmt.Errorf("context: %w", err)` wrap with lowercase messages; `errors.New` for static; no custom error types in service layer; no `nolint`.
 
-**Test org**: `task test` = `go test -tags=integration` (requires TEST_DATABASE_URL) + Vitest/RTL (*.test.tsx colocated) + node --test (tools/). Integration tests named `*_integration_test.go`.
+**Test org**: `task test` = `go test -tags=integration` + Vitest/RTL (*.test.tsx colocated) + node --test (tools/). PostgreSQL integration tests use `TEST_DATABASE_URL` when supplied, or start a PostgreSQL Testcontainer when it is absent (Docker required for the fallback). Integration tests named `*_integration_test.go`.
 
 **Build interface**: Taskfile only (`task build/test/verify/generate/run`); no shell scripts as build commands; pre-commit runs full `task verify` (intentional).
 

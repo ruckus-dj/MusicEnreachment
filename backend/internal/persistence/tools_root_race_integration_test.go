@@ -187,7 +187,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := resetTestOutputDirectory(t, ctx, setupRepository, output, neutral); err != nil {
+	if err := resetTestOutputDirectory(t, ctx, setupRepository, oldRoot, output, neutral); err != nil {
 		t.Fatalf("move output root before testing move overlap: %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 			if _, err := database.NewInsert().Model(move).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
-			err := resetTestOutputDirectory(t, ctx, setupRepository, neutral, candidate)
+			err := resetTestOutputDirectory(t, ctx, setupRepository, oldRoot, neutral, candidate)
 			if err == nil {
 				t.Fatalf("conflicting output %q was accepted during move", candidate)
 			}
@@ -269,7 +269,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 			assertNoMoveAdmission(t, ctx, database, move.ID)
 			assertStoredRuntimeValue(t, ctx, database, "output_case_sensitive", "true")
 			assertStoredRuntimeAbsent(t, ctx, database, "output_unicode_normalization")
-			if err := resetTestOutputDirectory(t, ctx, setupRepository, candidate, neutral); err != nil {
+			if err := resetTestOutputDirectory(t, ctx, setupRepository, oldRoot, candidate, neutral); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -418,6 +418,10 @@ func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostg
 		if err := settingsRepository.Set(ctx, "tools_directory", filepath.Join(base, "tools-next")); err != nil {
 			t.Fatal(err)
 		}
+		currentTools, found, err := settingsRepository.Get(ctx, "tools_directory")
+		if err != nil || !found {
+			t.Fatalf("read current tools root: found=%t err=%v", found, err)
+		}
 		currentOutput, found, err := settingsRepository.Get(ctx, "output_directory")
 		if err != nil || !found {
 			t.Fatalf("read current output root: found=%t err=%v", found, err)
@@ -426,7 +430,7 @@ func TestGenericSettingsWritesSerializeActiveSelectionsAndCanonicalizeRootsPostg
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := resetTestOutputDirectory(t, ctx, setupRepository, currentOutput, canonicalTarget); err != nil {
+		if err := resetTestOutputDirectory(t, ctx, setupRepository, currentTools, currentOutput, canonicalTarget); err != nil {
 			t.Fatal(err)
 		}
 		if err := settingsRepository.Set(ctx, "tools_directory", filepath.Join(base, "output")); err != nil {
@@ -470,11 +474,13 @@ func assertStoredRuntimeAbsent(t *testing.T, ctx context.Context, database *bun.
 	}
 }
 
-func resetTestOutputDirectory(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, oldRoot, newRoot string) error {
+func resetTestOutputDirectory(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, expectedToolsRoot, oldRoot, newRoot string) error {
 	t.Helper()
-	_, err := repository.RunOutputReset(ctx, oldRoot, newRoot,
-		func(context.Context, func(string) error) error { return nil },
-		func(context.Context, persistence.OutputResetJournal) error { return nil })
+	_, err := repository.RunOutputResetRequest(ctx, persistence.OutputResetRequest{
+		ExpectedOldRoot: oldRoot, ExpectedToolsRoot: expectedToolsRoot, NewRoot: newRoot,
+		Prepare: func(context.Context, func(persistence.OutputResetDirectory) error) error { return nil },
+		Finish:  func(context.Context, persistence.OutputResetJournal) error { return nil },
+	})
 	return err
 }
 
@@ -487,7 +493,14 @@ func resetTestOutputRoot(t *testing.T, ctx context.Context, settings *persistenc
 	if !found || oldRoot == newRoot {
 		return nil
 	}
-	return resetTestOutputDirectory(t, ctx, setup, oldRoot, newRoot)
+	toolsRoot, hasTools, err := settings.Get(ctx, "tools_directory")
+	if err != nil {
+		t.Fatalf("read tools root before output reset: %v", err)
+	}
+	if !hasTools {
+		toolsRoot = ""
+	}
+	return resetTestOutputDirectory(t, ctx, setup, toolsRoot, oldRoot, newRoot)
 }
 
 func assertNoMoveAdmission(t *testing.T, ctx context.Context, database *bun.DB, operationID uuid.UUID) {

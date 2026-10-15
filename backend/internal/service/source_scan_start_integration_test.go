@@ -168,8 +168,7 @@ func TestSourceScanStartEnqueuesTheOperationAndItsJobWithPostgreSQL(t *testing.T
 	t.Parallel()
 	fixture := newSourceScanStartIntegration(t, supportedScanStartPlatform(), true)
 	ctx := context.Background()
-	track := filepath.Join(fixture.source, "album", "track.flac")
-	writeSourceWalkFile(t, track, "audio bytes")
+	writeSourceScanFile(t, fixture.source, filepath.Join("album", "track.flac"), "audio bytes")
 
 	operation, err := fixture.scans.Start(ctx, fixture.root.ID)
 	if err != nil {

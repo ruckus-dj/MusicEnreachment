@@ -271,8 +271,11 @@
 - Реальные PostgreSQL integration tests не добавляются раньше DB-dependent
   предметных операций. При появлении persistence/River use cases план этапа
   обязан включать миграции на чистой БД, transactional `River.InsertTx`, commit,
-  rollback и выполнение job с настоящим PostgreSQL; тест использует отдельный
-  `TEST_DATABASE_URL` и не входит в unit suite без этой переменной.
+  rollback и выполнение job с настоящим PostgreSQL. Тесты запускаются с build tag
+  `integration`, отдельно от unit suite. По решению владельца от 2026-10-15
+  `TEST_DATABASE_URL` необязателен: если он задан, тесты используют его как
+  административное подключение для создания изолированных тестовых БД; иначе
+  запускают PostgreSQL через Testcontainers for Go (требуется Docker).
 - Vite dev server проксирует `/api` и `/health` на backend `127.0.0.1:8080`, не
   включая CORS и не создавая отдельную development security model.
 - Node.js 24 LTS используется только для frontend-инструментов; npm фиксирует
@@ -282,8 +285,9 @@
   уточняться по мере разработки.
 - Unit-тесты Go пишутся на стандартном пакете `testing`.
 - Frontend unit/component-тесты: Vitest + React Testing Library.
-- Интеграционные тесты Go с PostgreSQL через Testcontainers for Go и E2E-тесты
-  Playwright отложены до появления прямой необходимости.
+- PostgreSQL integration tests через Testcontainers for Go входят в полный
+  `task verify`; E2E-тесты Playwright в CI остаются отложенными до появления
+  прямой необходимости.
 
 ## Поддерживаемые платформы
 

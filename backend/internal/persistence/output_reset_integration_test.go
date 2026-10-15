@@ -18,7 +18,7 @@ import (
 
 func resetBoolPointer(value bool) *bool { return &value }
 
-func TestRunOutputResetJournalsAndCommitsAtomically(t *testing.T) {
+func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
@@ -33,16 +33,18 @@ func TestRunOutputResetJournalsAndCommitsAtomically(t *testing.T) {
 		t.Fatalf("create queued operation: %v", err)
 	}
 	created := false
-	token, err := repository.RunOutputReset(ctx, "/music/output-old", "/music/output-new",
-		func(_ context.Context, record func(string) error) error {
+	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
+		ExpectedOldRoot: "/music/output-old", NewRoot: "/music/output-new",
+		Prepare: func(_ context.Context, record func(OutputResetDirectory) error) error {
 			created = true
-			return record("/music/output-new/owned")
-		}, func(_ context.Context, journal OutputResetJournal) error {
+			return record(OutputResetDirectory{Path: "/music/output-new/owned", Phase: "intent"})
+		}, Finish: func(_ context.Context, journal OutputResetJournal) error {
 			if journal.Token == uuid.Nil || journal.State != "committed" || len(journal.CreatedDirectories) != 1 || journal.CreatedDirectories[0] != "/music/output-new/owned" {
 				t.Fatalf("finish journal = %#v", journal)
 			}
 			return nil
-		})
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +171,11 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	}
 	repository := NewSetupManagerRepository(database)
 	prepareErr := errors.New("injected preparation failure")
-	token, err := repository.RunOutputReset(ctx, "/music/output-old", "/music/output-new",
-		func(_ context.Context, _ func(string) error) error { return prepareErr }, func(context.Context, OutputResetJournal) error { return nil })
+	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
+		ExpectedOldRoot: "/music/output-old", NewRoot: "/music/output-new",
+		Prepare: func(_ context.Context, _ func(OutputResetDirectory) error) error { return prepareErr },
+		Finish:  func(context.Context, OutputResetJournal) error { return nil },
+	})
 	if !errors.Is(err, prepareErr) {
 		t.Fatalf("reset error = %v, want %v", err, prepareErr)
 	}
@@ -190,7 +195,7 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	}
 }
 
-func TestRunOutputResetAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *testing.T) {
+func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
@@ -199,14 +204,16 @@ func TestRunOutputResetAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *
 	repository := NewSetupManagerRepository(database)
 
 	// An unconfigured installation may initialize its output root through reset.
-	token, err := repository.RunOutputReset(ctx, "", "/music/initial",
-		func(context.Context, func(string) error) error { return nil },
-		func(_ context.Context, journal OutputResetJournal) error {
+	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
+		NewRoot: "/music/initial",
+		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
+		Finish: func(_ context.Context, journal OutputResetJournal) error {
 			if journal.State != "committed" {
 				t.Fatalf("initialization journal state = %q", journal.State)
 			}
 			return nil
-		})
+		},
+	})
 	if err != nil || token == uuid.Nil {
 		t.Fatalf("initialize output directory = %v, %v", token, err)
 	}
@@ -223,16 +230,16 @@ func TestRunOutputResetAllowsInitialOutputDirectoryAndRejectsInvalidRequests(t *
 
 	tests := []struct {
 		name, oldRoot, newRoot string
-		prepare                func(context.Context, func(string) error) error
+		prepare                func(context.Context, func(OutputResetDirectory) error) error
 		finish                 func(context.Context, OutputResetJournal) error
 	}{
-		{name: "same path", oldRoot: "/music/initial", newRoot: "/music/initial", prepare: func(context.Context, func(string) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
-		{name: "relative path", oldRoot: "/music/initial", newRoot: "relative", prepare: func(context.Context, func(string) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
+		{name: "same path", oldRoot: "/music/initial", newRoot: "/music/initial", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
+		{name: "relative path", oldRoot: "/music/initial", newRoot: "relative", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
 		{name: "missing prepare callback", oldRoot: "/music/initial", newRoot: "/music/next", finish: func(context.Context, OutputResetJournal) error { return nil }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := repository.RunOutputReset(ctx, test.oldRoot, test.newRoot, test.prepare, test.finish)
+			_, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{ExpectedOldRoot: test.oldRoot, NewRoot: test.newRoot, Prepare: test.prepare, Finish: test.finish})
 			if err == nil {
 				t.Fatal("invalid reset request succeeded")
 			}

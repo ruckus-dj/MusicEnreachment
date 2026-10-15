@@ -22,7 +22,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
-    "@faker-js/faker": "^10.6.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/jsdom": "^30.0.0",

@@ -20,20 +20,22 @@ func TestResetFilesystemPrepareAndRollbackOnlyOwnedEmptyDirectories(t *testing.T
 	root := resetFilesystemTestTempDir(t)
 	fs := NewResetFilesystem()
 	path := filepath.Join(root, "analysis")
-	var recorded []string
-	if err := fs.Prepare(context.Background(), root, []string{path}, func(path string) error {
-		if _, err := os.Lstat(path); !os.IsNotExist(err) {
-			t.Fatalf("journal intent must precede mkdir: %v", err)
+	var manifest []ResetDirectoryRecord
+	if err := fs.PrepareDurable(context.Background(), root, []string{path}, func(record ResetDirectoryRecord) error {
+		if record.Phase == "intent" {
+			if _, err := os.Lstat(record.Path); !os.IsNotExist(err) {
+				t.Fatalf("journal intent must precede mkdir: %v", err)
+			}
 		}
-		recorded = append(recorded, path)
+		manifest = append(manifest, record)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(recorded) != 1 || recorded[0] != path {
-		t.Fatalf("unexpected journal paths: %v", recorded)
+	if len(manifest) != 2 || manifest[0].Path != path || manifest[0].Phase != "intent" || manifest[1].Path != path || manifest[1].Phase != "created" || manifest[1].Identity == "" {
+		t.Fatalf("unexpected durable manifest: %#v", manifest)
 	}
-	if err := fs.Rollback(context.Background(), recorded); err != nil {
+	if err := fs.RollbackManifest(context.Background(), manifest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
@@ -53,7 +55,7 @@ func TestResetFilesystemLeavesPreexistingAndPopulatedDirectories(t *testing.T) {
 	}
 	fs := NewResetFilesystem()
 	called := false
-	if err := fs.Prepare(context.Background(), root, []string{preexisting}, func(string) error {
+	if err := fs.PrepareDurable(context.Background(), root, []string{preexisting}, func(record ResetDirectoryRecord) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -62,7 +64,7 @@ func TestResetFilesystemLeavesPreexistingAndPopulatedDirectories(t *testing.T) {
 	if called {
 		t.Fatal("pre-existing directory was journaled")
 	}
-	if err := fs.Rollback(context.Background(), []string{preexisting}); err == nil {
+	if err := fs.RollbackManifest(context.Background(), []ResetDirectoryRecord{{Path: preexisting, Phase: "intent"}}); err == nil {
 		t.Fatal("expected rollback to fail without proven ownership")
 	}
 	if _, err := os.Stat(file); err != nil {
@@ -70,13 +72,17 @@ func TestResetFilesystemLeavesPreexistingAndPopulatedDirectories(t *testing.T) {
 	}
 
 	owned := filepath.Join(root, "checks")
-	if err := fs.Prepare(context.Background(), root, []string{owned}, func(string) error { return nil }); err != nil {
+	var ownedManifest []ResetDirectoryRecord
+	if err := fs.PrepareDurable(context.Background(), root, []string{owned}, func(record ResetDirectoryRecord) error {
+		ownedManifest = append(ownedManifest, record)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(owned, "foreign"), []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.Rollback(context.Background(), []string{owned}); err == nil {
+	if err := fs.RollbackManifest(context.Background(), ownedManifest); err == nil {
 		t.Fatal("expected populated owned directory to be retained")
 	}
 	if _, err := os.Stat(filepath.Join(owned, "foreign")); err != nil {

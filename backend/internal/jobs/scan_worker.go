@@ -53,7 +53,6 @@ type scanWorkerRepository interface {
 
 type scanDeliveryRepository interface {
 	StartSourceScanDelivery(context.Context, uuid.UUID, int, int64) error
-	SetSourceScanDeliveryStage(context.Context, uuid.UUID, int, int64, string) error
 	FinishSourceScanDelivery(context.Context, uuid.UUID, int, int64, string, string, string) error
 }
 
@@ -165,7 +164,7 @@ func (worker *SourceScanWorker) Work(ctx context.Context, job *river.Job[service
 	if !root.Enabled {
 		return worker.fail(ctx, operation, service.SourceScanStageQueued, scanSafeDisabled)
 	}
-	scan := service.NewSourceScan(worker.repository, nil, scanDeliveryStages{repository: worker.repository, attempt: operation.Attempt, jobID: job.ID})
+	scan := service.NewSourceScan(worker.repository)
 	request := service.SourceScanRequest{
 		OperationID: operation.ID, RootID: root.ID, ExpectedConfiguredPath: root.ConfiguredPath,
 		ExpectedAttempt: operation.Attempt, ExpectedJobID: job.ID,
@@ -314,16 +313,6 @@ func scanOperationJobID(operation *persistence.Operation) int64 {
 		return 0
 	}
 	return *operation.RiverJobID
-}
-
-type scanDeliveryStages struct {
-	repository scanDeliveryRepository
-	attempt    int
-	jobID      int64
-}
-
-func (stages scanDeliveryStages) Running(ctx context.Context, operationID uuid.UUID, stage string) error {
-	return stages.repository.SetSourceScanDeliveryStage(ctx, operationID, stages.attempt, stages.jobID, stage)
 }
 
 var _ river.Worker[service.ScanSourceJobArgs] = (*SourceScanWorker)(nil)

@@ -37,9 +37,6 @@ type SourceStepClaim struct {
 	OperationAttempt int
 	JobID            int64
 	Step             SourceStepName
-	// AllowSuccessful is retained for source compatibility but is ignored.
-	// Successful results are re-claimable only through persisted operation intent.
-	AllowSuccessful bool
 }
 
 // SourceSHA256Apply is the successful hash output and its captured fence.

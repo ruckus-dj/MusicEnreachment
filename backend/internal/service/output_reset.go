@@ -13,18 +13,8 @@ import (
 )
 
 type outputResetRepository interface {
-	RunOutputReset(
-		context.Context,
-		string,
-		string,
-		func(context.Context, func(string) error) error,
-		func(context.Context, persistence.OutputResetJournal) error,
-	) (uuid.UUID, error)
-	RecoverOutputReset(context.Context, func(context.Context, persistence.OutputResetJournal) error) error
-}
-
-type durableOutputResetRepository interface {
 	RunOutputResetRequest(context.Context, persistence.OutputResetRequest) (uuid.UUID, error)
+	RecoverOutputReset(context.Context, func(context.Context, persistence.OutputResetJournal) error) error
 }
 
 // OutputReset coordinates filesystem preparation with the persistence journal.
@@ -83,14 +73,22 @@ func (s *OutputReset) Reset(ctx context.Context, expectedCurrent, candidate stri
 	finish := func(context.Context, persistence.OutputResetJournal) error {
 		return nil
 	}
-	var token uuid.UUID
-	if repository, ok := s.repository.(durableOutputResetRepository); ok {
-		token, err = repository.RunOutputResetRequest(ctx, persistence.OutputResetRequest{ExpectedOldRoot: oldRoot, NewRoot: newRoot, AllowedDirectories: plannedDirectories, Prepare: prepareDurable, Finish: finish})
-	} else {
-		token, err = s.repository.RunOutputReset(ctx, oldRoot, newRoot, func(ctx context.Context, record func(string) error) error {
-			return s.filesystem.Prepare(ctx, newRoot, directories, record)
-		}, finish)
+	expectedToolsRoot := ""
+	if s.registry != nil {
+		var found bool
+		expectedToolsRoot, found, err = s.registry.GetToolsDirectory(ctx)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("get expected tools directory: %w", err)
+		}
+		if !found {
+			expectedToolsRoot = ""
+		}
 	}
+	request := persistence.OutputResetRequest{
+		ExpectedOldRoot: oldRoot, ExpectedToolsRoot: expectedToolsRoot, NewRoot: newRoot,
+		AllowedDirectories: plannedDirectories, Prepare: prepareDurable, Finish: finish,
+	}
+	token, err := s.repository.RunOutputResetRequest(ctx, request)
 	if err != nil {
 		if recoveryErr := s.RecoverOutputReset(ctx); recoveryErr != nil {
 			return token, fmt.Errorf("output reset failed: %w; recovery failed: %v", err, recoveryErr)
@@ -158,7 +156,7 @@ func (s *OutputReset) ResetRuntime(ctx context.Context, expectedTools, expectedO
 				}, nil
 			},
 		}
-		token, err = s.runRuntimeOutputReset(ctx, request)
+		token, err = s.repository.RunOutputResetRequest(ctx, request)
 		if err != nil {
 			return err
 		}
@@ -181,14 +179,6 @@ var coordinateRuntimeReset = func(ctx context.Context, registry *settings.Regist
 
 func (s *OutputReset) registryCoordinate(ctx context.Context, tools, output string, update settings.RuntimeUpdate, run func(map[string]string) error) error {
 	return coordinateRuntimeReset(ctx, s.registry, tools, output, update, run)
-}
-
-func (s *OutputReset) runRuntimeOutputReset(ctx context.Context, request persistence.OutputResetRequest) (uuid.UUID, error) {
-	repository, ok := s.repository.(durableOutputResetRepository)
-	if !ok {
-		return uuid.Nil, fmt.Errorf("durable output reset repository is required")
-	}
-	return repository.RunOutputResetRequest(ctx, request)
 }
 
 // RecoverOutputReset resolves the filesystem half of the durable reset. A
