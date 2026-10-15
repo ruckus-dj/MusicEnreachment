@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupManualMatching,
   getGetIncomingGroupMatchingQueryKey,
@@ -384,7 +385,7 @@ function IncomingGroupReviewContent() {
             body: {
               expected_group_revision: group.revision,
               expected_authority_revision: review.authority_revision,
-              request_id: crypto.randomUUID(),
+              request_id: createUUID(),
             } satisfies MatchingReturnAutomaticBody,
           };
     const requestScope = authorityScope();
@@ -555,7 +556,7 @@ function IncomingGroupReviewContent() {
       body: {
         ...intent,
         preview_digest: currentPreview.preview_digest,
-        request_id: crypto.randomUUID(),
+        request_id: createUUID(),
       },
     };
     const requestScope = scopeIdentity();

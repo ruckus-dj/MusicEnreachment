@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createUUID } from "../../api/client/uuid";
 import {
   confirmIncomingGroupLocalMatching,
   listLocalReleases,
@@ -107,14 +108,6 @@ function tagValues(file: IncomingFileResponse | undefined, name: string) {
 
 function fileLabel(file: IncomingFileResponse) {
   return file.locations?.[0]?.relative_path || file.variant_id;
-}
-
-function freshRequestID() {
-  return crypto.randomUUID();
-}
-
-function localID() {
-  return crypto.randomUUID();
 }
 
 function toPayload(draft: LocalDraft): MatchingLocalTrack[] {
@@ -247,7 +240,7 @@ export function LocalReleaseEditor({
     artists: DraftArtist[],
     set: (next: DraftArtist[]) => void,
   ) {
-    set([...artists, { id: localID(), name: "" }]);
+    set([...artists, { id: createUUID(), name: "" }]);
   }
 
   function tagChoice(
@@ -293,7 +286,7 @@ export function LocalReleaseEditor({
     }
     setDraftField(
       "releaseArtists",
-      artists.map((name) => ({ id: localID(), name })),
+      artists.map((name) => ({ id: createUUID(), name })),
     );
   }
 
@@ -303,7 +296,7 @@ export function LocalReleaseEditor({
       tracks: [
         ...draft.tracks,
         {
-          id: localID(),
+          id: createUUID(),
           medium: "",
           position: "",
           displayedNumber: "",
@@ -477,13 +470,13 @@ export function LocalReleaseEditor({
     setStates((current) => {
       if (current[targetKey]) return current;
       const tracks = (selected.tracks ?? []).map((track) => ({
-        id: localID(),
+        id: createUUID(),
         medium: String(track.medium),
         position: String(track.position),
         displayedNumber: track.displayed_number,
         title: track.title,
         artists: (track.artists ?? []).map(({ name }) => ({
-          id: localID(),
+          id: createUUID(),
           name,
         })),
         fileMemberIds: [],
@@ -496,7 +489,7 @@ export function LocalReleaseEditor({
           draft: {
             releaseTitle: selected.title,
             releaseArtists: (selected.artists ?? []).map(({ name }) => ({
-              id: localID(),
+              id: createUUID(),
               name,
             })),
             tracks,
@@ -574,7 +567,7 @@ export function LocalReleaseEditor({
             body: {
               ...state.preview.body,
               preview_digest: state.preview.response.preview_digest,
-              request_id: freshRequestID(),
+              request_id: createUUID(),
             } as MatchingLocalConfirmBody,
           }
         : undefined);
@@ -996,7 +989,10 @@ export function LocalReleaseEditor({
                 onPress={() =>
                   editTrack(index, (current) => ({
                     ...current,
-                    artists: [...current.artists, { id: localID(), name: "" }],
+                    artists: [
+                      ...current.artists,
+                      { id: createUUID(), name: "" },
+                    ],
                   }))
                 }
               >
