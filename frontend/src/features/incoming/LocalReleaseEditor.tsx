@@ -58,6 +58,12 @@ type GroupState = {
   stale?: boolean;
 };
 
+type SourceSelection = {
+  sourceID: string;
+  album?: string;
+  title?: string;
+};
+
 type LocalReleaseCatalogState = {
   releases?: MatchingLocalRelease[];
   busy?: boolean;
@@ -141,9 +147,9 @@ export function LocalReleaseEditor({
   const [catalogs, setCatalogs] = useState<
     Record<string, LocalReleaseCatalogState>
   >({});
-  const [sourceID, setSourceID] = useState("");
-  const [selectedAlbum, setSelectedAlbum] = useState<string | undefined>();
-  const [selectedTitle, setSelectedTitle] = useState<string | undefined>();
+  const [sourceSelections, setSourceSelections] = useState<
+    Record<string, SourceSelection>
+  >({});
   const sequence = useRef(0);
   const catalogRequest = useRef(0);
   const currentScope = `${group.id}:${group.revision}:${authorityRevision === undefined ? "unknown" : authorityRevision}`;
@@ -157,9 +163,24 @@ export function LocalReleaseEditor({
   );
   const state = states[stateKey] ?? emptyGroupState();
   const draft = state.draft;
+  const sourceSelection = sourceSelections[group.id] ?? { sourceID: "" };
+  const {
+    sourceID,
+    album: selectedAlbum,
+    title: selectedTitle,
+  } = sourceSelection;
   const selectedSource = scopedFiles.find(
     (file) => file.variant_id === sourceID,
   );
+
+  function updateSourceSelection(
+    update: (current: SourceSelection) => SourceSelection,
+  ) {
+    setSourceSelections((current) => ({
+      ...current,
+      [group.id]: update(current[group.id] ?? { sourceID: "" }),
+    }));
+  }
 
   useEffect(() => {
     const previous = groupScopes.current[group.id];
@@ -235,12 +256,19 @@ export function LocalReleaseEditor({
     value: string,
   ) {
     if (!file) return;
-    if (name === "ALBUM") setSelectedAlbum(value);
-    if (name === "TITLE") setSelectedTitle(value);
+    updateSourceSelection((current) => {
+      const selection =
+        current.sourceID === file.variant_id
+          ? current
+          : { sourceID: file.variant_id };
+      if (name === "ALBUM") return { ...selection, album: value };
+      if (name === "TITLE") return { ...selection, title: value };
+      return selection;
+    });
   }
 
   function copyReleaseTitle() {
-    if (selectedAlbum === undefined) {
+    if (!selectedSource || selectedAlbum === undefined) {
       update((current) => ({
         ...current,
         notice: "Выберите значение ALBUM перед копированием.",
@@ -298,6 +326,7 @@ export function LocalReleaseEditor({
   }
 
   function copyTrackSource(index: number) {
+    if (!selectedSource) return;
     const titles = tagValues(selectedSource, "TITLE");
     const numbers = tagValues(selectedSource, "TRACKNUMBER");
     const discs = tagValues(selectedSource, "DISCNUMBER");
@@ -769,9 +798,7 @@ export function LocalReleaseEditor({
             className="block w-full rounded border p-2"
             value={sourceID}
             onChange={(event) => {
-              setSourceID(event.target.value);
-              setSelectedAlbum(undefined);
-              setSelectedTitle(undefined);
+              updateSourceSelection(() => ({ sourceID: event.target.value }));
             }}
           >
             <option value="">Не выбран</option>
@@ -838,7 +865,11 @@ export function LocalReleaseEditor({
             }
             onChange={(event) => {
               const values = [...new Set(tagValues(selectedSource, "TITLE"))];
-              setSelectedTitle(values[Number(event.target.value) - 1]);
+              tagChoice(
+                selectedSource,
+                "TITLE",
+                values[Number(event.target.value) - 1],
+              );
             }}
           >
             <option value="">
