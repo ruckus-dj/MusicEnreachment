@@ -1,46 +1,20 @@
 # Целевая модель данных
 
-## Уточнение владельца от 2026-10-08: source analysis и output
+## Source analysis и output
 
-Следующие решения уточняют концептуальные пункты ниже, но не описывают текущую
-физическую схему как уже изменённую. Существующие таблицы и код противоречат
-части решений и требуют отдельного refactor; проект — unpublished prototype,
-совместимость старых данных не нужна, squash миграций допустим, но не обязателен.
+Актуальный продуктовый и runtime-контракт source analysis, staged-copy retention,
+fingerprint cache и output реализован в завершённом плане 10; см.
+[`решения`](./decisions.md#текущий-контракт-инвентаря-анализа-и-output) и
+датированные [решения владельца плана 10](../plans/done/10-staged-source-analysis.md#appendix-a-owner-decisions).
+В частности, явный per-root mode, per-file processing, retained staged AUDIO
+copies и один последний fingerprint success на SHA уже поставлены. Source
+freshness на уровне продукта означает совпадение наблюдаемых size и `mtime`;
+более строгие implementation guards не добавляют требований.
 
-- Root задаёт режим, явно выбранный при добавлении, без default; изменение
-  действует только на будущие jobs. Отдельного staged setting/container overlay
-  нет. Root не имеет disabled state: удаление при отсутствии active operations
-  снимает queued tasks и root locations, но сохраняет source bytes, analyses и
-  collections.
-- Scan не создаёт analysis work через копирование/probe/hash: он enumerate/stat
-  кандидатов и ставит отдельный per-file processing. Jobs содержат type, IDs и
-  явный intent; актуальные остальные входы читаются из БД при execution/retry.
-  Истории нет; текущее publication state не snapshot. Независимые analyses
-  актуальны по SHA. Неизменённые size/mtime файлы не requeue-ятся автоматически,
-  failed work имеет manual retry; duplicates запрещены.
-- Locations удаляются для исчезнувших/нечитаемых файлов и недоступной области
-  root/collection/subtree; сами roots, collections и SHA analyses сохраняются.
-  Повторное обнаружение может переиспользовать SHA cache.
-- Fingerprint cache имеет одну текущую успешную запись на уникальный SHA-256;
-  версия `fpcalc` — provenance результата, но не ключ retained history. При
-  необходимости используется текущий выбранный инструмент. Успешная прежняя
-  запись остаётся видимой во время running/failed пересчёта и заменяется только
-  после нового успеха. Физические version-keyed таблицы ниже описывают старый код
-  и требуют refactor, а не выполнение этого решения.
-- Staged AUDIO copy и её identity/path отслеживаются в БД и сохраняются до
-  завершения всех запрошенных шагов. Retry/restart переиспользуют пригодную копию;
-  отсутствующая ссылка очищается, копия создаётся заново при необходимости.
-  Cleanup error отделён от анализа; очищать можно лишь eligible копии, не live и
-  не от незавершённой работы. Output path обязателен при setup, изменяем, но не
-  очищаем; смена проходит описанный в decisions.md validation/active-task/DB
-  cleanup lifecycle. Имена служебных областей `analysis`, `publication`,
-  `checks`, `media` пока техническое предложение.
-
-Эти решения означают будущие изменения физического отображения: текущие
-`source_root`, scan/work/operation snapshots, очередь, locations и публикационные
-ссылки нельзя представлять как уже соответствующие этому контракту. В частности,
-текущие migration/guard details ниже — историческое физическое дополнение, не
-утверждение о реализации owner decisions.
+Этот документ и DBML описывают логические сущности/связи, а не являются
+побайтовым зеркалом runtime-схемы. Не выводить из концептуального DBML наличие
+runtime-таблицы/worker или статус реализации соответствующего процесса. Файловая
+публикация остаётся отдельным следующим этапом и не считается поставленной.
 
 ## Логические области
 

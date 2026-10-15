@@ -2,7 +2,8 @@ Project music_ingest_redesign {
   database_type: 'PostgreSQL'
 
   Note: '''
-    Концептуальная current-state схема Music Ingest.
+    Концептуальная current-state схема Music Ingest; это не зеркальное описание
+    runtime-таблиц или доказательство наличия соответствующих workers.
     История изменений и завершённые задания намеренно не хранятся.
     Ответы metadata providers являются долговременным локальным кэшем; остальные таблицы описывают только актуальные сущности,
     текущие проблемы и единственную действующую публикацию.
@@ -225,7 +226,6 @@ Table source_root {
   id uuid [pk]
   configured_path text [not null, unique, note: 'Абсолютный server path; service дополнительно проверяет эквивалентные filesystem paths']
   display_name text [not null]
-  enabled boolean [not null, default: true]
   processing_mode source_processing_mode [not null]
   status source_root_status [not null, default: 'unknown']
   scan_generation bigint [not null, default: 0]

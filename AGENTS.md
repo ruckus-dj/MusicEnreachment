@@ -40,8 +40,8 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | Background jobs | backend/internal/jobs | River queue, PostgreSQL-backed |
 | Tool integrations | backend/internal/integrations/tools/AGENTS.md | Managed ffmpeg/fpcalc downloads, GitHub adapters |
 | Migrations | backend/internal/migrations/AGENTS.md | Embedded SQL, versioned .tx.up/.down pairs |
-| Settings | backend/internal/settings | Filesystem-backed registry |
-| Frontend screens | frontend/src/features/ | setup/, settings/, and sources/ |
+| Settings | backend/internal/settings | PostgreSQL-backed runtime registry and filesystem validation |
+| Frontend screens | frontend/src/features/ | Setup, settings, sources, and incoming workflows |
 | API client | frontend/src/api/generated/ | Orval-generated from OpenAPI, never hand-edit |
 | Conventions | docs/design/AGENTS.md | Russian docs: decisions.md (stack, forbidden items), repository-architecture.md (layering) |
 | Design prototype | docs/app-design/AGENTS.md | Static HTML/JS prototype with screenshots |
@@ -54,12 +54,13 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 | service.SetupService | type | backend/internal/service/setup.go | 11+ | First-run setup wizard contract (tools paths, verification) |
 | service.Operations | type | backend/internal/service/operations.go | 57+ | Operation state machine (Start/Progress/Succeed/Fail/Retry/Subscribe) |
 | persistence.SetupManagerRepository | type | backend/internal/persistence/setup_manager.go | 33+ | Central data layer: installations + operations (24 methods) |
-| settings.Registry | type | backend/internal/settings/settings.go | 8+ | Platform/log settings hub, filesystem-backed |
+| settings.Registry | type | backend/internal/settings/settings.go | 8+ | PostgreSQL-backed platform and runtime settings hub |
 | integrations/tools.Catalog | type | backend/internal/integrations/tools/catalog.go | 6+ | GitHub release adapters for tool downloads |
 | integrations/tools.Lifecycle | type | backend/internal/integrations/tools/lifecycle.go | 4+ | Tool materialization (download, verify, install) |
-| SetupManager | component | frontend/src/features/setup/SetupManager.tsx | 2 | Frontend setup wizard (150 lines, largest frontend file) |
-| SettingsScreen | component | frontend/src/features/settings/SettingsScreen.tsx | 1 | Settings UI (116 lines) |
-| AppShell | component | frontend/src/routes/AppShell.tsx | 1 | Hash router: /setup and /settings |
+| SetupManager | component | frontend/src/features/setup/SetupManager.tsx | 2 | First-run setup wizard |
+| SettingsScreen | component | frontend/src/features/settings/SettingsScreen.tsx | 1 | Runtime settings and managed tools |
+| SourcesScreen | component | frontend/src/features/sources/ | — | Source inventory, analysis, and incoming workflows |
+| AppShell | component | frontend/src/routes/AppShell.tsx | 1 | Hash router and screen wiring |
 
 ## CONVENTIONS
 **Config model inverted**: No config files; only 3 bootstrap env vars (DATABASE_URL, HTTP_BIND_ADDRESS, HTTP_PORT). All other settings are DB-backed runtime values edited via UI. Do NOT add new env vars.
@@ -142,4 +143,4 @@ cd backend && golangci-lint run ./...
 
 **Windows arm64 unsupported**: Explicitly documented limitation.
 
-**Hotspots for refactoring**: setup_manager.go (~300 lines, 24 methods), setup_manager_integration_test.go (446 lines), lifecycle.go (272 lines), catalog.go (233 lines).
+**Domain map freshness**: symbol reference counts, file sizes, and hotspot estimates are omitted because they drift quickly; consult the source tree and domain-specific AGENTS.md files.

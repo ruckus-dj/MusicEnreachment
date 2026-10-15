@@ -28,7 +28,7 @@ size and `mtime` is the product criterion. Do not treat stricter implementation
 guards or race/security proofs as product requirements or feature blockers.
 
 ## STRUCTURE
-designs.md and repository-architecture.md are the two most frequently referenced files. decisions.md covers what is allowed/forbidden; repository-architecture.md covers how packages relate.
+decisions.md covers what is allowed/forbidden; repository-architecture.md covers how packages relate. Completed plans and dated reports retain historical decisions and verification evidence; they are not a description of the current implementation.
 
 ## ANTI-PATTERNS
 - Implementing features explicitly forbidden in decisions.md (CORS, new env vars, in-app auth)

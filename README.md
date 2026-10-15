@@ -87,6 +87,19 @@ For frontend development, `npm --prefix frontend run dev` starts Vite. Its
 `127.0.0.1:8080`, preserving the production same-origin request model without
 CORS.
 
+### Application schema baseline
+
+The unpublished prototype starts from five embedded transactional baselines:
+application core, source inventory/analysis, provider cache, local library, and
+incoming/matching. They create the current schema directly, without replaying
+the previous development-only migration history.
+
+Databases created with the old development chain are not upgraded by this reset.
+Use a fresh database; recreate an existing one only if its data is explicitly
+disposable. Do not edit Bun's migration-history rows to bypass this boundary.
+Baseline rollback refuses populated application tables and never drops River's
+schema/history or unrelated tables. Stop the server before manual rollback.
+
 ## Local launch
 
 Run `task run` from the repository root to build the application and start it

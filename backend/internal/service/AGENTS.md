@@ -6,16 +6,18 @@
 Business logic layer. SetupService (first-run wizard) and Operations (state machine for long-running async work). Consumed by api handlers and River jobs.
 
 ## WHERE TO LOOK
-- setup.go - SetupService: State/SaveRuntime/Complete for first-run setup wizard
-- operations.go (189 lines) - Operations state machine: Start/Get/Progress/Succeed/Fail/Retry/Dismiss/Cleanup/Subscribe/notify (13 methods, 57+ references)
+- setup.go - SetupService: State/SaveRuntimeUpdate/Complete for first-run setup wizard
+- operations.go - Operations state machine, retries, cleanup, and SSE wake-ups
 - installations.go - Installations service (tool installation management)
 - operations_test.go, setup_test.go - unit tests
 
 ## STRUCTURE
-Three main services:
+Core services and workflow areas:
 - SetupService: first-run wizard state and persistence
 - Operations: async work state machine with SSE notifications
 - Installations: tool installation lifecycle
+- Source inventory, per-file analysis, staged inputs, and output reset
+- Provider execution, incoming grouping, automatic/manual matching, and local library
 
 All services depend on persistence layer repos (persistence.SetupManagerRepository) and settings.Registry.
 

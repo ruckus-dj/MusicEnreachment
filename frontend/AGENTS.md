@@ -3,7 +3,7 @@
 **Score: 11** (distinct domain: 10 config files + features, module boundary, code-heavy)
 
 ## OVERVIEW
-React 19 + Vite + Tailwind 4 + TanStack Query + react-aria-components. Orval-generated API client from OpenAPI. Two screens: /setup and /settings (hash router).
+React 19 + Vite + Tailwind 4 + TanStack Query + react-aria-components. Orval-generated API client from OpenAPI. The hash-routed UI includes first-run setup, runtime settings, source inventory/analysis, and incoming workflows.
 
 ## STRUCTURE
 ```
@@ -13,8 +13,10 @@ frontend/
 │   ├── routes/
 │   │   └── AppShell.tsx   # Hash router, useSyncExternalStore
 │   ├── features/
-│   │   ├── setup/         # SetupManager.tsx (150 lines, largest frontend file)
-│   │   └── settings/      # SettingsScreen.tsx (116 lines)
+│   │   ├── setup/         # First-run setup flow
+│   │   ├── settings/      # Runtime settings and managed tools
+│   │   ├── sources/       # Source roots, inventory, analysis, incoming workflows
+│   │   └── ...            # Other product features
 │   ├── components/        # Shared UI components
 │   └── api/
 │       ├── client/        # http.ts - custom fetch wrapper
@@ -27,8 +29,9 @@ frontend/
 ```
 
 ## WHERE TO LOOK
-- src/features/setup/SetupManager.tsx - first-run wizard (tools paths, verification)
-- src/features/settings/SettingsScreen.tsx - settings UI
+- src/features/setup/ - first-run wizard (tools paths, verification)
+- src/features/settings/ - runtime settings and managed tools
+- src/features/sources/ - source inventory, analysis, and incoming workflows
 - src/routes/AppShell.tsx - hash routing, screen wiring
 - src/api/generated/client.ts - Orval-generated hooks/types (NEVER hand-edit)
 - src/api/client/http.ts - custom fetch wrapper for generated client
