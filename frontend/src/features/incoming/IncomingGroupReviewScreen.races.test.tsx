@@ -77,8 +77,24 @@ function setup() {
   render(<IncomingGroupReviewScreen />);
 }
 
+// Readiness gate: the "Сохраненная оценка" heading only renders once the
+// active group's matching request has resolved, so it is the correct async
+// condition to await before touching the review controls. CI runs this suite
+// alongside competing Go/Postgres load, where that request can take well over
+// Testing Library's 1s default; wait on the rendered condition with an explicit
+// bounded timeout instead of an arbitrary sleep.
+const readinessTimeout = 5000;
+
+function awaitSavedEvaluation() {
+  return screen.findByRole(
+    "heading",
+    { name: "Сохраненная оценка" },
+    { timeout: readinessTimeout },
+  );
+}
+
 async function chooseCurrentRelease() {
-  await screen.findByRole("heading", { name: "Сохраненная оценка" });
+  await awaitSavedEvaluation();
   fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
     target: { value: releases[0] },
   });
@@ -130,7 +146,7 @@ describe("incoming review request races", () => {
     fireEvent.change(screen.getByLabelText("Входящая группа"), {
       target: { value: groups[1] },
     });
-    await screen.findByRole("heading", { name: "Сохраненная оценка" });
+    await awaitSavedEvaluation();
     pending.resolve(HttpResponse.json(previewBody));
     await Promise.resolve();
     expect(
@@ -142,7 +158,7 @@ describe("incoming review request races", () => {
     fireEvent.change(screen.getByLabelText("Входящая группа"), {
       target: { value: groups[0] },
     });
-    await screen.findByRole("heading", { name: "Сохраненная оценка" });
+    await awaitSavedEvaluation();
     fireEvent.change(screen.getByLabelText("Издание (выбор вручную)"), {
       target: { value: releases[0] },
     });
@@ -237,7 +253,7 @@ describe("incoming review request races", () => {
     fireEvent.change(screen.getByLabelText("Входящая группа"), {
       target: { value: groups[1] },
     });
-    await screen.findByRole("heading", { name: "Сохраненная оценка" });
+    await awaitSavedEvaluation();
     fireEvent.change(screen.getByLabelText("Входящая группа"), {
       target: { value: groups[0] },
     });
@@ -281,7 +297,7 @@ describe("incoming review request races", () => {
     fireEvent.change(screen.getByLabelText("Входящая группа"), {
       target: { value: groups[1] },
     });
-    await screen.findByRole("heading", { name: "Сохраненная оценка" });
+    await awaitSavedEvaluation();
     pending.resolve(HttpResponse.json({ ...previewBody, group_id: groups[0] }));
     await Promise.resolve();
     expect(
