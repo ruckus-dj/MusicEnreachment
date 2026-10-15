@@ -90,6 +90,8 @@ func StartAnalysisConsumerWithLifetime(startCtx, lifetimeCtx context.Context, da
 	client, err := river.NewClient(driver, &river.Config{
 		Workers: workers,
 		Queues:  map[string]river.QueueConfig{service.SourceAnalysisQueue: {MaxWorkers: maxWorkers}},
+		// This partial worker registry does not own infrastructure periodic jobs.
+		LeaderElectionDisabled: true,
 	})
 	if err != nil {
 		listenerPool.Close()

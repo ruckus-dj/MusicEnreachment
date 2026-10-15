@@ -202,6 +202,7 @@ func Run(ctx context.Context, config Config) error {
 	)
 	incomingMatchingReconcileWorker := jobs.NewIncomingMatchingReconcileWorker(sourceInventory, incomingMatchingReconciliation)
 	incomingMatchingReconcileDispatchWorker := jobs.NewIncomingMatchingReconcileDispatchWorker(matchingReconcileDispatcher)
+	sourceAnalysisPendingDispatchWorker := jobs.NewSourceAnalysisPendingDispatchWorker(sourceAnalysis)
 	providerFetchWorker := jobs.NewProviderFetchWorker(providerFetch, operationService)
 	matchingEvaluation := service.NewMatchingEvaluationService(incomingGroups, persistence.NewIncomingGroupingRepository(db), persistence.NewProviderCacheRepository(db), persistence.NewIncomingMatchCandidateRepository(db), registry)
 	matchingReview := service.NewMatchingReviewService(persistence.NewIncomingMatchCandidateRepository(db))
@@ -261,12 +262,13 @@ func Run(ctx context.Context, config Config) error {
 		river.AddWorker(workers, matchingApplyWorker)
 		river.AddWorker(workers, incomingMatchingReconcileWorker)
 		river.AddWorker(workers, incomingMatchingReconcileDispatchWorker)
+		river.AddWorker(workers, sourceAnalysisPendingDispatchWorker)
 		river.AddWorker(workers, jobs.NewCleanupWorker(setupManagerRepository))
 	}
 	// Keep exactly one base analysis slot on the main client. Additional River
 	// clients are provisioned only for actual queued/running demand.
 	primaryAnalysisCapacity := 1
-	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob())
+	riverClient, riverListenerPool, err := jobs.PrepareWithWorkersAndAnalysisConcurrency(ctx, config.DatabaseURL, sqldb, registerWorkers, primaryAnalysisCapacity, jobs.NewCleanupPeriodicJob(), jobs.NewIncomingMatchingReconcileDispatchPeriodicJob(), jobs.NewSourceAnalysisPendingDispatchPeriodicJob())
 	if err != nil {
 		return err
 	}

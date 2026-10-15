@@ -935,7 +935,7 @@ func (worker *SourceAnalysisWorker) wakePending(ctx context.Context, operation *
 	if worker.pendingDispatcher == nil || operation == nil || operation.TargetSourceRootID == nil {
 		return
 	}
-	if _, err := worker.pendingDispatcher.AdmitPending(context.WithoutCancel(ctx), *operation.TargetSourceRootID); err != nil {
+	if _, err := worker.pendingDispatcher.AdmitPending(ctx, *operation.TargetSourceRootID); err != nil {
 		slog.WarnContext(ctx, "source analysis pending admission failed", "operation", operation.ID, "root", *operation.TargetSourceRootID)
 	}
 }
