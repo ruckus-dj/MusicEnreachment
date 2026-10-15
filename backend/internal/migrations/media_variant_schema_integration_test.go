@@ -19,22 +19,10 @@ import (
 	"github.com/uptrace/bun/migrate"
 )
 
-// analysisVariantMigration is the version (file-name timestamp) of the saved
-// analysis-result migration whose up and down pair this test exercises. The
-// rollback test isolates exactly this migration by name, never "the last element
-// of the collection", so a later migration cannot silently change what it runs.
-const analysisVariantMigration = "20261005000000"
-const automaticSourceAnalysisMigration = "20261006000000"
-
 func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChangesWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.Open(t)
-	testpostgres.Reset(t, database)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
-	collection := mustMigrations(t)
-	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, automaticSourceAnalysisMigration))
-	migration := migrationNamed(t, collection, automaticSourceAnalysisMigration)
-	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
 
 	digest := make([]byte, 32)
 	digest[0] = 0x5a
@@ -43,6 +31,10 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 		t.Fatalf("insert populated analysis result: %v", err)
 	}
 
+	collection, err := migrations.Collection()
+	if err != nil {
+		t.Fatalf("load current migration collection: %v", err)
+	}
 	rollback := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if _, err := rollback.Rollback(ctx); err == nil {
 		t.Fatal("rollback with persisted analysis results succeeded, want refusal")
@@ -56,86 +48,6 @@ func TestAutomaticSourceAnalysisRollbackRefusesStoredResultsWithoutSchemaChanges
 	var count int
 	if err := database.NewRaw(`SELECT count(*) FROM media_variant WHERE id=? AND source_sha256=?`, variantID, digest).Scan(ctx, &count); err != nil || count != 1 {
 		t.Fatalf("stored result after refused rollback = %d, %v; want it unchanged", count, err)
-	}
-}
-
-// TestSourceMediaVariantMigrationRollbackWithPostgreSQL applies every migration
-// before the analysis-result pair, then the pair as its own migration group, and
-// proves the down migration restores the pre-analysis schema: no media_variant
-// table, no new operation columns, no location variant column, and the old kind
-// check and root guard back in place.
-func TestSourceMediaVariantMigrationRollbackWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	database := testpostgres.Open(t)
-	testpostgres.Reset(t, database)
-	ctx := context.Background()
-
-	full, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migrations: %v", err)
-	}
-	found := false
-	for _, migration := range full.Sorted() {
-		if migration.Name == analysisVariantMigration {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("migration %s is missing from the collection", analysisVariantMigration)
-	}
-
-	applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, full, analysisVariantMigration))
-	if relation := relationName(t, database, "media_variant"); relation != nil {
-		t.Fatalf("media_variant exists before its migration: %s", *relation)
-	}
-
-	// Keep this rollback focused on the migration under test. Later migrations
-	// intentionally add dependencies to the schema and must not be batched here.
-	migration := migrationNamed(t, full, analysisVariantMigration)
-	applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
-
-	if relation := relationName(t, database, "media_variant"); relation == nil {
-		t.Fatal("media_variant is missing after its migration")
-	}
-	for _, column := range []string{"size_bytes", "analysis_policy_version", "ffprobe_version", "ffprobe_json", "observed_tags", "inspected_at", "applied_operation_id"} {
-		if !columnExists(t, database, "media_variant", column) {
-			t.Fatalf("media_variant.%s is missing after its migration", column)
-		}
-	}
-	for _, column := range []string{"target_source_location_id", "analysis_installation_id", "analysis_media_variant_id"} {
-		if !columnExists(t, database, "operation", column) {
-			t.Fatalf("operation.%s is missing after its migration", column)
-		}
-	}
-	if !columnExists(t, database, "source_location", "media_variant_id") {
-		t.Fatal("source_location.media_variant_id is missing after its migration")
-	}
-
-	rollbackMigration(t, ctx, database, migration)
-
-	if relation := relationName(t, database, "media_variant"); relation != nil {
-		t.Fatalf("media_variant survives the rollback: %s", *relation)
-	}
-	for _, column := range []string{"target_source_location_id", "analysis_installation_id", "analysis_media_variant_id"} {
-		if columnExists(t, database, "operation", column) {
-			t.Fatalf("operation.%s survives the rollback", column)
-		}
-	}
-	if columnExists(t, database, "source_location", "media_variant_id") {
-		t.Fatal("source_location.media_variant_id survives the rollback")
-	}
-	kindConstraint := constraintDefinition(t, database, "operation_kind_check")
-	if strings.Contains(kindConstraint, "analyze_source") {
-		t.Fatalf("operation kind constraint after rollback = %s, want no analyze_source kind", kindConstraint)
-	}
-	if !indexExists(t, database, "operation_one_active_source_root_scan") {
-		t.Fatal("the restored scan-only root guard index is missing after the rollback")
-	}
-	if indexExists(t, database, "operation_one_active_source_root_operation") {
-		t.Fatal("the combined root guard index survives the rollback")
-	}
-	if constraintDefinition(t, database, "operation_active_tools_operations_exclusive") == "" {
-		t.Fatal("the exclusion constraint is missing after the rollback")
 	}
 }
 

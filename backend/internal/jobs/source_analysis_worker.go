@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -81,7 +79,6 @@ type SourceAnalysisWorker struct {
 	toolsDirectory       service.ToolsDirectoryReader
 	runtimeSettings      analysisWorkerSettings
 	platform             settings.PlatformState
-	opener               sourcefs.Opener
 	preparer             service.SourceAnalysisPreparing
 	inputPreparer        service.SourceAnalysisInputPreparing
 	verifyFFProbeVersion func(context.Context, string) (string, error)
@@ -228,7 +225,7 @@ func NewSourceAnalysisWorker(repository analysisWorkerRepository, operations *se
 		return 4, nil
 	}}
 	return &SourceAnalysisWorker{repository: repository, operations: operations, toolsDirectory: toolsDirectory,
-		runtimeSettings: runtimeSettings, platform: platform, opener: sourcefs.NewOpener(), fileLimiter: limiter}
+		runtimeSettings: runtimeSettings, platform: platform, fileLimiter: limiter}
 }
 
 // WithPreparer makes the step engine replaceable in deterministic worker tests.
@@ -323,7 +320,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 		}
 	}()
 	admittedOperation := operation
-	operation, selections, processingMode, err := worker.repository.StartNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, worker.platform.Platform.GOOS, worker.platform.Platform.GOARCH)
+	operation, selections, _, err := worker.repository.StartNormalizedSourceAnalysisDelivery(ctx, operation.ID, delivery, worker.platform.Platform.GOOS, worker.platform.Platform.GOARCH)
 	if err != nil {
 		if errors.Is(err, persistence.ErrSourceAnalysisStale) {
 			// A delivery that still owns the operation fence can become stale
@@ -351,7 +348,7 @@ func (worker *SourceAnalysisWorker) Work(ctx context.Context, job *river.Job[ser
 	var singleFailure *sourceAnalysisStepFailure
 	groups := groupSourceAnalysisExecutions(executions)
 	groupErrors, fatalErr := runSourceAnalysisGroups(ctx, worker.fileLimiter, reservation, len(groups), func(groupCtx context.Context, index int) error {
-		return worker.runWorkGroup(groupCtx, operation, snapshot, job.ID, groups[index], processingMode)
+		return worker.runWorkGroup(groupCtx, operation, snapshot, job.ID, groups[index])
 	})
 	reservationTransferred = true
 	// Every group has exited and released its limiter hold before delivery
@@ -488,7 +485,7 @@ func (worker *SourceAnalysisWorker) recoverStaleDelivery(ctx context.Context, op
 	return nil
 }
 
-func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution, fixtureMode string) error {
+func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution) error {
 	if len(executions) == 0 {
 		return nil
 	}
@@ -513,30 +510,20 @@ func (worker *SourceAnalysisWorker) runWorkGroup(ctx context.Context, operation 
 	registry, ok := any(worker.repository).(interface {
 		GetSourceAnalysisWorkExecution(context.Context, persistence.SourceAnalysisArtifactFence) (*persistence.SourceAnalysisWorkExecution, error)
 	})
-	mode := ""
-	if ok {
-		execution, err := registry.GetSourceAnalysisWorkExecution(ctx, fence)
-		if err != nil {
-			return err
-		}
-		if execution == nil || execution.WorkID != workID || execution.ProcessingMode == "" {
-			return fmt.Errorf("source analysis execution mode is unavailable")
-		}
-		mode = execution.ProcessingMode
-	} else {
-		// A fixture-only fallback preserves old direct worker construction. The
-		// production repository implements the fenced execution registry.
-		mode = fixtureMode
+	if !ok {
+		return fmt.Errorf("source analysis execution mode is unavailable")
+	}
+	execution, err := registry.GetSourceAnalysisWorkExecution(ctx, fence)
+	if err != nil {
+		return err
+	}
+	if execution == nil || execution.WorkID != workID || execution.ProcessingMode == "" {
+		return fmt.Errorf("source analysis execution mode is unavailable")
 	}
 	if worker.inputPreparer == nil {
-		if ok {
-			return fmt.Errorf("source analysis input preparer is unavailable")
-		}
-		// Test fixtures predating input preparation can continue exercising the
-		// in-place engine. Production composition always supplies this capability.
-		return worker.runLegacyInPlaceGroup(ctx, operation, snapshot, jobID, executions, claims, ordered)
+		return fmt.Errorf("source analysis input preparer is unavailable")
 	}
-	input, err := worker.inputPreparer.PrepareMode(ctx, fence, mode)
+	input, err := worker.inputPreparer.PrepareMode(ctx, fence, execution.ProcessingMode)
 	if err != nil {
 		return worker.failClaimedSteps(ctx, operation, jobID, executions, claims, "The source file could not be prepared for analysis.")
 	}
@@ -643,98 +630,6 @@ func (worker *SourceAnalysisWorker) failClaimedSteps(ctx context.Context, operat
 	return errors.Join(failures...)
 }
 
-func (worker *SourceAnalysisWorker) runLegacyInPlaceGroup(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, executions []persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, steps []persistence.SourceStepName) error {
-	// Compatibility path is restricted to un-wired test workers; deployment uses
-	// one shared SourceAnalysisPreparedInput via WithInputPreparer.
-	var failures []error
-	for _, step := range steps {
-		prepared, work, file, root, err := worker.prepareWorkSteps(ctx, operation, snapshot, jobID, executions[0], claims, []persistence.SourceStepName{step}, executions[0].ExistingSHA256)
-		if file != nil {
-			defer func() { _ = file.Close() }()
-		}
-		if root != nil {
-			defer func() { _ = root.Close() }()
-		}
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		_, err = worker.applyPreparedStep(ctx, operation, snapshot, jobID, executions[0], claims[step], work, step, prepared)
-		if err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func (worker *SourceAnalysisWorker) prepareWorkSteps(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, execution persistence.SourceAnalysisExecution, claims map[persistence.SourceStepName]int, steps []persistence.SourceStepName, existing *[32]byte) (service.SourceAnalysisPreparation, *persistence.SourceAnalysisWork, sourcefs.RegularFile, sourcefs.Directory, error) {
-	step := persistence.SourceStepName(execution.Step.Step)
-	work, location, err := worker.repository.GetNormalizedSourceAnalysisWork(ctx, execution.Work.ID)
-	if err != nil {
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file is no longer available for analysis.")
-	}
-	root, err := worker.repository.GetSourceRoot(ctx, work.SourceRootID)
-	if err != nil || root == nil || !root.Enabled || root.Stale() || root.ConfiguredPath != work.ConfiguredPath || root.InventoryPath == nil || *root.InventoryPath != work.InventoryPath {
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source inventory changed. Start a new analysis.")
-	}
-	if location.RelativePath != work.RelativePath || location.SizeBytes != work.SizeBytes || analysisMtime(location.Mtime) != analysisMtime(work.Mtime) {
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
-	}
-	rootDir, err := worker.opener.OpenRoot(ctx, work.InventoryPath)
-	if err != nil {
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source directory is unavailable. The previous result is unchanged.")
-	}
-	file, err := sourcefs.OpenRegularAt(ctx, rootDir, work.RelativePath)
-	if err != nil {
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file is unavailable. The previous result is unchanged.")
-	}
-	info, err := file.Stat(ctx)
-	if err != nil || info.Size() != work.SizeBytes || analysisMtime(info.ModTime()) != analysisMtime(work.Mtime) {
-		_ = file.Close()
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
-	}
-	if err := worker.verifyAbsoluteSourceStillCurrent(ctx, work, file, rootDir); err != nil {
-		_ = file.Close()
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
-	}
-	targets := service.SourceAnalysisTarget(0)
-	for _, targetStep := range steps {
-		targets |= analysisTargets(targetStep)
-	}
-	request := service.SourceAnalysisPrepareRequest{File: file, Targets: targets, ExistingSHA256: existing}
-	if snapshot.Mode == persistence.SourceAnalysisModeSingleStep && operation.RerunTarget && snapshot.TargetStep != nil && *snapshot.TargetStep == string(persistence.SourceStepFingerprint) {
-		request.BypassFingerprintCache = true
-	}
-	config, err := worker.preparerConfig(ctx, snapshot, work, operation.ID, operation.Attempt, jobID, steps...)
-	if err != nil {
-		_ = file.Close()
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The selected managed analysis tool is unavailable.")
-	}
-	preparer := worker.preparer
-	if preparer == nil {
-		preparer = service.NewSourceAnalysisPreparer(config)
-	}
-	if targets&(service.SourceAnalysisTargetFingerprint|service.SourceAnalysisTargetMetadata) != 0 {
-		request.ServerPath = filepath.Join(work.InventoryPath, filepath.FromSlash(work.RelativePath))
-	}
-	prepared := preparer.Prepare(ctx, request)
-	if err := ctx.Err(); err != nil {
-		_ = file.Close()
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, err
-	}
-	if err := worker.verifyAbsoluteSourceStillCurrent(ctx, work, file, rootDir); err != nil {
-		_ = file.Close()
-		_ = rootDir.Close()
-		return service.SourceAnalysisPreparation{}, nil, nil, nil, worker.failStep(ctx, operation, execution, step, claims[step], jobID, "The source file changed. Start a new analysis.")
-	}
-	return prepared, work, file, rootDir, nil
-}
-
 func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, operation *persistence.Operation, snapshot persistence.SourceAnalysisOperationSnapshot, jobID int64, execution persistence.SourceAnalysisExecution, attempt int, work *persistence.SourceAnalysisWork, step persistence.SourceStepName, prepared service.SourceAnalysisPreparation) (*[32]byte, error) {
 	fence := func() persistence.SourceStepFailure {
 		return persistence.SourceStepFailure{WorkID: work.ID, OperationID: operation.ID, OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, Step: step}
@@ -819,40 +714,6 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		return nil, worker.persistStepFailure(ctx, failure)
 	}
 	return nil, nil
-}
-
-// verifyAbsoluteSourceStillCurrent checks both the pinned inventory handle and
-// the configured absolute namespace. The former protects traversal; the latter
-// detects replacement of the root path while a long-running preparer is active.
-func (worker *SourceAnalysisWorker) verifyAbsoluteSourceStillCurrent(ctx context.Context, work *persistence.SourceAnalysisWork, original sourcefs.RegularFile, pinnedRoot sourcefs.Directory) error {
-	if err := worker.verifySourceStillCurrent(ctx, work, original, pinnedRoot); err != nil {
-		return err
-	}
-	freshRoot, err := worker.opener.OpenRoot(ctx, work.InventoryPath)
-	if err != nil {
-		return fmt.Errorf("reopen absolute inventory root: %w", err)
-	}
-	defer func() { _ = freshRoot.Close() }()
-	rootInfo, rootErr := pinnedRoot.Stat(ctx)
-	freshRootInfo, freshRootErr := freshRoot.Stat(ctx)
-	if rootErr != nil || freshRootErr != nil || !os.SameFile(rootInfo, freshRootInfo) {
-		return fmt.Errorf("absolute inventory root no longer names the analyzed directory")
-	}
-	freshFile, err := sourcefs.OpenRegularAt(ctx, freshRoot, work.RelativePath)
-	if err != nil {
-		return fmt.Errorf("reopen absolute source path: %w", err)
-	}
-	defer func() { _ = freshFile.Close() }()
-	return original.Borrow(ctx, func(first *os.File) error {
-		return freshFile.Borrow(ctx, func(second *os.File) error {
-			firstInfo, firstErr := first.Stat()
-			secondInfo, secondErr := second.Stat()
-			if firstErr != nil || secondErr != nil || !os.SameFile(firstInfo, secondInfo) {
-				return fmt.Errorf("absolute source path no longer names the analyzed file")
-			}
-			return nil
-		})
-	})
 }
 
 func groupSourceAnalysisExecutions(executions []persistence.SourceAnalysisExecution) [][]persistence.SourceAnalysisExecution {
@@ -1026,30 +887,6 @@ func (worker *SourceAnalysisWorker) persistStepFailure(ctx context.Context, fail
 		return err
 	}
 	return &sourceAnalysisStepFailure{safeError: failure.SafeError}
-}
-
-func analysisMtime(value time.Time) time.Time { return value.UTC().Truncate(time.Microsecond) }
-
-func (worker *SourceAnalysisWorker) verifySourceStillCurrent(ctx context.Context, work *persistence.SourceAnalysisWork, original sourcefs.RegularFile, root sourcefs.Directory) error {
-	info, err := original.Stat(ctx)
-	if err != nil || info.Size() != work.SizeBytes || analysisMtime(info.ModTime()) != analysisMtime(work.Mtime) {
-		return fmt.Errorf("source descriptor changed")
-	}
-	reopened, err := sourcefs.OpenRegularAt(ctx, root, work.RelativePath)
-	if err != nil {
-		return fmt.Errorf("reopen source path: %w", err)
-	}
-	defer func() { _ = reopened.Close() }()
-	return original.Borrow(ctx, func(first *os.File) error {
-		return reopened.Borrow(ctx, func(second *os.File) error {
-			firstInfo, firstErr := first.Stat()
-			secondInfo, secondErr := second.Stat()
-			if firstErr != nil || secondErr != nil || !os.SameFile(firstInfo, secondInfo) {
-				return fmt.Errorf("source path no longer names the analyzed file")
-			}
-			return nil
-		})
-	})
 }
 
 func (worker *SourceAnalysisWorker) terminalFailure(ctx context.Context, operation *persistence.Operation, jobID int64, stage, safe string) error {

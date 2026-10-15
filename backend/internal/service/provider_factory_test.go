@@ -120,7 +120,10 @@ func TestProviderFactoryReadsCurrentMusicBrainzConfiguration(t *testing.T) {
 }
 
 func TestProviderFactoryDoesNotLookupAcoustIDWithoutSavedKey(t *testing.T) {
-	store := &providerFactoryStore{values: make(map[string]string)}
+	store := &revisionedProviderFactoryStore{
+		providerFactoryStore: &providerFactoryStore{values: make(map[string]string)},
+		revision:             "no-credential-revision",
+	}
 	registry := settings.New(store, nil)
 	waiter := new(providerFactoryWaiter)
 	transport := new(providerFactoryRoundTripper)

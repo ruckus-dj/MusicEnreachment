@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/policy"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
@@ -19,13 +18,7 @@ import (
 )
 
 func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgreSQL(t *testing.T) {
-	ctx := context.Background()
-	db := testpostgres.Open(t)
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migrations: %v", err)
-	}
-	applyMatchingMigrationsThrough(t, ctx, db, collection, "20261211000000")
+	db := testpostgres.OpenMigrated(t)
 
 	callbackExecuted := false
 	testAutomaticFallbackFiniteFlowWithDatabase(t, true, false, true, true, false, nil, nil, db,
@@ -44,8 +37,8 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 			if err := db.NewRaw(`SELECT request_id FROM matching_provider_dependency WHERE parent_run_id=? ORDER BY request_id LIMIT 1`, oldRunID).Scan(ctx, &oldChildID); err != nil {
 				t.Fatalf("read original fallback provider child: %v", err)
 			}
-			var oldTargetGeneration int64
-			if err := db.NewRaw(`SELECT target_generation FROM matching_run_target WHERE run_id=? AND group_id=?`, oldRunID, oldGroupID).Scan(ctx, &oldTargetGeneration); err != nil {
+			var oldTargetGeneration, oldRequestGeneration int64
+			if err := db.NewRaw(`SELECT target_generation,COALESCE(reconciliation_generation,0) FROM matching_run_target WHERE run_id=? AND group_id=?`, oldRunID, oldGroupID).Scan(ctx, &oldTargetGeneration, &oldRequestGeneration); err != nil {
 				t.Fatalf("read old fallback target generation: %v", err)
 			}
 			if oldAcquisition.Intent.FallbackProviderSource == nil {
@@ -90,6 +83,9 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 			var generation int64
 			if err := db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, oldGroupID).Scan(ctx, &generation); err != nil {
 				t.Fatalf("read requested generation: %v", err)
+			}
+			if oldRequestGeneration < 1 || generation <= oldRequestGeneration {
+				t.Fatalf("fallback generations lack positive newer provenance: old-request=%d requested=%d", oldRequestGeneration, generation)
 			}
 			grouping := persistence.NewIncomingGroupingRepository(db)
 			if err := service.NewIncomingGroups(grouping).Refresh(ctx); err != nil {
@@ -183,10 +179,7 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 				(active_river_job_id IS NOT NULL OR active_river_attempt IS NOT NULL OR active_execution_epoch IS NOT NULL)`, oldRunID).Scan(ctx, &owners); err != nil || owners != 0 {
 				t.Fatalf("old fallback execution owners=%d err=%v", owners, err)
 			}
-			oldMarker := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Microsecond)
-			if _, err := db.NewRaw(`UPDATE matching_run SET quiesced_at=? WHERE id=?`, oldMarker, oldRunID).Exec(ctx); err != nil {
-				t.Fatalf("seed pre-schema-12 historical quiescence marker: %v", err)
-			}
+			ageQuiescedMatchingRunForRetirement(t, ctx, db, oldRunID)
 
 			counts := readFallbackRetirementCounts(t, ctx, db, oldRunID, oldChildID)
 			for _, name := range []string{"acquisition", "acquisition_phase", "calculation", "search_receipt", "lookup_receipt", "handoff", "fallback_seal", "request_registration", "provider_dependency", "target", "delivery"} {
@@ -253,8 +246,7 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 				t.Fatalf("capture accepted provider cache before cleanup: %v", err)
 			}
 
-			applyMatchingMigration(t, ctx, db, collection, "20261212000000")
-			if err := setup.DeleteObsoleteQuiescedMatchingRuns(ctx, time.Now().UTC()); err != nil {
+			if err := setup.DeleteObsoleteQuiescedMatchingRuns(ctx, time.Now().UTC().Add(time.Hour)); err != nil {
 				t.Fatalf("retire obsolete quiesced fallback run: %v", err)
 			}
 			assertObsoleteDirectRetirementClosure(t, ctx, db, oldRunID, oldChildID)
@@ -316,7 +308,7 @@ func TestObsoleteAutomaticFallbackRunRetirementPreservesCurrentGenerationPostgre
 				t.Fatalf("retirement changed accepted provider cache: before=%d after=%d err=%v", cacheCount, retainedCache, err)
 			}
 			return false
-		}, false, false, true)
+		}, true, false, false, true)
 	if !callbackExecuted {
 		t.Fatal("obsolete fallback retirement callback did not execute")
 	}

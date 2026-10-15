@@ -28,17 +28,11 @@ import { errorMessage, setupError } from "./setupApi";
 type Kind = "ffmpeg" | "fpcalc";
 const kinds: readonly Kind[] = ["ffmpeg", "fpcalc"];
 const operationKey = "melotrove.setup.operations";
-const legacyOperationKey = "melotrove.setup.operation";
 
 function savedIds(): string[] {
   const saved =
     window.localStorage.getItem(operationKey)?.split(",").filter(Boolean) || [];
-  const legacy =
-    window.localStorage
-      .getItem(legacyOperationKey)
-      ?.split(",")
-      .filter(Boolean) || [];
-  return [...new Set([...saved, ...legacy])];
+  return [...new Set(saved)];
 }
 
 export function SetupTools({
@@ -140,15 +134,6 @@ export function SetupTools({
     finishedIds.current.add(id);
     initialIds.current = initialIds.current.filter((value) => value !== id);
     window.localStorage.setItem(operationKey, initialIds.current.join(","));
-    const legacy = window.localStorage.getItem(legacyOperationKey);
-    if (legacy) {
-      const remaining = legacy
-        .split(",")
-        .filter((value) => value && value !== id);
-      if (remaining.length)
-        window.localStorage.setItem(legacyOperationKey, remaining.join(","));
-      else window.localStorage.removeItem(legacyOperationKey);
-    }
     setIds([...initialIds.current]);
   }, []);
   const load = useCallback(async () => {

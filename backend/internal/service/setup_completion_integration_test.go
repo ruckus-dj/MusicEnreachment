@@ -37,7 +37,7 @@ func completionFixture(t *testing.T, database *bun.DB, endpoint string, clock fu
 		service.NewOutputReset(installations, settings.NewResetFilesystem(), []string{"analysis", "publication", "checks", "media"}),
 	)
 	toolsDirectory, outputDirectory := t.TempDir(), filepath.Join(t.TempDir(), "output")
-	if err := setup.SaveRuntimeRequest(ctx, &toolsDirectory, &outputDirectory, setupCompletionStringPointer("mka")); err != nil {
+	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{ToolsDirectory: &toolsDirectory, OutputDirectory: &outputDirectory, PublicationFormat: setupCompletionStringPointer("mka")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := setup.SaveMusicBrainz(ctx, "self-hosted", endpoint); err != nil {
@@ -161,7 +161,9 @@ func TestOutputProbeSerializesConcurrentSetupOperations(t *testing.T) {
 		t.Fatal("completion did not register for the output guard")
 	}
 	saveDone := make(chan error, 1)
-	go func() { saveDone <- setup.SaveRuntime(ctx, "", output, "") }()
+	go func() {
+		saveDone <- setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &output})
+	}()
 	select {
 	case <-registered:
 	case <-ctx.Done():
@@ -245,7 +247,8 @@ func TestCompleteRejectsChangesDuringConnectivityCheck(t *testing.T) {
 			case "active installation verification":
 				_, err = database.ExecContext(ctx, "UPDATE tool_installation SET executable_versions = '{}' WHERE package_kind = 'ffmpeg'")
 			case "output directory changed":
-				err = setup.SaveRuntime(ctx, "", filepath.Join(t.TempDir(), "new-output"), "")
+				newOutput := filepath.Join(t.TempDir(), "new-output")
+				err = setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &newOutput})
 			}
 			if err != nil {
 				t.Fatalf("configuration write was blocked by the connectivity check: %v", err)

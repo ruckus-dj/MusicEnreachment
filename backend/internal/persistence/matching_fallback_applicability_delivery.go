@@ -138,8 +138,7 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 		Scan(ctx, &saved.Stage, &saved.Digest, &saved.Context, &saved.Edges, &saved.Schema, &saved.Calculator, &saved.DigestVersion); err != nil {
 		return fmt.Errorf("advance fallback applicability: load saved calculation: %w", err)
 	}
-	legacyReceipt := saved.Schema == matchingFallbackCalculationLegacySchemaVersion && saved.Calculator == matchingFallbackCalculationLegacyCalculatorVersion && saved.DigestVersion == matchingFallbackCalculationLegacyDigestVersion && saved.Stage == 0
-	if !legacyReceipt && (saved.Schema != matchingFallbackCalculationSchemaVersion || saved.Calculator != matchingFallbackCalculationCalculatorVersion || saved.DigestVersion != matchingFallbackCalculationDigestVersion) {
+	if saved.Schema != matchingFallbackCalculationSchemaVersion || saved.Calculator != matchingFallbackCalculationCalculatorVersion || saved.DigestVersion != matchingFallbackCalculationDigestVersion {
 		return fmt.Errorf("advance fallback applicability: saved calculation version is unsupported")
 	}
 	var snapshot MatchingFallbackCalculationContext
@@ -162,17 +161,6 @@ func (repository *SetupManagerRepository) advanceFallbackApplicabilityForDeliver
 		return fmt.Errorf("advance fallback applicability: canonicalize persisted context: %w", err)
 	}
 	actualDigest, digestErr := MatchingFallbackCalculationInputDigest(snapshot)
-	if legacyReceipt {
-		canonicalSaved, err = canonicalMatchingFallbackCalculationContextBytesV2(snapshot)
-		if err != nil {
-			return fmt.Errorf("advance fallback applicability: canonicalize legacy context: %w", err)
-		}
-		canonicalPersisted, err = canonicalMatchingFallbackCalculationContextBytesV2(persisted)
-		if err != nil {
-			return fmt.Errorf("advance fallback applicability: canonicalize legacy authority: %w", err)
-		}
-		actualDigest, digestErr = MatchingFallbackCalculationInputDigestV2(snapshot)
-	}
 	if digestErr != nil || actualDigest != saved.Digest || !equalDigest(canonicalSaved, canonicalPersisted) {
 		return fmt.Errorf("advance fallback applicability: saved context binding is invalid")
 	}
@@ -605,15 +593,10 @@ func validateFallbackApplicabilityZeroHistory(ctx context.Context, tx bun.Tx, ru
 			snapshot.AcquisitionRevision != saved.Revision || snapshot.StageIndex != stage {
 			return nil, fmt.Errorf("stage %d receipt identity is invalid", stage)
 		}
-		var digest string
-		switch {
-		case saved.Schema == matchingFallbackCalculationSchemaVersion && saved.Calculator == matchingFallbackCalculationCalculatorVersion && saved.DigestVersion == matchingFallbackCalculationDigestVersion:
-			digest, _ = MatchingFallbackCalculationInputDigest(snapshot)
-		case stage == 0 && saved.Schema == matchingFallbackCalculationLegacySchemaVersion && saved.Calculator == matchingFallbackCalculationLegacyCalculatorVersion && saved.DigestVersion == matchingFallbackCalculationLegacyDigestVersion:
-			digest, _ = MatchingFallbackCalculationInputDigestV2(snapshot)
-		default:
+		if saved.Schema != matchingFallbackCalculationSchemaVersion || saved.Calculator != matchingFallbackCalculationCalculatorVersion || saved.DigestVersion != matchingFallbackCalculationDigestVersion {
 			return nil, fmt.Errorf("stage %d receipt version is unsupported", stage)
 		}
+		digest, _ := MatchingFallbackCalculationInputDigest(snapshot)
 		if digest == "" || digest != saved.Digest {
 			return nil, fmt.Errorf("stage %d receipt context digest is invalid", stage)
 		}

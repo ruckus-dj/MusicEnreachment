@@ -149,6 +149,26 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{data: make(map[string]string)}
 }
 
+func TestAcoustIDCredentialRequiresAtomicStorage(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	store.data[settings.AcoustIDApplicationKey] = "existing-secret"
+	registry := settings.New(store, nil)
+	if err := registry.SetAcoustIDApplicationKey(ctx, "replacement-secret"); err == nil {
+		t.Fatal("credential write accepted storage without atomic revision support")
+	}
+	if err := registry.DeleteAcoustIDApplicationKey(ctx); err == nil {
+		t.Fatal("credential deletion accepted storage without atomic revision support")
+	}
+	if store.data[settings.AcoustIDApplicationKey] != "existing-secret" {
+		t.Fatal("unsupported credential storage was mutated")
+	}
+	key, present, revision, err := registry.ReadAcoustIDCredential(ctx)
+	if err == nil || key != "" || present || revision != "" {
+		t.Fatalf("unsupported credential storage returned credential data: present=%t revision=%q err=%v", present, revision, err)
+	}
+}
+
 func TestPlatformInitializationIsAtomic(t *testing.T) {
 	store := newMemoryStore()
 	registry := settings.New(store, nil)

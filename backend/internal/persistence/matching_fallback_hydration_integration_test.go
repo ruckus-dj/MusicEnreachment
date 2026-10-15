@@ -28,7 +28,6 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/uptrace/bun"
 )
 
 type failAfterMatchingWakeInsert struct {
@@ -51,18 +50,14 @@ func (inserter failAfterMatchingWakeInsert) InsertTx(ctx context.Context, tx *sq
 }
 
 func TestAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testing.T) {
-	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, false, false)
+	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, false)
 }
 
 func TestAutomaticFallbackQualifiedApplicabilityWaitsForPolicyPostgreSQL(t *testing.T) {
-	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, true, false)
+	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, true)
 }
 
-func TestAutomaticFallbackV1SearchReceiptWithCurrentCalculationPostgreSQL(t *testing.T) {
-	testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t, true, true)
-}
-
-func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testing.T, qualified, preserveCalculationTuple bool) {
+func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testing.T, qualified bool) {
 	t.Parallel()
 	fixture := newAutomaticMatchingTargetFenceFixture(t)
 	ctx, cancel := context.WithTimeout(fixture.ctx, 60*time.Second)
@@ -499,7 +494,7 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		t.Fatalf("digest writer context: %v", err)
 	}
 	// A caller can make a forged context internally self-consistent by changing
-	// even an ignored manifest field and recomputing the V2 digest. The writer
+	// even an ignored manifest field and recomputing the V3 digest. The writer
 	// must bind the supplied bytes to authority reconstructed inside its tx.
 	forgedContext := calculationContext
 	forgedContext.LookupReceipts = append([]persistence.MatchingFallbackLookupReceipt(nil), calculationContext.LookupReceipts...)
@@ -696,7 +691,6 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		if err != nil || !exists || qualifiedSnapshot.Phase != "pending_seal" || qualifiedSnapshot.Revision != complete.Revision+1 {
 			t.Fatalf("qualified calculation did not enter pending_seal: snapshot=%+v exists=%v err=%v", qualifiedSnapshot, exists, err)
 		}
-		rewriteFallbackCalculationAsLegacyV1ForTest(t, ctx, fixture.db, parentID, complete.Revision, preserveCalculationTuple)
 		sealedContext, found, err := freshRepository.LoadMatchingFallbackSealedCalculationContext(ctx, parentID)
 		if err != nil || !found {
 			t.Fatalf("sealed calculation context was not readable after cursor advance: found=%v err=%v", found, err)
@@ -709,9 +703,6 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		}
 		if err != nil || unmarshalErr != nil || calculationReceipt == nil || !reflect.DeepEqual(sealedContext, acceptedContext) {
 			t.Fatalf("sealed calculation context differs from accepted calculation: receipt=%+v unmarshal_err=%v err=%v", calculationReceipt, unmarshalErr, err)
-		}
-		if preserveCalculationTuple && (calculationReceipt.SchemaVersion != 3 || calculationReceipt.CalculatorVersion != 3 || calculationReceipt.DigestVersion != 3) {
-			t.Fatalf("V1 search receipt fixture changed the original calculation tuple: %+v", calculationReceipt)
 		}
 		sealAuthority, authorityExists, err := freshRepository.BuildMatchingFallbackSealAuthority(ctx, parentID, qualifiedSnapshot.Revision)
 		if err != nil || !authorityExists || sealAuthority.Disposition != "qualified" || sealAuthority.SelectedCalculation == nil ||
@@ -839,11 +830,38 @@ func testAutomaticFallbackHydrationWaitsForEveryLookupReceiptPostgreSQL(t *testi
 		if err != nil || !reflect.DeepEqual(replayedPublication, publication) {
 			t.Fatalf("repeated serialization of the same prepared evaluation changed the publication: err=%v replay=%+v first=%+v", err, replayedPublication, publication)
 		}
-		if err := tamperLegacyFallbackSearchPayloadForTest(ctx, fixture.db, parentID, complete.Revision); err != nil {
-			t.Fatalf("tamper legacy search payload fixture: %v", err)
+		// The seal is bound to the persisted calculation context, not a fresh read
+		// of the standalone search receipt. Corrupt that bound context without
+		// updating its digest to exercise the current integrity check.
+		corruptedContext := acceptedContext
+		corruptedContext.SearchReceipt.Payload = json.RawMessage(`{"corruption_probe":true}`)
+		corruptedContextBytes, err := json.Marshal(corruptedContext)
+		if err != nil {
+			t.Fatalf("encode corrupted current calculation context: %v", err)
 		}
-		if _, exists, err := freshRepository.GetMatchingFallbackAuthoritySeal(ctx, parentID, qualifiedSnapshot.Revision); err == nil || exists {
-			t.Fatalf("self-consistent historical context with a changed search payload passed seal validation: exists=%v err=%v", exists, err)
+		if _, err := fixture.db.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt DISABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
+			t.Fatalf("disable calculation receipt immutability for corruption probe: %v", err)
+		}
+		_, corruptionErr := fixture.db.NewRaw(`UPDATE matching_fallback_calculation_receipt SET context=?::jsonb WHERE run_id=? AND acquisition_revision=?`,
+			string(corruptedContextBytes), parentID, complete.Revision).Exec(ctx)
+		var corruptedSealExists bool
+		var corruptionReadErr error
+		if corruptionErr == nil {
+			_, corruptedSealExists, corruptionReadErr = freshRepository.GetMatchingFallbackAuthoritySeal(ctx, parentID, qualifiedSnapshot.Revision)
+		}
+		_, restoreErr := fixture.db.NewRaw(`UPDATE matching_fallback_calculation_receipt SET context=?::jsonb WHERE run_id=? AND acquisition_revision=?`,
+			string(calculationReceipt.Context), parentID, complete.Revision).Exec(ctx)
+		if _, err := fixture.db.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt ENABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
+			t.Fatalf("restore calculation receipt immutability after corruption probe: %v", err)
+		}
+		if corruptionErr != nil || restoreErr != nil {
+			t.Fatalf("corrupt or restore current calculation context: corrupt=%v restore=%v", corruptionErr, restoreErr)
+		}
+		if corruptionReadErr == nil || corruptedSealExists {
+			t.Fatalf("corrupted current calculation context passed seal validation: exists=%v err=%v", corruptedSealExists, corruptionReadErr)
+		}
+		if _, exists, err := freshRepository.GetMatchingFallbackAuthoritySeal(ctx, parentID, qualifiedSnapshot.Revision); err != nil || !exists {
+			t.Fatalf("restored current calculation context did not validate its seal: exists=%v err=%v", exists, err)
 		}
 		var sealRows int
 		if err := fixture.db.NewRaw(`SELECT count(*) FROM matching_fallback_authority_seal WHERE run_id=? AND wait_revision=?`, parentID, qualifiedSnapshot.Revision).Scan(ctx, &sealRows); err != nil || sealRows != 1 {
@@ -1088,181 +1106,4 @@ func canonicalFrozenTestJSON(t *testing.T, raw json.RawMessage) []byte {
 		t.Fatalf("encode canonical frozen fixture JSON: %v", err)
 	}
 	return canonical
-}
-
-func rewriteFallbackCalculationAsLegacyV1ForTest(t *testing.T, ctx context.Context, database *bun.DB, runID uuid.UUID, revision int64, preserveCalculationTuple bool) {
-	t.Helper()
-	var contextJSON, payloadText string
-	if err := database.NewRaw(`SELECT context::text FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, runID, revision).Scan(ctx, &contextJSON); err != nil {
-		t.Fatalf("read calculation context for legacy fixture: %v", err)
-	}
-	var snapshot persistence.MatchingFallbackCalculationContext
-	if err := json.Unmarshal([]byte(contextJSON), &snapshot); err != nil {
-		t.Fatalf("decode calculation context for legacy fixture: %v", err)
-	}
-	if err := database.NewRaw(`SELECT payload::text FROM matching_fallback_search_receipt WHERE run_id=? AND request_id=?`, runID, snapshot.SearchReceipt.RequestID).Scan(ctx, &payloadText); err != nil {
-		t.Fatalf("read PostgreSQL V1 payload representation: %v", err)
-	}
-	legacyPayload, err := json.Marshal(json.RawMessage(payloadText))
-	if err != nil {
-		t.Fatalf("encode original V1 search payload: %v", err)
-	}
-	originalDigest := sha256.Sum256(legacyPayload)
-	var phaseOutput, phaseProvenance string
-	if err := database.NewRaw(`SELECT output,response_provenance FROM matching_acquisition_phase WHERE run_id=? AND phase='fallback_applicability'`, runID).
-		Scan(ctx, &phaseOutput, &phaseProvenance); err != nil {
-		t.Fatalf("read phase search provenance for legacy fixture: %v", err)
-	}
-	var outputValue, provenanceValue any
-	if err := json.Unmarshal([]byte(phaseOutput), &outputValue); err != nil {
-		t.Fatalf("decode phase output for legacy fixture: %v", err)
-	}
-	if err := json.Unmarshal([]byte(phaseProvenance), &provenanceValue); err != nil {
-		t.Fatalf("decode phase provenance for legacy fixture: %v", err)
-	}
-	oldPayloadSHA := snapshot.SearchReceipt.PayloadSHA256
-	newPayloadSHA := hex.EncodeToString(originalDigest[:])
-	replaceJSONTextValue(outputValue, oldPayloadSHA, newPayloadSHA)
-	replaceJSONTextValue(provenanceValue, oldPayloadSHA, newPayloadSHA)
-	var snapshotOutputValue, snapshotProvenanceValue any
-	if err := json.Unmarshal(snapshot.PhaseOutput, &snapshotOutputValue); err != nil {
-		t.Fatalf("decode calculation phase output for legacy fixture: %v", err)
-	}
-	if err := json.Unmarshal(snapshot.PhaseProvenance, &snapshotProvenanceValue); err != nil {
-		t.Fatalf("decode calculation phase provenance for legacy fixture: %v", err)
-	}
-	replaceJSONTextValue(snapshotOutputValue, oldPayloadSHA, newPayloadSHA)
-	replaceJSONTextValue(snapshotProvenanceValue, oldPayloadSHA, newPayloadSHA)
-	encodedSnapshotOutput, err := json.Marshal(snapshotOutputValue)
-	if err != nil {
-		t.Fatalf("encode calculation phase output for legacy fixture: %v", err)
-	}
-	encodedSnapshotProvenance, err := json.Marshal(snapshotProvenanceValue)
-	if err != nil {
-		t.Fatalf("encode calculation phase provenance for legacy fixture: %v", err)
-	}
-	snapshot.PhaseOutput = encodedSnapshotOutput
-	snapshot.PhaseProvenance = encodedSnapshotProvenance
-	encodedOutput, err := json.Marshal(outputValue)
-	if err != nil {
-		t.Fatalf("encode phase output for legacy fixture: %v", err)
-	}
-	encodedProvenance, err := json.Marshal(provenanceValue)
-	if err != nil {
-		t.Fatalf("encode phase provenance for legacy fixture: %v", err)
-	}
-	phaseOutput, phaseProvenance = string(encodedOutput), string(encodedProvenance)
-	snapshot.SearchReceipt.Payload = legacyPayload
-	snapshot.SearchReceipt.PayloadSHA256 = newPayloadSHA
-	snapshot.SearchReceipt.PayloadDigestVersion = 0
-	legacyDigest, err := persistence.MatchingFallbackCalculationInputDigestV2(snapshot)
-	if preserveCalculationTuple {
-		legacyDigest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
-	}
-	if err != nil {
-		t.Fatalf("digest legacy calculation fixture: %v", err)
-	}
-	legacyContext, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatalf("encode legacy calculation context: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_search_receipt DISABLE TRIGGER matching_fallback_search_receipt_immutable`); err != nil {
-		t.Fatalf("disable search receipt immutability for fixture: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt DISABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
-		t.Fatalf("disable calculation receipt immutability for fixture: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_acquisition_phase DISABLE TRIGGER matching_acquisition_phase_append_only`); err != nil {
-		t.Fatalf("disable phase immutability for fixture: %v", err)
-	}
-	if _, err := database.NewRaw(`UPDATE matching_fallback_search_receipt SET payload_sha256=?,payload_digest_version=1 WHERE run_id=? AND request_id=?`, originalDigest[:], runID, snapshot.SearchReceipt.RequestID).Exec(ctx); err != nil {
-		t.Fatalf("write historical V1 search receipt fixture: %v", err)
-	}
-	if _, err := database.NewRaw(`UPDATE matching_acquisition_phase SET output=?::jsonb,response_provenance=?::jsonb
-		WHERE run_id=? AND phase='fallback_applicability'`, string(phaseOutput), string(phaseProvenance), runID).Exec(ctx); err != nil {
-		t.Fatalf("write historical phase search provenance fixture: %v", err)
-	}
-	update := `UPDATE matching_fallback_calculation_receipt SET input_digest=?,context=?::jsonb WHERE run_id=? AND acquisition_revision=?`
-	if !preserveCalculationTuple {
-		update = `UPDATE matching_fallback_calculation_receipt SET schema_version=2,calculator_version=1,digest_version=2,input_digest=?,context=?::jsonb WHERE run_id=? AND acquisition_revision=?`
-	}
-	if _, err := database.NewRaw(update, mustDecodeSHA256(t, legacyDigest), string(legacyContext), runID, revision).Exec(ctx); err != nil {
-		t.Fatalf("write historical calculation receipt fixture: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_search_receipt ENABLE TRIGGER matching_fallback_search_receipt_immutable`); err != nil {
-		t.Fatalf("restore search receipt immutability: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt ENABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
-		t.Fatalf("restore calculation receipt immutability: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_acquisition_phase ENABLE TRIGGER matching_acquisition_phase_append_only`); err != nil {
-		t.Fatalf("restore phase immutability: %v", err)
-	}
-}
-
-func replaceJSONTextValue(value any, oldValue, newValue string) {
-	switch value := value.(type) {
-	case map[string]any:
-		for key, child := range value {
-			if text, ok := child.(string); ok && text == oldValue {
-				value[key] = newValue
-				continue
-			}
-			replaceJSONTextValue(child, oldValue, newValue)
-		}
-	case []any:
-		for _, child := range value {
-			replaceJSONTextValue(child, oldValue, newValue)
-		}
-	}
-}
-
-func tamperLegacyFallbackSearchPayloadForTest(ctx context.Context, database *bun.DB, runID uuid.UUID, revision int64) error {
-	var contextJSON string
-	var schemaVersion, calculatorVersion, digestVersion int
-	if err := database.NewRaw(`SELECT context::text,schema_version,calculator_version,digest_version FROM matching_fallback_calculation_receipt WHERE run_id=? AND acquisition_revision=?`, runID, revision).
-		Scan(ctx, &contextJSON, &schemaVersion, &calculatorVersion, &digestVersion); err != nil {
-		return err
-	}
-	var snapshot persistence.MatchingFallbackCalculationContext
-	if err := json.Unmarshal([]byte(contextJSON), &snapshot); err != nil {
-		return err
-	}
-	snapshot.SearchReceipt.Payload = json.RawMessage(`"{\"tampered\":true}"`)
-	var digest string
-	var err error
-	if schemaVersion == 2 && calculatorVersion == 1 && digestVersion == 2 {
-		digest, err = persistence.MatchingFallbackCalculationInputDigestV2(snapshot)
-	} else {
-		digest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
-	}
-	if err != nil {
-		return err
-	}
-	digestBytes, err := hex.DecodeString(digest)
-	if err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt DISABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
-		return err
-	}
-	_, updateErr := database.NewRaw(`UPDATE matching_fallback_calculation_receipt SET input_digest=?,context=?::jsonb WHERE run_id=? AND acquisition_revision=?`,
-		digestBytes, string(encoded), runID, revision).Exec(ctx)
-	if _, err := database.ExecContext(ctx, `ALTER TABLE matching_fallback_calculation_receipt ENABLE TRIGGER matching_fallback_calculation_receipt_immutable`); err != nil {
-		return err
-	}
-	return updateErr
-}
-
-func mustDecodeSHA256(t *testing.T, value string) []byte {
-	t.Helper()
-	decoded, err := hex.DecodeString(value)
-	if err != nil {
-		t.Fatalf("decode SHA-256: %v", err)
-	}
-	return decoded
 }

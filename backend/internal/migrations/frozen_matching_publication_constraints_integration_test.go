@@ -55,7 +55,7 @@ func TestFrozenMatchingPublicationHeaderConstraintsWithPostgreSQL(t *testing.T) 
 	assertRejected("non-automatic authority", 3, runID, wait, digest, runID, 2, capture, captureDigest, "manual_review")
 
 	// The referenced tuple includes the exact digest, not merely run and wait.
-	sealRunID, _ := insertFallbackReceiptMigrationScope(t, ctx, database)
+	sealRunID, _ := insertMatchingCurrentSchemaScope(t, ctx, database)
 	sealDigest := make([]byte, 32)
 	sealDigest[0] = 1
 	if _, err := database.NewRaw(`INSERT INTO matching_fallback_authority_seal

@@ -1,2 +1,0 @@
-DROP TABLE source_work_variant_identity;
-DROP FUNCTION prevent_source_work_variant_identity_rekey();

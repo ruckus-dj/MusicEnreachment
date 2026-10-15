@@ -19,18 +19,17 @@ import (
 // post-hydration fallback calculator. It intentionally carries no repositories,
 // provider clients, settings, or filesystem-derived readers.
 type MatchingFallbackApplicabilityInput struct {
-	RunID                uuid.UUID
-	AcquisitionRevision  int64
-	StageIndex           int
-	Intent               persistence.MatchingAcquisitionIntent
-	Target               persistence.MatchingRunFenceSnapshot
-	PhaseInput           json.RawMessage
-	PhaseOutput          json.RawMessage
-	PhaseProvenance      json.RawMessage
-	SearchReceipt        persistence.MatchingFallbackSearchReceipt
-	LookupReceipts       []persistence.MatchingFallbackLookupReceipt
-	Authority            MatchingFallbackAuthority
-	legacySearchEvidence *persistence.MatchingFallbackVerifiedLegacySearchEvidence
+	RunID               uuid.UUID
+	AcquisitionRevision int64
+	StageIndex          int
+	Intent              persistence.MatchingAcquisitionIntent
+	Target              persistence.MatchingRunFenceSnapshot
+	PhaseInput          json.RawMessage
+	PhaseOutput         json.RawMessage
+	PhaseProvenance     json.RawMessage
+	SearchReceipt       persistence.MatchingFallbackSearchReceipt
+	LookupReceipts      []persistence.MatchingFallbackLookupReceipt
+	Authority           MatchingFallbackAuthority
 }
 
 // MatchingFallbackAuthority is the immutable provider/run and registered-request
@@ -486,11 +485,7 @@ func validateFallbackApplicabilityAuthority(input MatchingFallbackApplicabilityI
 		len(input.Authority.Lookups) != len(input.LookupReceipts) {
 		return fmt.Errorf("fallback applicability: provider request authority is incomplete or mismatched")
 	}
-	if input.legacySearchEvidence != nil {
-		if err := persistence.ValidateMatchingFallbackLegacySearchPayload(*input.legacySearchEvidence, input.SearchReceipt); err != nil {
-			return fmt.Errorf("fallback applicability: historical search receipt provenance is invalid: %w", err)
-		}
-	} else if err := validateReceiptDigests(input.SearchReceipt.PayloadDigestVersion, input.SearchReceipt.Payload, input.SearchReceipt.PayloadSHA256, nil, ""); err != nil {
+	if err := validateReceiptDigests(input.SearchReceipt.PayloadDigestVersion, input.SearchReceipt.Payload, input.SearchReceipt.PayloadSHA256, nil, ""); err != nil {
 		return err
 	}
 	if len(input.PhaseProvenance) == 0 || !json.Valid(input.PhaseProvenance) {
@@ -505,11 +500,6 @@ func validateReceiptDigests(payloadDigestVersion int, payload json.RawMessage, p
 	}
 	var payloadDigestInput []byte
 	switch payloadDigestVersion {
-	case 0, 1:
-		// Legacy payloads are checked against their exact compact bytes. If a
-		// historical JSONB context round-trip changed those bytes, only the
-		// persistence-validated sealed evidence path may authorize semantic hashing.
-		payloadDigestInput = payload
 	case 2:
 		canonicalPayload, err := canonicalFallbackJSON(payload)
 		if err != nil {

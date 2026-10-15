@@ -11,67 +11,25 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
 
-const sourceAnalysisStepInputStorageMigration = "20261008120000"
-
-func TestSourceAnalysisStepInputStorageMigrationWithPostgreSQL(t *testing.T) {
+func TestSourceAnalysisStepInputStorageCurrentSchemaWithPostgreSQL(t *testing.T) {
 	t.Parallel()
-	database := testpostgres.Open(t)
+	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
-	collection := mustMigrations(t)
-	migration := migrationNamed(t, collection, sourceAnalysisStepInputStorageMigration)
-
-	t.Run("clean rollback and reapply preserve nullable model behavior", func(t *testing.T) {
-		testpostgres.Reset(t, database)
-		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, sourceAnalysisStepInputStorageMigration))
-
-		beforeWorkID := insertStorageWork(t, ctx, database)
-		if _, err := database.ExecContext(ctx, `INSERT INTO source_analysis_step(work_id, step, state) VALUES (?, 'sha256', 'pending')`, beforeWorkID); err != nil {
-			t.Fatalf("insert pre-storage analysis step: %v", err)
-		}
-		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
-		before := persistence.SourceAnalysisStep{WorkID: beforeWorkID, Step: "sha256"}
-		assertStorageStepInputIsNull(t, ctx, database, before)
-
-		after := insertStorageStep(t, ctx, database, "probe")
-		assertStorageStepInputIsNull(t, ctx, database, after)
-
-		rollbackMigration(t, ctx, database, migration)
-		if columnExists(t, database, "source_analysis_step", "input_snapshot") {
-			t.Fatal("input_snapshot remains after clean storage rollback")
-		}
-		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
-		assertStorageStepInputIsNull(t, ctx, database, before)
-		assertStorageStepInputIsNull(t, ctx, database, after)
-	})
-
-	t.Run("non-null input refuses rollback without dropping data", func(t *testing.T) {
-		testpostgres.Reset(t, database)
-		applyMigrationsOneAtATime(t, ctx, database, migrationsBefore(t, collection, sourceAnalysisStepInputStorageMigration))
-		applyMigrationsOneAtATime(t, ctx, database, []*migrate.Migration{migration})
-		step := insertStorageStep(t, ctx, database, "sha256")
-		input := `{"sha256_enabled":true}`
-		if _, err := database.ExecContext(ctx, `UPDATE source_analysis_step SET input_snapshot=?::jsonb WHERE work_id=? AND step='sha256'`, input, step.WorkID); err != nil {
-			t.Fatalf("store step input: %v", err)
-		}
-
-		rollback := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
-		if _, err := rollback.Rollback(ctx); err == nil {
-			t.Fatal("rollback with stored step input succeeded")
-		}
-		if !columnExists(t, database, "source_analysis_step", "input_snapshot") {
-			t.Fatal("refused rollback dropped input_snapshot")
-		}
-		var preserved int
-		if err := database.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE work_id=? AND step='sha256' AND input_snapshot=?::jsonb`, step.WorkID, input).Scan(ctx, &preserved); err != nil {
-			t.Fatalf("read step input after refused rollback: %v", err)
-		}
-		if preserved != 1 {
-			t.Fatal("stored step input was not preserved after refused rollback")
-		}
-	})
+	step := insertStorageStep(t, ctx, database, "sha256")
+	assertStorageStepInputIsNull(t, ctx, database, step)
+	input := `{"sha256_enabled":true}`
+	if _, err := database.ExecContext(ctx, `UPDATE source_analysis_step SET input_snapshot=?::jsonb WHERE work_id=? AND step='sha256'`, input, step.WorkID); err != nil {
+		t.Fatalf("store step input: %v", err)
+	}
+	var preserved int
+	if err := database.NewRaw(`SELECT count(*) FROM source_analysis_step WHERE work_id=? AND step='sha256' AND input_snapshot=?::jsonb`, step.WorkID, input).Scan(ctx, &preserved); err != nil {
+		t.Fatalf("read stored step input: %v", err)
+	}
+	if preserved != 1 {
+		t.Fatal("stored step input was not persisted by current schema")
+	}
 }
 
 func insertStorageStep(t *testing.T, ctx context.Context, database *bun.DB, step string) persistence.SourceAnalysisStep {

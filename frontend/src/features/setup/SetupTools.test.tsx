@@ -64,6 +64,20 @@ afterEach(() => {
 });
 
 describe("SetupTools", () => {
+  it("ignores the obsolete singular operation storage key", async () => {
+    mockCatalogAndOperations([]);
+    localStorage.setItem("melotrove.setup.operation", "obsolete-operation");
+
+    render(<SetupTools />);
+
+    await waitFor(() =>
+      expect(localStorage.getItem("melotrove.setup.operations")).toBe(""),
+    );
+    expect(localStorage.getItem("melotrove.setup.operation")).toBe(
+      "obsolete-operation",
+    );
+  });
+
   it("keeps ready packages fixed while allowing the other package's first version selection", async () => {
     mockCatalogAndOperations([installation("ffmpeg-1", "ffmpeg", true)]);
     render(<SetupTools />);

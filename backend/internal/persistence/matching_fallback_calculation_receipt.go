@@ -14,12 +14,9 @@ import (
 )
 
 const (
-	matchingFallbackCalculationSchemaVersion           = 3
-	matchingFallbackCalculationCalculatorVersion       = 3
-	matchingFallbackCalculationDigestVersion           = 3
-	matchingFallbackCalculationLegacySchemaVersion     = 2
-	matchingFallbackCalculationLegacyCalculatorVersion = 1
-	matchingFallbackCalculationLegacyDigestVersion     = 2
+	matchingFallbackCalculationSchemaVersion     = 3
+	matchingFallbackCalculationCalculatorVersion = 3
+	matchingFallbackCalculationDigestVersion     = 3
 )
 
 // MatchingFallbackCalculationReceipt is the immutable calculation handoff. The
@@ -37,9 +34,7 @@ type MatchingFallbackCalculationReceipt struct {
 	Edges               json.RawMessage `json:"edges"`
 }
 
-// GetMatchingFallbackCalculationReceipt returns immutable saved evidence. The
-// stored version tuple selects the canonical digest format; a historical receipt
-// is validated using its original format and is never recalculated here.
+// GetMatchingFallbackCalculationReceipt returns immutable saved evidence.
 func (repository *SetupManagerRepository) GetMatchingFallbackCalculationReceipt(
 	ctx context.Context, runID uuid.UUID, acquisitionRevision int64,
 ) (*MatchingFallbackCalculationReceipt, error) {
@@ -90,8 +85,6 @@ func getMatchingFallbackCalculationReceipt(
 	switch {
 	case schemaVersion == matchingFallbackCalculationSchemaVersion && calculatorVersion == matchingFallbackCalculationCalculatorVersion && digestVersion == matchingFallbackCalculationDigestVersion:
 		calculatedDigest, err = MatchingFallbackCalculationInputDigest(snapshot)
-	case schemaVersion == matchingFallbackCalculationLegacySchemaVersion && calculatorVersion == matchingFallbackCalculationLegacyCalculatorVersion && digestVersion == matchingFallbackCalculationLegacyDigestVersion && receipt.StageIndex == 0:
-		calculatedDigest, err = MatchingFallbackCalculationInputDigestV2(snapshot)
 	default:
 		return nil, fmt.Errorf("read fallback calculation receipt: stored version tuple is unsupported")
 	}
@@ -267,34 +260,21 @@ func (repository *SetupManagerRepository) RecordMatchingFallbackCalculationForDe
 				Scan(ctx, &oldDigest, &oldContext, &oldEdges, &oldStage, &oldSchema, &oldCalculator, &oldDigestVersion); err != nil {
 				return fmt.Errorf("record fallback calculation receipt: read prior receipt: %w", err)
 			}
+			if oldSchema != matchingFallbackCalculationSchemaVersion || oldCalculator != matchingFallbackCalculationCalculatorVersion ||
+				oldDigestVersion != matchingFallbackCalculationDigestVersion {
+				return errors.New("record fallback calculation receipt: stored version tuple is unsupported")
+			}
 			var oldSnapshot MatchingFallbackCalculationContext
 			var oldContextCanonical []byte
 			var contextErr error
-			if json.Unmarshal([]byte(oldContext), &oldSnapshot) == nil {
-				switch {
-				case oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion:
-					oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytesV2(oldSnapshot)
-				case oldSchema == matchingFallbackCalculationSchemaVersion && oldCalculator == matchingFallbackCalculationCalculatorVersion && oldDigestVersion == matchingFallbackCalculationDigestVersion:
-					oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytes(oldSnapshot)
-				default:
-					contextErr = errors.New("stored calculation version pair is unsupported")
-				}
-			} else {
+			if json.Unmarshal([]byte(oldContext), &oldSnapshot) != nil {
 				contextErr = errors.New("stored context is invalid")
+			} else {
+				oldContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytes(oldSnapshot)
 			}
-			receiptContextCanonical := receiptCanonical
-			if oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion {
-				receiptContextCanonical, contextErr = canonicalMatchingFallbackCalculationContextBytesV2(snapshot)
-			}
-			digestMatches := oldDigest == receipt.InputDigest
-			if oldSchema == matchingFallbackCalculationLegacySchemaVersion && oldCalculator == matchingFallbackCalculationLegacyCalculatorVersion && oldDigestVersion == matchingFallbackCalculationLegacyDigestVersion {
-				digestMatches = false
-				if legacyDigest, digestErr := MatchingFallbackCalculationInputDigestV2(snapshot); digestErr == nil {
-					digestMatches = oldDigest == legacyDigest && receipt.StageIndex == 0
-				}
-			}
-			if oldStage != receipt.StageIndex || !digestMatches || contextErr != nil ||
-				!equalDigest(oldContextCanonical, receiptContextCanonical) || !matchingJSONEqual([]byte(oldEdges), receipt.Edges) {
+			if oldStage != receipt.StageIndex ||
+				oldDigest != receipt.InputDigest || contextErr != nil ||
+				!equalDigest(oldContextCanonical, receiptCanonical) || !matchingJSONEqual([]byte(oldEdges), receipt.Edges) {
 				return errors.New("conflicting fallback calculation receipt replay")
 			}
 			recorded = true

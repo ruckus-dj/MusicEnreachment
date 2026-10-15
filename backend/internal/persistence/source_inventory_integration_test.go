@@ -4,19 +4,14 @@ package persistence_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
 )
-
-const sourceInventoryMigrationName = "20261003000000"
 
 func TestSourceInventorySchemaWithPostgreSQL(t *testing.T) {
 	t.Parallel()
@@ -281,85 +276,6 @@ func TestSourceRootDeletionSetsOperationTargetToNullWithPostgreSQL(t *testing.T)
 	}
 	if preserved.State != "succeeded" || preserved.FinishedAt == nil {
 		t.Fatalf("terminal operation snapshot = %s/%v, want succeeded with a finish time", preserved.State, preserved.FinishedAt)
-	}
-}
-
-func TestSourceInventoryRollbackWithPostgreSQL(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migrations: %v", err)
-	}
-	// The baseline is every migration that precedes the fixed source inventory
-	// migration by name, never "the last element of the collection": a later
-	// migration must not silently change what this rollback test exercises.
-	withoutInventory := migrate.NewMigrations()
-	sourceInventoryFound := false
-	for _, migration := range collection.Sorted() {
-		if migration.Name == sourceInventoryMigrationName {
-			sourceInventoryFound = true
-			continue
-		}
-		if migration.Name > sourceInventoryMigrationName {
-			continue
-		}
-		withoutInventory.Add(migration)
-	}
-	if !sourceInventoryFound {
-		t.Fatalf("migration %s is missing from the collection", sourceInventoryMigrationName)
-	}
-
-	database := testpostgres.Open(t)
-	testpostgres.Reset(t, database)
-	// Init the full migrator first so the upsert path has the unique name index;
-	// RunMigration needs it, the baseline only needs the migration tables.
-	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true), migrate.WithUpsert(true))
-	if err := migrator.Init(ctx); err != nil {
-		t.Fatalf("initialize migrations: %v", err)
-	}
-	baseline := migrate.NewMigrator(database, withoutInventory, migrate.WithMarkAppliedOnSuccess(true))
-	if _, err := baseline.Migrate(ctx); err != nil {
-		t.Fatalf("apply the baseline migrations: %v", err)
-	}
-	assertRelationNotCreated(t, database, "source_root")
-	assertColumnAbsent(t, database, "operation", "target_source_root_id")
-
-	if err := migrator.RunMigration(ctx, sourceInventoryMigrationName); err != nil {
-		t.Fatalf("apply the source inventory migration: %v", err)
-	}
-	if sourceRelation := relationName(t, database, "source_root"); sourceRelation == nil {
-		t.Fatal("source_root is missing after the source inventory migration")
-	}
-
-	group, err := migrator.Rollback(ctx)
-	if err != nil {
-		t.Fatalf("roll back the source inventory migration: %v", err)
-	}
-	if group == nil || len(group.Migrations) != 1 {
-		t.Fatalf("rolled back migration group = %#v, want exactly one migration", group)
-	}
-	if group.Migrations[0].Name != sourceInventoryMigrationName {
-		t.Fatalf("rolled back migration = %s, want %s", group.Migrations[0].Name, sourceInventoryMigrationName)
-	}
-	assertRelationAbsent(t, database, "source_root")
-	assertRelationAbsent(t, database, "source_location")
-	assertRelationAbsent(t, database, "source_scan_candidate")
-	assertColumnAbsent(t, database, "operation", "target_source_root_id")
-	assertIndexAbsent(t, database, "operation_one_active_source_root_scan")
-	var kindConstraint string
-	if err := database.NewRaw(
-		`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'operation_kind_check'`,
-	).Scan(ctx, &kindConstraint); err != nil {
-		t.Fatalf("read operation kind constraint: %v", err)
-	}
-	for _, kind := range []string{"install", "activate", "delete", "move_tools_root"} {
-		if !strings.Contains(kindConstraint, kind) {
-			t.Fatalf("operation kind constraint after rollback = %s, want kind %s", kindConstraint, kind)
-		}
-	}
-	if strings.Contains(kindConstraint, "scan_source") {
-		t.Fatalf("operation kind constraint after rollback = %s, want no scan_source kind", kindConstraint)
 	}
 }
 

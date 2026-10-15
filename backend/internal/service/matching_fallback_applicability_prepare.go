@@ -121,33 +121,17 @@ func PrepareFrozenFallbackEvaluation(
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: selected context identity does not match seal")
 	}
 	var digest string
-	switch {
-	case ref.SchemaVersion == 2 && ref.CalculatorVersion == 1 && ref.DigestVersion == 2:
-		digest, err = persistence.MatchingFallbackCalculationInputDigestV2(snapshot)
-	case ref.SchemaVersion == 3 && ref.CalculatorVersion == 3 && ref.DigestVersion == 3:
-		digest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
-	default:
+	if ref.SchemaVersion != 3 || ref.CalculatorVersion != 3 || ref.DigestVersion != 3 {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported selected calculation version tuple")
 	}
+	digest, err = persistence.MatchingFallbackCalculationInputDigest(snapshot)
 	if err != nil || digest != ref.InputDigest {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: selected context digest is invalid")
 	}
-	var legacyEvidence *persistence.MatchingFallbackVerifiedLegacySearchEvidence
-	switch snapshot.SearchReceipt.PayloadDigestVersion {
-	case 0, 1:
-		verified, validationErr := persistence.ValidateMatchingFallbackLegacySearchEvidence(seal, snapshot)
-		if validationErr != nil {
-			return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: historical search provenance is invalid: %w", validationErr)
-		}
-		legacyEvidence = &verified
-	case 2:
-		// Canonical V2 receipt inputs remain governed solely by the calculation
-		// digest above; transient legacy evidence is only for V1 receipts.
-	default:
+	if snapshot.SearchReceipt.PayloadDigestVersion != 2 {
 		return PreparedFrozenFallbackEvaluation{}, false, fmt.Errorf("frozen fallback evaluation: unsupported search receipt version")
 	}
 	input := fallbackApplicabilityInputFromContext(snapshot)
-	input.legacySearchEvidence = legacyEvidence
 	result, err := CalculateFallbackApplicability(input)
 	if err != nil {
 		return PreparedFrozenFallbackEvaluation{}, false, err

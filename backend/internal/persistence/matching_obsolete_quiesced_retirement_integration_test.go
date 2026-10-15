@@ -7,33 +7,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/migrate"
-)
-
-const (
-	matchingQuiescenceSchemaMigration   = "20261211000000"
-	obsoleteMatchingRetirementMigration = "20261212000000"
-	failedObsoleteDisposalMigration     = "20261213000000"
 )
 
 func TestDeleteObsoleteQuiescedMatchingRunPreservesCurrentGenerationAndReceiptPostgreSQL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := testpostgres.Open(t)
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migrations: %v", err)
-	}
-	applyMatchingMigrationsThrough(t, ctx, db, collection, matchingQuiescenceSchemaMigration)
+	db := testpostgres.OpenMigrated(t)
 	fixture := newIncomingMatchFixture(t, ctx, db)
 	setup := persistence.NewSetupManagerRepository(db)
 	inventory := persistence.NewSourceInventoryRepository(db)
@@ -258,18 +246,9 @@ func TestDeleteObsoleteQuiescedMatchingRunPreservesCurrentGenerationAndReceiptPo
 		(active_river_job_id IS NOT NULL OR active_river_attempt IS NOT NULL OR active_execution_epoch IS NOT NULL)`, admission.OriginalRunID).Scan(ctx, &activeOwners); err != nil || activeOwners != 0 {
 		t.Fatalf("quiesced obsolete run still has active owners=%d err=%v", activeOwners, err)
 	}
-	// This is an upgrade-fixture seed: schema 11 already records quiescence, but
-	// schema 12's timestamp guard is not installed yet. It represents an already
-	// old production marker; production code never backdates quiescence timestamps.
-	oldMarker := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Microsecond)
-	if _, err := db.NewRaw(`UPDATE matching_run SET quiesced_at=? WHERE id=?`, oldMarker, admission.OriginalRunID).Exec(ctx); err != nil {
-		t.Fatalf("seed historical quiescence marker before timestamp guard migration: %v", err)
-	}
 	if _, err := db.NewRaw(`UPDATE matching_delivery SET consumed_at=? WHERE run_id=? AND consumed_at IS NULL`, time.Now().UTC(), admission.OriginalRunID).Exec(ctx); err != nil {
-		t.Fatalf("seed completed historical parent-delivery acknowledgments: %v", err)
+		t.Fatalf("settle parent-delivery acknowledgments: %v", err)
 	}
-	applyMatchingMigration(t, ctx, db, collection, obsoleteMatchingRetirementMigration)
-	applyMatchingMigration(t, ctx, db, collection, failedObsoleteDisposalMigration)
 	var statusBeforeSettlement struct {
 		State      string     `bun:"state"`
 		Stage      string     `bun:"stage"`
@@ -313,9 +292,10 @@ func TestDeleteObsoleteQuiescedMatchingRunPreservesCurrentGenerationAndReceiptPo
 	if err := db.NewRaw(`SELECT operation.state,operation.stage,operation.attempt,operation.safe_error,operation.finished_at,run.state AS run_state,run.quiesced_at FROM operation JOIN matching_run run ON run.operation_id=operation.id WHERE run.id=?`, admission.OriginalRunID).Scan(ctx, &statusBefore); err != nil {
 		t.Fatalf("read obsolete status before retirement: %v", err)
 	}
-	if !statusBefore.Marker.Equal(oldMarker) {
-		t.Fatalf("historical marker=%s, want %s", statusBefore.Marker, oldMarker)
+	if statusBefore.Marker.IsZero() || statusBefore.Marker.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("quiescence marker=%s, want a current timestamp produced by the quiesce writer", statusBefore.Marker)
 	}
+	ageQuiescedMatchingRunForRetirement(t, ctx, db, admission.OriginalRunID)
 	if statusBefore.State != statusBeforeSettlement.State || statusBefore.Stage != statusBeforeSettlement.Stage ||
 		statusBefore.Attempt != statusBeforeSettlement.Attempt || statusBefore.SafeError != "interrupted before runtime recovery" ||
 		statusBefore.FinishedAt == nil || !statusBefore.FinishedAt.Equal(interruptedAt) || statusBefore.RunState != statusBeforeSettlement.RunState {
@@ -330,7 +310,10 @@ func TestDeleteObsoleteQuiescedMatchingRunPreservesCurrentGenerationAndReceiptPo
 	if err := db.NewRaw(`SELECT payload,revision FROM provider_response_cache WHERE provider_source_id=? AND cache_key=?`, fixture.source, fixture.cacheKey).Scan(ctx, &cachePayloadBefore, &cacheRevisionBefore); err != nil {
 		t.Fatalf("capture accepted provider cache before retirement: %v", err)
 	}
-	cutoff := time.Now().UTC()
+	// The valid marker was created by the current writer, then aged using the
+	// narrowly scoped fixture helper above to model the 24-hour retention period.
+	// The repository still applies its own transaction-time cutoff.
+	cutoff := time.Now().UTC().Add(time.Hour)
 	if err := setup.DeleteObsoleteQuiescedMatchingRuns(ctx, cutoff); err != nil {
 		t.Fatalf("retire aged obsolete V2 run: %v", err)
 	}
@@ -409,40 +392,32 @@ func TestDeleteObsoleteQuiescedMatchingRunPreservesCurrentGenerationAndReceiptPo
 	}
 }
 
-func applyMatchingMigrationsThrough(t *testing.T, ctx context.Context, db *bun.DB, collection *migrate.Migrations, through string) {
+// ageQuiescedMatchingRunForRetirement simulates elapsed retention time without
+// restoring historical migration staging. The current quiescence writer first
+// creates a valid marker; only this transaction's focused test fixture disables
+// that one timestamp trigger while aging the marker, and re-enables it before
+// commit. Production timestamp/write-once guard tests remain enabled and separate.
+func ageQuiescedMatchingRunForRetirement(t *testing.T, ctx context.Context, db *bun.DB, runID uuid.UUID) {
 	t.Helper()
-	partial := migrate.NewMigrations()
-	for _, migration := range collection.Sorted() {
-		if migration.Name > through {
-			break
+	if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var valid bool
+		if err := tx.NewRaw(`SELECT quiesced_at IS NOT NULL AND active_river_job_id IS NULL
+			AND active_river_attempt IS NULL AND active_execution_epoch IS NULL
+			FROM matching_run WHERE id=? FOR UPDATE`, runID).Scan(ctx, &valid); err != nil {
+			return err
 		}
-		partial.Add(migration)
-	}
-	applyMatchingMigrationCollection(t, ctx, db, partial)
-}
-
-func applyMatchingMigration(t *testing.T, ctx context.Context, db *bun.DB, collection *migrate.Migrations, name string) {
-	t.Helper()
-	partial := migrate.NewMigrations()
-	for _, migration := range collection.Sorted() {
-		if migration.Name == name {
-			partial.Add(migration)
-			break
+		if !valid {
+			return fmt.Errorf("matching run is not in a current quiesced state")
 		}
-	}
-	if len(partial.Sorted()) != 1 {
-		t.Fatalf("migration %s not found", name)
-	}
-	applyMatchingMigrationCollection(t, ctx, db, partial)
-}
-
-func applyMatchingMigrationCollection(t *testing.T, ctx context.Context, db *bun.DB, collection *migrate.Migrations) {
-	t.Helper()
-	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if err := migrator.Init(ctx); err != nil {
-		t.Fatalf("initialize matching test migrations: %v", err)
-	}
-	if _, err := migrator.Migrate(ctx); err != nil {
-		t.Fatalf("apply matching test migrations: %v", err)
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE matching_run DISABLE TRIGGER matching_run_quiescence_timestamp_immutable`); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`UPDATE matching_run SET quiesced_at=transaction_timestamp()-interval '25 hours' WHERE id=?`, runID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `ALTER TABLE matching_run ENABLE TRIGGER matching_run_quiescence_timestamp_immutable`)
+		return err
+	}); err != nil {
+		t.Fatalf("age valid quiescence marker in a focused test transaction: %v", err)
 	}
 }

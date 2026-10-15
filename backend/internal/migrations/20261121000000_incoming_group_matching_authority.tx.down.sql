@@ -1,4 +1,0 @@
-DROP TABLE incoming_group_unlink_receipt;
-ALTER TABLE incoming_match_evaluation DROP COLUMN matching_authority_revision, DROP COLUMN matching_authority_mode;
-ALTER TABLE matching_run_target DROP COLUMN authority_revision;
-DROP TABLE incoming_group_matching_authority;

@@ -251,7 +251,7 @@ func TestSourceAnalysisWorkerWithInputPreparerSharesOneInputAndAppliesFastProbe(
 		}
 	})
 	go func() {
-		done <- worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions, "staged")
+		done <- worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions)
 	}()
 	select {
 	case <-probeApplied:
@@ -302,7 +302,7 @@ func TestSourceAnalysisWorkerWithInputPreparerOmitsSHAWhenNotSelected(t *testing
 	})
 	worker, snapshot, operation, executions, input := newWorkerGroup(t, repo, runner)
 	executions = executions[1:2]
-	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions, "staged"); err != nil {
+	if err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions); err != nil {
 		t.Fatalf("run work group: %v (input preparation: %v)", err, input.lastErr)
 	}
 	if repo.shaApplies != 0 || len(requests) != 1 || requests[0].Targets != service.SourceAnalysisTargetProbe || requests[0].ExistingSHA256 != nil {
@@ -325,7 +325,7 @@ func TestSourceAnalysisWorkerRunsSHAWhenToolConfigurationIsUnavailable(t *testin
 	cacheOnly := false
 	snapshot.CacheOnlyReuse = &cacheOnly
 	executions = executions[:2]
-	err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions, "staged")
+	err := worker.runWorkGroup(context.Background(), operation, snapshot, 9, executions)
 	var stepFailure *sourceAnalysisStepFailure
 	if !errors.As(err, &stepFailure) {
 		t.Fatalf("group error = %v, want tool step failure", err)
@@ -342,7 +342,7 @@ func TestSourceAnalysisWorkerFailsClosedWithoutInputPreparerForRegisteredExecuti
 		return service.SourceAnalysisPreparation{}
 	}))
 	worker.inputPreparer = nil
-	err := worker.runWorkGroup(context.Background(), operation, persistence.SourceAnalysisOperationSnapshot{}, 9, executions[:1], "in_place")
+	err := worker.runWorkGroup(context.Background(), operation, persistence.SourceAnalysisOperationSnapshot{}, 9, executions[:1])
 	if err == nil || err.Error() != "source analysis input preparer is unavailable" {
 		t.Fatalf("missing input preparer error = %v", err)
 	}
@@ -378,7 +378,7 @@ func TestSourceAnalysisWorkerJoinsCanceledRunnerBeforeReturning(t *testing.T) {
 			}
 		}
 	})
-	go func() { done <- worker.runWorkGroup(ctx, operation, snapshot, 9, executions, "ignored") }()
+	go func() { done <- worker.runWorkGroup(ctx, operation, snapshot, 9, executions) }()
 	select {
 	case <-started:
 	case err := <-done:
@@ -468,7 +468,7 @@ func TestSourceAnalysisWorkerMetadataPreValidationFailureSkipsReaderAndKeepsSibl
 		_ = os.Rename(movedPath, sourcePath)
 	})
 	done := make(chan error, 1)
-	go func() { done <- worker.runWorkGroup(ctx, operation, snapshot, 9, executions, "staged") }()
+	go func() { done <- worker.runWorkGroup(ctx, operation, snapshot, 9, executions) }()
 
 	select {
 	case step := <-repo.failureSignal:

@@ -41,7 +41,8 @@ func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *test
 		t.Fatal(err)
 	}
 	setup, registry, _ := outputResetAcceptanceSetup(t, database, oldRoot)
-	if err := setup.SaveRuntime(ctx, tools, oldRoot, "mka"); err != nil {
+	format := "mka"
+	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{ToolsDirectory: &tools, OutputDirectory: &oldRoot, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(oldFile), 0o700); err != nil {
@@ -57,7 +58,7 @@ func TestOutputResetAcceptanceSaveChangedRootPreservesRuntimeAndOldFiles(t *test
 	}
 	outputUpdate := missingRoot
 	formatUpdate := "source"
-	if err := setup.SaveRuntimeRequest(ctx, nil, &outputUpdate, &formatUpdate); err != nil {
+	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &outputUpdate, PublicationFormat: &formatUpdate}); err != nil {
 		t.Fatalf("save changed output root: %v", err)
 	}
 	values, err := registry.ReadRuntimeSettings(ctx)
@@ -81,7 +82,8 @@ func TestOutputResetAcceptanceSameCanonicalPopulatedRootDoesNotJournal(t *testin
 	ctx := context.Background()
 	root := t.TempDir()
 	setup, _, _ := outputResetAcceptanceSetup(t, database, root)
-	if err := setup.SaveRuntime(ctx, t.TempDir(), root, "mka"); err != nil {
+	tools, format := t.TempDir(), "mka"
+	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{ToolsDirectory: &tools, OutputDirectory: &root, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "already-here"), []byte("keep"), 0o600); err != nil {
@@ -92,7 +94,7 @@ func TestOutputResetAcceptanceSameCanonicalPopulatedRootDoesNotJournal(t *testin
 	if err := database.NewRaw("SELECT count(*) FROM output_reset_journal WHERE new_root = ?", root).Scan(ctx, &journalsBefore); err != nil {
 		t.Fatal(err)
 	}
-	if err := setup.SaveRuntimeRequest(ctx, nil, &output, nil); err != nil {
+	if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{OutputDirectory: &output}); err != nil {
 		t.Fatalf("same-root populated save: %v", err)
 	}
 	var journals int
@@ -504,7 +506,8 @@ func outputResetAcceptanceSetup(t *testing.T, database *bun.DB, outputRoot strin
 	setup := service.NewSetup(store, registry, platform, repository, nil).WithOutputReset(
 		service.NewOutputReset(repository, nil, nil),
 	)
-	if err := setup.SaveRuntime(t.Context(), t.TempDir(), outputRoot, "mka"); err != nil {
+	tools, format := t.TempDir(), "mka"
+	if err := setup.SaveRuntimeUpdate(t.Context(), service.RuntimeUpdateRequest{ToolsDirectory: &tools, OutputDirectory: &outputRoot, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	return setup, registry, repository

@@ -240,6 +240,11 @@ describe("IncomingGroupingEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Обновить снимок" }));
     await waitFor(() => expect(api.getIncomingGroups).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Предпросмотр" }),
+      ).toBeEnabled(),
+    );
     expect(screen.getByText("Действия черновика (1)")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Подтвердить изменения" }),

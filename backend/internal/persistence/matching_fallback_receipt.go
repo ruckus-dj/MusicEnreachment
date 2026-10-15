@@ -26,7 +26,7 @@ type MatchingFallbackSearchReceipt struct {
 	RequestInput          json.RawMessage `json:"request_input"`
 	Payload               json.RawMessage `json:"payload"`
 	PayloadSHA256         string          `json:"payload_sha256"`
-	PayloadDigestVersion  int             `json:"payload_digest_version,omitempty"`
+	PayloadDigestVersion  int             `json:"payload_digest_version"`
 	CacheRevision         *string         `json:"cache_revision,omitempty"`
 	CacheGeneration       int64           `json:"cache_generation"`
 	FetchOrder            int64           `json:"fetch_order"`
@@ -80,18 +80,11 @@ func getMatchingFallbackSearchReceipt(ctx context.Context, database bun.IDB, run
 		receipt.ExecutionEpoch < 1 || receipt.ProviderAttempt < 1 || receipt.RiverJobID < 1 {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved receipt is invalid")
 	}
-	if payloadDigestVersion != 1 && payloadDigestVersion != 2 {
+	if payloadDigestVersion != 2 {
 		return nil, fmt.Errorf("read matching fallback search receipt: payload digest version is invalid")
 	}
-	if payloadDigestVersion == 2 {
-		receipt.PayloadDigestVersion = payloadDigestVersion
-		receipt.Payload, err = canonicalMatchingJSON(json.RawMessage(payloadText))
-	} else {
-		// Version 1 hashed compact JSON produced from PostgreSQL's jsonb::text.
-		// Keep this representation (and omit the version in its DTO) for legacy
-		// calculation contexts whose serialized bytes are already sealed.
-		receipt.Payload, err = json.Marshal(json.RawMessage(payloadText))
-	}
+	receipt.PayloadDigestVersion = payloadDigestVersion
+	receipt.Payload, err = canonicalMatchingJSON(json.RawMessage(payloadText))
 	if err != nil {
 		return nil, fmt.Errorf("read matching fallback search receipt: saved payload is invalid")
 	}
@@ -263,18 +256,10 @@ func insertOrVerifyFallbackReceipt(ctx context.Context, tx bun.Tx, receipt Match
 		if err != nil {
 			return err
 		}
-		var priorDigestInput []byte
-		switch priorDigestVersion {
-		case 1:
-			priorDigestInput, err = json.Marshal(json.RawMessage(priorPayloadText))
-		case 2:
-			priorDigestInput = prior.Payload
-		default:
+		if priorDigestVersion != 2 {
 			return errors.New("saved automatic fallback search receipt has invalid digest version")
 		}
-		if err != nil {
-			return err
-		}
+		priorDigestInput := prior.Payload
 		priorHash := sha256.Sum256(priorDigestInput)
 		if prior.RunID != receipt.RunID || prior.StageIndex != receipt.StageIndex || prior.ProviderSourceID != receipt.ProviderSourceID ||
 			prior.ConfigurationIdentity != receipt.ConfigurationIdentity || prior.CacheKey != receipt.CacheKey ||

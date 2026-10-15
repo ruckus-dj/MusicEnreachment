@@ -35,7 +35,6 @@ const (
 	SetupCompletedAtKey              = "setup_completed_at"
 	SourceFileConcurrencyKey         = "source_file_concurrency"
 	AcoustIDApplicationKey           = "acoustid_application_key"
-	acoustIDConfigurationIdentityKey = "internal_acoustid_config_identity"
 	MusicBrainzSelfHostedThrottleKey = "musicbrainz_self_hosted_throttle"
 	MusicBrainzSelfHostedDelayKey    = "musicbrainz_self_hosted_delay_seconds"
 )
@@ -66,10 +65,6 @@ type musicBrainzConfigSnapshotStore interface {
 
 type runtimeUpdateStore interface {
 	UpdateRuntime(context.Context, string, string, map[string]string) error
-}
-
-type settingDeleteStore interface {
-	Delete(context.Context, string) error
 }
 
 type acoustIDCredentialStore interface {
@@ -202,7 +197,7 @@ func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) 
 	}
 	store, ok := r.store.(acoustIDCredentialStore)
 	if !ok {
-		return r.store.Set(ctx, AcoustIDApplicationKey, value)
+		return fmt.Errorf("atomic AcoustID credential storage is unavailable")
 	}
 	return store.SetOrDeleteAcoustIDCredential(ctx, &value)
 }
@@ -211,28 +206,20 @@ func (r *Registry) SetAcoustIDApplicationKey(ctx context.Context, value string) 
 // absence is the sole signal that AcoustID lookup is unavailable.
 func (r *Registry) DeleteAcoustIDApplicationKey(ctx context.Context) error {
 	store, ok := r.store.(acoustIDCredentialStore)
-	if ok {
-		return store.SetOrDeleteAcoustIDCredential(ctx, nil)
-	}
-	legacyStore, ok := r.store.(settingDeleteStore)
 	if !ok {
-		return fmt.Errorf("settings storage does not support deleting settings")
+		return fmt.Errorf("atomic AcoustID credential storage is unavailable")
 	}
-	return legacyStore.Delete(ctx, AcoustIDApplicationKey)
+	return store.SetOrDeleteAcoustIDCredential(ctx, nil)
 }
 
 // ReadAcoustIDCredential returns the secret together with its coherently read
 // opaque configuration revision for internal provider execution only.
 func (r *Registry) ReadAcoustIDCredential(ctx context.Context) (key string, present bool, revision string, err error) {
-	if store, ok := r.store.(acoustIDCredentialStore); ok {
-		return store.ReadAcoustIDCredential(ctx)
+	store, ok := r.store.(acoustIDCredentialStore)
+	if !ok {
+		return "", false, "", fmt.Errorf("atomic AcoustID credential storage is unavailable")
 	}
-	key, present, err = r.store.Get(ctx, AcoustIDApplicationKey)
-	if err != nil {
-		return "", false, "", err
-	}
-	revision, _, err = r.store.Get(ctx, acoustIDConfigurationIdentityKey)
-	return key, present, revision, err
+	return store.ReadAcoustIDCredential(ctx)
 }
 
 func (r *Registry) LoadLogLevel(ctx context.Context) error {

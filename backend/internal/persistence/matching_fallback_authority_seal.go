@@ -231,6 +231,5 @@ func readMatchingFallbackAuthoritySeal(ctx context.Context, database bun.IDB, ru
 	if err != nil || !bytes.Equal(canonical, expectedBytes) {
 		return MatchingFallbackSealAuthority{}, false, fmt.Errorf("read fallback authority seal: payload differs from original wait authority")
 	}
-	result.legacySearchEvidence = expected.legacySearchEvidence
 	return result, true, nil
 }

@@ -395,7 +395,7 @@ describe("SetupManager", () => {
   });
 
   it("recovers operation progress via SSE reconnect and REST snapshot", async () => {
-    localStorage.setItem("melotrove.setup.operation", operation.id);
+    localStorage.setItem("melotrove.setup.operations", operation.id);
     let current: OperationResponse = operation;
     server.use(
       http.get("/api/tools/installations", () =>
@@ -438,7 +438,7 @@ describe("SetupManager", () => {
     await waitFor(() =>
       expect(screen.getByText(/verified, 100/)).toBeVisible(),
     );
-    expect(localStorage.getItem("melotrove.setup.operation")).toBeNull();
+    expect(localStorage.getItem("melotrove.setup.operations")).toBe("");
   });
 
   it("runs all six steps with the first verified tool package versions autoactivated", async () => {
@@ -600,7 +600,7 @@ describe("SetupManager", () => {
   }, 10_000);
 
   it("keeps a failed operation available across reload and retries via REST", async () => {
-    localStorage.setItem("melotrove.setup.operation", operation.id);
+    localStorage.setItem("melotrove.setup.operations", operation.id);
     const retry = vi.fn(() =>
       HttpResponse.json({ ...operation, state: "queued", stage: "queued" }),
     );
@@ -632,12 +632,12 @@ describe("SetupManager", () => {
     await waitFor(() =>
       expect(screen.getByText(/download unavailable/)).toBeVisible(),
     );
-    expect(localStorage.getItem("melotrove.setup.operation")).toBe(
+    expect(localStorage.getItem("melotrove.setup.operations")).toBe(
       operation.id,
     );
     await click(`Повторить операцию ${operation.id}`);
     await waitFor(() => expect(retry).toHaveBeenCalledOnce());
-    expect(localStorage.getItem("melotrove.setup.operation")).toBe(
+    expect(localStorage.getItem("melotrove.setup.operations")).toBe(
       operation.id,
     );
   });
@@ -1059,11 +1059,11 @@ describe("SetupManager", () => {
 
   it("keeps saved operations and the catalog usable when discovery fails", async () => {
     const otherId = "36092c63-0e0f-4dc1-af39-674dc1ce037c";
+    // Current-format storage is deduplicated even when discovery is unavailable.
     localStorage.setItem(
       "melotrove.setup.operations",
       `${operation.id},${operation.id},${otherId}`,
     );
-    localStorage.setItem("melotrove.setup.operation", otherId);
     const listed = vi.fn(() =>
       HttpResponse.json(
         { detail: "operation list unavailable" },

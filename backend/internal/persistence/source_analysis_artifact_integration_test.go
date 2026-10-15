@@ -313,6 +313,18 @@ func TestSourceAnalysisExecutionModeIsImmutableAcrossRootModeChangesAndRetryWith
 	if err != nil || execution.ProcessingMode != "staged" {
 		t.Fatalf("recorded execution after root mode change = %+v, %v; want staged", execution, err)
 	}
+	// The captured execution identity is immutable at the database boundary: a
+	// direct mutation of its recorded processing mode is rejected, and the mode
+	// captured at delivery must survive that attempted rewrite unchanged.
+	if _, err := fixture.database.ExecContext(ctx, `UPDATE source_analysis_work_execution
+		SET processing_mode='in_place' WHERE work_id=? AND operation_id=? AND operation_attempt=? AND job_id=?`,
+		fence.WorkID, fence.OperationID, fence.OperationAttempt, fence.JobID); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("direct execution mode mutation error = %v, want immutability guard rejection", err)
+	}
+	mutated, err := fixture.repository.GetSourceAnalysisWorkExecution(ctx, fence)
+	if err != nil || mutated.ProcessingMode != "staged" {
+		t.Fatalf("execution after rejected mutation = %+v, %v; want staged retained", mutated, err)
+	}
 	if _, err := artifacts.MarkReady(ctx, artifactID, fence, artifact.SourceSizeBytes); err != nil {
 		t.Fatalf("mark staged artifact ready after root mode change: %v", err)
 	}

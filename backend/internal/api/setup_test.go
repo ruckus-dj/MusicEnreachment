@@ -58,9 +58,18 @@ func (store apiSettingsStore) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
-func (store apiSettingsStore) Delete(_ context.Context, key string) error {
-	delete(store, key)
+func (store apiSettingsStore) SetOrDeleteAcoustIDCredential(_ context.Context, value *string) error {
+	if value == nil {
+		delete(store, settings.AcoustIDApplicationKey)
+	} else {
+		store[settings.AcoustIDApplicationKey] = *value
+	}
 	return nil
+}
+
+func (store apiSettingsStore) ReadAcoustIDCredential(_ context.Context) (string, bool, string, error) {
+	key, present := store[settings.AcoustIDApplicationKey]
+	return key, present, "test-acoustid-revision", nil
 }
 
 func (store apiSettingsStore) SetMany(_ context.Context, values map[string]string) error {

@@ -4,75 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
-
-func TestVerifyAbsoluteSourceStillCurrentDetectsReplacedInventoryRoot(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows does not allow renaming an inventory root while an open descendant file handle exists")
-	}
-
-	ctx := context.Background()
-	parent := t.TempDir()
-	rootPath := filepath.Join(parent, "inventory")
-	if err := os.Mkdir(rootPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	rootPath, err := filepath.EvalSymlinks(rootPath)
-	if err != nil {
-		t.Fatalf("resolve the inventory root: %v", err)
-	}
-	sourcePath := filepath.Join(rootPath, "track.flac")
-	if err := os.WriteFile(sourcePath, []byte("original"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	opener := sourcefs.NewOpener()
-	pinnedRoot, err := opener.OpenRoot(ctx, rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pinnedRoot.Close() }()
-	original, err := pinnedRoot.OpenRegular(ctx, "track.flac")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = original.Close() }()
-	work := &persistence.SourceAnalysisWork{InventoryPath: rootPath, RelativePath: "track.flac", SizeBytes: info.Size(), Mtime: info.ModTime()}
-	worker := &SourceAnalysisWorker{opener: opener}
-
-	// Model a preparer replacing the namespace while the original pinned handles
-	// remain valid and an otherwise-successful analysis result is being produced.
-	if err := os.Rename(rootPath, filepath.Join(parent, "previous-inventory")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(rootPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(rootPath, "track.flac"), []byte("original"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := worker.verifyAbsoluteSourceStillCurrent(ctx, work, original, pinnedRoot); err == nil {
-		t.Fatal("replacement absolute inventory root was accepted")
-	}
-	if _, err := os.Stat(filepath.Join(parent, "previous-inventory", "track.flac")); err != nil {
-		t.Fatalf("pinned original inventory was not left available: %v", err)
-	}
-}
 
 type interruptedDeliveryRepository struct {
 	analysisWorkerRepository

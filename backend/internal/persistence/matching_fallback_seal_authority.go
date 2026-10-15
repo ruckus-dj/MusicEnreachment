@@ -17,8 +17,7 @@ import (
 const matchingFallbackSealAuthoritySchemaVersion = 3
 
 // MatchingFallbackSealCalculationReference points at an immutable saved
-// calculation. Version fields deliberately preserve the receipt's historical
-// tuple; they are not upgraded to the current writer version.
+// calculation. The version fields identify the current calculation format.
 type MatchingFallbackSealCalculationReference struct {
 	AcquisitionRevision int64  `json:"acquisition_revision"`
 	StageIndex          int    `json:"stage_index"`
@@ -50,100 +49,6 @@ type MatchingFallbackSealAuthority struct {
 	ProofHistory             []MatchingFallbackSealCalculationReference `json:"proof_history"`
 	FullEvaluationContext    json.RawMessage                            `json:"full_evaluation_context,omitempty"`
 	Digest                   string                                     `json:"digest"`
-	legacySearchEvidence     *matchingFallbackLegacySearchEvidence
-}
-
-// matchingFallbackLegacySearchEvidence is created only after a database reader
-// has checked a historical calculation's parsed search payload against the
-// independently verified immutable search receipt.
-type matchingFallbackLegacySearchEvidence struct {
-	RunID                uuid.UUID
-	CalculationRevision  int64
-	StageIndex           int
-	RequestID            uuid.UUID
-	PayloadDigestVersion int
-	OriginalReceiptSHA   string
-	SemanticPayloadSHA   string
-}
-
-// MatchingFallbackVerifiedLegacySearchEvidence is an opaque proof returned only
-// by validating a persistence-loaded historical seal against its immutable V1
-// search receipt.
-type MatchingFallbackVerifiedLegacySearchEvidence struct {
-	runID                uuid.UUID
-	calculationRevision  int64
-	stageIndex           int
-	requestID            uuid.UUID
-	payloadDigestVersion int
-	originalReceiptSHA   string
-	semanticPayloadSHA   string
-}
-
-// ValidateMatchingFallbackLegacySearchEvidence requires database-validated
-// provenance before a historical schema-2 calculation can be used as numerical
-// input. The token is deliberately transient and cannot be supplied in seal JSON.
-func ValidateMatchingFallbackLegacySearchEvidence(
-	seal MatchingFallbackSealAuthority, snapshot MatchingFallbackCalculationContext,
-) (MatchingFallbackVerifiedLegacySearchEvidence, error) {
-	evidence := seal.legacySearchEvidence
-	if evidence == nil || evidence.RunID != snapshot.RunID || evidence.CalculationRevision != snapshot.AcquisitionRevision ||
-		evidence.StageIndex != snapshot.StageIndex || evidence.RequestID != snapshot.SearchReceipt.RequestID ||
-		evidence.PayloadDigestVersion != 1 ||
-		(snapshot.SearchReceipt.PayloadDigestVersion != 0 && snapshot.SearchReceipt.PayloadDigestVersion != 1) ||
-		len(evidence.OriginalReceiptSHA) != sha256.Size*2 {
-		return MatchingFallbackVerifiedLegacySearchEvidence{}, fmt.Errorf("historical fallback search evidence is unavailable")
-	}
-	if _, err := hex.DecodeString(evidence.OriginalReceiptSHA); err != nil {
-		return MatchingFallbackVerifiedLegacySearchEvidence{}, fmt.Errorf("historical fallback search evidence has an invalid original digest")
-	}
-	if evidence.OriginalReceiptSHA != snapshot.SearchReceipt.PayloadSHA256 {
-		return MatchingFallbackVerifiedLegacySearchEvidence{}, fmt.Errorf("historical fallback search receipt digest differs from validated evidence")
-	}
-	semanticDigest, err := matchingFallbackSearchReceiptSemanticDigest(snapshot.SearchReceipt)
-	if err != nil || semanticDigest != evidence.SemanticPayloadSHA {
-		return MatchingFallbackVerifiedLegacySearchEvidence{}, fmt.Errorf("historical fallback search payload differs from validated evidence")
-	}
-	return MatchingFallbackVerifiedLegacySearchEvidence{
-		runID: evidence.RunID, calculationRevision: evidence.CalculationRevision, stageIndex: evidence.StageIndex,
-		requestID: evidence.RequestID, payloadDigestVersion: evidence.PayloadDigestVersion,
-		originalReceiptSHA: evidence.OriginalReceiptSHA, semanticPayloadSHA: evidence.SemanticPayloadSHA,
-	}, nil
-}
-
-// ValidateMatchingFallbackLegacySearchPayload validates the calculator payload
-// against the opaque evidence without relying on byte order inherited from jsonb.
-func ValidateMatchingFallbackLegacySearchPayload(
-	evidence MatchingFallbackVerifiedLegacySearchEvidence, receipt MatchingFallbackSearchReceipt,
-) error {
-	if evidence.runID != receipt.RunID || evidence.requestID != receipt.RequestID || evidence.stageIndex != receipt.StageIndex ||
-		evidence.payloadDigestVersion != 1 ||
-		(receipt.PayloadDigestVersion != 0 && receipt.PayloadDigestVersion != 1) || evidence.originalReceiptSHA != receipt.PayloadSHA256 {
-		return fmt.Errorf("historical fallback search evidence does not bind this receipt")
-	}
-	semanticDigest, err := matchingFallbackSearchReceiptSemanticDigest(receipt)
-	if err != nil || semanticDigest != evidence.semanticPayloadSHA {
-		return fmt.Errorf("historical fallback search payload differs from validated evidence")
-	}
-	return nil
-}
-
-func matchingFallbackSearchReceiptSemanticDigest(receipt MatchingFallbackSearchReceipt) (string, error) {
-	canonical, err := canonicalMatchingJSON(receipt.Payload)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(canonical)
-	return hex.EncodeToString(digest[:]), nil
-}
-
-func matchingFallbackSearchReceiptReferenceEqual(stored, context MatchingFallbackSearchReceipt) bool {
-	return stored.RunID == context.RunID && stored.RequestID == context.RequestID && stored.StageIndex == context.StageIndex &&
-		stored.ProviderSourceID == context.ProviderSourceID && stored.ConfigurationIdentity == context.ConfigurationIdentity &&
-		stored.CacheKey == context.CacheKey && matchingJSONEqual(stored.RequestInput, context.RequestInput) &&
-		stored.PayloadSHA256 == context.PayloadSHA256 && nullableString(stored.CacheRevision) == nullableString(context.CacheRevision) &&
-		stored.CacheGeneration == context.CacheGeneration && stored.FetchOrder == context.FetchOrder &&
-		stored.ExecutionEpoch == context.ExecutionEpoch && stored.ProviderAttempt == context.ProviderAttempt &&
-		stored.RiverJobID == context.RiverJobID && stored.AcceptedAt == context.AcceptedAt
 }
 
 // BuildMatchingFallbackSealAuthority derives the authority for the current
@@ -162,7 +67,6 @@ func (repository *SetupManagerRepository) BuildMatchingFallbackSealAuthority(
 	}
 	defer func() { _ = tx.Rollback() }()
 	authority, found, err := buildMatchingFallbackSealAuthority(ctx, tx, runID, expectedWaitRevision, false)
-	authority.legacySearchEvidence = nil
 	return authority, found, err
 }
 
@@ -223,36 +127,7 @@ func buildMatchingFallbackSealAuthority(
 		if err := json.Unmarshal(receipt.Context, &sealed); err != nil {
 			return result, false, fmt.Errorf("build fallback seal authority: decode selected calculation context: %w", err)
 		}
-		switch sealed.SearchReceipt.PayloadDigestVersion {
-		case 0, 1:
-			searchReceipt, err := getMatchingFallbackSearchReceipt(ctx, database, runID, sealed.SearchReceipt.RequestID)
-			if err != nil || searchReceipt == nil || searchReceipt.PayloadDigestVersion != 0 {
-				return result, false, fmt.Errorf("build fallback seal authority: historical search receipt is unavailable or unsupported")
-			}
-			storedPayloadDigest, err := matchingFallbackSearchReceiptSemanticDigest(*searchReceipt)
-			if err != nil {
-				return result, false, fmt.Errorf("build fallback seal authority: decode stored historical search payload: %w", err)
-			}
-			contextPayloadDigest, contextErr := matchingFallbackSearchReceiptSemanticDigest(sealed.SearchReceipt)
-			if contextErr != nil {
-				return result, false, fmt.Errorf("build fallback seal authority: decode calculation historical search payload: %w", contextErr)
-			}
-			if storedPayloadDigest != contextPayloadDigest {
-				return result, false, fmt.Errorf("build fallback seal authority: historical calculation search payload differs from stored receipt")
-			}
-			if !matchingFallbackSearchReceiptReferenceEqual(*searchReceipt, sealed.SearchReceipt) {
-				return result, false, fmt.Errorf("build fallback seal authority: historical calculation search receipt references differ from stored receipt")
-			}
-			result.legacySearchEvidence = &matchingFallbackLegacySearchEvidence{
-				RunID: runID, CalculationRevision: receipt.AcquisitionRevision,
-				StageIndex: receipt.StageIndex, RequestID: searchReceipt.RequestID,
-				PayloadDigestVersion: 1,
-				OriginalReceiptSHA:   searchReceipt.PayloadSHA256, SemanticPayloadSHA: storedPayloadDigest,
-			}
-		case 2:
-			// Canonical V2 search receipts are validated by the calculation's
-			// canonical input digest and do not require transient legacy evidence.
-		default:
+		if sealed.SearchReceipt.PayloadDigestVersion != 2 {
 			return result, false, fmt.Errorf("build fallback seal authority: selected calculation search receipt version is unsupported")
 		}
 		sealedContext = append(json.RawMessage(nil), receipt.Context...)

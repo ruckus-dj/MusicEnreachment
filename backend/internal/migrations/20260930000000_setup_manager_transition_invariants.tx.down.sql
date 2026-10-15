@@ -1,2 +1,0 @@
-ALTER TABLE operation DROP CONSTRAINT operation_install_has_target_installation;
-ALTER TABLE tool_installation DROP CONSTRAINT tool_installation_ready_is_verified;

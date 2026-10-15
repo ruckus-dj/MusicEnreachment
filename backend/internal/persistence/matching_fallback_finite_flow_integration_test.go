@@ -130,10 +130,10 @@ func testAutomaticFallbackFiniteFlowWithPublicationCallback(t *testing.T, histor
 }
 
 func testAutomaticFallbackFiniteFlowWithRecoveryCallback(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), beforePublication func(*testing.T, context.Context, *bun.DB, *persistence.SetupManagerRepository, *fallbackHandoffRiverInserter, uuid.UUID, int64, *jobs.MatchingEvaluationWorker), publishUnique ...bool) {
-	testAutomaticFallbackFiniteFlowWithDatabase(t, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview, afterPublication, beforePublication, nil, nil, publishUnique...)
+	testAutomaticFallbackFiniteFlowWithDatabase(t, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview, afterPublication, beforePublication, nil, nil, false, publishUnique...)
 }
 
-func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), beforePublication func(*testing.T, context.Context, *bun.DB, *persistence.SetupManagerRepository, *fallbackHandoffRiverInserter, uuid.UUID, int64, *jobs.MatchingEvaluationWorker), database *bun.DB, beforeWorkerClaim func(*testing.T, context.Context, *bun.DB, uuid.UUID, int64, int64) bool, publishUnique ...bool) {
+func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLookup, emptyPlan, exhaustPlan, continueSeal, publishReview bool, afterPublication func(uniquePublicationApplyFixture), beforePublication func(*testing.T, context.Context, *bun.DB, *persistence.SetupManagerRepository, *fallbackHandoffRiverInserter, uuid.UUID, int64, *jobs.MatchingEvaluationWorker), database *bun.DB, beforeWorkerClaim func(*testing.T, context.Context, *bun.DB, uuid.UUID, int64, int64) bool, requestBoundAdmission bool, publishUnique ...bool) {
 	if len(publishUnique) < 3 || publishUnique[2] {
 		t.Parallel()
 	}
@@ -217,12 +217,14 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLo
 	plan := policy.TypedFallbackQueryPlan{SchemaVersion: planned.SchemaVersion, Stages: planned.Stages}
 
 	var event persistence.IncomingMatchingReconcileEvent
-	if err := fixture.db.NewSelect().Model(&event).Where("state = ? AND delivery_claimed", "dispatched").Order("created_at DESC").Limit(1).Scan(ctx); err != nil {
-		t.Fatalf("read claimed reconciliation event: %v", err)
-	}
 	var eventEpoch int64
-	if err := fixture.db.NewRaw(`SELECT delivery_epoch FROM incoming_matching_reconcile_event WHERE id=?`, event.ID).Scan(ctx, &eventEpoch); err != nil {
-		t.Fatalf("read reconciliation epoch: %v", err)
+	if !requestBoundAdmission {
+		if err := fixture.db.NewSelect().Model(&event).Where("state = ? AND delivery_claimed", "dispatched").Order("created_at DESC").Limit(1).Scan(ctx); err != nil {
+			t.Fatalf("read claimed reconciliation event: %v", err)
+		}
+		if err := fixture.db.NewRaw(`SELECT delivery_epoch FROM incoming_matching_reconcile_event WHERE id=?`, event.ID).Scan(ctx, &eventEpoch); err != nil {
+			t.Fatalf("read reconciliation epoch: %v", err)
+		}
 	}
 
 	const releaseID = "90000000-0000-4000-8000-0000000000f1"
@@ -271,6 +273,38 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLo
 	t.Cleanup(listenerPool.Close)
 	inserter.client = client
 	fixture.repository.SetRiverInserter(client)
+	var requestGeneration int64
+	if requestBoundAdmission {
+		inventory := persistence.NewSourceInventoryRepository(fixture.db)
+		if err := fixture.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			return persistence.RequestIncomingMatchingReconciliationWith(ctx, tx, []uuid.UUID{groups[0].ID})
+		}); err != nil {
+			t.Fatalf("request initial fallback generation: %v", err)
+		}
+		// This fixture drives reconciliation claims explicitly rather than running
+		// a reconciliation consumer in the provider/matching worker bundle.
+		if err := inventory.DispatchPendingMatchingReconciliations(ctx, openScanEnqueueRiver(t, fixture.db)); err != nil {
+			t.Fatalf("dispatch initial fallback reconciliation: %v", err)
+		}
+		if err := fixture.db.NewSelect().Model(&event).Where("reason = ?", "current").Where("state = ?", "dispatched").Order("created_at DESC").Order("id DESC").Limit(1).Scan(ctx); err != nil {
+			t.Fatalf("read initial dispatched fallback reconciliation: %v", err)
+		}
+		if event.RegisteredJobID == nil {
+			t.Fatal("initial fallback reconciliation has no registered River delivery")
+		}
+		event.HighestDeliveryAttempt = 1
+		var claimed bool
+		eventEpoch, claimed, err = inventory.ClaimIncomingMatchingReconciliationDelivery(ctx, event.ID, *event.RegisteredJobID, event.HighestDeliveryAttempt)
+		if err != nil || !claimed {
+			t.Fatalf("claim initial fallback reconciliation: epoch=%d claimed=%v err=%v", eventEpoch, claimed, err)
+		}
+		if err := fixture.db.NewRaw(`SELECT requested_generation FROM incoming_matching_generation WHERE group_id=?`, groups[0].ID).Scan(ctx, &requestGeneration); err != nil {
+			t.Fatalf("read initial fallback request generation: %v", err)
+		}
+		if requestGeneration < 1 {
+			t.Fatalf("initial fallback request generation=%d, want positive provenance", requestGeneration)
+		}
+	}
 
 	var stageZero *policy.TypedFallbackQueryStage
 	var stageZeroKey string
@@ -325,6 +359,7 @@ func testAutomaticFallbackFiniteFlowWithDatabase(t *testing.T, historicalStageLo
 		Source:     persistence.AutomaticFallbackProviderSource{ID: source.ID, ProviderID: source.ProviderID, Endpoint: source.Endpoint, ConfigurationIdentity: config.Identity},
 		GroupID:    groups[0].ID, ExpectedGroupRevision: groups[0].Revision, PolicyVersion: service.MatchingPolicyVersion,
 		Plan: plan, EventID: event.ID, EventRiverJobID: *event.RegisteredJobID, EventRiverAttempt: event.HighestDeliveryAttempt, EventDeliveryEpoch: eventEpoch,
+		RequestGeneration: requestGeneration,
 	})
 	if err != nil {
 		t.Fatalf("admit automatic fallback run: %v", err)

@@ -152,7 +152,8 @@ func TestSaveRuntimeDoesNotPartiallyPersistInvalidSettings(t *testing.T) {
 	toolsPath := t.TempDir()
 	outputPath := t.TempDir()
 
-	if err := setup.SaveRuntime(ctx, toolsPath, outputPath, "invalid"); err == nil {
+	invalidFormat := "invalid"
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{ToolsDirectory: &toolsPath, OutputDirectory: &outputPath, PublicationFormat: &invalidFormat}); err == nil {
 		t.Fatal("invalid publication format was accepted")
 	}
 	if len(store.data) != 0 {
@@ -207,10 +208,12 @@ func TestSaveRuntimeRejectsWhitespaceDirectoryLikeRegistry(t *testing.T) {
 	if err := registry.SetToolsDirectory(ctx, "   ", ""); err == nil {
 		t.Fatal("registry accepted a whitespace-only directory")
 	}
-	if err := setup.SaveRuntime(ctx, "   ", "", ""); err == nil {
+	whitespaceTools := "   "
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{ToolsDirectory: &whitespaceTools}); err == nil {
 		t.Fatal("service accepted a directory rejected by registry")
 	}
-	if err := setup.SaveRuntime(ctx, "", "   ", ""); err == nil {
+	whitespaceOutput := "   "
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{OutputDirectory: &whitespaceOutput}); err == nil {
 		t.Fatal("service accepted a whitespace-only output directory")
 	}
 	if len(store.data) != 0 {
@@ -224,10 +227,10 @@ func TestSaveRuntimeRequestDistinguishesOmittedAndEmptyToolsDirectory(t *testing
 	setup := NewSetup(store, settings.New(store, nil), settings.PlatformState{}, nil, nil)
 	empty := ""
 
-	if err := setup.SaveRuntimeRequest(ctx, &empty, nil, nil); err == nil {
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{ToolsDirectory: &empty}); err == nil {
 		t.Fatal("explicitly empty tools directory was accepted")
 	}
-	if err := setup.SaveRuntimeRequest(ctx, nil, nil, nil); err != nil {
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{}); err != nil {
 		t.Fatalf("omitted tools directory was rejected: %v", err)
 	}
 	if len(store.data) != 0 {
@@ -253,7 +256,8 @@ func TestSaveRuntimePreservesOmittedSettingsAndBlocksToolsMove(t *testing.T) {
 	originalTools := store.data[settings.ToolsDirectoryKey]
 	originalOutput := store.data[settings.OutputDirectoryKey]
 
-	if err := setup.SaveRuntime(ctx, "", "", "mka"); err != nil {
+	format := "mka"
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	if store.data[settings.ToolsDirectoryKey] != originalTools ||
@@ -261,7 +265,8 @@ func TestSaveRuntimePreservesOmittedSettingsAndBlocksToolsMove(t *testing.T) {
 		store.data[settings.PublicationFormatKey] != "mka" {
 		t.Fatalf("partial update changed omitted settings: %#v", store.data)
 	}
-	if err := setup.SaveRuntime(ctx, t.TempDir(), "", "source"); err == nil {
+	newToolsPath, sourceFormat := t.TempDir(), "source"
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{ToolsDirectory: &newToolsPath, PublicationFormat: &sourceFormat}); err == nil {
 		t.Fatal("direct tools directory change accepted with installations")
 	}
 	if store.data[settings.ToolsDirectoryKey] != originalTools ||
@@ -281,7 +286,8 @@ func TestSaveRuntimeCommitsValidatedFieldsInOneWrite(t *testing.T) {
 	store.data[settings.OutputUnicodeNormalizationKey] = "none"
 	setup := NewSetup(store, registry, settings.PlatformState{}, nil, nil)
 
-	if err := setup.SaveRuntime(ctx, toolsPath, outputPath, "mka"); err != nil {
+	format := "mka"
+	if err := setup.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{ToolsDirectory: &toolsPath, OutputDirectory: &outputPath, PublicationFormat: &format}); err != nil {
 		t.Fatal(err)
 	}
 	if store.calls != 1 || len(store.data) != 5 {

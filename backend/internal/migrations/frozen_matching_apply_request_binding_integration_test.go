@@ -4,20 +4,17 @@ package migrations_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
-	"github.com/uptrace/bun/migrate"
 )
 
 func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
-	parentRunID, _ := insertFallbackReceiptMigrationScope(t, ctx, database)
+	parentRunID, _ := insertMatchingCurrentSchemaScope(t, ctx, database)
 	sealDigest := make([]byte, 32)
 	sealDigest[0] = 1
 	if _, err := database.NewRaw(`INSERT INTO matching_fallback_authority_seal
@@ -118,24 +115,4 @@ func TestFrozenMatchingApplyRequestBindingWithPostgreSQL(t *testing.T) {
 		t.Fatal("schema-2 request delete was accepted")
 	}
 
-	collection, err := migrations.Collection()
-	if err != nil {
-		t.Fatalf("load migration collection: %v", err)
-	}
-	migrator := migrate.NewMigrator(database, collection, migrate.WithMarkAppliedOnSuccess(true))
-	if _, err := migrator.Rollback(ctx); err == nil || !strings.Contains(err.Error(), "cannot roll back frozen matching apply request bindings") {
-		t.Fatalf("rollback with populated schema-2 request error = %v, want safety guard", err)
-	}
-	var retainedSchemaVersion int
-	if err := database.NewRaw(`SELECT schema_version FROM matching_apply_request WHERE apply_operation_id=?`, frozenRequestID).Scan(ctx, &retainedSchemaVersion); err != nil {
-		t.Fatalf("read request after refused rollback: %v", err)
-	}
-	if retainedSchemaVersion != 2 {
-		t.Fatalf("request after refused rollback has schema version %d, want 2", retainedSchemaVersion)
-	}
-	for _, column := range []string{"schema_version", "input_sha256", "frozen_authority_version", "parent_execution_epoch", "seal_wait_revision", "seal_digest", "target_capture_sha256"} {
-		if !columnExists(t, database, "matching_apply_request", column) {
-			t.Fatalf("refused rollback removed matching_apply_request.%s", column)
-		}
-	}
 }

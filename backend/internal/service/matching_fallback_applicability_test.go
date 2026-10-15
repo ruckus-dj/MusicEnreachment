@@ -55,30 +55,10 @@ func TestValidateReceiptDigestsCanonicalJSONB(t *testing.T) {
 	if err := validateReceiptDigests(2, persistedPayload, payloadDigest, tamperedProjection, projectionDigest); err == nil {
 		t.Fatal("semantically changed projection matched the accepted digest")
 	}
-}
-
-func TestValidateReceiptDigestsPreservesHistoricalSearchReceiptBytes(t *testing.T) {
-	// This is the committed writer's output shape: jsonb::text followed by
-	// json.Marshal(json.RawMessage(...)). PostgreSQL's key order is deliberately
-	// not lexical, so canonical JSON hashing would reject this receipt.
-	legacyPayload := json.RawMessage(`{"a":2,"long":1,"items":[{"b":2,"z":1}]}`)
-	legacyBytes, err := json.Marshal(json.RawMessage(legacyPayload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyHash := sha256.Sum256(legacyBytes)
-	legacyDigest := hex.EncodeToString(legacyHash[:])
-	if legacyDigest != "9ad1e499066c78025df917f4825731692f87788a831c9868a4a0f6bcec3a7675" {
-		t.Fatalf("historical writer fixture changed: digest=%s", legacyDigest)
-	}
-	if err := validateReceiptDigests(1, legacyPayload, legacyDigest, nil, ""); err != nil {
-		t.Fatalf("historical version-1 receipt rejected: %v", err)
-	}
-	if err := validateReceiptDigests(2, legacyPayload, legacyDigest, nil, ""); err == nil {
-		t.Fatal("version-1 receipt incorrectly validated under version 2")
-	}
-	if err := validateReceiptDigests(0, legacyPayload, legacyDigest, nil, ""); err != nil {
-		t.Fatalf("missing legacy context version rejected: %v", err)
+	for _, unsupportedVersion := range []int{0, 1} {
+		if err := validateReceiptDigests(unsupportedVersion, persistedPayload, payloadDigest, nil, ""); err == nil {
+			t.Fatalf("unsupported search payload digest version %d was accepted", unsupportedVersion)
+		}
 	}
 }
 

@@ -202,21 +202,6 @@ func (s *SetupService) state(ctx context.Context, completing bool) (SetupState, 
 	}
 	return SetupState{Completed: completed, ConfigurationHealth: health, Platform: s.platform, Runtime: runtimeSettings, SHA256Enabled: sha256Enabled}, nil
 }
-func (s *SetupService) SaveRuntime(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat string) error {
-	var tools, output, format *string
-	if toolsDirectory != "" {
-		tools = &toolsDirectory
-	}
-	if outputDirectory != "" {
-		output = &outputDirectory
-	}
-	if publicationFormat != "" {
-		format = &publicationFormat
-	}
-	return s.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
-		ToolsDirectory: tools, OutputDirectory: output, PublicationFormat: format,
-	})
-}
 
 // RuntimeUpdateRequest is a presence-aware request to update runtime settings.
 // Nil fields are preserved; supplied values follow the same validation and
@@ -226,14 +211,6 @@ type RuntimeUpdateRequest struct {
 	OutputDirectory       *string
 	PublicationFormat     *string
 	SourceFileConcurrency *int
-}
-
-// SaveRuntimeRequest preserves omitted values while treating an explicitly empty
-// output directory as an invalid request.
-func (s *SetupService) SaveRuntimeRequest(ctx context.Context, toolsDirectory, outputDirectory, publicationFormat *string) error {
-	return s.SaveRuntimeUpdate(ctx, RuntimeUpdateRequest{
-		ToolsDirectory: toolsDirectory, OutputDirectory: outputDirectory, PublicationFormat: publicationFormat,
-	})
 }
 
 // SaveRuntimeUpdate saves all supplied runtime values atomically.

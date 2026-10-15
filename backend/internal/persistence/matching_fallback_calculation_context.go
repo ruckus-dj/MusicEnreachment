@@ -64,92 +64,6 @@ func MatchingFallbackCalculationInputDigest(snapshot MatchingFallbackCalculation
 }
 
 func canonicalMatchingFallbackCalculationContextBytes(snapshot MatchingFallbackCalculationContext) ([]byte, error) {
-	return canonicalMatchingFallbackCalculationContextBytesVersion(snapshot, matchingFallbackCalculationDigestVersion)
-}
-
-// MatchingFallbackCalculationInputDigestV2 preserves the original receipt
-// authority format. StageIndex was not part of its context and must not be
-// added when checking a historical schema-2/calculator-1 receipt.
-func MatchingFallbackCalculationInputDigestV2(snapshot MatchingFallbackCalculationContext) (string, error) {
-	canonical, err := canonicalMatchingFallbackCalculationContextBytesV2(snapshot)
-	if err != nil {
-		return "", fmt.Errorf("digest legacy fallback calculation context: %w", err)
-	}
-	digest := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", digest[:]), nil
-}
-
-func canonicalMatchingFallbackCalculationContextBytesV2(snapshot MatchingFallbackCalculationContext) ([]byte, error) {
-	snapshot.Lookups = append([]MatchingFallbackCalculationLookupAuthority(nil), snapshot.Lookups...)
-	snapshot.LookupReceipts = append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...)
-	sort.Slice(snapshot.Lookups, func(i, j int) bool {
-		if snapshot.Lookups[i].ReleaseID != snapshot.Lookups[j].ReleaseID {
-			return snapshot.Lookups[i].ReleaseID < snapshot.Lookups[j].ReleaseID
-		}
-		return snapshot.Lookups[i].RequestID.String() < snapshot.Lookups[j].RequestID.String()
-	})
-	sort.Slice(snapshot.LookupReceipts, func(i, j int) bool {
-		if snapshot.LookupReceipts[i].RequestID != snapshot.LookupReceipts[j].RequestID {
-			return snapshot.LookupReceipts[i].RequestID.String() < snapshot.LookupReceipts[j].RequestID.String()
-		}
-		return snapshot.LookupReceipts[i].CacheKey < snapshot.LookupReceipts[j].CacheKey
-	})
-	// Keep field order and names aligned with the original v2 DTO, which did
-	// not include StageIndex.
-	type legacyLookupAuthority struct {
-		RequestID        uuid.UUID       `json:"request_id"`
-		ReleaseID        string          `json:"release_id"`
-		Kind             string          `json:"kind"`
-		ProviderSourceID uuid.UUID       `json:"provider_source_id"`
-		ProviderID       uuid.UUID       `json:"provider_id"`
-		Endpoint         string          `json:"endpoint"`
-		Configuration    string          `json:"configuration_identity"`
-		CacheKey         string          `json:"cache_key"`
-		Input            json.RawMessage `json:"input"`
-	}
-	type legacyContext struct {
-		RunID               uuid.UUID
-		AcquisitionRevision int64
-		Intent              MatchingAcquisitionIntent
-		Target              MatchingRunFenceSnapshot
-		PhaseInput          json.RawMessage
-		PhaseOutput         json.RawMessage
-		PhaseProvenance     json.RawMessage
-		SearchReceipt       MatchingFallbackSearchReceipt
-		LookupReceipts      []MatchingFallbackLookupReceipt
-		RunSourceID         uuid.UUID
-		RunProviderID       uuid.UUID
-		RunEndpoint         string
-		RunConfiguration    string
-		SearchKind          string
-		SearchCacheKey      string
-		SearchInput         json.RawMessage
-		Lookups             []legacyLookupAuthority
-	}
-	legacyLookups := make([]legacyLookupAuthority, len(snapshot.Lookups))
-	for index, lookup := range snapshot.Lookups {
-		legacyLookups[index] = legacyLookupAuthority{RequestID: lookup.RequestID, ReleaseID: lookup.ReleaseID, Kind: lookup.Kind,
-			ProviderSourceID: lookup.ProviderSourceID, ProviderID: lookup.ProviderID, Endpoint: lookup.Endpoint,
-			Configuration: lookup.Configuration, CacheKey: lookup.CacheKey, Input: lookup.Input}
-	}
-	encoded, err := json.Marshal(struct {
-		Version int           `json:"version"`
-		Context legacyContext `json:"context"`
-	}{Version: matchingFallbackCalculationLegacyDigestVersion, Context: legacyContext{
-		RunID: snapshot.RunID, AcquisitionRevision: snapshot.AcquisitionRevision, Intent: snapshot.Intent,
-		Target: snapshot.Target, PhaseInput: snapshot.PhaseInput, PhaseOutput: snapshot.PhaseOutput,
-		PhaseProvenance: snapshot.PhaseProvenance, SearchReceipt: snapshot.SearchReceipt,
-		LookupReceipts: snapshot.LookupReceipts, RunSourceID: snapshot.RunSourceID, RunProviderID: snapshot.RunProviderID,
-		RunEndpoint: snapshot.RunEndpoint, RunConfiguration: snapshot.RunConfiguration, SearchKind: snapshot.SearchKind,
-		SearchCacheKey: snapshot.SearchCacheKey, SearchInput: snapshot.SearchInput, Lookups: legacyLookups,
-	}})
-	if err != nil {
-		return nil, err
-	}
-	return canonicalMatchingJSON(encoded)
-}
-
-func canonicalMatchingFallbackCalculationContextBytesVersion(snapshot MatchingFallbackCalculationContext, version int) ([]byte, error) {
 	snapshot.Lookups = append([]MatchingFallbackCalculationLookupAuthority(nil), snapshot.Lookups...)
 	snapshot.LookupReceipts = append([]MatchingFallbackLookupReceipt(nil), snapshot.LookupReceipts...)
 	sort.Slice(snapshot.Lookups, func(i, j int) bool {
@@ -167,7 +81,7 @@ func canonicalMatchingFallbackCalculationContextBytesVersion(snapshot MatchingFa
 	encoded, err := json.Marshal(struct {
 		Version int                                `json:"version"`
 		Context MatchingFallbackCalculationContext `json:"context"`
-	}{Version: version, Context: snapshot})
+	}{Version: matchingFallbackCalculationDigestVersion, Context: snapshot})
 	if err != nil {
 		return nil, err
 	}
