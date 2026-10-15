@@ -33,7 +33,7 @@ func TestSourceAnalysisWorkerPreparerConfigPinsOnlyRequestedTool(t *testing.T) {
 	work := &persistence.SourceAnalysisWork{SizeBytes: 17}
 	probeID, fpcalcID := uuid.New(), uuid.New()
 	snapshot := persistence.SourceAnalysisOperationSnapshot{Tools: []persistence.SourceAnalysisToolSelection{
-		{InstallationID: probeID, Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "8.0"},
+		{InstallationID: probeID, Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "8.0", VersionBanner: "ffprobe version 8.0"},
 		{InstallationID: fpcalcID, Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", Version: "1.2.3", VersionBanner: "fpcalc version 1.2.3"},
 	}}
 	worker := &SourceAnalysisWorker{toolsDirectory: workerToolsDirectory{path: root, ok: true},
@@ -54,7 +54,7 @@ func TestSourceAnalysisWorkerPreparerConfigPinsOnlyRequestedTool(t *testing.T) {
 	if want := filepath.Join(root, "ffmpeg", "8.0", "ffprobe"); probe.ProbeExecutable != want {
 		t.Fatalf("probe executable = %q, want %q", probe.ProbeExecutable, want)
 	}
-	if probe.FPCalcExecutable != "" || probe.FFProbeVersion != "8.0" {
+	if probe.FPCalcExecutable != "" || probe.FFProbeVersion != "ffprobe version 8.0" {
 		t.Fatalf("probe config selected unrelated tool or wrong version: %+v", probe)
 	}
 

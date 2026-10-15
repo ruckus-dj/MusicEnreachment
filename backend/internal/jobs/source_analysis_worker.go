@@ -807,7 +807,7 @@ func (worker *SourceAnalysisWorker) preparerConfig(ctx context.Context, snapshot
 				return config, fmt.Errorf("pinned ffprobe selection is unavailable")
 			}
 		} else {
-			config.FFProbeVersion = selection.Version
+			config.FFProbeVersion = selection.VersionBanner
 			base := filepath.Join(root, filepath.FromSlash(selection.RelativePath))
 			executable := filepath.Join(base, selection.Executable)
 			if worker.platform.Platform.GOOS == "windows" {

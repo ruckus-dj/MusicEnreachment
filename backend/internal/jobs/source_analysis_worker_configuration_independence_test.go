@@ -25,14 +25,14 @@ func TestSourceAnalysisWorkerCombinedConfigFailuresStayStepLocal(t *testing.T) {
 
 	t.Run("invalid fpcalc metadata preserves probe config and fingerprint cache version", func(t *testing.T) {
 		snapshot := persistence.SourceAnalysisOperationSnapshot{Tools: []persistence.SourceAnalysisToolSelection{
-			{InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "8.0"},
+			{InstallationID: uuid.New(), Executable: "ffprobe", RelativePath: "ffmpeg/8.0", Version: "8.0", VersionBanner: "ffprobe version 8.0"},
 			{InstallationID: uuid.New(), Executable: "fpcalc", RelativePath: "chromaprint/1.2.3", Version: "1.2.3", VersionBanner: "invalid banner"},
 		}}
 		config, err := worker.preparerConfig(context.Background(), snapshot, work, operationID, 1, 2, persistence.SourceStepProbe, persistence.SourceStepFingerprint)
 		if err != nil {
 			t.Fatalf("combined config returned an error: %v", err)
 		}
-		if config.ProbeExecutable == "" || config.ProbeFactory == nil || config.FFProbeVersion != "8.0" {
+		if config.ProbeExecutable == "" || config.ProbeFactory == nil || config.FFProbeVersion != "ffprobe version 8.0" {
 			t.Fatalf("valid probe config was lost: %+v", config)
 		}
 		if config.FPCalcVersion.Version != "1.2.3" || config.FingerprinterFactory == nil {
