@@ -114,7 +114,7 @@ func (repository *SourceInventoryRepository) AcquireSourceScanToolHold(
 		if err := tx.NewRaw(`SELECT * FROM tool_installation WHERE id=?`, selection.InstallationID).Scan(ctx, installation); err != nil {
 			return fmt.Errorf("read pinned installation: %w", err)
 		}
-		if installation.PackageKind != selection.PackageKind || installation.RelativePath != filepath.ToSlash(selection.RelativePath) || installation.State != "ready" || installation.VerifiedAt == nil {
+		if installation.PackageKind != selection.PackageKind || filepath.ToSlash(installation.RelativePath) != filepath.ToSlash(selection.RelativePath) || installation.State != "ready" || installation.VerifiedAt == nil {
 			return fmt.Errorf("pinned installation no longer matches scan selection")
 		}
 		if !validInstallationRelativePath(installation) || !(tools.Platform{GOOS: installation.PlatformGOOS, GOARCH: installation.PlatformGOARCH}).Supported() {
