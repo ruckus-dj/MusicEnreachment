@@ -470,7 +470,8 @@ func (fixture sourceApplicationFixture) storedOperation(t *testing.T, id uuid.UU
 
 // countOperations reports how many operation rows the database holds.
 func (fixture sourceApplicationFixture) countOperations(ctx context.Context) (int, error) {
-	return fixture.database.NewSelect().Model((*persistence.Operation)(nil)).Count(ctx)
+	count, err := fixture.database.NewSelect().Model((*persistence.Operation)(nil)).Count(ctx)
+	return int(count), err
 }
 
 // runScan queues one scan through the composed router and executes the

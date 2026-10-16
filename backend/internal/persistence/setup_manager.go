@@ -807,7 +807,7 @@ func readyInstallationsCountTx(ctx context.Context, tx bun.Tx, packageKind strin
 	if err != nil {
 		return 0, fmt.Errorf("count ready %s installations: %w", packageKind, err)
 	}
-	return count, nil
+	return int(count), nil
 }
 
 func refuseOtherReadyInstallationTx(ctx context.Context, tx bun.Tx, packageKind string, id uuid.UUID) error {

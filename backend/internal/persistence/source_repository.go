@@ -330,7 +330,7 @@ func (repository *SourceInventoryRepository) ListSourceLocationsPage(ctx context
 	if cursor != nil {
 		query.Where("(relative_path, id) > (?, ?)", cursor.RelativePath, cursor.ID)
 	}
-	if err := query.Order("relative_path ASC").Order("id ASC").Limit(limit).Scan(ctx); err != nil {
+	if err := query.Order("relative_path ASC").Order("id ASC").Limit(int64(limit)).Scan(ctx); err != nil {
 		return nil, nil, fmt.Errorf("list source locations: %w", err)
 	}
 	if len(locations) < limit {
