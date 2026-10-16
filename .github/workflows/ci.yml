@@ -146,7 +146,9 @@ jobs:
           CGO_ENABLED: "1"
           CC: gcc
           CXX: g++
-        run: go test -tags=integration -count=1 -p 8 -parallel 8 ./...
+        # Each test package starts a native PostgreSQL server. Limit concurrent
+        # servers on Windows while retaining parallel tests within each package.
+        run: go test -tags=integration -count=1 -p ${{ runner.os == 'Windows' && '1' || '8' }} -parallel 8 ./...
       - name: Test frontend
         working-directory: frontend
         run: npm test

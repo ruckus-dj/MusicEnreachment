@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ruckus/MusicEnreachment/backend/internal/api"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
@@ -27,7 +28,7 @@ func TestExplicitActivationRequiresSetupCompletionPostgreSQL(t *testing.T) {
 	repository := persistence.NewSetupManagerRepository(database)
 	store := persistence.NewSettingsRepository(database)
 	registry := settings.New(store, nil)
-	platform, err := registry.InitializePlatform(ctx, settings.Platform{GOOS: "linux", GOARCH: "amd64"})
+	platform, err := registry.InitializePlatform(ctx, settings.CurrentPlatform())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestExplicitActivationRequiresSetupCompletionPostgreSQL(t *testing.T) {
 	if err := json.Unmarshal(persisted.ExecutableVersions, &versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions["fpcalc"] != "verified" {
+	if versions[tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0]] != "verified" {
 		t.Fatalf("persisted executable versions = %#v", versions)
 	}
 	if filepath.IsAbs(persisted.RelativePath) {

@@ -148,7 +148,10 @@ func adminDatabase(t *testing.T) *bun.DB {
 	process.serverOnce.Do(func() {
 		process.adminURL = os.Getenv("TEST_DATABASE_URL")
 		if process.adminURL == "" {
-			config := postgres.DefaultConfig().Version(postgres.V18).Port(0).StartParameters(map[string]string{"fsync": "off"})
+			// These clusters are disposable; crash durability is not under test.
+			config := postgres.DefaultConfig().Version(postgres.V18).Port(0).StartParameters(map[string]string{
+				"fsync": "off", "full_page_writes": "off", "synchronous_commit": "off",
+			})
 			if runtime.GOOS == "windows" {
 				// Embedded PostgreSQL creates restricted child-process tokens. Keep
 				// the test process's default DACL usable by the current user so those

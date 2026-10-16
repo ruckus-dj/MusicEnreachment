@@ -5,9 +5,11 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -41,7 +43,8 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	repository := persistence.NewSetupManagerRepository(database)
 	store := persistence.NewSettingsRepository(database)
 	registry := settings.New(store, nil)
-	platform, err := registry.InitializePlatform(ctx, settings.Platform{GOOS: "linux", GOARCH: "amd64"})
+	currentPlatform := settings.CurrentPlatform()
+	platform, err := registry.InitializePlatform(ctx, currentPlatform)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +76,10 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 
 	setup := service.NewSetup(store, registry, platform, repository, nil)
 	catalog := transitionCatalog{release: tools.Release{Identity: "1.6.1", Artifacts: []tools.Artifact{{Name: "fpcalc.zip"}}}}
-	installOperations := service.NewInstallOperations(repository, catalog, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, client, registry)
-	moveTools := service.NewMoveTools(repository, registry, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, client)
-	installations := service.NewInstallations(repository, settings.Platform{GOOS: "linux", GOARCH: "amd64"}, registry, transitionVerifier{}, registry)
+	toolPlatform := tools.Platform{GOOS: currentPlatform.GOOS, GOARCH: currentPlatform.GOARCH}
+	installOperations := service.NewInstallOperations(repository, catalog, toolPlatform, client, registry)
+	moveTools := service.NewMoveTools(repository, registry, toolPlatform, client)
+	installations := service.NewInstallations(repository, currentPlatform, registry, transitionVerifier{}, registry)
 	operations := service.NewOperations(repository)
 	router := chi.NewRouter()
 	humaAPI := api.New(router)
@@ -140,7 +144,7 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 
 	createTransitionInstallation(t, ctx, repository, toolsRoot, "fpcalc", "2.0", false)
 	newRoot := t.TempDir()
-	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"`+newRoot+`","remove_old_files":false}`)
+	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"remove_old_files":false}`, newRoot))
 	if response.Code != http.StatusOK {
 		t.Fatalf("move preflight status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -151,7 +155,7 @@ func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	if movePlan.Token == "" || movePlan.FileCount != 1 || len(movePlan.Conflicts) != 0 {
 		t.Fatalf("move preflight response = %#v", movePlan)
 	}
-	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", `{"new_tools_directory":"`+toolsRoot+`","remove_old_files":false}`)
+	response = transitionRequest(t, router, http.MethodPost, "/tools/move/preflight", fmt.Sprintf(`{"new_tools_directory":%q,"remove_old_files":false}`, toolsRoot))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("overlapping move preflight status=%d want=%d body=%s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
@@ -227,30 +231,42 @@ func (c transitionCatalog) Resolve(_ context.Context, _ tools.PackageKind, _ too
 type transitionVerifier struct{}
 
 func (transitionVerifier) VerifyInstallation(_ context.Context, root, relative string, _ tools.PackageKind, _ string, _ string) (map[string]string, error) {
-	info, err := os.Stat(filepath.Join(root, relative, "fpcalc"))
+	executable := "fpcalc"
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+	}
+	info, err := os.Stat(filepath.Join(root, relative, executable))
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, os.ErrInvalid
 	}
-	return map[string]string{"fpcalc": "verified"}, nil
+	return map[string]string{executable: "verified"}, nil
 }
 
 func createTransitionInstallation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, root, packageKind, release string, active bool) *persistence.ToolInstallation {
 	t.Helper()
 	id := uuid.New()
 	installation := &persistence.ToolInstallation{
-		ID: id, PackageKind: packageKind, PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "fixture", ReleaseIdentity: release, RelativePath: testInstallationRelativePath("linux", packageKind, release), State: "preparing",
+		ID: id, PackageKind: packageKind, PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH,
+		SourceName: "fixture", ReleaseIdentity: release, RelativePath: testInstallationRelativePath(runtime.GOOS, packageKind, release), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.MarkInstallationReady(ctx, id, json.RawMessage(`{"fpcalc":"verified"}`), time.Now().UTC()); err != nil {
+	executable := "fpcalc"
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+	}
+	versions, err := json.Marshal(map[string]string{executable: "verified"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, installation.RelativePath, "fpcalc")
+	if err := repository.MarkInstallationReady(ctx, id, versions, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, installation.RelativePath, executable)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +274,7 @@ func createTransitionInstallation(t *testing.T, ctx context.Context, repository 
 		t.Fatal(err)
 	}
 	if active {
-		if err := repository.ActivateInstallation(ctx, id, packageKind, "linux", "amd64", settings.ActiveFPCalcInstallationKey); err != nil {
+		if err := repository.ActivateInstallation(ctx, id, packageKind, runtime.GOOS, runtime.GOARCH, settings.ActiveFPCalcInstallationKey); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -209,7 +209,7 @@ func insertScanHoldInstallation(t *testing.T, ctx context.Context, database *bun
 	}
 	return persistence.SourceAnalysisToolSelection{
 		PackageKind: kind, InstallationID: installation.ID, RelativePath: relativePath,
-		Executable: executable, Version: version, VersionBanner: banner,
+		Executable: executableName, Version: version, VersionBanner: banner,
 	}
 }
 

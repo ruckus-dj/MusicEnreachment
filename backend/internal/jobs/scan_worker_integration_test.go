@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,20 @@ import (
 type scanDispatchRepository struct {
 	*persistence.SetupManagerRepository
 	*persistence.SourceInventoryRepository
+}
+
+type unreadableScopeScanRepository struct {
+	scanDispatchRepository
+	path string
+	set  atomic.Bool
+}
+
+func (repository *unreadableScopeScanRepository) ApplySourceEnumeration(ctx context.Context, apply persistence.SourceEnumerationApply) error {
+	if repository.set.Load() {
+		apply.Scopes = append(apply.Scopes, persistence.SourceEnumerationScope{RelativePath: repository.path, Kind: "subtree"})
+		apply.FailureSafeError = scanSafeTraversal
+	}
+	return repository.SourceInventoryRepository.ApplySourceEnumeration(ctx, apply)
 }
 
 func (repository scanDispatchRepository) GetInstallation(ctx context.Context, id uuid.UUID) (*persistence.ToolInstallation, error) {
@@ -89,7 +104,8 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 
 	operations := service.NewOperations(setupManager)
 	pathValidator := &recordingScanPathValidator{delegate: roots}
-	worker := NewSourceScanWorker(scanDispatchRepository{setupManager, inventory}, operations, pathValidator, registry, platform, tools.NewLifecycle(nil))
+	scanRepository := &unreadableScopeScanRepository{scanDispatchRepository: scanDispatchRepository{setupManager, inventory}, path: "locked"}
+	worker := NewSourceScanWorker(scanRepository, operations, pathValidator, registry, platform, tools.NewLifecycle(nil))
 	riverClient, listenerPool := startScanDispatchRiver(t, databaseURL, database, worker)
 	defer listenerPool.Close()
 	defer stopRiverClient(t, riverClient)
@@ -130,15 +146,20 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 		t.Fatalf("probes after the duplicate delivery = %d, want no second traversal", count)
 	}
 
-	// Given a subtree the traversal cannot read...
+	// Windows chmod cannot remove directory read access. Inject the unreadable
+	// scope there, while Unix continues to exercise real permission failures.
 	if err := os.MkdirAll(filepath.Join(source, "locked"), 0o755); err != nil {
-		t.Fatalf("create the locked directory: %v", err)
+		t.Fatalf("create the unreadable fixture directory: %v", err)
 	}
 	writeScanDispatchFile(t, filepath.Join(source, "locked", "notes.txt"), "not audio")
-	if err := os.Chmod(filepath.Join(source, "locked"), 0o000); err != nil {
-		t.Fatalf("lock the source subtree: %v", err)
+	if runtime.GOOS == "windows" {
+		scanRepository.set.Store(true)
+	} else {
+		if err := os.Chmod(filepath.Join(source, "locked"), 0o000); err != nil {
+			t.Fatalf("lock the source subtree: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(source, "locked"), 0o755) })
 	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(source, "locked"), 0o755) })
 	second, err := scans.Start(ctx, root.ID)
 	if err != nil {
 		t.Fatalf("start the failing scan: %v", err)
@@ -155,10 +176,13 @@ func TestSourceScanWorkerRiverDispatchPostgreSQL(t *testing.T) {
 	// An unreadable subtree is not the root's inaccessibility.
 	requireScanDispatchAvailability(t, ctx, inventory, root.ID, persistence.SourceRootStatusAvailable)
 
-	// Given the subtree is readable again...
+	// Given the subtree failure is no longer reported...
 	beforeRecovery := scanDispatchProbeCount(t, probes)
-	if err := os.Chmod(filepath.Join(source, "locked"), 0o755); err != nil {
-		t.Fatalf("unlock the source subtree: %v", err)
+	scanRepository.set.Store(false)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(filepath.Join(source, "locked"), 0o755); err != nil {
+			t.Fatalf("unlock the source subtree: %v", err)
+		}
 	}
 	third, err := scans.Start(ctx, root.ID)
 	if err != nil {
