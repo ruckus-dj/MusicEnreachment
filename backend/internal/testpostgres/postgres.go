@@ -150,6 +150,13 @@ func adminDatabase(t *testing.T) *bun.DB {
 		if process.adminURL == "" {
 			config := postgres.DefaultConfig().Version(postgres.V18).Port(0).StartParameters(map[string]string{"fsync": "off"})
 			if runtime.GOOS == "windows" {
+				// Embedded PostgreSQL creates restricted child-process tokens. Keep
+				// the test process's default DACL usable by the current user so those
+				// children can create their pipes and start initdb/postgres.
+				if err := ensureCurrentUserDefaultDACL(); err != nil {
+					process.serverErr = fmt.Errorf("prepare Windows token default DACL for embedded PostgreSQL: %w", err)
+					return
+				}
 				config = config.Environment("PG_RESTRICT_EXEC=1")
 			}
 			server := postgres.NewDatabase(config)
