@@ -72,7 +72,7 @@ Install these prerequisites:
 - Native PostgreSQL runtime libraries for your platform when running integration
   tests without `TEST_DATABASE_URL`; the test helper downloads PostgreSQL 18
   binaries on first use and caches them. Docker is not needed for these tests.
-  See the [embedded PostgreSQL runtime prerequisites](https://github.com/fergusstrange/embedded-postgres/blob/v2.0.0-alpha.2/docs/non-root.md).
+  See the [embedded PostgreSQL runtime prerequisites](https://github.com/fergusstrange/embedded-postgres/blob/v2.0.0-alpha.3/docs/non-root.md).
 - [pre-commit](https://pre-commit.com/#install) for the repository hook.
 
 Install locked frontend dependencies with `task frontend:install`, then run
@@ -115,6 +115,14 @@ Run `task run` from the repository root to build the application and start it
 with PostgreSQL through Docker Compose. `task run` launches Compose detached,
 so it returns to the shell; the application is available at
 `http://127.0.0.1:8080` by default. Stop it with `task stop`.
+
+Compose uses `postgres:18`, which tracks the latest PostgreSQL 18 minor when the
+image is pulled. Its data volume mounts at `/var/lib/postgresql`; PostgreSQL 18
+stores its cluster in `18/docker` below that directory. An existing PostgreSQL 17
+volume is **not automatically upgraded**: stop the old deployment and preserve its
+data with an explicit dump/restore or `pg_upgrade` before using PostgreSQL 18.
+Do not delete the old volume or assume a newly initialized empty cluster contains
+the previous data. See [deployment notes](docs/design/deployment.md#postgresql).
 
 To use an external PostgreSQL instance, run `task build` and start
 `./build/backend/server` with `DATABASE_URL` set to its PostgreSQL connection

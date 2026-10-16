@@ -24,7 +24,7 @@
 | --- | --- |
 | Backend | Go 1.27 |
 | Frontend | TypeScript, React Aria, Tailwind CSS; Node.js 24 LTS + npm для frontend toolchain |
-| Реляционная БД | PostgreSQL (приоритетный выбор) |
+| Реляционная БД | PostgreSQL 18, актуальный minor-релиз |
 | Деплой | Docker Compose; приложение также должно запускаться локально и на собственном сервере вне Docker |
 | Репозиторий | Один GitHub monorepo для всех компонентов проекта |
 | HTTP API | REST на Huma + chi; асинхронное взаимодействие добавляется только по необходимости |
@@ -192,7 +192,7 @@
 - По умолчанию Go-приложение отдаёт собранные Vite static assets.
 - Nginx может быть добавлен перед приложением в конкретном развёртывании, но не
   нужен для базового запуска и не является переключателем runtime-логики.
-- Базовый `docker-compose.yml` поднимает PostgreSQL вместе с приложением, но
+- Базовый `docker-compose.yml` поднимает PostgreSQL 18 вместе с приложением, но
   приложение также поддерживает подключение к внешней PostgreSQL.
 
 ### HTTP runtime и диагностика
@@ -276,8 +276,9 @@
   `TEST_DATABASE_URL` необязателен: если он задан, тесты используют его как
   административное подключение для создания изолированных тестовых БД; иначе
   запускают PostgreSQL 18 через `github.com/fergusstrange/embedded-postgres/v2`
-  версии `v2.0.0-alpha.2`. Бинарники соответствующей платформы загружаются и
-  кэшируются; требуются native runtime libraries PostgreSQL для выбранной ОС.
+   (версия зависимости фиксируется в `backend/go.mod`). Бинарники соответствующей
+   платформы загружаются и кэшируются; требуются native runtime libraries
+   PostgreSQL для выбранной ОС.
 - Vite dev server проксирует `/api` и `/health` на backend `127.0.0.1:8080`, не
   включая CORS и не создавая отдельную development security model.
 - Node.js 24 LTS используется только для frontend-инструментов; npm фиксирует
