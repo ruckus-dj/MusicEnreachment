@@ -33,6 +33,14 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
+func testInstallationRelativePath(goos, packageKind, release string) string {
+	separator := "/"
+	if goos == "windows" {
+		separator = `\`
+	}
+	return packageKind + separator + release
+}
+
 // sourceApplicationFixture is the production source composition: the same
 // repositories, services and worker constructors app.Run installs, down to the
 // shared persistence.SetupManagerRepository.
@@ -439,7 +447,7 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg),
 		PlatformGOOS: fixture.platform.Platform.GOOS, PlatformGOARCH: fixture.platform.Platform.GOARCH,
-		SourceName: "btbn", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", release)),
+		SourceName: "btbn", ReleaseIdentity: release, RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "ffmpeg", release),
 		State: "ready", ExecutableVersions: versions, VerifiedAt: &verifiedAt,
 	}
 	if err := fixture.installer.CreateInstallation(ctx, installation); err != nil {

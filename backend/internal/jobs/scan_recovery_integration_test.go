@@ -241,7 +241,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	installationID := uuid.New()
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: filepath.ToSlash(filepath.Join("fpcalc", "1.6.1")), State: "preparing",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: testInstallationRelativePath("linux", "fpcalc", "1.6.1"), State: "preparing",
 	}
 	if err := setupManager.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create the interrupted installation: %v", err)
@@ -280,7 +280,7 @@ func TestSourceScanStartupRecoveryPostgreSQL(t *testing.T) {
 	legacyInstallationID := uuid.New()
 	legacyInstallation := &persistence.ToolInstallation{
 		ID: legacyInstallationID, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: "1.6.2", RelativePath: filepath.ToSlash(filepath.Join("fpcalc", "1.6.2")), State: "preparing",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.2", RelativePath: testInstallationRelativePath("linux", "fpcalc", "1.6.2"), State: "preparing",
 	}
 	if err := setupManager.CreateInstallation(ctx, legacyInstallation); err != nil {
 		t.Fatalf("create the legacy installation: %v", err)
@@ -365,7 +365,7 @@ func TestLegacyInstallStartupRecoveryPreservesTerminalInstallationStatesPostgreS
 			release := "1.6.9-" + state
 			installation := &persistence.ToolInstallation{
 				ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-				SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join("fpcalc", release)), State: "preparing",
+				SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: testInstallationRelativePath("linux", "fpcalc", release), State: "preparing",
 			}
 			if err := repository.CreateInstallation(ctx, installation); err != nil {
 				t.Fatalf("create %s installation: %v", state, err)

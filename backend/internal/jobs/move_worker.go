@@ -167,7 +167,7 @@ func (worker *MoveWorker) Work(ctx context.Context, operation *persistence.Opera
 	targets := make(map[string]struct{}, len(snapshot.Files))
 	for _, file := range snapshot.Files {
 		installation, ok := expectedTargets[filepath.Clean(file.TargetPath)]
-		if !ok || installation.ID != file.InstallationID || installation.RelativePath != file.RelativePath ||
+		if !ok || installation.ID != file.InstallationID || filepath.Clean(installation.RelativePath) != filepath.Clean(file.RelativePath) ||
 			installation.PackageKind != string(file.PackageKind) || installation.ReleaseIdentity != file.ReleaseIdentity {
 			return worker.fail(ctx, operation, fmt.Errorf("move snapshot does not match managed installation identity"))
 		}

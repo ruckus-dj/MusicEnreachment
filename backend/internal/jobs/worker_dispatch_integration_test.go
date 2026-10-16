@@ -390,7 +390,7 @@ func TestMoveWorkerRiverInterruptionRecoveryPostgreSQL(t *testing.T) {
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.GOOS,
 		PlatformGOARCH: platform.GOARCH, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
-		RelativePath: "fpcalc/1.6.1", State: "preparing",
+		RelativePath: testInstallationRelativePath(platform.GOOS, "fpcalc", "1.6.1"), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create managed installation: %v", err)
@@ -530,7 +530,7 @@ func TestMoveWorkerRiverSwitchAndCleanupInterruptionRecoveryPostgreSQL(t *testin
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.GOOS,
 		PlatformGOARCH: platform.GOARCH, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
-		RelativePath: "fpcalc/1.6.1", State: "preparing",
+		RelativePath: testInstallationRelativePath(platform.GOOS, "fpcalc", "1.6.1"), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create managed installation: %v", err)
@@ -658,7 +658,7 @@ func TestMoveWorkerRiverRecoversPublishedTargetBeforeOwnershipJournalPostgreSQL(
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.GOOS,
 		PlatformGOARCH: platform.GOARCH, SourceName: "chromaprint", ReleaseIdentity: "1.6.1",
-		RelativePath: "fpcalc/1.6.1", State: "preparing",
+		RelativePath: testInstallationRelativePath(platform.GOOS, "fpcalc", "1.6.1"), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create managed installation: %v", err)
@@ -1098,7 +1098,7 @@ func enqueueInstall(t *testing.T, ctx context.Context, repository *persistence.S
 	t.Helper()
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join("fpcalc", release)),
+		SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: testInstallationRelativePath("linux", "fpcalc", release),
 		State: "preparing",
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{
@@ -1246,7 +1246,7 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	platform := tools.Platform{GOOS: "linux", GOARCH: "amd64"}
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "fpcalc", PlatformGOOS: platform.GOOS, PlatformGOARCH: platform.GOARCH,
-		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: "fpcalc/1.6.1", State: "preparing",
+		SourceName: "chromaprint", ReleaseIdentity: "1.6.1", RelativePath: testInstallationRelativePath(platform.GOOS, "fpcalc", "1.6.1"), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create managed installation: %v", err)
@@ -1259,7 +1259,7 @@ func TestReconcileInterruptedMoveRetryPostgreSQL(t *testing.T) {
 	}
 	ffmpegInstallation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: platform.GOOS, PlatformGOARCH: platform.GOARCH,
-		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: "ffmpeg/8.0", State: "preparing",
+		SourceName: "btbn", ReleaseIdentity: "8.0", RelativePath: testInstallationRelativePath(platform.GOOS, "ffmpeg", "8.0"), State: "preparing",
 	}
 	if err := os.MkdirAll(filepath.Join(oldRoot, ffmpegInstallation.RelativePath), 0o755); err != nil {
 		t.Fatal(err)

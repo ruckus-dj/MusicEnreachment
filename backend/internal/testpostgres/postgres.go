@@ -107,7 +107,7 @@ func URL(t *testing.T, db *bun.DB) string {
 }
 
 // AddCleanup registers process-scoped cleanup such as cached fixture removal.
-// It is run by Run after tests and before database/container teardown.
+// It is run by Run after tests and before database/server teardown.
 func AddCleanup(cleanup func() error) {
 	process.resourcesMu.Lock()
 	defer process.resourcesMu.Unlock()
@@ -115,7 +115,7 @@ func AddCleanup(cleanup func() error) {
 }
 
 // Run executes a package's test suite and removes only databases and templates
-// created by this helper, then stops its lazily started container.
+// created by this helper, then stops its lazily started server.
 func Run(m *testing.M) int {
 	code := m.Run()
 	if err := cleanupProcess(); err != nil {

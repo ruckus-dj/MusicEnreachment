@@ -4,9 +4,9 @@ package persistence_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,7 +35,8 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/analysis-move-barrier")
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	root := createInventoryRoot(t, ctx, inventory, filepath.Join(fixtureRoot, "analysis-move-barrier"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	installationID := insertAnalysisInstallation(t, ctx, database, "barrier-move")
@@ -48,7 +49,11 @@ func TestSourceAnalysisEnqueueRefusesMoveCommittedUnderLockWithPostgreSQL(t *tes
 		func(ctx context.Context, tx bun.Tx) error {
 			return insertQueuedOperation(ctx, tx, &persistence.Operation{
 				ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
+				InputSnapshot: mustFixtureJSON(t, struct {
+					SchemaVersion int    `json:"schema_version"`
+					OldRoot       string `json:"old_root"`
+					NewRoot       string `json:"new_root"`
+				}{1, filepath.Join(fixtureRoot, "tools-before"), filepath.Join(fixtureRoot, "tools-after")}),
 			})
 		},
 		func(ctx context.Context) error {
@@ -69,11 +74,14 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
-	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	toolsBefore := filepath.Join(fixtureRoot, "tools-before")
+	toolsAfter := filepath.Join(fixtureRoot, "tools-after")
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", toolsBefore); err != nil {
 		t.Fatal(err)
 	}
 	client := openScanEnqueueRiver(t, database)
-	root := createInventoryRoot(t, ctx, inventory, "/srv/move-analysis-barrier")
+	root := createInventoryRoot(t, ctx, inventory, filepath.Join(fixtureRoot, "move-analysis-barrier"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	installationID := insertAnalysisInstallation(t, ctx, database, "barrier-analysis")
@@ -86,7 +94,11 @@ func TestToolsMoveEnqueueRefusesAnalysisCommittedUnderLockWithPostgreSQL(t *test
 	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after"}`),
+		InputSnapshot: mustFixtureJSON(t, struct {
+			SchemaVersion int    `json:"schema_version"`
+			OldRoot       string `json:"old_root"`
+			NewRoot       string `json:"new_root"`
+		}{1, toolsBefore, toolsAfter}),
 	}
 	err := setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client, serviceOperationArgs{OperationID: move.ID}, nil)
 	if !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {

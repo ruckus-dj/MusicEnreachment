@@ -227,21 +227,36 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 	ctx := context.Background()
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
-	if err := settingsRepository.Set(ctx, settings.ToolsDirectoryKey, "/old-tools"); err != nil {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRoot, newRoot := filepath.Join(base, "old-tools"), filepath.Join(base, "new-tools")
+	rollbackRoot, pendingRoot := filepath.Join(base, "rollback-tools"), filepath.Join(base, "pending-tools")
+	otherRoot, wrongRoot := filepath.Join(base, "other-tools"), filepath.Join(base, "wrong-root")
+	snapshot := func(oldRoot, newRoot string) json.RawMessage {
+		t.Helper()
+		value, err := json.Marshal(map[string]string{"old_root": oldRoot, "new_root": newRoot})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	if err := settingsRepository.Set(ctx, settings.ToolsDirectoryKey, oldRoot); err != nil {
 		t.Fatal(err)
 	}
 	operation := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
-		InputSnapshot: json.RawMessage(`{"old_root":"/old-tools","new_root":"/new-tools"}`),
+		InputSnapshot: snapshot(oldRoot, newRoot),
 	}
 	if err := repository.CreateOperation(ctx, operation); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.CommitToolsRootMove(ctx, operation.ID, "/old-tools", "/new-tools"); err != nil {
+	if err := repository.CommitToolsRootMove(ctx, operation.ID, oldRoot, newRoot); err != nil {
 		t.Fatal(err)
 	}
 	current, _, err := settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
-	if err != nil || current != "/new-tools" {
+	if err != nil || current != newRoot {
 		t.Fatalf("tools directory = %q, %v", current, err)
 	}
 	switched, err := repository.GetOperation(ctx, operation.ID)
@@ -258,30 +273,30 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 
 	rollback := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
-		InputSnapshot: json.RawMessage(`{"old_root":"/new-tools","new_root":"/rollback-tools"}`),
+		InputSnapshot: snapshot(newRoot, rollbackRoot),
 	}
 	if err := repository.CreateOperation(ctx, rollback); err != nil {
 		t.Fatalf("create rollback move: %v", err)
 	}
-	if err := repository.CommitToolsRootMove(ctx, rollback.ID, "/new-tools", "/rollback-tools"); err != nil {
+	if err := repository.CommitToolsRootMove(ctx, rollback.ID, newRoot, rollbackRoot); err != nil {
 		t.Fatalf("switch rollback move: %v", err)
 	}
-	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, "/new-tools", "/wrong-root"); err == nil {
+	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, newRoot, wrongRoot); err == nil {
 		t.Fatal("rollback accepted a root that was not current")
 	}
 	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
-	if err != nil || current != "/rollback-tools" {
+	if err != nil || current != rollbackRoot {
 		t.Fatalf("rejected rollback changed tools directory = %q, %v", current, err)
 	}
 	switchedAgain, err := repository.GetOperation(ctx, rollback.ID)
 	if err != nil || switchedAgain.State != "running" || switchedAgain.Stage != "switched" {
 		t.Fatalf("rejected rollback changed operation = %#v, %v", switchedAgain, err)
 	}
-	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, "/new-tools", "/rollback-tools"); err != nil {
+	if err := repository.RollbackToolsRootMove(ctx, rollback.ID, newRoot, rollbackRoot); err != nil {
 		t.Fatalf("rollback switched tools root: %v", err)
 	}
 	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
-	if err != nil || current != "/new-tools" {
+	if err != nil || current != newRoot {
 		t.Fatalf("rolled-back tools directory = %q, %v", current, err)
 	}
 	rolledBack, err := repository.GetOperation(ctx, rollback.ID)
@@ -313,12 +328,12 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 
 	pendingRollback := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
-		InputSnapshot: json.RawMessage(`{"old_root":"/new-tools","new_root":"/pending-tools"}`),
+		InputSnapshot: snapshot(newRoot, pendingRoot),
 	}
 	if err := repository.CreateOperation(ctx, pendingRollback); err != nil {
 		t.Fatalf("create pending rollback move: %v", err)
 	}
-	if err := repository.CommitToolsRootMove(ctx, pendingRollback.ID, "/new-tools", "/pending-tools"); err != nil {
+	if err := repository.CommitToolsRootMove(ctx, pendingRollback.ID, newRoot, pendingRoot); err != nil {
 		t.Fatalf("switch pending rollback move: %v", err)
 	}
 	if err := repository.TransitionOperation(ctx, pendingRollback.ID, func(operation *persistence.Operation) error {
@@ -327,11 +342,11 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("mark rollback pending: %v", err)
 	}
-	if err := repository.RollbackToolsRootMove(ctx, pendingRollback.ID, "/new-tools", "/pending-tools"); err != nil {
+	if err := repository.RollbackToolsRootMove(ctx, pendingRollback.ID, newRoot, pendingRoot); err != nil {
 		t.Fatalf("rollback pending tools root move: %v", err)
 	}
 	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
-	if err != nil || current != "/new-tools" {
+	if err != nil || current != newRoot {
 		t.Fatalf("pending rollback tools directory = %q, %v", current, err)
 	}
 	pendingRolledBack, err := repository.GetOperation(ctx, pendingRollback.ID)
@@ -351,16 +366,16 @@ func TestCommitToolsRootMoveSwitchesSettingAndOperationAtomically(t *testing.T) 
 
 	stale := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "switch",
-		InputSnapshot: json.RawMessage(`{"old_root":"/old-tools","new_root":"/other-tools"}`),
+		InputSnapshot: snapshot(oldRoot, otherRoot),
 	}
 	if err := repository.CreateOperation(ctx, stale); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.CommitToolsRootMove(ctx, stale.ID, "/old-tools", "/other-tools"); err == nil {
+	if err := repository.CommitToolsRootMove(ctx, stale.ID, oldRoot, otherRoot); err == nil {
 		t.Fatal("stale move switched the tools root")
 	}
 	current, _, err = settingsRepository.Get(ctx, settings.ToolsDirectoryKey)
-	if err != nil || current != "/new-tools" {
+	if err != nil || current != newRoot {
 		t.Fatalf("stale move changed tools directory to %q: %v", current, err)
 	}
 }
@@ -472,9 +487,13 @@ func TestDeleteInstallationUsesToolsRootAfterCompletedMove(t *testing.T) {
 	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", "tools_directory", oldRoot); err != nil {
 		t.Fatal(err)
 	}
+	inputSnapshot, err := json.Marshal(map[string]string{"old_root": oldRoot, "new_root": newRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
-		InputSnapshot: json.RawMessage(`{"old_root":"` + oldRoot + `","new_root":"` + newRoot + `"}`),
+		InputSnapshot: inputSnapshot,
 	}
 	if err := repository.CreateOperation(ctx, move); err != nil {
 		t.Fatalf("create move operation: %v", err)
@@ -534,9 +553,13 @@ func TestDeleteInstallationAfterMoveWithoutPreservingOldFiles(t *testing.T) {
 	if _, err := database.ExecContext(ctx, "INSERT INTO app_setting (setting_name, setting_value, updated_at) VALUES (?, ?, now())", settings.ToolsDirectoryKey, oldRoot); err != nil {
 		t.Fatal(err)
 	}
+	inputSnapshot, err := json.Marshal(map[string]any{"old_root": oldRoot, "new_root": newRoot, "remove_old_files": true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
-		InputSnapshot: json.RawMessage(`{"old_root":"` + oldRoot + `","new_root":"` + newRoot + `","remove_old_files":true}`),
+		InputSnapshot: inputSnapshot,
 	}
 	if err := repository.CreateOperation(ctx, move); err != nil {
 		t.Fatalf("create move operation: %v", err)
@@ -595,9 +618,14 @@ func TestDeleteInstallationBeforeMoveDoesNotRestoreDeletedInstallation(t *testin
 		func(*persistence.ToolInstallation, string) error { return nil }); err != nil {
 		t.Fatalf("delete installation before move: %v", err)
 	}
+	newRoot := filepath.Join(t.TempDir(), "new")
+	inputSnapshot, err := json.Marshal(map[string]string{"old_root": root, "new_root": newRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "running", Stage: "copying",
-		InputSnapshot: json.RawMessage(`{"old_root":"` + root + `","new_root":"` + filepath.Join(t.TempDir(), "new") + `"}`),
+		InputSnapshot: inputSnapshot,
 	}
 	if err := repository.CreateOperation(ctx, move); err != nil {
 		t.Fatal(err)
@@ -1221,7 +1249,11 @@ func TestDeleteSucceededBeforeSkipsExecutionProvenanceWithPostgreSQL(t *testing.
 
 func createReadyInstallation(t *testing.T, ctx context.Context, repository *persistence.SetupManagerRepository, packageKind, goos, goarch, release string) *persistence.ToolInstallation {
 	t.Helper()
-	installation := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: goos, PlatformGOARCH: goarch, SourceName: "test", ReleaseIdentity: release, RelativePath: packageKind + "/" + release, State: "preparing"}
+	separator := "/"
+	if goos == "windows" {
+		separator = `\`
+	}
+	installation := &persistence.ToolInstallation{ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: goos, PlatformGOARCH: goarch, SourceName: "test", ReleaseIdentity: release, RelativePath: packageKind + separator + release, State: "preparing"}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatalf("create installation: %v", err)
 	}

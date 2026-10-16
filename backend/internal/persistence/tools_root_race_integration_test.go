@@ -26,8 +26,11 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 	repository := persistence.NewSetupManagerRepository(database)
 	settingsRepository := persistence.NewSettingsRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	const rootA = "/srv/tools-a"
-	const rootB = "/srv/tools-b"
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	rootA := filepath.Join(fixtureRoot, "tools-a")
+	rootB := filepath.Join(fixtureRoot, "tools-b")
+	outputB := filepath.Join(fixtureRoot, "output-b")
+	outputRollback := filepath.Join(fixtureRoot, "output-rollback")
 	if err := settingsRepository.Set(ctx, "tools_directory", rootA); err != nil {
 		t.Fatalf("set initial tools root: %v", err)
 	}
@@ -71,7 +74,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 			func(ctx context.Context) error {
 				return settingsRepository.UpdateRuntime(ctx, rootA, "", map[string]string{
 					"tools_directory":  rootB,
-					"output_directory": "/srv/output-b",
+					"output_directory": outputB,
 				})
 			})
 		if err == nil {
@@ -114,7 +117,7 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		// the rejected key reaches the trigger; otherwise the guard fails first.
 		err := settingsRepository.UpdateRuntime(ctx, rootA, "", map[string]string{
 			"tools_directory":    rootA,
-			"output_directory":   "/srv/output-rollback",
+			"output_directory":   outputRollback,
 			"publication_format": "mka",
 		})
 		if err == nil {
@@ -134,7 +137,11 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 			t.Fatal(err)
 		}
 		move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-			InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-a","new_root":"/srv/tools-c"}`)}
+			InputSnapshot: mustFixtureJSON(t, struct {
+				SchemaVersion int    `json:"schema_version"`
+				OldRoot       string `json:"old_root"`
+				NewRoot       string `json:"new_root"`
+			}{1, rootA, filepath.Join(fixtureRoot, "tools-c")})}
 		if err := repository.CreateToolsMoveOperationAndEnqueue(ctx, move, client, service.OperationJobArgs{OperationID: move.ID}, nil); err == nil {
 			t.Fatal("move enqueue accepted a preflight for the old tools root")
 		}
@@ -150,7 +157,11 @@ func TestToolsRootUpdateAndInstallEnqueueSerializeWithPostgreSQL(t *testing.T) {
 		reason := "previous installation failed"
 		finished := time.Now().UTC()
 		operation := &persistence.Operation{ID: uuid.New(), Kind: "install", State: "failed", Stage: "download", SafeError: &reason, FinishedAt: &finished,
-			InputSnapshot:        json.RawMessage(`{"target_identity":"fpcalc:chromaprint:1.5.2:linux:amd64","schema_version":2,"tools_root":"/srv/tools-a"}`),
+			InputSnapshot: mustFixtureJSON(t, struct {
+				TargetIdentity string `json:"target_identity"`
+				SchemaVersion  int    `json:"schema_version"`
+				ToolsRoot      string `json:"tools_root"`
+			}{"fpcalc:chromaprint:1.5.2:linux:amd64", 2, rootA}),
 			TargetInstallationID: &installation.ID}
 		if err := repository.CreateOperation(ctx, operation); err != nil {
 			t.Fatal(err)
@@ -176,12 +187,14 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 	settingsRepository := persistence.NewSettingsRepository(database)
 	setupRepository := persistence.NewSetupManagerRepository(database)
 	client := openScanEnqueueRiver(t, database)
-	const (
-		oldRoot = "/srv/tools"
-		newRoot = "/srv/tools-next"
-		output  = "/srv/output"
-		neutral = "/srv/output-neutral"
-	)
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	oldRoot := filepath.Join(fixtureRoot, "tools")
+	newRoot := filepath.Join(fixtureRoot, "tools-next")
+	output := filepath.Join(fixtureRoot, "output")
+	neutral := filepath.Join(fixtureRoot, "output-neutral")
+	archiveOutput := filepath.Join(fixtureRoot, "archive", "output")
+	directRoot := filepath.Join(fixtureRoot, "tools-direct")
+	filesystemRoot := filepath.VolumeName(fixtureRoot) + string(filepath.Separator)
 	if err := settingsRepository.SetMany(ctx, map[string]string{
 		"tools_directory": oldRoot, "output_directory": output, "output_case_sensitive": "true",
 	}); err != nil {
@@ -193,16 +206,20 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 
 	for name, candidate := range map[string]string{
 		"equal":           newRoot,
-		"parent":          "/srv",
-		"child":           newRoot + "/nested",
-		"filesystem root": "/",
+		"parent":          fixtureRoot,
+		"child":           filepath.Join(newRoot, "nested"),
+		"filesystem root": filesystemRoot,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
 				t.Fatalf("reset output root before move overlap test: %v", err)
 			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued", Attempt: 1,
-				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
+				InputSnapshot: mustFixtureJSON(t, struct {
+					SchemaVersion int    `json:"schema_version"`
+					OldRoot       string `json:"old_root"`
+					NewRoot       string `json:"new_root"`
+				}{1, oldRoot, newRoot})}
 			t.Cleanup(func() {
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
 				_ = settingsRepository.SetMany(ctx, map[string]string{"tools_directory": oldRoot, "output_case_sensitive": "true"})
@@ -226,10 +243,10 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 			}
 			assertStoredRuntimeValue(t, ctx, database, "output_directory", neutral)
 			assertStoredRuntimeAbsent(t, ctx, database, "output_unicode_normalization")
-			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, "/mnt/archive/output"); err != nil {
+			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, archiveOutput); err != nil {
 				t.Fatalf("nonconflicting output update during move: %v", err)
 			}
-			assertStoredRuntimeValue(t, ctx, database, "output_directory", "/mnt/archive/output")
+			assertStoredRuntimeValue(t, ctx, database, "output_directory", archiveOutput)
 			if _, err := database.NewDelete().Model(move).WherePK().Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -239,13 +256,17 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		})
 	}
 
-	for name, candidate := range map[string]string{"equal": newRoot, "parent": "/srv", "child": newRoot + "/nested", "filesystem root": "/"} {
+	for name, candidate := range map[string]string{"equal": newRoot, "parent": fixtureRoot, "child": filepath.Join(newRoot, "nested"), "filesystem root": filesystemRoot} {
 		t.Run("move admission observes output committed first/"+name, func(t *testing.T) {
 			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
 				t.Fatalf("reset output root before move admission race: %v", err)
 			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
+				InputSnapshot: mustFixtureJSON(t, struct {
+					SchemaVersion int    `json:"schema_version"`
+					OldRoot       string `json:"old_root"`
+					NewRoot       string `json:"new_root"`
+				}{1, oldRoot, newRoot})}
 			t.Cleanup(func() {
 				_, _ = database.NewRaw("DELETE FROM river_job WHERE args->>'operation_id' = ?", move.ID.String()).Exec(ctx)
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
@@ -275,13 +296,17 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		})
 	}
 
-	for name, candidate := range map[string]string{"equal": newRoot, "parent": "/srv", "child": newRoot + "/nested", "filesystem root": "/"} {
+	for name, candidate := range map[string]string{"equal": newRoot, "parent": fixtureRoot, "child": filepath.Join(newRoot, "nested"), "filesystem root": filesystemRoot} {
 		t.Run("output update observes move admission committed first/"+name, func(t *testing.T) {
 			if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, neutral); err != nil {
 				t.Fatalf("reset output root before output update race: %v", err)
 			}
 			move := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-				InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools","new_root":"/srv/tools-next"}`)}
+				InputSnapshot: mustFixtureJSON(t, struct {
+					SchemaVersion int    `json:"schema_version"`
+					OldRoot       string `json:"old_root"`
+					NewRoot       string `json:"new_root"`
+				}{1, oldRoot, newRoot})}
 			t.Cleanup(func() {
 				_, _ = database.NewRaw("DELETE FROM river_job WHERE args->>'operation_id' = ?", move.ID.String()).Exec(ctx)
 				_, _ = database.NewDelete().Model(move).WherePK().Exec(ctx)
@@ -316,19 +341,23 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 	}
 
 	t.Run("direct tools root update without installations", func(t *testing.T) {
-		if err := settingsRepository.UpdateRuntime(ctx, oldRoot, output, map[string]string{"tools_directory": "/srv/tools-direct"}); err != nil {
+		if err := settingsRepository.UpdateRuntime(ctx, oldRoot, output, map[string]string{"tools_directory": directRoot}); err != nil {
 			t.Fatalf("direct tools root change with no installations: %v", err)
 		}
-		assertStoredRuntimeValue(t, ctx, database, "tools_directory", "/srv/tools-direct")
+		assertStoredRuntimeValue(t, ctx, database, "tools_directory", directRoot)
 	})
 
 	t.Run("failed move target is revalidated on retry", func(t *testing.T) {
-		const retryTarget = "/srv/retry-target"
+		retryTarget := filepath.Join(fixtureRoot, "retry-target")
 		reason := "previous move failed"
 		finished := time.Now().UTC()
 		operation := &persistence.Operation{ID: uuid.New(), Kind: "move_tools_root", State: "failed", Stage: "copy",
 			SafeError: &reason, FinishedAt: &finished,
-			InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-direct","new_root":"/srv/retry-target"}`)}
+			InputSnapshot: mustFixtureJSON(t, struct {
+				SchemaVersion int    `json:"schema_version"`
+				OldRoot       string `json:"old_root"`
+				NewRoot       string `json:"new_root"`
+			}{1, directRoot, retryTarget})}
 		if err := setupRepository.CreateOperation(ctx, operation); err != nil {
 			t.Fatal(err)
 		}
@@ -346,7 +375,7 @@ func TestRuntimeRootsRespectActiveMoveAndKeepNonconflictingOutputUpdatesPostgreS
 		if err := database.NewRaw("SELECT count(*) FROM river_job WHERE args->>'operation_id' = ?", operation.ID.String()).Scan(ctx, &jobs); err != nil || jobs != 0 {
 			t.Fatalf("rejected retry left River jobs=%d err=%v", jobs, err)
 		}
-		if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, "/mnt/archive/output"); err != nil {
+		if err := resetTestOutputRoot(t, ctx, settingsRepository, setupRepository, archiveOutput); err != nil {
 			t.Fatal(err)
 		}
 		retried, err := setupRepository.RetryOperationAndEnqueue(ctx, operation.ID, client, service.OperationJobArgs{OperationID: operation.ID}, nil)
@@ -529,6 +558,28 @@ func toolsRootRaceInstall() (*persistence.ToolInstallation, *persistence.Operati
 		TargetInstallationID: &installation.ID,
 	}
 	return installation, operation
+}
+
+func mustFixturePath(t *testing.T, path string) string {
+	t.Helper()
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("make fixture path absolute: %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		t.Fatalf("canonicalize fixture path: %v", err)
+	}
+	return filepath.Clean(canonical)
+}
+
+func mustFixtureJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal fixture JSON: %v", err)
+	}
+	return encoded
 }
 
 func assertToolsRootRaceState(t *testing.T, ctx context.Context, database *bun.DB, root string, installationID, operationID uuid.UUID, expectedRows int) {

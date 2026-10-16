@@ -72,6 +72,7 @@ Install these prerequisites:
 - Native PostgreSQL runtime libraries for your platform when running integration
   tests without `TEST_DATABASE_URL`; the test helper downloads PostgreSQL 18
   binaries on first use and caches them. Docker is not needed for these tests.
+  See the [embedded PostgreSQL runtime prerequisites](https://github.com/fergusstrange/embedded-postgres/blob/v2.0.0-alpha.2/docs/non-root.md).
 - [pre-commit](https://pre-commit.com/#install) for the repository hook.
 
 Install locked frontend dependencies with `task frontend:install`, then run
@@ -79,6 +80,11 @@ Install locked frontend dependencies with `task frontend:install`, then run
 the repository root. Enable the hook with `pre-commit install`. The pre-commit
 hook intentionally runs the complete `task verify`; it can be split into faster
 stages later if repository growth makes that necessary.
+
+GitHub Actions CI runs the full backend integration suite — plus the frontend
+tests and build — on Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`) and
+Windows (`amd64`). These native test jobs do not require Docker; a separate
+Docker Compose smoke job checks the deployment.
 
 Backend matching uses the vendored MIT-licensed RapidFuzz C++ library through
 cgo. Linux binaries require the system C++ runtime (`libstdc++6` on Debian);

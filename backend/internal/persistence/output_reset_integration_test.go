@@ -18,13 +18,22 @@ import (
 
 func resetBoolPointer(value bool) *bool { return &value }
 
+func nativeTestPath(t *testing.T, value string) string {
+	t.Helper()
+	path := filepath.FromSlash(value)
+	if !strings.HasPrefix(value, "/") || filepath.VolumeName(path) != "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(filepath.VolumeName(t.TempDir()) + path)
+}
+
 func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
-	if err := settings.Set(ctx, "output_directory", "/music/output-old"); err != nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-old")); err != nil {
 		t.Fatal(err)
 	}
 	repository := NewSetupManagerRepository(database)
@@ -34,12 +43,12 @@ func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 	}
 	created := false
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: "/music/output-old", NewRoot: "/music/output-new",
+		ExpectedOldRoot: nativeTestPath(t, "/music/output-old"), NewRoot: nativeTestPath(t, "/music/output-new"),
 		Prepare: func(_ context.Context, record func(OutputResetDirectory) error) error {
 			created = true
-			return record(OutputResetDirectory{Path: "/music/output-new/owned", Phase: "intent"})
+			return record(OutputResetDirectory{Path: nativeTestPath(t, "/music/output-new/owned"), Phase: "intent"})
 		}, Finish: func(_ context.Context, journal OutputResetJournal) error {
-			if journal.Token == uuid.Nil || journal.State != "committed" || len(journal.CreatedDirectories) != 1 || journal.CreatedDirectories[0] != "/music/output-new/owned" {
+			if journal.Token == uuid.Nil || journal.State != "committed" || len(journal.CreatedDirectories) != 1 || journal.CreatedDirectories[0] != nativeTestPath(t, "/music/output-new/owned") {
 				t.Fatalf("finish journal = %#v", journal)
 			}
 			return nil
@@ -52,17 +61,17 @@ func TestRunOutputResetRequestJournalsAndCommitsAtomically(t *testing.T) {
 		t.Fatalf("reset callback/token = %v/%v", created, token)
 	}
 	value, found, err := settings.Get(ctx, "output_directory")
-	if err != nil || !found || value != "/music/output-new" {
+	if err != nil || !found || value != nativeTestPath(t, "/music/output-new") {
 		t.Fatalf("output directory = %q, %v, %v", value, found, err)
 	}
 	failed, err := repository.GetOperation(ctx, queued.ID)
 	if err != nil || failed.State != "failed" || failed.SafeError == nil || *failed.SafeError == "" {
 		t.Fatalf("queued operation after reset = %#v, %v; want failed with a safe error", failed, err)
 	}
-	if err := settings.Set(ctx, "output_directory", "/music/output-bypass"); err == nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-bypass")); err == nil {
 		t.Fatal("direct output-root change succeeded")
 	}
-	if err := settings.Set(ctx, "output_directory", "/music/output-new"); err != nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-new")); err != nil {
 		t.Fatalf("same-path setting update: %v", err)
 	}
 	var state string
@@ -114,7 +123,7 @@ func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
-	if err := settings.Set(ctx, "output_directory", "/music/output-old"); err != nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-old")); err != nil {
 		t.Fatal(err)
 	}
 	existing, err := filepath.EvalSymlinks(t.TempDir())
@@ -126,7 +135,7 @@ func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.
 	repository := NewSetupManagerRepository(database)
 
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: "/music/output-old",
+		ExpectedOldRoot: nativeTestPath(t, "/music/output-old"),
 		NewRoot:         newRoot,
 		Prepare: func(_ context.Context, record func(OutputResetDirectory) error) error {
 			return record(OutputResetDirectory{Path: ancestor, Phase: "intent"})
@@ -145,7 +154,7 @@ func TestOutputResetRejectsUnplannedMissingAncestorWithoutCreatingIt(t *testing.
 	if _, err := os.Lstat(ancestor); !os.IsNotExist(err) {
 		t.Fatalf("unplanned ancestor status = %v, want it to remain absent", err)
 	}
-	if value, found, err := settings.Get(ctx, "output_directory"); err != nil || !found || value != "/music/output-old" {
+	if value, found, err := settings.Get(ctx, "output_directory"); err != nil || !found || value != nativeTestPath(t, "/music/output-old") {
 		t.Fatalf("output directory after rejected reset = %q, %v, %v; want unchanged", value, found, err)
 	}
 	journal, err := repository.ReadUnresolvedOutputReset(ctx)
@@ -166,13 +175,13 @@ func TestOutputResetFailureBlocksAdmissionsUntilRecovery(t *testing.T) {
 	ctx := context.Background()
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
-	if err := settings.Set(ctx, "output_directory", "/music/output-old"); err != nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/output-old")); err != nil {
 		t.Fatal(err)
 	}
 	repository := NewSetupManagerRepository(database)
 	prepareErr := errors.New("injected preparation failure")
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot: "/music/output-old", NewRoot: "/music/output-new",
+		ExpectedOldRoot: nativeTestPath(t, "/music/output-old"), NewRoot: nativeTestPath(t, "/music/output-new"),
 		Prepare: func(_ context.Context, _ func(OutputResetDirectory) error) error { return prepareErr },
 		Finish:  func(context.Context, OutputResetJournal) error { return nil },
 	})
@@ -205,7 +214,7 @@ func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidReque
 
 	// An unconfigured installation may initialize its output root through reset.
 	token, err := repository.RunOutputResetRequest(ctx, OutputResetRequest{
-		NewRoot: "/music/initial",
+		NewRoot: nativeTestPath(t, "/music/initial"),
 		Prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil },
 		Finish: func(_ context.Context, journal OutputResetJournal) error {
 			if journal.State != "committed" {
@@ -218,13 +227,13 @@ func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidReque
 		t.Fatalf("initialize output directory = %v, %v", token, err)
 	}
 	value, found, err := settings.Get(ctx, "output_directory")
-	if err != nil || !found || value != "/music/initial" {
+	if err != nil || !found || value != nativeTestPath(t, "/music/initial") {
 		t.Fatalf("initialized output directory = %q, %v, %v", value, found, err)
 	}
-	if err := settings.Set(ctx, "output_directory", "/music/bypass"); err == nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/bypass")); err == nil {
 		t.Fatal("direct output-root change succeeded")
 	}
-	if err := settings.Set(ctx, "output_directory", "/music/initial"); err != nil {
+	if err := settings.Set(ctx, "output_directory", nativeTestPath(t, "/music/initial")); err != nil {
 		t.Fatalf("same-path setting update: %v", err)
 	}
 
@@ -233,9 +242,9 @@ func TestRunOutputResetRequestAllowsInitialOutputDirectoryAndRejectsInvalidReque
 		prepare                func(context.Context, func(OutputResetDirectory) error) error
 		finish                 func(context.Context, OutputResetJournal) error
 	}{
-		{name: "same path", oldRoot: "/music/initial", newRoot: "/music/initial", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
-		{name: "relative path", oldRoot: "/music/initial", newRoot: "relative", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
-		{name: "missing prepare callback", oldRoot: "/music/initial", newRoot: "/music/next", finish: func(context.Context, OutputResetJournal) error { return nil }},
+		{name: "same path", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: nativeTestPath(t, "/music/initial"), prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
+		{name: "relative path", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: "relative", prepare: func(context.Context, func(OutputResetDirectory) error) error { return nil }, finish: func(context.Context, OutputResetJournal) error { return nil }},
+		{name: "missing prepare callback", oldRoot: nativeTestPath(t, "/music/initial"), newRoot: nativeTestPath(t, "/music/next"), finish: func(context.Context, OutputResetJournal) error { return nil }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -254,8 +263,8 @@ func TestOutputResetRejectsStaleToolsRootWithoutChangingRuntimeSettings(t *testi
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
 	for name, value := range map[string]string{
-		"tools_directory":              "/music/tools-current",
-		"output_directory":             "/music/output-current",
+		"tools_directory":              nativeTestPath(t, "/music/tools-current"),
+		"output_directory":             nativeTestPath(t, "/music/output-current"),
 		"output_case_sensitive":        "true",
 		"output_unicode_normalization": "none",
 		"publication_format":           "source",
@@ -266,11 +275,11 @@ func TestOutputResetRejectsStaleToolsRootWithoutChangingRuntimeSettings(t *testi
 	}
 	before := runtimeSettingsSnapshot(t, ctx, database)
 	_, err := NewSetupManagerRepository(database).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot:   "/music/output-current",
-		ExpectedToolsRoot: "/music/tools-stale",
-		NewRoot:           "/music/output-next",
+		ExpectedOldRoot:   nativeTestPath(t, "/music/output-current"),
+		ExpectedToolsRoot: nativeTestPath(t, "/music/tools-stale"),
+		NewRoot:           nativeTestPath(t, "/music/output-next"),
 		RuntimeValues: map[string]string{
-			"tools_directory":              "/music/tools-next",
+			"tools_directory":              nativeTestPath(t, "/music/tools-next"),
 			"output_case_sensitive":        "false",
 			"output_unicode_normalization": "nfc",
 			"publication_format":           "mka",
@@ -297,8 +306,8 @@ func TestOutputResetCommitsRuntimeSemanticsTogetherWithOutputRoot(t *testing.T) 
 	initializeRiver(t, ctx, database)
 	settings := NewSettingsRepository(database)
 	for name, value := range map[string]string{
-		"tools_directory":              "/music/tools-current",
-		"output_directory":             "/music/output-current",
+		"tools_directory":              nativeTestPath(t, "/music/tools-current"),
+		"output_directory":             nativeTestPath(t, "/music/output-current"),
 		"output_case_sensitive":        "true",
 		"output_unicode_normalization": "none",
 		"publication_format":           "source",
@@ -308,11 +317,11 @@ func TestOutputResetCommitsRuntimeSemanticsTogetherWithOutputRoot(t *testing.T) 
 		}
 	}
 	_, err := NewSetupManagerRepository(database).RunOutputResetRequest(ctx, OutputResetRequest{
-		ExpectedOldRoot:   "/music/output-current",
-		ExpectedToolsRoot: "/music/tools-current",
-		NewRoot:           "/music/output-next",
+		ExpectedOldRoot:   nativeTestPath(t, "/music/output-current"),
+		ExpectedToolsRoot: nativeTestPath(t, "/music/tools-current"),
+		NewRoot:           nativeTestPath(t, "/music/output-next"),
 		RuntimeValues: map[string]string{
-			"tools_directory":    "/music/tools-next",
+			"tools_directory":    nativeTestPath(t, "/music/tools-next"),
 			"publication_format": "mka",
 		},
 		OutputCaseSensitive:        resetBoolPointer(false),
@@ -325,8 +334,8 @@ func TestOutputResetCommitsRuntimeSemanticsTogetherWithOutputRoot(t *testing.T) 
 	}
 	got := runtimeSettingsSnapshot(t, ctx, database)
 	want := map[string]string{
-		"tools_directory":              "/music/tools-next",
-		"output_directory":             "/music/output-next",
+		"tools_directory":              nativeTestPath(t, "/music/tools-next"),
+		"output_directory":             nativeTestPath(t, "/music/output-next"),
 		"output_case_sensitive":        "false",
 		"output_unicode_normalization": "nfc",
 		"publication_format":           "mka",

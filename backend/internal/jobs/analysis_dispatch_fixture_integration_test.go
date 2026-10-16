@@ -57,6 +57,14 @@ func newAnalysisDispatchFixture(t *testing.T) analysisDispatchFixture {
 	return newAnalysisDispatchFixtureWithPreparer(t, nil)
 }
 
+func testInstallationRelativePath(goos, packageKind, release string) string {
+	separator := "/"
+	if goos == "windows" {
+		separator = `\`
+	}
+	return packageKind + separator + release
+}
+
 func newAnalysisDispatchFixtureWithPreparer(t *testing.T, preparer service.SourceAnalysisPreparing) analysisDispatchFixture {
 	return newAnalysisDispatchFixtureConfigured(t, preparer, "in_place", true)
 }
@@ -201,7 +209,7 @@ func (fixture *analysisDispatchFixture) installAnalysisDispatchFPCalc(t *testing
 		ID: installationID, PackageKind: string(tools.PackageFPCalc),
 		PlatformGOOS: fixture.platform.Platform.GOOS, PlatformGOARCH: fixture.platform.Platform.GOARCH,
 		SourceName: "analysis-dispatch-test", ReleaseIdentity: release,
-		RelativePath: filepath.ToSlash(filepath.Join("fpcalc", release)), State: "ready",
+		RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "fpcalc", release), State: "ready",
 		ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if err := fixture.setup.CreateInstallation(ctx, installation); err != nil {
@@ -271,14 +279,14 @@ func (fixture *analysisDispatchFixture) startWithScheduleAndReset(t *testing.T, 
 	shaEnabled, rerun, cacheOnly := true, false, false
 	tool := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: fixture.installationID,
-		RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", analysisDispatchRelease)), Executable: "ffprobe",
+		RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "ffmpeg", analysisDispatchRelease), Executable: "ffprobe",
 		Version: analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
 	}
 	selectedTools := []persistence.SourceAnalysisToolSelection{tool}
 	if fixture.fpcalcID != uuid.Nil {
 		selectedTools = append(selectedTools, persistence.SourceAnalysisToolSelection{
 			PackageKind: "fpcalc", InstallationID: fixture.fpcalcID,
-			RelativePath: filepath.ToSlash(filepath.Join("fpcalc", analysisDispatchRelease)), Executable: "fpcalc",
+			RelativePath: testInstallationRelativePath(fixture.platform.Platform.GOOS, "fpcalc", analysisDispatchRelease), Executable: "fpcalc",
 			Version: analysisDispatchRelease, VersionBanner: "fpcalc version " + analysisDispatchRelease,
 		})
 	}

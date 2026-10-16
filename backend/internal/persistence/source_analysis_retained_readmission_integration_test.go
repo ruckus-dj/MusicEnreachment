@@ -30,10 +30,7 @@ func TestRetainedSourceAnalysisReadmissionAfterDismissalWithPostgreSQL(t *testin
 	)
 	installationID := uuid.New()
 	now := time.Now().UTC()
-	relativePath, err := tools.ManagedRelativePath(tools.PackageFFmpeg, "retained-release")
-	if err != nil {
-		t.Fatalf("resolve managed ffmpeg path: %v", err)
-	}
+	relativePath := testManagedRelativePath(t, tools.PackageFFmpeg, "darwin", "retained-release")
 	installation := &persistence.ToolInstallation{
 		ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: "retained-release", RelativePath: relativePath,

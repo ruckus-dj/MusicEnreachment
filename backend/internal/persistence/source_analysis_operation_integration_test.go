@@ -403,10 +403,7 @@ func TestNormalizedSourceAnalysisTerminalReleasesToolAndWorkHoldsWithPostgreSQL(
 
 func insertAnalysisFPCalcFixture(t *testing.T, ctx context.Context, database *bun.DB, releaseIdentity, version string) *persistence.ToolInstallation {
 	t.Helper()
-	relativePath, err := tools.ManagedRelativePath(tools.PackageFPCalc, releaseIdentity)
-	if err != nil {
-		t.Fatalf("managed fpcalc analysis installation path: %v", err)
-	}
+	relativePath := testManagedRelativePath(t, tools.PackageFPCalc, "darwin", releaseIdentity)
 	now := time.Now().UTC()
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "darwin", PlatformGOARCH: "arm64",

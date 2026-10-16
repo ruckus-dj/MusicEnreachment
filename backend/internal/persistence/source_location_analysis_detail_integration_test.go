@@ -196,10 +196,7 @@ func TestReadSourceLocationDetailIncludesSelectedAnalysisAndBatchHoldWithPostgre
 
 func readyFPCalc(t *testing.T, releaseIdentity, version string) *persistence.ToolInstallation {
 	t.Helper()
-	relativePath, err := tools.ManagedRelativePath(tools.PackageFPCalc, releaseIdentity)
-	if err != nil {
-		t.Fatalf("managed fpcalc detail installation path: %v", err)
-	}
+	relativePath := testManagedRelativePath(t, tools.PackageFPCalc, "darwin", releaseIdentity)
 	verifiedAt := time.Now().UTC()
 	return &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "darwin", PlatformGOARCH: "arm64",

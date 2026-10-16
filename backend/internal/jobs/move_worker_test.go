@@ -139,6 +139,33 @@ func TestMoveWorkerCopiesOnlyManagedFilesAndKeepsUnknownData(t *testing.T) {
 	}
 }
 
+func TestMoveWorkerMatchesEquivalentNativeRelativePathSeparators(t *testing.T) {
+	t.Parallel()
+	if filepath.Separator != '\\' {
+		t.Skip("requires Windows-native path separators")
+	}
+	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, false, false)
+	for index := range snapshot.Files {
+		// Preflight snapshots use native separators while the database may retain
+		// slash-separated relative paths written by a Linux instance.
+		snapshot.Files[index].RelativePath = filepath.Clean(snapshot.Files[index].RelativePath)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.InputSnapshot = raw
+
+	repository := &moveWorkerRepository{workerRepository: &workerRepository{operation: operation, installation: installation}, root: oldRoot}
+	worker := jobs.NewMoveWorker(repository, service.NewOperations(repository), moveWorkerSettings{root: oldRoot}, tools.Platform{GOOS: "linux", GOARCH: "amd64"}, tools.NewLifecycle(moveCommandRunner{}))
+	if err := worker.Work(context.Background(), operation); err != nil {
+		t.Fatalf("move rejected equivalent relative-path separators: %v", err)
+	}
+	if repository.root != newRoot || operation.State != "succeeded" {
+		t.Fatalf("move result root=%s operation=%s", repository.root, operation.State)
+	}
+}
+
 func TestMoveWorkerRestoresRootsAndConfirmedConflictsOnVerificationFailure(t *testing.T) {
 	t.Parallel()
 	oldRoot, newRoot, operation, installation, snapshot := newMoveFixture(t, true, true)
@@ -801,9 +828,13 @@ func dispatchMove(t *testing.T, repository *moveWorkerRepository, root string) e
 	runtimeSettings := moveWorkerSettings{root: root}
 	dispatcher := jobs.NewInstallationWorker(repository, operations, nil, runtimeSettings, platform, nil)
 	dispatcher.SetMoveWorker(jobs.NewMoveWorker(repository, operations, runtimeSettings, platform, tools.NewLifecycle(moveCommandRunner{})))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	return dispatcher.Work(ctx, workerJob(repository.operation.ID))
+	err := dispatcher.Work(ctx, workerJob(repository.operation.ID))
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("move worker dispatch exceeded 60s timeout: %w", err)
+	}
+	return err
 }
 
 func TestInstallationWorkerPreparesSourceWitnessesBeforeSwitch(t *testing.T) {

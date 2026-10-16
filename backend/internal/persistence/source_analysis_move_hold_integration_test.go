@@ -4,8 +4,8 @@ package persistence_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -24,12 +24,15 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	ctx := context.Background()
 	inventory := persistence.NewSourceInventoryRepository(database)
 	setup := persistence.NewSetupManagerRepository(database)
-	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", "/srv/tools-before"); err != nil {
+	fixtureRoot := mustFixturePath(t, t.TempDir())
+	toolsBefore := filepath.Join(fixtureRoot, "tools-before")
+	toolsAfter := filepath.Join(fixtureRoot, "tools-after")
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "tools_directory", toolsBefore); err != nil {
 		t.Fatal(err)
 	}
 	client := openScanEnqueueRiver(t, database)
 
-	root := createInventoryRoot(t, ctx, inventory, "/srv/move-hold")
+	root := createInventoryRoot(t, ctx, inventory, filepath.Join(fixtureRoot, "move-hold"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "album/track.flac", 2048, probeMtime())
 	establishInventory(t, ctx, database, root)
 	installationID := insertAnalysisInstallation(t, ctx, database, "held")
@@ -43,7 +46,12 @@ func TestToolsMoveEnqueueRefusesAnyActiveAnalysisHoldWithPostgreSQL(t *testing.T
 	// The move snapshot lists no files at all; the global hold must still refuse.
 	move := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"/srv/tools-before","new_root":"/srv/tools-after","files":[]}`),
+		InputSnapshot: mustFixtureJSON(t, struct {
+			SchemaVersion int      `json:"schema_version"`
+			OldRoot       string   `json:"old_root"`
+			NewRoot       string   `json:"new_root"`
+			Files         []string `json:"files"`
+		}{1, toolsBefore, toolsAfter, []string{}}),
 	}
 	if err := setup.CreateToolsMoveOperationAndEnqueue(ctx, move, client,
 		serviceOperationArgs{OperationID: move.ID}, nil); !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {

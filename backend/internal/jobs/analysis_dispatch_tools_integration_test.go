@@ -80,7 +80,7 @@ func writeAnalysisDispatchFFmpeg(t *testing.T, ctx context.Context, database *bu
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg),
 		PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,
 		SourceName: "analysis-dispatch-test", ReleaseIdentity: analysisDispatchRelease,
-		RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", analysisDispatchRelease)),
+		RelativePath: testInstallationRelativePath(runtime.GOOS, "ffmpeg", analysisDispatchRelease),
 		State:        "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if err := persistence.NewSetupManagerRepository(database).CreateInstallation(ctx, installation); err != nil {

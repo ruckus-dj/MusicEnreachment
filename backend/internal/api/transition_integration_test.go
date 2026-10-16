@@ -23,6 +23,14 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
+func testInstallationRelativePath(goos, packageKind, release string) string {
+	separator := "/"
+	if goos == "windows" {
+		separator = `\`
+	}
+	return packageKind + separator + release
+}
+
 func TestToolTransitionHTTPResponsesPostgreSQL(t *testing.T) {
 	t.Parallel()
 	database := testpostgres.OpenMigrated(t)
@@ -234,7 +242,7 @@ func createTransitionInstallation(t *testing.T, ctx context.Context, repository 
 	id := uuid.New()
 	installation := &persistence.ToolInstallation{
 		ID: id, PackageKind: packageKind, PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "fixture", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join(packageKind, release)), State: "preparing",
+		SourceName: "fixture", ReleaseIdentity: release, RelativePath: testInstallationRelativePath("linux", packageKind, release), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)

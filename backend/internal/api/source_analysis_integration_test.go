@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -231,7 +230,6 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("managed fpcalc path: %v", err)
 		}
-		relativePath = filepath.ToSlash(relativePath)
 		verifiedAt := time.Now().UTC()
 		installation := &persistence.ToolInstallation{
 			ID: id, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.Platform.GOOS,
@@ -406,7 +404,6 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ffmpegPath = filepath.ToSlash(ffmpegPath)
 	verifiedAt := time.Now().UTC()
 	ffmpeg := &persistence.ToolInstallation{
 		ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,

@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +16,15 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/service"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
+
+func nativeTestPath(t *testing.T, value string) string {
+	t.Helper()
+	path := filepath.FromSlash(value)
+	if !strings.HasPrefix(value, "/") || filepath.VolumeName(path) != "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(filepath.VolumeName(t.TempDir()) + path)
+}
 
 func sameSnapshotIntent(left, right json.RawMessage) bool {
 	var leftValue, rightValue any
@@ -33,11 +43,11 @@ func TestOutputResetCancelsQueuedNormalizedAnalysisAndRetainsSuccesses(t *testin
 	ctx := context.Background()
 	client := openScanEnqueueRiver(t, database)
 	manager := persistence.NewSetupManagerRepository(database)
-	if err := persistence.NewSettingsRepository(database).Set(ctx, "output_directory", "/music/reset-analysis-old"); err != nil {
+	if err := persistence.NewSettingsRepository(database).Set(ctx, "output_directory", nativeTestPath(t, "/music/reset-analysis-old")); err != nil {
 		t.Fatal(err)
 	}
 	repository := persistence.NewSourceInventoryRepository(database)
-	root := createInventoryRoot(t, ctx, repository, "/srv/reset-analysis")
+	root := createInventoryRoot(t, ctx, repository, nativeTestPath(t, "/srv/reset-analysis"))
 	location := insertAnalysisLocation(t, ctx, database, root.ID, "track.flac", 2048, probeMtime())
 	secondLocation := insertAnalysisLocation(t, ctx, database, root.ID, "track-2.flac", 4096, probeMtime())
 	establishInventory(t, ctx, database, root)
@@ -126,7 +136,7 @@ func TestOutputResetCancelsQueuedNormalizedAnalysisAndRetainsSuccesses(t *testin
 	}
 
 	if _, err := manager.RunOutputResetRequest(ctx, persistence.OutputResetRequest{
-		ExpectedOldRoot: "/music/reset-analysis-old", NewRoot: "/music/reset-analysis-new",
+		ExpectedOldRoot: nativeTestPath(t, "/music/reset-analysis-old"), NewRoot: nativeTestPath(t, "/music/reset-analysis-new"),
 		Prepare: func(context.Context, func(persistence.OutputResetDirectory) error) error { return nil },
 		Finish:  func(context.Context, persistence.OutputResetJournal) error { return nil },
 	}); err != nil {

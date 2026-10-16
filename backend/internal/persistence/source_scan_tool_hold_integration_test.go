@@ -107,9 +107,15 @@ func TestSourceScanToolHoldsUseVerifiedSelectionsWithPostgreSQL(t *testing.T) {
 		t.Fatal("SQL guard accepted an active scan whose tool-read flag disagreed with its holds")
 	}
 
+	blockedMoveSnapshot, err := json.Marshal(map[string]any{
+		"schema_version": 1, "old_root": toolsRoot, "new_root": filepath.Join(t.TempDir(), "tools-blocked"), "files": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	blockedMove := &persistence.Operation{
 		ID: uuid.New(), Kind: "move_tools_root", State: "queued", Stage: "queued",
-		InputSnapshot: json.RawMessage(`{"schema_version":1,"old_root":"` + toolsRoot + `","new_root":"` + filepath.Join(t.TempDir(), "tools-blocked") + `","files":[]}`),
+		InputSnapshot: blockedMoveSnapshot,
 	}
 	if err := setup.CreateToolsMoveOperationAndEnqueue(ctx, blockedMove, client,
 		serviceOperationArgs{OperationID: blockedMove.ID}, nil); !errors.Is(err, persistence.ErrToolsInstallationHeldByAnalysis) {
@@ -170,12 +176,14 @@ func TestSourceScanToolHoldsUseVerifiedSelectionsWithPostgreSQL(t *testing.T) {
 func insertScanHoldInstallation(t *testing.T, ctx context.Context, database *bun.DB, toolsRoot, kind, executable, banner string) persistence.SourceAnalysisToolSelection {
 	t.Helper()
 	release := "scan-hold-" + uuid.NewString()
-	relativePath := filepath.ToSlash(filepath.Join(kind, release))
+	// The persisted relative path follows the selected platform's convention,
+	// which is the runtime platform for this fixture.
+	relativePath := filepath.Join(kind, release)
 	executableName := executable
 	if runtime.GOOS == "windows" {
 		executableName += ".exe"
 	}
-	executablePath := filepath.Join(toolsRoot, filepath.FromSlash(relativePath), executableName)
+	executablePath := filepath.Join(toolsRoot, relativePath, executableName)
 	if err := os.MkdirAll(filepath.Dir(executablePath), 0o755); err != nil {
 		t.Fatalf("create managed tool directory: %v", err)
 	}

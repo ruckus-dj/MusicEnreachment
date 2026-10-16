@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -375,10 +376,7 @@ func insertAnalysisLocation(t *testing.T, ctx context.Context, database *bun.DB,
 func insertAnalysisInstallation(t *testing.T, ctx context.Context, database *bun.DB, identity string) uuid.UUID {
 	t.Helper()
 	now := time.Now().UTC()
-	relativePath, err := tools.ManagedRelativePath(tools.PackageFFmpeg, identity)
-	if err != nil {
-		t.Fatalf("managed analysis installation path: %v", err)
-	}
+	relativePath := testManagedRelativePath(t, tools.PackageFFmpeg, "darwin", identity)
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: "ffmpeg", PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: identity, RelativePath: relativePath,
@@ -389,6 +387,19 @@ func insertAnalysisInstallation(t *testing.T, ctx context.Context, database *bun
 		t.Fatalf("insert analysis installation %s: %v", identity, err)
 	}
 	return installation.ID
+}
+
+// Persisted installation paths follow the recorded platform, not the test host.
+func testManagedRelativePath(t *testing.T, kind tools.PackageKind, goos, identity string) string {
+	t.Helper()
+	relativePath, err := tools.ManagedRelativePath(kind, identity)
+	if err != nil {
+		t.Fatalf("managed test installation path: %v", err)
+	}
+	if goos == "windows" {
+		return strings.ReplaceAll(relativePath, "/", `\`)
+	}
+	return filepath.ToSlash(relativePath)
 }
 
 func verifiedExecutableVersionMetadata(t *testing.T, kind tools.PackageKind, goos, version string) json.RawMessage {

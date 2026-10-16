@@ -712,10 +712,7 @@ func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun
 	t.Helper()
 	kind := tools.PackageKind(packageKind)
 	releaseIdentity := packageKind + "-test-release"
-	relativePath, err := tools.ManagedRelativePath(kind, releaseIdentity)
-	if err != nil {
-		t.Fatalf("managed %s analysis installation path: %v", packageKind, err)
-	}
+	relativePath := testManagedRelativePath(t, kind, "darwin", releaseIdentity)
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: packageKind, PlatformGOOS: "darwin", PlatformGOARCH: "arm64",
 		SourceName: "analysis-test", ReleaseIdentity: releaseIdentity, RelativePath: relativePath,
@@ -727,10 +724,11 @@ func insertVerifiedAnalysisTool(t *testing.T, ctx context.Context, database *bun
 		t.Fatalf("decode verified executable metadata: %v", err)
 	}
 	versions[executable] = banner
-	installation.ExecutableVersions, err = json.Marshal(versions)
+	executableVersions, err := json.Marshal(versions)
 	if err != nil {
 		t.Fatalf("encode verified executable metadata: %v", err)
 	}
+	installation.ExecutableVersions = executableVersions
 	verifiedAt := time.Now().UTC()
 	installation.VerifiedAt = &verifiedAt
 	if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
