@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ const (
 	poolMaxOpen    = 8
 	adminPoolLimit = 4
 	resourcePrefix = "melotrove_test_"
+	cleanupTimeout = time.Minute
 )
 
 var process struct {
@@ -146,7 +148,11 @@ func adminDatabase(t *testing.T) *bun.DB {
 	process.serverOnce.Do(func() {
 		process.adminURL = os.Getenv("TEST_DATABASE_URL")
 		if process.adminURL == "" {
-			server := postgres.NewDatabase(postgres.DefaultConfig().Version(postgres.V18).Port(0))
+			config := postgres.DefaultConfig().Version(postgres.V18).Port(0).StartParameters(map[string]string{"fsync": "off"})
+			if runtime.GOOS == "windows" {
+				config = config.Environment("PG_RESTRICT_EXEC=1")
+			}
+			server := postgres.NewDatabase(config)
 			if err := server.Start(); err != nil {
 				process.serverErr = fmt.Errorf("start embedded PostgreSQL: %w", err)
 				return
@@ -261,7 +267,7 @@ func registerResource(name string) {
 }
 
 func dropDatabase(name string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	_, err := process.adminDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)")
 	return err
@@ -283,10 +289,7 @@ func cleanupProcess() error {
 		}
 	}
 	for index := len(resources) - 1; index >= 0; index-- {
-		queryCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		_, err := admin.ExecContext(queryCtx, "DROP DATABASE IF EXISTS "+quoteIdentifier(resources[index])+" WITH (FORCE)")
-		cancel()
-		if err != nil {
+		if err := dropDatabase(resources[index]); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}

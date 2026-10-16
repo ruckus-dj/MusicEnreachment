@@ -146,8 +146,6 @@ jobs:
           CGO_ENABLED: "1"
           CC: gcc
           CXX: g++
-          # Hosted Windows runners deny PostgreSQL's restricted-token re-exec.
-          PG_RESTRICT_EXEC: ${{ runner.os == 'Windows' && '1' || '' }}
         run: go test -tags=integration -count=1 -p 8 -parallel 8 ./...
       - name: Test frontend
         working-directory: frontend
