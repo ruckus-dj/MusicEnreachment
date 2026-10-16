@@ -234,7 +234,7 @@ func createTransitionInstallation(t *testing.T, ctx context.Context, repository 
 	id := uuid.New()
 	installation := &persistence.ToolInstallation{
 		ID: id, PackageKind: packageKind, PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "fixture", ReleaseIdentity: release, RelativePath: filepath.Join(packageKind, release), State: "preparing",
+		SourceName: "fixture", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join(packageKind, release)), State: "preparing",
 	}
 	if err := repository.CreateInstallation(ctx, installation); err != nil {
 		t.Fatal(err)

@@ -130,7 +130,7 @@ func (fixture *analysisDispatchFixture) createOrphanAnalysis(t *testing.T, ctx c
 	shaEnabled, rerun, cacheOnly := true, false, false
 	probe := persistence.SourceAnalysisToolSelection{
 		PackageKind: "ffmpeg", InstallationID: fixture.installationID,
-		RelativePath: filepath.Join("ffmpeg", analysisDispatchRelease), Executable: "ffprobe",
+		RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", analysisDispatchRelease)), Executable: "ffprobe",
 		Version: analysisDispatchRelease, VersionBanner: "ffprobe version " + analysisDispatchRelease,
 	}
 	snapshot, err := json.Marshal(persistence.SourceAnalysisOperationSnapshot{

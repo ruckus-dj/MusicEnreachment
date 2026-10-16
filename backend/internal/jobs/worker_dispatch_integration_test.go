@@ -1098,7 +1098,7 @@ func enqueueInstall(t *testing.T, ctx context.Context, repository *persistence.S
 	t.Helper()
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFPCalc), PlatformGOOS: "linux", PlatformGOARCH: "amd64",
-		SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: filepath.Join("fpcalc", release),
+		SourceName: "chromaprint", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join("fpcalc", release)),
 		State: "preparing",
 	}
 	snapshot, err := json.Marshal(service.InstallInputSnapshot{

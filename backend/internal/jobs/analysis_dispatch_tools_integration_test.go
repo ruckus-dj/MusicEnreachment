@@ -71,7 +71,7 @@ func analysisProbeExecutableName(t *testing.T, want string) string {
 func writeAnalysisDispatchFFmpeg(t *testing.T, ctx context.Context, database *bun.DB, repository *persistence.SettingsRepository, toolsRoot string, platform settings.PlatformState) (uuid.UUID, string) {
 	t.Helper()
 	helper := buildAnalysisProbeExecutables(t, toolsRoot)
-	versions, err := json.Marshal(map[string]string{"ffmpeg": "ffmpeg version " + analysisDispatchRelease, "ffprobe": "ffprobe version " + analysisDispatchRelease})
+	versions, err := json.Marshal(map[string]string{tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[0]: "ffmpeg version " + analysisDispatchRelease, tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[1]: "ffprobe version " + analysisDispatchRelease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func writeAnalysisDispatchFFmpeg(t *testing.T, ctx context.Context, database *bu
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg),
 		PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,
 		SourceName: "analysis-dispatch-test", ReleaseIdentity: analysisDispatchRelease,
-		RelativePath: filepath.Join("ffmpeg", analysisDispatchRelease),
+		RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", analysisDispatchRelease)),
 		State:        "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if err := persistence.NewSetupManagerRepository(database).CreateInstallation(ctx, installation); err != nil {

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -430,7 +431,7 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 			t.Fatalf("write the managed %s: %v", name, err)
 		}
 	}
-	versions, err := json.Marshal(map[string]string{"ffmpeg": "ffmpeg version " + release, "ffprobe": "ffprobe version " + release})
+	versions, err := json.Marshal(map[string]string{tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[0]: "ffmpeg version " + release, tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)[1]: "ffprobe version " + release})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +439,7 @@ func (fixture sourceApplicationFixture) provisionManagedFFprobe(t *testing.T) {
 	installation := &persistence.ToolInstallation{
 		ID: uuid.New(), PackageKind: string(tools.PackageFFmpeg),
 		PlatformGOOS: fixture.platform.Platform.GOOS, PlatformGOARCH: fixture.platform.Platform.GOARCH,
-		SourceName: "btbn", ReleaseIdentity: release, RelativePath: filepath.Join("ffmpeg", release),
+		SourceName: "btbn", ReleaseIdentity: release, RelativePath: filepath.ToSlash(filepath.Join("ffmpeg", release)),
 		State: "ready", ExecutableVersions: versions, VerifiedAt: &verifiedAt,
 	}
 	if err := fixture.installer.CreateInstallation(ctx, installation); err != nil {

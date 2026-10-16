@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -175,6 +176,7 @@ func c07SeedLegacyReadyInstallation(t *testing.T, ctx context.Context, repo *per
 	if err != nil {
 		t.Fatal(err)
 	}
+	relative = filepath.ToSlash(relative)
 	installation := &persistence.ToolInstallation{
 		ID: id, PackageKind: "ffmpeg", PlatformGOOS: "linux", PlatformGOARCH: "amd64",
 		SourceName: "legacy-test", ReleaseIdentity: version, RelativePath: relative,

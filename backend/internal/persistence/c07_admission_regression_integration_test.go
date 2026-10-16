@@ -5,6 +5,7 @@ package persistence_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -136,6 +137,7 @@ func c07Admission(t *testing.T, ctx context.Context, repo *persistence.SetupMana
 	if err != nil {
 		t.Fatal(err)
 	}
+	relative = filepath.ToSlash(relative)
 	installation := &persistence.ToolInstallation{ID: installationID, PackageKind: kind, PlatformGOOS: "linux", PlatformGOARCH: "amd64", SourceName: "test", ReleaseIdentity: version, RelativePath: relative, State: "preparing", ArtifactIdentities: []byte(`[]`)}
 	operation := &persistence.Operation{ID: operationID, Kind: "install", State: "queued", Stage: "queued", InputSnapshot: snapshot, TargetInstallationID: &installationID}
 	err = repo.CreateInstallationOperationAndEnqueue(ctx, root, installation, operation, client, service.OperationJobArgs{OperationID: operationID}, nil)

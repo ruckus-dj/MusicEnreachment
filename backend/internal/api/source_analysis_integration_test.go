@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -230,11 +231,12 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("managed fpcalc path: %v", err)
 		}
+		relativePath = filepath.ToSlash(relativePath)
 		verifiedAt := time.Now().UTC()
 		installation := &persistence.ToolInstallation{
 			ID: id, PackageKind: string(tools.PackageFPCalc), PlatformGOOS: platform.Platform.GOOS,
 			PlatformGOARCH: platform.Platform.GOARCH, SourceName: "api-test", ReleaseIdentity: release,
-			RelativePath: relativePath, State: "ready", ExecutableVersions: json.RawMessage(fmt.Sprintf(`{"fpcalc":%q}`, "fpcalc version "+version)),
+			RelativePath: relativePath, State: "ready", ExecutableVersions: json.RawMessage(fmt.Sprintf(`{%q:%q}`, tools.ExpectedExecutables(tools.PackageFPCalc, platform.Platform.GOOS)[0], "fpcalc version "+version)),
 			ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 		}
 		if _, err := database.NewInsert().Model(installation).Exec(ctx); err != nil {
@@ -404,11 +406,12 @@ func TestSourceAnalysisHTTPAgainstPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ffmpegPath = filepath.ToSlash(ffmpegPath)
 	verifiedAt := time.Now().UTC()
 	ffmpeg := &persistence.ToolInstallation{
 		ID: ffmpegID, PackageKind: "ffmpeg", PlatformGOOS: platform.Platform.GOOS, PlatformGOARCH: platform.Platform.GOARCH,
 		SourceName: "api-test", ReleaseIdentity: "ffmpeg-api-test", RelativePath: ffmpegPath, State: "ready",
-		ExecutableVersions: json.RawMessage(`{"ffmpeg":"ffmpeg version 6.1.1","ffprobe":"ffprobe version 6.1.1"}`),
+		ExecutableVersions: json.RawMessage(fmt.Sprintf(`{%q:%q,%q:%q}`, tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[0], "ffmpeg version 6.1.1", tools.ExpectedExecutables(tools.PackageFFmpeg, platform.Platform.GOOS)[1], "ffprobe version 6.1.1")),
 		ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verifiedAt,
 	}
 	if _, err := database.NewInsert().Model(ffmpeg).Exec(ctx); err != nil {
