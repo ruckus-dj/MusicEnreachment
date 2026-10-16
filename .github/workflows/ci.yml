@@ -61,6 +61,17 @@ jobs:
       - uses: go-task/setup-task@v2
         with:
           version: 3.x
+      - name: Install PostgreSQL runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libssl3t64 \
+            libreadline8t64 \
+            libxml2 \
+            libgssapi-krb5-2 \
+            zlib1g \
+            liblz4-1 \
+            libzstd1
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
@@ -98,6 +109,18 @@ jobs:
       - uses: go-task/setup-task@v2
         with:
           version: 3.x
+      - name: Install PostgreSQL runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libssl3t64 \
+            libreadline8t64 \
+            libxml2 \
+            libgssapi-krb5-2 \
+            zlib1g \
+            liblz4-1 \
+            libzstd1
       - name: Install Windows C++ toolchain
         id: windows-cxx
         if: runner.os == 'Windows'
@@ -115,15 +138,15 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      # Full PostgreSQL integration coverage runs on Ubuntu in `task verify`; this
-      # platform matrix keeps the default Go unit tests runnable without Docker.
-      - name: Test backend unit tests
+      # The embedded PostgreSQL 18 provider makes the full integration suite
+      # available on every native platform in this matrix.
+      - name: Test backend integration suite
         working-directory: backend
         env:
           CGO_ENABLED: "1"
           CC: gcc
           CXX: g++
-        run: go test -v ./...
+        run: go test -tags=integration -count=1 -p 8 -parallel 8 ./...
       - name: Test frontend
         working-directory: frontend
         run: npm test

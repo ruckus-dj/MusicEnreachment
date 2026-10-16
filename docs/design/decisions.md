@@ -275,7 +275,9 @@
   `integration`, отдельно от unit suite. По решению владельца от 2026-10-15
   `TEST_DATABASE_URL` необязателен: если он задан, тесты используют его как
   административное подключение для создания изолированных тестовых БД; иначе
-  запускают PostgreSQL через Testcontainers for Go (требуется Docker).
+  запускают PostgreSQL 18 через `github.com/fergusstrange/embedded-postgres/v2`
+  версии `v2.0.0-alpha.2`. Бинарники соответствующей платформы загружаются и
+  кэшируются; требуются native runtime libraries PostgreSQL для выбранной ОС.
 - Vite dev server проксирует `/api` и `/health` на backend `127.0.0.1:8080`, не
   включая CORS и не создавая отдельную development security model.
 - Node.js 24 LTS используется только для frontend-инструментов; npm фиксирует
@@ -285,7 +287,7 @@
   уточняться по мере разработки.
 - Unit-тесты Go пишутся на стандартном пакете `testing`.
 - Frontend unit/component-тесты: Vitest + React Testing Library.
-- PostgreSQL integration tests через Testcontainers for Go входят в полный
+- PostgreSQL integration tests через embedded PostgreSQL входят в полный
   `task verify`; E2E-тесты Playwright в CI остаются отложенными до появления
   прямой необходимости.
 

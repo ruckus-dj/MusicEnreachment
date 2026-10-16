@@ -12,19 +12,16 @@ import (
 	"testing"
 	"time"
 
+	postgres "github.com/fergusstrange/embedded-postgres/v2"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/migrate"
 )
 
 const (
-	postgresImage  = "postgres:17"
 	poolMaxOpen    = 8
 	adminPoolLimit = 4
 	resourcePrefix = "melotrove_test_"
@@ -35,7 +32,7 @@ var process struct {
 	resourcesMu sync.Mutex
 	serverOnce  sync.Once
 	serverErr   error
-	container   testcontainers.Container
+	server      *postgres.EmbeddedPostgres
 	adminURL    string
 	adminDB     *bun.DB
 	template    string
@@ -149,23 +146,13 @@ func adminDatabase(t *testing.T) *bun.DB {
 	process.serverOnce.Do(func() {
 		process.adminURL = os.Getenv("TEST_DATABASE_URL")
 		if process.adminURL == "" {
-			container, err := postgres.Run(context.Background(), postgresImage,
-				postgres.WithDatabase("postgres"),
-				postgres.WithUsername("postgres"),
-				postgres.WithPassword("postgres"),
-				testcontainers.WithTmpfs(map[string]string{"/var/lib/postgresql/data": "rw"}),
-				testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30*time.Second)),
-			)
-			if err != nil {
-				process.serverErr = fmt.Errorf("start PostgreSQL Testcontainer: %w", err)
+			server := postgres.NewDatabase(postgres.DefaultConfig().Version(postgres.V18).Port(0))
+			if err := server.Start(); err != nil {
+				process.serverErr = fmt.Errorf("start embedded PostgreSQL: %w", err)
 				return
 			}
-			process.container = container
-			process.adminURL, err = container.ConnectionString(context.Background(), "sslmode=disable")
-			if err != nil {
-				process.serverErr = fmt.Errorf("get PostgreSQL Testcontainer connection string: %w", err)
-				return
-			}
+			process.server = server
+			process.adminURL = server.ConnectionURL()
 		}
 		parsed, err := url.Parse(process.adminURL)
 		if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Host == "" {
@@ -286,7 +273,7 @@ func cleanupProcess() error {
 	cleanups := append([]func() error(nil), process.cleanups...)
 	process.resourcesMu.Unlock()
 	process.Lock()
-	container := process.container
+	server := process.server
 	admin := process.adminDB
 	process.Unlock()
 	var failures []string
@@ -308,10 +295,8 @@ func cleanupProcess() error {
 			failures = append(failures, err.Error())
 		}
 	}
-	if container != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := container.Terminate(ctx); err != nil {
+	if server != nil {
+		if err := server.Stop(); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}

@@ -69,6 +69,9 @@ Install these prerequisites:
 - [golangci-lint 2.14](https://golangci-lint.run/docs/welcome/install/);
 - [Docker with Compose](https://docs.docker.com/engine/install/) for the local
   PostgreSQL deployment and deployment smoke checks;
+- Native PostgreSQL runtime libraries for your platform when running integration
+  tests without `TEST_DATABASE_URL`; the test helper downloads PostgreSQL 18
+  binaries on first use and caches them. Docker is not needed for these tests.
 - [pre-commit](https://pre-commit.com/#install) for the repository hook.
 
 Install locked frontend dependencies with `task frontend:install`, then run

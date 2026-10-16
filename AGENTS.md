@@ -73,7 +73,7 @@ MeloTrove (legacy name: MusicEnreachment) - music library manager with source in
 
 **Error handling**: `fmt.Errorf("context: %w", err)` wrap with lowercase messages; `errors.New` for static; no custom error types in service layer; no `nolint`.
 
-**Test org**: `task test` = `go test -tags=integration` + Vitest/RTL (*.test.tsx colocated) + node --test (tools/). PostgreSQL integration tests use `TEST_DATABASE_URL` when supplied, or start a PostgreSQL Testcontainer when it is absent (Docker required for the fallback). Integration tests named `*_integration_test.go`.
+**Test org**: `task test` = `go test -tags=integration` + Vitest/RTL (*.test.tsx colocated) + node --test (tools/). PostgreSQL integration tests use `TEST_DATABASE_URL` when supplied, or start embedded PostgreSQL 18 when absent. The fallback downloads and caches platform-specific PostgreSQL binaries and requires that platform's native PostgreSQL runtime libraries; Docker is not required. Integration tests named `*_integration_test.go`.
 
 **Build interface**: Taskfile only (`task build/test/verify/generate/run`); no shell scripts as build commands; pre-commit runs full `task verify` (intentional).
 
