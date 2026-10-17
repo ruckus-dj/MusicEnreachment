@@ -67,6 +67,8 @@ type PublicationFileIdentity struct {
 	SHA256    string `json:"sha256,omitempty"`
 }
 
+const PublicationCurrentOwnershipVersion = 1
+
 type PublicationCurrentAudio struct {
 	Version int                 `json:"version"`
 	Facts   PersistedAudioFacts `json:"facts"`
