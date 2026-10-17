@@ -33,6 +33,13 @@ type RealPublicationStageValidator struct {
 	Probe PublicationStageProbe
 }
 
+func (validator RealPublicationStageValidator) validateSupervised() error {
+	if validator.Probe == nil {
+		return errors.New("supervised publication validator requires a scope-bound probe")
+	}
+	return nil
+}
+
 func (validator RealPublicationStageValidator) Validate(ctx context.Context, stagePath string, input persistence.PublicationInputs) (result PublicationStageObservation, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return PublicationStageObservation{}, err

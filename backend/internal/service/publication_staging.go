@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
-	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
@@ -34,6 +33,10 @@ type PreparedPublicationStage interface {
 // observed from that file, including stream topology and normalized metadata.
 type PublicationStageValidator interface {
 	Validate(context.Context, string, persistence.PublicationInputs) (PublicationStageObservation, error)
+}
+
+type supervisedPublicationStageValidator interface {
+	validateSupervised() error
 }
 
 type PublicationMetadataWriter interface {
@@ -63,42 +66,41 @@ type publicationStageRepository interface {
 // not settle an operation or expose/replace the current publication.
 type PublicationStagingRunner struct {
 	Repository  publicationStageRepository
-	Commands    tools.CommandRunner
 	PinnedTools PublicationPinnedTools
 	Metadata    PublicationMetadataWriter
 	Validator   PublicationStageValidator
 }
 
-// Run requires the caller to have acquired the shared publication resources
-// before claiming the database delivery. AlreadyOwned is never permission to
-// launch a second mutator. The caller retains its coordinator locks around Run.
-func (runner PublicationStagingRunner) Run(ctx context.Context, guard persistence.PublicationDeliveryGuard, claim persistence.PublicationDeliveryClaimOutcome, input persistence.PublicationInputs, stage PreparedPublicationStage, resourcesHeld bool) (result PublicationStageObservation, resultErr error) {
+// Run executes only under a newly acquired scope bound to the same delivery.
+func (runner PublicationStagingRunner) Run(ctx context.Context, scope *PublicationExecutionScope, input persistence.PublicationInputs, stage PreparedPublicationStage) (result PublicationStageObservation, resultErr error) {
 	if runner.Repository == nil || stage == nil {
 		return result, errors.New("publication staging dependencies are unavailable")
 	}
-	if claim != persistence.PublicationDeliveryAcquired || !resourcesHeld {
-		return result, errors.New("publication delivery is not newly acquired under coordinator resources")
+	if scope == nil || !scope.CanExecute() || scope.repository == nil {
+		return result, errors.New("publication execution scope is unavailable")
 	}
+	guard := scope.guard
 	defer func() {
-		if err := stage.Close(); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("close publication stage: %w", err))
-			return
-		}
-		// Quiescence is attempted only after the stage has closed (and synchronous
-		// CommandRunner/TagLib calls have returned). Never use cancellation to
-		// release a claim while a child or file mutation may still be active.
-		cleanupCtx := context.WithoutCancel(ctx)
-		valid, err := runner.Repository.CheckPublicationDelivery(cleanupCtx, guard)
-		if err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("recheck publication delivery before quiescence: %w", err))
-		} else if valid {
-			if _, err := runner.Repository.MarkPublicationQuiescent(cleanupCtx, guard); err != nil {
-				resultErr = errors.Join(resultErr, fmt.Errorf("quiesce publication staging delivery: %w", err))
-			}
+		if err := scope.Finalize(ctx, stage.Close); err != nil {
+			resultErr = errors.Join(resultErr, err)
 		}
 	}()
-	if runner.Commands == nil || runner.PinnedTools == nil || runner.Validator == nil {
+	if runner.PinnedTools == nil || runner.Validator == nil {
 		return result, errors.New("publication staging dependencies are unavailable")
+	}
+	if bound, ok := runner.PinnedTools.(*GuardedPublicationPinnedTools); ok && (bound.scope != scope || bound.guard != guard) {
+		return result, errors.New("publication pinned tools are not bound to the execution scope")
+	}
+	switch validator := runner.Validator.(type) {
+	case *RealPublicationStageValidator:
+		if validator == nil {
+			return result, errors.New("supervised publication validator is unavailable")
+		}
+	}
+	if validator, ok := runner.Validator.(supervisedPublicationStageValidator); ok {
+		if err := validator.validateSupervised(); err != nil {
+			return result, err
+		}
 	}
 	if err := input.Validate(); err != nil {
 		return result, fmt.Errorf("validate frozen publication inputs: %w", err)
@@ -152,7 +154,7 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, guard persistenc
 		}
 		return result, fmt.Errorf("resolve pinned publication ffmpeg: %w", err)
 	}
-	if _, err := runner.Commands.Run(ctx, ffmpeg, args...); err != nil {
+	if _, err := scope.Run(ctx, ffmpeg, args...); err != nil {
 		return result, fmt.Errorf("prepare publication audio: %w", err)
 	}
 	if err := check(); err != nil {

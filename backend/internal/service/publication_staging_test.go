@@ -27,6 +27,9 @@ func (f *pubStageRepo) CheckPublicationDelivery(context.Context, persistence.Pub
 	*f.events = append(*f.events, "check")
 	return f.staleAt == 0 || f.checks < f.staleAt, nil
 }
+func (f *pubStageRepo) PublicationToolsForDelivery(context.Context, persistence.PublicationDeliveryGuard) ([]persistence.SourceAnalysisToolSelection, *persistence.ToolInstallation, string, bool, error) {
+	return nil, nil, "", false, nil
+}
 func (f *pubStageRepo) AdvancePublicationStage(_ context.Context, _ persistence.PublicationDeliveryGuard, phase string, _ persistence.PublicationStageObservation) (bool, error) {
 	f.phases = append(f.phases, phase)
 	*f.events = append(*f.events, phase)
@@ -61,6 +64,13 @@ type pubStageCommand struct {
 	events *[]string
 	output string
 	run    func(context.Context) error
+}
+
+type pubStageScopedCommand struct{ pubStageCommand }
+
+func (f pubStageScopedCommand) Run(ctx context.Context, name string, args ...string) (PublicationCommandResult, error) {
+	out, err := f.pubStageCommand.Run(ctx, name, args...)
+	return PublicationCommandResult{Output: out, QuiescenceEstablished: true}, err
 }
 
 func (f pubStageCommand) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -98,7 +108,7 @@ func (f pubStageValidator) Validate(context.Context, string, persistence.Publica
 	return PublicationStageObservation{Ownership: persistence.ArtifactOwnership{ExpectedSize: &size}, Audio: []byte(`{"codec":"aac"}`), Metadata: []byte(`{"title":"ok"}`), SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, f.err
 }
 
-func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, validateErr, closeErr error) (PublicationStagingRunner, persistence.PublicationInputs, *pubStagePrepared, *[]string) {
+func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, validateErr, closeErr error) (PublicationStagingRunner, *PublicationExecutionScope, persistence.PublicationInputs, *pubStagePrepared, *[]string) {
 	t.Helper()
 	events := []string{}
 	repo.events = &events
@@ -112,8 +122,15 @@ func pubStageSetup(t *testing.T, repo *pubStageRepo, command pubStageCommand, va
 	}
 	stage := &pubStagePrepared{paths: PublicationStagePaths{InputPath: inputPath, OutputPath: outputPath, RelativePath: "album/track.mka"}, events: &events, closeErr: closeErr}
 	command.output = outputPath
-	runner := PublicationStagingRunner{Repository: repo, Commands: command, PinnedTools: pubStageTools{&events}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
-	return runner, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
+	guard := persistence.PublicationDeliveryGuard{DeliveryToken: "stage-test"}
+	scope, err := NewPublicationExecutionScope(context.Background(), publication.NewCoordinator(), []publication.ResourceLock{{Key: "stage-test", Mode: publication.Exclusive}}, guard, func(context.Context, persistence.PublicationDeliveryGuard) (persistence.PublicationDeliveryClaimOutcome, error) {
+		return persistence.PublicationDeliveryAcquired, nil
+	}, pubStageScopedCommand{command}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := PublicationStagingRunner{Repository: repo, PinnedTools: pubStageTools{&events}, Metadata: pubStageWriter{events: &events}, Validator: pubStageValidator{&events, validateErr}}
+	return runner, scope, persistence.PublicationInputs{Version: persistence.PublicationInputsVersion, IntentKind: "audio", Format: publication.AudioFormatMKA, DesiredTags: map[string][]string{"title": {"track"}}, Tools: []persistence.SourceAnalysisToolSelection{{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffmpeg", Executable: "ffmpeg", Version: "7", VersionBanner: "ffmpeg version 7"}, {PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7", VersionBanner: "ffmpeg version 7"}}, Audio: &persistence.PublicationAudioInput{WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(), ConfiguredRootPath: dir, InventoryRootPath: dir, RelativePath: "input.flac", MTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), AnalysisPolicyVersion: 1, FFProbeVersion: "7", AudioFacts: persistence.PersistedAudioFacts{StreamIndex: 0, Codec: "flac", Lossless: pubStageBool(true), Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}}}, stage, &events
 }
 func pubStageBool(v bool) *bool { return &v }
 
@@ -138,8 +155,8 @@ func indexPubStage(xs []string, want string) int {
 func TestPublicationStagingSuccessTransitionsInOrderAndClosesBeforeQuiescence(t *testing.T) {
 	repo := &pubStageRepo{}
 	command := pubStageCommand{}
-	runner, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
-	got, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
+	got, err := runner.Run(context.Background(), scope, input, stage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,8 +178,8 @@ func TestPublicationStagingCommandFailureWaitsForReturnBeforeClose(t *testing.T)
 	repo := &pubStageRepo{}
 	var returned bool
 	command := pubStageCommand{run: func(context.Context) error { returned = true; return failure }}
-	runner, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
-	_, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
+	_, err := runner.Run(context.Background(), scope, input, stage)
 	if !errors.Is(err, failure) {
 		t.Fatalf("error %v", err)
 	}
@@ -179,8 +196,8 @@ func TestPublicationStagingCancellationClosesOnlyAfterSynchronousCommandReturns(
 	ctx, cancel := context.WithCancel(context.Background())
 	returned := false
 	command := pubStageCommand{run: func(context.Context) error { cancel(); returned = true; return ctx.Err() }}
-	runner, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
-	_, err := runner.Run(ctx, persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
+	_, err := runner.Run(ctx, scope, input, stage)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error %v", err)
 	}
@@ -192,8 +209,8 @@ func TestPublicationStagingCancellationClosesOnlyAfterSynchronousCommandReturns(
 func TestPublicationStagingCloseFailureIsReturnedAndDoesNotQuiesce(t *testing.T) {
 	closeErr := errors.New("close failed")
 	repo := &pubStageRepo{}
-	runner, input, stage, _ := pubStageSetup(t, repo, pubStageCommand{}, nil, closeErr)
-	_, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	runner, scope, input, stage, _ := pubStageSetup(t, repo, pubStageCommand{}, nil, closeErr)
+	_, err := runner.Run(context.Background(), scope, input, stage)
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("close error lost: %v", err)
 	}
@@ -206,8 +223,8 @@ func TestPublicationStagingProbeFailureDoesNotRecordValidatedTransition(t *testi
 	probeErr := errors.New("probe failed")
 	repo := &pubStageRepo{}
 	command := pubStageCommand{}
-	runner, input, stage, _ := pubStageSetup(t, repo, command, probeErr, nil)
-	_, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	runner, scope, input, stage, _ := pubStageSetup(t, repo, command, probeErr, nil)
+	_, err := runner.Run(context.Background(), scope, input, stage)
 	if !errors.Is(err, probeErr) {
 		t.Fatalf("error %v", err)
 	}
@@ -219,8 +236,8 @@ func TestPublicationStagingProbeFailureDoesNotRecordValidatedTransition(t *testi
 func TestPublicationStagingStaleGuardAfterCommandSkipsMetadataWrite(t *testing.T) {
 	repo := &pubStageRepo{staleAt: 3}
 	command := pubStageCommand{}
-	runner, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
-	if _, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true); err == nil {
+	runner, scope, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
+	if _, err := runner.Run(context.Background(), scope, input, stage); err == nil {
 		t.Fatal("expected stale guard")
 	}
 	if containsPubStage(*events, "writer") || containsPubStage(*events, "probe") {
@@ -230,8 +247,8 @@ func TestPublicationStagingStaleGuardAfterCommandSkipsMetadataWrite(t *testing.T
 
 func TestPublicationStagingAlreadyOwnedDoesNotMutate(t *testing.T) {
 	repo := &pubStageRepo{}
-	runner, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
-	if _, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAlreadyOwned, input, stage, true); err == nil {
+	runner, _, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	if _, err := runner.Run(context.Background(), nil, input, stage); err == nil {
 		t.Fatal("expected claim rejection")
 	}
 	if containsPubStage(*events, "ffmpeg") || containsPubStage(*events, "writer") || containsPubStage(*events, "probe") {
@@ -239,11 +256,65 @@ func TestPublicationStagingAlreadyOwnedDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestScopeBoundPublicationToolsRejectGuardMismatch(t *testing.T) {
+	repo := &pubStageRepo{}
+	_, scope, _, _, _ := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	guard := scope.guard
+	guard.DeliveryToken = "other-delivery"
+	if _, err := NewScopeBoundPublicationPinnedTools(repo, scope, guard, tools.Platform{GOOS: "darwin", GOARCH: "arm64"}); err == nil {
+		t.Fatal("expected mismatched guard rejection")
+	}
+	if scope.finalized || scope.unknown {
+		t.Fatal("guard mismatch changed execution scope")
+	}
+}
+
+func TestScopeBoundPublicationToolsRequireCapturedScope(t *testing.T) {
+	repo := &pubStageRepo{}
+	_, scope, _, _, _ := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	guard := scope.guard
+	adapter, err := NewScopeBoundPublicationPinnedTools(repo, scope, guard, tools.Platform{GOOS: "darwin", GOARCH: "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter.scope != scope || adapter.resolver.scope != scope {
+		t.Fatal("scoped adapter did not capture its execution scope")
+	}
+
+	otherRepo := &pubStageRepo{}
+	runner, otherScope, input, stage, _ := pubStageSetup(t, otherRepo, pubStageCommand{}, nil, nil)
+	runner.PinnedTools = adapter
+	if _, err := runner.Run(context.Background(), otherScope, input, stage); err == nil {
+		t.Fatal("scope-bound adapter was accepted for a foreign scope")
+	}
+}
+
+func TestPublicationStagingUnknownCommandRetainsStageAndScope(t *testing.T) {
+	repo := &pubStageRepo{}
+	command := pubStageCommand{run: func(context.Context) error { return errors.New("lost process result") }}
+	runner, scope, input, stage, events := pubStageSetup(t, repo, command, nil, nil)
+	// Model a runner that cannot establish child-process quiescence.
+	scope.commands = unknownPubStageCommand{}
+	_, err := runner.Run(context.Background(), scope, input, stage)
+	if err == nil || !scope.unknown {
+		t.Fatalf("expected fenced unknown execution, got error=%v unknown=%v", err, scope.unknown)
+	}
+	if containsPubStage(*events, "close") || containsPubStage(*events, "quiescent") {
+		t.Fatalf("unknown execution released stage authority: %v", *events)
+	}
+}
+
+type unknownPubStageCommand struct{}
+
+func (unknownPubStageCommand) Run(context.Context, string, ...string) (PublicationCommandResult, error) {
+	return PublicationCommandResult{}, errors.New("quiescence unknown")
+}
+
 func TestPublicationStagingUnavailableDependencyClosesAcceptedStage(t *testing.T) {
 	repo := &pubStageRepo{}
-	runner, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
 	runner.Validator = nil
-	_, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true)
+	_, err := runner.Run(context.Background(), scope, input, stage)
 	if err == nil {
 		t.Fatal("expected missing dependency error")
 	}
@@ -252,11 +323,34 @@ func TestPublicationStagingUnavailableDependencyClosesAcceptedStage(t *testing.T
 	}
 }
 
+func TestPublicationStagingRejectsUnsupervisedRealValidatorPointer(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		validator PublicationStageValidator
+	}{
+		{name: "pointer", validator: &RealPublicationStageValidator{}},
+		{name: "nil pointer", validator: (*RealPublicationStageValidator)(nil)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &pubStageRepo{}
+			runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+			runner.Validator = test.validator
+			_, err := runner.Run(context.Background(), scope, input, stage)
+			if err == nil {
+				t.Fatal("expected unsupervised validator to be rejected")
+			}
+			if containsPubStage(*events, "ffmpeg") || len(repo.phases) != 0 {
+				t.Fatalf("validator rejection occurred after staging work: events=%v phases=%v", *events, repo.phases)
+			}
+		})
+	}
+}
+
 func TestPublicationStagingRejectsInvalidFrozenInputsBeforeMutation(t *testing.T) {
 	repo := &pubStageRepo{}
-	runner, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
 	input.Version++
-	if _, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true); err == nil {
+	if _, err := runner.Run(context.Background(), scope, input, stage); err == nil {
 		t.Fatal("expected invalid frozen inputs")
 	}
 	if containsPubStage(*events, "ffmpeg") || containsPubStage(*events, "writer") || containsPubStage(*events, "probe") || !containsPubStage(*events, "close") || !containsPubStage(*events, "quiescent") {
@@ -266,9 +360,9 @@ func TestPublicationStagingRejectsInvalidFrozenInputsBeforeMutation(t *testing.T
 
 func TestPublicationStagingRejectsUnanchoredPathsBeforeMutation(t *testing.T) {
 	repo := &pubStageRepo{}
-	runner, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
+	runner, scope, input, stage, events := pubStageSetup(t, repo, pubStageCommand{}, nil, nil)
 	stage.paths.OutputPath = "relative/output.mka"
-	if _, err := runner.Run(context.Background(), persistence.PublicationDeliveryGuard{}, persistence.PublicationDeliveryAcquired, input, stage, true); err == nil {
+	if _, err := runner.Run(context.Background(), scope, input, stage); err == nil {
 		t.Fatal("expected invalid stage paths")
 	}
 	if containsPubStage(*events, "ffmpeg") || containsPubStage(*events, "writer") || containsPubStage(*events, "probe") || !containsPubStage(*events, "close") || !containsPubStage(*events, "quiescent") {
