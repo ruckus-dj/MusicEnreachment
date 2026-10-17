@@ -103,6 +103,13 @@ func TestManualMatchingTrackOverridesAreLocalAndFencedPostgreSQL(t *testing.T) {
 		t.Fatalf("receipt did not retain explicit override values: %+v", confirmedAssignment)
 	}
 	assertManualOverrideValues(t, ctx, db, localTrackID, "", []string{"", "Name"})
+	var overrideRevision int64
+	if err := db.NewRaw(`SELECT metadata_revision FROM local_track WHERE id=?`, localTrackID).Scan(ctx, &overrideRevision); err != nil {
+		t.Fatal(err)
+	}
+	if overrideRevision != 2 {
+		t.Fatalf("manual title/credit override metadata revision = %d, want 2", overrideRevision)
+	}
 	var afterRecordingTitle string
 	if err := db.NewRaw(`SELECT title FROM local_recording WHERE id=?`, localRecordingID).Scan(ctx, &afterRecordingTitle); err != nil {
 		t.Fatal(err)
@@ -134,6 +141,12 @@ func TestManualMatchingTrackOverridesAreLocalAndFencedPostgreSQL(t *testing.T) {
 		t.Fatalf("confirm without new override: %v", err)
 	}
 	assertManualOverrideValues(t, ctx, db, localTrackID, "", []string{"", "Name"})
+	if err := db.NewRaw(`SELECT metadata_revision FROM local_track WHERE id=?`, localTrackID).Scan(ctx, &overrideRevision); err != nil {
+		t.Fatal(err)
+	}
+	if overrideRevision != 2 {
+		t.Fatalf("confirmation without overrides changed metadata revision: %d", overrideRevision)
+	}
 	if _, err := db.NewRaw(`UPDATE local_track SET title='concurrent edit' WHERE id=?`, localTrackID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}

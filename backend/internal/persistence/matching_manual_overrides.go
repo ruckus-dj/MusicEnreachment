@@ -65,7 +65,7 @@ func applyManualTrackOverrides(ctx context.Context, tx bun.Tx, trackID uuid.UUID
 	if err != nil {
 		return err
 	}
-	if _, err := tx.NewRaw(`UPDATE local_track SET metadata=COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('manual_matching_override', COALESCE(metadata->'manual_matching_override','{}'::jsonb) || ?::jsonb) WHERE id=?`, string(encoded), trackID).Exec(ctx); err != nil {
+	if _, err := tx.NewRaw(`UPDATE local_track SET metadata=COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('manual_matching_override', COALESCE(metadata->'manual_matching_override','{}'::jsonb) || ?::jsonb), metadata_revision=metadata_revision+1, updated_at=now() WHERE id=?`, string(encoded), trackID).Exec(ctx); err != nil {
 		return fmt.Errorf("manual matching: record track override provenance: %w", err)
 	}
 	return nil

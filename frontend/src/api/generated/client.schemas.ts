@@ -285,6 +285,31 @@ export interface LibraryArtistCreditResponse {
   join_phrase: string;
 }
 
+export interface LibraryArtistResolution {
+  /** @nullable */
+  candidate_artist_ids: string[] | null;
+  effective_artist_id: string;
+  effective_artist_mbid: string;
+  selected_artist_id: string;
+  status: string;
+}
+
+export interface LibraryPrimaryArtistBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  artist_id: string | null;
+  expected_revision: number;
+  expected_track_revision?: number;
+}
+
+export interface LibraryPrimaryArtistResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  publication_applied: boolean;
+  revision: number;
+}
+
 export interface LibrarySourceLocationResponse {
   location_id: string;
   mtime?: string;
@@ -315,12 +340,16 @@ export interface LibraryReleaseTrackResponse {
   local_track_id: string;
   medium: number;
   metadata: unknown;
+  metadata_revision: number;
   metadata_version: number;
   position: number;
+  primary_artist: LibraryArtistResolution;
   recording_id: string;
+  recording_metadata_revision?: number;
   /** @nullable */
   sources: LibraryTrackSourceResponse[] | null;
   title: string;
+  track_metadata_revision: number;
 }
 
 export interface LibraryReleaseDetailResponse {
@@ -330,7 +359,9 @@ export interface LibraryReleaseDetailResponse {
   artists: LibraryArtistCreditResponse[] | null;
   id: string;
   metadata: unknown;
+  metadata_revision: number;
   metadata_version: number;
+  primary_artist: LibraryArtistResolution;
   title: string;
   /** @nullable */
   tracks: LibraryReleaseTrackResponse[] | null;

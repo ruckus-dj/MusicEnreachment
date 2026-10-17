@@ -35,6 +35,7 @@ type Dependencies struct {
 	ManualReleaseSelection *service.ManualReleaseSelectionService
 	ManualPickerSearch     *service.ManualPickerSearchService
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
+	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
 }
 
 type preflightEntry struct {

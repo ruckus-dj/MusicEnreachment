@@ -334,10 +334,48 @@ func validateMatchingLocalCaptures(group IncomingGroupingGroup, captures []Incom
 }
 
 func materializeMatchingLocal(ctx context.Context, tx bun.Tx, preview MatchingLocalPreview, intent MatchingLocalIntent) (uuid.UUID, error) {
+	if intent.LocalReleaseID != nil {
+		// Keep this helper safe independently of the preview's existing locks:
+		// release, positions, then UUID-ordered shared local tracks.
+		var releaseID uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_release WHERE id=? FOR UPDATE`, *intent.LocalReleaseID).Scan(ctx, &releaseID); err != nil {
+			return uuid.Nil, fmt.Errorf("lock existing local matching release: %w", err)
+		}
+		var positions []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM release_track WHERE release_id=? ORDER BY medium,position,id FOR UPDATE`, releaseID).Scan(ctx, &positions); err != nil {
+			return uuid.Nil, fmt.Errorf("lock existing local matching positions: %w", err)
+		}
+	}
+	tracks := append([]MatchingLocalTrack(nil), intent.Tracks...)
+	sort.Slice(tracks, func(i, j int) bool {
+		if tracks[i].Medium != tracks[j].Medium {
+			return tracks[i].Medium < tracks[j].Medium
+		}
+		return tracks[i].Position < tracks[j].Position
+	})
+	localTrackIDs := make([]uuid.UUID, 0, len(tracks))
+	seenLocalTrackIDs := make(map[uuid.UUID]struct{}, len(tracks))
+	for _, track := range tracks {
+		if track.LocalTrackID == nil {
+			continue
+		}
+		if _, exists := seenLocalTrackIDs[*track.LocalTrackID]; exists {
+			continue
+		}
+		seenLocalTrackIDs[*track.LocalTrackID] = struct{}{}
+		localTrackIDs = append(localTrackIDs, *track.LocalTrackID)
+	}
+	if len(localTrackIDs) > 0 {
+		var locked []uuid.UUID
+		if err := tx.NewRaw(`SELECT id FROM local_track WHERE id IN (?) ORDER BY id FOR UPDATE`, bun.List(localTrackIDs)).Scan(ctx, &locked); err != nil {
+			return uuid.Nil, fmt.Errorf("lock existing local matching tracks: %w", err)
+		}
+	}
+
 	releaseID := uuid.New()
 	if intent.LocalReleaseID != nil {
 		releaseID = *intent.LocalReleaseID
-		if _, err := tx.NewRaw(`UPDATE local_release SET title=?,updated_at=now() WHERE id=?`, intent.ReleaseTitle, releaseID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE local_release SET title=?,metadata_revision=metadata_revision+1,updated_at=now() WHERE id=?`, intent.ReleaseTitle, releaseID).Exec(ctx); err != nil {
 			return uuid.Nil, err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM release_artist WHERE release_id=?`, releaseID).Exec(ctx); err != nil {
@@ -349,18 +387,11 @@ func materializeMatchingLocal(ctx context.Context, tx bun.Tx, preview MatchingLo
 	if err := insertLocalCredits(ctx, tx, releaseID, "release_artist", intent.ReleaseArtists); err != nil {
 		return uuid.Nil, err
 	}
-	tracks := append([]MatchingLocalTrack(nil), intent.Tracks...)
-	sort.Slice(tracks, func(i, j int) bool {
-		if tracks[i].Medium != tracks[j].Medium {
-			return tracks[i].Medium < tracks[j].Medium
-		}
-		return tracks[i].Position < tracks[j].Position
-	})
 	for _, track := range tracks {
 		trackID := uuid.New()
 		if track.LocalTrackID != nil {
 			trackID = *track.LocalTrackID
-			if _, err := tx.NewRaw(`UPDATE local_track SET title=?,updated_at=now() WHERE id=?`, track.Title, trackID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`UPDATE local_track SET title=?,metadata_revision=metadata_revision+1,updated_at=now() WHERE id=?`, track.Title, trackID).Exec(ctx); err != nil {
 				return uuid.Nil, err
 			}
 			if _, err := tx.NewRaw(`DELETE FROM track_artist WHERE track_id=?`, trackID).Exec(ctx); err != nil {

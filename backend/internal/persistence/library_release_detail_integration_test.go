@@ -24,6 +24,8 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	rootID, locationID := uuid.New(), uuid.New()
 	positionA, positionB := uuid.New(), uuid.New()
 	providerID, providerReleaseID := uuid.New(), uuid.New()
+	musicBrainzProviderID, providerArtistA, providerArtistB := uuid.New(), uuid.New(), uuid.New()
+	artistAMbid, artistBMbid := uuid.New(), uuid.New()
 
 	statements := []struct {
 		query string
@@ -42,6 +44,9 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 		{`INSERT INTO source_root(id,configured_path,display_name,status,enabled,scan_generation,inventory_path) VALUES (?,?,'Library','available',false,1,?)`, []any{rootID, "/srv/library", "/srv/library"}},
 		{`INSERT INTO source_location(id,source_root_id,relative_path,size_bytes,mtime,last_seen_scan_generation,probe_status,media_variant_id) VALUES (?,?,?,1024,?,1,'audio',?)`, []any{locationID, rootID, "disc/song.flac", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), variantA}},
 		{`INSERT INTO provider(id,code) VALUES (?, 'fixture')`, []any{providerID}},
+		{`INSERT INTO provider(id,code) VALUES (?, 'musicbrainz')`, []any{musicBrainzProviderID}},
+		{`INSERT INTO provider_artist(id,provider_id,provider_key,name) VALUES (?,?,?,'Artist A'),(?,?,?,'Artist B')`, []any{providerArtistA, musicBrainzProviderID, artistAMbid.String(), providerArtistB, musicBrainzProviderID, artistBMbid.String()}},
+		{`INSERT INTO provider_local_artist(provider_id,provider_artist_id,local_artist_id,method) VALUES (?,?,?,'manual'),(?,?,?,'manual')`, []any{musicBrainzProviderID, providerArtistA, artistA, musicBrainzProviderID, providerArtistB, artistB}},
 		{`INSERT INTO provider_release(id,provider_id,provider_key,title) VALUES (?,?,?,'linked')`, []any{providerReleaseID, providerID, "linked-release"}},
 		{`INSERT INTO provider_local_release(provider_id,provider_release_id,local_release_id,method) VALUES (?,?,?,'manual')`, []any{providerID, providerReleaseID, linkedID}},
 	}
@@ -57,6 +62,9 @@ func TestReadLibraryReleaseDetailWithPostgreSQL(t *testing.T) {
 	}
 	if detail.Title != "Album" || detail.MetadataVersion != 3 || len(detail.Artists) != 2 || detail.Artists[0].CreditName != "A credit" || detail.Artists[1].CreditName != "B credit" {
 		t.Fatalf("release detail metadata/credits = %+v", detail)
+	}
+	if detail.PrimaryArtistMBIDs[artistA] == nil || *detail.PrimaryArtistMBIDs[artistA] != artistAMbid || detail.PrimaryArtistMBIDs[artistB] == nil || *detail.PrimaryArtistMBIDs[artistB] != artistBMbid {
+		t.Fatalf("MusicBrainz identities = %+v", detail.PrimaryArtistMBIDs)
 	}
 	if len(detail.Tracks) != 2 {
 		t.Fatalf("release positions = %+v", detail.Tracks)

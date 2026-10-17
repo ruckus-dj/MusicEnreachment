@@ -38,6 +38,8 @@ import type {
   InstallPreflightInputBody,
   InstallationActionInputBody,
   InstallationsBody,
+  LibraryPrimaryArtistBody,
+  LibraryPrimaryArtistResponse,
   LibraryReleaseDetailResponse,
   ListInstallationsParams,
   ListOperationsParams,
@@ -1683,6 +1685,238 @@ export function useGetLibraryRelease<TData = Awaited<ReturnType<typeof getLibrar
 
 
 
+
+export type setLibraryPositionPrimaryArtistResponse200 = {
+  data: LibraryPrimaryArtistResponse
+  status: 200
+}
+
+export type setLibraryPositionPrimaryArtistResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setLibraryPositionPrimaryArtistResponseSuccess = (setLibraryPositionPrimaryArtistResponse200) & {
+  headers: Headers;
+};
+export type setLibraryPositionPrimaryArtistResponseError = (setLibraryPositionPrimaryArtistResponseDefault) & {
+  headers: Headers;
+};
+
+export type setLibraryPositionPrimaryArtistResponse = (setLibraryPositionPrimaryArtistResponseSuccess | setLibraryPositionPrimaryArtistResponseError)
+
+export const getSetLibraryPositionPrimaryArtistUrl = (releaseId: string,
+    positionId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/positions/${positionId}/primary-artist`
+}
+
+/**
+ * @summary Select a local position primary artist
+ */
+export const setLibraryPositionPrimaryArtist = async (releaseId: string,
+    positionId: string,
+    libraryPrimaryArtistBody: NonReadonly<LibraryPrimaryArtistBody>, options?: RequestInit): Promise<setLibraryPositionPrimaryArtistResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSetLibraryPositionPrimaryArtistUrl(releaseId,positionId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryPrimaryArtistBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: setLibraryPositionPrimaryArtistResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as setLibraryPositionPrimaryArtistResponse
+}
+
+
+
+
+
+export const getSetLibraryPositionPrimaryArtistMutationKey = () => ['setLibraryPositionPrimaryArtist'] as const;
+
+export const getSetLibraryPositionPrimaryArtistMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>, TError,SetLibraryPositionPrimaryArtistMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>, TError,SetLibraryPositionPrimaryArtistMutationVariables, TContext> => {
+
+const mutationKey = getSetLibraryPositionPrimaryArtistMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>, SetLibraryPositionPrimaryArtistMutationVariables> = (props) => {
+          const {releaseId,positionId,data} = props ?? {};
+
+          return  setLibraryPositionPrimaryArtist(releaseId,positionId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetLibraryPositionPrimaryArtistMutationResult = NonNullable<Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>>
+    export type SetLibraryPositionPrimaryArtistMutationBody = NonReadonly<LibraryPrimaryArtistBody>
+    export type SetLibraryPositionPrimaryArtistMutationError = ErrorModel
+    export type SetLibraryPositionPrimaryArtistMutationVariables = {releaseId: string;positionId: string;data: NonReadonly<LibraryPrimaryArtistBody>}
+
+    /**
+ * @summary Select a local position primary artist
+ */
+export const useSetLibraryPositionPrimaryArtist = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>, TError,SetLibraryPositionPrimaryArtistMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setLibraryPositionPrimaryArtist>>,
+        TError,
+        SetLibraryPositionPrimaryArtistMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetLibraryPositionPrimaryArtistMutationOptions(options), queryClient);
+    }
+
+export type setLibraryReleasePrimaryArtistResponse200 = {
+  data: LibraryPrimaryArtistResponse
+  status: 200
+}
+
+export type setLibraryReleasePrimaryArtistResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setLibraryReleasePrimaryArtistResponseSuccess = (setLibraryReleasePrimaryArtistResponse200) & {
+  headers: Headers;
+};
+export type setLibraryReleasePrimaryArtistResponseError = (setLibraryReleasePrimaryArtistResponseDefault) & {
+  headers: Headers;
+};
+
+export type setLibraryReleasePrimaryArtistResponse = (setLibraryReleasePrimaryArtistResponseSuccess | setLibraryReleasePrimaryArtistResponseError)
+
+export const getSetLibraryReleasePrimaryArtistUrl = (releaseId: string,) => {
+
+
+
+
+  return `/api/library/releases/${releaseId}/primary-artist`
+}
+
+/**
+ * @summary Select a local release primary artist
+ */
+export const setLibraryReleasePrimaryArtist = async (releaseId: string,
+    libraryPrimaryArtistBody: NonReadonly<LibraryPrimaryArtistBody>, options?: RequestInit): Promise<setLibraryReleasePrimaryArtistResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+const res = await fetch(getSetLibraryReleasePrimaryArtistUrl(releaseId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(libraryPrimaryArtistBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: setLibraryReleasePrimaryArtistResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as setLibraryReleasePrimaryArtistResponse
+}
+
+
+
+
+
+export const getSetLibraryReleasePrimaryArtistMutationKey = () => ['setLibraryReleasePrimaryArtist'] as const;
+
+export const getSetLibraryReleasePrimaryArtistMutationOptions = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>, TError,SetLibraryReleasePrimaryArtistMutationVariables, TContext>, fetch?: RequestInit}
+): UseMutationOptions<Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>, TError,SetLibraryReleasePrimaryArtistMutationVariables, TContext> => {
+
+const mutationKey = getSetLibraryReleasePrimaryArtistMutationKey();
+const {mutation: mutationOptions, fetch: fetchOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, fetch: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>, SetLibraryReleasePrimaryArtistMutationVariables> = (props) => {
+          const {releaseId,data} = props ?? {};
+
+          return  setLibraryReleasePrimaryArtist(releaseId,data,fetchOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetLibraryReleasePrimaryArtistMutationResult = NonNullable<Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>>
+    export type SetLibraryReleasePrimaryArtistMutationBody = NonReadonly<LibraryPrimaryArtistBody>
+    export type SetLibraryReleasePrimaryArtistMutationError = ErrorModel
+    export type SetLibraryReleasePrimaryArtistMutationVariables = {releaseId: string;data: NonReadonly<LibraryPrimaryArtistBody>}
+
+    /**
+ * @summary Select a local release primary artist
+ */
+export const useSetLibraryReleasePrimaryArtist = <TError = ErrorModel,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>, TError,SetLibraryReleasePrimaryArtistMutationVariables, TContext>, fetch?: RequestInit}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setLibraryReleasePrimaryArtist>>,
+        TError,
+        SetLibraryReleasePrimaryArtistMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetLibraryReleasePrimaryArtistMutationOptions(options), queryClient);
+    }
 
 export type listLocalReleasesResponse200 = {
   data: MatchingLocalCatalog

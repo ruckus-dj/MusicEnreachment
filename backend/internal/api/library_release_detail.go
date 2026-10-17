@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -15,17 +16,41 @@ type LibraryReleaseDetailInput struct {
 	ReleaseID string `path:"release_id"`
 }
 
+type libraryPrimaryArtistReleaseInput struct {
+	ReleaseID string                   `path:"release_id"`
+	Body      libraryPrimaryArtistBody `json:"body"`
+}
+type libraryPrimaryArtistPositionInput struct {
+	ReleaseID  string                   `path:"release_id"`
+	PositionID string                   `path:"position_id"`
+	Body       libraryPrimaryArtistBody `json:"body"`
+}
+type libraryPrimaryArtistBody struct {
+	ExpectedRevision      int64      `json:"expected_revision"`
+	ExpectedTrackRevision *int64     `json:"expected_track_revision,omitempty"`
+	ArtistID              *uuid.UUID `json:"artist_id" nullable:"true" required:"true"`
+}
+type libraryPrimaryArtistOutput struct {
+	Body libraryPrimaryArtistResponse `json:"body"`
+}
+type libraryPrimaryArtistResponse struct {
+	Revision           int64 `json:"revision"`
+	PublicationApplied bool  `json:"publication_applied"`
+}
+
 type LibraryReleaseDetailOutput struct {
 	Body LibraryReleaseDetailResponse `json:"body"`
 }
 
 type LibraryReleaseDetailResponse struct {
-	ID              uuid.UUID                     `json:"id"`
-	Title           string                        `json:"title"`
-	Metadata        json.RawMessage               `json:"metadata"`
-	MetadataVersion int                           `json:"metadata_version"`
-	Artists         []LibraryArtistCreditResponse `json:"artists"`
-	Tracks          []LibraryReleaseTrackResponse `json:"tracks"`
+	ID               uuid.UUID                       `json:"id"`
+	Title            string                          `json:"title"`
+	Metadata         json.RawMessage                 `json:"metadata"`
+	MetadataVersion  int                             `json:"metadata_version"`
+	MetadataRevision int64                           `json:"metadata_revision"`
+	PrimaryArtist    service.LibraryArtistResolution `json:"primary_artist"`
+	Artists          []LibraryArtistCreditResponse   `json:"artists"`
+	Tracks           []LibraryReleaseTrackResponse   `json:"tracks"`
 }
 
 type LibraryArtistCreditResponse struct {
@@ -36,17 +61,21 @@ type LibraryArtistCreditResponse struct {
 }
 
 type LibraryReleaseTrackResponse struct {
-	ID              uuid.UUID                     `json:"id"`
-	LocalTrackID    uuid.UUID                     `json:"local_track_id"`
-	RecordingID     *uuid.UUID                    `json:"recording_id"`
-	Medium          int                           `json:"medium"`
-	Position        int                           `json:"position"`
-	DisplayedNumber string                        `json:"displayed_number"`
-	Title           string                        `json:"title"`
-	Metadata        json.RawMessage               `json:"metadata"`
-	MetadataVersion int                           `json:"metadata_version"`
-	Artists         []LibraryArtistCreditResponse `json:"artists"`
-	Sources         []LibraryTrackSourceResponse  `json:"sources"`
+	ID                        uuid.UUID                       `json:"id"`
+	LocalTrackID              uuid.UUID                       `json:"local_track_id"`
+	RecordingID               *uuid.UUID                      `json:"recording_id"`
+	Medium                    int                             `json:"medium"`
+	Position                  int                             `json:"position"`
+	DisplayedNumber           string                          `json:"displayed_number"`
+	Title                     string                          `json:"title"`
+	Metadata                  json.RawMessage                 `json:"metadata"`
+	MetadataVersion           int                             `json:"metadata_version"`
+	MetadataRevision          int64                           `json:"metadata_revision"`
+	TrackMetadataRevision     int64                           `json:"track_metadata_revision"`
+	RecordingMetadataRevision *int64                          `json:"recording_metadata_revision,omitempty"`
+	PrimaryArtist             service.LibraryArtistResolution `json:"primary_artist"`
+	Artists                   []LibraryArtistCreditResponse   `json:"artists"`
+	Sources                   []LibraryTrackSourceResponse    `json:"sources"`
 }
 
 type LibraryTrackSourceResponse struct {
@@ -91,11 +120,58 @@ func registerLibraryReleaseDetail(api huma.API, dependencies Dependencies) {
 		}
 		return &LibraryReleaseDetailOutput{Body: libraryReleaseDetailResponse(detail)}, nil
 	})
+	registerLibraryPrimaryArtist(api, dependencies.LibraryPrimaryArtists)
+}
+
+func registerLibraryPrimaryArtist(api huma.API, selection *service.LibraryPrimaryArtists) {
+	write := func(ctx context.Context, releaseID, positionID uuid.UUID, body libraryPrimaryArtistBody) (*libraryPrimaryArtistOutput, error) {
+		if selection == nil {
+			return nil, huma.Error503ServiceUnavailable("library primary artist selection is unavailable")
+		}
+		revision, err := selection.Set(ctx, releaseID, positionID, body.ArtistID, body.ExpectedRevision, body.ExpectedTrackRevision)
+		switch {
+		case errors.Is(err, service.ErrLibraryPrimaryArtistInvalidRequest):
+			return nil, huma.Error400BadRequest("library primary artist request is invalid")
+		case errors.Is(err, service.ErrLibraryReleaseNotFound), errors.Is(err, service.ErrLibraryPositionNotFound):
+			return nil, huma.Error404NotFound("library release or position not found")
+		case errors.Is(err, service.ErrLibraryPrimaryArtistConflict):
+			return nil, huma.Error409Conflict("library metadata revision is stale")
+		case errors.Is(err, service.ErrLibraryPrimaryArtistInvalid):
+			return nil, huma.Error400BadRequest("artist is not a current credit member")
+		case err != nil:
+			return nil, huma.Error503ServiceUnavailable("library primary artist selection is unavailable")
+		default:
+			return &libraryPrimaryArtistOutput{Body: libraryPrimaryArtistResponse{Revision: revision, PublicationApplied: false}}, nil
+		}
+	}
+	huma.Register(api, huma.Operation{OperationID: "set-library-release-primary-artist", Method: http.MethodPut,
+		Path: "/library/releases/{release_id}/primary-artist", Summary: "Select a local release primary artist", Tags: []string{"Library"}},
+		func(ctx context.Context, input *libraryPrimaryArtistReleaseInput) (*libraryPrimaryArtistOutput, error) {
+			releaseID, err := uuid.Parse(input.ReleaseID)
+			if err != nil || releaseID == uuid.Nil {
+				return nil, huma.Error400BadRequest("library release ID is invalid")
+			}
+			return write(ctx, releaseID, uuid.Nil, input.Body)
+		})
+	huma.Register(api, huma.Operation{OperationID: "set-library-position-primary-artist", Method: http.MethodPut,
+		Path: "/library/releases/{release_id}/positions/{position_id}/primary-artist", Summary: "Select a local position primary artist", Tags: []string{"Library"}},
+		func(ctx context.Context, input *libraryPrimaryArtistPositionInput) (*libraryPrimaryArtistOutput, error) {
+			releaseID, err := uuid.Parse(input.ReleaseID)
+			if err != nil || releaseID == uuid.Nil {
+				return nil, huma.Error400BadRequest("library release ID is invalid")
+			}
+			positionID, err := uuid.Parse(input.PositionID)
+			if err != nil || positionID == uuid.Nil {
+				return nil, huma.Error400BadRequest("library position ID is invalid")
+			}
+			return write(ctx, releaseID, positionID, input.Body)
+		})
 }
 
 func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryReleaseDetailResponse {
 	response := LibraryReleaseDetailResponse{
 		ID: detail.ID, Title: detail.Title, Metadata: detail.Metadata, MetadataVersion: detail.MetadataVersion,
+		MetadataRevision: detail.MetadataRevision, PrimaryArtist: detail.PrimaryArtist,
 		Artists: make([]LibraryArtistCreditResponse, 0, len(detail.Artists)),
 		Tracks:  make([]LibraryReleaseTrackResponse, 0, len(detail.Tracks)),
 	}
@@ -107,6 +183,8 @@ func libraryReleaseDetailResponse(detail service.LibraryReleaseDetail) LibraryRe
 			ID: track.ID, LocalTrackID: track.LocalTrackID, RecordingID: track.RecordingID,
 			Medium: track.Medium, Position: track.Position, DisplayedNumber: track.DisplayedNumber,
 			Title: track.Title, Metadata: track.Metadata, MetadataVersion: track.MetadataVersion,
+			MetadataRevision: track.MetadataRevision, TrackMetadataRevision: track.TrackMetadataRevision,
+			RecordingMetadataRevision: track.RecordingMetadataRevision, PrimaryArtist: track.PrimaryArtist,
 			Artists: make([]LibraryArtistCreditResponse, 0, len(track.Artists)),
 			Sources: make([]LibraryTrackSourceResponse, 0, len(track.Sources)),
 		}
