@@ -1,6 +1,6 @@
 # Test fixtures
 
-`eg.mka` is copied byte-for-byte from the
+`eg.flac`, `eg.mp3`, `eg.m4a`, and `eg.mka` are copied byte-for-byte from the
 `testdata/` directory of
 [`github.com/deluan/go-taglib`](https://github.com/deluan/go-taglib/tree/32d7614f30ecf47d451cd801e0cfb93bf9739db4/testdata)
 at commit `32d7614f30ecf47d451cd801e0cfb93bf9739db4`. The package's
