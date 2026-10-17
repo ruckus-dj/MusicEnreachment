@@ -377,6 +377,11 @@ func TestPublicationStagePreparerValidatesCopiedInputAndJournalsInOrder(t *testi
 	if createdIdentity == nil || createdIdentity.Platform != runtime.GOOS || createdIdentity.Platform != parentIdentity.Platform || createdIdentity.Volume != parentIdentity.Volume || createdIdentity.FileID == "" {
 		t.Fatalf("journaled directory identity = %#v, want actual %s identity under parent %#v", createdIdentity, runtime.GOOS, parentIdentity)
 	}
+	paths := stage.Paths()
+	wantOutputRel := filepath.ToSlash(filepath.Join(fixture.repo.records[0].PrivateDirRel, "output.flac"))
+	if paths.RelativePath != fixture.repo.records[0].OutputRel || paths.RelativePath != wantOutputRel || paths.RelativePath == fixture.repo.input.Audio.RelativePath {
+		t.Fatalf("audio stage relative path = %q, journal output = %q, want canonical private output %q distinct from source %q", paths.RelativePath, fixture.repo.records[0].OutputRel, wantOutputRel, fixture.repo.input.Audio.RelativePath)
+	}
 	if err := stage.Validate(context.Background()); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -457,7 +462,9 @@ func TestPublicationStagePreparerStagesCurrentRewriteArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stage.Close() })
-	if filepath.Ext(stage.Paths().InputPath) != ".mp3" || stage.Paths().RelativePath != "current.mp3" {
+	paths := stage.Paths()
+	wantOutputRel := filepath.ToSlash(filepath.Join(fixture.repo.records[0].PrivateDirRel, "output.mp3"))
+	if filepath.Ext(paths.InputPath) != ".mp3" || paths.RelativePath != fixture.repo.records[0].OutputRel || paths.RelativePath != wantOutputRel || paths.RelativePath == fixture.repo.input.Rewrite.RelativePath {
 		t.Fatalf("rewrite stage paths = %#v", stage.Paths())
 	}
 	if err := stage.Validate(context.Background()); err != nil {

@@ -229,3 +229,186 @@ func assertPublicationExposureUnchanged(t *testing.T, ctx context.Context, f pub
 		t.Fatalf("journal changed: entries=%d err=%v", len(entries), err)
 	}
 }
+
+func TestPublicationCandidateInstalledRecordsAndReplaysPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, intent, staged := readyPublicationExposureFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, staged); err != nil || outcome != PublicationExposureRecorded {
+		t.Fatalf("begin exposure = %q, %v", outcome, err)
+	}
+	size, mtime := int64(10), int64(20)
+	installed := PublicationCandidateInstalledObservation{Version: 1, TargetRelativePath: intent.TargetRelativePath, Identity: PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: staged.PayloadSHA256}}
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, installed); err != nil || outcome != PublicationCandidateInstalledRecorded {
+		t.Fatalf("record installed = %q, %v", outcome, err)
+	}
+	before, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || before.Phase != "exposing" {
+		t.Fatalf("attempt phase = %q, %v", before.Phase, err)
+	}
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, installed); err != nil || outcome != PublicationCandidateInstalledAlreadyRecorded {
+		t.Fatalf("replay installed = %q, %v", outcome, err)
+	}
+	changed := installed
+	changed.Identity = clonePublicationFileIdentity(installed.Identity)
+	otherDigest := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	changed.Identity.SHA256 = otherDigest
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, changed); err != nil || outcome != PublicationCandidateInstalledStale {
+		t.Fatalf("changed installed observation = %q, %v", outcome, err)
+	}
+	changed = installed
+	changed.TargetRelativePath = "root/other.flac"
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, changed); err != nil || outcome != PublicationCandidateInstalledStale {
+		t.Fatalf("changed installed target = %q, %v", outcome, err)
+	}
+	staleGuard := f.guard
+	staleGuard.DeliveryToken += "-stale"
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, staleGuard, intent, staged, installed); err != nil || outcome != PublicationCandidateInstalledStale {
+		t.Fatalf("stale guard = %q, %v", outcome, err)
+	}
+	after, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || string(after.MutationJournal) != string(before.MutationJournal) {
+		t.Fatalf("replay/conflict changed journal: %v", err)
+	}
+	var currentCount int
+	if err := f.db.NewRaw(`SELECT count(*) FROM track_publication WHERE position_id=?`, f.guard.ExpectedPositionID).Scan(ctx, &currentCount); err != nil || currentCount != 0 {
+		t.Fatalf("current publication count = %d, %v", currentCount, err)
+	}
+}
+
+func TestPublicationCandidateInstalledRejectsMalformedExposureJournalPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		mutate func([]json.RawMessage) []json.RawMessage
+	}{
+		{name: "duplicate exposure", mutate: func(entries []json.RawMessage) []json.RawMessage { return append(entries, entries[len(entries)-1]) }},
+		{name: "malformed unrelated exposure", mutate: func(entries []json.RawMessage) []json.RawMessage {
+			var record map[string]any
+			if err := json.Unmarshal(entries[len(entries)-1], &record); err != nil {
+				panic(err)
+			}
+			record["intent"] = map[string]any{"version": 1}
+			encoded, _ := json.Marshal(record)
+			return append(entries, encoded)
+		}},
+		{name: "malformed guard", mutate: func(entries []json.RawMessage) []json.RawMessage {
+			var record map[string]any
+			if err := json.Unmarshal(entries[len(entries)-1], &record); err != nil {
+				panic(err)
+			}
+			record["guard"] = map[string]any{}
+			encoded, _ := json.Marshal(record)
+			entries[len(entries)-1] = encoded
+			return entries
+		}},
+		{name: "invalid phase transition", mutate: func(entries []json.RawMessage) []json.RawMessage {
+			var record map[string]any
+			if err := json.Unmarshal(entries[len(entries)-1], &record); err != nil {
+				panic(err)
+			}
+			record["from"] = "staged"
+			encoded, _ := json.Marshal(record)
+			entries[len(entries)-1] = encoded
+			return entries
+		}},
+		{name: "conflicting position tuple", mutate: func(entries []json.RawMessage) []json.RawMessage {
+			var record map[string]any
+			if err := json.Unmarshal(entries[len(entries)-1], &record); err != nil {
+				panic(err)
+			}
+			record["position_id"] = uuid.NewString()
+			encoded, _ := json.Marshal(record)
+			entries[len(entries)-1] = encoded
+			return entries
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, intent, staged := readyPublicationExposureFixture(t)
+			repo := NewSetupManagerRepository(f.db)
+			if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, staged); err != nil || outcome != PublicationExposureRecorded {
+				t.Fatalf("begin exposure = %q, %v", outcome, err)
+			}
+			before, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var entries []json.RawMessage
+			if err := json.Unmarshal(before.MutationJournal, &entries); err != nil {
+				t.Fatal(err)
+			}
+			journal, err := json.Marshal(tc.mutate(entries))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(journal), f.guard.OperationID).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			badBefore, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			size, mtime := int64(10), int64(20)
+			installed := PublicationCandidateInstalledObservation{Version: 1, TargetRelativePath: intent.TargetRelativePath, Identity: PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: staged.PayloadSHA256}}
+			if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, installed); outcome != PublicationCandidateInstalledStale {
+				t.Fatalf("malformed exposure = %q, %v", outcome, err)
+			}
+			after, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+			if err != nil || after.Phase != "exposing" || string(after.MutationJournal) != string(badBefore.MutationJournal) {
+				t.Fatalf("attempt mutated: phase=%q err=%v", after.Phase, err)
+			}
+			var state, stage string
+			if err := f.db.NewRaw(`SELECT state,stage FROM operation WHERE id=?`, f.guard.OperationID).Scan(ctx, &state, &stage); err != nil || state != "running" || stage != "exposing" {
+				t.Fatalf("operation state/stage changed: %q/%q err=%v", state, stage, err)
+			}
+			var claimState string
+			if err := f.db.NewRaw(`SELECT state FROM publication_execution_claim WHERE operation_id=?`, f.guard.OperationID).Scan(ctx, &claimState); err != nil || claimState != "executing" {
+				t.Fatalf("claim state changed: %q err=%v", claimState, err)
+			}
+		})
+	}
+}
+
+func TestPublicationCandidateInstalledRejectsDuplicateInstalledJournalPostgreSQL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, intent, staged := readyPublicationExposureFixture(t)
+	repo := NewSetupManagerRepository(f.db)
+	if outcome, err := repo.BeginPublicationExposure(ctx, f.guard, intent, staged); err != nil || outcome != PublicationExposureRecorded {
+		t.Fatalf("begin exposure = %q, %v", outcome, err)
+	}
+	size, mtime := int64(10), int64(20)
+	installed := PublicationCandidateInstalledObservation{Version: 1, TargetRelativePath: intent.TargetRelativePath, Identity: PublicationFileIdentity{SizeBytes: &size, MTime: &mtime, SHA256: staged.PayloadSHA256}}
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, installed); err != nil || outcome != PublicationCandidateInstalledRecorded {
+		t.Fatalf("record installed = %q, %v", outcome, err)
+	}
+	before, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(before.MutationJournal, &entries); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := json.Marshal(append(entries, entries[len(entries)-1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NewRaw(`UPDATE track_publication_attempt SET mutation_journal=?::jsonb WHERE operation_id=?`, string(journal), f.guard.OperationID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	badBefore, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := repo.RecordPublicationCandidateInstalled(ctx, f.guard, intent, staged, installed); outcome != PublicationCandidateInstalledStale {
+		t.Fatalf("duplicate installed records = %q, %v", outcome, err)
+	}
+	after, err := repo.ReadPublicationAttempt(ctx, f.guard.OperationID)
+	if err != nil || after.Phase != "exposing" || string(after.MutationJournal) != string(badBefore.MutationJournal) {
+		t.Fatalf("attempt mutated: phase=%q err=%v", after.Phase, err)
+	}
+}
