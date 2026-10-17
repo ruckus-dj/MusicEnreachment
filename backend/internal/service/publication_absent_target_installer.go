@@ -38,7 +38,7 @@ func newAbsentTargetInstaller(scope *PublicationExecutionScope, repository absen
 	if scope == nil || repository == nil || stage == nil || root == nil || stageDir == nil || targetParent == nil || scope.guard != guard || intent.Expectation != "absent" || intent.TargetRelativePath == "" || intent.StagedPath == "" || strings.ContainsAny(stageName+targetName, "/\\") || stageName == "" || targetName == "" {
 		return nil, errors.New("invalid absent-target publication installer dependencies")
 	}
-	return &absentTargetInstaller{scope: scope, repository: repository, guard: guard, intent: intent, validated: validated, stage: stage, root: root, stageDir: stageDir, targetParent: targetParent, stageName: stageName, targetName: targetName}, nil
+	return &absentTargetInstaller{scope: scope, repository: repository, guard: guard, intent: intent, validated: validated.Clone(), stage: stage, root: root, stageDir: stageDir, targetParent: targetParent, stageName: stageName, targetName: targetName}, nil
 }
 
 // Install serializes the whole operation against Run and Finalize. It never

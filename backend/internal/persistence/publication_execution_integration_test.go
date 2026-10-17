@@ -31,6 +31,10 @@ func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 	db := testpostgres.OpenMigrated(t)
 	initializeRiver(t, ctx, db)
 	positionID, operationID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	frozenInputs, err := json.Marshal(publicationInputsFixture(t, "audio"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	releaseID, trackID := uuid.New(), uuid.New()
 	var jobID int64
 	var epoch uuid.UUID
@@ -60,7 +64,7 @@ func newPublicationExecutionFixture(t *testing.T) publicationExecutionFixture {
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO track_publication_attempt
 		(operation_id,position_id,epoch,expected_generation,candidate_generation,intent_kind,phase,frozen_inputs,namespace_manifest,mutation_journal)
-		VALUES (?,?,?,NULL,?,'audio','queued','{}','{}','[]')`, operationID, positionID, epoch, candidateID); err != nil {
+		VALUES (?,?,?,NULL,?,'audio','queued',?::jsonb,'{}','[]')`, operationID, positionID, epoch, candidateID, string(frozenInputs)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -95,7 +99,7 @@ func TestPublicationDeliveryClaimAcquiresAndPersistsTransitionPostgreSQL(t *test
 		t.Fatalf("transition = operation:%s attempt:%s claim:%s", operationState, phase, claimState)
 	}
 	attempt, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
-	if err != nil || attempt == nil || string(attempt.FrozenInputs) != "{}" {
+	if err != nil || attempt == nil || len(attempt.FrozenInputs) == 0 || string(attempt.FrozenInputs) == "{}" {
 		t.Fatalf("read persisted attempt = %+v, %v", attempt, err)
 	}
 	if got, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || got != PublicationDeliveryAlreadyOwned {
@@ -227,6 +231,11 @@ func TestPublicationStageAdvancesWithTypedAppendOnlyJournalPostgreSQL(t *testing
 	if outcome, err := repo.ClaimPublicationDelivery(context.Background(), f.guard); err != nil || outcome != PublicationDeliveryAcquired {
 		t.Fatalf("claim = %q, %v", outcome, err)
 	}
+	before, err := repo.ReadPublicationAttempt(context.Background(), f.guard.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozenBefore := append(json.RawMessage(nil), before.FrozenInputs...)
 	observation := newValidPublicationStageObservation()
 	if ok, err := repo.AdvancePublicationStage(context.Background(), f.guard, "staged", observation); err != nil || ok {
 		t.Fatalf("wrong-order stage = %t, %v", ok, err)
@@ -245,9 +254,8 @@ func TestPublicationStageAdvancesWithTypedAppendOnlyJournalPostgreSQL(t *testing
 	if err := json.Unmarshal(attempt.MutationJournal, &entries); err != nil || len(entries) != 2 {
 		t.Fatalf("journal = %s, %v", attempt.MutationJournal, err)
 	}
-	var frozen map[string]json.RawMessage
-	if err := json.Unmarshal(attempt.FrozenInputs, &frozen); err != nil || string(attempt.FrozenInputs) != "{}" {
-		t.Fatalf("frozen inputs overwritten: %s, %v", attempt.FrozenInputs, err)
+	if !sameJSONValue(attempt.FrozenInputs, frozenBefore) {
+		t.Fatalf("frozen inputs changed: before %s, after %s", frozenBefore, attempt.FrozenInputs)
 	}
 }
 

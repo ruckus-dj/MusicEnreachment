@@ -162,7 +162,44 @@ func AssessFirstPublicationCommit(attempt TrackPublicationAttempt, operation Pub
 	if !matching || installed.TargetRelativePath != targetRelativePath || installed.Identity.SizeBytes == nil || validated.Ownership.ExpectedSize == nil || *installed.Identity.SizeBytes != *validated.Ownership.ExpectedSize || installed.Identity.MTime == nil || validated.Ownership.ExpectedMTime == nil || *installed.Identity.MTime != *validated.Ownership.ExpectedMTime || installed.Identity.SHA256 != validated.PayloadSHA256 {
 		return FirstPublicationCommitProjection{}, errors.New("target is not represented by the namespace manifest and installed identity")
 	}
-	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: []string{"asset_outcomes", "quality_policy_provenance", "namespace_revalidation", "live_delivery_fence"}}, nil
+	missing := []string{"asset_outcomes", "quality_policy_provenance", "namespace_revalidation", "live_delivery_fence"}
+	assetsPresent := len(validated.ActualAssets) != 0
+	var assetOutcomes PublicationAssetOutcomes
+	if assetsPresent {
+		var err error
+		assetOutcomes, err = DecodePublicationAssetOutcomes(validated.ActualAssets)
+		if err != nil {
+			return FirstPublicationCommitProjection{}, fmt.Errorf("invalid publication asset evidence: %w", err)
+		}
+		if err := assetOutcomes.ValidateAgainstMetadata(metadata.Tags, nil); err != nil {
+			return FirstPublicationCommitProjection{}, fmt.Errorf("publication asset evidence contradicts metadata: %w", err)
+		}
+		missing = removeCommitRequirement(missing, "asset_outcomes")
+	}
+	if validated.QualityPolicyVersion != 0 {
+		if input.Version == PublicationInputsVersion {
+			return FirstPublicationCommitProjection{}, errors.New("publication stage claims quality policy provenance for version 1 inputs")
+		}
+		if input.Version != PublicationInputsVersion2 {
+			return FirstPublicationCommitProjection{}, errors.New("publication stage has unsupported frozen input version")
+		}
+		if validated.QualityPolicyVersion != input.QualityPolicyVersion {
+			return FirstPublicationCommitProjection{}, errors.New("publication stage quality policy provenance contradicts frozen inputs")
+		}
+		if assetsPresent {
+			missing = removeCommitRequirement(missing, "quality_policy_provenance")
+		}
+	}
+	return FirstPublicationCommitProjection{Version: 1, PositionID: attempt.PositionID, Epoch: attempt.Epoch, CandidateGeneration: attempt.CandidateGeneration, TargetRelativePath: targetRelativePath, CurrentAudio: audio, Ownership: PublicationCurrentOwnership{Version: 1, Identity: installed.Identity}, Metadata: metadata, NamespaceManifest: append([]PublicationNamespaceNode(nil), manifest...), EvidenceClassification: "evidence_consistency_only_namespace_not_revalidated", MissingRequirements: missing}, nil
+}
+
+func removeCommitRequirement(requirements []string, target string) []string {
+	for index, requirement := range requirements {
+		if requirement == target {
+			return append(requirements[:index], requirements[index+1:]...)
+		}
+	}
+	return requirements
 }
 
 func strictMetadata(raw json.RawMessage, target *PublicationCommitMetadata) error {

@@ -50,10 +50,12 @@ type PublicationPinnedTools interface {
 }
 
 type PublicationStageObservation struct {
-	Ownership persistence.ArtifactOwnership
-	Audio     json.RawMessage
-	Metadata  json.RawMessage
-	SHA256    string
+	Ownership            persistence.ArtifactOwnership
+	Audio                json.RawMessage
+	Metadata             json.RawMessage
+	SHA256               string
+	Assets               json.RawMessage
+	QualityPolicyVersion int
 }
 
 type publicationStageRepository interface {
@@ -220,7 +222,8 @@ func (runner PublicationStagingRunner) Run(ctx context.Context, scope *Publicati
 		return result, errors.New("publication validator returned incomplete actual observations")
 	}
 	validated := persistence.PublicationStageObservation{Version: 1, RelativePath: paths.RelativePath,
-		Ownership: result.Ownership, PayloadSHA256: result.SHA256, ActualAudio: result.Audio, ActualMetadata: result.Metadata}
+		Ownership: result.Ownership, PayloadSHA256: result.SHA256, ActualAudio: result.Audio, ActualMetadata: result.Metadata,
+		ActualAssets: append(json.RawMessage(nil), result.Assets...), QualityPolicyVersion: result.QualityPolicyVersion}
 	if err := check(); err != nil {
 		return result, fmt.Errorf("validate publication stage before validated transition: %w", err)
 	}

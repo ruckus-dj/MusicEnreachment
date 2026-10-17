@@ -1,11 +1,71 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/metadata"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/sourcefs"
 	"github.com/ruckus/MusicEnreachment/backend/internal/persistence"
 	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
+
+type publicationValidatorTools struct{}
+
+func (publicationValidatorTools) Executable(context.Context, []persistence.SourceAnalysisToolSelection, string) (string, error) {
+	return "ffprobe", nil
+}
+
+type publicationValidatorMetadataReader struct {
+	capture metadata.Capture
+	err     error
+	request metadata.ReadRequest
+}
+
+func (reader *publicationValidatorMetadataReader) Read(_ context.Context, _ string, request metadata.ReadRequest) (metadata.Capture, error) {
+	reader.request = request
+	return reader.capture, reader.err
+}
+
+func TestRealPublicationStageValidatorCapturesV2AssetEvidence(t *testing.T) {
+	_, _, input, _, _ := pubStageSetup(t, &pubStageRepo{}, pubStageCommand{}, nil, nil)
+	input.Version = persistence.PublicationInputsVersion2
+	input.QualityPolicyVersion = publication.QualityPolicyVersion
+
+	stage := filepath.Join(t.TempDir(), "stage.flac")
+	if err := os.WriteFile(stage, []byte("staged payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader := &publicationValidatorMetadataReader{capture: metadata.Capture{
+		Tags: input.DesiredTags, CoverInspection: &metadata.CoverInspection{Observed: true},
+	}}
+	validator := RealPublicationStageValidator{
+		Tools: publicationValidatorTools{}, MetadataReader: reader,
+		Probe: func(context.Context, string, sourcefs.RegularFile, publication.AudioContainer) ([]byte, error) {
+			return []byte(`{"format":{"format_name":"matroska,webm"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2,"bits_per_raw_sample":16}]}`), nil
+		},
+	}
+	got, err := validator.Validate(context.Background(), stage, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reader.request.CoverInspection {
+		t.Fatal("V2 metadata read did not request cover inspection")
+	}
+	var assets persistence.PublicationAssetOutcomes
+	if err := json.Unmarshal(got.Assets, &assets); err != nil {
+		t.Fatalf("decode actual assets: %v", err)
+	}
+	if assets.Cover.State != persistence.PublicationAssetAbsent || assets.Lyrics.State != persistence.PublicationAssetAbsent {
+		t.Fatalf("assets = %#v, want observed absent cover and lyrics", assets)
+	}
+	if got.QualityPolicyVersion != publication.QualityPolicyVersion {
+		t.Fatalf("quality policy = %d", got.QualityPolicyVersion)
+	}
+}
 
 func TestPublicationStageAudioPlanPreservesRewriteCodecAndContainer(t *testing.T) {
 	lossless := false
@@ -44,6 +104,7 @@ func TestValidatePublicationTopology(t *testing.T) {
 	}{
 		{name: "single audio", json: `{"streams":[{"codec_type":"audio"}]}`, valid: true},
 		{name: "video", json: `{"streams":[{"codec_type":"audio"},{"codec_type":"video"}]}`},
+		{name: "attached picture", json: `{"streams":[{"codec_type":"audio"},{"codec_type":"video","disposition":{"attached_pic":1}}]}`},
 		{name: "multiple audio", json: `{"streams":[{"codec_type":"audio"},{"codec_type":"audio"}]}`},
 		{name: "chapters", json: `{"streams":[{"codec_type":"audio"}],"chapters":[{}]}`},
 	}

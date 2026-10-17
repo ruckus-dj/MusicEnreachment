@@ -17,12 +17,30 @@ import (
 // PublicationStageObservation is the source-free readback for one staged
 // artifact. Paths are publication-relative, never source paths.
 type PublicationStageObservation struct {
-	Version        int               `json:"version"`
-	RelativePath   string            `json:"relative_path"`
-	Ownership      ArtifactOwnership `json:"ownership"`
-	PayloadSHA256  string            `json:"payload_sha256,omitempty"`
-	ActualAudio    json.RawMessage   `json:"actual_audio"`
-	ActualMetadata json.RawMessage   `json:"actual_metadata"`
+	Version              int               `json:"version"`
+	RelativePath         string            `json:"relative_path"`
+	Ownership            ArtifactOwnership `json:"ownership"`
+	PayloadSHA256        string            `json:"payload_sha256,omitempty"`
+	ActualAudio          json.RawMessage   `json:"actual_audio"`
+	ActualMetadata       json.RawMessage   `json:"actual_metadata"`
+	ActualAssets         json.RawMessage   `json:"actual_assets,omitempty"`
+	QualityPolicyVersion int               `json:"quality_policy_version,omitempty"`
+}
+
+// Clone detaches JSON evidence and optional ownership pointers from caller-owned memory.
+func (o PublicationStageObservation) Clone() PublicationStageObservation {
+	o.ActualAudio = append(json.RawMessage(nil), o.ActualAudio...)
+	o.ActualMetadata = append(json.RawMessage(nil), o.ActualMetadata...)
+	o.ActualAssets = append(json.RawMessage(nil), o.ActualAssets...)
+	if o.Ownership.ExpectedSize != nil {
+		value := *o.Ownership.ExpectedSize
+		o.Ownership.ExpectedSize = &value
+	}
+	if o.Ownership.ExpectedMTime != nil {
+		value := *o.Ownership.ExpectedMTime
+		o.Ownership.ExpectedMTime = &value
+	}
+	return o
 }
 
 // ArtifactOwnership captures the expected filesystem identity for a staged
@@ -70,6 +88,19 @@ func (repository *SetupManagerRepository) AdvancePublicationStage(ctx context.Co
 		attempt, operation, _, ok, err := lockAndValidatePublicationDelivery(ctx, tx, guard, "advance publication stage")
 		if err != nil || !ok || attempt.Phase != expectedPhase || operation.Stage != expectedPhase {
 			return err
+		}
+		if expectedPhase == "staged" {
+			input, decodeErr := DecodePublicationInputs(attempt.FrozenInputs)
+			if decodeErr != nil {
+				return fmt.Errorf("advance publication stage: decode frozen inputs: %w", decodeErr)
+			}
+			if input.Version == PublicationInputsVersion2 {
+				if len(observation.ActualAssets) == 0 || observation.QualityPolicyVersion != input.QualityPolicyVersion {
+					return errors.New("advance publication stage: version 2 requires matching asset and quality-policy evidence")
+				}
+			} else if observation.QualityPolicyVersion != 0 {
+				return errors.New("advance publication stage: version 1 cannot claim quality-policy evidence")
+			}
 		}
 		journal, err := appendPublicationStageJournal(attempt.MutationJournal, expectedPhase, nextPhase, observation)
 		if err != nil {
@@ -219,7 +250,23 @@ func validPublicationStageObservation(o PublicationStageObservation) bool {
 			return false
 		}
 	}
-	return publicationJSONObject(o.ActualAudio) && publicationJSONObject(o.ActualMetadata)
+	if !publicationJSONObject(o.ActualAudio) || !publicationJSONObject(o.ActualMetadata) {
+		return false
+	}
+	if len(o.ActualAssets) == 0 {
+		return o.QualityPolicyVersion == 0
+	}
+	assets, err := DecodePublicationAssetOutcomes(o.ActualAssets)
+	if err != nil {
+		return false
+	}
+	var metadata PublicationCommitMetadata
+	if strictMetadata(o.ActualMetadata, &metadata) != nil || assets.ValidateAgainstMetadata(metadata.Tags, nil) != nil {
+		return false
+	}
+	// Asset outcomes are factual read-back evidence independent of quality-policy
+	// provenance. Version 1 observations may carry them without claiming a policy.
+	return o.QualityPolicyVersion >= 0
 }
 
 func appendPublicationStageJournal(raw json.RawMessage, from, to string, observation PublicationStageObservation) (json.RawMessage, error) {
