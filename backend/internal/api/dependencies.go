@@ -36,6 +36,7 @@ type Dependencies struct {
 	ManualPickerSearch     *service.ManualPickerSearchService
 	LibraryReleaseDetails  *service.LibraryReleaseDetails
 	LibraryPrimaryArtists  *service.LibraryPrimaryArtists
+	LibraryMetadata        *service.LibraryMetadataService
 }
 
 type preflightEntry struct {

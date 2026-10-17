@@ -120,7 +120,7 @@ func TestFieldValueRejectsInvalidStatesAuthorityAndTypes(t *testing.T) {
 		{"explicit empty payload", "title", `{"state":"explicit_empty","value":"x","authority":"manual","provenance":{"kind":"manual"}}`, "must not include a value"},
 		{"explicit empty null payload", "title", `{"state":"explicit_empty","value":null,"authority":"manual","provenance":{"kind":"manual"}}`, "must not include a value"},
 		{"bad authority", "title", `{"state":"absent","authority":"maybe","provenance":{"kind":"provider"}}`, "unknown metadata authority"},
-		{"authority provenance mismatch", "title", `{"state":"absent","authority":"manual","provenance":{"kind":"provider"}}`, "requires automatic authority"},
+		{"unknown provenance", "title", `{"state":"absent","authority":"manual","provenance":{"kind":"unverified"}}`, "unknown metadata provenance"},
 		{"bad string type", "title", `{"state":"value","value":12,"authority":"manual","provenance":{"kind":"manual"}}`, "must be a string"},
 		{"bad list type", "genre", `{"state":"value","value":["ok",false],"authority":"automatic","provenance":{"kind":"provider"}}`, "list entries must be strings"},
 		{"bad bpm", "bpm", `{"state":"value","value":0,"authority":"automatic","provenance":{"kind":"provider"}}`, "positive finite number"},
@@ -201,5 +201,35 @@ func TestFieldRegistryIsStableAndProtectsCanonicalFields(t *testing.T) {
 	definition, _ := Field("title")
 	if !containsScope(definition.Scopes, ScopeRelease) {
 		t.Fatal("registry definitions were mutated through returned slice")
+	}
+}
+
+func TestDecodeEnvelopeRejectsUntrustedMetadataClaimsAndTrailingDocuments(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"unknown authority", `{"version":1,"scope":"release","desired":{"title":{"state":"value","value":"x","authority":"provider","provenance":{"kind":"provider"}}}}`},
+		{"unknown provenance", `{"version":1,"scope":"release","desired":{"title":{"state":"value","value":"x","authority":"manual","provenance":{"kind":"unknown"}}}}`},
+		{"unknown state", `{"version":1,"scope":"release","desired":{"title":{"state":"unset","authority":"automatic","provenance":{"kind":"provider"}}}}`},
+		{"trailing document", `{"version":1,"scope":"release","desired":{}} {}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := DecodeEnvelope([]byte(test.data)); err == nil {
+				t.Fatal("DecodeEnvelope() unexpectedly accepted invalid document")
+			}
+		})
+	}
+}
+
+func TestManualAuthorityPreservesProviderValueProvenance(t *testing.T) {
+	envelope, err := DecodeEnvelope([]byte(`{"version":1,"scope":"release","desired":{"genre":{"state":"value","value":["Jazz"],"authority":"manual","provenance":{"kind":"provider","reference":"accepted-field"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := envelope.Desired["genre"]
+	if field.Authority != AuthorityManual || field.Provenance.Kind != ProvenanceProvider || field.Provenance.Reference != "accepted-field" {
+		t.Fatalf("authority/provenance = %#v", field)
 	}
 }

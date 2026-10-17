@@ -29,6 +29,8 @@ var additiveMigrationNames = []string{
 	"20261017000001",
 	"20261017000002",
 	"20261017000003",
+	"20261017000004",
+	"20261017000005",
 }
 
 var currentMigrationNames = append(append([]string(nil), baselineMigrationNames...), additiveMigrationNames...)
@@ -201,7 +203,7 @@ func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []st
 
 func assertCurrentSchema(t *testing.T, database *bun.DB) {
 	t.Helper()
-	var nativeColumns, nativeConstraints, identityColumns, identityConstraints int
+	var nativeColumns, nativeConstraints, identityColumns, identityConstraints, positionMetadataColumns int
 	ctx := context.Background()
 	checks := []struct {
 		query  string
@@ -212,6 +214,7 @@ func assertCurrentSchema(t *testing.T, database *bun.DB) {
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_native_matroska_check'`, &nativeConstraints, 0},
 		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='release_track' AND column_name='id' AND data_type='uuid' AND is_nullable='NO'`, &identityColumns, 1},
 		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.release_track'::regclass AND conname='release_track_id_key' AND contype='u'`, &identityConstraints, 1},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='release_track' AND column_name='metadata' AND data_type='jsonb' AND is_nullable='NO'`, &positionMetadataColumns, 1},
 	}
 	for _, check := range checks {
 		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {

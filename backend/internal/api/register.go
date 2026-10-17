@@ -28,6 +28,7 @@ func RegisterAll(api huma.API, dependencies Dependencies) {
 	registerManualReleaseSelection(api, dependencies.ManualReleaseSelection)
 	registerManualPickerSearch(api, dependencies.ManualPickerSearch)
 	registerLibraryReleaseDetail(api, dependencies)
+	registerLibraryMetadata(api, dependencies.LibraryMetadata)
 }
 
 func registerOperationEvents(router chi.Router, operations *service.Operations) {

@@ -812,7 +812,7 @@ func writeMatchingMetadata(ctx context.Context, tx bun.Tx, table string, id uuid
 	if err != nil {
 		return err
 	}
-	_, err = tx.NewRaw(`UPDATE `+table+` SET metadata=?::jsonb WHERE id=?`, string(metadata), id).Exec(ctx)
+	_, err = tx.NewRaw(`UPDATE `+table+` SET metadata=COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(?, COALESCE(metadata->?, '{}'::jsonb) || (?::jsonb->?)), updated_at=now() WHERE id=?`, provenanceKey, provenanceKey, string(metadata), provenanceKey, id).Exec(ctx)
 	return err
 }
 

@@ -101,6 +101,27 @@ export interface DeleteSourceBody {
   confirmed_path: string;
 }
 
+export interface Provenance {
+  kind: string;
+  reference?: string;
+  source_field?: string;
+}
+
+export interface FieldValue {
+  authority: string;
+  provenance: Provenance;
+  state: string;
+  value?: unknown;
+}
+
+export type EnvelopeDesired = {[key: string]: FieldValue};
+
+export interface Envelope {
+  desired: EnvelopeDesired;
+  scope: string;
+  version: number;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -292,6 +313,23 @@ export interface LibraryArtistResolution {
   effective_artist_mbid: string;
   selected_artist_id: string;
   status: string;
+}
+
+export type LibraryMetadataBodyChanges = {[key: string]: unknown};
+
+export interface LibraryMetadataBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  changes: LibraryMetadataBodyChanges;
+  expected_revision: number;
+}
+
+export interface LibraryMetadataResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  envelope: Envelope;
+  publication_applied: boolean;
+  revision: number;
 }
 
 export interface LibraryPrimaryArtistBody {

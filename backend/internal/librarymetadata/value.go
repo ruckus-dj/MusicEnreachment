@@ -59,6 +59,12 @@ type FieldValue struct {
 	valuePresent bool
 }
 
+// ManualFieldValue constructs a manual desired value while preserving whether
+// the request explicitly supplied the value member.
+func ManualFieldValue(state ValueState, value any, present bool) FieldValue {
+	return FieldValue{State: state, Value: value, Authority: AuthorityManual, Provenance: Provenance{Kind: ProvenanceManual}, valuePresent: present}
+}
+
 // UnmarshalJSON records whether the wire document supplied a value so an
 // explicit null cannot be mistaken for an omitted value. Unknown properties
 // remain rejected even though the envelope decoder cannot see inside this
@@ -212,14 +218,9 @@ func (fieldValue FieldValue) validate(definition FieldDefinition) error {
 		return fmt.Errorf("unknown metadata authority %q", fieldValue.Authority)
 	}
 	switch fieldValue.Provenance.Kind {
-	case ProvenanceProvider, ProvenanceSourceMetadata:
-		if fieldValue.Authority != AuthorityAutomatic {
-			return fmt.Errorf("%s provenance requires automatic authority", fieldValue.Provenance.Kind)
-		}
-	case ProvenanceManual:
-		if fieldValue.Authority != AuthorityManual {
-			return fmt.Errorf("manual provenance requires manual authority")
-		}
+	case ProvenanceProvider, ProvenanceSourceMetadata, ProvenanceManual:
+		// Authority protects a value from automatic replacement; provenance
+		// records its origin. A manually chosen provider value retains its origin.
 	default:
 		return fmt.Errorf("unknown metadata provenance kind %q", fieldValue.Provenance.Kind)
 	}

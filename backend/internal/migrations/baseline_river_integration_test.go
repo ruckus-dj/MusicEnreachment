@@ -14,7 +14,7 @@ import (
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
-func TestBaselineRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
+func TestCurrentSchemaRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	database := testpostgres.Open(t)
@@ -34,8 +34,10 @@ func TestBaselineRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		WHERE n.nspname='public' AND c.relkind='r' AND c.relname NOT LIKE 'bun\_%' ESCAPE '\'`).Scan(ctx, &tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if tableCount != 85 {
-		t.Fatalf("baseline contains %d application tables, want 85", tableCount)
+	// The five baselines contain 85 tables; publication state adds seven.
+	const currentApplicationTables = 85 + 7
+	if tableCount != currentApplicationTables {
+		t.Fatalf("current schema contains %d application tables, want %d", tableCount, currentApplicationTables)
 	}
 	river, err := rivermigrate.New(riverdatabasesql.New(database.DB), nil)
 	if err != nil {
@@ -59,7 +61,7 @@ func TestBaselineRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		t.Fatal("River migration fixture has no history")
 	}
 	if _, err := application.Rollback(ctx); err != nil {
-		t.Fatalf("roll back empty application baseline alongside River: %v", err)
+		t.Fatalf("roll back empty current application schema alongside River: %v", err)
 	}
 	var jobs, riverHistoryAfter, unrelated int
 	if err := database.NewRaw(`SELECT count(*) FROM river_job WHERE id=?`, jobID).Scan(ctx, &jobs); err != nil {
@@ -75,6 +77,6 @@ func TestBaselineRollbackPreservesRiverAndUnrelatedData(t *testing.T) {
 		t.Fatalf("application rollback changed other data: jobs=%d unrelated=%d River history=%d (was %d)", jobs, unrelated, riverHistoryAfter, riverHistoryBefore)
 	}
 	if _, err := application.Migrate(ctx); err != nil {
-		t.Fatalf("reapply application baseline alongside River: %v", err)
+		t.Fatalf("reapply current application schema alongside River: %v", err)
 	}
 }
