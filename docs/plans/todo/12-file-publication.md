@@ -9,6 +9,37 @@ removal. Первоначальное описание DRAFT ниже сохра
 после соответствующих технических гейтов и проверок; завершение плана и
 runtime acceptance ещё не достигнуты.
 
+### Текущий прогресс реализации — 2026-10-17 (после `1c3bb62`)
+
+Реализованы подготовительные foundation-срезы: атомарный admission публикации в
+namespace с durable claims и River jobs, содержащими только operation ID;
+durable source holds и защита мутаций источника согласно A.17; typed execution
+inputs с probe-verified selected facts; подготовка переписывает только
+ownership-verified artifact, не оригинальный source; проекция согласованных
+metadata в tags и staged writer/preparers. Добавлены exclusive stage journal,
+supervised execution scopes с удержанием до доказанного quiescence,
+descriptor-bound probing, разрешение инструментов из frozen managed tools и
+ограничения demuxer/protocol для publication inputs. Это foundation, а не
+завершённые exposure/recovery или end-to-end publication slices.
+
+Windows job backend пока **UNREGISTERED**; проверка membership процесса в job —
+не arbitrary broker containment и не полный sandbox. Native Windows поведение
+не проверено, CI для этой серии ещё не запушен. Также ещё не валидированы
+sample-rate и сохранение аудиобайтов как фактические характеристики результата.
+После settle не сохраняется история исходного аудиоисточника; это не означает,
+что сохранение аудиобайтов текущей публикации уже доказано.
+
+Остаются runtime interprocess exclusion, доказательство поведения при потере БД
+на старте, Linux/macOS containment, exposure journal/recovery/settlement,
+wiring cover/lyrics assets, automatic reconciliation и cleanup, а также UI/API
+end-to-end, Navidrome/tag mapping и distribution/licensing. Поэтому план 12 не
+завершён и не переносится в `done/`; owner contract и отложенный scope этим
+статусом не меняются.
+
+Последняя указанная полная проверка `task verify` прошла; изменения внесены
+отдельными коммитами с локальными hooks, но пока не pushed. Ключевой диапазон
+реализации: `d649800`–`1c3bb62` (последний — demuxer/protocol policy).
+
 **Статус: DRAFT.** Подготовлена предметная декомпозиция следующей основной
 области. Это не разрешение на реализацию: перед implementation необходимо
 получить явные решения владельца по открытым продуктовым пунктам D01–D05 и
