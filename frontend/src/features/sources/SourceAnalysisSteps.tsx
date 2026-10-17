@@ -41,7 +41,6 @@ export interface SourceAnalysisMetadataSuccess {
     readonly version: string;
     readonly contract: string;
   };
-  readonly nativeMatroska?: unknown;
 }
 
 export interface SourceAnalysisStepsProps {
@@ -203,14 +202,6 @@ export function SourceAnalysisSteps({
                     </dl>
                   ) : (
                     <p className="sources-note">Сохранённых тегов нет.</p>
-                  )}
-                  {metadata.nativeMatroska !== undefined && (
-                    <details>
-                      <summary>Нативные теги Matroska</summary>
-                      <pre>
-                        {JSON.stringify(metadata.nativeMatroska, null, 2)}
-                      </pre>
-                    </details>
                   )}
                 </>
               )}

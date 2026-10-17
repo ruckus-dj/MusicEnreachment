@@ -732,7 +732,6 @@ export interface SourceMetadataProvenanceResponse {
 export type SourceMetadataResponseTags = {[key: string]: string[] | null};
 
 export interface SourceMetadataResponse {
-  native_matroska?: unknown;
   provenance: SourceMetadataProvenanceResponse;
   tags: SourceMetadataResponseTags;
 }

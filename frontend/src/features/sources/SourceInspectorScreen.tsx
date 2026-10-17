@@ -208,7 +208,6 @@ export function SourceInspectorScreen({
               metadata && {
                 tags: metadata.tags,
                 provenance: metadata.provenance,
-                nativeMatroska: metadata.native_matroska,
               }
             }
             retryAvailable={retryAvailable}

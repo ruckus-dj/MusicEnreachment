@@ -68,7 +68,6 @@ type SourceAnalysisStepDetail struct {
 type SourceMetadataDetail struct {
 	Tags       map[string][]string
 	Provenance SourceMetadataProvenance
-	Matroska   json.RawMessage
 }
 
 type SourceMetadataProvenance struct {
@@ -252,7 +251,6 @@ func (s *SourceLocationDetails) Read(ctx context.Context, rootID, locationID uui
 				}
 				stepDetail.Metadata = &SourceMetadataDetail{
 					Tags: detailTags, Provenance: provenance,
-					Matroska: append(json.RawMessage(nil), metadata.NativeMatroska...),
 				}
 			}
 			detail.Steps = append(detail.Steps, stepDetail)

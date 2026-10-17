@@ -80,7 +80,6 @@ type SourceMetadataResult struct {
 	SourceSHA256       []byte          `bun:"source_sha256,nullzero"`
 	ObservedTags       json.RawMessage `bun:"observed_tags,type:jsonb"`
 	Provenance         json.RawMessage `bun:"provenance,type:jsonb"`
-	NativeMatroska     json.RawMessage `bun:"native_matroska,type:jsonb,nullzero"`
 	ObservedAt         time.Time       `bun:"observed_at,nullzero"`
 	WinningResultID    uuid.UUID       `bun:"winning_result_id,type:uuid"`
 	AppliedOperationID uuid.UUID       `bun:"applied_operation_id,type:uuid"`

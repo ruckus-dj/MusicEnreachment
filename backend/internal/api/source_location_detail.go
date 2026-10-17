@@ -77,7 +77,6 @@ type SourceAnalysisStepResponse struct {
 type SourceMetadataResponse struct {
 	Tags       map[string][]string              `json:"tags"`
 	Provenance SourceMetadataProvenanceResponse `json:"provenance"`
-	Matroska   json.RawMessage                  `json:"native_matroska,omitempty"`
 }
 
 type SourceMetadataProvenanceResponse struct {
@@ -232,7 +231,6 @@ func sourceLocationDetailResponse(detail service.SourceLocationDetail) (SourceLo
 					Name: step.Metadata.Provenance.Name, Version: step.Metadata.Provenance.Version,
 					Contract: step.Metadata.Provenance.Contract,
 				},
-				Matroska: step.Metadata.Matroska,
 			}
 		}
 		response.Steps = append(response.Steps, stepResponse)

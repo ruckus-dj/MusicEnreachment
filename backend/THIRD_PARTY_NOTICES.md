@@ -12,19 +12,18 @@ product are reproduced here.
 | Component | Version | License |
 | --- | --- | --- |
 | `github.com/anyascii/go` | v0.3.3 | ISC |
-| `golang.org/x/text` | v0.42.0 | BSD-3-Clause |
-| `go.senan.xyz/taglib` | v0.14.0 | LGPL-2.1 |
-| `github.com/tetratelabs/wazero` | v1.11.1-0.20260428013916-2bbd517b7633 | Apache-2.0 |
-| `github.com/remko/go-mkvparse` | v0.14.0 | MIT |
+| `golang.org/x/text` | v0.43.0 | BSD-3-Clause |
+| `github.com/deluan/go-taglib` (imported as `go.senan.xyz/taglib`) | `v0.0.0-20260926163408-32d7614f30ec` | LGPL-2.1 |
+| `github.com/tetratelabs/wazero` | v1.12.0 | Apache-2.0 |
 | `go.uploadedlobster.com/musicbrainzws2` | v0.19.0 | MIT |
 | `go.uploadedlobster.com/mbtypes` | v0.4.0 | MIT |
 | `github.com/go-resty/resty/v2` | v2.17.2 | MIT |
 | `golang.org/x/time` | v0.16.0 | BSD-3-Clause |
-| `golang.org/x/net` | v0.58.0 | BSD-3-Clause |
+| `golang.org/x/net` | v0.61.0 | BSD-3-Clause |
 | `github.com/go-air/gini` | v1.0.4 | MIT |
 | RapidFuzz C++ (`backend/internal/integrations/textsimilarity/third_party/rapidfuzz`) | v3.3.4 | MIT |
-| TagLib (embedded in `go.senan.xyz/taglib` `taglib.wasm`) | v2.1.1 | LGPL-2.1 or MPL-1.1 |
-| utfcpp (TagLib submodule `3rdparty/utfcpp`) | commit `df857efc5bbc2aa84012d865f7d7e9cccdc08562` | BSL-1.0 |
+| TagLib (embedded in `github.com/deluan/go-taglib` `taglib.wasm`) | v2.3.2 | LGPL-2.1 or MPL-1.1 |
+| utfcpp (TagLib submodule `3rdparty/utfcpp`) | BSL-1.0 |
 
 ---
 
@@ -103,18 +102,18 @@ shall terminate as of the date such litigation is filed.
 
 ---
 
-## go.senan.xyz/taglib v0.14.0
+## github.com/deluan/go-taglib v0.0.0-20260926163408-32d7614f30ec
 
-The go-taglib v0.14.0 `LICENSE` file is the verbatim GNU Lesser General Public
+The selected fork's `LICENSE` file is the verbatim GNU Lesser General Public
 License version 2.1 text (with no additional per-file copyright line),
 reproduced in full in [Appendix A](#appendix-a-gnu-lesser-general-public-license-v21).
 
-Source: <https://github.com/sentriz/go-taglib/tree/v0.14.0>
+Source: <https://github.com/deluan/go-taglib/tree/32d7614f30ecf47d451cd801e0cfb93bf9739db4>
 
-### Embedded TagLib v2.1.1 (WebAssembly)
+### Embedded TagLib v2.3.2 (WebAssembly)
 
-go-taglib v0.14.0 embeds a WebAssembly build of TagLib v2.1.1 and executes it
-through `github.com/tetratelabs/wazero`. TagLib v2.1.1 is dual-licensed under
+The selected fork embeds a WebAssembly build of TagLib v2.3.2 and executes it
+through `github.com/tetratelabs/wazero` v1.12.0. TagLib v2.3.2 is dual-licensed under
 the GNU Lesser General Public License version 2.1 or the Mozilla Public License
 version 1.1. The upstream `AUTHORS` file names Scott Wheeler (author,
 maintainer), Lukas Lalinsky, Tsuda Kageyu, Stephen F. Booth, Ismael Orenstein,
@@ -125,12 +124,11 @@ not assert a sole-author copyright for TagLib. This notice reproduces the
 LGPL-2.1 text, as one available license option, in
 [Appendix A](#appendix-a-gnu-lesser-general-public-license-v21), for both
 go-taglib and the embedded TagLib build. Upstream release:
-<https://github.com/taglib/taglib/releases/tag/v2.1.1>. Reproduction and
+<https://github.com/taglib/taglib/releases/tag/v2.3.2>. Reproduction and
 verification attestations: <https://github.com/sentriz/go-taglib/attestations/>.
 
-TagLib pins its `3rdparty/utfcpp` submodule to
-`df857efc5bbc2aa84012d865f7d7e9cccdc08562` from
-<https://github.com/nemtrif/utfcpp>. The exact source headers attribute the
+TagLib includes its `3rdparty/utfcpp` submodule from
+<https://github.com/nemtrif/utfcpp>. The source headers attribute the
 utfcpp code to Nemanja Trifunovic (including 2006 and 2018 notices); the
 upstream `LICENSE` is the Boost Software License 1.0 and is reproduced below.
 
@@ -166,7 +164,7 @@ FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-## github.com/tetratelabs/wazero v1.11.1-0.20260428013916-2bbd517b7633
+## github.com/tetratelabs/wazero v1.12.0
 
 Apache License 2.0. Copyright 2020-2023 wazero authors. The module `NOTICE`
 file reads:
@@ -176,32 +174,6 @@ file reads:
 
 The full Apache License 2.0 text is reproduced in
 [Appendix B](#appendix-b-apache-license-20).
-
-## github.com/remko/go-mkvparse v0.14.0
-
-MIT License
-
-Copyright (c) 2017 Remko Tronçon
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
 
 ## go.uploadedlobster.com/musicbrainzws2 v0.19.0 and go.uploadedlobster.com/mbtypes v0.4.0
 

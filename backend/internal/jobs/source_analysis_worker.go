@@ -690,10 +690,6 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		capture := prepared.Metadata.Capture
 		tags, marshalErr := json.Marshal(capture.Tags)
 		provenance, provenanceErr := json.Marshal(capture.Provenance)
-		var native json.RawMessage
-		if capture.Matroska != nil {
-			native, marshalErr = json.Marshal(capture.Matroska)
-		}
 		if marshalErr != nil || provenanceErr != nil {
 			failure := fence()
 			failure.SafeError = "The metadata result could not be saved. The previous result is unchanged."
@@ -701,7 +697,7 @@ func (worker *SourceAnalysisWorker) applyPreparedStep(ctx context.Context, opera
 		}
 		_, err = worker.repository.ApplySourceMetadata(ctx, persistence.SourceMetadataApply{WorkID: work.ID, OperationID: operation.ID,
 			OperationAttempt: operation.Attempt, JobID: jobID, StepAttempt: attempt, ObservedTags: tags,
-			Provenance: provenance, NativeMatroska: native, ObservedAt: time.Now().UTC()})
+			Provenance: provenance, ObservedAt: time.Now().UTC()})
 	default:
 		return nil, fmt.Errorf("unsupported source analysis step %q", step)
 	}

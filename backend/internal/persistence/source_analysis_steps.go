@@ -85,7 +85,6 @@ type SourceMetadataApply struct {
 	StepAttempt      int
 	ObservedTags     json.RawMessage
 	Provenance       json.RawMessage
-	NativeMatroska   json.RawMessage
 	ObservedAt       time.Time
 }
 
@@ -520,9 +519,9 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 				}
 				var sameResult bool
 				if err := tx.NewRaw(`SELECT EXISTS (
-					SELECT 1 FROM media_metadata_result WHERE id=? AND observed_tags=?::jsonb AND provenance=?::jsonb
-					AND native_matroska IS NOT DISTINCT FROM ?::jsonb AND observed_at=? AND applied_operation_id=?
-				)`, selected.ID, apply.ObservedTags, apply.Provenance, nullableJSON(apply.NativeMatroska), apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
+						SELECT 1 FROM media_metadata_result WHERE id=? AND observed_tags=?::jsonb AND provenance=?::jsonb
+						AND observed_at=? AND applied_operation_id=?
+					)`, selected.ID, apply.ObservedTags, apply.Provenance, apply.ObservedAt.UTC().Truncate(time.Microsecond), apply.OperationID).Scan(ctx, &sameResult); err != nil {
 					return fmt.Errorf("apply source metadata: validate replay: %w", err)
 				}
 				if !sameResult {
@@ -551,7 +550,7 @@ func (repository *SourceInventoryRepository) ApplySourceMetadata(ctx context.Con
 		observedAt := apply.ObservedAt.UTC().Truncate(time.Microsecond)
 		resultID := uuid.New()
 		result := &SourceMetadataResult{ID: resultID, SourceSHA256: digest, ObservedTags: apply.ObservedTags, Provenance: apply.Provenance,
-			NativeMatroska: apply.NativeMatroska, ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
+			ObservedAt: observedAt, WinningResultID: resultID, AppliedOperationID: apply.OperationID}
 		previousID := locked.Step.SuccessMetadataResultID
 		if len(digest) == 32 {
 			// Stable conflict arbitration: the earliest observed capture wins, then

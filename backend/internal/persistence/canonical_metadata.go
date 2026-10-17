@@ -49,8 +49,8 @@ func upsertCanonicalMetadataResult(ctx context.Context, tx bun.IDB, digest []byt
 	}
 
 	if candidate.ID != canonical.ID && metadataCandidateWins(candidate, *canonical) {
-		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,native_matroska=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
-			candidate.ObservedTags, candidate.Provenance, nullableJSON(candidate.NativeMatroska), candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE media_metadata_result SET observed_tags=?,provenance=?,observed_at=?,winning_result_id=?,applied_operation_id=? WHERE id=?`,
+			candidate.ObservedTags, candidate.Provenance, candidate.ObservedAt, candidate.WinningResultID, candidate.AppliedOperationID, canonical.ID).Exec(ctx); err != nil {
 			return nil, fmt.Errorf("upsert canonical source metadata: update winning capture: %w", err)
 		}
 	}

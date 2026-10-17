@@ -159,7 +159,6 @@ describe("SourceAnalysisSteps", () => {
               version: "1.0",
               contract: "normalized tags",
             },
-            nativeMatroska: { tags: [] },
           },
           onRetry,
         })}

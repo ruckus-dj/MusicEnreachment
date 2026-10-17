@@ -5,13 +5,18 @@ package migrations_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/ruckus/MusicEnreachment/backend/internal/migrations"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 )
 
+// The unpublished prototype keeps the five fresh-instance baselines as its
+// historical foundation. Later additive migrations apply on top and must not
+// be folded into the baseline identity.
 var baselineMigrationNames = []string{
 	"20261015000001",
 	"20261015000002",
@@ -20,7 +25,14 @@ var baselineMigrationNames = []string{
 	"20261015000005",
 }
 
-func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
+var additiveMigrationNames = []string{
+	"20261017000001",
+	"20261017000002",
+}
+
+var currentMigrationNames = append(append([]string(nil), baselineMigrationNames...), additiveMigrationNames...)
+
+func TestCurrentMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) {
 	t.Parallel()
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
@@ -32,38 +44,30 @@ func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) 
 		t.Fatalf("insert River-owned row: %v", err)
 	}
 	collection := loadMigrations(t)
-	assertBaselineMigrationInventory(t, collection)
+	assertMigrationInventory(t, collection, currentMigrationNames)
 
 	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
-		t.Fatalf("initialize baseline migrations: %v", err)
+		t.Fatalf("initialize current migrations: %v", err)
 	}
 	group, err := migrator.Migrate(ctx)
 	if err != nil {
-		t.Fatalf("apply baseline migrations: %v", err)
+		t.Fatalf("apply current migrations: %v", err)
 	}
-	if group == nil || len(group.Migrations) != len(baselineMigrationNames) {
-		t.Fatalf("applied migration group = %#v, want the five baseline migrations", group)
-	}
-	for i, name := range baselineMigrationNames {
-		if group.Migrations[i].Name != name {
-			t.Fatalf("migration %d = %q, want %q", i, group.Migrations[i].Name, name)
-		}
-	}
+	assertMigrationGroup(t, group, currentMigrationNames, "applied")
+	assertCurrentSchema(t, db)
 	if group, err = migrator.Migrate(ctx); err != nil || group == nil || len(group.Migrations) != 0 {
 		t.Fatalf("reapplying current schema = %#v, %v; want an empty migration group", group, err)
 	}
 
 	rolledBack, err := migrator.Rollback(ctx)
 	if err != nil {
-		t.Fatalf("rollback clean baseline group: %v", err)
+		t.Fatalf("rollback clean migration group: %v", err)
 	}
-	if rolledBack == nil || len(rolledBack.Migrations) != len(baselineMigrationNames) {
-		t.Fatalf("rollback group = %#v, want all five baseline migrations", rolledBack)
-	}
-	for _, table := range []string{"app_setting", "operation", "source_root"} {
+	assertMigrationGroup(t, rolledBack, currentMigrationNames, "rolled back")
+	for _, table := range []string{"app_setting", "operation", "source_root", "media_metadata_result", "release_track"} {
 		if relationName(t, db, table) != nil {
-			t.Errorf("application table %s remains after baseline rollback", table)
+			t.Errorf("application table %s remains after current rollback", table)
 		}
 	}
 	var riverState string
@@ -72,11 +76,10 @@ func TestBaselineMigrationsApplyIdempotentlyAndRollbackAsOneGroup(t *testing.T) 
 	}
 	group, err = migrator.Migrate(ctx)
 	if err != nil {
-		t.Fatalf("reapply baseline group: %v", err)
+		t.Fatalf("reapply current migration group: %v", err)
 	}
-	if group == nil || len(group.Migrations) != len(baselineMigrationNames) {
-		t.Fatalf("reapplied migration group = %#v, want all five baseline migrations", group)
-	}
+	assertMigrationGroup(t, group, currentMigrationNames, "reapplied")
+	assertCurrentSchema(t, db)
 }
 
 func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
@@ -84,7 +87,12 @@ func TestUnsafeBaselineRollbackIsAtomic(t *testing.T) {
 	db := testpostgres.Open(t)
 	testpostgres.Reset(t, db)
 	ctx := context.Background()
-	collection := loadMigrations(t)
+	// This test targets the baseline rollback guard. Additive down migrations
+	// run as separate transactions before the guarded baseline down file, so a
+	// full current collection would change the schema before the refusal. The
+	// current collection's clean rollback is covered by the test above.
+	collection := loadBaselineMigrations(t)
+	assertMigrationInventory(t, collection, baselineMigrationNames)
 	migrator := migrate.NewMigrator(db, collection, migrate.WithMarkAppliedOnSuccess(true))
 	if err := migrator.Init(ctx); err != nil {
 		t.Fatalf("initialize baseline migrations: %v", err)
@@ -144,20 +152,72 @@ func loadMigrations(t *testing.T) *migrate.Migrations {
 	t.Helper()
 	collection, err := migrations.Collection()
 	if err != nil {
-		t.Fatalf("load baseline migrations: %v", err)
+		t.Fatalf("load application migrations: %v", err)
 	}
 	return collection
 }
 
-func assertBaselineMigrationInventory(t *testing.T, collection *migrate.Migrations) {
+func assertMigrationInventory(t *testing.T, collection *migrate.Migrations, want []string) {
 	t.Helper()
 	got := collection.Sorted()
-	if len(got) != len(baselineMigrationNames) {
-		t.Fatalf("discovered %d migrations, want exactly the five current baselines: %#v", len(got), got)
+	if len(got) != len(want) {
+		t.Fatalf("discovered %d migrations, want %d: %#v", len(got), len(want), got)
 	}
-	for i, name := range baselineMigrationNames {
+	for i, name := range want {
 		if got[i].Name != name {
 			t.Fatalf("discovered migration %d = %q, want %q", i, got[i].Name, name)
+		}
+	}
+}
+
+func loadBaselineMigrations(t *testing.T) *migrate.Migrations {
+	t.Helper()
+	baseline := migrate.NewMigrations()
+	for _, migration := range loadMigrations(t).Sorted() {
+		if slices.Contains(baselineMigrationNames, migration.Name) {
+			baseline.Add(migration)
+		}
+	}
+	assertMigrationInventory(t, baseline, baselineMigrationNames)
+	return baseline
+}
+
+func assertMigrationGroup(t *testing.T, group *migrate.MigrationGroup, want []string, direction string) {
+	t.Helper()
+	if group == nil {
+		t.Fatalf("%s migration group is nil", direction)
+	}
+	got := make([]string, 0, len(group.Migrations))
+	for _, migration := range group.Migrations {
+		got = append(got, migration.Name)
+	}
+	// Bun returns rollback groups in reverse execution order.
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("%s migration names = %v, want %v", direction, got, want)
+	}
+}
+
+func assertCurrentSchema(t *testing.T, database *bun.DB) {
+	t.Helper()
+	var nativeColumns, nativeConstraints, identityColumns, identityConstraints int
+	ctx := context.Background()
+	checks := []struct {
+		query  string
+		result *int
+		want   int
+	}{
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='media_metadata_result' AND column_name='native_matroska'`, &nativeColumns, 0},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.media_metadata_result'::regclass AND conname='media_metadata_result_native_matroska_check'`, &nativeConstraints, 0},
+		{`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='release_track' AND column_name='id' AND data_type='uuid' AND is_nullable='NO'`, &identityColumns, 1},
+		{`SELECT count(*) FROM pg_constraint WHERE conrelid='public.release_track'::regclass AND conname='release_track_id_key' AND contype='u'`, &identityConstraints, 1},
+	}
+	for _, check := range checks {
+		if err := database.NewRaw(check.query).Scan(ctx, check.result); err != nil {
+			t.Fatalf("inspect current schema: %v", err)
+		}
+		if *check.result != check.want {
+			t.Fatalf("schema check %q = %d, want %d", check.query, *check.result, check.want)
 		}
 	}
 }

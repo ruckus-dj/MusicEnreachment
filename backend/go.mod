@@ -10,7 +10,6 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/remko/go-mkvparse v0.14.0
 	github.com/riverqueue/river v0.49.0
 	github.com/riverqueue/river/riverdriver/riverdatabasesql v0.49.0
 	github.com/riverqueue/river/rivertype v0.49.0
@@ -18,7 +17,7 @@ require (
 	github.com/uptrace/bun v1.3.0
 	github.com/uptrace/bun/dialect/pgdialect v1.3.0
 	github.com/uptrace/bun/driver/pgdriver v1.3.0
-	go.senan.xyz/taglib v0.15.0
+	go.senan.xyz/taglib v0.0.0-20260926163408-32d7614f30ec
 	go.uploadedlobster.com/mbtypes v0.4.0
 	go.uploadedlobster.com/musicbrainzws2 v0.19.0
 	golang.org/x/sys v0.49.0
@@ -53,3 +52,5 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 )
+
+replace go.senan.xyz/taglib => github.com/deluan/go-taglib v0.0.0-20260926163408-32d7614f30ec
