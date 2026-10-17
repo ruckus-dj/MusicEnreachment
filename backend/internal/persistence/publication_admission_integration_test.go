@@ -7,12 +7,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/ruckus/MusicEnreachment/backend/internal/integrations/tools"
 	"github.com/ruckus/MusicEnreachment/backend/internal/testpostgres"
 )
 
@@ -61,7 +64,37 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 	manifest := func(path string) []PublicationNamespaceNode {
 		return []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: path, RelativePath: path, NodeKind: "file"}}
 	}
-	req := PublicationAdmission{PositionID: positions[0], ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{"input":"frozen"}`), NamespaceManifest: manifest("root/a.flac")}
+	installationID := uuid.New()
+	verified := time.Now().UTC()
+	executableNames := tools.ExpectedExecutables(tools.PackageFFmpeg, runtime.GOOS)
+	versions, _ := json.Marshal(map[string]string{executableNames[0]: "ffmpeg version 7.0", executableNames[1]: "ffprobe version 7.0"})
+	separatorPath := "ffmpeg/release-1"
+	if runtime.GOOS == "windows" {
+		separatorPath = `ffmpeg\release-1`
+	}
+	if err := NewSetupManagerRepository(db).CreateInstallation(ctx, &ToolInstallation{ID: installationID, PackageKind: "ffmpeg", PlatformGOOS: runtime.GOOS, PlatformGOARCH: runtime.GOARCH, SourceName: "fixture", ReleaseIdentity: "release-1", RelativePath: separatorPath, State: "ready", ExecutableVersions: versions, ArtifactIdentities: json.RawMessage(`{}`), VerifiedAt: &verified}); err != nil {
+		t.Fatal(err)
+	}
+	selections := []SourceAnalysisToolSelection{
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffmpeg", Version: "7.0", VersionBanner: "ffmpeg version 7.0"},
+		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0"},
+	}
+	newRewriteRequest := func(position uuid.UUID, path string) PublicationAdmission {
+		input := publicationInputsFixture(t, "rewrite")
+		input.Tools = selections
+		input.Rewrite.CurrentGeneration = uuid.New()
+		ownership, _ := json.Marshal(PublicationCurrentOwnership{Version: 1, Identity: input.Rewrite.Ownership})
+		audio, _ := json.Marshal(PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts})
+		if _, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'Artist/Album/track.mka',?::jsonb,?::jsonb,'{}'::jsonb,'{}'::jsonb,1,now()) ON CONFLICT(position_id) DO UPDATE SET epoch=excluded.epoch,generation=excluded.generation,relative_path=excluded.relative_path,ownership=excluded.ownership,actual_audio=excluded.actual_audio`, position, epoch, input.Rewrite.CurrentGeneration, string(ownership), string(audio)); err != nil {
+			t.Fatal(err)
+		}
+		frozen, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return PublicationAdmission{PositionID: position, ExpectedEpoch: epoch, ExpectedGeneration: uuidPointer(input.Rewrite.CurrentGeneration), CandidateGeneration: uuid.New(), IntentKind: "rewrite", ToolsReadRequired: true, Tools: selections, FrozenInputs: frozen, NamespaceManifest: manifest(path)}
+	}
+	req := newRewriteRequest(positions[0], "root/a.flac")
 	inserter := new(publicationAdmissionInserter)
 	repo := NewSetupManagerRepository(db)
 	op, err := repo.AdmitPublication(ctx, req, inserter)
@@ -99,6 +132,20 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 		t.Fatalf("namespace manifest must be a versioned object: %s (%v)", namespaceManifest, err)
 	}
 	// Same owner may replace its generation; another owner may not claim its file.
+	badCurrent := newRewriteRequest(positions[1], "root/bad-current.flac")
+	if _, err := db.ExecContext(ctx, `UPDATE track_publication SET relative_path='forged.mka' WHERE position_id=?`, positions[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "current publication identity changed") {
+		t.Fatalf("rewritten path was not checked against the locked publication: %v", err)
+	}
+	badCurrent = newRewriteRequest(positions[1], "root/bad-ownership.flac")
+	if _, err := db.ExecContext(ctx, `UPDATE track_publication SET ownership='{}'::jsonb WHERE position_id=?`, positions[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AdmitPublication(ctx, badCurrent, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "rewrite ownership") {
+		t.Fatalf("forged current ownership was admitted: %v", err)
+	}
 	req.CandidateGeneration = uuid.New()
 	if _, err = repo.AdmitPublication(ctx, req, new(publicationAdmissionInserter)); err == nil {
 		t.Fatal("unfinished same-position attempt was admitted")
@@ -110,24 +157,38 @@ func TestPublicationAdmissionAtomicNamespaceAndFencesPostgreSQL(t *testing.T) {
 		t.Fatal("file collision admitted")
 	}
 	// A compatible shared directory alone is reservable by another position.
-	shared := PublicationAdmission{PositionID: positions[1], ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{}`), NamespaceManifest: []PublicationNamespaceNode{{CanonicalKey: "shared", RelativePath: "shared", NodeKind: "dir", DirectoryScope: "same"}}}
+	shared := newRewriteRequest(positions[1], "root/shared")
+	shared.NamespaceManifest = []PublicationNamespaceNode{{CanonicalKey: "shared", RelativePath: "shared", NodeKind: "dir", DirectoryScope: "same"}}
 	if _, err = repo.AdmitPublication(ctx, shared, new(publicationAdmissionInserter)); err != nil {
 		t.Fatalf("shared directory reservation: %v", err)
 	}
-	stale := PublicationAdmission{PositionID: positions[2], ExpectedEpoch: uuid.New(), CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{}`), NamespaceManifest: manifest("root/stale.flac")}
+	stale := newRewriteRequest(positions[2], "root/stale.flac")
+	stale.ExpectedEpoch = uuid.New()
 	if _, err = repo.AdmitPublication(ctx, stale, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "output epoch changed") {
 		t.Fatalf("expected output epoch fence error, got %v", err)
 	}
-	stale = PublicationAdmission{PositionID: positions[2], ExpectedEpoch: epoch, ExpectedGeneration: uuidPointer(uuid.New()), CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{}`), NamespaceManifest: manifest("root/stale.flac")}
+	stale = newRewriteRequest(positions[2], "root/stale.flac")
+	staleGeneration := uuid.New()
+	stale.ExpectedGeneration = uuidPointer(staleGeneration)
+	staleInput, err := DecodePublicationInputs(stale.FrozenInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleInput.Rewrite.CurrentGeneration = staleGeneration
+	stale.FrozenInputs, err = json.Marshal(staleInput)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err = repo.AdmitPublication(ctx, stale, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), "current generation changed") {
 		t.Fatalf("expected current generation fence error, got %v", err)
 	}
-	prefix := PublicationAdmission{PositionID: positions[2], ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{}`), NamespaceManifest: []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/a.flac", RelativePath: "root/a.flac", NodeKind: "dir", DirectoryScope: "child"}, {CanonicalKey: "root/a.flac/child", RelativePath: "root/a.flac/child", NodeKind: "file"}}}
+	prefix := newRewriteRequest(positions[2], "root/prefix")
+	prefix.NamespaceManifest = []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/a.flac", RelativePath: "root/a.flac", NodeKind: "dir", DirectoryScope: "child"}, {CanonicalKey: "root/a.flac/child", RelativePath: "root/a.flac/child", NodeKind: "file"}}
 	if _, err = repo.AdmitPublication(ctx, prefix, new(publicationAdmissionInserter)); err == nil {
 		t.Fatal("file/directory prefix conflict admitted")
 	}
 	// Enqueue failure rolls back operation, attempt and reservations.
-	failed := PublicationAdmission{PositionID: positions[2], ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", FrozenInputs: json.RawMessage(`{}`), NamespaceManifest: manifest("root/fail.flac")}
+	failed := newRewriteRequest(positions[2], "root/fail.flac")
 	if _, err = repo.AdmitPublication(ctx, failed, &publicationAdmissionInserter{fail: true}); err == nil {
 		t.Fatal("expected enqueue failure")
 	}

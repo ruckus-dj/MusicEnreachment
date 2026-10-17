@@ -1,15 +1,20 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -35,8 +40,24 @@ type PublicationAdmission struct {
 	IntentKind          string
 	ToolsReadRequired   bool
 	Tools               []SourceAnalysisToolSelection
+	Source              *PublicationSourceSelection
 	FrozenInputs        json.RawMessage
 	NamespaceManifest   []PublicationNamespaceNode
+}
+
+// PublicationSourceSelection is the caller's exact inventory selector. The
+// persisted hold is derived from the strict frozen contract, never these fields.
+type PublicationSourceSelection struct {
+	RootID         uuid.UUID
+	LocationID     uuid.UUID
+	WorkID         uuid.UUID
+	MediaVariantID uuid.UUID
+	ConfiguredPath string
+	InventoryPath  string
+	RelativePath   string
+	SizeBytes      int64
+	MTime          time.Time
+	HoldUUID       uuid.UUID
 }
 
 type publicationTrackArgs struct {
@@ -54,18 +75,37 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 	if request.IntentKind != "audio" && request.IntentKind != "rewrite" {
 		return uuid.Nil, fmt.Errorf("admit publication: unsupported intent")
 	}
-	if !publicationJSONObject(request.FrozenInputs) {
-		return uuid.Nil, fmt.Errorf("admit publication: frozen inputs must be a JSON object")
+	input, err := DecodePublicationInputs(request.FrozenInputs)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: %w", err)
+	}
+	if input.IntentKind != request.IntentKind || !samePublicationTools(request.Tools, input.Tools) {
+		return uuid.Nil, fmt.Errorf("admit publication: request conflicts with frozen publication inputs")
+	}
+	if request.IntentKind == "audio" {
+		if request.Source == nil || !publicationSourceMatchesInput(*request.Source, *input.Audio) {
+			return uuid.Nil, fmt.Errorf("admit publication: source selection must match frozen audio input")
+		}
+	} else if request.Source != nil {
+		return uuid.Nil, fmt.Errorf("admit publication: rewrite cannot select an original source")
+	}
+	if request.IntentKind == "rewrite" && !sameOptionalUUID(request.ExpectedGeneration, &input.Rewrite.CurrentGeneration) {
+		return uuid.Nil, fmt.Errorf("admit publication: rewrite generation does not match frozen input")
 	}
 	if err := validatePublicationManifest(request.NamespaceManifest); err != nil {
 		return uuid.Nil, err
 	}
 	operationID := uuid.New()
-	err := repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+	err = repository.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
 		if err := AcquireOutputAdmissionGate(ctx, tx); err != nil {
 			return fmt.Errorf("admit publication: lock output gate: %w", err)
 		}
 		var pinnedInstallation *ToolInstallation
+		if request.Source != nil {
+			if err := lockSourceFingerprintMutations(ctx, tx); err != nil {
+				return fmt.Errorf("admit publication: lock source mutation gate: %w", err)
+			}
+		}
 		if request.ToolsReadRequired {
 			if err := lockToolsMoveReaders(ctx, tx); err != nil {
 				return fmt.Errorf("admit publication: lock tools-root readers: %w", err)
@@ -83,6 +123,15 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			if err := lockPackageSelections(ctx, tx, []string{"ffmpeg"}); err != nil {
 				return fmt.Errorf("admit publication: lock ffmpeg selection: %w", err)
 			}
+		} else if len(request.Tools) != 0 {
+			return fmt.Errorf("admit publication: tool selections require tools-read admission")
+		}
+		if request.Source != nil {
+			if err := validateAndLockPublicationSource(ctx, tx, request.PositionID, *request.Source, *input.Audio); err != nil {
+				return err
+			}
+		}
+		if request.ToolsReadRequired {
 			installationID := request.Tools[0].InstallationID
 			if err := lockCompatibleInstallations(ctx, tx, []uuid.UUID{installationID}); err != nil {
 				return fmt.Errorf("admit publication: lock pinned ffmpeg installation: %w", err)
@@ -94,8 +143,6 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			if err := validatePublicationInstallation(pinnedInstallation, request.Tools); err != nil {
 				return err
 			}
-		} else if len(request.Tools) != 0 {
-			return fmt.Errorf("admit publication: tool selections require tools-read admission")
 		}
 		var epoch uuid.UUID
 		if err := tx.NewRaw(`SELECT output_epoch FROM publication_namespace_state WHERE singleton=true FOR UPDATE`).Scan(ctx, &epoch); err != nil {
@@ -116,6 +163,23 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 		if !sameOptionalUUID(generation, request.ExpectedGeneration) {
 			return fmt.Errorf("admit publication: current generation changed")
 		}
+		if input.Rewrite != nil {
+			var current TrackPublication
+			if err := tx.NewSelect().Model(&current).Where("position_id=?", request.PositionID).For("UPDATE").Scan(ctx); err != nil {
+				return fmt.Errorf("admit publication: lock current publication: %w", err)
+			}
+			if current.Epoch != epoch || current.Generation != input.Rewrite.CurrentGeneration || current.RelativePath != input.Rewrite.RelativePath {
+				return fmt.Errorf("admit publication: current publication identity changed")
+			}
+			var ownership PublicationCurrentOwnership
+			if err := decodePublicationCurrentContract(current.Ownership, &ownership); err != nil || ownership.Version != 1 || !reflect.DeepEqual(ownership.Identity, input.Rewrite.Ownership) {
+				return fmt.Errorf("admit publication: frozen rewrite ownership does not match current publication")
+			}
+			var audio PublicationCurrentAudio
+			if err := decodePublicationCurrentContract(current.ActualAudio, &audio); err != nil || audio.Version != 1 || audio.Facts.Validate() != nil || !reflect.DeepEqual(audio.Facts, input.Rewrite.AudioFacts) {
+				return fmt.Errorf("admit publication: frozen rewrite audio facts do not match current publication")
+			}
+		}
 		var active uuid.UUID
 		if err := tx.NewRaw(`SELECT operation_id FROM track_publication_attempt WHERE position_id=?`, request.PositionID).Scan(ctx, &active); err == nil {
 			return fmt.Errorf("admit publication: position already has an unfinished attempt")
@@ -126,10 +190,7 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 			return err
 		}
 		snapshot, _ := json.Marshal(map[string]any{"version": 1, "position_id": request.PositionID.String(), "output_epoch": epoch.String(), "intent_kind": request.IntentKind})
-		frozenInputs, err := publicationFrozenInputs(request.FrozenInputs, request.Tools)
-		if err != nil {
-			return err
-		}
+		frozenInputs := append(json.RawMessage(nil), request.FrozenInputs...)
 		result, err := client.InsertTx(ctx, tx.Tx, publicationTrackArgs{OperationID: operationID}, nil)
 		if err != nil {
 			return fmt.Errorf("admit publication: insert River job: %w", err)
@@ -154,12 +215,67 @@ func (repository *SetupManagerRepository) AdmitPublication(ctx context.Context, 
 				return fmt.Errorf("admit publication: hold pinned ffmpeg installation: %w", err)
 			}
 		}
+		if request.Source != nil {
+			source := request.Source
+			if source.HoldUUID == uuid.Nil {
+				return fmt.Errorf("admit publication: source hold UUID is required")
+			}
+			if _, err := tx.NewRaw(`INSERT INTO publication_source_hold(operation_id,application_attempt,river_job_id,epoch,hold_uuid,source_root_id,source_location_id,work_id,media_variant_id,configured_path,inventory_path,relative_path,size_bytes,mtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, operationID, 1, result.Job.ID, epoch, source.HoldUUID, source.RootID, source.LocationID, source.WorkID, source.MediaVariantID, source.ConfiguredPath, source.InventoryPath, source.RelativePath, source.SizeBytes, source.MTime).Exec(ctx); err != nil {
+				return fmt.Errorf("admit publication: create source hold: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return uuid.Nil, err
 	}
 	return operationID, nil
+}
+
+func decodePublicationCurrentContract(raw json.RawMessage, destination any) error {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
+		return fmt.Errorf("current publication contract is empty")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("current publication contract has trailing data")
+	}
+	switch contract := destination.(type) {
+	case *PublicationCurrentAudio:
+		if contract.Version != 1 {
+			return fmt.Errorf("unsupported current publication audio version %d", contract.Version)
+		}
+		if err := contract.Facts.Validate(); err != nil {
+			return fmt.Errorf("invalid current publication audio facts: %w", err)
+		}
+	case *PublicationCurrentOwnership:
+		if contract.Version != 1 {
+			return fmt.Errorf("unsupported current publication ownership version %d", contract.Version)
+		}
+		identity := contract.Identity
+		if identity.SizeBytes == nil && identity.MTime == nil && identity.SHA256 == "" {
+			return fmt.Errorf("current publication ownership identity is required")
+		}
+		if identity.SizeBytes != nil && *identity.SizeBytes < 0 {
+			return fmt.Errorf("current publication ownership size is invalid")
+		}
+		if identity.SHA256 != "" && !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(identity.SHA256) {
+			return fmt.Errorf("current publication ownership digest is invalid")
+		}
+	}
+	return nil
+}
+
+func publicationSourceMatchesInput(source PublicationSourceSelection, input PublicationAudioInput) bool {
+	return source.RootID == input.RootID && source.LocationID == input.LocationID && source.WorkID == input.WorkID &&
+		source.MediaVariantID == input.MediaVariantID && source.ConfiguredPath == input.ConfiguredRootPath &&
+		source.InventoryPath == input.InventoryRootPath && source.RelativePath == input.RelativePath &&
+		source.SizeBytes == input.SizeBytes && source.MTime.Equal(input.MTime)
 }
 
 func validatePublicationToolSelections(selections []SourceAnalysisToolSelection) error {
@@ -214,31 +330,6 @@ func publicationBannerMatchesVersion(banner, executable, version string) bool {
 	firstLine, _, _ := strings.Cut(banner, "\n")
 	fields := strings.Fields(firstLine)
 	return len(fields) >= 3 && fields[0] == executable && fields[1] == "version" && fields[2] == version
-}
-
-func publicationFrozenInputs(raw json.RawMessage, selections []SourceAnalysisToolSelection) (json.RawMessage, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-		return nil, fmt.Errorf("admit publication: frozen inputs must be a JSON object")
-	}
-	if existing, ok := fields["tools"]; ok {
-		var previous []SourceAnalysisToolSelection
-		if err := json.Unmarshal(existing, &previous); err != nil || !samePublicationTools(previous, selections) || len(selections) == 0 && len(previous) != 0 {
-			return nil, fmt.Errorf("admit publication: frozen tool selections conflict with pinned tools")
-		}
-	}
-	if len(selections) > 0 {
-		encoded, err := json.Marshal(selections)
-		if err != nil {
-			return nil, fmt.Errorf("admit publication: encode pinned tools: %w", err)
-		}
-		fields["tools"] = encoded
-	}
-	encoded, err := json.Marshal(fields)
-	if err != nil {
-		return nil, fmt.Errorf("admit publication: encode frozen inputs: %w", err)
-	}
-	return encoded, nil
 }
 
 func samePublicationTools(left, right []SourceAnalysisToolSelection) bool {

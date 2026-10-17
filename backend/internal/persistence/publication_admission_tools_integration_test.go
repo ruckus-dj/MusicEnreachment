@@ -64,7 +64,18 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 		{PackageKind: "ffmpeg", InstallationID: installationID, RelativePath: separatorPath, Executable: "ffprobe", Version: "7.0", VersionBanner: "ffprobe version 7.0"},
 	}
 	manifest := []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/file", RelativePath: "root/file", NodeKind: "file"}}
-	request := PublicationAdmission{PositionID: positionID, ExpectedEpoch: epoch, CandidateGeneration: uuid.New(), IntentKind: "audio", ToolsReadRequired: true, Tools: selections, FrozenInputs: json.RawMessage(`{"caller":"preserved"}`), NamespaceManifest: manifest}
+	input := publicationInputsFixture(t, "rewrite")
+	input.Tools = selections
+	ownership, _ := json.Marshal(PublicationCurrentOwnership{Version: 1, Identity: input.Rewrite.Ownership})
+	audio, _ := json.Marshal(PublicationCurrentAudio{Version: 1, Facts: input.Rewrite.AudioFacts})
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,'Artist/Album/track.mka',?::jsonb,?::jsonb,'{}'::jsonb,'{}'::jsonb,1,now())`, positionID, epoch, input.Rewrite.CurrentGeneration, string(ownership), string(audio)); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := PublicationAdmission{PositionID: positionID, ExpectedEpoch: epoch, ExpectedGeneration: uuidPointer(input.Rewrite.CurrentGeneration), CandidateGeneration: uuid.New(), IntentKind: "rewrite", ToolsReadRequired: true, Tools: selections, FrozenInputs: frozen, NamespaceManifest: manifest}
 	repo := NewSetupManagerRepository(db)
 	operationID, err := repo.AdmitPublication(ctx, request, new(publicationAdmissionInserter))
 	if err != nil {
@@ -74,13 +85,13 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	if err := db.NewRaw(`SELECT count(*) FROM operation_tool_read_hold WHERE operation_id=? AND installation_id=?`, operationID, installationID).Scan(ctx, &holds); err != nil || holds != 1 {
 		t.Fatalf("expected one installation hold, got %d (%v)", holds, err)
 	}
-	var frozen []byte
-	if err := db.NewRaw(`SELECT frozen_inputs FROM track_publication_attempt WHERE operation_id=?`, operationID).Scan(ctx, &frozen); err != nil {
+	var persistedFrozen []byte
+	if err := db.NewRaw(`SELECT frozen_inputs FROM track_publication_attempt WHERE operation_id=?`, operationID).Scan(ctx, &persistedFrozen); err != nil {
 		t.Fatal(err)
 	}
 	var frozenFields map[string]json.RawMessage
-	if err := json.Unmarshal(frozen, &frozenFields); err != nil || frozenFields["caller"] == nil || frozenFields["tools"] == nil {
-		t.Fatalf("frozen inputs lost caller data or pinned tools: %s (%v)", frozen, err)
+	if err := json.Unmarshal(persistedFrozen, &frozenFields); err != nil || frozenFields["rewrite"] == nil || frozenFields["tools"] == nil {
+		t.Fatalf("frozen inputs lost typed rewrite data or pinned tools: %s (%v)", persistedFrozen, err)
 	}
 
 	invalidSelections := []struct {
@@ -105,6 +116,15 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	}
 	for index, invalid := range invalidSelections {
 		invalid.request.NamespaceManifest = []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/invalid-" + string(rune('a'+index)), RelativePath: "root/invalid-" + string(rune('a'+index)), NodeKind: "file"}}
+		invalidInput, err := DecodePublicationInputs(invalid.request.FrozenInputs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invalidInput.Tools = invalid.request.Tools
+		invalid.request.FrozenInputs, err = json.Marshal(invalidInput)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := repo.AdmitPublication(ctx, invalid.request, new(publicationAdmissionInserter)); err == nil || !strings.Contains(err.Error(), invalid.wantError) {
 			t.Fatalf("expected %q validation error, got %v", invalid.wantError, err)
 		}
@@ -113,6 +133,21 @@ func TestPublicationAdmissionPinsFFmpegAndHoldsInstallationPostgreSQL(t *testing
 	failed := request
 	failed.PositionID, failed.CandidateGeneration = makePosition(3), uuid.New()
 	failed.NamespaceManifest = []PublicationNamespaceNode{{CanonicalKey: "root", RelativePath: "root", NodeKind: "dir", DirectoryScope: "root"}, {CanonicalKey: "root/enqueue-failed", RelativePath: "root/enqueue-failed", NodeKind: "file"}}
+	failedInput, err := DecodePublicationInputs(failed.FrozenInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedOwnership, err := json.Marshal(PublicationCurrentOwnership{Version: 1, Identity: failedInput.Rewrite.Ownership})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedAudio, err := json.Marshal(PublicationCurrentAudio{Version: 1, Facts: failedInput.Rewrite.AudioFacts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track_publication(position_id,epoch,generation,relative_path,ownership,actual_audio,actual_metadata,actual_assets,quality_policy_version,validated_at) VALUES (?,?,?,?,?::jsonb,?::jsonb,'{}'::jsonb,'{}'::jsonb,1,now())`, failed.PositionID, failed.ExpectedEpoch, failedInput.Rewrite.CurrentGeneration, failedInput.Rewrite.RelativePath, string(failedOwnership), string(failedAudio)); err != nil {
+		t.Fatal(err)
+	}
 	failedInserter := &publicationAdmissionInserter{fail: true}
 	if _, err := repo.AdmitPublication(ctx, failed, failedInserter); err == nil || !strings.Contains(err.Error(), "insert River job") {
 		t.Fatal("expected enqueue failure")

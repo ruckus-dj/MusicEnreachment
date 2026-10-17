@@ -26,10 +26,10 @@ func publicationInputsFixture(t *testing.T, intent string) PublicationInputs {
 			{PackageKind: "ffmpeg", InstallationID: installation, RelativePath: "bin/ffprobe", Executable: "ffprobe", Version: "7.1", VersionBanner: "ffprobe version 7.1"},
 		},
 	}
-	facts := PersistedAudioFacts{StreamIndex: 1, Codec: "pcm_s16le", Lossless: &lossless, Channels: &channels, BitDepth: &bitDepth, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
+	facts := PersistedAudioFacts{StreamIndex: 1, Codec: "flac", Lossless: &lossless, Channels: &channels, BitDepth: &bitDepth, Container: publication.AudioContainerFLAC, SupportedSourceContainer: true}
 	if intent == "audio" {
 		input.Audio = &PublicationAudioInput{
-			RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(),
+			WorkID: uuid.New(), RootID: uuid.New(), LocationID: uuid.New(), MediaVariantID: uuid.New(), ProbeResultID: uuid.New(),
 			ConfiguredRootPath: root, InventoryRootPath: root,
 			RelativePath: "disc/track.flac", SizeBytes: 0,
 			MTime:                 time.Date(2026, 10, 1, 12, 0, 0, 123456000, time.UTC),
@@ -167,6 +167,52 @@ func TestPublicationInputSelectorsAndToolSelectionsAreExact(t *testing.T) {
 	input.Rewrite.Ownership = PublicationFileIdentity{}
 	if err := input.Validate(); err == nil {
 		t.Fatal("accepted rewrite without ownership identity")
+	}
+}
+
+func TestPublicationProbeFactsAreDerivedFromSelectedJSON(t *testing.T) {
+	policy, version := 3, "ffprobe 7.1"
+	inspected, applied := time.Now().UTC(), uuid.New()
+	probe := SourceMediaVariant{SizeBytes: 42, AnalysisPolicyVersion: &policy, FFProbeVersion: &version, InspectedAt: &inspected, AppliedOperationID: &applied,
+		AudioStreamCount: intPointer(1), FFProbeJSON: json.RawMessage(`{"format":{"format_name":"mov,mp4,m4a,3gp,3g2,mj2"},"streams":[{"index":0,"codec_type":"video","codec_name":"h264"},{"index":"2","codec_type":"audio","codec_name":"alac","channels":"2","bit_rate":"900000","bits_per_raw_sample":"24"}]}`)}
+	facts, err := publicationAudioFactsFromProbe(probe, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.StreamIndex != 2 || facts.Codec != "alac" || !*facts.Lossless || facts.Container != publication.AudioContainerM4A || !facts.SupportedSourceContainer || facts.Bitrate == nil || *facts.Bitrate != 900000 || facts.BitDepth == nil || *facts.BitDepth != 24 {
+		t.Fatalf("unexpected derived probe facts: %#v", facts)
+	}
+	for _, raw := range []string{
+		`{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"wavpack"}]}`,
+		`{"format":{"format_name":"flac"},"streams":[{"index":0.5,"codec_type":"audio","codec_name":"flac"}]}`,
+		`{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac"},{"index":0,"codec_type":"audio","codec_name":"flac"}]}`,
+		`{"format":{"format_name":"flac"},"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","bit_rate":"-1"}]}`,
+	} {
+		probe.FFProbeJSON = json.RawMessage(raw)
+		if _, err := publicationAudioFactsFromProbe(probe, 0); err == nil {
+			t.Fatalf("accepted untrusted probe JSON: %s", raw)
+		}
+	}
+}
+
+func TestPublicationCurrentContractsRequireVersionAndExactEvidence(t *testing.T) {
+	for _, raw := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`{"version":2,"facts":{}}`), json.RawMessage(`{"version":1,"facts":{},"future":true}`), json.RawMessage(`{"version":1,"facts":{}} {}`)} {
+		var current PublicationCurrentAudio
+		if err := decodePublicationCurrentContract(raw, &current); err == nil && (current.Version != 1 || current.Facts.Lossless == nil) {
+			t.Fatalf("accepted incomplete current audio contract: %s", raw)
+		} else if err == nil {
+			t.Fatalf("accepted current audio lacking facts: %s", raw)
+		}
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"version":2,"identity":{"size_bytes":1}}`),
+		json.RawMessage(`{"version":1,"identity":{}}`),
+		json.RawMessage(`{"version":1,"identity":{"size_bytes":-1}}`),
+	} {
+		var current PublicationCurrentOwnership
+		if err := decodePublicationCurrentContract(raw, &current); err == nil {
+			t.Fatalf("accepted incomplete current ownership contract: %s", raw)
+		}
 	}
 }
 

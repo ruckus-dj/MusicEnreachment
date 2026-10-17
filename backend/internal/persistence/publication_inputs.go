@@ -33,9 +33,11 @@ type PublicationInputs struct {
 // PublicationAudioInput identifies the source file and verified audio result
 // selected at admission. No codec classification is inferred from the path.
 type PublicationAudioInput struct {
+	WorkID                uuid.UUID           `json:"work_id"`
 	RootID                uuid.UUID           `json:"root_id"`
 	LocationID            uuid.UUID           `json:"location_id"`
 	MediaVariantID        uuid.UUID           `json:"media_variant_id"`
+	ProbeResultID         uuid.UUID           `json:"probe_result_id"`
 	ConfiguredRootPath    string              `json:"configured_root_path"`
 	InventoryRootPath     string              `json:"inventory_root_path"`
 	RelativePath          string              `json:"relative_path"`
@@ -61,6 +63,16 @@ type PublicationFileIdentity struct {
 	SizeBytes *int64 `json:"size_bytes,omitempty"`
 	MTime     *int64 `json:"mtime,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
+}
+
+type PublicationCurrentAudio struct {
+	Version int                 `json:"version"`
+	Facts   PersistedAudioFacts `json:"facts"`
+}
+
+type PublicationCurrentOwnership struct {
+	Version  int                     `json:"version"`
+	Identity PublicationFileIdentity `json:"identity"`
 }
 
 // PersistedAudioFacts is the stable JSON representation of verified stream
@@ -141,8 +153,8 @@ func (input PublicationInputs) Validate() error {
 }
 
 func (input PublicationAudioInput) Validate() error {
-	if input.RootID == uuid.Nil || input.LocationID == uuid.Nil || input.MediaVariantID == uuid.Nil {
-		return fmt.Errorf("root, location and media variant selectors are required")
+	if input.WorkID == uuid.Nil || input.RootID == uuid.Nil || input.LocationID == uuid.Nil || input.MediaVariantID == uuid.Nil || input.ProbeResultID == uuid.Nil {
+		return fmt.Errorf("work, root, location, canonical media variant and probe result selectors are required")
 	}
 	if !filepath.IsAbs(input.ConfiguredRootPath) || !filepath.IsAbs(input.InventoryRootPath) {
 		return fmt.Errorf("configured and inventory root paths must be absolute paths")
@@ -181,6 +193,9 @@ func (facts PersistedAudioFacts) Validate() error {
 	}
 	if facts.Channels != nil && *facts.Channels <= 0 || facts.Bitrate != nil && *facts.Bitrate < 0 || facts.BitDepth != nil && *facts.BitDepth <= 0 {
 		return fmt.Errorf("audio stream measurements are invalid")
+	}
+	if facts.ALACCapabilitiesVerified {
+		return fmt.Errorf("ALAC capabilities have no verified tool evidence")
 	}
 	return nil
 }
