@@ -23,6 +23,8 @@ const (
 	OutputCaseSensitiveKey           = "output_case_sensitive"
 	OutputUnicodeNormalizationKey    = "output_unicode_normalization"
 	PublicationFormatKey             = "publication_format"
+	PublicationPathTemplateKey       = "publication_path_template"
+	PublicationRemoveSourcesKey      = "publication_remove_sources"
 	MusicBrainzModeKey               = "musicbrainz_mode"
 	MusicBrainzBaseURLKey            = "musicbrainz_base_url"
 	MusicBrainzConfigIdentityKey     = "musicbrainz_config_identity"
@@ -101,6 +103,8 @@ type RuntimeSettings struct {
 	ToolsDirectory                    string
 	OutputDirectory                   string
 	PublicationFormat                 string
+	PublicationPathTemplate           string
+	PublicationRemoveSources          bool
 	MusicBrainzMode                   string
 	MusicBrainzBaseURL                string
 	MusicBrainzVerifiedAt             *time.Time
@@ -125,6 +129,8 @@ type RuntimeUpdate struct {
 	OutputCaseSensitive        *bool
 	OutputUnicodeNormalization *string
 	PublicationFormat          *string
+	PublicationPathTemplate    *string
+	PublicationRemoveSources   *bool
 	SourceFileConcurrency      *int
 }
 
@@ -465,6 +471,20 @@ func runtimeUpdateValues(update RuntimeUpdate) (map[string]string, error) {
 		}
 		values[PublicationFormatKey] = value
 	}
+	if update.PublicationPathTemplate != nil {
+		value, err := serializeSetting(publicationPathTemplateSetting, *update.PublicationPathTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("publication path template: %w", err)
+		}
+		values[PublicationPathTemplateKey] = value
+	}
+	if update.PublicationRemoveSources != nil {
+		value, err := serializeSetting(publicationRemoveSourcesSetting, *update.PublicationRemoveSources)
+		if err != nil {
+			return nil, fmt.Errorf("publication source removal: %w", err)
+		}
+		values[PublicationRemoveSourcesKey] = value
+	}
 	if update.SourceFileConcurrency != nil {
 		value, err := serializeSetting(sourceFileConcurrencySetting, *update.SourceFileConcurrency)
 		if err != nil {
@@ -506,6 +526,18 @@ func (r *Registry) SetPublicationFormat(ctx context.Context, format string) erro
 		return err
 	}
 	return r.store.Set(ctx, PublicationFormatKey, value)
+}
+
+// GetPublicationPathTemplate returns the saved publication path template, or its approved default.
+func (r *Registry) GetPublicationPathTemplate(ctx context.Context) (string, error) {
+	value, _, err := readSetting(ctx, r.store, publicationPathTemplateSetting)
+	return value, err
+}
+
+// GetPublicationRemoveSources returns whether publication source removal is enabled.
+func (r *Registry) GetPublicationRemoveSources(ctx context.Context) (bool, error) {
+	value, _, err := readSetting(ctx, r.store, publicationRemoveSourcesSetting)
+	return value, err
 }
 
 // GetMusicBrainzConfig returns the current MusicBrainz configuration.
@@ -691,6 +723,14 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
+	template, _, err := readSetting(ctx, r.store, publicationPathTemplateSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	removeSources, _, err := readSetting(ctx, r.store, publicationRemoveSourcesSetting)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
 	musicBrainz, err := r.GetMusicBrainzConfig(ctx)
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -751,6 +791,8 @@ func (r *Registry) ReadRuntimeSettings(ctx context.Context) (RuntimeSettings, er
 		ToolsDirectory:                    tools,
 		OutputDirectory:                   output,
 		PublicationFormat:                 format,
+		PublicationPathTemplate:           template,
+		PublicationRemoveSources:          removeSources,
 		MusicBrainzMode:                   musicBrainz.Mode,
 		MusicBrainzBaseURL:                musicBrainz.BaseURL,
 		MusicBrainzVerifiedAt:             musicBrainz.VerifiedAt,

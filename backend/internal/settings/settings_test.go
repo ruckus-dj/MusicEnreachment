@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 	"github.com/ruckus/MusicEnreachment/backend/internal/settings"
 )
 
@@ -440,7 +441,7 @@ func TestPublicationFormatValidation(t *testing.T) {
 		t.Fatal("accepted invalid format")
 	}
 
-	for _, format := range []string{"source", "mka"} {
+	for _, format := range []string{"source", "mka", "m4a"} {
 		if err := registry.SetPublicationFormat(ctx, format); err != nil {
 			t.Fatalf("set format %q: %v", format, err)
 		}
@@ -449,6 +450,113 @@ func TestPublicationFormatValidation(t *testing.T) {
 		if err != nil || !exists || got != format {
 			t.Fatalf("get format: %q, %v, %v; want %q", got, exists, err, format)
 		}
+	}
+}
+
+func TestPublicationSettingsDefaultAndRoundTrip(t *testing.T) {
+	store := newMemoryStore()
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	template, err := registry.GetPublicationPathTemplate(ctx)
+	if err != nil || template != publication.DefaultTemplate {
+		t.Fatalf("default publication path template = %q, %v; want %q", template, err, publication.DefaultTemplate)
+	}
+	removeSources, err := registry.GetPublicationRemoveSources(ctx)
+	if err != nil || removeSources {
+		t.Fatalf("default publication source removal = %v, %v; want false", removeSources, err)
+	}
+	if got, err := registry.ReadRuntimeSettings(ctx); err != nil || got.PublicationPathTemplate != publication.DefaultTemplate || got.PublicationRemoveSources {
+		t.Fatalf("runtime publication settings = %+v, %v", got, err)
+	}
+
+	customTemplate := `{ALBUM_NAME}/{TRACK_NAME}.{EXT}`
+	removeSources = true
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{
+		PublicationPathTemplate:  &customTemplate,
+		PublicationRemoveSources: &removeSources,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gotTemplate, err := registry.GetPublicationPathTemplate(ctx)
+	if err != nil || gotTemplate != customTemplate {
+		t.Fatalf("saved publication path template = %q, %v", gotTemplate, err)
+	}
+	gotRemoveSources, err := registry.GetPublicationRemoveSources(ctx)
+	if err != nil || !gotRemoveSources {
+		t.Fatalf("saved publication source removal = %v, %v", gotRemoveSources, err)
+	}
+}
+
+func TestPublicationPathTemplateRejectsInvalidSyntaxBeforeWrite(t *testing.T) {
+	store := &recordingStore{memoryStore: newMemoryStore()}
+	registry := settings.New(store, nil)
+	invalid := `{TRACK_NAME`
+	if err := registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{PublicationPathTemplate: &invalid}); err == nil {
+		t.Fatal("accepted invalid publication path template")
+	}
+	if store.setManyCalls != 0 {
+		t.Fatalf("invalid template caused %d writes", store.setManyCalls)
+	}
+}
+
+func TestUpdateRuntimePublicationRemoveSourcesPersistsUnlessExplicitlyChanged(t *testing.T) {
+	store := &recordingStore{memoryStore: newMemoryStore()}
+	registry := settings.New(store, nil)
+	ctx := context.Background()
+
+	removeSources := true
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationRemoveSources: &removeSources}); err != nil {
+		t.Fatalf("enable source removal: %v", err)
+	}
+	if stored := store.data[settings.PublicationRemoveSourcesKey]; stored != "true" {
+		t.Fatalf("stored source removal = %q, want true", stored)
+	}
+
+	format := "m4a"
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationFormat: &format}); err != nil {
+		t.Fatalf("update publication format: %v", err)
+	}
+	gotRemoveSources, err := registry.GetPublicationRemoveSources(ctx)
+	if err != nil || !gotRemoveSources {
+		t.Fatalf("omitted source removal = %v, %v; want true preserved", gotRemoveSources, err)
+	}
+
+	removeSources = false
+	if err := registry.UpdateRuntime(ctx, settings.RuntimeUpdate{PublicationRemoveSources: &removeSources}); err != nil {
+		t.Fatalf("disable source removal: %v", err)
+	}
+	gotRemoveSources, err = registry.GetPublicationRemoveSources(ctx)
+	if err != nil || gotRemoveSources {
+		t.Fatalf("explicitly disabled source removal = %v, %v; want false", gotRemoveSources, err)
+	}
+}
+
+func TestUpdateRuntimeUnknownTemplateTokenRejectsEveryValueInTheUpdate(t *testing.T) {
+	store := &recordingStore{memoryStore: newMemoryStore()}
+	store.data[settings.PublicationFormatKey] = "source"
+	store.data[settings.PublicationRemoveSourcesKey] = "false"
+	registry := settings.New(store, nil)
+
+	unknown := `{UNKNOWN_TOKEN}`
+	format := "m4a"
+	removeSources := true
+	err := registry.UpdateRuntime(context.Background(), settings.RuntimeUpdate{
+		PublicationPathTemplate:  &unknown,
+		PublicationFormat:        &format,
+		PublicationRemoveSources: &removeSources,
+	})
+	if err == nil {
+		t.Fatal("accepted a template with an unknown token")
+	}
+	if store.setManyCalls != 0 {
+		t.Fatalf("rejected update caused %d writes", store.setManyCalls)
+	}
+	if store.data[settings.PublicationFormatKey] != "source" || store.data[settings.PublicationRemoveSourcesKey] != "false" {
+		t.Fatalf("rejected update changed settings: %v", store.data)
+	}
+	if _, exists := store.data[settings.PublicationPathTemplateKey]; exists {
+		t.Fatalf("rejected template was stored: %v", store.data)
 	}
 }
 

@@ -203,6 +203,8 @@ export function SettingsScreen() {
   const outputDirectory = useSectionDraft<string>();
   const publicationFormat =
     useSectionDraft<UpdateSettingsBodyPublicationFormat>();
+  const publicationPathTemplate = useSectionDraft<string>();
+  const publicationRemoveSources = useSectionDraft<boolean>();
   const sourceFileConcurrency = useSectionDraft<string>();
   const musicBrainz = useSectionDraft(sameMusicBrainz);
   const lrclib = useSectionDraft<boolean>();
@@ -303,8 +305,14 @@ export function SettingsScreen() {
       const settings = fresh.settings;
       outputDirectory.sync(settings.output_directory);
       publicationFormat.sync(
-        settings.publication_format === "source" ? "source" : "mka",
+        settings.publication_format === "source"
+          ? "source"
+          : settings.publication_format === "m4a"
+            ? "m4a"
+            : "mka",
       );
+      publicationPathTemplate.sync(settings.publication_path_template);
+      publicationRemoveSources.sync(settings.publication_remove_sources);
       sourceFileConcurrency.sync(String(settings.source_file_concurrency));
       musicBrainz.sync({
         mode:
@@ -338,6 +346,8 @@ export function SettingsScreen() {
       setMoveDirectoryValue,
       outputDirectory.sync,
       publicationFormat.sync,
+      publicationPathTemplate.sync,
+      publicationRemoveSources.sync,
       sourceFileConcurrency.sync,
       musicBrainz.sync,
       lrclib.sync,
@@ -1133,8 +1143,15 @@ export function SettingsScreen() {
                 >
                   <option value="source">Исходный формат</option>
                   <option value="mka">MKA remux</option>
+                  <option value="m4a">M4A</option>
                 </select>
               </label>
+              {publicationFormat.value === "m4a" && (
+                <p role="note">
+                  M4A сохраняет AAC и ALAC без перекодирования; другие lossless
+                  кодируются в ALAC, другие lossy — в AAC с потерями.
+                </p>
+              )}
               {(outputDirectory.dirty || publicationFormat.dirty) && (
                 <p>Есть несохранённые изменения публикации.</p>
               )}
@@ -1157,7 +1174,9 @@ export function SettingsScreen() {
                       publicationFormat.acknowledge(
                         fresh.settings.publication_format === "source"
                           ? "source"
-                          : "mka",
+                          : fresh.settings.publication_format === "m4a"
+                            ? "m4a"
+                            : "mka",
                         revision,
                       ),
                     publicationFormat.beginSave,
@@ -1166,6 +1185,98 @@ export function SettingsScreen() {
                 }
               >
                 Сохранить формат
+              </AppButton>
+              <label>
+                Шаблон пути публикации
+                <input
+                  aria-describedby="publication-template-help"
+                  maxLength={4096}
+                  value={
+                    publicationPathTemplate.value ??
+                    state.settings.publication_path_template
+                  }
+                  onChange={(event) =>
+                    publicationPathTemplate.update(event.target.value)
+                  }
+                />
+              </label>
+              <p id="publication-template-help">
+                Токены в фигурных скобках подставляются из метаданных; для
+                отсутствующего значения задайте альтернативу через |. Шаблон
+                может содержать только имя файла без каталогов.
+              </p>
+              {publicationPathTemplate.dirty && (
+                <p>Есть несохранённый шаблон пути публикации.</p>
+              )}
+              <AppButton
+                isDisabled={busy || !publicationPathTemplate.value}
+                onPress={() =>
+                  void mutate(
+                    (savedDraft) =>
+                      updateSettings({
+                        publication_path_template: savedDraft.value,
+                      }),
+                    204,
+                    "Шаблон пути публикации сохранён.",
+                    publicationPathTemplate.capture,
+                    (fresh, revision) =>
+                      publicationPathTemplate.acknowledge(
+                        fresh.settings.publication_path_template,
+                        revision,
+                      ),
+                    publicationPathTemplate.beginSave,
+                    publicationPathTemplate.endSave,
+                  )
+                }
+              >
+                Сохранить шаблон пути
+              </AppButton>
+              <label className="settings-inline">
+                <input
+                  type="checkbox"
+                  checked={
+                    publicationRemoveSources.value ??
+                    state.settings.publication_remove_sources
+                  }
+                  onChange={(event) =>
+                    publicationRemoveSources.update(event.target.checked)
+                  }
+                />{" "}
+                Разрешить удаление исходников после публикации
+              </label>
+              <p role="note">
+                Выключено по умолчанию. При включении удаление в будущем может
+                применяться только после успешной проверки публикации; изменение
+                настройки не удаляет существующие файлы и не запускает
+                обработку.
+              </p>
+              {publicationRemoveSources.dirty && (
+                <p>Есть несохранённая настройка удаления исходников.</p>
+              )}
+              <AppButton
+                isDisabled={busy}
+                onPress={() =>
+                  void mutate(
+                    (savedDraft) =>
+                      updateSettings({
+                        publication_remove_sources:
+                          savedDraft.value ??
+                          state.settings.publication_remove_sources,
+                      }),
+                    204,
+                    "Настройка удаления исходников сохранена.",
+                    publicationRemoveSources.capture,
+                    (fresh, revision) =>
+                      publicationRemoveSources.acknowledge(
+                        fresh.settings.publication_remove_sources,
+                        revision,
+                      ),
+                    publicationRemoveSources.beginSave,
+                    publicationRemoveSources.endSave,
+                  )
+                }
+              >
+                Сохранить настройку удаления
               </AppButton>
               <AppButton
                 isDisabled={

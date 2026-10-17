@@ -13,9 +13,11 @@ type UpdateSettingsInput struct {
 }
 
 type UpdateSettingsBody struct {
-	OutputDirectory       string `json:"output_directory,omitempty" maxLength:"4096"`
-	PublicationFormat     string `json:"publication_format,omitempty" enum:"source,mka"`
-	SourceFileConcurrency *int   `json:"source_file_concurrency,omitempty" minimum:"1"`
+	OutputDirectory          string  `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat        string  `json:"publication_format,omitempty" enum:"source,mka,m4a"`
+	PublicationPathTemplate  *string `json:"publication_path_template,omitempty" maxLength:"4096"`
+	PublicationRemoveSources *bool   `json:"publication_remove_sources,omitempty"`
+	SourceFileConcurrency    *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
 }
 
 type UpdateMusicBrainzInput struct {
@@ -99,7 +101,9 @@ func registerSettings(api huma.API, setup *service.SetupService) {
 		}
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
 			OutputDirectory: outputDirectory, PublicationFormat: publicationFormat,
-			SourceFileConcurrency: input.Body.SourceFileConcurrency,
+			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
+			PublicationRemoveSources: input.Body.PublicationRemoveSources,
+			SourceFileConcurrency:    input.Body.SourceFileConcurrency,
 		}); err != nil {
 			return nil, huma.Error400BadRequest("settings could not be saved")
 		}

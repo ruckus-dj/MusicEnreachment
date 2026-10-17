@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ruckus/MusicEnreachment/backend/internal/publication"
 )
 
 type settingDefinition[T any] struct {
@@ -88,8 +89,15 @@ func parseIdentity(value string) (string, error) {
 func parseDirectory(value string) (string, error) { return NormalizePath(value) }
 
 func parsePublicationFormat(value string) (string, error) {
-	if value != "source" && value != "mka" {
-		return "", fmt.Errorf("publication format must be 'source' or 'mka'")
+	if value != "source" && value != "mka" && value != "m4a" {
+		return "", fmt.Errorf("publication format must be 'source', 'mka', or 'm4a'")
+	}
+	return value, nil
+}
+
+func parsePublicationPathTemplate(value string) (string, error) {
+	if _, err := publication.ParseTemplate(value); err != nil {
+		return "", err
 	}
 	return value, nil
 }
@@ -176,19 +184,29 @@ func timeDefinition(name string, mutable bool) settingDefinition[time.Time] {
 }
 
 var (
-	defaultPublic          = "public"
-	defaultInfo            = "info"
-	defaultTrue            = true
-	defaultFileConcurrency = 4
-	defaultSelfHostedDelay = 0.5
+	defaultPublic                   = "public"
+	defaultInfo                     = "info"
+	defaultTrue                     = true
+	defaultFileConcurrency          = 4
+	defaultSelfHostedDelay          = 0.5
+	defaultPublicationPathTemplate  = `{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}`
+	defaultPublicationRemoveSources = false
 
-	platformOSSetting      = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
-	platformArchSetting    = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
-	toolsRootSetting       = textDefinition(ToolsDirectoryKey, "path", parseDirectory, true)
-	outputRootSetting      = textDefinition(OutputDirectoryKey, "path", parseDirectory, true)
-	outputCaseSetting      = boolDefinition(OutputCaseSensitiveKey)
-	outputUnicodeSetting   = textDefinition(OutputUnicodeNormalizationKey, "enum", parseUnicodeNormalization, true)
-	publicationSetting     = textDefinition(PublicationFormatKey, "enum", parsePublicationFormat, true)
+	platformOSSetting              = textDefinition(PlatformGOOSKey, "enum", parsePlatformOS, false)
+	platformArchSetting            = textDefinition(PlatformGOARCHKey, "enum", parsePlatformArch, false)
+	toolsRootSetting               = textDefinition(ToolsDirectoryKey, "path", parseDirectory, true)
+	outputRootSetting              = textDefinition(OutputDirectoryKey, "path", parseDirectory, true)
+	outputCaseSetting              = boolDefinition(OutputCaseSensitiveKey)
+	outputUnicodeSetting           = textDefinition(OutputUnicodeNormalizationKey, "enum", parseUnicodeNormalization, true)
+	publicationSetting             = textDefinition(PublicationFormatKey, "enum", parsePublicationFormat, true)
+	publicationPathTemplateSetting = settingDefinition[string]{
+		name: PublicationPathTemplateKey, kind: "template", parse: parsePublicationPathTemplate,
+		serialize: func(value string) string { return value }, defaultVal: &defaultPublicationPathTemplate, mutable: true,
+	}
+	publicationRemoveSourcesSetting = settingDefinition[bool]{
+		name: PublicationRemoveSourcesKey, kind: "bool", parse: strconv.ParseBool,
+		serialize: strconv.FormatBool, defaultVal: &defaultPublicationRemoveSources, mutable: true,
+	}
 	musicBrainzModeSetting = settingDefinition[string]{
 		name: MusicBrainzModeKey, kind: "enum", parse: parseMusicBrainzMode,
 		serialize: func(value string) string { return value }, defaultVal: &defaultPublic, mutable: true,
@@ -254,7 +272,7 @@ var (
 
 var registeredSettings = []registeredSetting{
 	platformOSSetting, platformArchSetting, toolsRootSetting, outputRootSetting,
-	outputCaseSetting, outputUnicodeSetting, publicationSetting,
+	outputCaseSetting, outputUnicodeSetting, publicationSetting, publicationPathTemplateSetting, publicationRemoveSourcesSetting,
 	musicBrainzModeSetting, musicBrainzURLSetting, musicBrainzIdentitySetting,
 	musicBrainzVerifiedSetting, lrclibSetting, sha256Setting, logSetting,
 	activeFFmpegSetting, activeFPCalcSetting, sourceFileConcurrencySetting,

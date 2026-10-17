@@ -33,6 +33,8 @@ type RuntimeSettingsResponse struct {
 	ToolsDirectory                    string     `json:"tools_directory"`
 	OutputDirectory                   string     `json:"output_directory"`
 	PublicationFormat                 string     `json:"publication_format"`
+	PublicationPathTemplate           string     `json:"publication_path_template"`
+	PublicationRemoveSources          bool       `json:"publication_remove_sources"`
 	MusicBrainzMode                   string     `json:"musicbrainz_mode"`
 	MusicBrainzBaseURL                string     `json:"musicbrainz_base_url"`
 	MusicBrainzVerifiedAt             *time.Time `json:"musicbrainz_verified_at,omitempty"`
@@ -58,10 +60,12 @@ type SaveRuntimeInput struct {
 }
 
 type SaveRuntimeBody struct {
-	ToolsDirectory        *string `json:"tools_directory,omitempty" maxLength:"4096"`
-	OutputDirectory       *string `json:"output_directory,omitempty" maxLength:"4096"`
-	PublicationFormat     *string `json:"publication_format,omitempty" enum:"source,mka"`
-	SourceFileConcurrency *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
+	ToolsDirectory           *string `json:"tools_directory,omitempty" maxLength:"4096"`
+	OutputDirectory          *string `json:"output_directory,omitempty" maxLength:"4096"`
+	PublicationFormat        *string `json:"publication_format,omitempty" enum:"source,mka,m4a"`
+	PublicationPathTemplate  *string `json:"publication_path_template,omitempty" maxLength:"4096"`
+	PublicationRemoveSources *bool   `json:"publication_remove_sources,omitempty"`
+	SourceFileConcurrency    *int    `json:"source_file_concurrency,omitempty" minimum:"1"`
 }
 
 type CheckPathsInput struct {
@@ -129,6 +133,8 @@ func RegisterSetup(api huma.API, setup *service.SetupService) {
 		if err := setup.SaveRuntimeUpdate(ctx, service.RuntimeUpdateRequest{
 			ToolsDirectory: input.Body.ToolsDirectory, OutputDirectory: input.Body.OutputDirectory,
 			PublicationFormat: input.Body.PublicationFormat, SourceFileConcurrency: input.Body.SourceFileConcurrency,
+			PublicationPathTemplate:  input.Body.PublicationPathTemplate,
+			PublicationRemoveSources: input.Body.PublicationRemoveSources,
 		}); err != nil {
 			return nil, huma.Error400BadRequest("invalid runtime settings")
 		}
@@ -277,6 +283,8 @@ func setupStateOutput(state service.SetupState) *SetupStateOutput {
 				ToolsDirectory:                    state.Runtime.ToolsDirectory,
 				OutputDirectory:                   state.Runtime.OutputDirectory,
 				PublicationFormat:                 state.Runtime.PublicationFormat,
+				PublicationPathTemplate:           state.Runtime.PublicationPathTemplate,
+				PublicationRemoveSources:          state.Runtime.PublicationRemoveSources,
 				MusicBrainzMode:                   state.Runtime.MusicBrainzMode,
 				MusicBrainzBaseURL:                state.Runtime.MusicBrainzBaseURL,
 				MusicBrainzVerifiedAt:             state.Runtime.MusicBrainzVerifiedAt,

@@ -28,6 +28,9 @@ const settings = {
     tools_directory: "/srv/tools",
     output_directory: "/srv/music",
     publication_format: "mka",
+    publication_path_template:
+      '{ALBUM_PRIMARY_ARTIST} [{ALBUM_PRIMARY_ARTIST_MBID_PART | ALBUM_PRIMARY_ARTIST_ID}]/{ALBUM_TYPE | "Unclassified"}/{ALBUM_YEAR | "Unknown year"} - {ALBUM_NAME} [{ALBUM_MBID_PART | ALBUM_ID}]/{DISC_NUMBER:02}-{TRACK_NUMBER:02} - {TRACK_NAME}.{EXT}',
+    publication_remove_sources: false,
     source_file_concurrency: 4,
     musicbrainz_mode: "public",
     musicbrainz_base_url: "",
@@ -561,6 +564,81 @@ describe("SettingsScreen", () => {
     expect(validation).toHaveTextContent("Каталог недоступен");
     expect(validation).toBe(focusedAlert);
     expect(validation).toHaveFocus();
+  });
+
+  it("saves the publication template and source-removal permission independently", async () => {
+    const payloads: unknown[] = [];
+    let template = settings.settings.publication_path_template;
+    let removeSources = false;
+    server.use(
+      http.put("/api/settings/runtime", async ({ request }) => {
+        const payload = (await request.json()) as {
+          publication_path_template?: string;
+          publication_remove_sources?: boolean;
+        };
+        payloads.push(payload);
+        if (payload.publication_path_template)
+          template = payload.publication_path_template;
+        if (payload.publication_remove_sources !== undefined)
+          removeSources = payload.publication_remove_sources;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get("/api/settings", () =>
+        json({
+          ...settings,
+          settings: {
+            ...settings.settings,
+            publication_path_template: template,
+            publication_remove_sources: removeSources,
+          },
+        }),
+      ),
+    );
+    render(<SettingsScreen />);
+    const pathTemplate = await screen.findByLabelText("Шаблон пути публикации");
+    fireEvent.change(pathTemplate, {
+      target: { value: "{ALBUM_NAME}/{TRACK_NAME}.{EXT}" },
+    });
+    const templateSaved = nextResponseFor("/api/settings/runtime", "PUT");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить шаблон пути" }),
+    );
+    await templateSaved;
+    await waitFor(() =>
+      expect(payloads).toEqual([
+        { publication_path_template: "{ALBUM_NAME}/{TRACK_NAME}.{EXT}" },
+      ]),
+    );
+
+    fireEvent.click(
+      screen.getByLabelText("Разрешить удаление исходников после публикации"),
+    );
+    const removalSaved = nextResponseFor("/api/settings/runtime", "PUT");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить настройку удаления" }),
+    );
+    await removalSaved;
+    await waitFor(() =>
+      expect(payloads).toEqual([
+        { publication_path_template: "{ALBUM_NAME}/{TRACK_NAME}.{EXT}" },
+        { publication_remove_sources: true },
+      ]),
+    );
+    expect(
+      screen.getByText(
+        /не удаляет существующие файлы и не запускает обработку/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("warns about AAC transcoding when M4A is selected", async () => {
+    render(<SettingsScreen />);
+    fireEvent.change(await screen.findByLabelText("Publication format"), {
+      target: { value: "m4a" },
+    });
+    expect(screen.getByText(/M4A сохраняет AAC и ALAC/)).toHaveTextContent(
+      "другие lossy — в AAC с потерями",
+    );
   });
 
   it.each([

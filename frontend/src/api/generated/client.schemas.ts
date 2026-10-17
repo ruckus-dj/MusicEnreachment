@@ -775,6 +775,8 @@ export interface RuntimeSettingsResponse {
   output_directory: string;
   output_unicode_normalization?: string;
   publication_format: string;
+  publication_path_template: string;
+  publication_remove_sources: boolean;
   sha256_enabled: boolean;
   source_file_concurrency: number;
   tools_directory: string;
@@ -786,6 +788,7 @@ export type SaveRuntimeBodyPublicationFormat = typeof SaveRuntimeBodyPublication
 export const SaveRuntimeBodyPublicationFormat = {
   source: 'source',
   mka: 'mka',
+  m4a: 'm4a',
 } as const;
 
 export interface SaveRuntimeBody {
@@ -794,6 +797,9 @@ export interface SaveRuntimeBody {
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: SaveRuntimeBodyPublicationFormat;
+  /** @maxLength 4096 */
+  publication_path_template?: string;
+  publication_remove_sources?: boolean;
   /** @minimum 1 */
   source_file_concurrency?: number;
   /** @maxLength 4096 */
@@ -1170,6 +1176,7 @@ export type UpdateSettingsBodyPublicationFormat = typeof UpdateSettingsBodyPubli
 export const UpdateSettingsBodyPublicationFormat = {
   source: 'source',
   mka: 'mka',
+  m4a: 'm4a',
 } as const;
 
 export interface UpdateSettingsBody {
@@ -1178,6 +1185,9 @@ export interface UpdateSettingsBody {
   /** @maxLength 4096 */
   output_directory?: string;
   publication_format?: UpdateSettingsBodyPublicationFormat;
+  /** @maxLength 4096 */
+  publication_path_template?: string;
+  publication_remove_sources?: boolean;
   /** @minimum 1 */
   source_file_concurrency?: number;
 }

@@ -31,8 +31,16 @@ func validateRuntimeSettingValues(values map[string]string) error {
 				return fmt.Errorf("invalid filesystem Unicode normalization")
 			}
 		case "publication_format":
-			if value != "source" && value != "mka" {
-				return fmt.Errorf("publication format must be 'source' or 'mka'")
+			if value != "source" && value != "mka" && value != "m4a" {
+				return fmt.Errorf("publication format must be 'source', 'mka', or 'm4a'")
+			}
+		case "publication_path_template":
+			if value == "" {
+				return fmt.Errorf("publication path template must not be empty")
+			}
+		case "publication_remove_sources":
+			if _, err := strconv.ParseBool(value); err != nil {
+				return fmt.Errorf("invalid publication source removal setting: %w", err)
 			}
 		case "source_file_concurrency":
 			concurrency, err := strconv.Atoi(value)
